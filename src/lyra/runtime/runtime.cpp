@@ -19,9 +19,8 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_call.hpp"
-#include "lyra/runtime/process_kind.hpp"
-#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
@@ -123,14 +122,20 @@ void Runtime::RunSimulation() {
     // because the simulation reached its end (LRM 9.2.3).
     RunAsLanding(*this, [this] { WalkInitialize(design_->Root()); });
     WalkActivate(design_->Root());
-    RegisterProcesses();
 
     // LRM 4.4: slots run in time order and the simulator never goes backwards,
-    // so the earliest pending slot is always the next one.
+    // so the earliest pending slot is always the next one. Time moves only to a
+    // slot that holds something (LRM 4.5): one whose every event was taken back
+    // -- the delay of a process stopped or killed before its time came -- is
+    // passed over where it stands.
     while (std::holds_alternative<Running>(state_)) {
       auto slot = slots_.begin();
       if (slot == slots_.end()) {
         break;
+      }
+      if (slot->second.Empty()) {
+        slots_.erase(slot);
+        continue;
       }
       now_ = slot->first;
       ExecuteTimeSlot(slot->second);
@@ -252,27 +257,13 @@ void Runtime::ResolveGlobalTimePrecision() {
   time_format_.units_power = global_precision_power_;
 }
 
-void Runtime::RegisterProcesses() {
-  for (const auto& process : processes_) {
-    switch (process->Kind()) {
-      case ProcessKind::kInitial:
-        Schedule(now_, Region::kActive, process->TopHandle());
-        break;
-      case ProcessKind::kFinal:
-        process->TopHandle()->Park(finals_);
-        break;
-      case ProcessKind::kSpawned:
-      case ProcessKind::kDetached:
-        throw InternalError(
-            "Runtime::RegisterProcesses: an execution created during "
-            "simulation must not appear in static scope registration");
-    }
-  }
-}
-
 void Runtime::RegisterProcessInRegistry(
     std::shared_ptr<RuntimeProcess> process) {
   processes_.push_back(std::move(process));
+}
+
+void Runtime::QueueFinal(Activation* top) {
+  top->Queue(finals_);
 }
 
 auto Runtime::ClaimNamespaceInitialization(std::string_view name) -> bool {
@@ -338,23 +329,18 @@ void Runtime::RunRegion(TimeSlot& slot, Region region) {
   for (OwnedCall& effect : effects) {
     effect();
   }
-  while (Registration* queued = draining_.PopFront()) {
-    CoroutineHandle handle = queued->activation;
-    ConsumeWait(handle);
-    RunProcess(handle);
+  while (QueuePlace* queued = draining_.PopFront()) {
+    Activation* activation = queued->activation;
+    ConsumeWait(activation);
+    RunProcess(activation);
   }
 }
 
 void Runtime::ExecuteFinalProcesses() {
   const std::uint64_t requests_before = end_requests_;
-  while (Registration* queued = finals_.PopFront()) {
-    CoroutineHandle handle = queued->activation;
-    handle->RevokeRegistrations();
-    // A `final` block is never an `await` target (LRM 9.7 restricts targets to
-    // initial / always / fork), so its terminal transition drains no waiters;
-    // the collector stays empty.
-    std::vector<CoroutineHandle> woken;
-    const bool completed = ResumeProcess(handle, woken);
+  while (QueuePlace* queued = finals_.PopFront()) {
+    Activation* activation = queued->activation;
+    const bool completed = activation->Process().ResumeWith(*this, activation);
     // LRM 9.2.3: a `$finish` reached inside a final procedure ends the
     // simulation immediately, so the ones still queued do not run. The request
     // is what says so, however the procedure itself came to an end.
@@ -372,17 +358,7 @@ void Runtime::ExecuteFinalProcesses() {
   finals_.Clear();
 }
 
-auto Runtime::ResumeProcess(
-    CoroutineHandle handle, std::vector<CoroutineHandle>& woken) -> bool {
-  // Capture the owning process before resuming, since `handle` may be an
-  // enabled task's frame that is destroyed as control returns up the enable
-  // chain. On completion the terminal transition drains the process's own
-  // `await` waiters into `woken` atomically.
-  RuntimeProcess& process = handle->Process();
-  return process.ResumeWith(*this, handle, woken);
-}
-
-void Runtime::RunProcess(CoroutineHandle handle) {
+void Runtime::RunProcess(Activation* activation) {
   // Where an ending stops the design: no process resumes after one. Deferred
   // effects the slot already holds still run, and a `final` body reaches its
   // statements through its own path.
@@ -390,23 +366,18 @@ void Runtime::RunProcess(CoroutineHandle handle) {
     return;
   }
   // No wait dispatch: an execution that stopped to wait arranged its own way
-  // back before it gave up control.
-  RuntimeProcess& process = handle->Process();
-  std::vector<CoroutineHandle> woken;
-  if (!ResumeProcess(handle, woken)) {
+  // back before it gave up control. The owning process is taken before the
+  // resume, since `activation` may be an enabled task's frame that is
+  // destroyed as control returns up the enable chain.
+  RuntimeProcess& process = activation->Process();
+  if (!process.ResumeWith(*this, activation)) {
     return;
   }
-  // Terminal transition already settled the process and drained its own `await`
-  // waiters into `woken` (LRM 9.7) atomically. Add the surviving-boundary
-  // effect -- the parent's `wait fork` waiter if this was the last live child
-  // (LRM 9.6.1) -- while the node is still linked, then schedule.
+  // The terminal transition already woke what awaits this process (LRM 9.3.2,
+  // 9.7). Its parent's `wait fork` may hold now that it has one live child
+  // fewer (LRM 9.6.1), which is asked while the node is still linked.
   if (RuntimeProcess* parent = process.Parent(); parent != nullptr) {
-    if (CoroutineHandle waiter = parent->TakeWaitForkWaiterIfSatisfied()) {
-      woken.push_back(waiter);
-    }
-  }
-  for (CoroutineHandle waiter : woken) {
-    Wake(waiter);
+    WakeParkedOn(parent->WaitForkCondition(), Change::Whole());
   }
   // Releasing destroys `process` and every ancestor the release leaves with no
   // lineage to retain, so no statement may follow it here.
@@ -415,29 +386,27 @@ void Runtime::RunProcess(CoroutineHandle handle) {
 
 void RegisterInitialProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine) {
-  // Runtime is the sole concrete `RuntimeEffects` derived class (declared
-  // `final`), so recovering it from the ambient view is safe.
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
-  auto& rt = static_cast<Runtime&>(current_runtime());
-  rt.RegisterProcessInRegistry(
-      std::make_shared<RuntimeProcess>(
-          owning_scope, ProcessKind::kInitial, std::move(coroutine),
-          unit_instance->InitializationSeeds().NextSeed()));
+  Runtime& rt = AsRuntime(current_runtime());
+  auto process = std::make_shared<RuntimeProcess>(
+      owning_scope, std::move(coroutine),
+      unit_instance->InitializationSeeds().NextSeed());
+  // LRM 9.2: an `initial` or `always` starts on the Active queue at time 0.
+  rt.Schedule(rt.Now(), Region::kActive, process->TopActivation());
+  rt.RegisterProcessInRegistry(std::move(process));
 }
 
 void RegisterFinalProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine) {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
-  auto& rt = static_cast<Runtime&>(current_runtime());
-  rt.RegisterProcessInRegistry(
-      std::make_shared<RuntimeProcess>(
-          owning_scope, ProcessKind::kFinal, std::move(coroutine),
-          unit_instance->InitializationSeeds().NextSeed()));
+  Runtime& rt = AsRuntime(current_runtime());
+  auto process = std::make_shared<RuntimeProcess>(
+      owning_scope, std::move(coroutine),
+      unit_instance->InitializationSeeds().NextSeed());
+  rt.QueueFinal(process->TopActivation());
+  rt.RegisterProcessInRegistry(std::move(process));
 }
 
 void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance) {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
-  static_cast<Runtime&>(runtime).EnterStaticInit(
+  AsRuntime(runtime).EnterStaticInit(
       unit_instance->InitializationSeeds().NextSeed());
 }
 
@@ -448,20 +417,16 @@ void EnterNamespaceStaticInit(RuntimeEffects& runtime) {
   // generator, which is what gives every package the same starting point and
   // keeps one package's draws out of another's (LRM 18.14.1).
   InitializationRng seeds;
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
-  static_cast<Runtime&>(runtime).EnterStaticInit(seeds.NextSeed());
+  AsRuntime(runtime).EnterStaticInit(seeds.NextSeed());
 }
 
 auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)
     -> std::int64_t {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
-  return static_cast<Runtime&>(runtime).ClaimNamespaceInitialization(name) ? 1
-                                                                           : 0;
+  return AsRuntime(runtime).ClaimNamespaceInitialization(name) ? 1 : 0;
 }
 
 void LeaveStaticInit(RuntimeEffects& runtime) {
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
-  static_cast<Runtime&>(runtime).LeaveStaticInit();
+  AsRuntime(runtime).LeaveStaticInit();
 }
 
 }  // namespace lyra::runtime

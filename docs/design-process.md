@@ -1,7 +1,7 @@
 # Design process
 
-How to arrive at a design in this codebase, and how to falsify one. Comment rules live in
-`code-comments.md`; doc-writing rules live in `style.md`.
+How to arrive at a design in this codebase, how to falsify one, and how to read the code that
+results. Comment rules live in `code-comments.md`; doc-writing rules live in `style.md`.
 
 ## What you are reading it for, not what you are allowed to read
 
@@ -363,6 +363,39 @@ Four checks, all cheap:
   step whose stated contract is that it reads one declaration and waits on nothing. **A shape that
   fits a contract already written is usually right; one that keeps needing another mechanism to say
   where something lives is usually answering a question it created.**
+
+## Reading a function
+
+Everything above judges a shape by its readers. A function has one more reader, the person reading
+its body, and the test is of the same kind: **a body is right when it can be checked correct in one
+pass, top to bottom, with the reader holding nothing the text does not show.** Each question below
+is something such a reader stumbles on, and each has been a real defect here.
+
+- **Does its job fit in a sentence with no "and"?** The test a lowering takes, taken by a function.
+  One that arranged how a stopped execution resumes also woke it, in one arm of four; the arm was a
+  second job its caller already did, and without it the function only parks and queues.
+- **Do things that are the same look the same, and things that differ look different?** Three waits,
+  each for a state, wrote the same lines to answer a stop, so a reader checked three bodies to learn
+  there was one rule; two helpers under two names made one conversion. The converse costs more: an
+  arm that looks like its siblings and decides something they do not is skimmed exactly because it
+  looks the same.
+- **Does each value appear once it is whole, and stay as it is?** A name declared, then filled, then
+  adjusted makes a reader track which of its states each later line sees. A flag set in one place
+  and tested in another is the same thing over a longer distance.
+- **Is what the body does not handle dismissed first?** A body that returns on those cases leaves
+  the rest at one depth; nesting the main path under its preconditions makes a reader carry every
+  one of them to the last line.
+- **Does every line do something a reader would miss?** A temporary used once that names nothing, a
+  wrapper that only forwards, a local function called from one place: each is a line to read and a
+  name to resolve for what the code beside it already said.
+- **Would its neighbours write it this way?** Not as a defence of the shape -- the neighbours can
+  all be wrong -- but as a cost: a function spelling a visit, a conversion or a loop in a way of its
+  own is read as meaning something by it.
+
+A body that fails one of these is usually reporting on the shape around it rather than on its own
+lines -- the repeated lines were a concept nobody had named, the second job was a decision made in
+two places -- so the fix starts from the sections above. Rearranging the lines until they pass
+leaves the cause where it was.
 
 ## Do not mint a rule from a fix
 

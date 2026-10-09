@@ -162,6 +162,8 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
       return Of<Observation>();
     case support::LibraryObject::kReadReport:
       return Of<ReadReport>();
+    case support::LibraryObject::kWait:
+      return Of<Wait>();
     case support::LibraryObject::kDpiBitBuffer:
       return Of<value::DpiBitBuffer>();
     case support::LibraryObject::kDpiLogicBuffer:

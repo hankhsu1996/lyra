@@ -17,8 +17,8 @@ class Observable;
   return ObjectRootOf(ref.Handle());
 }
 
-// The event source of an object, which a wait reaching the object subscribes
-// to (LRM 9.4.2), given whatever reaches it: a handle, or the running method's
+// The event source of an object, which a wait reaching the object enrols on
+// (LRM 9.4.2), given whatever reaches it: a handle, or the running method's
 // own object. Reaching a member through a handle naming no object is the
 // design's own failure (LRM 8.4).
 [[nodiscard]] auto EventSourceOf(GcObject* object) -> Observable*;

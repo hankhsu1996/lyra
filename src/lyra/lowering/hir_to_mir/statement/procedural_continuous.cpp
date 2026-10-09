@@ -113,7 +113,7 @@ auto LowerProceduralContinuousAssignStmt(
     mir::Block wait_block;
     auto waited = BuildValueChangeWaitStmt(
         wait_block, closure.Frame().WithBlock(&wait_block), process,
-        pca.sensitivity_list, support::BuiltinFn::kWaitAny);
+        pca.sensitivity_list);
     if (!waited) return std::unexpected(std::move(waited.error()));
     wait_block.AppendStmt(*std::move(waited));
     const mir::BlockId wait_scope =

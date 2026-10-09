@@ -343,6 +343,7 @@ auto MemberStorageKindOf(
               case lir::RuntimeLibraryKind::kTrigger:
               case lir::RuntimeLibraryKind::kObservation:
               case lir::RuntimeLibraryKind::kReadReport:
+              case lir::RuntimeLibraryKind::kWait:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kControlEffect:
               // What a constant is made of, which no member holds.
@@ -829,13 +830,14 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObservationOfValue:
     case support::BuiltinFn::kObservationOfValueQualified:
     case support::BuiltinFn::kObservationQualified:
-    case support::BuiltinFn::kObservationArm:
     case support::BuiltinFn::kObservationFires:
-    case support::BuiltinFn::kWaitAny:
+    case support::BuiltinFn::kWaitOn:
+    case support::BuiltinFn::kWaitOnImplicitList:
+    case support::BuiltinFn::kParkAt:
     case support::BuiltinFn::kWaitRecollecting:
     case support::BuiltinFn::kWaitUntil:
-    case support::BuiltinFn::kWaitOnReport:
     case support::BuiltinFn::kReadReportEmpty:
+    case support::BuiltinFn::kReadReportForImplicitList:
     case support::BuiltinFn::kReadReportAdd:
     case support::BuiltinFn::kReadReportAddThroughHandle:
     case support::BuiltinFn::kReadReportEnterCallOnHandle:

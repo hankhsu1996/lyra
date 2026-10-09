@@ -12,10 +12,15 @@
 
 namespace lyra::hir {
 
-auto ReadsStorageOnly(const base::Arena<Expr, ExprId>& exprs, ExprId id)
+namespace {
+
+// Whether evaluating `id` does nothing but read storage, every primary it
+// reaches accepted by `accepts`.
+auto ReadsOnly(
+    const base::Arena<Expr, ExprId>& exprs, ExprId id, const auto& accepts)
     -> bool {
   const auto reads = [&](ExprId operand) {
-    return ReadsStorageOnly(exprs, operand);
+    return ReadsOnly(exprs, operand, accepts);
   };
   const auto all_read = [&](std::span<const ExprId> operands) {
     return std::ranges::all_of(operands, reads);
@@ -25,11 +30,7 @@ auto ReadsStorageOnly(const base::Arena<Expr, ExprId>& exprs, ExprId id)
   };
   return std::visit(
       Overloaded{
-          [](const PrimaryExpr& p) {
-            // A property named bare is one of the object the method runs on,
-            // which no elaboration sealed (LRM 8.4).
-            return !std::holds_alternative<ClassPropertyRef>(p.data);
-          },
+          [&](const PrimaryExpr& p) { return accepts(p.data); },
           [&](const UnaryExpr& e) { return reads(e.operand); },
           [&](const BinaryExpr& e) { return reads(e.lhs) && reads(e.rhs); },
           [&](const ConditionalExpr& e) {
@@ -104,6 +105,71 @@ auto ReadsStorageOnly(const base::Arena<Expr, ExprId>& exprs, ExprId id)
           [](const ClassNewExpr&) { return false; },
           [](const DynamicCastExpr&) { return false; }},
       exprs.Get(id).data);
+}
+
+// Whether `primary` names a property of the object the method runs on, which
+// a property named bare does (LRM 8.4). An object is made as the design runs,
+// so reading one of its properties reads no storage elaboration sealed.
+auto IsPropertyOfTheReceiver(const Primary& primary) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const ClassPropertyRef&) { return true; },
+          [](const IntegerLiteral&) { return false; },
+          [](const StringLiteral&) { return false; },
+          [](const RealLiteral&) { return false; },
+          [](const NullLiteral&) { return false; },
+          [](const ThisHandle&) { return false; },
+          [](const QueueLastIndex&) { return false; },
+          [](const ProceduralVarRef&) { return false; },
+          [](const StaticPropertyRef&) { return false; },
+          [](const RoutedValueRef&) { return false; },
+          [](const RoutedObjectRef&) { return false; },
+          [](const IterationBindingRef&) { return false; },
+          [](const PatternVarRef&) { return false; },
+          [](const ExternalUnitValueRef&) { return false; }},
+      primary);
+}
+
+// Whether `primary` names something a body declares, which exists only from
+// its declaration on (LRM 6.21). A pattern binds its identifier either in the
+// expression being asked about or in a statement around it (LRM 12.6), and the
+// reference alone does not say which, so every pattern binding counts. A `with`
+// clause's iteration value is bound by the expression the clause sits in (LRM
+// 7.12.4), so it exists wherever that expression is evaluated.
+auto IsDeclaredByABody(const Primary& primary) -> bool {
+  return std::visit(
+      Overloaded{
+          [](const ProceduralVarRef&) { return true; },
+          [](const PatternVarRef&) { return true; },
+          [](const IterationBindingRef&) { return false; },
+          [](const IntegerLiteral&) { return false; },
+          [](const StringLiteral&) { return false; },
+          [](const RealLiteral&) { return false; },
+          [](const NullLiteral&) { return false; },
+          [](const ThisHandle&) { return false; },
+          [](const QueueLastIndex&) { return false; },
+          [](const ClassPropertyRef&) { return false; },
+          [](const StaticPropertyRef&) { return false; },
+          [](const RoutedValueRef&) { return false; },
+          [](const RoutedObjectRef&) { return false; },
+          [](const ExternalUnitValueRef&) { return false; }},
+      primary);
+}
+
+}  // namespace
+
+auto ReadsStorageOnly(const base::Arena<Expr, ExprId>& exprs, ExprId id)
+    -> bool {
+  return ReadsOnly(exprs, id, [](const Primary& primary) {
+    return !IsPropertyOfTheReceiver(primary);
+  });
+}
+
+auto ReadsElaboratedStorageOnly(
+    const base::Arena<Expr, ExprId>& exprs, ExprId id) -> bool {
+  return ReadsOnly(exprs, id, [](const Primary& primary) {
+    return !IsPropertyOfTheReceiver(primary) && !IsDeclaredByABody(primary);
+  });
 }
 
 }  // namespace lyra::hir

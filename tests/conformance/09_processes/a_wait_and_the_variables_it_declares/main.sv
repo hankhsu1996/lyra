@@ -9,6 +9,10 @@
 // procedure. And an automatic the enclosing block declares exists while a
 // nested @* waits, so a fork branch writing it wakes that wait.
 //
+// The same holds of what an `iff` qualifier reads (LRM 9.4.2.3): one that reads
+// an automatic its body declares reads it as that execution of the body left
+// it, each time the watched expression moves.
+//
 // An array method's iterator is read-only and lives only while its method is
 // evaluated (LRM 7.12), so a wait whose own expression introduces one -- an
 // event control or a level wait -- is woken by the array it ranges over, and a
@@ -27,8 +31,14 @@ module Top;
   time level_woke = 0;
   bit clk;
   int changed_ticks;
+  int qualified_wakes;
 
   initial repeat (4) #5 clk = !clk;
+
+  always begin
+    automatic bit gate = 1'b1;
+    @(posedge clk iff gate) qualified_wakes = qualified_wakes + 1;
+  end
 
   always @(posedge clk)
     if ($changed(arr.sum() with (item))) changed_ticks = changed_ticks + 1;
@@ -104,6 +114,9 @@ module Top;
     if (changed_ticks !== 1)
       $fatal(1, "$changed over an iterator held on %0d ticks, expected 1",
              changed_ticks);
+    if (qualified_wakes !== 2)
+      $fatal(1, "a qualifier reading a body's automatic woke %0d times, expected 2",
+             qualified_wakes);
     $display("All checks passed");
   end
 endmodule

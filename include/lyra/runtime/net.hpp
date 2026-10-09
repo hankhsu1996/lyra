@@ -542,15 +542,16 @@ class ResolvedNet : public Observable {
     return contributions_[index];
   }
 
-  // Stores the resolved value and wakes subscribers only when it actually
+  // Stores the resolved value and wakes what waits here only when it actually
   // changed (LRM 9.4.2). A contribution that moves without changing the
   // resolved value wakes no observer.
   void PublishIfChanged(RuntimeEffects& runtime, T next) {
     if (resolved_.IsBitIdentical(next)) {
       return;
     }
-    runtime.WakeWaitersOf(
-        *this, ReplaceWhole(resolved_, [&] { resolved_ = std::move(next); }));
+    runtime.WakeParkedOn(this->Members(), ReplaceWhole(resolved_, [&] {
+                           resolved_ = std::move(next);
+                         }));
   }
 
   T resolved_{};

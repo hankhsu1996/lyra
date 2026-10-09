@@ -1,6 +1,6 @@
 #pragma once
 
-#include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
@@ -12,6 +12,6 @@ namespace lyra::runtime {
 // this way, and only because the slot is unknown until the event has happened
 // (LRM 9.4.5): an update whose slot is settled where the statement is reached
 // hands the region a closure and waits for nothing.
-auto ResumeInNbaRegion(RuntimeEffects& runtime) -> bool;
+auto ResumeInNbaRegion() -> Wait;
 
 }  // namespace lyra::runtime

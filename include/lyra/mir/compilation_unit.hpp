@@ -229,6 +229,9 @@ struct BuiltinMirTypes {
   // What a function is handed where a call of it is to report what it reads
   // (LRM 9.4.2), and null where it only runs.
   TypeId read_report_ptr;
+  TypeId wait;
+  // What each stop at a wait is handed.
+  TypeId wait_ptr;
   TypeId coroutine_void;
   TypeId wildcard_index;
 };
@@ -433,13 +436,17 @@ struct CompilationUnit {
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kReadReport}}),
             .read_report_ptr = TypeId{},
+            .wait = types.Intern(
+                Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kWait}}),
+            .wait_ptr = TypeId{},
             .coroutine_void = TypeId{},
             .wildcard_index = types.Intern(Type{WildcardIndexType{}}),
         } {
-    // `Coroutine<void>` is the completion type of a process or void task, and a
-    // pointer to a read report is what a function is handed. Both are built in
-    // the constructor body because each reads back an already-interned type;
-    // their member-list entries above are unused placeholders overwritten here.
+    // `Coroutine<void>` is the completion type of a process or void task, a
+    // pointer to a read report is what a function is handed, and a pointer to a
+    // wait is what a stop is handed. Each is built in the constructor body
+    // because each reads back an already-interned type; their member-list
+    // entries above are unused placeholders overwritten here.
     // The field is a convenience alias for the canonical instance, not a
     // deduplication mechanism -- interning `Coroutine<void>` anywhere returns
     // this same id.
@@ -448,6 +455,10 @@ struct CompilationUnit {
     builtins.read_report_ptr = types.Intern(
         mir::Type{mir::PointerType{
             .pointee = builtins.read_report,
+            .ownership = mir::PointerOwnership::kBorrowed}});
+    builtins.wait_ptr = types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = builtins.wait,
             .ownership = mir::PointerOwnership::kBorrowed}});
   }
 

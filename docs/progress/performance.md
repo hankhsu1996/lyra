@@ -122,7 +122,7 @@ block; a conversion between two types the compiler already knows costs about 360
 comparing the old one against the new**, which is 13% and 5% of the representative block and 15% and
 12% of scalar arithmetic. Third, and only where the design waits on a clock, is **every wait
 allocating**: about 12% of the clocked pipeline is the allocator, beside building a trigger list and
-subscribing per wait. The design's own body stays under 5% in every one. The first of the three is
+subscribing per wait. The design's own body stays under 5% in every one. The first and the third are
 closed below.
 
 - [x] An integral value's dimension stack no longer allocates for the single-dimension case. Every
@@ -165,6 +165,26 @@ closed below.
       expression, so what a leaf's bit window does is pass over a wait a write cannot have reached
       rather than decide one. Tracked with the construct it affects, in
       [processes.md](processes.md).
+
+- [x] A wait whose watched storage cannot change while its process lives -- an `always_comb`, an
+      `always_ff`, an event control on fixed storage anywhere in a body, a continuous assignment and
+      every port connection, a sampler, an assertion's clock tick -- is built once and no longer
+      rebuilt and re-registered at every stop. It stands on what it watches for its whole life, and
+      a stop only says that the process is waiting there now; nothing is allocated and no watched
+      expression is evaluated per stop. Every other wait is held by the body the same way, built at
+      its stop, and a process inside a named block joins the block's disable target once rather than
+      at every stop. Measured on the RISC-V core (`hello_test`, `--release`, whole run under
+      callgrind, 13,268 cycles), against `dfa5bae9` built the same way: the execution backend 14.08
+      G to 10.40 G instructions (784 K per cycle), the C++ backend 11.63 G to 8.65 G (652 K per
+      cycle), both ending at `$finish` 26548.
+
+      Against calling such a process as a plain function, which an earlier shape did for the
+      processes that wait only at their head (9.96 G and 7.63 G), resuming and parking a suspended
+      body costs 0.44 G more on the execution backend and 1.02 G more on the C++ backend: the
+      scheduler's bookkeeping around a resume, and on the execution backend its adapter around a
+      generated body. None of it depends on what the process waits on, and on the execution backend
+      most of it is paid back by the function shape's per-run construction of its locals being
+      gone.
 
 - [x] A closure the execution backend builds -- the expression an event control watches, the effect
       a nonblocking assignment defers -- is made once, with its captures in its own allocation, and

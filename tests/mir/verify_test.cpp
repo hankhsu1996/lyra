@@ -31,14 +31,12 @@ void AddAwaitingBody(CompilationUnit& unit, TypeId result) {
   CallableCode code = CallableCode::Defined();
   code.result_type = result;
   Block inner;
-  const ExprId registration = inner.exprs.Add(
+  const ExprId park = inner.exprs.Add(
       Expr{
           .data = MachineBoolLiteral{.value = true},
           .type = unit.builtins.machine_bool});
   const ExprId wait = inner.exprs.Add(
-      Expr{
-          .data = WaitExpr{.registration = registration},
-          .type = unit.builtins.void_type});
+      Expr{.data = WaitExpr{.park = park}, .type = unit.builtins.void_type});
   inner.AppendStmt(ExprStmt{.expr = wait});
   const BlockId scope = code.Body().child_scopes.Add(std::move(inner));
   code.Body().AppendStmt(BlockStmt{.scope = scope});
@@ -74,8 +72,8 @@ TEST(MirVerifyTest, ASuspensionIsRefusedOnlyWhereNothingCouldResumeIt) {
   EXPECT_NO_THROW(Verify(coroutine_unit));
 }
 
-// Awaiting an execution and waiting on a registration end differently, so each
-// is refused where its operand is what the other waits on.
+// Awaiting an execution and stopping where a park says end differently, so
+// each is refused where its operand is what the other waits on.
 TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
   CompilationUnit unit;
   unit.name = "U";
@@ -97,7 +95,7 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
           .virtual_dispatch = std::nullopt});
   try {
     Verify(unit);
-    FAIL() << "an await on a registration's answer was accepted";
+    FAIL() << "an await on a park's answer was accepted";
   } catch (const InternalError& error) {
     const std::string message = error.what();
     EXPECT_NE(message.find("not an execution"), std::string::npos) << message;

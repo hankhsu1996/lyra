@@ -511,15 +511,15 @@ struct AwaitExpr {
   ExprId execution;
 };
 
-// Waiting for what a call has just registered (LRM 9.4 timing controls, 9.6
-// `wait fork`, 9.7 `await`): `registration` has arranged this execution's
-// resumption and answers whether control must be given up at all, so control
-// leaves here where it answers true and comes back when what it registered
-// happens. Yields nothing. A different operation from awaiting an execution:
-// what ends the wait is the scheduler rather than another body, and nothing is
-// handed back.
+// Stopping this execution where `park` says to (LRM 9.4 timing controls, 9.6
+// `wait fork`, 9.7 `await`, a foreign task's fiber): `park` is a call that has
+// parked the execution and arranged how it resumes, and answers whether
+// control must be given up at all, so control leaves here where it answers
+// true and comes back when the execution is resumed. Yields nothing. A
+// different operation from awaiting an execution: what ends the wait is the
+// scheduler rather than another body, and nothing is handed back.
 struct WaitExpr {
-  ExprId registration;
+  ExprId park;
 };
 
 // Projects one element out of a sequence value by position. The position is an

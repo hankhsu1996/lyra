@@ -234,11 +234,11 @@ the detail lives in the entry itself.
   every value-change wait (`always_comb` / `@*`, `@(...)`, `wait (cond)`, a continuous assignment)
   is one shape over a per-leaf `(observable, bit_range)` set. Its MIR carrier is superseded by the
   next entry, and what a leaf's bit range decides by the owner-transition entry.
-- [value-change-wait-as-runtime-call](value-change-wait-as-runtime-call.md) -- that wait is an
-  ordinary runtime call taking the trigger set, awaited like every other suspending call; MIR
-  carries no event-control node, and one enum for the edge specifier is shared by compiler and
-  runtime. A dedicated MIR statement, a per-leaf registration call, and an engine subscription verb
-  are rejected.
+- [value-change-wait-as-runtime-call](value-change-wait-as-runtime-call.md) -- that wait is ordinary
+  runtime calls: one building it over the trigger set, and the stop at it every timing control
+  shares; MIR carries no event-control node, and one enum for the edge specifier is shared by
+  compiler and runtime. A dedicated MIR statement, a per-leaf build call, and an engine enrolment
+  verb are rejected.
 - [update-due-on-an-event](update-due-on-an-event.md) -- an assignment whose update is due on an
   event states no slot where it stands, so the update is carried by an execution of no lineage that
   waits, places itself in the NBA region of the slot the event lands in, and writes there. A
@@ -340,7 +340,7 @@ the detail lives in the entry itself.
   -- every variable a body that can wait declares is a cell reporting its writes, stated in MIR,
   because any process that can reach it may wait on it, while a function's stay values since nothing
   can wait on them; a wait names it by its declaration rather than a route, a wait through a
-  reference registers on what the reference reports to, and an automatic variable's sampled and past
+  reference enrols on what the reference reports to, and an automatic variable's sampled and past
   values are its current one. A cell only where another process can reach the variable, and one
   coarse source for plain storage, are rejected.
 - [inline-member-slots](inline-member-slots.md) -- a storage block whose owner cannot move holds its
@@ -1098,22 +1098,30 @@ the detail lives in the entry itself.
   detection belongs to the armed observation, which compares its own expression against the baseline
   it took when it armed. Information about what a write could have affected may only eliminate
   candidate observations, never decide one.
-- [activation-registration](activation-registration.md) -- an activation's membership in a wake
-  target (an observable, an event, a join condition, a region queue, a delay slot) is one record the
-  activation owns and the target merely links; the activation-side set and the target-side list are
-  two indexes over it, revoking is a detach rather than a search, and the two-authoritative-copies
-  shape is rejected.
+- [a-membership-is-one-record](a-membership-is-one-record.md) -- a membership in a wake target (an
+  observable, an event, a process's termination, a disable target, a region queue, a delay slot) is
+  one record, owned by what shares its life -- a wait, a process's record of being inside a target,
+  an activation's queue place -- and merely linked by the target; leaving is a detach rather than a
+  search, and the two-authoritative-copies shape is rejected.
+- [a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md) -- every timing
+  control is a wait the body's frame holds, built where what it waits for stops changing (once for
+  the body's run on fixed storage, at the stop for a delay or a join); its memberships stand for its
+  life, each stop only parks on it and answers how the execution carries on, and a join waits on its
+  branches' termination. Every process stays one coroutine; the two-kinds-of-process split was
+  built, measured and rejected. Revises waiting-is-an-operation D4 and disable-scope-invalidation
+  D2.
 - [activation-disposition](activation-disposition.md) -- an activation has one authoritative
   disposition (Executing / Runnable / Blocked / Suspended(saved) / Terminal); a wait is a retainable
-  pending capability distinct from its registration (enrollment), supplied uniformly by each
+  pending capability distinct from where the activation is parked, supplied uniformly by each
   construct; suspension saves the prior disposition; a central wait-kind taxonomy,
   `Runnable(region)`, and mirroring the wait's state are rejected.
 - [disable-scope-invalidation](disable-scope-invalidation.md) -- `disable` (LRM 9.6.2) invalidates a
   cancellation source's generation; every affected execution reconciles at one uniform validity gate
-  before its next statement, reusing the registration entitlement substrate. Membership in a target
-  is carried by the running process, so it spans a call, and is captured at a spawn. A local goto, a
-  per-thread extent frontier carried in a `DisableUnwind` exception, an explicit resume-reason, a
-  dedicated entitlement object, and membership rebuilt per callable from lexical scope are rejected.
+  before its next statement, reusing the membership list every wait target uses. Membership in a
+  target is carried by the running process, so it spans a call, and is captured at a spawn. A local
+  goto, a per-thread extent frontier carried in a `DisableUnwind` exception, an explicit
+  resume-reason, a dedicated entitlement object, and membership rebuilt per callable from lexical
+  scope are rejected.
 - [run-time-failure-is-not-an-outcome](run-time-failure-is-not-an-outcome.md) -- an activation's
   terminal outcome carries only what the source language can consume, which is the produced value
   and the departure a region lands; SystemVerilog has no spelling for a failure, so a failure is the

@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
-#include <span>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -17,7 +16,6 @@
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
-#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
@@ -45,8 +43,8 @@ namespace lyra::runtime {
 // performed through another while it was open, and what writing one element
 // costs does not scale with the size of the whole value.
 //
-// `Watched` is whether anything reads the answer. A variable cell with nothing
-// waiting on it has no one to tell (LRM 4.3), so the write keeps nothing from
+// `Watched` is whether anything reads the answer. A variable cell no wait is
+// enrolled on has no one to tell (LRM 4.3), so the write keeps nothing from
 // before it; a net driver always has its net, which resolves again only where
 // the driver's own contribution moved (LRM 6.5).
 //
@@ -94,7 +92,7 @@ class RareWriteState {
   [[nodiscard]] virtual auto TakenOver() const -> bool = 0;
 };
 
-// What every variable is whatever it holds: the waits parked on it, and
+// What every variable is whatever it holds: the waits enrolled on it, and
 // whatever a sampled or taken-over variable has to do before a write lands. A
 // write that knows the variable only as this -- one through a reference to a
 // part of it, which knows the part's type and not the variable's -- asks it
@@ -113,10 +111,10 @@ class VariableCell : public Observable {
     return rare_ == nullptr || rare_->Admit();
   }
   // Whether a write into the variable has anyone to tell what it did: a wait
-  // parked here (LRM 4.3). Under a procedural continuous assignment a write
+  // enrolled here (LRM 4.3). Under a procedural continuous assignment a write
   // lands where nothing reads it (LRM 10.6), so it has nothing to tell either.
   [[nodiscard]] auto Watched() const -> bool {
-    return HasWaiter() && (rare_ == nullptr || !rare_->TakenOver());
+    return HasMembers() && (rare_ == nullptr || !rare_->TakenOver());
   }
 
  protected:
@@ -322,7 +320,7 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // Tells whoever waits here that a write changed the cell (LRM 4.3), passing
   // over a wait whose bits `change` shows the write left alone.
   void PublishTransition(const Change& change) {
-    current_runtime().WakeWaitersOf(*this, change);
+    current_runtime().WakeParkedOn(this->Members(), change);
   }
 
   // Opens a write into the cell for the full-expression that writes. The cell's
@@ -351,7 +349,7 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     if (CellRareState<T>* rare = ExistingRareState()) {
       rare->KeepPreponed();
     }
-    if (!this->HasWaiter()) {
+    if (!this->HasMembers()) {
       this->Overwrite(new_val);
       return;
     }
@@ -500,7 +498,7 @@ struct ErasedReference {
   // the variable admits it first.
   void AdmitStep() const;
 
-  // What a wait on the storage registers on: what `Report` tells, which is the
+  // What a wait on the storage enrols on: what `Report` tells, which is the
   // variable or the object's event source. Storage that belongs to nothing
   // answers with none, since no write to it is ever told.
   [[nodiscard]] auto ReportsTo() const -> Observable*;
@@ -694,36 +692,12 @@ auto ReferProperty(const value::ObjectRef& handle)
       handle.View<typename MemberOf<decltype(Property)>::Class>());
 }
 
-// What a wait on the storage `reference` names registers on (LRM 13.5.2): what
+// What a wait on the storage `reference` names enrols on (LRM 13.5.2): what
 // a write through the reference is told to, never the reference itself.
 template <value::LyraValue T>
 auto ReportsTo(const Ref<T>& reference) -> Observable* {
   return reference.Erased().ReportsTo();
 }
-
-// Makes `frame` runnable again when what happens at one of `triggers` is an
-// event for the wait (LRM 9.4.2 / 9.4.2.2 / 9.4.3 / 15.5.2). Each subscription
-// registers on the frame's own wait-registration set, so waking or destroying
-// the frame revokes every leaf and the one that wakes it drops the siblings;
-// the engine has no idea what kind of wait this is. Each leaf is copied into
-// the target's waiter record, so `triggers` is only read for the duration of
-// this call.
-//
-// An empty leaf set is legal and means "never wake up" -- an `always_comb`
-// whose body reads nothing (`always_comb c = 7;`) runs once, then suspends
-// forever.
-void SubscribeToLeaves(
-    CoroutineHandle frame, std::span<const Trigger> triggers);
-
-// Which frame is waiting is the runtime's own to know, so nothing here is
-// handed one: both backends reach this the same way and answer their caller
-// with the same bool. The wait keeps its own copy of each leaf, so the leaves
-// are only read here -- laid out in one array, or each where its builder left
-// it and named by address.
-auto WaitAny(RuntimeEffects& services, std::span<const Trigger> triggers)
-    -> bool;
-auto WaitAny(RuntimeEffects& services, std::span<const Trigger* const> triggers)
-    -> bool;
 
 // Defaulted here rather than where they are declared: a constructor or
 // destructor defaulted on its first declaration is not user-provided, so a unit

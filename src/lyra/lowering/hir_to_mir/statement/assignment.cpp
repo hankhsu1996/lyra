@@ -184,51 +184,6 @@ auto LowerStreamingUnpackAssign(
       .data = mir::BlockStmt{.scope = wrapper_scope_id}};
 }
 
-// Whether this call statement parks the process until what the call registers
-// happens (LRM 9.7 `await` among them). A task enable is not asked here: its
-// completion is awaited, which the call's type states. The visit answers what a
-// type cannot: a callee that parks the process through a runtime entry instead
-// of completing. It is exhaustive over the callee kinds, so a kind that comes
-// to park forces a decision here rather than silently defaulting to not
-// parking.
-auto CallStatementWaits(const hir::CallExpr& call) -> bool {
-  return std::visit(
-      Overloaded{
-          // No system subroutine parks its caller: the ones that end the run
-          // leave the calling execution instead (LRM 20.2), which a function
-          // may do and could not do by suspending (LRM 13.4).
-          [](const hir::SystemSubroutineRef&) { return false; },
-          // An intra-unit task enable and a cross-unit one (LRM 26.3) both
-          // complete as coroutines, which the call's type already answered.
-          [](const hir::StructuralSubroutineRef&) { return false; },
-          [](const hir::ExternalUnitSubroutineRef&) { return false; },
-          // A task another instance publishes (LRM 25.7, 23.6) completes as a
-          // coroutine on the same terms.
-          [](const hir::ExternalUnitMethodRef&) { return false; },
-          // A foreign task import (LRM 35.5.2) completes as a coroutine too,
-          // which the call's type already answered.
-          [](const hir::ForeignImportRef&) { return false; },
-          // A class method that is a task (LRM 8.6, 13.3) completes as a
-          // coroutine, which the call's type already answered.
-          [](const hir::MethodCallRef&) { return false; },
-          [](const hir::StaticMethodCallRef&) { return false; },
-          // A built-in method mostly computes a value against a library type
-          // and never yields; the ones that park the caller until something
-          // else settles (LRM 9.7 `await`) say so on their own declaration.
-          [](const hir::BuiltinMethodRef& b) {
-            return support::RuntimeEntryOf(b.method).parks_the_caller;
-          },
-          // An enumerated type method (LRM 6.19.5) is answered from the member
-          // table, either as a constant or by a synthesized non-task callable.
-          [](const hir::EnumMethodRef&) { return false; },
-          // A sampled value function reads state a clocking event's ticks have
-          // already settled (LRM 16.9.3), so it waits for nothing.
-          [](const hir::PastValueRef&) { return false; },
-          [](const hir::ValueChangeRef&) { return false; },
-      },
-      call.callee);
-}
-
 // The statement-position lowering a system subroutine needs when its effect
 // cannot be expressed as a bare value: a file write whose formatted output is
 // bound to an output argument, and the `$sformat` / `$swrite` family whose
@@ -399,15 +354,16 @@ auto LowerExprStmt(
     if (!call_or) return std::unexpected(std::move(call_or.error()));
     const mir::ExprId call_id = block.exprs.Add(*std::move(call_or));
     const mir::TypeId call_type = block.exprs.Get(call_id).type;
+    // What the call answers says what the statement is: a task enable's
+    // execution, awaited (LRM 13.3); a wait, stopped at (LRM 9.7 `await`); or
+    // a value nothing reads.
+    const mir::CompilationUnit& unit = process.Owner().Unit();
     mir::Stmt stmt = [&] {
-      if (process.Owner()
-              .Unit()
-              .types.Get(call_type)
-              .Is<mir::CoroutineType>()) {
+      if (unit.types.Get(call_type).Is<mir::CoroutineType>()) {
         return BuildAwaitStmt(process.Owner(), block, call_id);
       }
-      if (CallStatementWaits(*call)) {
-        return BuildWaitStmt(process.Owner(), block, call_id);
+      if (call_type == unit.builtins.wait) {
+        return BuildStopStmt(process.Owner(), frame, call_id);
       }
       return mir::Stmt{
           .label = std::nullopt, .data = mir::ExprStmt{.expr = call_id}};

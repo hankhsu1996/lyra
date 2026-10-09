@@ -257,21 +257,21 @@ designator's owner both ask.
 
 ### D6. Event detection belongs to the armed observation, and compares consecutive values it observed
 
-An event control arms an observation when execution reaches it, taking its expression's current
-value as the baseline, and disarms when the observation fires. A variable's transition makes an
-observation a candidate; the observation decides by comparing its expression's value against the
-baseline, with the edge rules of LRM 9.4.2 Table 9-2 applied to the expression's least significant
-bit.
+An event control's observation takes its expression's current value as the baseline where the wait
+begins. A variable's transition makes an observation a candidate; the observation decides by
+comparing its expression's value against the baseline, with the edge rules of LRM 9.4.2 Table 9-2
+applied to the expression's least significant bit.
 
 A candidate that does not fire advances the baseline. Otherwise comparisons are not between
 consecutive observed states: an observation armed on `posedge clk` while `clk` is 1 sees a
 transition to 0 that does not fire, and a later transition back to 1 would then compare 1 against 1
 and miss a posedge.
 
-The baseline, and any state a future optimization keeps beside it, belong to the armed observation
-instance and are destroyed when it disarms. That is what makes LRM 9.7 resensitization fall out:
-while a process is not waiting at an event control, no observation exists there, so a change during
-that window is missed.
+The baseline, and any state a future optimization keeps beside it, belong to the observation, which
+lives as long as the wait holding it -- across every stop at it where what the wait watches stays
+the same (`a-wait-is-storage-of-its-activation.md`). A change while the process is not parked at the
+control is not one the control reports, and the baseline is taken afresh where the process stops
+there again whenever anything moved meanwhile; that is what makes LRM 9.7 resensitization fall out.
 
 Sensitivity that names variables rather than an expression -- `always_comb` and `always_latch` (LRM
 9.2.2.2.1) -- arms an observation whose detector fires on any candidate. It is one alternative of
@@ -374,7 +374,7 @@ always still correct.
 - [unpacked-range-belongs-to-type](unpacked-range-belongs-to-type.md) -- its constraint that a
   cell's whole-value store never grows semantic-store behaviour is what D1's separation of the
   transition boundary from mutation machinery preserves.
-- [activation-registration](activation-registration.md) -- an armed observation's state lives on the
-  record the activation owns, which is where D6 places the baseline.
+- [a-membership-is-one-record](a-membership-is-one-record.md) -- an armed observation's state is
+  reached from the wait's membership, which is where D6 places the baseline.
 - [read-set-inference](read-set-inference.md) -- the read set decides when an observation becomes a
   candidate; D6 keeps that separate from whether its expression changed.

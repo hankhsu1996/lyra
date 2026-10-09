@@ -8,6 +8,10 @@
 // time step; and a wait condition, which becomes true or does not, and where it
 // has become true meanwhile continues the process in the current time step
 // (LRM 9.7).
+//
+// A `disable` of a block the suspended process is inside still ends that
+// block for it (LRM 9.6.2): resumed, it leaves the block at once rather than
+// waiting on, in the current time step.
 module Top;
   int delayed_suspended, delayed_not_progressed;
   int delayed_marker, delayed_ran_time, delayed_after_resume;
@@ -16,13 +20,38 @@ module Top;
 
   int pending_ran_time, condition_ran_time;
 
+  int held_ran_on, held_left_time;
+
   bit sig;
   bit gate;
+  event never_fires;
 
   process delayed;
   process watcher;
   process pending;
   process conditioned;
+  process held;
+
+  task automatic hold();
+    begin : held_block
+      @(never_fires);
+      held_ran_on = 1;
+    end
+    held_left_time = $time;
+  endtask
+
+  initial begin
+    held_left_time = -1;
+    fork
+      begin
+        held = process::self();
+        hold();
+      end
+    join_none
+    #1 held.suspend();
+    disable hold.held_block;
+    #1 held.resume();
+  end
 
   initial begin
     fork
@@ -116,6 +145,9 @@ module Top;
       $fatal(1, "pending_ran_time was %0d, expected 50", pending_ran_time);
     if (condition_ran_time !== 20)
       $fatal(1, "condition_ran_time was %0d, expected 20", condition_ran_time);
+    if (held_ran_on !== 0 || held_left_time !== 2)
+      $fatal(1, "a block disabled while suspended was left at %0d, expected 2",
+             held_left_time);
     $display("All checks passed");
   end
 endmodule

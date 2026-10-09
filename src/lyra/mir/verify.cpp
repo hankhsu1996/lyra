@@ -64,7 +64,7 @@ auto Suspends(
       }
     } else if (const auto* wait = std::get_if<WaitExpr>(&expr.data)) {
       suspends = true;
-      if (!unit.types.Get(block.exprs.Get(wait->registration).type)
+      if (!unit.types.Get(block.exprs.Get(wait->park).type)
                .Is<MachineBoolType>()) {
         throw InternalError(
             std::format(
@@ -140,7 +140,7 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
             }
           },
           [&](const AwaitExpr& e) { reach(e.execution); },
-          [&](const WaitExpr& e) { reach(e.registration); },
+          [&](const WaitExpr& e) { reach(e.park); },
           [&](const VectorGetExpr& e) {
             reach(e.vector);
             reach(e.index);

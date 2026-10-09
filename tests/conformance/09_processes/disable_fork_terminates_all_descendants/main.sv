@@ -6,10 +6,19 @@
 // the dynamic parent-child one, and a task enable does not start a thread of
 // its own (LRM 9.5), so a disable fork written in a task body also reaches
 // what the process that enabled the task had spawned before the call.
+//
+// What it terminates goes as a whole, whatever its parts were waiting on --
+// one descendant awaiting another included (LRM 9.7) -- and what goes with it
+// is only the descendants: a descendant inside the same named block as the
+// process that disabled it leaves that block, and the process stays inside, so
+// a later `disable` of the block still reaches it (LRM 9.6.2).
 module Top;
   int child_ran, grandchild_ran, sibling_ran, outer_child_ran;
   int resume_time, after_disable;
   int reached_after_empty_disable, after_task_time;
+  int awaiting_resumed;
+  int spawner_left_region;
+  process awaited;
 
   task automatic take_first();
     fork
@@ -38,6 +47,42 @@ module Top;
     #100;
   end
 
+  initial begin
+    fork
+      begin
+        fork
+          begin
+            awaited = process::self();
+            #100;
+          end
+        join_none
+        #0 awaited.await();
+        awaiting_resumed = 1;
+      end
+    join_none
+    #1 disable fork;
+  end
+
+  task automatic stay_in_region(input bit spawn);
+    begin : region
+      if (spawn) begin
+        fork
+          stay_in_region(0);
+        join_none
+        #1 disable fork;
+      end
+      #5;
+      if (spawn) spawner_left_region = 0;
+    end
+  endtask
+
+  initial begin
+    spawner_left_region = 1;
+    stay_in_region(1);
+  end
+
+  initial #2 disable stay_in_region.region;
+
   final begin
     if (reached_after_empty_disable !== 1)
       $fatal(1, "reached_after_empty_disable was %0d, expected 1",
@@ -56,6 +101,10 @@ module Top;
       $fatal(1, "resume_time was %0d, expected 10", resume_time);
     if (after_task_time !== 10)
       $fatal(1, "after_task_time was %0d, expected 10", after_task_time);
+    if (awaiting_resumed !== 0)
+      $fatal(1, "a descendant awaiting another resumed after both were disabled");
+    if (spawner_left_region !== 1)
+      $fatal(1, "a process left a block its disabled descendant was inside");
     $display("All checks passed");
   end
 endmodule

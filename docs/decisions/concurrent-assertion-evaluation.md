@@ -171,7 +171,7 @@ The process waits on the clocking event and, at each tick, submits one closure t
 region of that time step. The closure starts a new attempt, advances every live one, and for each
 attempt that resolved submits its action to the Reactive region. This is the shape a sampler already
 has ([sampled-value-and-its-clock](sampled-value-and-its-clock.md) D3): an action bound to a
-schedule event, re-arming through its own loop.
+schedule event, waiting on it as any `always` does.
 
 Waking is not evaluating. The process wakes where any value-change wait wakes, and the tick's work
 goes to Observed as a deferred effect, which is what places evaluation in the region F4 requires

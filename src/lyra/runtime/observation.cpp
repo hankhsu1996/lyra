@@ -47,6 +47,12 @@ void Observation::Arm() const {
   }
 }
 
+void Observation::Disarm() const {
+  if (held_ != nullptr) {
+    held_->Disarm();
+  }
+}
+
 auto Observation::Fires() const -> bool {
   return held_ == nullptr || held_->Fires();
 }

@@ -1,21 +1,18 @@
 #pragma once
 
-#include <utility>
-#include <vector>
-
-#include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/observation.hpp"
-#include "lyra/runtime/registration.hpp"
-#include "lyra/runtime/trigger.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
 // A place where something happens that activations wait for: a variable cell or
 // a net taking a new value (LRM 4.3 calls that an update event), a named event
-// being triggered (LRM 15.5.1). What waits here is the whole of what such an
-// occurrence is reported to -- nothing else reads one -- so an occurrence with
-// nothing waiting has nothing to report, and may skip the work of describing
-// itself.
+// being triggered (LRM 15.5.1). The waits enrolled here are the whole of what
+// such an occurrence is reported to -- nothing else reads one -- so an
+// occurrence where none is enrolled has nothing to report, and may skip the
+// work of describing itself. A wait stays enrolled for as long as the frame
+// holding it does, parked there or not, so an occurrence where one is enrolled
+// is described whether or not anything is parked at it yet.
 //
 // Deriving from this has to leave the derived cell's own address equal to the
 // address of what waits on it: generated code hands a cell's address across a C
@@ -35,42 +32,18 @@ class Observable {
   // Written here, and not in the library's own source, because every store
   // asks it and the library's own writes fold it. The price is that a unit
   // writing a cell of a type its design shaped carries a copy of it.
-  [[nodiscard]] auto HasWaiter() const noexcept -> bool {
-    return !waiters_.Empty();
+  [[nodiscard]] auto HasMembers() const noexcept -> bool {
+    return !members_.Empty();
   }
 
-  void Subscribe(
-      CoroutineHandle handle, Observation observation,
-      value::BitPositions reads) {
-    Registration& reg = handle->Park(waiters_);
-    reg.reads = reads;
-    reg.observation = std::move(observation);
-  }
-
-  // Claims and returns the activations this occurrence is an event for; the
-  // rest stay parked. A wait whose bits it left alone is passed over without
-  // being asked, and every other one answers for itself -- an event control
-  // whose evaluation only reads storage by what its expression is worth now,
-  // and every other wait by having been reached at all, its process deciding
-  // once it runs (LRM 4.5, 9.2.2.2.1, 9.4.2, 15.5.1).
-  [[nodiscard]] auto TakeFiringWaiters(const Change& change)
-      -> std::vector<CoroutineHandle> {
-    std::vector<CoroutineHandle> woken;
-    waiters_.ForEach([&](Registration& reg) {
-      if (change.KnownUnchanged(reg.reads)) {
-        return;
-      }
-      if (!reg.FiresNow()) {
-        return;
-      }
-      reg.Unlink();
-      woken.push_back(reg.activation);
-    });
-    return woken;
+  // What an occurrence here is reported to: the memberships of the waits
+  // enrolled here, each for its awaiter's whole life.
+  [[nodiscard]] auto Members() noexcept -> IntrusiveList<WaitMembership>& {
+    return members_;
   }
 
  private:
-  RegistrationList waiters_;
+  IntrusiveList<WaitMembership> members_;
 };
 
 }  // namespace lyra::runtime

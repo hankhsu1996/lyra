@@ -4,6 +4,7 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/wait.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 
@@ -52,15 +53,16 @@ auto DelayDeadline(
 // only sees an activation arriving in a region at the right time.
 //
 // The two entries differ only in how the amount the design wrote becomes a
-// count of steps; both answer whether the caller must give up control.
+// count of steps. Each is built at its stop, where the amount is known, and
+// the moment is taken from when it is built.
 auto Delay(
     RuntimeEffects& runtime, const value::PackedArray& duration,
     const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> bool;
+    const value::PackedArray& precision_power) -> Wait;
 
 auto DelayReal(
     RuntimeEffects& runtime, const value::Real& duration,
     const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> bool;
+    const value::PackedArray& precision_power) -> Wait;
 
 }  // namespace lyra::runtime

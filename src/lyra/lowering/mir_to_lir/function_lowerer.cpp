@@ -3468,7 +3468,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             // with one type between them -- so an address taken through one
             // would name whichever form the type does not admit. Reading and
             // writing through a reference are its own operations, and so is
-            // what a wait on it registers on.
+            // what a wait on it enrols on.
             if (const auto* opened = std::get_if<mir::DerefExpr>(
                     &block.exprs.Get(addr.operand).data);
                 opened != nullptr &&
@@ -3550,14 +3550,14 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerCoroutineAwait(block, await, type);
           },
           [&](const mir::WaitExpr& wait) -> diag::Result<lir::Operand> {
-            // The registration has already arranged this execution's
-            // resumption and answered whether it must park; where it must, a
-            // control edge hands control back to the scheduler, which resumes
-            // at the next block. A delay, an event control and a join differ
-            // only in the call that precedes it. That call is lowered like any
-            // other -- what it answers is the machine boolean MIR gave it, and
-            // the suspend edge is what this adds around it.
-            auto park = LowerExpr(block, wait.registration);
+            // The call has already parked this execution and answered whether
+            // it must give up control; where it must, a control edge hands
+            // control back to the scheduler, which resumes at the next block.
+            // Every wait differs only in the call that precedes it. That call
+            // is lowered like any other -- what it answers is the machine
+            // boolean MIR gave it, and the suspend edge is what this adds
+            // around it.
+            auto park = LowerExpr(block, wait.park);
             if (!park) {
               return std::unexpected(std::move(park.error()));
             }

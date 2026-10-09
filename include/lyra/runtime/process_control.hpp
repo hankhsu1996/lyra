@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/wait.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/packed_array.hpp"
 
@@ -42,9 +43,10 @@ auto ProcessStatus(const value::ObjectRef& self) -> lyra::value::PackedArray;
 // executing in, and that frame is somewhere in the killed subtree. Every
 // off-path node (each parked at a safe boundary) is torn down synchronously,
 // while the chain that owns the running frame is kept linked so it stays alive;
-// the running process's own termination is requested (registrations revoked,
-// cause recorded) and its body is unwound to the engine's resume boundary,
-// where the terminal state is published and the retained chain released.
+// the running process's own termination is requested (taken off whatever could
+// wake it, cause recorded) and its body is unwound to the engine's resume
+// boundary, where the terminal state is published and the retained chain
+// released.
 void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime);
 
 // LRM 9.7 `process::await`: wait for another process to terminate, normally or
@@ -54,7 +56,7 @@ void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime);
 // error to await the calling process, which cannot wait for its own
 // termination.
 auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)
-    -> bool;
+    -> Wait;
 
 // LRM 9.7 `process::suspend()`: pause a process. It is an error to suspend the
 // calling process (a function cannot suspend its own execution). Suspending a

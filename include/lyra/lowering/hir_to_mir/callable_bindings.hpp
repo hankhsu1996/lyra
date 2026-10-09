@@ -138,6 +138,11 @@ class CallableBindings {
       BindingOriginId origin, const std::optional<std::string>& name,
       mir::TypeId type) -> mir::LocalId;
 
+  // The outermost block of the body these bindings belong to. What is built
+  // there lasts for one whole run of the body -- a process's, a call's, a
+  // branch's.
+  [[nodiscard]] auto RootBlock() const -> mir::Block&;
+
   // Declare a local with no cross-body identity (a lowering temporary used only
   // within this body). It is allocated in `locals` but never captured, and it
   // answers to no identifier: a local the source declared is one some other

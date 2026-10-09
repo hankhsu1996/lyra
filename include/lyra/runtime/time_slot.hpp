@@ -5,20 +5,21 @@
 #include <optional>
 #include <vector>
 
+#include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
-#include "lyra/runtime/registration.hpp"
 
 namespace lyra::runtime {
 
 // What one region of one time slot holds pending, in the two kinds an event can
 // be. LRM 4.5 fixes no order between the events of one region, so each kind is
-// kept in the container that suits it: an activation is reached through a
-// registration record it owns, which is what keeps revoking a parked one a
+// kept in the container that suits it: an activation is reached through the
+// place in a queue it owns, which is what keeps taking a queued one off a
 // constant-time unlink, and a deferred effect owns nothing and is held until
 // the region runs.
 struct RegionQueue {
-  RegistrationList activations;
+  IntrusiveList<QueuePlace> activations;
   std::vector<OwnedCall> effects;
 
   [[nodiscard]] auto Empty() const noexcept -> bool {

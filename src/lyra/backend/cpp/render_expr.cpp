@@ -549,13 +549,12 @@ void RenderExpr(
                 view, out, "co_await ",
                 Operand{.expr = a.execution, .at_least = Precedence::kPostfix});
           },
-          // A registration answers whether it parked, so it is wrapped to be
+          // A park answers whether it parked, so it is wrapped to be
           // awaitable: `co_await Suspension{call}`.
           [&](const mir::WaitExpr& w) {
             const Enclosure enclosure(out, Precedence::kPrefix, at_least);
             Write(
-                view, out, "co_await ", SuspensionCppType(), "{",
-                w.registration, "}");
+                view, out, "co_await ", SuspensionCppType(), "{", w.park, "}");
           },
           [&](const mir::VectorGetExpr& g) {
             Write(

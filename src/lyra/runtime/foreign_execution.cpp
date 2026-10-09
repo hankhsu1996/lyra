@@ -108,16 +108,16 @@ ForeignExecutionGuard::~ForeignExecutionGuard() {
   ForeignProcessSlot() = previous_process_;
 }
 
-void DriveOnForeignStack(CoroutineHandle frame) {
-  frame->self.resume();
-  while (!frame->self.done()) {
+void DriveOnForeignStack(Activation* frame) {
+  frame->coroutine.resume();
+  while (!frame->coroutine.done()) {
     YieldForeignExecution();
-    frame->self.resume();
+    frame->coroutine.resume();
   }
 }
 
 auto EnterForeignTask(
-    RuntimeEffects& effects, CoroutineHandle continuation,
+    RuntimeEffects& effects, Activation* continuation,
     std::unique_ptr<ForeignExecution> fiber) -> bool {
   return effects.CurrentProcess().EnterForeignExecution(
       continuation, std::move(fiber));

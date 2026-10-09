@@ -6,23 +6,25 @@
 
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
 // LRM 9.3.2 Table 9-1 dispatch, over the branches a fork states. `ForkWaitAll`
-// (`join`) resumes the parent after every branch finishes; `ForkWaitFirst`
+// (`join`) resumes the parent after every branch terminates; `ForkWaitFirst`
 // (`join_any`) after the first; `SpawnAll` (`join_none`) returns void so the
 // parent never waits at all. Branch ordering falls out of the engine's
 // snapshot-drain -- a branch enqueued while the parent runs is reached only on
 // the next drain pass, after the parent has parked (for `ForkWaitAll` /
 // `ForkWaitFirst`) or moved on (for `SpawnAll`).
 //
-// Each answers whether the executing process must give up control.
+// The two that wait spawn the branches and answer the parent's wait for its
+// join condition, which the parent then stops at.
 auto ForkWaitAll(RuntimeEffects& runtime, std::span<Coroutine<void>> branches)
-    -> bool;
+    -> Wait;
 
 auto ForkWaitFirst(RuntimeEffects& runtime, std::span<Coroutine<void>> branches)
-    -> bool;
+    -> Wait;
 
 void SpawnAll(RuntimeEffects& runtime, std::span<Coroutine<void>> branches);
 
@@ -31,13 +33,13 @@ void SpawnAll(RuntimeEffects& runtime, std::span<Coroutine<void>> branches);
 // state; the operation itself is one of the three above.
 template <std::size_t N>
 auto ForkWaitAll(
-    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches) -> bool {
+    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches) -> Wait {
   return ForkWaitAll(runtime, std::span<Coroutine<void>>{branches});
 }
 
 template <std::size_t N>
 auto ForkWaitFirst(
-    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches) -> bool {
+    RuntimeEffects& runtime, std::array<Coroutine<void>, N> branches) -> Wait {
   return ForkWaitFirst(runtime, std::span<Coroutine<void>>{branches});
 }
 
@@ -47,12 +49,11 @@ void SpawnAll(
   SpawnAll(runtime, std::span<Coroutine<void>>{branches});
 }
 
-// LRM 9.6.1 `wait fork`: block the executing process until every immediate
-// child it spawned has terminated. The condition is read from the executing
-// process; the frame parked on it is the one that ran `wait fork` (the task
-// frame when `wait fork` sits in a task), so it is armed through the suspending
-// handle rather than the process's own body.
-auto WaitFork(RuntimeEffects& runtime) -> bool;
+// LRM 9.6.1 `wait fork`: wait until every immediate child the executing process
+// spawned has terminated. The condition is the executing process's; the frame
+// parked on it is the one that ran `wait fork` (the task frame when `wait fork`
+// sits in a task).
+auto WaitFork(RuntimeEffects& runtime) -> Wait;
 
 // LRM 9.6.3 `disable fork`: terminate every descendant of the executing
 // process. The caller does not block -- the next statement runs at the same

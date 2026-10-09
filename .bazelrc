@@ -36,6 +36,12 @@ build --per_file_copt=external/[^/]*llvm-project[^/]*/.*@-O2
 build --incompatible_strict_action_env
 build --verbose_failures
 
+# What a build prints is Lyra's own: a third-party repository's warnings are
+# not ours to act on, and LLVM alone prints hundreds whenever it is compiled.
+# This filters what is shown, not how anything is compiled, so it moves no
+# cache key; a failing action is still reported whichever repository owns it.
+build --output_filter=^//
+
 test --test_output=errors
 
 # The default set is what the merge gate runs, so a local run answers "does this

@@ -101,6 +101,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "observation";
     case RuntimeLibraryKind::kReadReport:
       return "read report";
+    case RuntimeLibraryKind::kWait:
+      return "wait";
     case RuntimeLibraryKind::kObjectWrite:
       return "object write";
     case RuntimeLibraryKind::kCancellationTarget:
@@ -562,6 +564,9 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
               // Held by the waiting frame across the waits it states into.
               case RuntimeLibraryKind::kReadReport:
                 return LibraryObject::kReadReport;
+              // Held by the body across every stop it makes at it.
+              case RuntimeLibraryKind::kWait:
+                return LibraryObject::kWait;
               // Held by the writer for as long as the write lasts; ending it
               // is what tells the object it was written.
               case RuntimeLibraryKind::kObjectWrite:

@@ -6,8 +6,10 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -48,12 +50,27 @@ void AppendRuntimeEffectStmt(
     const UnitLowerer& unit_lowerer, mir::Block& block,
     support::BuiltinFn entry, std::vector<mir::ExprId> operands);
 
-// Builds the statement a call that may park its caller amounts to: waiting for
-// what it registered. `registration` is already interned into `block` and
-// answers whether the caller must give up control.
+// Builds the statement a call that may park its caller amounts to: a stop at a
+// wait, or a foreign task carried on a fiber. `park` is already interned into
+// `block` and answers whether the caller must give up control.
 [[nodiscard]] auto BuildWaitStmt(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
-    mir::ExprId registration) -> mir::Stmt;
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId park)
+    -> mir::Stmt;
+
+// The stop at the wait the local `wait` holds, in `block`. Every timing control
+// (LRM 9.4) is a wait the body holds and a stop at it, wherever the wait was
+// built.
+[[nodiscard]] auto BuildParkStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::LocalId wait)
+    -> mir::Stmt;
+
+// A wait built at its stop, because what it waits for is known only there --
+// a delay's amount, a fork's branches, an evaluation's reports -- and the stop
+// at it: `built` answers the wait, which is held in a local of the block
+// `frame` is writing, and the returned stop is for that same block, after it.
+[[nodiscard]] auto BuildStopStmt(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId built)
+    -> mir::Stmt;
 
 // Builds the statement enabling a task amounts to where nothing reads what it
 // completes with: awaiting the execution `execution` evaluates to (LRM 13.3).

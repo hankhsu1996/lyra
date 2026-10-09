@@ -1,6 +1,6 @@
 # Waiting is an operation both backends call, and what is waited for belongs to the execution
 
-Date: 2026-09-17. Status: accepted.
+Date: 2026-09-17, D4 revised 2026-10-05. Status: accepted.
 
 ## Context
 
@@ -17,9 +17,9 @@ about what that owes:
 > transpired, the process is scheduled into the Active or Reactive region to continue its execution
 > in the current time step.
 
-Three things to wait for, one rule: withdraw the enrolment when the process is stopped, make the
-wait again when it is started, and continue at once where what it waits for has already happened.
-None of it may run a statement of the body, because the body is parked.
+Three things to wait for, one rule: stop answering to the wait when the process is stopped, wait
+again when it is started, and continue at once where what it waits for has already happened. None of
+it may run a statement of the body, because the body is parked.
 
 Measured against that clause on 2026-09-16, three of four positions answered wrongly, split across
 the two backends: a delay and an event control continued at the moment the process was started
@@ -75,7 +75,7 @@ this execution's resumption and answers whether control must be given up (LRM 9.
 of its own.
 
 _Revised 2026-09-24._ This first read "one node, whose operand's type says which of the two it is".
-That held only for an execution, whose type is its own; a registration's type is a machine boolean,
+That held only for an execution, whose type is its own; a parking call's type is a machine boolean,
 which says nothing, so each consumer decided the operation by testing for the other type, and the
 execution lowering also tested whether the operand was a call -- a second input to the same
 question. Two constructs the source writes differently are two nodes at the layer whose peers are
@@ -92,7 +92,7 @@ where it is written. Here the source writes two constructs, and what clang recor
 sub-expressions is here which of the two nodes it is. A protocol the operand's type resolved through
 would not change that: its answer would still have to be stated, which is what the node does. What
 two nodes cost is that each can now be written over the other's operand, so verifying a unit refuses
-an await on anything but an execution and a wait on anything but a registration's answer.
+an await on anything but an execution and a wait on anything but a parking call's answer.
 
 **D3. Each backend realizes the await in its own terms, and neither invents a name to do it.** The
 machine-model path decomposes it into the call, a branch on its answer, a suspend edge and the
@@ -101,20 +101,23 @@ awaits a library type whose whole content is "give up control where the call say
 that question on the way back" -- one type for every construct, named where a library type's
 spelling is named.
 
-**D4. An execution holds what it is waiting for, for as long as it waits.** It is built where the
-body parks, because that is the last moment anything knows what the body asked for, and it answers
-two things: make this wait, and make it again after the process was stopped. Stopping the process
-revokes the enrolment and keeps it; starting the process asks it again.
+**D4. An execution names what it is waiting for, for as long as it waits.** The wait answers two
+things: how the execution stopping at it carries on, and the same again after the process was
+stopped. Stopping the process takes the execution off the wait and keeps the wait; starting the
+process asks the wait again. The wait itself is held by the body's frame, built where what it waits
+for stops changing: once for the body's whole run where that is storage that stays the same, and at
+the stop for what only the stop knows -- a delay's amount, a fork's branches, an evaluation's
+reports ([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)).
 
 **D5. Making a wait and making it again are separate questions, because the standard answers them
 separately.** For most constructs the second is the first asked afresh. For a `wait (cond)` it is
 not: the condition is read by the body, so starting the process again answers "already satisfied"
 and lets the body's own loop read it -- which is the evaluation the clause asks for. That is why a
-level wait registers through a call of its own rather than through the event control's.
+level wait is built by a call of its own rather than by the event control's.
 
-**D6. Which frame is waiting is the runtime's to know.** Nothing that registers a wait is handed
-one. A called task takes over its process's thread and gives it back, on both backends, so the
-runtime can answer at any point which frame would park.
+**D6. Which frame is waiting is the runtime's to know.** Nothing that builds or stops at a wait is
+handed one. A called task takes over its process's thread and gives it back, on both backends, so
+the runtime can answer at any point which frame would park.
 
 ## Invariants
 
@@ -125,7 +128,7 @@ runtime can answer at any point which frame would park.
 2. A body stops to wait in exactly one way, and that way takes what is being waited for. There is no
    way to reach the scheduler without it, so no wait exists that process control cannot restart.
 
-3. An execution holds what it waits for exactly while it is blocked. Holding nothing is how a
+3. An execution names what it waits for exactly while it is blocked. Naming nothing is how a
    runnable execution says it has nothing left to wait for.
 
 4. No scheduler or activation path asks which construct a wait came from.
@@ -144,7 +147,7 @@ runtime can answer at any point which frame would park.
   it produced was MIR in which `$finish(0)` stands as the condition of an `if`, which is not
   software; and it moved into MIR a decomposition MIR-to-LIR already did correctly.
 
-- **A suspension that carries its own wakeup.** The wakeup is registered by the call before it, so a
+- **A suspension that carries its own wakeup.** The wakeup is arranged by the call before it, so a
   suspension names nothing; `lir.md` forbids a scheduling concept as a node for the same reason.
 
 - **Not desensitizing at all, and dropping what arrives while stopped.** This is SystemC's
@@ -176,9 +179,9 @@ runtime can answer at any point which frame would park.
   -- plus one library type the direct-rendering target awaits. MIR's one change came later, with the
   revision of D2.
 
-- A suspension costs one allocation for what is being waited for. Whether that is visible in a
-  simulation's throughput has not been measured; the shape to reach for if it is, is storage on the
-  activation rather than a taxonomy.
+- What is being waited for costs its construction where it is built, which for storage that stays
+  the same is once per run of the body rather than once per stop
+  ([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md) has the numbers).
 
 ## Cross-references
 
@@ -186,8 +189,8 @@ runtime can answer at any point which frame would park.
   list gives the per-construct restart rules as "an edge re-subscribes, a delay compares its
   absolute deadline, a monotonic condition re-checks", which is the clause's three minus the wait
   condition; D5 above is that missing one, and it is where one of the three wrong answers lived.
-- [jit-process-suspension](jit-process-suspension.md) -- D3 there already required one registration
-  call per construct, naming a level wait among them; this is that requirement met. Its D5, that the
+- [jit-process-suspension](jit-process-suspension.md) -- D3 there already required one call per
+  construct, naming a level wait among them; this is that requirement met. Its D5, that the
   scheduler's token is runtime-owned on the execution backend, is unchanged: who owns the token is a
   realization difference, and it was never a licence for a second wait protocol.
 - `../architecture/mir.md` -- invariant 10, which asks HIR-to-MIR to emit a combination of existing

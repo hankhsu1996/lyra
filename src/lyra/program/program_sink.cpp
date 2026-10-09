@@ -296,13 +296,15 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_observation_of_value_qualified",
       &lyra_rt_observation_of_value_qualified);
   add("lyra_rt_observation_qualified", &lyra_rt_observation_qualified);
-  add("lyra_rt_observation_arm", &lyra_rt_observation_arm);
   add("lyra_rt_observation_fires", &lyra_rt_observation_fires);
-  add("lyra_rt_wait_any", &lyra_rt_wait_any);
   add("lyra_rt_wait_recollecting", &lyra_rt_wait_recollecting);
   add("lyra_rt_wait_until", &lyra_rt_wait_until);
-  add("lyra_rt_wait_on_report", &lyra_rt_wait_on_report);
+  add("lyra_rt_wait_on", &lyra_rt_wait_on);
+  add("lyra_rt_wait_on_implicit_list", &lyra_rt_wait_on_implicit_list);
+  add("lyra_rt_park_at", &lyra_rt_park_at);
   add("lyra_rt_read_report_empty", &lyra_rt_read_report_empty);
+  add("lyra_rt_read_report_for_implicit_list",
+      &lyra_rt_read_report_for_implicit_list);
   add("lyra_rt_read_report_add", &lyra_rt_read_report_add);
   add("lyra_rt_read_report_add_through_handle",
       &lyra_rt_read_report_add_through_handle);
@@ -799,6 +801,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_trigger_destroy", &lyra_rt_trigger_destroy);
   add("lyra_rt_observation_destroy", &lyra_rt_observation_destroy);
   add("lyra_rt_read_report_destroy", &lyra_rt_read_report_destroy);
+  add("lyra_rt_wait_destroy", &lyra_rt_wait_destroy);
   add("lyra_rt_dpi_bit_buffer_destroy", &lyra_rt_dpi_bit_buffer_destroy);
   add("lyra_rt_dpi_logic_buffer_destroy", &lyra_rt_dpi_logic_buffer_destroy);
   add("lyra_rt_dpi_open_array_destroy", &lyra_rt_dpi_open_array_destroy);
@@ -868,6 +871,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_trigger_move", &lyra_rt_trigger_move);
   add("lyra_rt_observation_move", &lyra_rt_observation_move);
   add("lyra_rt_read_report_move", &lyra_rt_read_report_move);
+  add("lyra_rt_wait_move", &lyra_rt_wait_move);
   add("lyra_rt_dpi_bit_buffer_move", &lyra_rt_dpi_bit_buffer_move);
   add("lyra_rt_dpi_logic_buffer_move", &lyra_rt_dpi_logic_buffer_move);
   add("lyra_rt_dpi_open_array_move", &lyra_rt_dpi_open_array_move);

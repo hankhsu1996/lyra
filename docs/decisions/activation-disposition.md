@@ -4,12 +4,17 @@ Date: 2026-07-15. Status: accepted; its separation of the enrollment from the wa
 shape it gives the second half is superseded by
 [waiting-is-an-operation](waiting-is-an-operation.md).
 
-**What that record changed, so this one is not read for it.** Here the wait's own state stays in the
+**What changed since, so this one is not read for it.** Here the wait's own state stays in the
 construct -- "its retained awaiter/registration state" -- and what the activation holds is a
 capability over it. That works only where the construct has somewhere to keep it, which is a
 coroutine frame, which one of the two backends does not have; so the two ended up with separate
-realizations and only one of them was written against the whole clause. The activation now holds the
-wait itself, built where the body stops, and the capability is not a layer over anything. The two
+realizations and only one of them was written against the whole clause. Every wait is now held in
+the body's frame on both backends, as storage of the activation
+([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)), and the capability
+is not a layer over anything. The enrollment this record has `suspend` revoke and `resume` restore
+no longer comes and goes either: a wait's memberships stand for the wait's whole life, `suspend`
+only takes the activation off the wait it is parked on, and `resume` asks the wait again whether to
+park there or carry on ([a-membership-is-one-record](a-membership-is-one-record.md)). The two
 questions this record collapses into one -- making a wait, and making it again after the process was
 stopped -- are also separate there, because LRM 9.7 answers them separately for a `wait` condition.
 
@@ -22,7 +27,7 @@ mechanism -- normal wake, `disable`, `kill` -- either resumes the body past that
 it. None needs to reconstruct the wait. `resume()` does: it must re-sensitize a process the body
 cannot re-enter to re-run the registration.
 
-`activation-registration.md` gave the runtime a `Registration` -- the activation's revocable
+`a-membership-is-one-record.md` gave the runtime a `Registration` -- the activation's revocable
 membership in a wake target. That is enough to _detach_ a wait (revoke the enrollment) but not to
 _re-establish_ one: a registration records where the activation is presently linked, and a revoke
 forgets it. The wait itself -- the absolute deadline, the observables and edges, the target process
@@ -45,9 +50,9 @@ into a single slot. The closure was being asked to be, at once:
 - the **scheduling effect** (which region to resume into).
 
 A slot whose surface is that many unrelated responsibilities is the wrong structure -- the same
-reading `activation-registration.md` applied to the two-authoritative-copies registration: when the
-machinery serves reconciliation rather than the relation, the model is missing a concept. Here the
-missing concept is the activation's **disposition** and, under it, a **pending wait** that is
+reading `a-membership-is-one-record.md` applied to the two-authoritative-copies registration: when
+the machinery serves reconciliation rather than the relation, the model is missing a concept. Here
+the missing concept is the activation's **disposition** and, under it, a **pending wait** that is
 separate from its **registration**.
 
 ## The model
@@ -145,7 +150,7 @@ D7. A process has exactly one active leaf activation while not executing (a task
 
 - **A second authoritative copy of the wait's state** -- a blocked-operation object mirroring the
   deadline / observable / target the construct already holds. This is the two-authoritative-copies
-  shape `activation-registration.md` rejected, one level up (D4).
+  shape `a-membership-is-one-record.md` rejected, one level up (D4).
 
 - **"An opaque re-establish closure cannot map to the execution backend."** Retracted. Lyra's
   runtime effects are ordinary closures / per-construct calls already
@@ -156,13 +161,13 @@ D7. A process has exactly one active leaf activation while not executing (a task
 
 ## Cross-references
 
-- `../architecture/activation.md` -- invariant 7 (disposition and pending wait), the refined
-  invariant 4 (registration as enrollment), and the forbidden shapes this entry's D3 / D4 / D6
-  state.
+- `../architecture/activation.md` -- invariant 7 (disposition, and the wait an activation is parked
+  on), invariant 4 (a membership ends with its owner), and the forbidden shapes this entry's D3 / D4
+  / D6 state.
 - `../architecture/scheduling.md` -- the engine as a construct-neutral mechanism; a wait kind is not
   a distinction the execution path may branch on.
-- [activation-registration](activation-registration.md) -- the registration as one record owned by
-  the activation; this entry separates that enrollment from the retainable wait it serves.
+- [a-membership-is-one-record](a-membership-is-one-record.md) -- a membership as one record owned by
+  what shares its life; this entry separates that enrollment from the retainable wait it serves.
 - [jit-process-suspension](jit-process-suspension.md) -- the execution-backend counterpart: a
   per-construct wakeup registration behind a generic suspend edge, which re-establishing a pending
   wait re-issues.

@@ -1,6 +1,5 @@
 #include "lyra/runtime/named_event.hpp"
 
-#include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/packed_array.hpp"
 
@@ -11,7 +10,7 @@ NamedEvent::~NamedEvent() = default;
 
 void NamedEvent::Trigger(RuntimeEffects& runtime) {
   last_triggered_at_ = runtime.Now();
-  runtime.WakeWaitersOf(*this, Change::Whole());
+  runtime.WakeParkedOn(Members(), Change::Whole());
 }
 
 auto NamedEvent::Triggered(RuntimeEffects& runtime) const

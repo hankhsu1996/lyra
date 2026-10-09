@@ -2016,12 +2016,12 @@ auto CodeGenFunction::ConstructionOf(
               // naming one would have nothing to call. A print item is built as
               // one of its two forms and never as their sum; a time format, an
               // open-array handle, a control effect and an observation are what
-              // some other entry answers with, and so is a read report; a
-              // chunk is the element type a canonical buffer's pointer
-              // addresses rather than a value; a cancellation target and a
-              // channel's joint cancel state are storage the owner holds and
-              // reaches by address; and a write into an object is opened by the
-              // entry that opens it.
+              // some other entry answers with, and so are a read report and a
+              // held wait; a chunk is the element type a canonical buffer's
+              // pointer addresses rather than a value; a cancellation target
+              // and a channel's joint cancel state are storage the owner holds
+              // and reaches by address; and a write into an object is opened
+              // by the entry that opens it.
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kTimeFormat:
               case lir::RuntimeLibraryKind::kDpiBitChunk:
@@ -2030,6 +2030,7 @@ auto CodeGenFunction::ConstructionOf(
               case lir::RuntimeLibraryKind::kControlEffect:
               case lir::RuntimeLibraryKind::kObservation:
               case lir::RuntimeLibraryKind::kReadReport:
+              case lir::RuntimeLibraryKind::kWait:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kCancellationTarget:
               case lir::RuntimeLibraryKind::kChannelCancellation:

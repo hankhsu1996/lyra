@@ -7,12 +7,15 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
-#include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
-PromiseBase::PromiseBase() = default;
-PromiseBase::~PromiseBase() = default;
+Activation::Activation() {
+  queued.activation = this;
+}
+Activation::~Activation() = default;
 
 Cancelled::Cancelled(std::exception_ptr effect) : effect(std::move(effect)) {
 }
@@ -30,51 +33,39 @@ Raised::Raised(Raised&&) noexcept = default;
 auto Raised::operator=(Raised&&) noexcept -> Raised& = default;
 Raised::~Raised() = default;
 
-auto PromiseBase::Park(RegistrationList& target) -> Registration& {
-  Registration& reg = registrations.emplace_back();
-  reg.activation = this;
-  target.PushBack(reg);
-  return reg;
+void Activation::Queue(IntrusiveList<QueuePlace>& queue) noexcept {
+  queued.Unlink();
+  queue.PushBack(queued);
 }
 
-void PromiseBase::RevokeRegistrations() noexcept {
-  registrations.clear();
+void Activation::ParkOn(Awaiter& stopped_at) noexcept {
+  awaiter = &stopped_at;
+  stopped_at.parked_ = this;
 }
 
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-auto PromiseBase::initial_suspend() noexcept -> std::suspend_always {
+void Activation::Withdraw() noexcept {
+  queued.Unlink();
+  if (awaiter != nullptr) {
+    awaiter->parked_ = nullptr;
+  }
+}
+
+auto Activation::initial_suspend() noexcept -> std::suspend_always {
   return {};
 }
 
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-auto PromiseBase::FinalAwaiter::await_ready() const noexcept -> bool {
-  return false;
-}
-
-auto PromiseBase::FinalAwaiter::await_suspend(
-    // NOLINTNEXTLINE(readability-named-parameter)
-    std::coroutine_handle<>) const noexcept -> std::coroutine_handle<> {
-  if (promise->on_complete) {
-    promise->on_complete();
-  }
-  if (promise->continuation) {
-    return promise->continuation;
+auto Activation::ContinuationAfterCompletion() const noexcept
+    -> std::coroutine_handle<> {
+  if (continuation) {
+    return continuation;
   }
   return std::noop_coroutine();
 }
 
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-void PromiseBase::FinalAwaiter::await_resume() const noexcept {
-}
-
-auto PromiseBase::final_suspend() noexcept -> FinalAwaiter {
-  return FinalAwaiter{.promise = this};
-}
-
-auto PromiseBase::Process() const -> RuntimeProcess& {
+auto Activation::Process() const -> RuntimeProcess& {
   if (process == nullptr) {
     throw InternalError(
-        "PromiseBase::Process: no RuntimeProcess back-pointer set");
+        "Activation::Process: no RuntimeProcess back-pointer set");
   }
   return *process;
 }

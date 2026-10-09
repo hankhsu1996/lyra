@@ -543,9 +543,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kResumeInNbaRegion:
       return {
           .name = "resume_in_nba_region",
-          .declaration = FreeFunction{"lyra::runtime::ResumeInNbaRegion"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .declaration = FreeFunction{"lyra::runtime::ResumeInNbaRegion"}};
     case BuiltinFn::kSubmitPostponed:
       return {
           .name = "submit_postponed",
@@ -713,14 +711,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "delay",
           .declaration = FreeFunction{"lyra::runtime::Delay"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kDelayReal:
       return {
           .name = "delay_real",
           .declaration = FreeFunction{"lyra::runtime::DelayReal"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kObservationOnReaching:
       return {
           .name = "observation_on_reaching",
@@ -737,37 +733,36 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "observation_qualified",
           .declaration = StaticFactory{"Qualified"}};
-    case BuiltinFn::kObservationArm:
-      return {.name = "observation_arm", .declaration = Method{"Arm"}};
     case BuiltinFn::kObservationFires:
       return {.name = "observation_fires", .declaration = Method{"Fires"}};
-    case BuiltinFn::kWaitAny:
-      return {
-          .name = "wait_any",
-          .declaration = FreeFunction{"lyra::runtime::WaitAny"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
     case BuiltinFn::kWaitRecollecting:
       return {
           .name = "wait_recollecting",
-          .declaration = FreeFunction{"lyra::runtime::WaitRecollecting"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .declaration = FreeFunction{"lyra::runtime::WaitRecollecting"}};
     case BuiltinFn::kWaitUntil:
       return {
           .name = "wait_until",
-          .declaration = FreeFunction{"lyra::runtime::WaitUntil"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
-    case BuiltinFn::kWaitOnReport:
+          .declaration = FreeFunction{"lyra::runtime::WaitUntil"}};
+    case BuiltinFn::kWaitOn:
       return {
-          .name = "wait_on_report",
-          .declaration = FreeFunction{"lyra::runtime::WaitAny"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .name = "wait_on",
+          .declaration = FreeFunction{"lyra::runtime::WaitOn"}};
+    case BuiltinFn::kWaitOnImplicitList:
+      return {
+          .name = "wait_on_implicit_list",
+          .declaration = FreeFunction{"lyra::runtime::WaitOnImplicitList"}};
+    case BuiltinFn::kParkAt:
+      return {
+          .name = "park_at",
+          .declaration = FreeFunction{"lyra::runtime::ParkAt"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kReadReportEmpty:
       return {
           .name = "read_report_empty", .declaration = StaticFactory{"Empty"}};
+    case BuiltinFn::kReadReportForImplicitList:
+      return {
+          .name = "read_report_for_implicit_list",
+          .declaration = StaticFactory{"ForImplicitList"}};
     case BuiltinFn::kReadReportAdd:
       return {.name = "read_report_add", .declaration = Method{"Add"}};
     case BuiltinFn::kReadReportAddThroughHandle:
@@ -910,14 +905,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "fork_wait_all",
           .declaration = FreeFunction{"lyra::runtime::ForkWaitAll"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kForkWaitFirst:
       return {
           .name = "fork_wait_first",
           .declaration = FreeFunction{"lyra::runtime::ForkWaitFirst"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kSpawnAll:
       return {
           .name = "spawn_all",
@@ -927,8 +920,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "wait_fork",
           .declaration = FreeFunction{"lyra::runtime::WaitFork"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kDisableFork:
       return {
           .name = "disable_fork",
@@ -978,7 +970,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "process_await",
           .declaration = FreeFunction{"lyra::runtime::ProcessAwait"},
           .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .answers_a_wait = true};
     case BuiltinFn::kProcessSuspend:
       return {
           .name = "process_suspend",
@@ -1113,8 +1105,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "run_foreign_task_on_fiber",
           .declaration = FreeFunction{"lyra::runtime::RunForeignTaskOnFiber"},
-          .takes_the_runtime_handle = true,
-          .parks_the_caller = true};
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRunExportedTaskToCompletion:
       return {
           .name = "run_exported_task_to_completion",

@@ -6,7 +6,7 @@ Both backends now reach the cases that need a second activation as well, since a
 call into a task both lower on the execution backend. A target declared in a class method, a static
 method, or a package subroutine is reached the same way, its source living where that declaration
 scope keeps static-lifetime state, and one declared anywhere else on the design hierarchy is reached
-by a hierarchical name in every direction the language admits.
+by a hierarchical name in every direction the language admits. D2 revised 2026-10-05.
 
 ## Why this decision matters
 
@@ -40,10 +40,8 @@ than by one of its own.
 
 An activation has, at any instant, exactly one **next-resume entitlement** -- the single live means
 by which it will run its next statement (activation.md). It is held by whichever part of the
-scheduler substrate the activation's state uses: the running stack, a scheduler-queue registration,
-a wait-target registration, or a saved suspended disposition. Runnable enrollment and blocked
-enrollment are already one shape -- a `Registration` linked into a `RegistrationList`
-(activation-registration.md).
+scheduler substrate the activation's state uses: the running stack, its place in a scheduler queue,
+its being parked on a wait, or a saved suspended disposition.
 
 `disable B` invalidates the scope by bumping its generation. Every entitlement bound to the old
 generation is then re-presented to a uniform **validity gate** before the activation runs its next
@@ -60,11 +58,14 @@ D2. A target is a thing an execution waits on, so `disable` releases waiters rat
 for them. Only the execution itself can leave a scope, so all a `disable` has to do is give control
 back to the executions that would never regain it -- the blocked ones. Being blocked inside a target
 is itself a wait: the execution waits for that target not to be disabled, alongside whatever else it
-waits for. It therefore enrols in the target by the same means it enrols in an event, any one of
-them releases the wait, and releasing revokes the rest (activation-registration.md D7, D8).
-`disable` then fires a list, the same act an event trigger performs. The alternative -- no list on
-the target, and a `disable` that searches the live executions for the ones inside it -- would be the
-only place in the runtime that finds its waiters by searching instead of by firing a list.
+waits for. It therefore holds a membership on the target for as long as it is inside, owned by its
+own record of the target (a-membership-is-one-record.md), and `disable` fires the target's list, the
+same act an event trigger performs: each member's frame is woken where that frame is blocked -- the
+same "who is parked here now" test a wait on storage uses. A running or runnable execution is passed
+over and reaches the check on its own, and a stopped one takes it when it is started again (LRM
+9.7). The alternative -- no list on the target, and a `disable` that searches the live executions
+for the ones inside it -- would be the only place in the runtime that finds its waiters by searching
+instead of by firing a list.
 
 D3. The check is generation mismatch alone. There is no resume-reason and no pending-control flag:
 the captured generation versus the target's current generation is the whole signal, asked before the
@@ -100,8 +101,8 @@ the LRM mandates.
 
 D5. No new runtime concept is introduced. There is no execution-entitlement object, no live-extent
 registry, no stored exit continuation, and no traversal of the live executions: a target reuses the
-registration substrate every wait target already uses, and membership -- which targets an execution
-is inside, and the generation it captured entering each -- is state of the running execution.
+membership list every wait target already uses, and membership -- which targets an execution is
+inside, and the generation it captured entering each -- is state of the running execution.
 
 D6. Only the region that consumes the effect is expressed in the compiled program. A suspend, a
 call, and a `disable` are the same program whether or not any target encloses them -- the generation
@@ -117,8 +118,8 @@ which region consumes it are fixed here and re-decided by no backend.
 - `disable` gains no state branch: it invalidates, then releases its waiters through the existing
   wake verb; the running activation -- only ever the one executing the `disable` -- reaches the gate
   after its statement, and an already-runnable one reaches it when next drained.
-- A suspend enrols in the targets its execution is inside, which are only the named scopes it has
-  entered -- none, for a body that entered no named scope, so such a body pays nothing.
+- Entering a target enrols the execution in it, and leaving it leaves -- nothing at all for a body
+  that entered no named scope, and nothing per stop for one that did.
 - The frontier of a recursive or reentrant disable is implicit: the cascade stops at the first valid
   generation, so no outermost-extent computation exists.
 - An activation that enters the scope after the `disable` captures the new generation and is
@@ -180,8 +181,8 @@ which region consumes it are fixed here and re-decided by no backend.
   generation supplies both. A new enum is a second source of truth beside the generation.
 
 - **A dedicated execution-entitlement runtime object.** The single next-resume entitlement already
-  exists implicitly as the disposition plus its one live registration; naming it as a parallel
-  object re-labels what the registration and the disposition already are.
+  exists implicitly as the disposition plus the one place that would resume it; naming it as a
+  parallel object re-labels what that place and the disposition already are.
 
 - **Membership rebuilt from the body's lexical scope, per callable.** Re-establishing the enclosing
   targets by re-emitting entry guards in each body -- which a fork branch did for its own coroutine
@@ -215,8 +216,8 @@ chain the target sits on.
 
 - architecture/activation.md -- the single next-resume entitlement invariant and the forbidden state
   branch.
-- activation-registration.md -- one record owned by the activation, the target merely links it; a
-  cancellation source is another such target.
+- a-membership-is-one-record.md -- one record owned by what shares its life, the target merely links
+  it; a cancellation source is another such target.
 - activation-disposition.md -- the authoritative disposition and the uniform, construct-neutral way
   of arranging a wait again that the gate reuses.
 - architecture/scheduling.md -- the engine branches only on queue and region; the gate lives in

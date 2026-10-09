@@ -4,20 +4,28 @@
 #include <exception>
 #include <functional>
 
-#include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
 
 namespace lyra::runtime {
 
 class RuntimeEffects;
 class RuntimeProcess;
 
+// A process's being inside a disable target (LRM 9.6.2), as a node of the
+// target's list. The process's record of the target owns it, so it stands for
+// exactly as long as the process is inside.
+struct TargetMembership : IntrusiveListNode<TargetMembership> {
+  // Null on the sentinel a list embeds to close its ring.
+  RuntimeProcess* process = nullptr;
+};
+
 // The cancellation state of a procedural scope (LRM 9.6.2
 // `disable`). It is a reusable cancellation token: one monotonic
-// generation plus the set of activations currently blocked inside the target.
+// generation plus the set of processes currently inside the target.
 // An execution entering the target captures the current generation; where it
 // regains control it compares its captured generation against the current one,
 // and a mismatch means it was disabled while away. `disable` advances the
-// generation and wakes every blocked activation so each reaches that
+// generation and wakes every one of them that is blocked so each reaches that
 // comparison. The generation is a counter rather than a one-shot flag because
 // the same target is re-entered under one static identity (a reentrant task, an
 // `always`); an entry after a disable captures the newer generation and is
@@ -29,10 +37,10 @@ class RuntimeProcess;
 // or the whole program -- and it is shared by every concurrent execution inside
 // the target, so it outlives any single execution and is stored as a cell of
 // whatever owns it. It is not an execution scope: it owns no
-// activation's lifetime, and the waiters it holds are revocable registrations
-// the activations themselves own, exactly as an event's are. Where a runtime
-// with a separate token factory would have two objects, this is one, and it is
-// named for what a `disable` names -- the word the LRM uses.
+// activation's lifetime, and the memberships it holds are owned by the
+// processes inside it, exactly as an event's are owned by what waits on it.
+// Where a runtime with a separate token factory would have two objects, this is
+// one, and it is named for what a `disable` names -- the word the LRM uses.
 //
 // Two things a reader arriving from those runtimes will look for and not find,
 // both deliberate. A cancellation reaches an execution by polling and not by a
@@ -59,10 +67,10 @@ class CancellationTarget {
 
   // A target is something an execution can be waiting on: while blocked inside
   // it, the execution waits for the target not to be disabled, alongside
-  // whatever else it waits for. It enrolls here for the same reason and by the
-  // same means it enrolls in an event.
-  [[nodiscard]] auto CancelWaiters() -> RegistrationList& {
-    return cancel_waiters_;
+  // whatever else it waits for. A process enrols here for as long as it is
+  // inside, as a wait enrols on what it watches for as long as it stands.
+  [[nodiscard]] auto Members() -> IntrusiveList<TargetMembership>& {
+    return members_;
   }
 
   // LRM 9.6.2 `disable`: end the current generation, then wake every execution
@@ -72,7 +80,7 @@ class CancellationTarget {
 
  private:
   std::uint64_t generation_ = 0;
-  RegistrationList cancel_waiters_;
+  IntrusiveList<TargetMembership> members_;
 };
 
 // A disable target together with the generation it carried when something

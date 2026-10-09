@@ -2,15 +2,14 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 #include <exception>
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/process_kind.hpp"
-#include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/wait.hpp"
@@ -88,8 +87,6 @@ struct DeferredReportValidity {
 // task or function it called (LRM 9.6.1): a subroutine call runs in the
 // caller's thread and creates no process of its own. The list therefore
 // accumulates across every fork the process executes.
-class Scope;
-
 class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
  public:
   // `owning_scope` is the scope this process was registered against -- the
@@ -106,8 +103,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // it from the process that created it, a static one from the initialization
   // RNG of the unit instance its declaration belongs to.
   RuntimeProcess(
-      Scope* owning_scope, ProcessKind kind, Coroutine<void> coroutine,
-      RandomSeed seed);
+      Scope* owning_scope, Coroutine<void> coroutine, RandomSeed seed);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -122,8 +118,6 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // Out of line: a foreign call this process holds is carried on a vehicle this
   // header only names, so destroying one cannot be written here.
   ~RuntimeProcess();
-
-  [[nodiscard]] auto Kind() const -> ProcessKind;
 
   // What is in force while this process runs: the generator its randomization
   // calls draw from and a process spawned from here takes its seed out of (LRM
@@ -156,30 +150,26 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     return termination_cause_;
   }
 
-  // Resumes `handle` -- the specific coroutine frame that suspended (the
-  // innermost one when a task enabled by this process is suspended). Symmetric
-  // transfer carries control back up the enable chain. Returns true if the
-  // whole process ran to completion (judged on the top-level coroutine), false
-  // if it stopped to wait again. Captured `handle` may be destroyed
-  // by the time this returns, so completion and exceptions are read off the
-  // top-level coroutine, not `handle`.
+  // Resumes `activation` -- the specific frame that suspended (the innermost
+  // one when a task enabled by this process is suspended). Symmetric transfer
+  // carries control back up the enable chain. Returns true if the whole process
+  // ran to completion (judged on the top-level frame), false if it stopped to
+  // wait again. `activation` may be destroyed by the time this returns, so
+  // completion and exceptions are read off the top-level frame, not it.
   //
   // Completing runs the whole terminal transition atomically -- terminal state,
-  // frame release, and draining this process's own `await` waiters into `woken`
-  // -- so a body can never be left terminated with its waiters unwoken. The
-  // node outlives the frame. Taking the runtime is what makes this the only
-  // way a body can run: the resumed body reaches its own process identity
-  // through the runtime's ambient, and a caller cannot resume without
-  // supplying it.
-  auto ResumeWith(
-      RuntimeEffects& effects, CoroutineHandle handle,
-      std::vector<CoroutineHandle>& woken) -> bool;
+  // frame release, and waking what awaits this process's termination -- so a
+  // body can never be left terminated with its waiters unwoken. The node
+  // outlives the frame. Taking the runtime is what makes this the only way a
+  // body can run: the resumed body reaches its own process identity through
+  // the runtime's ambient, and a caller cannot resume without supplying it.
+  auto ResumeWith(RuntimeEffects& effects, Activation* activation) -> bool;
 
-  // The top-level coroutine frame. A wait is arranged for whichever frame is
+  // The top-level frame's activation. A wait is arranged for whichever frame is
   // carrying the thread, which is the innermost one; this is what the engine
   // schedules to start the process and what completion is judged against. Null
   // once the body has terminated.
-  [[nodiscard]] auto TopHandle() const -> CoroutineHandle;
+  [[nodiscard]] auto TopActivation() const -> Activation*;
 
   // Takes `child` into this process's lineage. A fork's parallel statement is a
   // thread of the process that executed the fork (LRM 9.5), which is the
@@ -188,57 +178,50 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
 
   [[nodiscard]] auto Parent() const -> RuntimeProcess*;
 
-  // Parks `waiter` on this process's `wait fork` condition (LRM 9.6.1). The
-  // waiter is the frame that executed `wait fork` -- in a task it is the task
-  // frame, not this process's own body -- so process identity and the parked
-  // activation are deliberately distinct.
-  void ArmWaitFork(CoroutineHandle waiter);
+  // This process's `wait fork` condition (LRM 9.6.1): what a `wait fork` this
+  // thread executes enrols on. The frame parked there is the one that executed
+  // it -- in a task, the task's frame, not this process's own body -- so
+  // process identity and the parked activation are deliberately distinct.
+  [[nodiscard]] auto WaitForkCondition() -> IntrusiveList<WaitMembership>& {
+    return wait_fork_condition_;
+  }
 
-  // Parks `waiter` on this process's termination (LRM 9.7 `await`). It is
-  // resumed once this process settles any terminal state -- normal completion
-  // or a kill -- which is when the terminal transition drains the waiter list
-  // into the runnable set. The caller checks the terminal state first, so a
-  // process that is already terminated is never parked here.
-  void ArmTerminatedWaiter(CoroutineHandle waiter);
+  // This process's termination (LRM 9.3.2 `join`, 9.7 `await`): what a wait
+  // for it enrols on. Whatever is parked there is asked once this process
+  // settles any terminal state -- normal completion or a kill.
+  [[nodiscard]] auto Termination() -> IntrusiveList<WaitMembership>& {
+    return termination_;
+  }
 
-  // Stops the frame carrying this process's thread to wait for a `W` built from
-  // `args`, and answers whether the caller must give up control -- false where
-  // what it waits for had already happened, in which case nothing was arranged
-  // and the caller carries on.
+  // Stops the frame carrying this process's thread at `awaiter`, and answers
+  // whether the caller must give up control -- false where what it waits for
+  // had already happened, in which case nothing was arranged and the caller
+  // carries on.
   //
-  // This is the one way a body stops to wait, for both the bodies that can be
-  // unwound through and the bodies that cannot, which is what makes the wait
+  // This is the one way a body stops to wait, which is what makes the wait
   // something the execution holds. A construct that reached the scheduler
   // without one would be one that process control could not restart (LRM 9.7),
   // and there is no way to spell that here.
-  template <class W, class... Args>
-  auto ParkOn(RuntimeEffects& services, Args&&... args) -> bool {
-    const CoroutineHandle leaf = current_leaf_;
-    W& wait = leaf->AdoptWait<W>(std::forward<Args>(args)...);
-    if (wait.Begin(services, leaf) == WaitOutcome::kSatisfied) {
-      leaf->wait.reset();
-      return false;
-    }
-    // The flush-point status is a constant of the wait's kind (LRM 16.4.2), so
-    // it is read once here and recorded on the frame, which is the one place a
-    // resume asks -- by then the wait itself may already be gone.
-    leaf->wait_is_report_flush_point = wait.IsReportFlushPoint();
-    LeafIsBlocked(leaf);
-    return true;
-  }
+  auto ParkAt(RuntimeEffects& services, Awaiter& awaiter) -> bool;
+
+  // The frame of this thread that is blocked right now, if one is: what a
+  // `disable` of a target this process is inside has to give control back to
+  // (LRM 9.6.2). One running, already runnable, or stopped from outside is not
+  // blocked, and reaches the check on its own when it next runs.
+  [[nodiscard]] auto BlockedLeaf() const -> Activation*;
 
   // Hands this thread to `nested` and takes it back. A called task runs in its
   // caller's thread (LRM 9.5) rather than as a process of its own, so one
   // process can be inside several activations at once; the innermost is what a
-  // wait this thread registers parks, and what the scheduler resumes. They are
+  // stop this thread makes parks, and what the scheduler resumes. They are
   // owned here because nothing below them outlives a suspension.
-  auto PushActivation(Coroutine<void> nested) -> CoroutineHandle;
+  auto PushActivation(Coroutine<void> nested) -> Activation*;
   void PopActivation();
 
   // The same relation for a nested activation this process does not own,
   // because the frame that enabled it holds it. Which frame carries the thread
   // is the same fact either way, so it is recorded the same way.
-  void EnterLeaf(CoroutineHandle leaf);
+  void EnterLeaf(Activation* leaf);
   void LeaveLeaf();
 
   // The run-time error that left the innermost activation's body, if any. A
@@ -247,7 +230,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // takes it back out so it can continue on its way to a landing.
   [[nodiscard]] auto TakeInnermostRaisedError() -> std::exception_ptr;
 
-  [[nodiscard]] auto CurrentLeaf() const -> CoroutineHandle {
+  [[nodiscard]] auto CurrentLeaf() const -> Activation* {
     return current_leaf_;
   }
 
@@ -262,15 +245,15 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // stand until the call returns, so this takes it: the process is what the
   // call belongs to and what resumes it.
   auto EnterForeignExecution(
-      CoroutineHandle continuation, std::unique_ptr<ForeignExecution> fe)
-      -> bool;
+      Activation* continuation, std::unique_ptr<ForeignExecution> fe) -> bool;
 
   // Enter (LRM 9.6.2) a disable target: until the target is left, a `disable`
   // of it reaches this execution, and a check finds it among the targets this
   // execution is inside.
   void PushEnclosingTarget(CancellationTarget* target) {
-    enclosing_targets_.push_back(
-        CapturedTarget{.target = target, .generation = target->Generation()});
+    enclosing_targets_.emplace_back(
+        CapturedTarget{.target = target, .generation = target->Generation()},
+        *this);
   }
 
   // Leave a target. Reached on every exit path an execution can take out of
@@ -278,7 +261,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // raising from there would end the program rather than report anything.
   void PopEnclosingTarget(CancellationTarget* target) noexcept {
     if (!enclosing_targets_.empty() &&
-        enclosing_targets_.back().target == target) {
+        enclosing_targets_.back().captured.target == target) {
       enclosing_targets_.pop_back();
     }
   }
@@ -304,9 +287,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // it entered (LRM 9.6.2), or null when none has. Outermost wins because
   // leaving a target also leaves every target nested within it.
   [[nodiscard]] auto OutermostInvalidatedTarget() const -> CancellationTarget* {
-    for (const CapturedTarget& enclosing : enclosing_targets_) {
-      if (!enclosing.Holds()) {
-        return enclosing.target;
+    for (const EnclosingTarget& enclosing : enclosing_targets_) {
+      if (!enclosing.captured.Holds()) {
+        return enclosing.captured.target;
       }
     }
     return nullptr;
@@ -320,20 +303,26 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // own code, and reaches targets that are not in its body's lexical scope at
   // all (a fork inside a task called from the target).
   void InheritEnclosingTargets(const RuntimeProcess& spawner) {
-    enclosing_targets_ = spawner.enclosing_targets_;
+    for (const EnclosingTarget& enclosing : spawner.enclosing_targets_) {
+      enclosing_targets_.emplace_back(enclosing.captured, *this);
+    }
   }
 
-  // LRM 9.7 `suspend`: revoke the active leaf's scheduler participation -- a
-  // detach, no scheduler verb -- and record the suspended state. What the leaf
-  // is waiting for stays with it, because starting the process again waits for
-  // that same thing; only the enrolment goes. A process already suspended or
-  // terminated is unaffected.
+  // LRM 9.7 `suspend`: withdraw the active leaf from whatever would resume it
+  // and record the suspended state. What the leaf is waiting for stays with it,
+  // because starting the process again waits for that same thing; only its
+  // being parked there goes. A process already suspended, terminated, or on its
+  // way to terminating is unaffected.
   void Suspend();
 
-  // LRM 9.7 `resume`: leave the suspended state onto the waiting axis so the
-  // bridge that holds the engine can arrange the leaf's wait again. This
-  // settles the state axis only; scheduling stays with the bridge.
-  void MarkResumed();
+  // LRM 9.7 `resume`: a process that is not suspended is unaffected. Otherwise
+  // its leaf waits again for what it was waiting for, and runs in the current
+  // time step where that has already happened -- which is the whole of the
+  // clause, because a leaf that was runnable when it was stopped is one whose
+  // wait was already satisfied. A departure owed while it was stopped -- a
+  // target it is inside was disabled -- is taken now, as it would have been
+  // had it been blocked (LRM 9.6.2).
+  void Resume(RuntimeEffects& effects);
 
   // The epoch a deferred report queued by this process right now belongs to
   // (LRM 16.4.1, 12.4.2.1), created on first use because most processes queue
@@ -364,9 +353,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     if (enclosing_targets_.empty()) {
       return recorded;
     }
-    recorded.push_back(enclosing_targets_.front());
+    recorded.push_back(enclosing_targets_.front().captured);
     if (enclosing_targets_.size() > 1) {
-      recorded.push_back(enclosing_targets_.back());
+      recorded.push_back(enclosing_targets_.back().captured);
     }
     return recorded;
   }
@@ -377,39 +366,31 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // the `wait fork` condition.
   [[nodiscard]] auto HasNoLiveChild() const -> bool;
 
-  // If a frame is parked here on `wait fork` and the condition now holds,
-  // unlink and return that frame for scheduling; null otherwise.
-  [[nodiscard]] auto TakeWaitForkWaiterIfSatisfied() -> CoroutineHandle;
-
-  // Bulk subtree termination (`kill` and `disable fork`) is one transactional
-  // mutation: dismantle the whole subtree, collecting each node's local wake
-  // effects into `woken`, while suppressing any intermediate parent-condition
-  // re-evaluation; the caller then stabilizes the surviving lineage boundary
-  // (the one parent whose child set shrank), re-evaluates its `wait fork`
-  // there, and only then publishes `woken` to the scheduler. No node is
-  // scheduled, and no parent predicate is republished, mid-dismantle -- so
-  // nothing runs while the topology is half-mutated. Anything added to the
-  // terminal transition must respect this: local effects collect here, boundary
-  // effects at the caller, publication last.
+  // Bulk subtree termination (`kill` and `disable fork`) dismantles the whole
+  // subtree, waking what awaits each node's termination as that node settles;
+  // the caller then stabilizes the surviving lineage boundary (the one parent
+  // whose child set shrank) and asks its `wait fork` there. Waking only queues
+  // -- nothing runs until the region the activation was queued in does, which
+  // is after the dismantling is over -- and an activation woken here whose own
+  // frame a later step of the dismantling releases leaves its queue with that
+  // frame, so nothing is left to resume it.
   //
   // Forcibly terminates every descendant of this process -- not only its
   // immediate children, and including the descendants of subprocesses that have
   // already terminated (LRM 9.6.3 `disable fork`). This process itself keeps
   // running. Shares the kill primitive: each newly-terminated descendant is
-  // marked KILLED and its frame released, so no queue, waiter list, or
-  // subscription can name it, and every activation awaiting one is appended to
-  // `woken` for the caller to schedule. A descendant kept alive by a `process`
-  // handle survives as a parent-less terminal node reporting KILLED; the rest
-  // are reclaimed.
-  void DisableDescendants(std::vector<CoroutineHandle>& woken);
+  // marked KILLED and its frame released, so no queue or wait can name it. A
+  // descendant kept alive by a `process` handle survives as a parent-less
+  // terminal node reporting KILLED; the rest are reclaimed.
+  void DisableDescendants(RuntimeEffects& services);
 
   // Forcibly terminates this process and its whole subtree (LRM 9.7 `kill`):
-  // each node not already terminal is marked KILLED and its frame released, its
-  // await waiters are appended to `woken`, and the lineage links inside the
-  // subtree are severed so a handle-held node becomes a parent-less terminal
-  // orphan and the rest are reclaimed. On return this node is severed from its
-  // own children but still linked to its parent; the caller drops that link.
-  void TerminateSubtreeKilled(std::vector<CoroutineHandle>& woken);
+  // each node not already terminal is marked KILLED and its frame released, and
+  // the lineage links inside the subtree are severed so a handle-held node
+  // becomes a parent-less terminal orphan and the rest are reclaimed. On return
+  // this node is severed from its own children but still linked to its parent;
+  // the caller drops that link.
+  void TerminateSubtreeKilled(RuntimeEffects& services);
 
   // Terminates this subtree (LRM 9.7 `kill` / LRM 9.6 `disable`) when it
   // contains `running` -- the calling process, whose frame is executing and so
@@ -421,7 +402,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // published, and the whole retained chain released, when its body reaches the
   // resume boundary. The caller unwinds `running` after this returns.
   void TerminateSubtreeDeferringRunning(
-      RuntimeProcess& running, std::vector<CoroutineHandle>& woken);
+      RuntimeProcess& running, RuntimeEffects& services);
 
   // Whether `other` is this process or a descendant of it -- i.e. whether
   // terminating this subtree would tear down `other`'s frame. `kill` consults
@@ -432,11 +413,12 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
 
   // Phase 1 of a deferred, safe-boundary termination (LRM 9.6 / 9.7): the
   // calling process cannot destroy the frame it is running in, so termination
-  // is split. This records the terminal cause and revokes the leaf's scheduler
-  // participation -- nothing can wake it -- but does NOT publish the terminal
-  // state or drain waiters, because the body is still going to run its unwind.
-  // The terminal state, frame release, and waiter drain happen atomically later
-  // (phase 2), when the body has unwound to a safe boundary.
+  // is split. This records the terminal cause and takes the leaf off whatever
+  // could resume it -- nothing can wake it -- but does NOT publish the terminal
+  // state or wake what awaits the termination, because the body is still going
+  // to run its unwind. The terminal state, frame release, and that waking
+  // happen atomically later (phase 2), when the body has unwound to a safe
+  // boundary.
   // Publishing nothing here is the point: an observer of `status()` or a
   // termination waiter never sees the process terminated while its body may
   // still run user code. Exactly-once -- a re-request on an already-requested
@@ -462,26 +444,21 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // which it sets and restores around a foreign call.
   friend class ForeignExecutionGuard;
 
-  // What blocking a frame records, whichever way its wakeup was registered: the
-  // vehicle carrying this thread when it blocks is the vehicle the scheduler
-  // must drive to resume it, retained past the block (unlike the registration)
-  // because a resume runs from another process's context where the ambient
-  // vehicle is that caller's, not this leaf's; and a blocked frame waits on the
-  // targets it is inside as well.
-  void LeafIsBlocked(CoroutineHandle leaf) {
-    resume_target_ = current_foreign_execution_;
-    EnrolInEnclosingTargets(leaf);
-  }
-
-  // Blocking inside a disable target is also waiting on that target (LRM
-  // 9.6.2), so the leaf enrols in each the same way it enrols in the event or
-  // delay it blocks on. Any one of them releases the wait, and releasing it
-  // revokes the rest.
-  void EnrolInEnclosingTargets(CoroutineHandle leaf) {
-    for (const CapturedTarget& enclosing : enclosing_targets_) {
-      leaf->Park(enclosing.target->CancelWaiters());
+  // One disable target this execution is inside (LRM 9.6.2): the generation it
+  // captured entering, and its membership on the target, which stands for as
+  // long as this record does. Being blocked inside a target is waiting for it
+  // not to be disabled, alongside whatever else the frame waits for, and the
+  // membership is how a `disable` finds the process to ask.
+  struct EnclosingTarget {
+    EnclosingTarget(CapturedTarget captured, RuntimeProcess& inside)
+        : captured(captured) {
+      membership.process = &inside;
+      captured.target->Members().PushBack(membership);
     }
-  }
+
+    CapturedTarget captured;
+    TargetMembership membership;
+  };
 
   // Drives `fe` for one stretch -- into its next suspension or its return --
   // with the foreign-execution context installed for its duration, so an inner
@@ -492,30 +469,35 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
 
   // The one indivisible terminal transition, and the sole writer of the
   // terminal state: a body can never be marked terminated while it still owns
-  // the frame it ran in, nor terminated without its own `await` waiters being
-  // extracted. Sets terminal state + cause, releases the frame (which revokes
-  // every registration it held), and drains this process's termination waiters
-  // into `woken`. Split-off variants that settle without draining are
+  // the frame it ran in, nor terminated without what awaits it being asked.
+  // Sets terminal state + cause, releases the frame (which ends every wait it
+  // held and its place in any queue), and wakes what awaits this process's
+  // termination. Split-off variants that settle without waking are
   // deliberately absent -- that separation was the footgun this primitive
   // removes.
   void SettleTerminated(
-      ProcessTerminationCause cause, std::vector<CoroutineHandle>& woken);
+      ProcessTerminationCause cause, RuntimeEffects& services);
   // Ends this node, or -- where its execution holds a foreign call that has yet
   // to return -- asks it to end and hands it control once more so that call can
   // return. Every bulk termination goes through here, so no path can settle a
   // node whose frame is under another language's.
-  void SettleOrRequestKilled(std::vector<CoroutineHandle>& woken);
+  void SettleOrRequestKilled(RuntimeEffects& services);
+  // Parks `leaf` at `awaiter` and arranges for it to carry on as `resumption`
+  // says, answering whether it is parked -- false where it carries on without
+  // stopping, in which case nothing was arranged.
+  static auto Arrange(
+      RuntimeEffects& services, Activation* leaf, Awaiter& awaiter,
+      const Resumption& resumption) -> bool;
   [[nodiscard]] auto IsReleasable() const -> bool;
   void EraseChild(RuntimeProcess& child);
 
-  ProcessKind kind_;
   Scope* owning_scope_;
   Coroutine<void> coroutine_;
   RunningState running_;
   // The frame the engine will resume next for this process (invariant: a
   // non-executing process has exactly one active leaf). Starts at the top frame
   // and follows the innermost parked frame as waits block it.
-  CoroutineHandle current_leaf_ = nullptr;
+  Activation* current_leaf_ = nullptr;
   // The activations this thread is inside beyond its own body, innermost last,
   // each called by the one before it. Empty while it runs its own body. Only
   // the activations this process owns are here; one a calling frame holds is
@@ -524,7 +506,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // What `current_leaf_` was before each activation this thread entered, so
   // leaving one restores the frame that called it. Innermost last, the same
   // order as the activations themselves.
-  std::vector<CoroutineHandle> outer_leaves_;
+  std::vector<Activation*> outer_leaves_;
   // One foreign call this thread has entered and not yet returned from: the
   // vehicle carrying it, and the SV frame to resume once it returns -- the
   // frame that made the call. An exported task the call reaches suspends and
@@ -533,7 +515,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // because a call reached from inside another has its own of each.
   struct ForeignCall {
     std::unique_ptr<ForeignExecution> vehicle;
-    CoroutineHandle continuation;
+    Activation* continuation;
   };
   // Innermost last. Each is held until its own call returns, which is after the
   // frame that made it has parked, so nothing shorter-lived can own one.
@@ -559,16 +541,16 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   std::vector<std::shared_ptr<RuntimeProcess>> children_;
   // The disable targets enclosing this execution, outermost first: those
   // inherited from the spawner, then those entered by this execution's own
-  // frames. Entering a target pushes it and leaving pops it. This is the only
-  // record of the relation; a target holds no set of the executions inside it.
-  std::vector<CapturedTarget> enclosing_targets_;
-  // The `wait fork` condition holds at most one activation: the frame that
-  // executed `wait fork`.
-  RegistrationList parked_wait_fork_;
-  // The `await` condition (LRM 9.7): every activation waiting for this process
-  // to terminate. Unlike `wait fork` it holds any number of waiters, drained
-  // when this process settles a terminal state.
-  RegistrationList terminated_waiters_;
+  // frames. Entering a target pushes it and leaving pops it. A deque because
+  // each target's list points at the memberships held here.
+  std::deque<EnclosingTarget> enclosing_targets_;
+  // The `wait fork` condition: every `wait fork` wait this thread holds enrols
+  // here, and only the one it is stopped at is parked.
+  IntrusiveList<WaitMembership> wait_fork_condition_;
+  // Every wait for this process to terminate -- a `join` of the fork that
+  // spawned it, an `await` of it (LRM 9.3.2, 9.7) -- asked when this process
+  // settles a terminal state.
+  IntrusiveList<WaitMembership> termination_;
 };
 
 }  // namespace lyra::runtime

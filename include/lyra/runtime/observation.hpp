@@ -173,10 +173,11 @@ class ValueWatchOf final : public ValueWatch {
 // qualifier, which is read when what is watched moves and not when the
 // qualifier itself does (LRM 9.4.2, 9.4.2.3, 15.5).
 //
-// Both live no longer than the wait. A procedure that is not waiting at an
-// event control has no observation there, so a change while it is elsewhere is
-// not detected -- which is what the standard requires of a procedure that has
-// left and re-reached the control.
+// Both live no longer than the wait. A change while the procedure is not parked
+// at the event control is not one it reports, and the control measures from
+// what its expression is worth when the procedure reaches it again -- which is
+// what the standard requires of a procedure that has left and re-reached the
+// control.
 //
 // Whoever asks runs the expression and the qualifier, so asking is done either
 // by the change -- for an evaluation that only reads storage, which nothing
@@ -189,13 +190,12 @@ class ValueWatchOf final : public ValueWatch {
 // asks is written here.
 class ArmedObservation {
  public:
-  // Built where execution reaches the event control, unarmed: it has nothing
-  // to compare against until the expression is first evaluated. A wait whose
-  // target decides by being reached -- a named event's trigger is the event --
-  // watches nothing, and `iff` is the whole of what can still hold it back.
-  // The qualifier arrives already reduced to LRM 12.4 truth as a one-bit value,
-  // because that reduction is the language's and belongs where the expression
-  // is compiled rather than here.
+  // Built unarmed: it has nothing to compare against until the expression is
+  // first evaluated. A wait whose target decides by being reached -- a named
+  // event's trigger is the event -- watches nothing, and `iff` is the whole of
+  // what can still hold it back. The qualifier arrives already reduced to LRM
+  // 12.4 truth as a one-bit value, because that reduction is the language's
+  // and belongs where the expression is compiled rather than here.
   ArmedObservation(
       std::unique_ptr<ValueWatch> watch,
       std::move_only_function<value::PackedArray()> condition);
@@ -294,19 +294,18 @@ class Observation {
         std::make_shared<ArmedObservation>(nullptr, std::move(condition))};
   }
 
-  // The engine asks this of every wait a change reaches, and no unit does, so
-  // it is written here for the engine's own sources to fold.
-  [[nodiscard]] auto Get() const -> ArmedObservation* {
-    return held_.get();
-  }
-
   // Arms what this holds, where the wait begins. Being reached holds nothing to
   // arm.
   void Arm() const;
 
-  // Whether the candidacy that resumed the waiting process is an event for it,
-  // asked by that process: the evaluation is the process's own (LRM 4.5).
-  // Being reached is the whole condition where nothing is held.
+  // Leaves what this holds with nothing to compare against, for the waiting
+  // process to arm on its next evaluation.
+  void Disarm() const;
+
+  // Whether a candidacy is an event for the wait: asked by the change where
+  // the evaluation only reads storage (LRM 4.7), and by the waiting process
+  // where the evaluation is its own (LRM 4.5). Being reached is the whole
+  // condition where nothing is held.
   [[nodiscard]] auto Fires() const -> bool;
 
  private:

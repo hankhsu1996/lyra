@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/declared_variable.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/statement/assertions.hpp"
@@ -246,11 +247,10 @@ auto LowerImplicitListProcess(ProcessLowerer& process, const hir::Reads& reads)
     -> diag::Result<mir::CallableCode> {
   return LowerForeverProcess(
       process, [&](const WalkFrame& entry_frame) -> diag::Result<AfterBody> {
-        auto report = CollectImplicitList(entry_frame, process, reads);
-        if (!report) return std::unexpected(std::move(report.error()));
-        return AfterBody{[&process, report = *report](mir::Block& body) {
-          body.AppendStmt(
-              BuildImplicitListWaitStmt(body, process.Owner(), report));
+        auto held = HoldImplicitList(entry_frame, process, reads);
+        if (!held) return std::unexpected(std::move(held.error()));
+        return AfterBody{[&process, held = *held](mir::Block& body) {
+          body.AppendStmt(BuildParkStmt(process.Owner(), body, held));
         }};
       });
 }

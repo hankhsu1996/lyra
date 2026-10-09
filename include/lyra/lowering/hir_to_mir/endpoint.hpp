@@ -67,16 +67,16 @@ struct BoundEndpoint {
     const WalkFrame& frame, const mir::CompilationUnit& unit,
     const BoundEndpoint& endpoint) -> mir::Expr;
 
-// A borrowed pointer to what a wait on the endpoint registers on -- the
-// change-observation subscription surface. A slot pointing at the cell hands it
-// over; a reference answers with what it reports to, since a wait registers on
-// whatever a write through it tells; anything else takes the address of the
-// cell it names. Appends to `block` and returns the pointer's id.
+// A borrowed pointer to what a wait on the endpoint enrols on. A slot pointing
+// at the cell hands it over; a reference answers with what it reports to, since
+// a wait enrols on whatever a write through it tells; anything else takes the
+// address of the cell it names. Appends to `block` and returns the pointer's
+// id.
 [[nodiscard]] auto EndpointObservablePtr(
     mir::Block& block, const WalkFrame& frame, const mir::CompilationUnit& unit,
     const BoundEndpoint& endpoint) -> mir::ExprId;
 
-// What a wait on the storage `reference` names registers on (LRM 13.5.2):
+// What a wait on the storage `reference` names enrols on (LRM 13.5.2):
 // whatever a write through the reference is told to, the variable or the
 // object a property belongs to, as an erased pointer -- null where the storage
 // belongs to nothing. Appends to `block` and returns the pointer's id.

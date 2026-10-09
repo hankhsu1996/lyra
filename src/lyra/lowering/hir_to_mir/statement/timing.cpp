@@ -164,23 +164,13 @@ auto BuildQualifierObservationLocal(
       {*closure});
 }
 
-// LRM 9.4.2.2 `@*`: the standard makes the wait sensitive to the variables the
-// controlled statement reads rather than to the value of an expression, so
-// being reached is the whole of the condition.
-auto BuildImplicitEventWaitStmt(
-    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
-    const hir::ImplicitEventControl& ie) -> diag::Result<mir::Stmt> {
-  return BuildValueChangeWaitStmt(
-      block, frame, process, ie.sensitivity_list, support::BuiltinFn::kWaitAny);
-}
-
-// LRM 9.4.1 `#N`. The wait lowers to a coroutine-suspending free-function
-// call whose argument vector states the runtime handle, the amount of time the
-// design asked to wait, and the enclosing scope's time unit and precision
-// powers (LRM 3.14.2); the runtime rounds that amount to the scope's precision
-// (LRM 3.14.1) and scales it to the design-global tick (LRM 3.14.3). The amount
-// is evaluated here, where the statement is reached, so a later write to
-// anything it read does not reach a wait already under way.
+// LRM 9.4.1 `#N`. The wait is built at the stop by a free-function call whose
+// argument vector states the runtime handle, the amount of time the design
+// asked to wait, and the enclosing scope's time unit and precision powers (LRM
+// 3.14.2); the runtime rounds that amount to the scope's precision (LRM
+// 3.14.1) and scales it to the design-global tick (LRM 3.14.3). The amount is
+// evaluated here, where the statement is reached, so a later write to anything
+// it read does not reach a wait already under way.
 //
 // Which entry carries it follows the amount's own type, because the language
 // reads the same written value differently in each: an integral amount counts
@@ -216,15 +206,16 @@ auto BuildDelayWaitStmt(
       static_cast<std::int64_t>(process.Resolution().precision_power));
   const support::BuiltinFn entry =
       is_real ? support::BuiltinFn::kDelayReal : support::BuiltinFn::kDelay;
-  const mir::ExprId call_id = block.exprs.Add(
+  const mir::ExprId wait_id = block.exprs.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = entry},
           {runtime_id, duration_id, unit_power_id, precision_power_id},
-          unit.builtins.machine_bool));
-  return BuildWaitStmt(process.Owner(), block, call_id);
+          unit.builtins.wait));
+  return BuildStopStmt(process.Owner(), frame.WithBlock(&block), wait_id);
 }
 
-// LRM 15.5.1: triggering reaches RuntimeEffects to wake subscribers. The engine
+// LRM 15.5.1: triggering reaches RuntimeEffects to wake what waits on the
+// event. The engine
 // handle is a real trailing argument, threaded the same way every runtime
 // effect threads it.
 auto BuildTriggerCallExpr(
@@ -244,19 +235,43 @@ auto BuildTriggerCallExpr(
       .type = unit_lowerer.Unit().builtins.void_type};
 }
 
-// Whether every expression deciding a wait -- what it watches and the qualifier
-// gating it, each where the source wrote one -- only reads storage, so that a
-// change may evaluate them where it happens: that is a schedule LRM 4.7
-// permits, and nothing such an evaluation does can tell it from the waiting
-// process evaluating them. Anything else is the waiting process's own to
-// evaluate (LRM 4.5).
-auto DecidedWhereItChanges(
+// The expressions an event control evaluates: what each trigger watches, and
+// the qualifier gating it where the source wrote one (LRM 9.4.2, 9.4.2.3).
+auto EvaluatedBy(const hir::EventControl& ec) -> std::vector<hir::ExprId> {
+  std::vector<hir::ExprId> evaluated;
+  for (const hir::EventTrigger& trigger : ec.triggers) {
+    evaluated.push_back(trigger.signal);
+    if (trigger.condition.has_value()) {
+      evaluated.push_back(*trigger.condition);
+    }
+  }
+  return evaluated;
+}
+
+// A named event's trigger is the event itself, so its qualifier is the whole
+// of what it evaluates (LRM 15.5.2).
+auto EvaluatedBy(const hir::NamedEventControl& nec)
+    -> std::vector<hir::ExprId> {
+  std::vector<hir::ExprId> evaluated;
+  if (nec.condition.has_value()) {
+    evaluated.push_back(*nec.condition);
+  }
+  return evaluated;
+}
+
+// Who evaluates an event control's expressions when what it watches changes,
+// which is the one question that separates the two ways an event control is
+// built. The waiting process does (LRM 4.5), and that is what the control
+// means. Where every one of them only reads storage, the change may evaluate
+// them where it happens instead: a schedule LRM 4.7 permits, which nothing
+// such an evaluation does can tell from the process evaluating them, and which
+// spares resuming the process to learn that a change was no event.
+auto ChangeDecides(
     const base::Arena<hir::Expr, hir::ExprId>& exprs,
-    std::initializer_list<std::optional<hir::ExprId>> deciding) -> bool {
-  return std::ranges::all_of(
-      deciding, [&](const std::optional<hir::ExprId>& expr) {
-        return !expr.has_value() || hir::ReadsStorageOnly(exprs, *expr);
-      });
+    std::span<const hir::ExprId> evaluated) -> bool {
+  return std::ranges::all_of(evaluated, [&](hir::ExprId expr) {
+    return hir::ReadsStorageOnly(exprs, expr);
+  });
 }
 
 // `entry` acting on the observation `observation` holds, answering `type`.
@@ -269,17 +284,6 @@ auto ObservationCall(
   return block.exprs.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = entry, .receiver = held}, {}, type));
-}
-
-// Arms `observation` with what its expression is worth where the wait begins.
-void ArmObservation(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    mir::LocalId observation) {
-  block.AppendStmt(
-      mir::ExprStmt{
-          .expr = ObservationCall(
-              unit, block, support::BuiltinFn::kObservationArm, observation,
-              unit.builtins.void_type)});
 }
 
 // `while (none of observations fires) { waiting }`: the waiting process asks
@@ -365,7 +369,7 @@ auto LocalsAsArray(
 // first evaluation is made before any wait and gives what later ones are
 // measured from, so it is no event.
 template <ExprLowerer Lowerer>
-auto BuildEvaluatedEventWaitStmt(
+auto BuildProcessDecidedEventWaitStmt(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block,
     const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
@@ -404,46 +408,102 @@ auto BuildEvaluatedEventWaitStmt(
                         observation, unit.builtins.observation)),
                 observation_ptr));
       });
-  const mir::ExprId runtime_id =
-      waiting.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId call_id = waiting.exprs.Add(
+  const mir::ExprId wait_id = waiting.exprs.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = support::BuiltinFn::kWaitRecollecting},
-          {runtime_id, reports_id, observations_id},
-          unit.builtins.machine_bool));
-  waiting.AppendStmt(BuildWaitStmt(lowerer.Owner(), waiting, call_id));
+          {reports_id, observations_id}, unit.builtins.wait));
+  waiting.AppendStmt(
+      BuildStopStmt(lowerer.Owner(), frame.WithBlock(&waiting), wait_id));
   return WaitUntilOneFires(unit, block, observations, std::move(waiting));
 }
 
-}  // namespace
-
-// An event control a change decides registers its leaves once, each watching
-// for what its observation decides, armed where the control is reached; any
-// other is decided by its process (LRM 9.4.2).
+// An event control a change decides (LRM 4.7, 9.4.2): one wait, built where
+// everything it watches and `evaluated` -- the expressions its observations
+// evaluate at the change -- exists, each leaf watching for what the
+// observation of its trigger decides.
 template <ExprLowerer Lowerer>
-auto BuildEventWaitStmt(
+auto BuildChangeDecidedEventWaitStmt(
     Lowerer& lowerer, WalkFrame frame, mir::Block& block,
-    const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
-  if (!std::ranges::all_of(ec.triggers, [&](const hir::EventTrigger& t) {
-        return DecidedWhereItChanges(
-            lowerer.HirExprs(), {t.signal, t.condition});
-      })) {
-    return BuildEvaluatedEventWaitStmt(lowerer, frame, block, ec);
+    const hir::EventControl& ec, std::span<const hir::ExprId> evaluated)
+    -> diag::Result<mir::Stmt> {
+  std::vector<hir::SensitivityEntry> cells;
+  for (const hir::EventTrigger& trigger : ec.triggers) {
+    cells.insert(cells.end(), trigger.cells.begin(), trigger.cells.end());
   }
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& storage =
+      WaitStorageBlock(frame, block, cells, lowerer.HirExprs(), evaluated);
+  const WalkFrame storage_frame = frame.WithBlock(&storage);
   std::vector<ObservedLeaf> leaves;
   for (const hir::EventTrigger& trigger : ec.triggers) {
-    auto observation =
-        BuildObservationLocal(lowerer, frame, block, trigger, std::nullopt);
+    auto observation = BuildObservationLocal(
+        lowerer, storage_frame, storage, trigger, std::nullopt);
     if (!observation) return std::unexpected(std::move(observation.error()));
-    ArmObservation(unit, block, *observation);
     for (const hir::SensitivityEntry& cell : trigger.cells) {
       leaves.push_back(
           ObservedLeaf{.entry = cell, .observation = *observation});
     }
   }
-  return BuildWaitStmt(
-      block, frame, lowerer, leaves, support::BuiltinFn::kWaitAny);
+  return BuildWaitOnStmt(storage, block, frame, lowerer, leaves);
+}
+
+// A named event's wait a change decides (LRM 4.7, 15.5.2): the trigger is the
+// event itself, so nothing has a value to have moved and the observation
+// carries the `iff` qualifier alone (LRM 9.4.2.3), evaluated where the trigger
+// lands.
+auto BuildChangeDecidedNamedEventWaitStmt(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    const hir::NamedEventControl& nec, std::span<const hir::ExprId> evaluated)
+    -> diag::Result<mir::Stmt> {
+  const std::array<hir::SensitivityEntry, 1> cells{nec.event};
+  mir::Block& storage =
+      WaitStorageBlock(frame, block, cells, process.HirExprs(), evaluated);
+  auto observation = BuildQualifierObservationLocal(
+      process, frame.WithBlock(&storage), storage, nec.condition);
+  if (!observation) return std::unexpected(std::move(observation.error()));
+  const std::array<ObservedLeaf, 1> leaves{
+      ObservedLeaf{.entry = nec.event, .observation = *observation}};
+  return BuildWaitOnStmt(storage, block, frame, process, leaves);
+}
+
+// A named event's wait its process decides (LRM 4.5): the trigger alone is
+// what the wait watches, so the wait evaluates nothing, and each trigger
+// resumes the process to evaluate the qualifier itself.
+auto BuildProcessDecidedNamedEventWaitStmt(
+    ProcessLowerer& process, WalkFrame frame, mir::Block& block,
+    const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
+  const mir::CompilationUnit& unit = process.Owner().Unit();
+  auto qualifier =
+      BuildQualifierObservationLocal(process, frame, block, nec.condition);
+  if (!qualifier) return std::unexpected(std::move(qualifier.error()));
+  const std::array<hir::SensitivityEntry, 1> cells{nec.event};
+  mir::Block& storage =
+      WaitStorageBlock(frame, block, cells, process.HirExprs(), {});
+  const std::array<ObservedLeaf, 1> leaves{ObservedLeaf{
+      .entry = nec.event,
+      .observation = DeclareObservation(
+          unit, frame.WithBlock(&storage), storage,
+          support::BuiltinFn::kObservationOnReaching, {})}};
+  mir::Block waiting;
+  auto wait = BuildWaitOnStmt(
+      storage, waiting, frame.WithBlock(&waiting), process, leaves);
+  if (!wait) return std::unexpected(std::move(wait.error()));
+  waiting.AppendStmt(*std::move(wait));
+  const std::array<mir::LocalId, 1> observations{*qualifier};
+  return WaitUntilOneFires(unit, block, observations, std::move(waiting));
+}
+
+}  // namespace
+
+template <ExprLowerer Lowerer>
+auto BuildEventWaitStmt(
+    Lowerer& lowerer, WalkFrame frame, mir::Block& block,
+    const hir::EventControl& ec) -> diag::Result<mir::Stmt> {
+  const std::vector<hir::ExprId> evaluated = EvaluatedBy(ec);
+  if (ChangeDecides(lowerer.HirExprs(), evaluated)) {
+    return BuildChangeDecidedEventWaitStmt(
+        lowerer, frame, block, ec, evaluated);
+  }
+  return BuildProcessDecidedEventWaitStmt(lowerer, frame, block, ec);
 }
 
 template auto BuildEventWaitStmt(
@@ -456,33 +516,12 @@ template auto BuildEventWaitStmt(
 auto BuildNamedEventWaitStmt(
     ProcessLowerer& process, WalkFrame frame, mir::Block& block,
     const hir::NamedEventControl& nec) -> diag::Result<mir::Stmt> {
-  // A trigger is the event itself, so there is nothing to have moved and the
-  // observation carries the `iff` qualifier alone (LRM 9.4.2.3, 15.5).
-  const mir::CompilationUnit& unit = process.Owner().Unit();
-  auto observation =
-      BuildQualifierObservationLocal(process, frame, block, nec.condition);
-  if (!observation) return std::unexpected(std::move(observation.error()));
-  if (DecidedWhereItChanges(process.HirExprs(), {nec.condition})) {
-    ArmObservation(unit, block, *observation);
-    const std::array<ObservedLeaf, 1> leaves{
-        ObservedLeaf{.entry = nec.event, .observation = *observation}};
-    return BuildWaitStmt(
-        block, frame, process, leaves, support::BuiltinFn::kWaitAny);
+  const std::vector<hir::ExprId> evaluated = EvaluatedBy(nec);
+  if (ChangeDecides(process.HirExprs(), evaluated)) {
+    return BuildChangeDecidedNamedEventWaitStmt(
+        process, frame, block, nec, evaluated);
   }
-  // A qualifier that can act is the waiting process's to evaluate, each time
-  // the trigger resumes it; the trigger alone is what the wait watches.
-  mir::Block waiting;
-  const std::array<ObservedLeaf, 1> leaves{ObservedLeaf{
-      .entry = nec.event,
-      .observation = DeclareObservation(
-          unit, frame, block, support::BuiltinFn::kObservationOnReaching, {})}};
-  auto wait = BuildWaitStmt(
-      waiting, frame.WithBlock(&waiting), process, leaves,
-      support::BuiltinFn::kWaitAny);
-  if (!wait) return std::unexpected(std::move(wait.error()));
-  waiting.AppendStmt(*std::move(wait));
-  const std::array<mir::LocalId, 1> observations{*observation};
-  return WaitUntilOneFires(unit, block, observations, std::move(waiting));
+  return BuildProcessDecidedNamedEventWaitStmt(process, frame, block, nec);
 }
 
 auto BuildAnyEventWaitStmt(
@@ -516,9 +555,13 @@ auto LowerTimedStmt(
                 [&](const hir::NamedEventControl& nec) {
                   return BuildNamedEventWaitStmt(process, inner, block, nec);
                 },
-                [&](const hir::ImplicitEventControl& ie)
-                    -> diag::Result<mir::Stmt> {
-                  return BuildImplicitEventWaitStmt(process, inner, block, ie);
+                // LRM 9.4.2.2 `@*`: the standard makes the wait sensitive to
+                // the variables the controlled statement reads rather than to
+                // the value of an expression, so being reached is the whole of
+                // the condition.
+                [&](const hir::ImplicitEventControl& ie) {
+                  return BuildValueChangeWaitStmt(
+                      block, inner, process, ie.sensitivity_list);
                 }},
             t.timing);
       });
@@ -616,13 +659,12 @@ auto LowerWaitStmt(
         return inner_block.exprs.Add(
             mir::MakeLocalRefExpr(reported, unit.builtins.read_report_ptr));
       });
-  const mir::ExprId runtime_id =
-      inner_block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId call_id = inner_block.exprs.Add(
+  const mir::ExprId wait_id = inner_block.exprs.Add(
       mir::MakeCallExpr(
-          mir::Direct{.target = support::BuiltinFn::kWaitUntil},
-          {runtime_id, reports_id}, unit.builtins.machine_bool));
-  inner_block.AppendStmt(BuildWaitStmt(process.Owner(), inner_block, call_id));
+          mir::Direct{.target = support::BuiltinFn::kWaitUntil}, {reports_id},
+          unit.builtins.wait));
+  inner_block.AppendStmt(BuildStopStmt(
+      process.Owner(), wrapper_frame.WithBlock(&inner_block), wait_id));
 
   const mir::BlockId inner_scope_id =
       wrapper.child_scopes.Add(std::move(inner_block));

@@ -197,9 +197,9 @@ auto lyra_rt_find_export_entry(void* scope, const void* subroutine)
 
 // The two directions of a DPI-C task across the boundary. Going out, the call
 // is carried on a stack of the runtime's own so an exported task it reaches can
-// suspend while simulation time advances (LRM 35.5.1.1); that is the
-// registration an import task's suspend edge is preceded by, so it answers the
-// park flag every registration answers with. Coming in, a foreign caller is not
+// suspend while simulation time advances (LRM 35.5.1.1); it is what an import
+// task's suspend edge is preceded by, so it answers whether the caller must
+// give up control, as a stop at a wait does. Coming in, a foreign caller is not
 // a coroutine and cannot await (LRM 35.8), so the entry it called drives the
 // body to completion on the stack that call is running on, and what the body
 // completes with lands in the storage its caller supplied rather than coming
@@ -210,29 +210,30 @@ void lyra_rt_run_exported_task_to_completion(void* activation);
 // LRM 9.3.2 Table 9-1. Each takes the branches one `fork` spawned, in source
 // order, and hands them to the engine, which does not run any of them until the
 // spawning process blocks or terminates. `spawn_all` is `join_none`, whose
-// parent never waits and so answers nothing; the other two park the parent
-// unless the fork spawned no branch at all.
+// parent never waits and so answers nothing; the other two answer the parent's
+// wait for its join, built in storage the caller gives.
 void lyra_rt_spawn_all(void* runtime, LyraSpan branches);
-auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches) -> bool;
-auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches) -> bool;
+auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches, void* out)
+    -> void*;
+auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches, void* out)
+    -> void*;
 
 // LRM 9.6.1 `wait fork` and 9.6.3 `disable fork`. Both read the executing
-// process, so neither names the children it reaches. `wait fork` parks the
-// caller unless every immediate child has already terminated; `disable fork`
-// never blocks.
-auto lyra_rt_wait_fork(void* runtime) -> bool;
+// process, so neither names the children it reaches. `wait fork` answers the
+// wait for every immediate child to have terminated; `disable fork` never
+// blocks.
+auto lyra_rt_wait_fork(void* runtime, void* out) -> void*;
 void lyra_rt_disable_fork(void* runtime);
 
 // LRM 9.7 process control. The receiver is a handle of the managed-reference
 // domain naming a process node; `self` builds one for the calling process,
 // which the engine already owns, so nothing is constructed here. `await` is the
-// one that blocks, and it answers the way every registration does -- whether
-// the caller must park at all -- since a target that has already terminated
-// leaves nothing to wait for.
+// one that waits, and it answers the wait for the target to terminate, which
+// the caller then stops at.
 auto lyra_rt_process_self(void* runtime, void* out) -> void*;
 auto lyra_rt_process_status(const void* self, void* out) -> void*;
 void lyra_rt_process_kill(const void* self, void* runtime);
-auto lyra_rt_process_await(const void* self, void* runtime) -> bool;
+auto lyra_rt_process_await(const void* self, void* runtime, void* out) -> void*;
 void lyra_rt_process_suspend(const void* self, void* runtime);
 void lyra_rt_process_resume(const void* self, void* runtime);
 
@@ -302,7 +303,7 @@ auto lyra_rt_self_handle(void* self, void* out) -> void*;
 
 // What reports a change to an object's properties (LRM 9.4.2), each taking the
 // object as the root every object shares: the source a wait on the object
-// subscribes to, and a write into its properties, opened on the object alone
+// enrols on, and a write into its properties, opened on the object alone
 // in storage the writing body gives, which answers the object the properties
 // are reached through and whose end tells the object.
 auto lyra_rt_object_event_source(void* object) -> void*;
@@ -353,29 +354,24 @@ void lyra_rt_submit_nba_after_real(
 // update the standard makes no process of.
 void lyra_rt_run_detached(void* runtime, void* carrier);
 
-// The region that update is due in, reached by the carrier once the event has
-// named the slot (LRM 4.4.2.4). Which execution suspends is the running one,
-// read from the runtime, so nothing about it crosses; the answer is the park
-// flag every registration returns, and this one always parks.
-auto lyra_rt_resume_in_nba_region(void* runtime) -> bool;
+// The wait for the region that update is due in, which the carrier stops at
+// once the event has named the slot (LRM 4.4.2.4).
+auto lyra_rt_resume_in_nba_region(void* out) -> void*;
 
-// Registers the running process to wake after `duration` steps of its scope's
-// time unit (`unit_power`), the registration a delay's suspend edge is preceded
-// by (LRM 9.4.1). The runtime rounds that amount to the scope's precision
-// (`precision_power`) and scales it to the engine's global tick; a zero wait
-// re-enqueues on the current slot's inactive region. The counts cross as opaque
-// packed values, like every scalar. The wakeup source is the running process
-// itself, read from the runtime; no token crosses the boundary. A delay always
-// parks.
+// The wait of a delay (LRM 9.4.1): `duration` steps of its scope's time unit
+// (`unit_power`), from now. The runtime rounds that amount to the scope's
+// precision (`precision_power`) and scales it to the engine's global tick; a
+// zero wait lands on the current slot's inactive region. The counts cross as
+// opaque packed values, like every scalar.
 auto lyra_rt_delay(
     void* runtime, const void* duration, const void* unit_power,
-    const void* precision_power) -> bool;
+    const void* precision_power, void* out) -> void*;
 
 // The same for a delay the design wrote as a real expression, which can name a
 // fraction of a time unit and is rounded to the precision (LRM 3.14.1).
 auto lyra_rt_delay_real(
     void* runtime, const void* duration, const void* unit_power,
-    const void* precision_power) -> bool;
+    const void* precision_power, void* out) -> void*;
 
 // Builds one leaf of a wait: the place it watches, what decides whether what
 // happens there is an event -- which the leaves watching for one event share --
@@ -398,25 +394,18 @@ auto lyra_rt_make_trigger(
 // there being the event itself (LRM 15.5.1). Like a trigger these are
 // transient, and the waits built from them hold them for as long as they last.
 //
-// Building one evaluates nothing. It is armed where the wait begins, with what
-// the expression is worth then, and asked by the waiting process where the
-// process decides -- the answer crossing as the machine integer every computed
-// answer crosses as, since a host `bool` here would say the call parks its
-// caller.
+// Building one evaluates nothing. The wait holding it arms it with what the
+// expression is worth where the wait begins, and the waiting process asks it
+// where the process decides -- the answer crossing as the machine integer
+// every computed answer crosses as, since a host `bool` here would say the
+// call parks its caller.
 auto lyra_rt_observation_on_reaching(void* out) -> void*;
 auto lyra_rt_observation_of_value(void* expression, const void* edge, void* out)
     -> void*;
 auto lyra_rt_observation_of_value_qualified(
     void* expression, const void* edge, void* condition, void* out) -> void*;
 auto lyra_rt_observation_qualified(void* condition, void* out) -> void*;
-void lyra_rt_observation_arm(const void* observation);
 auto lyra_rt_observation_fires(const void* observation) -> std::int64_t;
-
-// Waits for what happens at one of `triggers` to be an event for the wait (LRM
-// 9.4.2 / 9.4.2.2 / 15.5.2). An empty span means "never wake up". Which
-// execution is waiting is the runtime's own to know, so no token crosses the
-// boundary. Answers whether the caller must give up control.
-auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 
 // The waits on the places an evaluation the process made reached, one read
 // report per expression evaluated: an event control its process decides, with
@@ -426,12 +415,20 @@ auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool;
 // waits for the next occurrence (LRM 9.7). Each takes what its reports hold,
 // leaving them empty for the next evaluation.
 auto lyra_rt_wait_recollecting(
-    void* runtime, LyraSpan reports, LyraSpan observations) -> bool;
-auto lyra_rt_wait_until(void* runtime, LyraSpan reports) -> bool;
+    LyraSpan reports, LyraSpan observations, void* out) -> void*;
+auto lyra_rt_wait_until(LyraSpan reports, void* out) -> void*;
 
-// The wait of a procedure whose implicit list was collected once into a report
-// (LRM 9.2.2.2.1).
-auto lyra_rt_wait_on_report(void* runtime, const void* report) -> bool;
+// A wait for what happens at one of `triggers` to be an event for it (LRM
+// 9.4.2 / 9.4.2.2 / 15.5.2), or at one leaf of the implicit list a report
+// settled (LRM 9.2.2.2.1). An empty span means "never wake up".
+auto lyra_rt_wait_on(LyraSpan triggers, void* out) -> void*;
+auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void*;
+
+// Every wait above is built in storage the caller gives, and every stop is
+// this, at one of them, answering whether the caller must give up control.
+// Which execution is waiting is the runtime's own to know, so no token crosses
+// the boundary.
+auto lyra_rt_park_at(void* runtime, void* wait) -> bool;
 
 // What an evaluation states the places it reached in: an empty report; a place
 // read and the bits of it read; a place reached through a handle; every object
@@ -442,6 +439,7 @@ auto lyra_rt_wait_on_report(void* runtime, const void* report) -> bool;
 // meeting a read no leaf watches yet refuses the report, and the design fails
 // there.
 auto lyra_rt_read_report_empty(void* out) -> void*;
+auto lyra_rt_read_report_for_implicit_list(void* out) -> void*;
 void lyra_rt_read_report_add(
     void* report, void* place, const void* lsb_bit_offset,
     const void* bit_width);
@@ -462,7 +460,7 @@ void lyra_rt_refuse_report(const void* why);
 
 // A named event (LRM 15.5). Triggering records the instant and ends the wait of
 // every process the trigger is an event for; waiting for one is an ordinary
-// wait naming the event, since the event is a place a wait registers on like
+// wait naming the event, since the event is a place a wait enrols on like
 // any other. `triggered` answers whether the most recent trigger happened in
 // this time step, which is a comparison of instants rather than a state the
 // event clears.
@@ -658,7 +656,7 @@ auto lyra_rt_run_program(
 // is the design's own failure (LRM 8.4).
 auto lyra_rt_refer_storage(void* storage, void* out) -> void*;
 auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void*;
-// What a wait on the storage a reference names registers on: the variable or
+// What a wait on the storage a reference names enrols on: the variable or
 // the object's event source, and null for storage nothing is told about.
 auto lyra_rt_reference_reports_to(const void* reference) -> void*;
 auto lyra_rt_packed_cell_refer(void* cell, void* out) -> void*;
@@ -718,8 +716,8 @@ auto lyra_rt_packed_cell_drive_takeover(
     -> bool;
 void lyra_rt_packed_cell_end_takeover(void* cell, const void* level);
 // Reading and writing storage a caller lent, which answers through the form
-// the reference carries: a subscribable variable's own access, or a plain
-// read and write where nothing subscribes.
+// the reference carries: a watchable variable's own access, or a plain read
+// and write where nothing can watch.
 auto lyra_rt_packed_ref_get(void* reference) -> const void*;
 void lyra_rt_packed_ref_set(void* reference, const void* value);
 void lyra_rt_packed_ref_arm_sampling(void* reference);
@@ -2309,6 +2307,7 @@ void lyra_rt_hierarchy_segment_destroy(void* object);
 void lyra_rt_trigger_destroy(void* object);
 void lyra_rt_observation_destroy(void* object);
 void lyra_rt_read_report_destroy(void* object);
+void lyra_rt_wait_destroy(void* object);
 void lyra_rt_dpi_bit_buffer_destroy(void* object);
 void lyra_rt_dpi_logic_buffer_destroy(void* object);
 void lyra_rt_dpi_open_array_destroy(void* object);
@@ -2363,6 +2362,7 @@ auto lyra_rt_hierarchy_segment_move(void* value, void* out) -> void*;
 auto lyra_rt_trigger_move(void* value, void* out) -> void*;
 auto lyra_rt_observation_move(void* value, void* out) -> void*;
 auto lyra_rt_read_report_move(void* value, void* out) -> void*;
+auto lyra_rt_wait_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_bit_buffer_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_logic_buffer_move(void* value, void* out) -> void*;
 auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void*;
