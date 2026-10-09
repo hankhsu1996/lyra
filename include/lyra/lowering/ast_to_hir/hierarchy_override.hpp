@@ -50,11 +50,6 @@ using OverrideEffect = std::variant<
 [[nodiscard]] auto OverridesOn(const slang::ast::InstanceSymbol& inst)
     -> std::vector<OverrideEffect>;
 
-// Whether something written elsewhere can reach an instance below `inst`: only
-// a body an override reached, or one a configuration elaborated, holds one.
-[[nodiscard]] auto OverridesMayReachBelow(
-    const slang::ast::InstanceSymbol& inst) -> bool;
-
 // Whether `param` of `body` holds a value given somewhere other than the
 // instantiation. Such a value takes precedence over the instantiation's own
 // (LRM 23.10, 33.4.3), and only the elaborated value states it, since the

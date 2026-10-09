@@ -7,7 +7,47 @@
 // same declaration from every instance (LRM 23.6) -- including one that names
 // a single instance of the module writing it, which is that instance's own
 // declaration in one instance and another's in every other, for a call and a
-// disable as for a read.
+// disable as for a read. A name written two instances down is found in an
+// instance the writer stands in from one place and beside the writer's
+// ancestors from another, and the instances between are the same module in
+// both. A search may also pass instances of the module it lands in.
+module Deep;
+  int seen = -1;
+  initial #1 seen = near.x;
+endmodule
+
+module Middle;
+  Deep d();
+endmodule
+
+module Near;
+  int x = 0;
+  Middle m();
+endmodule
+
+module Far;
+  Near shadow();
+endmodule
+
+// A name whose search passes instances of the very module it lands in: the
+// reader stands three instances of `Nest` deep and names the outermost.
+module NestReader;
+  int seen = -1;
+  initial #1 seen = outer_nest.depth;
+  final
+    if (seen !== 2)
+      $fatal(1, "%m read depth %0d through outer_nest, expected 2", seen);
+endmodule
+
+module Nest #(parameter int DEPTH = 0);
+  int depth = DEPTH;
+  if (DEPTH > 0) begin : deeper
+    Nest #(.DEPTH(DEPTH - 1)) inner ();
+  end else begin : innermost
+    NestReader reader ();
+  end
+endmodule
+
 module Ticker;
   int calls = 0;
   int finished = 0;
@@ -106,8 +146,21 @@ module Top;
   Answer #(.W(5)) a5();
   Ticker first_ticker();
   Ticker second_ticker();
+  Near near();
+  Far far();
+  Nest #(.DEPTH(2)) outer_nest ();
+
+  initial begin
+    near.x = 3;
+    far.shadow.x = 7;
+  end
 
   final begin
+    if (near.m.d.seen !== 3)
+      $fatal(1, "near.m.d.seen was %0d, expected 3", near.m.d.seen);
+    if (far.shadow.m.d.seen !== 3)
+      $fatal(1, "far.shadow.m.d.seen was %0d, expected 3",
+             far.shadow.m.d.seen);
     if (first_ticker.calls !== 2 || second_ticker.calls !== 0)
       $fatal(1, "a call named on one instance landed %0d and %0d, expected 2 and 0",
              first_ticker.calls, second_ticker.calls);

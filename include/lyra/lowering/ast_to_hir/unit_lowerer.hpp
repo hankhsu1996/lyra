@@ -107,15 +107,6 @@ using ForeignImportBindings = std::unordered_map<
 using ForeignImportScopes =
     std::unordered_map<const slang::ast::SubroutineSymbol*, ScopeFrameId>;
 
-// The program-global C name each exported subroutine is reached by (LRM 35.5).
-// An `export "DPI-C"` is a directive rather than a member symbol, so a scope
-// walk never encounters one and the subroutine it names carries no mark of its
-// own; the frontend resolves each directive against the scope declaring it, and
-// this is that resolution keyed by the subroutine it resolved to. It spans the
-// design because directives resolve once, after every scope has elaborated.
-using ForeignExportNames =
-    std::unordered_map<const slang::ast::SubroutineSymbol*, std::string_view>;
-
 // A component of a hierarchical path names an owned child of some scope this
 // unit declares: an instance / instance-array member (`c.x`, `c[1].x`), or a
 // generate block (`g[1].x`, LRM 27). The child's slang symbol maps to the
@@ -507,9 +498,8 @@ using PlacedSpecializations = std::unordered_map<
 
 // What every unit's lowering reads and none of them changes: where a
 // construct was written, the shared sensitivity analysis (one cache across the
-// design), whether assertions are elided rather than rejected, the foreign
-// export names, which are resolved design-wide before any unit is walked, what
-// decides the name of every unit, which every party naming one reads, and the
+// design), whether assertions are elided rather than rejected, what decides
+// the name of every unit, which every party naming one reads, and the
 // specializations placed in a unit from a generic declared elsewhere, which
 // only the design as a whole lists. The slang compilation itself is
 // deliberately absent: walking top instances is the driver's job, and a unit
@@ -519,13 +509,11 @@ class LoweringFacts {
   LoweringFacts(
       const frontend::SlangSourceMapper& source_mapper,
       SensitivityAnalyzer& sensitivity_analyzer,
-      const ForeignExportNames& foreign_export_names,
       support::AssertionPolicy assertion_policy,
       const SpecializationPolicy& specialization,
       const PlacedSpecializations& placed)
       : source_mapper_(&source_mapper),
         sensitivity_analyzer_(&sensitivity_analyzer),
-        foreign_export_names_(&foreign_export_names),
         assertion_policy_(assertion_policy),
         specialization_(&specialization),
         placed_(&placed) {
@@ -548,17 +536,6 @@ class LoweringFacts {
     return *sensitivity_analyzer_;
   }
 
-  // The C name `sub` is exported under (LRM 35.5), or nullopt when no `export
-  // "DPI-C"` names it.
-  [[nodiscard]] auto ForeignExportName(const slang::ast::SubroutineSymbol& sub)
-      const -> std::optional<std::string_view> {
-    const auto it = foreign_export_names_->find(&sub);
-    if (it == foreign_export_names_->end()) {
-      return std::nullopt;
-    }
-    return it->second;
-  }
-
   [[nodiscard]] auto AssertionPolicy() const -> support::AssertionPolicy {
     return assertion_policy_;
   }
@@ -570,7 +547,6 @@ class LoweringFacts {
  private:
   const frontend::SlangSourceMapper* source_mapper_;
   SensitivityAnalyzer* sensitivity_analyzer_;
-  const ForeignExportNames* foreign_export_names_;
   support::AssertionPolicy assertion_policy_;
   const SpecializationPolicy* specialization_;
   const PlacedSpecializations* placed_;
@@ -1015,10 +991,6 @@ class UnitLowerer {
       const slang::ast::Symbol& containing) const
       -> const slang::ast::TimingControl*;
 
-  [[nodiscard]] auto ForeignExportName(const slang::ast::SubroutineSymbol& sub)
-      const -> std::optional<std::string_view> {
-    return facts_.ForeignExportName(sub);
-  }
   // Whether the design being built contains this procedural block. A concurrent
   // assertion is a process whose whole body is the assertion, so disabling
   // assertions removes it rather than emptying it -- an always block with no

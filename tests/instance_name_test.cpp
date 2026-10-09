@@ -4,6 +4,7 @@
 // simulates can observe a name, so this is stated against the naming itself.
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -100,6 +101,62 @@ TEST(InstanceName, IsTheSameWhicheverInstanceIsAskedFirst) {
   EXPECT_FALSE(a_asked_first.empty());
   EXPECT_EQ(a_asked_first, a_asked_second);
   EXPECT_EQ(b_asked_first, b_asked_second);
+}
+
+// One module twice, its logger naming `sensor` (LRM 23.8): from the first the
+// name lands in the sensor holding the logger, and from the spare it lands in
+// the board, beside the spare.
+constexpr std::string_view kASpareReadsTheMain = R"(
+module Logger;
+  int seen;
+  initial seen = sensor.temperature;
+endmodule
+
+module Sensor;
+  int temperature;
+  Logger logger ();
+endmodule
+
+module Backup;
+  Sensor spare ();
+endmodule
+
+module Board;
+  Sensor sensor ();
+  Backup backup ();
+endmodule
+)";
+
+TEST(InstanceName, FollowsWhereANameWrittenBelowLandsAndNotWhoWasAskedFirst) {
+  const Elaborated design(kASpareReadsTheMain);
+  ASSERT_TRUE(design.Succeeded());
+  using slang::ast::InstanceSymbol;
+  const InstanceSymbol& board = design.TopNamed("Board");
+  const auto& sensor = board.body.find<InstanceSymbol>("sensor");
+  const auto& backup = board.body.find<InstanceSymbol>("backup");
+  const auto& spare = backup.body.find<InstanceSymbol>("spare");
+  const auto& main_logger = sensor.body.find<InstanceSymbol>("logger");
+  const auto& spare_logger = spare.body.find<InstanceSymbol>("logger");
+  const std::vector<const InstanceSymbol*> outermost_first{
+      &board, &sensor, &main_logger, &backup, &spare, &spare_logger};
+
+  const SpecializationPolicy from_the_top;
+  std::vector<std::string> asked_from_the_top;
+  for (const InstanceSymbol* inst : outermost_first) {
+    asked_from_the_top.push_back(from_the_top.NameOf(*inst));
+  }
+
+  const SpecializationPolicy from_the_leaves;
+  std::vector<std::string> asked_from_the_leaves(outermost_first.size());
+  for (std::size_t at = outermost_first.size(); at-- > 0;) {
+    asked_from_the_leaves[at] = from_the_leaves.NameOf(*outermost_first[at]);
+  }
+
+  EXPECT_EQ(asked_from_the_top, asked_from_the_leaves);
+  // The loggers compile apart, so what builds each does too.
+  EXPECT_NE(
+      from_the_top.NameOf(main_logger), from_the_top.NameOf(spare_logger));
+  EXPECT_NE(from_the_top.NameOf(sensor), from_the_top.NameOf(spare));
 }
 
 }  // namespace

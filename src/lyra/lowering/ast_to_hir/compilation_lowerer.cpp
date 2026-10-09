@@ -193,20 +193,6 @@ auto CollectUnits(
   return std::move(collector.found);
 }
 
-// Indexes the frontend's resolution of every `export "DPI-C"` directive (LRM
-// 35.5) by the subroutine it names. The directive is resolved against the scope
-// declaring it, so the subroutine it resolves to is the one that scope's walk
-// reaches, and a scope elaborated under several specializations contributes the
-// subroutine of each.
-auto CollectForeignExportNames(const LowerCompilationFacts& facts)
-    -> ForeignExportNames {
-  ForeignExportNames names;
-  for (const auto& exported : facts.Compilation().getDPIExports()) {
-    names.emplace(exported.subroutine, exported.cIdentifier);
-  }
-  return names;
-}
-
 auto CollectPackages(const LowerCompilationFacts& facts)
     -> std::vector<const slang::ast::PackageSymbol*> {
   // `getPackages` includes the built-in `std` package (LRM 6.7.1); the runtime
@@ -420,9 +406,10 @@ auto LowerBodiesOf(
   return lowerer.LowerBodies(signatures);
 }
 
-// The first line two units' dumps disagree on, as a clause for a report. Two
-// units that compare unequal say nothing about where, and whoever reads the
-// report has only the two instances' names to start from otherwise.
+// Where two units' dumps first part, as a clause for a report: the line they
+// disagree on, the line one goes on with, or that neither shows the difference.
+// Two units that compare unequal say nothing about where, and whoever reads
+// the report has only the two instances' names to start from otherwise.
 auto WhereTheyFirstDiffer(
     const hir::CompilationUnit& unit, const hir::CompilationUnit& instance)
     -> std::string {
@@ -441,7 +428,13 @@ auto WhereTheyFirstDiffer(
     left.remove_prefix(std::min(left.size(), left_line.size() + 1));
     right.remove_prefix(std::min(right.size(), right_line.size() + 1));
   }
-  return ": one states more than the other";
+  if (left.empty() && right.empty()) {
+    return ": the two differ in something the dump of a unit does not state";
+  }
+  const std::string_view longer = left.empty() ? right : left;
+  return std::format(
+      ": the {} goes on to state `{}` where the other ends",
+      left.empty() ? "instance" : "unit", longer.substr(0, longer.find('\n')));
 }
 
 // The definitions a witness of which lowered apart from the unit it shares.
@@ -494,9 +487,10 @@ auto DefinitionsLoweredApart(
         throw InternalError(
             std::format(
                 "DefinitionsLoweredApart: instance '{}' shares unit '{}' with "
-                "an instance it agrees with on everything a unit is told apart "
-                "by, and lowers to something that unit does not{}",
+                "instance '{}', which it agrees with on everything a unit is "
+                "told apart by, and lowers to something that unit does not{}",
                 repeat->body->getHierarchicalPath(), unit.name,
+                unit.body->getHierarchicalPath(),
                 lowered ? WhereTheyFirstDiffer(*shared, *lowered)
                         : std::string{", because it does not lower at all"}));
       }
@@ -527,12 +521,11 @@ auto DefinitionsLoweredApart(
 // What the design's units hold between declaring and lowering their bodies.
 // Everything a unit reads is here and outlives the unit reading it: the AST is
 // declared first, so it is released after every lowerer pointing into it, and
-// the export names, the sensitivity analysis, the specialization policy and
-// where each specialization is held are built beside the facts that point at
-// them rather than handed in.
+// the sensitivity analysis, the specialization policy and where each
+// specialization is held are built beside the facts that point at them rather
+// than handed in.
 struct DeclaredDesign::Units {
   std::unique_ptr<slang::ast::Compilation> front_end;
-  ForeignExportNames export_names;
   SensitivityAnalyzer sensitivity;
   SpecializationPolicy specialization;
   SpecializationHomes specialization_homes;
@@ -549,8 +542,8 @@ struct DeclaredDesign::Units {
       support::AssertionPolicy assertion_policy)
       : front_end(std::move(elaborated)),
         facts(
-            source_mapper, sensitivity, export_names, assertion_policy,
-            specialization, specialization_homes.placed) {
+            source_mapper, sensitivity, assertion_policy, specialization,
+            specialization_homes.placed) {
   }
 
   // Declares every unit the design has under the specialization policy held
@@ -619,7 +612,6 @@ auto DeclaredDesign::Declare(
       std::move(front_end), source_mapper, assertion_policy);
   const LowerCompilationFacts facts(
       *units->front_end, source_mapper, assertion_policy);
-  units->export_names = CollectForeignExportNames(facts);
 
   Definitions kept_whole;
   for (;;) {

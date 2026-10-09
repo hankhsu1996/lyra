@@ -215,12 +215,14 @@ what the frontend happened to do.
    code-shape-affecting inputs, the specialization key is fully determined. Keys do not depend on
    traversal order, instance enumeration, or the order in which instances are encountered.
 8. **A specialization is computed from occurrences, and the artifact compiles a body elaborated for
-   one of them.** Every argument is read off the occurrence -- what its parent wrote, and what was
-   written elsewhere that reaches it or an occurrence below it (LRM 23.10.1, 23.11, 33.4). The body
-   an artifact compiles is one elaborated under those same arguments, so what it was named for and
-   what it compiles against are one application; a body elaborated for a different application
-   states different types at the same positions. The frontend's record that two bodies duplicate
-   each other is an input to neither half.
+   one of them.** Every argument is read off the occurrence -- what its parent wrote, what was
+   written elsewhere that reaches it or an occurrence below it (LRM 23.10.1, 23.11, 33.4), and where
+   each hierarchical name written in it or below it lands once it leaves the occurrence (LRM 23.8).
+   Together they settle which specialization every occurrence below is, since a unit's code names
+   the class of each one it builds. The body an artifact compiles is one elaborated under those same
+   arguments, so what it was named for and what it compiles against are one application; a body
+   elaborated for a different application states different types at the same positions. The
+   frontend's record that two bodies duplicate each other is an input to neither half.
 9. **Producer and consumer derive the identity independently and agree.** A unit's own identity and
    the identity a parent means when it instantiates that unit are computed from the same inputs by
    the same function, with no table between them -- which is what lets units compile in any order
