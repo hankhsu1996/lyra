@@ -10,6 +10,7 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/reads_storage_only.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
@@ -54,7 +55,7 @@ auto BindRouted(
   return BindEndpoint(process.EnclosingScopeLowerer(), frame, reference);
 }
 
-// What a wait on a variable the running body declares registers on: its cell,
+// What a wait on a variable the running body declares enrols on: its cell,
 // or, for a `ref` formal, whatever a write through it is told to (LRM 13.5.2).
 // Only a procedural body declares one.
 template <typename Lowerer>
@@ -75,7 +76,7 @@ auto BodyVariableSource(
     if (!lowered) {
       throw InternalError(
           "BodyVariableSource: a variable the body declares failed to lower as "
-          "the storage a wait registers on");
+          "the storage a wait enrols on");
     }
     const mir::ExprId storage = block.exprs.Add(*std::move(lowered));
     const mir::TypeId storage_type = block.exprs.Get(storage).type;
@@ -144,7 +145,7 @@ auto BuildReportCall(
 
 namespace {
 
-// What a registration hands the runtime: a borrowed pointer to what reports a
+// What a wait's trigger hands the runtime: a borrowed pointer to what reports a
 // write there. A route answers for this form itself, because an endpoint that
 // reached out of the unit already holds a pointer and composing one from the
 // cell would send that case through a dereference and back; so does whatever
@@ -193,7 +194,7 @@ auto BuildObservablePtrExpr(
 }
 
 // Which bits of a place's packed encoding a leaf reads, as the `(lsb, width)` a
-// registration takes (LRM 9.4.2 / 9.4.2.2 / 9.4.3). A read of the whole of it
+// wait's trigger takes (LRM 9.4.2 / 9.4.2.2 / 9.4.3). A read of the whole of it
 // is width 0, which is also what a named event and an object carry, having no
 // bits at all.
 struct WatchedBitPositions {
@@ -527,32 +528,38 @@ auto DeclareObservation(
               unit.builtins.observation)));
 }
 
-namespace {
-
-// The wait registering through `entry`, which reads the engine handle and then
-// `operand` -- what the wait watches -- built in `block`.
-auto WaitThrough(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
-    support::BuiltinFn entry, mir::ExprId operand) -> mir::Stmt {
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId call_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = entry},
-                  .arguments = {runtime_id, operand}},
-          .type = unit_lowerer.Unit().builtins.machine_bool});
-  return BuildWaitStmt(unit_lowerer, block, call_id);
+auto WaitStorageBlock(
+    const WalkFrame& frame, mir::Block& stop_block,
+    std::span<const hir::SensitivityEntry> cells,
+    const base::Arena<hir::Expr, hir::ExprId>& exprs,
+    std::span<const hir::ExprId> evaluated) -> mir::Block& {
+  const bool watches_a_body_variable =
+      std::ranges::any_of(cells, [](const hir::SensitivityEntry& cell) {
+        return std::visit(
+            Overloaded{
+                [](const hir::ValueTarget&) { return false; },
+                [](const hir::ProceduralVarRef&) { return true; }},
+            cell.cell);
+      });
+  const bool evaluates_a_body_variable =
+      !std::ranges::all_of(evaluated, [&](hir::ExprId expr) {
+        return hir::ReadsElaboratedStorageOnly(exprs, expr);
+      });
+  return watches_a_body_variable || evaluates_a_body_variable
+             ? stop_block
+             : frame.bindings->RootBlock();
 }
 
-}  // namespace
+namespace {
 
+// One trigger per leaf, as the machine array a wait is built on, built in
+// `target_block`. A leaf watching part of its cell names the part by the
+// select the source wrote, whose indices are constants and are lowered here;
+// `lowerer` is the lowering that owns those expressions.
 template <typename Lowerer>
-auto BuildWaitStmt(
+auto BuildTriggerArray(
     mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
-    std::span<const ObservedLeaf> leaves, support::BuiltinFn entry)
-    -> diag::Result<mir::Stmt> {
+    std::span<const ObservedLeaf> leaves) -> diag::Result<mir::ExprId> {
   auto& unit = lowerer.Owner().Unit();
   std::vector<mir::ExprId> triggers;
   triggers.reserve(leaves.size());
@@ -564,38 +571,64 @@ auto BuildWaitStmt(
   }
   const mir::TypeId triggers_type =
       mir::MachineArrayOf(unit.types, unit.builtins.trigger, triggers.size());
-  const mir::ExprId triggers_id = target_block.exprs.Add(
+  return target_block.exprs.Add(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(triggers)},
           .type = triggers_type});
-  return WaitThrough(lowerer.Owner(), target_block, entry, triggers_id);
 }
 
-namespace {
+}  // namespace
 
-// An empty report in a local of `frame`'s block, everything `reads` names
-// recorded in it, and the local holding a pointer to it.
 template <typename Lowerer>
-auto ReportInto(
-    const WalkFrame& frame, Lowerer& lowerer, const hir::Reads& reads)
+auto BuildWaitOnStmt(
+    mir::Block& storage_block, mir::Block& stop_block, const WalkFrame& frame,
+    Lowerer& lowerer, std::span<const ObservedLeaf> leaves)
+    -> diag::Result<mir::Stmt> {
+  const WalkFrame storage_frame = frame.WithBlock(&storage_block);
+  auto triggers =
+      BuildTriggerArray(storage_block, storage_frame, lowerer, leaves);
+  if (!triggers) return std::unexpected(std::move(triggers.error()));
+  const mir::LocalId wait = DeclareLocal(
+      storage_frame,
+      storage_block.exprs.Add(
+          mir::MakeCallExpr(
+              mir::Direct{.target = support::BuiltinFn::kWaitOn}, {*triggers},
+              lowerer.Owner().Unit().builtins.wait)));
+  return BuildParkStmt(lowerer.Owner(), stop_block, wait);
+}
+
+template <typename Lowerer>
+auto BuildValueChangeWaitStmt(
+    mir::Block& stop_block, const WalkFrame& frame, Lowerer& lowerer,
+    std::span<const hir::SensitivityEntry> sensitivity_list)
+    -> diag::Result<mir::Stmt> {
+  mir::Block& storage_block = WaitStorageBlock(
+      frame, stop_block, sensitivity_list, lowerer.HirExprs(), {});
+  const mir::LocalId observation = DeclareObservation(
+      lowerer.Owner().Unit(), frame, storage_block,
+      support::BuiltinFn::kObservationOnReaching, {});
+  std::vector<ObservedLeaf> leaves;
+  leaves.reserve(sensitivity_list.size());
+  for (const hir::SensitivityEntry& entry : sensitivity_list) {
+    leaves.push_back(ObservedLeaf{.entry = entry, .observation = observation});
+  }
+  return BuildWaitOnStmt(storage_block, stop_block, frame, lowerer, leaves);
+}
+
+auto HoldImplicitList(
+    const WalkFrame& frame, ProcessLowerer& lowerer, const hir::Reads& reads)
     -> diag::Result<mir::LocalId> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
-  const mir::LocalId report =
-      frame.bindings->DeclareAnonymous(unit.builtins.read_report);
-  block.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = report,
-          .init = block.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::CallExpr{
-                          .callee =
-                              mir::Direct{
-                                  .target =
-                                      support::BuiltinFn::kReadReportEmpty},
-                          .arguments = {}},
-                  .type = unit.builtins.read_report})});
+  // A report no evaluation makes, so a function called to report into it runs
+  // nothing of its body.
+  const mir::LocalId report = DeclareLocal(
+      frame,
+      block.exprs.Add(
+          mir::MakeCallExpr(
+              mir::Direct{
+                  .target = support::BuiltinFn::kReadReportForImplicitList},
+              {}, unit.builtins.read_report)));
   const mir::LocalId pointer = DeclareLocal(
       frame,
       block.exprs.Add(
@@ -605,48 +638,18 @@ auto ReportInto(
               unit.builtins.read_report_ptr)));
   auto reported = ReportReads(lowerer, frame, reads, pointer);
   if (!reported) return std::unexpected(std::move(reported.error()));
-  return pointer;
-}
-
-}  // namespace
-
-auto CollectImplicitList(
-    const WalkFrame& frame, ProcessLowerer& lowerer, const hir::Reads& reads)
-    -> diag::Result<mir::LocalId> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  mir::Block& block = *frame.current_block;
-  auto pointer = ReportInto(frame, lowerer, reads);
-  if (!pointer) return std::unexpected(std::move(pointer.error()));
   ActOnReport(
-      unit, block, *pointer,
-      support::BuiltinFn::kReadReportSettleAsImplicitList, {});
-  return *pointer;
-}
-
-auto BuildImplicitListWaitStmt(
-    mir::Block& block, const UnitLowerer& unit_lowerer, mir::LocalId report)
-    -> mir::Stmt {
-  return WaitThrough(
-      unit_lowerer, block, support::BuiltinFn::kWaitOnReport,
+      unit, block, pointer, support::BuiltinFn::kReadReportSettleAsImplicitList,
+      {});
+  return DeclareLocal(
+      frame,
       block.exprs.Add(
-          mir::MakeLocalRefExpr(
-              report, unit_lowerer.Unit().builtins.read_report_ptr)));
-}
-
-template <typename Lowerer>
-auto BuildValueChangeWaitStmt(
-    mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
-    const std::vector<hir::SensitivityEntry>& sensitivity_list,
-    support::BuiltinFn entry) -> diag::Result<mir::Stmt> {
-  const mir::LocalId observation = DeclareObservation(
-      lowerer.Owner().Unit(), frame, target_block,
-      support::BuiltinFn::kObservationOnReaching, {});
-  std::vector<ObservedLeaf> leaves;
-  leaves.reserve(sensitivity_list.size());
-  for (const hir::SensitivityEntry& read : sensitivity_list) {
-    leaves.push_back(ObservedLeaf{.entry = read, .observation = observation});
-  }
-  return BuildWaitStmt(target_block, frame, lowerer, leaves, entry);
+          mir::MakeCallExpr(
+              mir::Direct{.target = support::BuiltinFn::kWaitOnImplicitList},
+              {block.exprs.Add(
+                  mir::MakeLocalRefExpr(
+                      pointer, unit.builtins.read_report_ptr))},
+              unit.builtins.wait)));
 }
 
 // One instantiation per lowering a wait is built in.
@@ -662,14 +665,12 @@ template auto ReportReads(
 template auto ReportReads(
     const StructuralScopeLowerer&, const WalkFrame&, const hir::Reads&,
     mir::LocalId) -> diag::Result<void>;
-template auto BuildWaitStmt(
-    mir::Block&, const WalkFrame&, ProcessLowerer&,
-    std::span<const ObservedLeaf>, support::BuiltinFn)
-    -> diag::Result<mir::Stmt>;
-template auto BuildWaitStmt(
-    mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
-    std::span<const ObservedLeaf>, support::BuiltinFn)
-    -> diag::Result<mir::Stmt>;
+template auto BuildWaitOnStmt(
+    mir::Block&, mir::Block&, const WalkFrame&, ProcessLowerer&,
+    std::span<const ObservedLeaf>) -> diag::Result<mir::Stmt>;
+template auto BuildWaitOnStmt(
+    mir::Block&, mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
+    std::span<const ObservedLeaf>) -> diag::Result<mir::Stmt>;
 template auto ReportCells(
     ProcessLowerer&, const WalkFrame&, mir::LocalId,
     std::span<const hir::SensitivityEntry>) -> diag::Result<void>;
@@ -678,11 +679,9 @@ template auto ReportCells(
     std::span<const hir::SensitivityEntry>) -> diag::Result<void>;
 template auto BuildValueChangeWaitStmt(
     mir::Block&, const WalkFrame&, ProcessLowerer&,
-    const std::vector<hir::SensitivityEntry>&, support::BuiltinFn)
-    -> diag::Result<mir::Stmt>;
+    std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
 template auto BuildValueChangeWaitStmt(
     mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
-    const std::vector<hir::SensitivityEntry>&, support::BuiltinFn)
-    -> diag::Result<mir::Stmt>;
+    std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

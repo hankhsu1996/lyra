@@ -14,7 +14,7 @@ namespace lyra::lowering::hir_to_mir {
 // access's receiver is.
 
 // The event source of the object `object` reaches, which a wait reaching the
-// object subscribes to: one per object, covering every property (LRM 9.4.2).
+// object enrols on: one per object, covering every property (LRM 9.4.2).
 [[nodiscard]] auto ObjectEventSourceOf(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object)
     -> mir::ExprId;

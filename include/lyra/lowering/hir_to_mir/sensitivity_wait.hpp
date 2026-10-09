@@ -3,7 +3,10 @@
 #include <span>
 #include <vector>
 
+#include "lyra/base/arena.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/expr.hpp"
+#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -91,13 +94,11 @@ auto ReportReads(
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments)
     -> mir::LocalId;
 
-// Every SV construct that waits for something to happen converges on one
-// runtime call taking one trigger per leaf -- `@*` (LRM 9.4.2.2), `@(...)`
-// (LRM 9.4.2), `@e` (LRM 15.5.2), `wait (cond)` (LRM 9.4.3), and a continuous
-// assignment -- differing only in what decides that reaching a leaf is an
-// event for them. A wait its process decides hands it the reports its last
-// evaluation stated instead, and an implicit list (LRM 9.2.2.2.1) waits on the
-// one report it collected ahead of its first run.
+// Every construct that waits for something to happen on storage converges on
+// one wait holding one trigger per leaf -- `@*` (LRM 9.4.2.2), `@(...)` (LRM
+// 9.4.2), `@e` (LRM 15.5.2), an implicit list (LRM 9.2.2.2.1), and a
+// continuous assignment -- differing only in what decides that reaching a leaf
+// is an event for them, and built where everything it names stops changing.
 //
 // Lowering picks the observable-pointer expression per leaf so a backend
 // forwards one stored expression rather than re-deriving the shape from the
@@ -105,44 +106,46 @@ auto ReportReads(
 // borrowed-pointer slot (a cross-unit reference sealed in the resolve phase, or
 // another sealed pointer) is the bare `FieldAccess`.
 
-// The wait itself: reaching a leaf is a candidacy, and the leaf's observation
-// says whether it is an event. `entry` is which of the two waits over those
-// leaves this is -- one for the next occurrence, or one for a condition the
-// body re-tests -- since the two ask the same leaves and part company only
-// where a stopped process is started again (LRM 9.7).
-//
-// A leaf watching part of its cell names the part by the select the source
-// wrote, whose indices are lowered here; `lowerer` is the lowering that owns
-// those expressions.
+// The block a wait whose stop is in `stop_block` is built in, where `cells` are
+// what it watches and `evaluated` the expressions of `exprs` its observations
+// evaluate where a change happens: the outermost block of the body, which
+// lasts for the body's whole run, or `stop_block` where anything among them
+// names something the body declares, which exists only from its declaration on
+// (LRM 6.21).
+[[nodiscard]] auto WaitStorageBlock(
+    const WalkFrame& frame, mir::Block& stop_block,
+    std::span<const hir::SensitivityEntry> cells,
+    const base::Arena<hir::Expr, hir::ExprId>& exprs,
+    std::span<const hir::ExprId> evaluated) -> mir::Block&;
+
+// The wait on `leaves` and the stop at it: reaching a leaf is a candidacy, and
+// the leaf's observation says whether it is an event. The wait is built in
+// `storage_block`, which already declares the leaves' observations, and the
+// returned stop at it is for `stop_block`.
 template <typename Lowerer>
-auto BuildWaitStmt(
-    mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
-    std::span<const ObservedLeaf> leaves, support::BuiltinFn entry)
+auto BuildWaitOnStmt(
+    mir::Block& storage_block, mir::Block& stop_block, const WalkFrame& frame,
+    Lowerer& lowerer, std::span<const ObservedLeaf> leaves)
     -> diag::Result<mir::Stmt>;
 
-// An implicit list collected once into a report, ahead of the procedure's first
-// run (LRM 9.2.2.2.1): everything `reads` names and writes is recorded, each
-// call reporting what its function reads and writes, and the report is then
-// settled as the list. Every statement lands in the block `frame` is writing;
-// the answer is the local holding a pointer to the report.
-auto CollectImplicitList(
-    const WalkFrame& frame, ProcessLowerer& lowerer, const hir::Reads& reads)
-    -> diag::Result<mir::LocalId>;
-
-// The wait on an implicit list `report` points at, each time the procedure
-// finishes its body.
-[[nodiscard]] auto BuildImplicitListWaitStmt(
-    mir::Block& block, const UnitLowerer& unit_lowerer, mir::LocalId report)
-    -> mir::Stmt;
-
 // The wait of a construct the standard makes sensitive to the variables it
-// reads, where a change to any of them is the event (LRM 9.4.2.2, 10.3).
+// reads, where a change to any of them is the event (LRM 9.4.2.2, 10.3, 10.6).
 // Being reached is the whole condition, so its leaves share the one
-// observation that says so.
+// observation that says so. The stop is for `stop_block`.
 template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
-    mir::Block& target_block, const WalkFrame& frame, Lowerer& lowerer,
-    const std::vector<hir::SensitivityEntry>& sensitivity_list,
-    support::BuiltinFn entry) -> diag::Result<mir::Stmt>;
+    mir::Block& stop_block, const WalkFrame& frame, Lowerer& lowerer,
+    std::span<const hir::SensitivityEntry> sensitivity_list)
+    -> diag::Result<mir::Stmt>;
+
+// The wait on an implicit list, collected once into a report ahead of the
+// procedure's first run (LRM 9.2.2.2.1): everything `reads` names and writes
+// is recorded, each call reporting what its function reads and writes without
+// running, the report is settled as the list, and the wait is built on it.
+// Every statement lands in the block `frame` is writing; the answer is the
+// local holding the wait.
+auto HoldImplicitList(
+    const WalkFrame& frame, ProcessLowerer& lowerer, const hir::Reads& reads)
+    -> diag::Result<mir::LocalId>;
 
 }  // namespace lyra::lowering::hir_to_mir

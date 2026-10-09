@@ -12,15 +12,18 @@ namespace lyra::runtime {
 
 void CancellationTarget::Invalidate(RuntimeEffects& effects) {
   ++generation_;
-  // Releasing the waiters is the same act an event trigger performs on its own:
-  // a blocked execution would otherwise never regain control -- a `wait` whose
-  // condition no longer becomes true is the whole point -- and waking it
-  // revokes the registrations it holds elsewhere, so its wait settles exactly
-  // once. An execution that is running or already runnable is not waiting on
-  // this target and reaches the check on its own.
-  while (Registration* waiter = cancel_waiters_.PopFront()) {
-    effects.Wake(waiter->activation);
-  }
+  // Waking the blocked executions inside is the same act an event trigger
+  // performs on what waits on it: a blocked execution would otherwise never
+  // regain control -- a `wait` whose condition no longer becomes true is the
+  // whole point -- and waking it takes it off the wait it was parked on, so
+  // that wait cannot wake it a second time. An execution that is running,
+  // already runnable, or stopped from outside is not blocked and reaches the
+  // check on its own, when it next runs.
+  members_.ForEach([&](TargetMembership& member) {
+    if (Activation* blocked = member.process->BlockedLeaf()) {
+      effects.Wake(blocked);
+    }
+  });
 }
 
 void EnterCancellationTarget(

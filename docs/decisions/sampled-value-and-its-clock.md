@@ -126,7 +126,8 @@ with the diagnostic the standard requires, rather than sampled against a guess.
 Per F4 the sampling agent is an always procedure, and it is lowered as one: a body that waits on the
 clocking event, evaluates each sampled expression over its leaves' retained values, and repeats. It
 is an action bound to a schedule event, which is a category that already exists, so it needs no
-scheduling concept of its own and re-arms through its own loop like every other `always`.
+scheduling concept of its own and waits on its clock through its own loop as any `always` does
+([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)).
 
 This is deliberately not an observation armed by a reader. An armed observation exists only while
 someone waits at it, which is exactly the LRM 9.7 resensitization property

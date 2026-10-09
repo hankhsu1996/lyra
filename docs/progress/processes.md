@@ -60,9 +60,13 @@ under each item, and the conformance gaps at the end.
       Pathological zero-delay loops are caught by the engine's settle limit.
 - [x] P10 / P13 -- `always_comb` / `always_latch` (LRM 9.2.2.2.1) and `always @*` / `always @(*)`
       (LRM 9.4.2.2). The block's own text is analyzed, and each function an `always_comb` or
-      `always_latch` calls reports what it reads and writes once at time zero; the body runs at t =
-      0 (`always_comb` / `always_latch`) or after the first wait (`@*`), then waits on any change to
-      the read set.
+      `always_latch` calls reports what it reads and writes once, where the process is created,
+      without running -- so a function counting its own calls counts one for the run at time zero
+      and one for each run after; the body runs at t = 0 (`always_comb` / `always_latch`) or after
+      the first wait (`@*`), then waits on any change to the read set. Such a procedure, and one
+      waiting at an event control it opens with (`always_ff`), answers process control as any
+      process does (LRM 9.7): it reports WAITING between runs, misses a change while suspended, runs
+      on resuming where a change had already made it ready, and runs no more once killed.
 
       What a read in that set contributes follows from what the name denotes, and every kind of
       declaration says so rather than sharing one answer. A net or a variable is waited on wherever
@@ -258,7 +262,8 @@ under each item, and the conformance gaps at the end.
 ### Concurrency
 
 - [x] P8 -- `fork` / `join` / `join_any` / `join_none` (LRM 9.3). Spawns concurrent processes; the
-      parent resumes per the join condition.
+      parent resumes per the join condition, once enough branches have terminated -- a branch killed
+      counts as surely as one that ran out its statements.
   - [ ] A `join_none` reached while no process is running -- a class constructor that forks, called
         from a variable's declaration initializer, which runs before any process starts (LRM 6.21).
         It is reported as a compiler bug. Whether the standard gives such a fork a parent, or makes

@@ -14,7 +14,6 @@
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
-#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/wait.hpp"
@@ -22,11 +21,6 @@
 
 namespace lyra::runtime {
 
-namespace {
-
-// Recovers the concrete Runtime from its capability view. Safe because
-// Runtime is the sole derived class (declared `final`), so every
-// `RuntimeEffects` object is a `Runtime` object.
 auto AsRuntime(RuntimeEffects& effects) -> Runtime& {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
   return static_cast<Runtime&>(effects);
@@ -36,6 +30,8 @@ auto AsRuntime(const RuntimeEffects& effects) -> const Runtime& {
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
   return static_cast<const Runtime&>(effects);
 }
+
+namespace {
 
 auto CurrentRuntimeSlot() -> RuntimeEffects*& {
   thread_local RuntimeEffects* slot = nullptr;
@@ -118,11 +114,11 @@ void RuntimeEffects::RecordCoverage(const value::String& site, bool succeeded) {
 }
 
 void RuntimeEffects::Schedule(
-    SimTime when, Region region, CoroutineHandle activation) {
-  activation->Park(AsRuntime(*this).SlotAt(when)[region].activations);
+    SimTime when, Region region, Activation* activation) {
+  activation->Queue(AsRuntime(*this).SlotAt(when)[region].activations);
 }
 
-void RuntimeEffects::Wake(CoroutineHandle activation) {
+void RuntimeEffects::Wake(Activation* activation) {
   ConsumeWait(activation);
   Schedule(Now(), Region::kActive, activation);
 }
@@ -230,11 +226,16 @@ void RuntimeEffects::SubmitDeferredFinal(OwnedCall action) {
       });
 }
 
-void RuntimeEffects::WakeWaitersOf(
-    Observable& observable, const Change& change) {
-  for (CoroutineHandle handle : observable.TakeFiringWaiters(change)) {
-    Wake(handle);
-  }
+void RuntimeEffects::WakeParkedOn(
+    IntrusiveList<WaitMembership>& members, const Change& change) {
+  members.ForEach([&](WaitMembership& membership) {
+    if (change.KnownUnchanged(membership.reads)) {
+      return;
+    }
+    if (Activation* woken = membership.awaiter->WokenBy(membership)) {
+      Wake(woken);
+    }
+  });
 }
 
 auto RuntimeEffects::EveryObject() -> Observable& {
@@ -271,7 +272,8 @@ void ReportRaisedError(
   }
 }
 
-void RuntimeEffects::Spawn(Coroutine<void> coroutine) {
+auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
+    -> std::shared_ptr<RuntimeProcess> {
   Runtime& rt = AsRuntime(*this);
   if (rt.current_process_ == nullptr) {
     throw InternalError(
@@ -282,9 +284,9 @@ void RuntimeEffects::Spawn(Coroutine<void> coroutine) {
   // next value, so a whole subtree of threads follows from the seed of the one
   // at its root and the order the branches then run in does not move any of it.
   auto child = std::make_shared<RuntimeProcess>(
-      parent.OwningScope(), ProcessKind::kSpawned, std::move(coroutine),
+      parent.OwningScope(), std::move(coroutine),
       parent.Running().rng.NextSeed());
-  const CoroutineHandle handle = child->TopHandle();
+  Activation* const activation = child->TopActivation();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than
   // rebuilding it once it starts running: it is spawned already enclosed, and a
@@ -292,7 +294,8 @@ void RuntimeEffects::Spawn(Coroutine<void> coroutine) {
   child->InheritEnclosingTargets(parent);
   parent.AdoptChild(child);
   rt.RegisterProcessInRegistry(child);
-  Schedule(Now(), Region::kActive, handle);
+  Schedule(Now(), Region::kActive, activation);
+  return child;
 }
 
 void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
@@ -307,15 +310,14 @@ void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
   // no random values, and taking a seed from the process that reached the
   // statement would move that process's own stream (LRM 18.14.1).
   auto carrier = std::make_shared<RuntimeProcess>(
-      rt.current_process_->OwningScope(), ProcessKind::kDetached,
-      std::move(coroutine), RandomSeed{0});
-  const CoroutineHandle handle = carrier->TopHandle();
+      rt.current_process_->OwningScope(), std::move(coroutine), RandomSeed{0});
+  Activation* const activation = carrier->TopActivation();
   // No lineage and no disable membership: the standard makes no process of the
   // update this carries out, so nothing that names processes may find it. What
   // keeps it alive is therefore the runtime's own registry, which every
   // execution created during simulation is held by.
   rt.RegisterProcessInRegistry(std::move(carrier));
-  Schedule(Now(), Region::kActive, handle);
+  Schedule(Now(), Region::kActive, activation);
 }
 
 auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {

@@ -16,11 +16,11 @@
 #include "lyra/runtime/coverage.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/mem_file.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/region.hpp"
-#include "lyra/runtime/registration.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -105,6 +105,10 @@ class Runtime final : public RuntimeEffects {
   // registration functions live outside this class.
   void RegisterProcessInRegistry(std::shared_ptr<RuntimeProcess> process);
 
+  // LRM 9.2.3: a `final` procedure waits for the end of simulation, after the
+  // last slot, rather than in any slot.
+  void QueueFinal(Activation* top);
+
   // Takes a static initialization on as what is running, and gives it back.
   // Its generator starts from `seed`, which the container's initialization RNG
   // chose (LRM 18.14.1). Public because the entries generated code reaches live
@@ -149,17 +153,11 @@ class Runtime final : public RuntimeEffects {
   // LRM 3.14.3: design-global tick is the minimum declared precision across
   // the tree.
   void ResolveGlobalTimePrecision();
-  void RegisterProcesses();
   void WalkResolve(Scope& scope);
   void WalkInitialize(Scope& scope);
   void WalkActivate(Scope& scope);
 
-  // Runs a suspended frame's owning process against this runtime's execution
-  // ambient. On completion the terminal transition drains the process's own
-  // `await` waiters into `woken` for the caller to schedule.
-  auto ResumeProcess(
-      CoroutineHandle handle, std::vector<CoroutineHandle>& woken) -> bool;
-  void RunProcess(CoroutineHandle handle);
+  void RunProcess(Activation* activation);
 
   // LRM 4.5: Preponed, then regions taken in order until nothing in Active
   // through Re-NBA remains, then Postponed. Work a region produces lands back
@@ -196,13 +194,13 @@ class Runtime final : public RuntimeEffects {
   std::map<SimTime, TimeSlot> slots_;
   // Final processes wait here rather than in any slot: LRM 9.2.3 runs them
   // after the last one, when no slot is left to hold them.
-  RegistrationList finals_;
+  IntrusiveList<QueuePlace> finals_;
   // Every concurrent assertion the design activated, so an attempt no tick
   // settled can be answered before the finals run.
   std::vector<EvaluationAttempts*> concurrent_assertions_;
   // The activations a region drain is working through, held apart from the
   // region they came out of.
-  RegistrationList draining_;
+  IntrusiveList<QueuePlace> draining_;
   // Reached by a write to a property of any object, for the waits nothing
   // narrower covers.
   Observable every_object_;
@@ -236,10 +234,15 @@ class Runtime final : public RuntimeEffects {
   bool tool_failed_ = false;
 };
 
+// The runtime a `RuntimeEffects` view is a view of. `Runtime` is the only class
+// deriving from the view, so every view is one.
+[[nodiscard]] auto AsRuntime(RuntimeEffects& effects) -> Runtime&;
+[[nodiscard]] auto AsRuntime(const RuntimeEffects& effects) -> const Runtime&;
+
 // Reached by generated `RegisterInitial` / `RegisterFinal` builtins: creates a
 // process bound to `owning_scope` and registers it in the ambient runtime.
 // LRM 9.2 lifecycle: an `initial` starts on the Active queue at time 0; a
-// `final` parks on the finals list until shutdown. The scope handle arrives
+// `final` waits on the finals list until shutdown. The scope handle arrives
 // as a pointer because the generated call site is holding the `self` pointer
 // from its enclosing body.
 // `unit_instance` is the module, interface, or program instance the process is

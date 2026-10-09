@@ -1,63 +1,56 @@
 #pragma once
 
 #include <coroutine>
-#include <deque>
 #include <exception>
-#include <functional>
-#include <memory>
 #include <utility>
 #include <variant>
 
 #include "lyra/runtime/cancellation.hpp"
-#include "lyra/runtime/generated_call_scope.hpp"
-#include "lyra/runtime/registration.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
 class RuntimeProcess;
+struct Activation;
 
-// Non-templated scheduling state shared by every coroutine frame -- a process
-// body, a task body, a fork branch -- regardless of the value the frame
-// completes with. The engine and everything an execution waits on hold a
-// `PromiseBase*` as the universal wakeup token and read scheduling state
-// through it, never naming the frame's result type. `self` is this frame's own
-// handle, type-erased, so the engine resumes and queries completion without
-// knowing the result type (recovering a promise from a frame address is not a
-// portable ABI, so the handle is stored at construction, not derived).
-struct PromiseBase {
+// An activation's place in a queue the scheduler drains, as a node of that
+// queue's list.
+struct QueuePlace : IntrusiveListNode<QueuePlace> {
+  // Null on the sentinel a list embeds to close its ring.
+  Activation* activation = nullptr;
+};
+
+// One suspendable execution -- a process body, a task body, a fork branch --
+// as the scheduler sees it: the wait it is parked on, the queue it sits in,
+// whom its completion goes to. It is the part of every frame's promise that
+// does not depend on the value the frame completes with, so the engine and
+// everything an execution waits on hold an `Activation*` and never name the
+// frame's result type.
+struct Activation {
+  // The process whose thread this frame runs in: its own for a process body or
+  // a fork branch, its caller's for a called task (LRM 9.5).
   RuntimeProcess* process = nullptr;
+  // This frame, type-erased, so the engine resumes it and asks whether it is
+  // done without knowing its result type. Stored where the frame is made,
+  // because a promise of one type cannot be turned back into its frame through
+  // a base of it.
+  std::coroutine_handle<> coroutine;
+
+  // The frame awaiting this one's completion, resumed in its place (a task
+  // returning to its caller); none for a process body, which ends its process.
   std::coroutine_handle<> continuation;
-  std::function<void()> on_complete;
-  std::coroutine_handle<> self;
-  // Every membership this activation currently holds: the observables of a
-  // value-change wait (`@(a or b)` holds one each), a named event, a join or
-  // `wait fork` condition, or the scheduler queue or delay slot it sits in. It
-  // owns them, so releasing it unlinks them all and leaves nothing able to
-  // resume it. A deque because the targets' lists point at these addresses, and
-  // appending must not move the ones already linked.
-  std::deque<Registration> registrations;
-  // What this activation is waiting for, while it is blocked and only then. It
-  // is distinct from `registrations`, which is where the wait is enrolled right
-  // now: stopping the process from outside revokes the enrolment and keeps
-  // this, and starting it again waits for the same thing afresh through it (LRM
-  // 9.7). Whichever construct stopped the body built it and handed it here, so
-  // it is the activation's own and outlives the call that made it -- which is
-  // what lets a call that is not a frame arrange a wait at all.
-  std::unique_ptr<Wait> wait;
-  // Whether the wait this frame is blocked on is a deferred report flush point
-  // (LRM 16.4.2 / 12.4.2.1), read off the wait once where it is built so a
-  // resume asks one field rather than a wait that may already be gone.
-  bool wait_is_report_flush_point = false;
-  // This execution's value storage: the home of every value whose life exceeds
-  // one stretch of generated code, such as a local read after a resumption.
-  //
-  // It hangs here, on the scheduling record, because that is where a collector
-  // can reach it -- the generated body's own frame is opaque, so a value living
-  // there would be findable by nothing. An execution that needs one installs it
-  // before running a statement; a backend whose bodies hold their values
-  // natively leaves it null.
-  std::unique_ptr<ActivationValueStore> activation_values;
+
+  // The awaiter this activation is stopped at, while it is blocked and only
+  // then. The frame owns it; this only names it. Stopping the process from
+  // outside keeps it, and starting it again waits for the same thing afresh
+  // through it (LRM 9.7).
+  Awaiter* awaiter = nullptr;
+
+  // This activation's place in the scheduler queue, delay slot or end-of-run
+  // list it sits in. It is in at most one at a time and is put in one at
+  // nearly every stop, so the place is part of the activation.
+  QueuePlace queued;
 
   // Defined in this struct's own source file, as is every member of it that is
   // not parameterized: what a member of the shipped surface compiles to is the
@@ -65,68 +58,48 @@ struct PromiseBase {
   // again in every translation unit that reaches it -- a constructor or
   // destructor defaulted here included, since every frame a unit states
   // constructs and destroys one.
-  PromiseBase();
-  PromiseBase(const PromiseBase&) = delete;
-  auto operator=(const PromiseBase&) -> PromiseBase& = delete;
-  PromiseBase(PromiseBase&&) = delete;
-  auto operator=(PromiseBase&&) -> PromiseBase& = delete;
-  ~PromiseBase();
+  Activation();
+  Activation(const Activation&) = delete;
+  auto operator=(const Activation&) -> Activation& = delete;
+  Activation(Activation&&) = delete;
+  auto operator=(Activation&&) -> Activation& = delete;
+  ~Activation();
 
-  // Builds what this activation is about to wait for, and hands it to the
-  // activation. A frame waits for one thing at a time, so building a second
-  // ends the first.
-  template <class W, class... Args>
-  auto AdoptWait(Args&&... args) -> W& {
-    auto adopted = std::make_unique<W>(std::forward<Args>(args)...);
-    W& held = *adopted;
-    wait = std::move(adopted);
-    return held;
-  }
+  // Puts this activation in `queue`, to run when the queue does.
+  void Queue(IntrusiveList<QueuePlace>& queue) noexcept;
 
-  // Parks this activation on `target` and hands back the membership, so a
-  // caller whose target carries a fire condition can record it.
-  auto Park(RegistrationList& target) -> Registration&;
+  // Parks this activation on `stopped_at`: it names that awaiter, and the
+  // awaiter names it as what an occurrence there wakes.
+  void ParkOn(Awaiter& stopped_at) noexcept;
 
-  // Drops every membership: the activation is runnable again, so nothing it was
-  // parked on may fire it a second time.
-  void RevokeRegistrations() noexcept;
+  // Takes this activation out of whatever would resume it: off the queue it
+  // sits in, and no longer parked on its awaiter, which it keeps. It is
+  // runnable again, or stopped from outside, so nothing it was waiting on may
+  // resume it.
+  void Withdraw() noexcept;
 
-  // A promise protocol hook is an instance customization point by contract, so
-  // it stays a member even when an implementation reads no promise state.
-  auto initial_suspend() noexcept -> std::suspend_always;
+  static auto initial_suspend() noexcept -> std::suspend_always;
 
-  // On completion, run the completion hook (a fork branch reports to its join
-  // group) then transfer to the enabler if there is one (a task returning to
-  // its caller); a top-level process has no continuation and suspends so the
-  // engine sees `done()`.
-  struct FinalAwaiter {
-    PromiseBase* promise;
-    // A coroutine awaiter hook is an instance customization point by contract,
-    // so each stays a member even where an implementation reads no awaiter
-    // state. The handle the language hands `await_suspend` is the frame that is
-    // suspending, which this one already holds as the promise it names.
-    [[nodiscard]] auto await_ready() const noexcept -> bool;
-    [[nodiscard]] auto await_suspend(std::coroutine_handle<>) const noexcept
-        -> std::coroutine_handle<>;
-    void await_resume() const noexcept;
-  };
-  auto final_suspend() noexcept -> FinalAwaiter;
+  // What runs once this frame completes: the frame awaiting it (a task
+  // returning to its caller), or nothing, so a process body suspends at its end
+  // and the engine sees `done()`.
+  [[nodiscard]] auto ContinuationAfterCompletion() const noexcept
+      -> std::coroutine_handle<>;
 
   [[nodiscard]] auto Process() const -> RuntimeProcess&;
 };
 
 // A nested activation -- a called task -- takes over its process's thread and
 // gives it back when it completes (LRM 9.5). The pair is what makes "which
-// frame is running" a fact the runtime holds, so a wait registered from
-// anywhere parks the frame that actually asked for it and nothing has to be
-// handed one.
-void EnterActivation(PromiseBase& leaf);
-void LeaveActivation(PromiseBase& leaf);
+// frame is running" a fact the runtime holds, so a stop made from anywhere
+// parks the frame that actually made it and nothing has to be handed one.
+void EnterActivation(Activation& leaf);
+void LeaveActivation(Activation& leaf);
 
 // Enters `nested` as an activation of the process running now, to return to
 // `continuation` when it completes.
 void EnterNestedActivation(
-    PromiseBase& nested, std::coroutine_handle<> continuation);
+    Activation& nested, std::coroutine_handle<> continuation);
 
 // The activation was left by a control effect no region claimed, which its
 // landing reports as a forced termination (LRM 9.6.2, 9.7).
@@ -160,7 +133,8 @@ struct Raised {
 
 // The single typed terminal outcome an activation settles: the value it
 // produced, or the departure that reached its landing in one of the two forms
-// above. Kept off `PromiseBase` so the scheduler never sees `T` or the outcome.
+// above. Kept off the activation so the scheduler never sees `T` or the
+// outcome.
 // The slot stores the outcome and hands it to the activation's one consumer;
 // whether it is re-raised in place or extracted first and re-raised after the
 // frame is torn down is the consumer's decision, not the slot's. The
@@ -243,7 +217,7 @@ class CompletionSlot<void> {
 // or a process body with `T = void`. The completion value travels through the
 // promise: the body's `co_return v` stores it, and the awaiting frame moves it
 // out in `await_resume` before this `Coroutine` (which owns the frame) is
-// destroyed. All scheduling lives on the non-templated `PromiseBase` the engine
+// destroyed. All scheduling lives on the non-templated `Activation` the engine
 // sees; nothing per-`T` reaches the scheduler.
 //
 // A `Coroutine` is lazy (suspends before its first statement) and is its own
@@ -252,7 +226,7 @@ class CompletionSlot<void> {
 template <class T>
 class Coroutine {
  public:
-  struct promise_type : PromiseBase, CompletionSlot<T> {
+  struct promise_type : Activation, CompletionSlot<T> {
     // Defaulted after the class rather than here: left implicit, the frame's
     // promise would be constructed and destroyed by code every unit stating a
     // body defines itself, which no statement that the family is already
@@ -266,9 +240,21 @@ class Coroutine {
 
     auto get_return_object() -> Coroutine {
       auto handle = std::coroutine_handle<promise_type>::from_promise(*this);
-      self = handle;
+      coroutine = handle;
       return Coroutine{handle};
     }
+
+    // On completion, control transfers to what continues this frame. The frame
+    // the language hands over is the one completing, so its promise is where
+    // that is read.
+    struct FinalAwaiter {
+      [[nodiscard]] static auto await_ready() noexcept -> bool;
+      [[nodiscard]] static auto await_suspend(
+          std::coroutine_handle<promise_type> completing) noexcept
+          -> std::coroutine_handle<>;
+      static void await_resume() noexcept;
+    };
+    static auto final_suspend() noexcept -> FinalAwaiter;
   };
 
   Coroutine() = default;
@@ -314,7 +300,7 @@ class Coroutine {
   }
 
   // The scheduling token for this frame -- what the engine queues and resumes.
-  [[nodiscard]] auto Token() const -> CoroutineHandle {
+  [[nodiscard]] auto Token() const -> Activation* {
     return handle_ ? &handle_.promise() : nullptr;
   }
 
@@ -343,5 +329,26 @@ Coroutine<T>::promise_type::promise_type() = default;
 
 template <class T>
 Coroutine<T>::promise_type::~promise_type() = default;
+
+template <class T>
+auto Coroutine<T>::promise_type::FinalAwaiter::await_ready() noexcept -> bool {
+  return false;
+}
+
+template <class T>
+auto Coroutine<T>::promise_type::FinalAwaiter::await_suspend(
+    std::coroutine_handle<promise_type> completing) noexcept
+    -> std::coroutine_handle<> {
+  return completing.promise().ContinuationAfterCompletion();
+}
+
+template <class T>
+void Coroutine<T>::promise_type::FinalAwaiter::await_resume() noexcept {
+}
+
+template <class T>
+auto Coroutine<T>::promise_type::final_suspend() noexcept -> FinalAwaiter {
+  return {};
+}
 
 }  // namespace lyra::runtime

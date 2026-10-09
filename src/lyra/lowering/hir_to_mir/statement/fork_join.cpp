@@ -145,11 +145,10 @@ auto LowerForkStmt(
               mir::CallExpr{
                   .callee = mir::Direct{.target = dispatch.callee},
                   .arguments = {runtime_id, branches_id}},
-          .type = dispatch.parent_waits ? builtins.machine_bool
-                                        : builtins.void_type});
+          .type = dispatch.parent_waits ? builtins.wait : builtins.void_type});
 
   if (dispatch.parent_waits) {
-    fork_block.AppendStmt(BuildWaitStmt(process.Owner(), fork_block, call_id));
+    fork_block.AppendStmt(BuildStopStmt(process.Owner(), fork_frame, call_id));
   } else {
     fork_block.AppendStmt(mir::ExprStmt{.expr = call_id});
   }
@@ -170,9 +169,9 @@ auto LowerForkStmt(
 }
 
 // LRM 9.6.1 `wait fork`: wait for the executing process's immediate children to
-// terminate. It lowers to a single runtime call taking only the runtime handle;
-// the child set is resolved at runtime from the executing process, so MIR
-// carries no operand. The same shape as `join`, and for the same reason.
+// terminate. The wait is built by a single runtime call taking only the runtime
+// handle; the child set is resolved at runtime from the executing process, so
+// MIR carries no operand. The same shape as `join`, and for the same reason.
 auto LowerWaitForkStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label)
     -> diag::Result<mir::Stmt> {
@@ -180,15 +179,15 @@ auto LowerWaitForkStmt(
   const auto& builtins = process.Owner().Unit().builtins;
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId call_id = block.exprs.Add(
+  const mir::ExprId wait_id = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kWaitFork},
                   .arguments = {runtime_id}},
-          .type = builtins.machine_bool});
-  mir::Stmt waited = BuildWaitStmt(process.Owner(), block, call_id);
+          .type = builtins.wait});
+  mir::Stmt waited = BuildStopStmt(process.Owner(), frame, wait_id);
   waited.label = std::move(label);
   return waited;
 }

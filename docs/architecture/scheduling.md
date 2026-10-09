@@ -24,6 +24,15 @@ scheduler holds the activation token and resumes the body; a `co_await` in the b
 again. Process state -- procedural locals, the implicit program counter -- lives in the coroutine
 frame, which the engine does not introspect.
 
+Every wait is part of that state too. It is built where what it waits for stops changing and enrols
+on what it watches for its whole life: once in the body's outermost block for a wait on storage that
+stays the same every time the body reaches the stop -- nearly every wait on storage -- and at the
+stop for one only the stop can name, a delay's amount or a fork's branches, or one that reads a
+variable the body declares. A stop only marks the activation as parked on it; an occurrence while
+one is parked wakes it, and any other occurrence is ignored. That is the C++ and Rust shape of the
+same thing -- an awaitable is a local of the coroutine, declared where its inputs are known, and a
+stop only awaits it. `decisions/a-wait-is-storage-of-its-activation.md` holds why.
+
 A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
 until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each
 completed task transfers control back to its enabler, so suspension flows through the whole enable
@@ -40,15 +49,16 @@ The engine does three things: it holds queues of runnable coroutine handles, it 
 parks each one on whichever queue the code it just ran asked for. It never inspects what a coroutine
 represents, why it suspended, or what it waits for. A coroutine frame is opaque to it.
 
-Construct semantics live entirely in what an execution waits for. Each suspending construct hands
-the execution one of those where it stops, and it reaches back to a small fixed set of
-construct-neutral scheduling verbs. What those verbs take is a **placement** -- which time slot, and
-which region of it -- because that is what an LRM 4.4 event is: a time, a region, and the thing to
-do there. A wait places its activation; a satisfied one wakes it into the Active region of the
-current slot; a spawning construct may adopt a coroutine and place it; and a construct may ask that
-the simulation stop. The verbs name _where and when_ a handle becomes runnable again, never _why_.
-Distinct constructs -- a delay, an event wait, a task enable -- bottom out in the same verbs, and
-the engine cannot tell them apart.
+Construct semantics live entirely in what an execution waits for. Each suspending construct builds
+one of those for the body to stop at, and the wait answers how a stop there carries on -- at once,
+on an occurrence, later in this time step in a named region, or at a time -- which the one stop
+arranges through a small fixed set of construct-neutral scheduling verbs. What those verbs take is a
+**placement** -- which time slot, and which region of it -- because that is what an LRM 4.4 event
+is: a time, a region, and the thing to do there. A stop places its activation; a satisfied wait
+wakes it into the Active region of the current slot; a spawning construct may adopt a coroutine and
+place it; and a construct may ask that the simulation stop. The verbs name _where and when_ a handle
+becomes runnable again, never _why_. Distinct constructs -- a delay, an event wait, a task enable --
+bottom out in the same verbs, and the engine cannot tell them apart.
 
 Taking the placement as an argument rather than encoding it in the verb's name is what keeps the set
 complete. A verb per combination covers points of that space and leaves the rest unreachable, and a
@@ -132,7 +142,9 @@ flowchart TB
 That one step is LRM 4.5's loop. The reference algorithm writes it as moving the earliest nonempty
 region's events into Active and running Active again; running the region where it stands reaches the
 same order, since a region later in the list is reached only once everything before it is empty, and
-whatever it schedules earlier is found first on the next look.
+whatever it schedules earlier is found first on the next look. The same loop moves time only to the
+earliest nonempty slot: a slot whose every event was taken back -- the delay of a process stopped or
+killed before its time came -- is passed over, and the time it named never becomes the time.
 
 Two consequences carry the weight. A process woken by a blocking write runs while the active set
 drains, before the NBA region commits the nonblocking writes issued beside it -- deferring it past

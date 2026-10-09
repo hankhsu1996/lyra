@@ -25,8 +25,8 @@ The concepts already exist and are already separate in the architecture:
 
 - `activation.md` owns the **activation** -- the in-flight execution instance's control face (the
   token the scheduler holds, the completion slot, the ownership/continuation/cancellation relations,
-  the lineage, the registration set). It is backend-neutral, and its "Does Not Own" is explicit that
-  storage layout and frame allocation are below it.
+  the lineage, the memberships that can reach it). It is backend-neutral, and its "Does Not Own" is
+  explicit that storage layout and frame allocation are below it.
 - `lifetime.md` owns the **activation frame** -- the Lyra-owned storage holding the language-visible
   values that live with an activation across a suspension. Same lifetime as the activation,
   different responsibility, realized per backend.
@@ -43,10 +43,10 @@ its own name.
   outlives the frame it once held -- the code already does this. `RuntimeProcess` is not a
   value-storage concept.
 
-- **"activation" names the control identity only.** The scheduler token (a `PromiseBase*`, the field
-  `Registration::activation`) is the activation reached through its token, and `Scope::Activate` is
-  the elaboration phase that creates processes (`elaboration_lifecycle.md`). These uses are correct
-  and are left as they are. The word does not name any value storage.
+- **"activation" names the control identity only.** The scheduler token (an `Activation*`, which a
+  membership names as its waiter) is the activation reached through its token, and `Scope::Activate`
+  is the elaboration phase that creates processes (`elaboration_lifecycle.md`). These uses are
+  correct and are left as they are. The word does not name any value storage.
 
 - **"activation frame" is the architecture's neutral name; the execution backend's type is not
   one.** The storage a value-typed local needs to survive a suspension is the activation frame

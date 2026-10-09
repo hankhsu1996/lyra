@@ -447,6 +447,8 @@ class MirDumper {
                   return "RuntimeLibrary(Observation)";
                 case RuntimeLibraryKind::kReadReport:
                   return "RuntimeLibrary(ReadReport)";
+                case RuntimeLibraryKind::kWait:
+                  return "RuntimeLibrary(Wait)";
                 case RuntimeLibraryKind::kObjectDefinition:
                   return "RuntimeLibrary(ObjectDefinition)";
                 case RuntimeLibraryKind::kDpiBitBuffer:
@@ -883,8 +885,7 @@ class MirDumper {
                   "AwaitExpr execution=Expr[{}]", a.execution.value);
             },
             [](const WaitExpr& w) -> std::string {
-              return std::format(
-                  "WaitExpr registration=Expr[{}]", w.registration.value);
+              return std::format("WaitExpr park=Expr[{}]", w.park.value);
             },
             [](const VectorGetExpr& g) -> std::string {
               return std::format(

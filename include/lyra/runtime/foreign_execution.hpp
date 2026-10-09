@@ -105,7 +105,7 @@ class ForeignExecutionGuard {
 // two stretches of the body the vehicle yields to the scheduler and the body
 // continues when the scheduler drives it again (LRM 35.5.1.1); a body that
 // consumes no simulation time is done on the first resume.
-void DriveOnForeignStack(CoroutineHandle frame);
+void DriveOnForeignStack(Activation* frame);
 
 // Carries a DPI import task's foreign call (LRM 35.5.2) on `fiber`, entered on
 // the process the run is currently executing, with `continuation` the frame to
@@ -114,7 +114,7 @@ void DriveOnForeignStack(CoroutineHandle frame);
 // call is stated here and nowhere else, because a body compiled as a coroutine
 // and one compiled to an external entry both reach the boundary through this.
 auto EnterForeignTask(
-    RuntimeEffects& effects, CoroutineHandle continuation,
+    RuntimeEffects& effects, Activation* continuation,
     std::unique_ptr<ForeignExecution> fiber) -> bool;
 
 // A DPI import task's foreign-call step (LRM 35.5.2): runs `foreign_call` on a

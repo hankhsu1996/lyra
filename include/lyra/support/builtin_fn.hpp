@@ -325,7 +325,7 @@ enum class BuiltinFn : std::uint16_t {
   // the object travels with the reference, and the property is named as the
   // part the call reaches.
   kReferProperty,
-  // What a wait on the storage a reference names registers on: whatever a
+  // What a wait on the storage a reference names enrols on: whatever a
   // write through the reference is told to -- the variable, or the object a
   // property belongs to (LRM 13.5.2, 9.4.2) -- as an erased pointer, the form
   // an object's event source takes too.
@@ -375,9 +375,9 @@ enum class BuiltinFn : std::uint16_t {
   // execution that waits for the event and then applies it. `RunDetached` takes
   // that execution as a coroutine and runs it apart from every lineage -- the
   // standard makes no process of the update, so `wait fork` does not wait for
-  // it and `disable fork` does not reach it -- and `ResumeInNbaRegion` is how
-  // it reaches the region the update is due in (LRM 4.4.2.4) once the event has
-  // named the slot.
+  // it and `disable fork` does not reach it -- and `ResumeInNbaRegion` is the
+  // wait it stops at to reach the region the update is due in (LRM 4.4.2.4)
+  // once the event has named the slot.
   kRunDetached,
   kResumeInNbaRegion,
   kSubmitPostponed,
@@ -536,9 +536,10 @@ enum class BuiltinFn : std::uint16_t {
   kReadMemWithin,
   kWriteMem,
   kWriteMemWithin,
-  // LRM 9.4.1 `#N`. The runtime free functions the scheduler suspends on. Each
-  // call takes the runtime handle, the amount of time the design asked to wait,
-  // and the calling scope's time unit and precision powers; the runtime rounds
+  // LRM 9.4.1 `#N`. The runtime free functions answering the wait of a delay.
+  // Each call takes the runtime handle, the amount of time the design asked to
+  // wait, and the calling scope's time unit and precision powers; the runtime
+  // rounds
   // that amount to the scope's precision (LRM 3.14.1) and scales it to the
   // design-global tick (LRM 3.14.3). There are two because the language gives a
   // program two ways to write such an amount and reads them differently -- an
@@ -559,22 +560,24 @@ enum class BuiltinFn : std::uint16_t {
   kObservationOfValue,
   kObservationOfValueQualified,
   kObservationQualified,
-  // Building an observation evaluates nothing. Arming takes what its
-  // expression is worth where the wait begins; asking whether a candidacy was
-  // an event evaluates it again, by the waiting process for a wait that
-  // process decides (LRM 4.5), and answers one or zero.
-  kObservationArm,
+  // Building an observation evaluates nothing. Asking whether a candidacy was
+  // an event evaluates it, by the waiting process for a wait that process
+  // decides (LRM 4.5), and answers one or zero.
   kObservationFires,
-  // LRM 9.4.2 / 9.4.2.2 value-change wait. The runtime free function a wait on
-  // a signal suspends on -- an `@(...)`, an `@*`, an `always_comb` /
-  // `always_latch` body, a continuous assignment. The call takes the runtime
-  // handle and the trigger set, one entry per watched leaf, and answers whether
-  // the caller must give up control; the execution continues when a change to
-  // one of them is an event for the wait.
-  kWaitAny,
+  // LRM 9.4.2 / 9.4.2.2 value-change wait -- an `@(...)`, an `@*`, an
+  // implicit list, a continuous assignment. The wait is built on one trigger
+  // per watched leaf, or on the implicit list a report settled (LRM
+  // 9.2.2.2.1), where what it watches stops changing, and held across the
+  // body's stops there. Each answers the wait.
+  kWaitOn,
+  kWaitOnImplicitList,
+  // LRM 9.4 every stop: it takes the runtime handle and the wait the body holds
+  // -- whichever construct built it -- and answers whether the caller must give
+  // up control; the execution continues when what the wait waits for happens.
+  kParkAt,
   // LRM 9.4.2 / 9.4.3 the waits on what an evaluation the process made
-  // reached, each taking the runtime handle and one read report per expression
-  // evaluated. The process decides these by evaluating again, so an event
+  // reached, each taking one read report per expression evaluated and built at
+  // the stop. The process decides these by evaluating again, so an event
   // control resumes on every candidacy and asks its observations, which it
   // also hands over for a restart (LRM 9.7); a `wait (cond)` resumes for its
   // loop to test the condition, which is also what a restart does, since a
@@ -582,21 +585,19 @@ enum class BuiltinFn : std::uint16_t {
   // what its reports hold.
   kWaitRecollecting,
   kWaitUntil,
-  // LRM 9.2.2.2.1 the wait of an `always_comb` / `always_latch` whose implicit
-  // list was collected once into a report, taking the runtime handle and that
-  // report: the same leaves every time the procedure finishes its body.
-  kWaitOnReport,
   // What an evaluation states the places it reached in (LRM 9.4.2): an empty
-  // report; a place it reads and the bits it reads there; a place reached
-  // through a handle; every object at once; the bracket around a call made on
-  // a handle, while which everything reported is reached through it; a place
-  // written and its bits; settling what was reported as a procedure's
-  // implicit list (LRM 9.2.2.2.1), which keeps only what was read directly,
-  // less what was written; the bracket a function takes around reporting into
-  // it, which answers whether to go on at all; and whether the function,
-  // having reported, runs -- the one the evaluation called does. A function
-  // reaching a read no leaf watches yet refuses the report instead.
+  // report, or one no evaluation makes, a procedure's implicit list, whose
+  // calls report and never run; a place it reads and the bits it reads there;
+  // a place reached through a handle; every object at once; the bracket around
+  // a call made on a handle, while which everything reported is reached
+  // through it; a place written and its bits; settling what was reported as a
+  // procedure's implicit list (LRM 9.2.2.2.1), which keeps only what was read
+  // directly, less what was written; the bracket a function takes around
+  // reporting into it, which answers whether to go on at all; and whether the
+  // function, having reported, runs -- the one an evaluation called does. A
+  // function reaching a read no leaf watches yet refuses the report instead.
   kReadReportEmpty,
+  kReadReportForImplicitList,
   kReadReportAdd,
   kReadReportAddThroughHandle,
   kReadReportAddEveryObject,
@@ -674,7 +675,7 @@ enum class BuiltinFn : std::uint16_t {
   // being one.
   kViewOf,
   // What reports a change to an object's properties (LRM 9.4.2): the event
-  // source a wait reaching the object subscribes to; a write into its
+  // source a wait reaching the object enrols on; a write into its
   // properties, opened on the object alone, open while the full-expression
   // doing it lasts and telling the object when it ends; and the object a write
   // answers, which is how a dereference of the write is reached below MIR.
@@ -682,22 +683,22 @@ enum class BuiltinFn : std::uint16_t {
   kOpenObjectWrite,
   kWrittenObject,
   // Fork-join branch dispatch. Each entry spawns every branch as its own
-  // coroutine and yields the parent's wait shape per LRM 9.3.2: `kForkWaitAll`
-  // for `join` (resume after the last branch), `kForkWaitFirst` for
-  // `join_any` (resume after the first), `kSpawnAll` for `join_none` (no
-  // wait; the call's result is `void` so the caller never awaits it). The
-  // mode lives in the callee identity rather than as an enum operand so MIR
-  // never carries a join-mode datum and the call's result type is what
-  // selects await vs not. Each takes the runtime handle followed by a
-  // variadic branch list -- the runtime entry is a variadic template that
-  // assembles the move-only branches into the internal coroutine vector.
+  // coroutine and answers per LRM 9.3.2: `kForkWaitAll` for `join` (the wait
+  // for the last branch), `kForkWaitFirst` for `join_any` (the wait for the
+  // first), `kSpawnAll` for `join_none` (no wait; the call's result is `void`
+  // so the caller never stops). The mode lives in the callee identity rather
+  // than as an enum operand so MIR never carries a join-mode datum and the
+  // call's result type is what selects whether the caller stops. Each takes the
+  // runtime handle followed by a variadic branch list -- the runtime entry is a
+  // variadic template that assembles the move-only branches into the internal
+  // coroutine vector.
   kForkWaitAll,
   kForkWaitFirst,
   kSpawnAll,
-  // LRM 9.6.1 `wait fork`: suspends the executing process until every immediate
-  // child it spawned has terminated. Takes only the runtime handle; the child
-  // set is the executing process's, read at runtime. The call's result is
-  // `void` and the caller awaits it, the same await shape as `join`.
+  // LRM 9.6.1 `wait fork`: the wait for every immediate child the executing
+  // process spawned to have terminated. Takes only the runtime handle; the
+  // child set is the executing process's, read at runtime. The caller stops at
+  // what it answers, the same shape as `join`.
   kWaitFork,
   // LRM 9.6.3 `disable fork`: terminates every descendant of the executing
   // process, including the descendants of subprocesses that have already
@@ -848,9 +849,9 @@ enum class BuiltinFn : std::uint16_t {
   kDpiOpenArrayHandle,
   kDpiOpenArrayValue,
   // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose
-  // native stack can be parked while simulation time advances. It is the
-  // registration the import's suspension is preceded by, so it answers whether
-  // the caller must park at all, exactly as a delay does. The call itself is
+  // native stack can be parked while simulation time advances. It is where the
+  // import's caller stops, so it answers whether the caller must give up
+  // control, exactly as stopping at a wait does. The call itself is
   // `args[1]`, a closure of the whole boundary; a foreign task may consume time
   // by calling back an exported task that suspends, and the fiber is what lets
   // that suspension cross a native stack the runtime does not own. A free
@@ -1102,13 +1103,10 @@ struct RuntimeEntry {
   // where there is none, so a call site composing the operands has to know
   // whether to supply it and only the entry knows.
   bool takes_the_runtime_handle = false;
-  // Whether a call to the entry parks the caller until something other than
-  // the call settles, so a statement calling it awaits (LRM 9.7 `await`, LRM
-  // 9.4 a delay, LRM 9.4.2 a value-change wait). Distinct from a callee that
-  // completes as a coroutine, which the call's own type states: the entry
-  // answers with an ordinary value and nothing about that value says the
-  // caller stopped.
-  bool parks_the_caller = false;
+  // Whether the entry answers a wait its caller then stops at, whatever the
+  // source-level call it lowers yields (LRM 9.7 `await`, a void task). The
+  // entry builds what is waited for; the stop is the caller's.
+  bool answers_a_wait = false;
   // How a call to the entry ends. An entry can depart unless its definition
   // cannot raise a departure: a run-time error it raises is a departure too,
   // and it may run the design's own code, which a `disable` anywhere reaches

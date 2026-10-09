@@ -5,10 +5,8 @@
 #include <limits>
 
 #include "lyra/base/time.hpp"
-#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
@@ -54,25 +52,16 @@ auto ScaleToGlobalTicks(
   return ScaleByPowerOfTen(ticks, from_power - global_power);
 }
 
-class DelayWait : public Wait {
+// A delay of some time: the process resumes at the deadline it was given, and
+// started again after being stopped it still resumes there -- or at once, where
+// the deadline has passed meanwhile (LRM 9.7).
+class DelayAwaiter final : public Awaiter {
  public:
-  DelayWait(SimTime deadline, Region region)
-      : deadline_(deadline), region_(region) {
+  explicit DelayAwaiter(SimTime deadline) : deadline_(deadline) {
   }
 
-  auto Begin(RuntimeEffects& services, CoroutineHandle leaf)
-      -> WaitOutcome override {
-    services.Schedule(deadline_, region_, leaf);
-    return WaitOutcome::kBlocked;
-  }
-
-  auto Again(RuntimeEffects& services, CoroutineHandle leaf)
-      -> WaitOutcome override {
-    if (services.Now() >= deadline_) {
-      return WaitOutcome::kSatisfied;
-    }
-    services.Schedule(deadline_, Region::kActive, leaf);
-    return WaitOutcome::kBlocked;
+  auto Begin() -> Resumption override {
+    return AtTime{.when = deadline_};
   }
 
   // A delay waits for time, not for a condition, so resuming from it is not a
@@ -83,17 +72,36 @@ class DelayWait : public Wait {
 
  private:
   SimTime deadline_;
-  Region region_;
 };
 
-// Waits `ticks` steps of `precision_power`, answering whether the caller must
-// give up control. The two delay entries meet here.
+// A `#0` delay: the process gives way to everything already active in this
+// time step and resumes in the Inactive region (LRM 4.4.2.3, 9.4.1). Started
+// again after being stopped, its time has already come.
+class ZeroDelayAwaiter final : public Awaiter {
+ public:
+  auto Begin() -> Resumption override {
+    return LaterInThisTimeStep{.region = Region::kInactive};
+  }
+
+  auto Again() -> Resumption override {
+    return WithoutStopping{};
+  }
+
+  // Waiting for no time is still waiting for time (LRM 12.4.2.1).
+  [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
+    return false;
+  }
+};
+
+// A wait of `ticks` steps of `precision_power` from now. The two delay entries
+// meet here.
 auto DelayForTicks(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
-    -> bool {
-  return runtime.CurrentProcess().ParkOn<DelayWait>(
-      runtime, DelayDeadline(runtime, ticks, precision_power),
-      ticks == 0 ? Region::kInactive : Region::kActive);
+    -> Wait {
+  if (ticks == 0) {
+    return MakeWait<ZeroDelayAwaiter>();
+  }
+  return MakeWait<DelayAwaiter>(DelayDeadline(runtime, ticks, precision_power));
 }
 
 }  // namespace
@@ -141,7 +149,7 @@ auto DelayDeadline(
 auto Delay(
     RuntimeEffects& runtime, const value::PackedArray& duration,
     const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> bool {
+    const value::PackedArray& precision_power) -> Wait {
   const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
   const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
   return DelayForTicks(
@@ -151,7 +159,7 @@ auto Delay(
 auto DelayReal(
     RuntimeEffects& runtime, const value::Real& duration,
     const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> bool {
+    const value::PackedArray& precision_power) -> Wait {
   const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
   const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
   return DelayForTicks(

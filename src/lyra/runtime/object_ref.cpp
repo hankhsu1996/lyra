@@ -35,17 +35,17 @@ auto GcObject::EventSource() -> Observable& {
 // object is watched while one of them is, whether or not it has a source of
 // its own.
 auto GcObject::Watched() const -> bool {
-  return (event_source_ != nullptr && event_source_->HasWaiter()) ||
-         current_runtime().EveryObject().HasWaiter();
+  return (event_source_ != nullptr && event_source_->HasMembers()) ||
+         current_runtime().EveryObject().HasMembers();
 }
 
 void GcObject::PublishChange() {
   RuntimeEffects& runtime = current_runtime();
-  if (event_source_ != nullptr && event_source_->HasWaiter()) {
-    runtime.WakeWaitersOf(*event_source_, Change::Whole());
+  if (event_source_ != nullptr && event_source_->HasMembers()) {
+    runtime.WakeParkedOn(event_source_->Members(), Change::Whole());
   }
-  if (Observable& every = runtime.EveryObject(); every.HasWaiter()) {
-    runtime.WakeWaitersOf(every, Change::Whole());
+  if (Observable& every = runtime.EveryObject(); every.HasMembers()) {
+    runtime.WakeParkedOn(every.Members(), Change::Whole());
   }
 }
 

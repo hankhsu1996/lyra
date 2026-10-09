@@ -70,6 +70,10 @@ auto CallableBindings::Declare(BindingOriginId origin, mir::TypeId type)
   return id;
 }
 
+auto CallableBindings::RootBlock() const -> mir::Block& {
+  return code_->Body();
+}
+
 auto CallableBindings::DeclareAnonymous(mir::TypeId type) -> mir::LocalId {
   return code_->AddLocal(type);
 }

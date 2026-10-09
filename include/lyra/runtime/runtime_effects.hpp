@@ -2,10 +2,12 @@
 
 #include <cstdint>
 #include <exception>
+#include <memory>
 #include <string_view>
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
+#include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/running_state.hpp"
@@ -49,7 +51,7 @@ class RuntimeEffects {
   // LRM 4.4: place `activation` in `region` of the time slot at `when`, to be
   // resumed when that region runs. Naming the placement is the whole of what a
   // suspending construct tells the engine; nothing here says what it waits for.
-  void Schedule(SimTime when, Region region, CoroutineHandle activation);
+  void Schedule(SimTime when, Region region, Activation* activation);
 
   // The wait that parked `activation` is satisfied, so it becomes runnable in
   // the Active region of the current slot (LRM 4.5). Ending the wait belongs to
@@ -57,14 +59,21 @@ class RuntimeEffects {
   // `@(a or b)`, the event it waited for -- may fire it a second time, and a
   // suspend in the woken-but-not-yet-resumed window then saves a runnable
   // disposition rather than a blocked one.
-  void Wake(CoroutineHandle activation);
+  void Wake(Activation* activation);
 
-  // Something has happened at `observable` -- a cell took a new value, a named
-  // event was triggered. Every activation waiting there that it is an event for
-  // becomes runnable, and the rest stay parked. `change` bounds which bits the
-  // occurrence could have reached, and bounds nothing where it has no bits to
-  // speak of.
-  void WakeWaitersOf(Observable& observable, const Change& change);
+  // Something has happened where the waits enrolled on `members` watch -- a
+  // cell took a new value, a named event was triggered, a process terminated.
+  // `change` bounds which bits the occurrence could have reached, and bounds
+  // nothing where it has no bits to speak of. A membership whose bits it shows
+  // untouched is passed over, and every other one asks its awaiter what is
+  // parked there now and whether this was an event for it: an event control
+  // whose evaluation only reads storage by what its expression is worth now, a
+  // wait for a state by whether that state holds, and every other wait by
+  // having been reached at all, its process deciding once it runs (LRM 4.5,
+  // 9.2.2.2.1, 9.4.2, 15.5.1). Waking only queues and leaves every membership
+  // where it is, so each activation is woken as it is found.
+  void WakeParkedOn(
+      IntrusiveList<WaitMembership>& members, const Change& change);
 
   // What every object's change also reaches: a wait whose expression reads an
   // object no report could follow is reevaluated whenever a property of any
@@ -126,8 +135,8 @@ class RuntimeEffects {
       std::string_view task, const value::String& origin,
       const value::PackedArray& level);
   // Adopts `coroutine` as a spawned child of the executing process's
-  // lineage (LRM 9.5) and schedules it.
-  void Spawn(Coroutine<void> coroutine);
+  // lineage (LRM 9.5), schedules it, and answers the process it now is.
+  auto Spawn(Coroutine<void> coroutine) -> std::shared_ptr<RuntimeProcess>;
 
   // Takes `coroutine` on as an execution of no lineage and schedules it: a
   // deferred effect the standard makes no process of, so nothing that names

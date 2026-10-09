@@ -25,10 +25,16 @@ constexpr std::int64_t kReportDepthBound = 64;
 
 }  // namespace
 
-ReadReport::ReadReport() = default;
+ReadReport::ReadReport(bool an_evaluation_reports)
+    : an_evaluation_reports_(an_evaluation_reports) {
+}
 
 auto ReadReport::Empty() -> ReadReport {
-  return ReadReport{};
+  return ReadReport{true};
+}
+
+auto ReadReport::ForImplicitList() -> ReadReport {
+  return ReadReport{false};
 }
 
 ReadReport::ReadReport(ReadReport&&) noexcept = default;
@@ -191,7 +197,7 @@ void ReadReport::Leave() {
 // A report a function makes nests in the report of whatever called it, so the
 // call the evaluation made is the one that leaves nothing open.
 auto ReadReport::RunsTheBody() const -> std::int64_t {
-  return depth_ == 0 ? 1 : 0;
+  return an_evaluation_reports_ && depth_ == 0 ? 1 : 0;
 }
 
 void RefuseReport(std::string_view why) {

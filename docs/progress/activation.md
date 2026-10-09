@@ -8,8 +8,8 @@ The runtime already realizes the load-bearing core of the contract: an activatio
 frame; the scheduler holds a payload-neutral activation token and never sees the completion type; a
 suspending callable's result type is `Coroutine<T>` and a typed await consumes its value; a spawned
 process is attached to its spawner's lineage, which is both the ownership and the
-cancellation-domain relation and outlives the execution it named while any descendant is live; and
-its outcome is aggregated by a join state. The gaps below are where the current shape is still wrong
+cancellation-domain relation and outlives the execution it named while any descendant is live; and a
+join waits on each branch's termination. The gaps below are where the current shape is still wrong
 or incomplete relative to the contract.
 
 ## Items
@@ -23,58 +23,54 @@ or incomplete relative to the contract.
       process node, read by `status()` / `await()`, because a process killed while parked is
       released without its slot ever being read.
 
-- [x] **Registrations are revocable.** Contract invariant 4: every external reference to a parked
-      activation -- a region queue slot, a delay slot, an event waiter entry, a value-change
-      subscription, a join aggregator entry -- is a revocable registration the activation owns, and
-      a frame is destroyed only after the registration set is empty. Every one of those is now the
-      same thing: a membership recorded once, owned by the activation and merely linked by the
-      target. Because the relation has a single record rather than a copy on each side, revoking is
-      a detach -- neither end searches the other, and neither can hold a belief the other has
-      abandoned. Releasing an activation detaches every membership it still holds, so nothing --
-      queue, delay slot, waiter list, subscription, join condition -- is left able to resume it. No
-      new registration kind may be added that an activation cannot revoke, and adding one means
-      giving a target a list, not teaching the scheduler a new way to be searched.
+- [x] **Every reference to a parked activation ends with its owner.** Contract invariant 4: every
+      external reference to a parked activation -- a region queue, a delay slot, an event, a value
+      change, a process's termination, a disable target -- is a membership recorded once, owned by
+      what shares its life and merely linked by the target: the activation for its queue place, the
+      wait its frame holds for what that wait watches, the process for its being inside a target.
+      Because the relation has a single record rather than a copy on each side, leaving is a detach
+      -- neither end searches the other, and neither can hold a belief the other has abandoned.
+      Releasing an activation releases its frame, and with it every wait it held and its queue
+      place, so nothing is left able to resume it; waking only queues, so a bulk kill can wake as it
+      goes even where a later step releases one it woke. Adding a kind of wait means giving a target
+      a list, not teaching the scheduler a new way to be searched.
 
 - [x] **Cancellation over the dynamic domain settles a reader.** Contract: a cancellation domain --
       a relation distinct from ownership and continuation -- decides which activations are cancelled
-      together; disabling revokes every registration, cancels the owned descendants, then releases
-      the frame. Current shape: `disable fork` (LRM 9.6.3) and `kill` (LRM 9.7) both walk the
-      process lineage, which is that domain, and terminate the whole descendant subtree -- including
-      the descendants of subprocesses that have already terminated. Both funnel through one terminal
-      transition: each terminated node is marked KILLED and its frame released, and releasing a
-      frame revokes its registrations, so nothing -- queue, waiter, subscription, or a handle held
-      past the kill -- is left able to resume it.
+      together; disabling takes each activation off whatever could resume it, cancels the owned
+      descendants, then releases the frame. Current shape: `disable fork` (LRM 9.6.3) and `kill`
+      (LRM 9.7) both walk the process lineage, which is that domain, and terminate the whole
+      descendant subtree -- including the descendants of subprocesses that have already terminated.
+      Both funnel through one terminal transition: each terminated node is marked KILLED and its
+      frame released, and releasing a frame ends every wait it held and its queue place, so nothing
+      -- queue, wait, or a handle held past the kill -- is left able to resume it.
 
       Cancellation now has a reader. `process::status()` reports a killed process as KILLED through a
       handle that outlives it, and `process::await()` (LRM 9.7) suspends a process until another
       terminates -- normally or forcibly -- then reads that outcome. KILLED is realized as a
       persistent fact of the process node, a terminal cause distinguishing a finished process from a
       killed one, not as a `Cancelled` value in the completion slot: a cancelled activation is
-      released while parked, so its slot is never read. The contract's three-way completion slot
-      (`Succeeded` / `Faulted` / `Cancelled`) should be revised accordingly -- cancellation is a
-      lifetime event observed through status / await, not a third terminal value the consumer reads
-      from the slot.
+      released while parked, so its slot is never read. Cancellation is a lifetime event observed
+      through status / await, not a third terminal value the consumer reads from the slot.
 
-      One gap: the killed subtree must be off the calling process's own execution stack, because
-      terminating a process releases (destroys) its frame and a running body cannot destroy the frame
-      it executes in. Killing the calling process or one of its ancestors is rejected for now.
-      Supporting it needs a deferred safe-boundary termination -- mark the target, unwind the calling
-      body to the scheduler's resume boundary, and tear the frame down there -- rather than the
-      synchronous release used for an off-stack subtree.
+      Killing the calling process or one of its ancestors is a deferred safe-boundary termination: a
+      running body cannot destroy the frame it executes in, so the target is marked, the calling body
+      unwinds to the scheduler's resume boundary, and the frame is torn down there, while every
+      off-stack subtree is released at once.
 
 - [x] **Pause and resume settle on the disposition model.** `process::suspend()` / `resume()` (LRM
-      9.7) pause and restart a process. A blocked activation holds what it is waiting for, distinct
-      from where that wait is enrolled right now: a suspend revokes the enrolment and keeps what is
-      being waited for, and a resume waits for the same thing afresh -- enrolling again, or running
-      in the current time step where it has already happened. Each suspending construct supplies
-      that uniformly, so its own resume rule reads in one place: an event control or named event
-      subscribes again (an occurrence during the stop is missed), a delay compares the absolute
-      moment it is waiting for (one that has passed continues at once), a `wait` condition is read
-      by the body's own loop (a condition that became true during the stop continues at once), and a
-      monotonic condition (join, wait fork, await) is re-checked. Holding nothing is how an
-      activation that was already runnable says it has nothing left to wait for. `status()` reports
-      SUSPENDED. The four positions run on both backends. See the activation contract and the
-      waiting-is-an-operation decision.
+      9.7) pause and restart a process. A blocked activation is parked on a wait its frame holds,
+      whose memberships stand for the wait's whole life: a suspend takes the activation off that
+      wait and keeps the wait, and a resume asks it afresh -- parking there again, or running in the
+      current time step where what it waits for has already happened. Each suspending construct
+      supplies that uniformly, so its own resume rule reads in one place: an event control or named
+      event measures from what it is worth again (an occurrence during the stop is missed), a delay
+      compares the absolute moment it is waiting for (one that has passed continues at once), a
+      `wait` condition is read by the body's own loop (a condition that became true during the stop
+      continues at once), and a monotonic condition (join, wait fork, await) is re-checked. Holding
+      nothing is how an activation that was already runnable says it has nothing left to wait for.
+      `status()` reports SUSPENDED. The four positions run on both backends. See the activation
+      contract and the waiting-is-an-operation decision.
 
 - [x] **Disable of a named block or task.** `disable` (LRM 9.6.2) selects its target by static block
       or task identity and reaches every execution currently inside it, without regard to the
@@ -125,9 +121,9 @@ or incomplete relative to the contract.
 
 - [ ] **Runtime vocabulary trails the model.** The execution code names the activation and its core
       in coroutine-implementation terms; the contract's vocabulary is activation / completion slot /
-      cancellation domain / join state, with the coroutine mechanics as one realization. The
-      execution-state axis is named for the model -- a process's states are execution states, and
-      its end state is outcome-neutral termination rather than "completed" -- and the terminal
-      outcome is now a named completion slot; the join-state vocabulary still trails. Rename the
-      rest where it clarifies the boundary between execution control and completion. Low priority;
+      cancellation domain / join, with the coroutine mechanics as one realization. The activation,
+      its execution-state axis -- a process's states are execution states, and its end state is
+      outcome-neutral termination rather than "completed" -- the terminal outcome's completion slot,
+      and the join as a wait on its branches' termination are named for the model. Rename the rest
+      where it clarifies the boundary between execution control and completion. Low priority;
       unblocked.

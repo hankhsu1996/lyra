@@ -8,8 +8,11 @@
 
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -49,15 +52,39 @@ void AppendRuntimeEffectStmt(
 }
 
 auto BuildWaitStmt(
-    const UnitLowerer& unit_lowerer, mir::Block& block,
-    mir::ExprId registration) -> mir::Stmt {
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId park)
+    -> mir::Stmt {
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::Expr{
-                  .data = mir::WaitExpr{.registration = registration},
+                  .data = mir::WaitExpr{.park = park},
                   .type = unit_lowerer.Unit().builtins.void_type})}};
+}
+
+auto BuildParkStmt(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::LocalId wait)
+    -> mir::Stmt {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  const mir::ExprId wait_ptr = block.exprs.Add(
+      mir::MakeAddressOfExpr(
+          block.exprs.Add(mir::MakeLocalRefExpr(wait, unit.builtins.wait)),
+          unit.builtins.wait_ptr));
+  const mir::ExprId call_id = block.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{.target = support::BuiltinFn::kParkAt},
+          {runtime_id, wait_ptr}, unit.builtins.machine_bool));
+  return BuildWaitStmt(unit_lowerer, block, call_id);
+}
+
+auto BuildStopStmt(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId built)
+    -> mir::Stmt {
+  return BuildParkStmt(
+      unit_lowerer, *frame.current_block, DeclareLocal(frame, built));
 }
 
 auto BuildAwaitStmt(

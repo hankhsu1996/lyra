@@ -38,18 +38,20 @@ ordinary runtime calls that precede the terminator, so a delay, an event control
 differ only in those calls and share one suspend. This keeps LIR free of a source-language timing
 concept (`lir.md`): a suspend is a generic CFG edge, an event control is a runtime call.
 
-### D3. A wakeup registration is one runtime call per construct, and it is token-implicit
+### D3. A wait is built by one runtime call per construct, and stopping at it is token-implicit
 
-Each suspending construct registers its wakeup through one runtime call named for the construct -- a
+Each suspending construct builds its wait through one runtime call named for the construct -- a
 delay, an event control, a level wait -- not for the engine verb it happens to reach. A delay is a
-single registration even though a zero delay enqueues on the inactive region while a positive one
-enqueues at a future time; which construct-neutral verb the engine ends up running is the runtime's
-business, not a distinction the boundary exposes.
+single call even though a zero delay resumes in the inactive region while a positive one resumes at
+a future time; which construct-neutral verb the engine ends up running is the runtime's business,
+not a distinction the boundary exposes. The wait is held in a local of the body where what it waits
+for stops changing, and stopping at it is one construct-neutral call every stop shares, taking that
+local (`a-wait-is-storage-of-its-activation.md`); the construct lives only in the first.
 
-The registration acts on the process the runtime currently has running, so no activation token
-appears in LIR or in generated code. The runtime invariant is that the running-process context
-identifies this process for the whole time generated code is executing, so a registration call
-inside a body reaches the right token.
+The stop acts on the process the runtime currently has running, so no activation token appears in
+LIR or in generated code. The runtime invariant is that the running-process context identifies this
+process for the whole time generated code is executing, so a stop inside a body reaches the right
+token.
 
 ### D4. The LLVM backend states where a body suspends; LLVM's coroutine passes derive how it resumes
 
@@ -115,11 +117,11 @@ the same way, and an export's entry, which lands every departure, would stop it.
 1. Coroutine-ness is a type. No flag on a function, a terminator, or a node restates it, and no
    backend infers it from the presence of a suspension.
 
-2. A suspend edge registers nothing. Every wakeup source is registered by a runtime call preceding
-   the terminator; the terminator is a pure control edge to the resume block.
+2. A suspend edge arranges nothing. How the execution resumes is arranged by the runtime call that
+   stops it, preceding the terminator; the terminator is a pure control edge to the resume block.
 
-3. No activation token appears in LIR or in generated code. Registration verbs act on the running
-   process, which the runtime identifies for the whole time generated code runs.
+3. No activation token appears in LIR or in generated code. Stopping acts on the running process,
+   which the runtime identifies for the whole time generated code runs.
 
 4. The emitter does not synthesize a coroutine's frame, resume state, or spills. It emits coroutine
    intrinsics; the coroutine passes derive the resumable form.
@@ -156,9 +158,10 @@ the same way, and an export's entry, which lands every departure, would stop it.
 ## Scope and consequences
 
 - In scope: delay (`#N`, `#0`), event control (`@(...)`), level wait (`wait (cond)`), and
-  named-event wait (`@e`). They differ only in the registration calls that precede an identical
-  suspend edge. A level wait lowers to a re-check loop -- evaluate, continue if true, else register
-  and suspend, then re-evaluate on resume -- so invariant 2 holds on each iteration.
+  named-event wait (`@e`). They differ only in the call that builds the wait before an identical
+  stop and suspend edge. A level wait lowers to a re-check loop -- evaluate, continue if true, else
+  build the wait on what the evaluation reached and stop at it, then re-evaluate on resume -- so
+  invariant 2 holds on each iteration.
 
 - **A value that must outlive a suspension is not a coroutine question.** The coroutine passes
   persist a body's slots across a suspension, but a value on this backend is an opaque handle into
@@ -185,8 +188,8 @@ the same way, and an export's entry, which lands every departure, would stop it.
   physical realization below LIR.
 - `architecture/backend_contract.md` -- a backend entry is a mechanical function of one node; a
   decision that changes the emitted shape is a design failure upstream.
-- `architecture/scheduling.md` -- the engine as a construct-neutral mechanism and the verbs a wakeup
-  registration bottoms out on.
+- `architecture/scheduling.md` -- the engine as a construct-neutral mechanism and the verbs a stop
+  bottoms out on.
 - `architecture/activation.md` -- the activation and the payload-neutral token the scheduler holds.
 - [jit-value-realization](jit-value-realization.md) -- the opaque-handle baseline, and the
   cross-suspension value lifetime it leaves open.

@@ -53,6 +53,7 @@
 #include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/simulation_entry.hpp"
+#include "lyra/runtime/value_change_wait.hpp"
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/event_edge.hpp"
@@ -153,26 +154,6 @@ class GeneratedBody {
   GeneratedCoroutine frame_;
 };
 
-// Reaches the running coroutine's own record without suspending, which is how a
-// body names storage belonging to the execution rather than to itself.
-struct RunningExecution {
-  PromiseBase* promise = nullptr;
-  // A coroutine awaiter hook is an instance customization point by contract, so
-  // it stays a member even where the implementation reads no awaiter state.
-  // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-  [[nodiscard]] auto await_ready() const noexcept -> bool {
-    return false;
-  }
-  template <class P>
-  auto await_suspend(std::coroutine_handle<P> self) noexcept -> bool {
-    promise = &self.promise();
-    return false;
-  }
-  [[nodiscard]] auto await_resume() const noexcept -> PromiseBase* {
-    return promise;
-  }
-};
-
 // The runtime-owned coroutine that is the process the engine schedules, and
 // which drives the generated body's own coroutine.
 //
@@ -190,9 +171,7 @@ struct RunningExecution {
 // stopped before its first statement, so no generated code has run yet and
 // nothing has reached for the store.
 auto RunGeneratedProcess(GeneratedBody generated) -> Coroutine<void> {
-  PromiseBase& execution = *(co_await RunningExecution{});
-  execution.activation_values = std::make_unique<ActivationValueStore>();
-  ActivationValueStore& values = *execution.activation_values;
+  ActivationValueStore values;
 
   // Every stretch of the body runs in a scope of its own naming this store, and
   // the parking between two of them holds none: a scope open across a park
@@ -286,8 +265,8 @@ auto RefGet(void* reference) -> const void* {
 }
 
 // Opening a write into what a wrapper stands for, in the storage the caller
-// gave. A cell and a subscribable referent report the write when it ends;
-// storage nothing subscribes to takes it with nothing to report; a driver
+// gave. A cell and a watchable referent report the write when it ends;
+// storage nothing can watch takes it with nothing to report; a driver
 // re-resolves its net if its contribution moved.
 template <value::LyraValue T>
 auto OpenCellWrite(void* cell, void* out) -> void* {
@@ -945,6 +924,7 @@ auto ObservationHandles(LyraSpan observations)
 
 }  // namespace lyra::runtime
 
+using lyra::runtime::Activation;
 using lyra::runtime::ActivationValueCell;
 using lyra::runtime::AdoptObject;
 using lyra::runtime::AssignDesignatedSlice;
@@ -956,7 +936,6 @@ using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
 using lyra::runtime::ControlEffect;
 using lyra::runtime::Coroutine;
-using lyra::runtime::CoroutineHandle;
 using lyra::runtime::current_runtime;
 using lyra::runtime::CurrentExportScope;
 using lyra::runtime::CurrentForeignProcess;
@@ -1002,6 +981,7 @@ using lyra::runtime::OpenRefWrite;
 using lyra::runtime::OpenTupleRefWrite;
 using lyra::runtime::OpenWrite;
 using lyra::runtime::OwnedClosure;
+using lyra::runtime::ParkAt;
 using lyra::runtime::ProcessAwait;
 using lyra::runtime::ProcessKill;
 using lyra::runtime::ProcessOf;
@@ -1053,8 +1033,10 @@ using lyra::runtime::TupleRefSet;
 using lyra::runtime::ValuesOf;
 using lyra::runtime::Var;
 using lyra::runtime::ViewOf;
-using lyra::runtime::WaitAny;
+using lyra::runtime::Wait;
 using lyra::runtime::WaitFork;
+using lyra::runtime::WaitOn;
+using lyra::runtime::WaitOnImplicitList;
 using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
 using lyra::value::AssociativeIndexOrder;
@@ -1362,17 +1344,17 @@ auto lyra_rt_enter_coroutine_owned_environment(
 auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
   lyra::runtime::RuntimeProcess& process = svc.CurrentProcess();
-  const CoroutineHandle caller = process.CurrentLeaf();
-  const CoroutineHandle called = process.PushActivation(
+  Activation* const caller = process.CurrentLeaf();
+  Activation* const called = process.PushActivation(
       std::move(*static_cast<Coroutine<void>*>(activation)));
-  called->self.resume();
+  called->coroutine.resume();
   // An activation that consumed no time is over before its caller could have
   // waited for it, and the caller is still on the stack below, so nothing
   // continues it and it must not park.
-  if (called->self.done()) {
+  if (called->coroutine.done()) {
     return false;
   }
-  called->continuation = caller->self;
+  called->continuation = caller->coroutine;
   return true;
 }
 
@@ -1397,20 +1379,22 @@ void lyra_rt_spawn_all(void* runtime, LyraSpan branches) {
   SpawnAll(svc, std::span<Coroutine<void>>{taken});
 }
 
-auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches) -> bool {
+auto lyra_rt_fork_wait_all(void* runtime, LyraSpan branches, void* out)
+    -> void* {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
   std::vector<Coroutine<void>> taken = TakeBranches(branches);
-  return ForkWaitAll(svc, std::span<Coroutine<void>>{taken});
+  return Emplace(out, ForkWaitAll(svc, std::span<Coroutine<void>>{taken}));
 }
 
-auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches) -> bool {
+auto lyra_rt_fork_wait_first(void* runtime, LyraSpan branches, void* out)
+    -> void* {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
   std::vector<Coroutine<void>> taken = TakeBranches(branches);
-  return ForkWaitFirst(svc, std::span<Coroutine<void>>{taken});
+  return Emplace(out, ForkWaitFirst(svc, std::span<Coroutine<void>>{taken}));
 }
 
-auto lyra_rt_wait_fork(void* runtime) -> bool {
-  return WaitFork(*static_cast<RuntimeEffects*>(runtime));
+auto lyra_rt_wait_fork(void* runtime, void* out) -> void* {
+  return Emplace(out, WaitFork(*static_cast<RuntimeEffects*>(runtime)));
 }
 
 void lyra_rt_disable_fork(void* runtime) {
@@ -1429,8 +1413,11 @@ void lyra_rt_process_kill(const void* self, void* runtime) {
   ProcessKill(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
 }
 
-auto lyra_rt_process_await(const void* self, void* runtime) -> bool {
-  return ProcessAwait(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime));
+auto lyra_rt_process_await(const void* self, void* runtime, void* out)
+    -> void* {
+  return Emplace(
+      out,
+      ProcessAwait(ProcessOf(self), *static_cast<RuntimeEffects*>(runtime)));
 }
 
 void lyra_rt_process_suspend(const void* self, void* runtime) {
@@ -1558,18 +1545,22 @@ void lyra_rt_submit_deferred_final(void* runtime, void* closure) {
 
 auto lyra_rt_delay(
     void* runtime, const void* duration, const void* unit_power,
-    const void* precision_power) -> bool {
-  return Delay(
-      *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(duration),
-      Read<PackedArray>(unit_power), Read<PackedArray>(precision_power));
+    const void* precision_power, void* out) -> void* {
+  return Emplace(
+      out,
+      Delay(
+          *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(duration),
+          Read<PackedArray>(unit_power), Read<PackedArray>(precision_power)));
 }
 
 auto lyra_rt_delay_real(
     void* runtime, const void* duration, const void* unit_power,
-    const void* precision_power) -> bool {
-  return DelayReal(
-      *static_cast<RuntimeEffects*>(runtime), Read<Real>(duration),
-      Read<PackedArray>(unit_power), Read<PackedArray>(precision_power));
+    const void* precision_power, void* out) -> void* {
+  return Emplace(
+      out,
+      DelayReal(
+          *static_cast<RuntimeEffects*>(runtime), Read<Real>(duration),
+          Read<PackedArray>(unit_power), Read<PackedArray>(precision_power)));
 }
 
 // What crosses is the cell's own address -- a variable, a net, a named event --
@@ -1613,39 +1604,41 @@ auto lyra_rt_observation_qualified(void* condition, void* out) -> void* {
   return Emplace(out, Observation::Qualified(TakeCondition(condition)));
 }
 
-void lyra_rt_observation_arm(const void* observation) {
-  static_cast<const Observation*>(observation)->Arm();
-}
-
 auto lyra_rt_observation_fires(const void* observation) -> std::int64_t {
   return static_cast<const Observation*>(observation)->Fires() ? 1 : 0;
 }
 
-auto lyra_rt_wait_any(void* runtime, LyraSpan triggers) -> bool {
-  return WaitAny(
-      *static_cast<RuntimeEffects*>(runtime), TriggerHandles(triggers));
-}
-
 auto lyra_rt_wait_recollecting(
-    void* runtime, LyraSpan reports, LyraSpan observations) -> bool {
-  return WaitRecollecting(
-      *static_cast<RuntimeEffects*>(runtime), ReportHandles(reports),
-      ObservationHandles(observations));
+    LyraSpan reports, LyraSpan observations, void* out) -> void* {
+  return Emplace(
+      out, WaitRecollecting(
+               ReportHandles(reports), ObservationHandles(observations)));
 }
 
-auto lyra_rt_wait_until(void* runtime, LyraSpan reports) -> bool {
-  return WaitUntil(
-      *static_cast<RuntimeEffects*>(runtime), ReportHandles(reports));
+auto lyra_rt_wait_until(LyraSpan reports, void* out) -> void* {
+  return Emplace(out, WaitUntil(ReportHandles(reports)));
 }
 
-auto lyra_rt_wait_on_report(void* runtime, const void* report) -> bool {
-  return WaitAny(
-      *static_cast<RuntimeEffects*>(runtime),
-      static_cast<const ReadReport*>(report));
+auto lyra_rt_wait_on(LyraSpan triggers, void* out) -> void* {
+  return Emplace(out, WaitOn(TriggerHandles(triggers)));
+}
+
+auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void* {
+  return Emplace(
+      out, WaitOnImplicitList(static_cast<const ReadReport*>(report)));
+}
+
+auto lyra_rt_park_at(void* runtime, void* wait) -> bool {
+  return ParkAt(
+      *static_cast<RuntimeEffects*>(runtime), static_cast<Wait*>(wait));
 }
 
 auto lyra_rt_read_report_empty(void* out) -> void* {
   return Emplace(out, ReadReport::Empty());
+}
+
+auto lyra_rt_read_report_for_implicit_list(void* out) -> void* {
+  return Emplace(out, ReadReport::ForImplicitList());
 }
 
 void lyra_rt_read_report_add(
@@ -1704,8 +1697,8 @@ void lyra_rt_refuse_report(const void* why) {
   RefuseReport(static_cast<const char*>(why));
 }
 
-auto lyra_rt_resume_in_nba_region(void* runtime) -> bool {
-  return ResumeInNbaRegion(*static_cast<RuntimeEffects*>(runtime));
+auto lyra_rt_resume_in_nba_region(void* out) -> void* {
+  return Emplace(out, ResumeInNbaRegion());
 }
 
 void lyra_rt_trigger(void* event, void* runtime) {
@@ -2016,12 +2009,12 @@ auto lyra_rt_run_foreign_task_on_fiber(void* runtime, void* closure) -> bool {
 }
 
 void lyra_rt_run_exported_task_to_completion(void* activation) {
-  // A wait this thread registers parks its innermost activation, and the body
+  // A stop this thread makes parks its innermost activation, and the body
   // reached here is one: it runs in the thread that entered the foreign call
   // (LRM 9.5), so entering it is what makes a delay inside it park the right
   // frame rather than the one that called out.
   RuntimeProcess& process = CurrentForeignProcess();
-  const CoroutineHandle called = process.PushActivation(
+  Activation* const called = process.PushActivation(
       std::move(*static_cast<Coroutine<void>*>(activation)));
   DriveOnForeignStack(called);
   // A run-time error that left the body was stored rather than allowed to
@@ -6507,6 +6500,9 @@ void lyra_rt_observation_destroy(void* object) {
 void lyra_rt_read_report_destroy(void* object) {
   std::destroy_at(static_cast<ReadReport*>(object));
 }
+void lyra_rt_wait_destroy(void* object) {
+  std::destroy_at(static_cast<Wait*>(object));
+}
 void lyra_rt_dpi_bit_buffer_destroy(void* object) {
   std::destroy_at(static_cast<DpiBitBuffer*>(object));
 }
@@ -6674,6 +6670,9 @@ auto lyra_rt_observation_move(void* value, void* out) -> void* {
 }
 auto lyra_rt_read_report_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<ReadReport*>(value)));
+}
+auto lyra_rt_wait_move(void* value, void* out) -> void* {
+  return Emplace(out, std::move(*static_cast<Wait*>(value)));
 }
 auto lyra_rt_dpi_bit_buffer_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<DpiBitBuffer*>(value)));

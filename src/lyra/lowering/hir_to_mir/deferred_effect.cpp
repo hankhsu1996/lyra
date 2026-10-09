@@ -164,18 +164,11 @@ auto AppendArrivalAtDueRegion(
   // The event has named the slot; the region within it is the one every
   // nonblocking effect lands in, so the carrier goes there before applying it
   // (LRM 4.4.2.4).
-  const mir::ExprId runtime_id =
-      body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
-  const mir::ExprId region_call_id = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kResumeInNbaRegion},
-                  .arguments = {runtime_id}},
-          .type = unit.builtins.machine_bool});
-  body.AppendStmt(BuildWaitStmt(process.Owner(), body, region_call_id));
+  const mir::ExprId region_wait_id = body.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{.target = support::BuiltinFn::kResumeInNbaRegion}, {},
+          unit.builtins.wait));
+  body.AppendStmt(BuildStopStmt(unit_lowerer, carrier.Frame(), region_wait_id));
   return {};
 }
 

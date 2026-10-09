@@ -2889,6 +2889,36 @@ enough to warrant its own focused review.
       classes, since C++ has no way to state an explicit instantiation over a list of types, and a
       switch naming every domain beside them fails the build when that list changes.
 
+- [x] R187 -- The runtime's record of an activation is named for what it is, the activation, and
+      every target, wait and queue holds a pointer to it by that name. It used to be spelled as a
+      coroutine handle while holding the frame's real coroutine handle beside it, so one read as a
+      handle inside another. A queue place names the activation it holds, and a wait's membership
+      names the wait it belongs to.
+
+- [ ] R183 -- The runtime's capability view, which generated code holds, reaches the one runtime
+      behind it by a static downcast, declared once and carrying a suppressed warning about the
+      design itself. The view is a base with no state so that generated code cannot reach the host
+      boundary; what it needs is the runtime's state without the cast, which either the state living
+      where the view can name it or the view holding the runtime would give. Target: no downcast, at
+      no cost on the scheduling calls every stop makes. Not blocked.
+
+- [ ] R184 -- One report type serves two things that share little: what one evaluation of a waited
+      expression reached, which a wait then takes, and a procedure's implicit list, which is
+      collected once, records writes as well, and is settled rather than taken. Each has state and
+      operations the other never uses, and a flag says which of the two a report is so that a
+      function reporting into it knows whether to run. Target: each is its own thing, sharing only
+      what a function reporting what it reads has to be handed. Not blocked.
+
+- [ ] R185 -- A wait's leaf may name a variable a procedural body declares, and the type saying so
+      is the same one a structural scope's own waits use, where no such variable can exist; the
+      lowering for a scope answers that case by failing as a compiler bug. Target: a scope's wait
+      cannot state a body's variable. Not blocked.
+
+- [ ] R186 -- A procedure that repeats is lowered through a helper handed one callback that both
+      does what precedes the loop and answers a second callback for what follows the body each time
+      round, which a procedure with nothing to add fills with two empty ones. Target: the steps a
+      repeating procedure is made of are ones its two kinds call in order. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

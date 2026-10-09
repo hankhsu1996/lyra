@@ -23,6 +23,7 @@ enum class LibraryObject : std::uint8_t {
   kTrigger,
   kObservation,
   kReadReport,
+  kWait,
   kDpiBitBuffer,
   kDpiLogicBuffer,
   kDpiOpenArray,

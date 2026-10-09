@@ -5,7 +5,6 @@
 #include <string_view>
 #include <vector>
 
-#include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/packed.hpp"
 #include "lyra/value/packed_array.hpp"
@@ -13,7 +12,6 @@
 namespace lyra::runtime {
 
 class Observable;
-class RuntimeEffects;
 
 // The places one evaluation of a waited expression reached (LRM 9.4.2), which
 // the process then waits on: reaching any of them is a candidacy, and the
@@ -42,6 +40,11 @@ class ReadReport {
  public:
   // A report nothing has been stated into yet.
   [[nodiscard]] static auto Empty() -> ReadReport;
+  // The same for a procedure's implicit list (LRM 9.2.2.2.1), which no
+  // evaluation makes: a function called to report into it states what it reads
+  // and never runs, so collecting the list does nothing the procedure would
+  // not.
+  [[nodiscard]] static auto ForImplicitList() -> ReadReport;
 
   ReadReport(const ReadReport&) = delete;
   auto operator=(const ReadReport&) -> ReadReport& = delete;
@@ -119,7 +122,7 @@ class ReadReport {
     value::BitPositions bits;
   };
 
-  ReadReport();
+  explicit ReadReport(bool an_evaluation_reports);
 
   void Reach(Trigger trigger);
 
@@ -129,29 +132,14 @@ class ReadReport {
   std::int64_t depth_ = 0;
   // How many calls made on a handle are reporting now.
   std::int64_t calls_on_handles_ = 0;
+  // Whether an evaluation is what reports here, which needs the value of the
+  // function it calls and so runs it.
+  bool an_evaluation_reports_;
 };
 
 // A function reporting what a call of it reads meets a read no leaf watches
 // yet. The function compiled whether or not a wait calls it, so the design's
 // request fails here, where one does (LRM 9.4.2).
 [[noreturn]] void RefuseReport(std::string_view why);
-
-// An event control its process decides: the frame resumes on every candidacy
-// the reports' places see, and evaluates its observations again to learn
-// whether it was an event and what it reaches now. The observations are held
-// for a restart (LRM 9.7), which leaves them to be armed by that evaluation
-// rather than wherever the restart is asked for.
-auto WaitRecollecting(
-    RuntimeEffects& services, std::span<ReadReport* const> reports,
-    std::span<const Observation* const> observations) -> bool;
-
-// A `wait (cond)` waiting on what the last test of its condition reached (LRM
-// 9.4.3).
-auto WaitUntil(RuntimeEffects& services, std::span<ReadReport* const> reports)
-    -> bool;
-
-// A procedure's implicit list, collected once into `report`: the wait each time
-// the procedure finishes its body, watching the same leaves every time.
-auto WaitAny(RuntimeEffects& services, const ReadReport* report) -> bool;
 
 }  // namespace lyra::runtime

@@ -368,6 +368,11 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // `always_comb` or `always_latch` collects its implicit list into one too,
   // once, told what is written as well (LRM 9.2.2.2.1).
   kReadReport,
+  // LRM 9.4 a timing control as the body holds it: `lyra::runtime::Wait`,
+  // built where what it waits for stops changing and stopped at from there --
+  // once for the body's whole run where that is fixed storage, at the stop for
+  // a delay or a join -- so a stop only says that the body is waiting there.
+  kWait,
   // LRM 23.3.3.5 / 27.6 elaborated hierarchy segment:
   // `lyra::runtime::HierarchySegment`, the per-scope structured identity each
   // child carries from construction (base name plus per-dimension indices).

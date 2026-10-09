@@ -42,7 +42,6 @@
 #include "lyra/runtime/object_ref.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/observable.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/process_control.hpp"      // IWYU pragma: keep
-#include "lyra/runtime/process_kind.hpp"         // IWYU pragma: keep
 #include "lyra/runtime/random.hpp"               // IWYU pragma: keep
 #include "lyra/runtime/read_report.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/runtime.hpp"              // IWYU pragma: keep
@@ -56,6 +55,7 @@
 #include "lyra/runtime/stream_dispatcher.hpp"    // IWYU pragma: keep
 #include "lyra/runtime/suspension.hpp"           // IWYU pragma: keep
 #include "lyra/runtime/trigger.hpp"              // IWYU pragma: keep
+#include "lyra/runtime/value_change_wait.hpp"    // IWYU pragma: keep
 #include "lyra/runtime/value_families.hpp"       // IWYU pragma: keep
 #include "lyra/runtime/var.hpp"                  // IWYU pragma: keep
 #include "lyra/value/associative_array.hpp"      // IWYU pragma: keep

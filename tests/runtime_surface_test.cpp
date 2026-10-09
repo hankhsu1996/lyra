@@ -122,8 +122,9 @@ auto IsTheDesignsOwn(
 // The list is what makes that a decision rather than a drift: an entry is added
 // only with the reason it has to be read where it is used.
 constexpr std::array<std::string_view, 6> kFoldedByTheWritePath = {
-    "lyra::runtime::Observable::HasWaiter() const",
-    "lyra::runtime::RegistrationList::Empty() const",
+    "lyra::runtime::Observable::HasMembers() const",
+    "lyra::runtime::IntrusiveList<lyra::runtime::WaitMembership>::Empty() "
+    "const",
     "lyra::runtime::VariableCell::AdmitsWrite()",
     "lyra::runtime::VariableCell::Watched() const",
     "lyra::runtime::ErasedReference::Admits() const",

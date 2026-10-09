@@ -173,8 +173,7 @@ auto LowerContinuousAssign(
   }
 
   auto waited = BuildValueChangeWaitStmt(
-      body_block, body_frame, lowerer, src.sensitivity_list,
-      support::BuiltinFn::kWaitAny);
+      body_block, body_frame, lowerer, src.sensitivity_list);
   if (!waited) return std::unexpected(std::move(waited.error()));
   body_block.AppendStmt(*std::move(waited));
 

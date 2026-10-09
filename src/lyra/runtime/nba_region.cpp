@@ -1,21 +1,16 @@
 #include "lyra/runtime/nba_region.hpp"
 
-#include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/region.hpp"
-#include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
 
 namespace {
 
-class NbaRegionWait : public Wait {
+class NbaRegionAwaiter final : public Awaiter {
  public:
-  auto Begin(RuntimeEffects& services, CoroutineHandle leaf)
-      -> WaitOutcome override {
-    services.Schedule(services.Now(), Region::kNba, leaf);
-    return WaitOutcome::kBlocked;
+  auto Begin() -> Resumption override {
+    return LaterInThisTimeStep{.region = Region::kNba};
   }
 
   // A region boundary inside one update, not a construct LRM 12.4.2.1 names as
@@ -27,8 +22,8 @@ class NbaRegionWait : public Wait {
 
 }  // namespace
 
-auto ResumeInNbaRegion(RuntimeEffects& runtime) -> bool {
-  return runtime.CurrentProcess().ParkOn<NbaRegionWait>(runtime);
+auto ResumeInNbaRegion() -> Wait {
+  return MakeWait<NbaRegionAwaiter>();
 }
 
 }  // namespace lyra::runtime
