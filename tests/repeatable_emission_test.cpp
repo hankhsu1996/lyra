@@ -14,6 +14,12 @@
 // anything here being told about it. What the sink does not write -- the build
 // recipe, the bundled runtime -- carries the output directory's own path and is
 // assembled around the text rather than lowered from the design.
+//
+// The same text is held to one more thing no simulation can observe: that a
+// C++ compiler has to accept it. A design written flat and lowered a level
+// deeper per operand simulates correctly on the path that compiles no text, and
+// is refused by a host compiler only once it is long enough, so the text of
+// every design here is held to the nesting the standard asks a compiler for.
 
 #include <cstddef>
 #include <filesystem>
@@ -22,6 +28,7 @@
 #include <iterator>
 #include <map>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <fmt/format.h>
@@ -99,6 +106,80 @@ auto Emit(
   return ReadEveryFileUnder(dir);
 }
 
+// How deep one written file nests its parentheses, braces and brackets at the
+// deepest, and the line that depth is reached on. What stands inside a string
+// literal is text, not nesting.
+struct Nesting {
+  std::size_t depth = 0;
+  std::size_t line = 0;
+};
+
+auto DeepestNesting(std::string_view text) -> Nesting {
+  Nesting deepest;
+  std::size_t depth = 0;
+  std::size_t line = 1;
+  bool in_string = false;
+  bool escaped = false;
+  for (const char c : text) {
+    if (c == '\n') {
+      ++line;
+    }
+    if (in_string) {
+      if (escaped) {
+        escaped = false;
+      } else if (c == '\\') {
+        escaped = true;
+      } else if (c == '"') {
+        in_string = false;
+      }
+      continue;
+    }
+    switch (c) {
+      case '"':
+        in_string = true;
+        break;
+      case '(':
+      case '[':
+      case '{':
+        ++depth;
+        if (depth > deepest.depth) {
+          deepest = {.depth = depth, .line = line};
+        }
+        break;
+      case ')':
+      case ']':
+      case '}':
+        --depth;
+        break;
+      default:
+        break;
+    }
+  }
+  return deepest;
+}
+
+// What a C++ compiler is asked to accept at the least: 256 levels of
+// parenthesized expression within one full expression and 256 of compound
+// statement ([implimits]). A file's nesting counted whole is at least either
+// one, so a file within this is within both.
+constexpr std::size_t kNestingACompilerAccepts = 256;
+
+// The files of `files` that nest deeper than a C++ compiler has to accept,
+// each with how deep and where.
+auto NestsTooDeep(const std::map<std::string, std::string>& files)
+    -> std::string {
+  std::string out;
+  for (const auto& [relpath, text] : files) {
+    const Nesting deepest = DeepestNesting(text);
+    if (deepest.depth > kNestingACompilerAccepts) {
+      out += fmt::format(
+          "\n  '{}' nests {} deep at line {}", relpath, deepest.depth,
+          deepest.line);
+    }
+  }
+  return out;
+}
+
 auto Describe(
     const std::map<std::string, std::string>& first,
     const std::map<std::string, std::string>& second) -> std::string {
@@ -144,6 +225,12 @@ class RepeatableEmissionTest : public testing::Test {
     EXPECT_TRUE(difference.empty())
         << "compiling '" << case_->id
         << "' twice wrote two programs: " << difference;
+
+    const std::string too_deep = NestsTooDeep(first_files);
+    EXPECT_TRUE(too_deep.empty())
+        << "'" << case_->id
+        << "' is written as text a C++ compiler need not accept, nested past "
+        << kNestingACompilerAccepts << " levels:" << too_deep;
   }
 
  private:

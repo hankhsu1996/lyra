@@ -196,8 +196,13 @@ merged node.
       the handle it would be written through, and a tagged union's member written there neither runs
       its index nor fails its tag check (LRM 11.9), wherever the operand stands -- an arm of `?:`,
       the second operand of `&&`, `||` or `->`, a later `&&&` clause, a later expression of a case
-      item. `<->` and `inside` evaluate every operand. A chain of conditionals over four-state
-      predicates emits text linear in its length.
+      item. `<->` and `inside` evaluate every operand. A chain the source writes flat is as deep as
+      one of two links whatever its length and whatever its operands can hold: a run of the
+      operators of any one precedence level, a conditional whose third operand is a conditional, and
+      a predicate of many `&&&` clauses, two-state or four-state, with or without a pattern. Every
+      conformance case's written C++ is held to the nesting a C++ compiler has to accept. One run is
+      not flat yet: a comparison whose answer is the next comparison's first operand (`a < b < c`),
+      which converts that answer at every link.
 
 ## Cross-references
 

@@ -35,7 +35,10 @@ void WriteType(const ScopeView& view, TargetText& out, mir::TypeId type);
 // The object a member -- a field, or a member function a call enters -- is
 // reached on, followed by the access to it: `p->` where the object is what a
 // pointer designates, which C++ defines as `(*p).` ([expr.ref]), and `o.`
-// otherwise.
+// otherwise. An object that is an operator's result is that operator called as
+// the member function its first operand's type declares it as, `x.operator!().`
+// and `a.operator^(b).`, which keeps a run of operators and member functions
+// at one depth.
 void WriteMemberReceiver(
     const ScopeView& view, TargetText& out, mir::ExprId object);
 

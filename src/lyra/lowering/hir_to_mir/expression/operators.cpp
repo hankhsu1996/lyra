@@ -1,9 +1,12 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 
+#include <algorithm>
 #include <array>
 #include <expected>
+#include <optional>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -388,7 +391,7 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kLogicalImplication:
       throw InternalError(
           "BuildMirBinaryExpr: the operator may leave its second operand "
-          "unevaluated, so it is a selection built before both are lowered");
+          "unevaluated, so it is built before both are lowered");
   }
   throw InternalError("BuildMirBinaryExpr: unknown HIR BinaryOp");
 }
@@ -406,47 +409,40 @@ auto LowerHirUnaryExpr(
       *std::move(operand_or), result_type);
 }
 
-// `&&`, `||` and `->` evaluate their second operand only where the first leaves
-// the answer open, and an unknown first operand leaves it open: the second is
-// evaluated and the two combine by the operator's table (LRM 11.4.7, 11.3.5).
-// That is the conditional operator over the first operand (LRM 11.4.11), with
-// the second operand's truth as one arm and the answer the first settles as
-// the other, since combining the two arms bit by bit is that table. Every other
-// operator evaluates both operands.
+// The operands of `root` and of every use of the same operator that is its
+// first operand, first to last: `a || b || c` groups as `(a || b) || c` (LRM
+// Table 11-2), and regrouping it changes neither which operands are evaluated
+// nor the answer, so the whole run is one search.
 template <ExprLowerer Lowerer>
-auto LowerHirBinaryExpr(
-    Lowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const Evaluation second_truth =
-      [&](const WalkFrame& at) -> diag::Result<mir::ExprId> {
-    auto second_or = LowerAndAddOperand(lowerer, at, b.rhs);
-    if (!second_or) return second_or;
-    mir::Block& block = *at.current_block;
-    return ConvertToType(
-        unit, block, BuildTruth(unit, block, *second_or), result_type);
-  };
-  const auto settled = [&unit, result_type](bool answer) -> Evaluation {
-    return [&unit, result_type,
-            answer](const WalkFrame& at) -> diag::Result<mir::ExprId> {
-      mir::Block& block = *at.current_block;
-      return ConvertToType(
-          unit, block, BuildBit1Literal(unit, block, answer), result_type);
-    };
-  };
-  const auto select_on_first = [&](const Evaluation& then_arm,
-                                   const Evaluation& else_arm) {
-    return BuildSelection(
-        unit, frame, ExpressionPredicate(lowerer, b.lhs), result_type, then_arm,
-        else_arm);
-  };
-  switch (b.op) {
-    case hir::BinaryOp::kLogicalAnd:
-      return select_on_first(second_truth, settled(false));
-    case hir::BinaryOp::kLogicalOr:
-      return select_on_first(settled(true), second_truth);
+auto LeftGroupedOperands(Lowerer& lowerer, const hir::BinaryExpr& root)
+    -> std::vector<hir::ExprId> {
+  std::vector<hir::ExprId> operands{root.rhs};
+  hir::ExprId first = root.lhs;
+  for (;;) {
+    const auto* inner =
+        std::get_if<hir::BinaryExpr>(&lowerer.HirExprs().Get(first).data);
+    if (inner == nullptr || inner->op != root.op) break;
+    operands.push_back(inner->rhs);
+    first = inner->lhs;
+  }
+  operands.push_back(first);
+  std::ranges::reverse(operands);
+  return operands;
+}
+
+// `first`, as the first operand of `op`, where `op` is one of the two
+// operators that group from the right and take the rest of their run as the
+// second operand (LRM Table 11-2); nothing for any other operator.
+template <ExprLowerer Lowerer>
+auto ConsequenceLinkOf(Lowerer& lowerer, hir::BinaryOp op, hir::ExprId first)
+    -> std::optional<ConsequenceLink> {
+  switch (op) {
     case hir::BinaryOp::kLogicalImplication:
-      return select_on_first(second_truth, settled(true));
+      return Implies{.operand = ExpressionPredicate(lowerer, first)};
+    case hir::BinaryOp::kLogicalEquivalence:
+      return IsEquivalentTo{.operand = ExpressionPredicate(lowerer, first)};
+    case hir::BinaryOp::kLogicalAnd:
+    case hir::BinaryOp::kLogicalOr:
     case hir::BinaryOp::kAdd:
     case hir::BinaryOp::kSub:
     case hir::BinaryOp::kMul:
@@ -466,7 +462,86 @@ auto LowerHirBinaryExpr(
     case hir::BinaryOp::kGreaterThan:
     case hir::BinaryOp::kLessEqual:
     case hir::BinaryOp::kLessThan:
-    case hir::BinaryOp::kLogicalEquivalence:
+    case hir::BinaryOp::kLogicalShiftLeft:
+    case hir::BinaryOp::kArithmeticShiftLeft:
+    case hir::BinaryOp::kLogicalShiftRight:
+    case hir::BinaryOp::kArithmeticShiftRight:
+    case hir::BinaryOp::kPower:
+      return std::nullopt;
+  }
+  throw InternalError("ConsequenceLinkOf: unknown HIR BinaryOp");
+}
+
+// `&&` and `||` evaluate an operand only where the ones before it leave the
+// answer open, and an unknown operand leaves it open (LRM 11.4.7, 11.3.5), so
+// each is a search through its operands. `->` and `<->` are a run combined
+// from its last operand back. Every other operator evaluates both operands.
+template <ExprLowerer Lowerer>
+auto LowerHirBinaryExpr(
+    Lowerer& lowerer, WalkFrame frame, const hir::BinaryExpr& b,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const auto search =
+      [&](SettledBy rule,
+          std::span<const Predicate> terms) -> diag::Result<mir::Expr> {
+    auto answer_or = BuildSearch(unit, frame, rule, terms, result_type);
+    if (!answer_or) return std::unexpected(std::move(answer_or.error()));
+    return block.exprs.Get(*answer_or);
+  };
+  const auto terms_of = [&](std::span<const hir::ExprId> operands) {
+    std::vector<Predicate> terms;
+    terms.reserve(operands.size());
+    for (const hir::ExprId operand : operands) {
+      terms.push_back(ExpressionPredicate(lowerer, operand));
+    }
+    return terms;
+  };
+  switch (b.op) {
+    case hir::BinaryOp::kLogicalAnd:
+      return search(
+          SettledBy::kFalseTerm, terms_of(LeftGroupedOperands(lowerer, b)));
+    case hir::BinaryOp::kLogicalOr:
+      return search(
+          SettledBy::kTrueTerm, terms_of(LeftGroupedOperands(lowerer, b)));
+    case hir::BinaryOp::kLogicalImplication:
+    case hir::BinaryOp::kLogicalEquivalence: {
+      std::vector<ConsequenceLink> links;
+      hir::ExprId last = b.rhs;
+      const hir::BinaryExpr* run = &b;
+      while (std::optional<ConsequenceLink> link =
+                 ConsequenceLinkOf(lowerer, run->op, run->lhs)) {
+        links.push_back(*std::move(link));
+        last = run->rhs;
+        const auto* rest =
+            std::get_if<hir::BinaryExpr>(&lowerer.HirExprs().Get(last).data);
+        if (rest == nullptr) break;
+        run = rest;
+      }
+      auto answer_or = BuildConsequenceRun(
+          unit, frame, links, ExpressionPredicate(lowerer, last), result_type);
+      if (!answer_or) return std::unexpected(std::move(answer_or.error()));
+      return block.exprs.Get(*answer_or);
+    }
+    case hir::BinaryOp::kAdd:
+    case hir::BinaryOp::kSub:
+    case hir::BinaryOp::kMul:
+    case hir::BinaryOp::kDiv:
+    case hir::BinaryOp::kMod:
+    case hir::BinaryOp::kBitwiseAnd:
+    case hir::BinaryOp::kBitwiseOr:
+    case hir::BinaryOp::kBitwiseXor:
+    case hir::BinaryOp::kBitwiseXnor:
+    case hir::BinaryOp::kEquality:
+    case hir::BinaryOp::kInequality:
+    case hir::BinaryOp::kCaseEquality:
+    case hir::BinaryOp::kCaseInequality:
+    case hir::BinaryOp::kWildcardEquality:
+    case hir::BinaryOp::kWildcardInequality:
+    case hir::BinaryOp::kGreaterEqual:
+    case hir::BinaryOp::kGreaterThan:
+    case hir::BinaryOp::kLessEqual:
+    case hir::BinaryOp::kLessThan:
     case hir::BinaryOp::kLogicalShiftLeft:
     case hir::BinaryOp::kArithmeticShiftLeft:
     case hir::BinaryOp::kLogicalShiftRight:
@@ -478,24 +553,25 @@ auto LowerHirBinaryExpr(
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   auto rhs_or = LowerAndAddOperand(lowerer, frame, b.rhs);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  return BuildMirBinaryExpr(
-      unit, *frame.current_block, b.op, *lhs_or, *rhs_or, result_type);
+  return BuildMirBinaryExpr(unit, block, b.op, *lhs_or, *rhs_or, result_type);
 }
 
-// The conditional operator: a selection on its predicate, a series of clauses,
-// between its two expressions (LRM 11.4.11, 12.6.3). Both arms carry the type
-// the conditional yields whatever their own expressions produced, because what
-// reads a conditional reads the type off the node. The identifiers a clause's
-// pattern introduces are declared in the block the expression stands in, which
-// encloses the clauses after it and the first expression, the two things that
-// may read them.
+// The conditional operator: a selection by its predicate, a series of clauses,
+// between its two expressions (LRM 11.4.11, 12.6.3). A third operand that is
+// itself a conditional of the same type goes on with the selection, so
+// `p ? a : q ? b : c` is one selection of two arms. Every value carries the
+// type the conditional yields whatever its own expression produced, because
+// what reads a conditional reads the type off the node. The identifiers a
+// clause's pattern introduces are declared in the block the whole selection
+// stands in, which encloses the clauses after it and its arm's expression, the
+// two things that may read them.
 template <ExprLowerer Lowerer>
 auto LowerHirConditionalExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConditionalExpr& c,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const auto arm = [&lowerer, &unit,
-                    result_type](hir::ExprId value) -> Evaluation {
+  const auto value_of = [&lowerer, &unit,
+                         result_type](hir::ExprId value) -> Evaluation {
     return [&lowerer, &unit, value,
             result_type](const WalkFrame& at) -> diag::Result<mir::ExprId> {
       auto value_or = LowerAndAddOperand(lowerer, at, value);
@@ -503,9 +579,24 @@ auto LowerHirConditionalExpr(
       return ConvertToType(unit, *at.current_block, *value_or, result_type);
     };
   };
+  std::vector<SelectionArm> arms;
+  const hir::ConditionalExpr* conditional = &c;
+  for (;;) {
+    arms.push_back(
+        {.predicate =
+             ClauseSeriesPredicate(lowerer, frame, conditional->conditions),
+         .value = value_of(conditional->then_value)});
+    const hir::Expr& otherwise =
+        lowerer.HirExprs().Get(conditional->else_value);
+    const auto* nested = std::get_if<hir::ConditionalExpr>(&otherwise.data);
+    if (nested == nullptr ||
+        lowerer.Owner().TranslateType(otherwise.type) != result_type) {
+      break;
+    }
+    conditional = nested;
+  }
   return BuildSelection(
-      unit, frame, ClauseSeriesPredicate(lowerer, frame, c.conditions),
-      result_type, arm(c.then_value), arm(c.else_value));
+      unit, frame, arms, value_of(conditional->else_value), result_type);
 }
 
 template <ExprLowerer Lowerer>

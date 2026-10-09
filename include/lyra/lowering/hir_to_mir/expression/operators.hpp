@@ -36,8 +36,7 @@ auto LowerCompoundOperation(hir::BinaryOp op) -> CompoundOperation;
 // lowered operand ids (already in `block`): an operator a library performs is a
 // call of the entry that performs it, and the rest are the operator a target
 // applies. `&&`, `||` and `->` may leave their second operand unevaluated, so
-// they are selections built before both operands are lowered and never reach
-// this.
+// they are built before both operands are lowered and never reach this.
 auto BuildMirBinaryExpr(
     const mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
     mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)

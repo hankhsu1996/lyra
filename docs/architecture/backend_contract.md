@@ -99,11 +99,13 @@ two ways.
 
    What the target's own grammar or its compiler's limits require is not presentation, and it is the
    backend's to answer. An operand is enclosed exactly where it holds together less than its
-   position asks, and a branch holding one statement is written as that statement, because a target
-   compiler bounds how deeply text may nest: a chain the program states flat -- a long sum, the
-   items of a case -- has to reach the target flat, or a program the language accepts is one the
-   target refuses. Both choices read only the node's kind and its own children, so they are
-   spellings.
+   position asks, a branch holding one statement is written as that statement, and an operator whose
+   result is the object a member is reached on is written in the target's postfix form of it,
+   because a target compiler bounds how deeply text may nest: a chain the program states flat -- a
+   long sum, the items of a case, a run of operators of which the target has some as operators and
+   the rest as functions of the value -- has to reach the target flat, or a program the language
+   accepts is one the target refuses. Each choice reads only the node's kind and its own children,
+   so they are spellings.
 
    Different syntactic shape is therefore not the test, and reading it as one condemns the
    mechanical cases. A member reached through a pointer and one reached inline, a declaration that
