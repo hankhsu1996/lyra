@@ -51,7 +51,7 @@ lyra check [files...]                 # Elaborate and report diagnostics; no low
 lyra dump ast [files...]              # Dump slang's elaborated AST as JSON
 lyra dump hir|mir|lir|llvm [files...] # Dump the named intermediate form
 lyra emit cpp -o <dir> [files...]     # Write a self-contained C++ project
-lyra build [-o <file>] [files...]     # Build the program; ./<design name or top> by default
+lyra build [-o <file>] [files...]     # Build the program; ./<library name or top> by default
 lyra run [files...]                   # Build the program and execute it; writes nothing here
 lyra cache clear                      # Empty the store of kept programs, units and headers
 ```
@@ -81,14 +81,16 @@ driver: every front-end option slang accepts -- `--top`, `-I`, `-D`, `-G`, `--si
 Lyra's command line; what follows is the simulation's own argv, where LRM 21.6 plusargs go.
 `lyra --help` prints the authoritative option list.
 
-**A design declares itself in a `lyra.toml` beside it, so it is not respelled at every invocation.**
-The file names the design's sources, search paths, defines, parameter overrides, tops, and the
-native sources DPI-C resolves against; it is found by walking up from the working directory, and
-every path in it resolves against the file's own directory. A command line naming sources uses no
-declaration at all, and `--config <file>` names one outright. What is true of one invocation or one
-machine -- `-o`, `--release`, `--backend`, `--cxx`, `--cache-dir` -- is refused by name, because the
-file is committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence
-rule: material accumulates, selection is replaced.
+**A `lyra.toml` beside the sources declares them, so a design is not respelled at every
+invocation.** `[library]` names a library and the sources, search paths, defines and native DPI-C
+sources it is made of; `[design]` states what is run of it -- the tops, their parameter overrides,
+and the same kinds of source where only a testbench needs them. Every cell compiled there is in the
+declared library. The file is found by walking up from the working directory, and every path in it
+resolves against the file's own directory. A command line naming sources uses no declaration at all,
+and `--config <file>` names one outright. What is true of one invocation or one machine -- `-o`,
+`--release`, `--backend`, `--cxx`, `--cache-dir` -- is refused by name, because the file is
+committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence rule:
+material accumulates, selection is replaced.
 
 **`--release` trades build time for simulation speed.** By default the design's own code is compiled
 unoptimized on either backend, because iterating pays that compile on every edit; `--release`

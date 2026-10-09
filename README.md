@@ -43,8 +43,8 @@ options reach Lyra unchanged, and `lyra --help` is authoritative on all of it.
 A program Lyra builds is kept in your cache directory under a name computed from what built it, so
 running an unchanged design again skips the compile, and nothing is written into your project.
 
-A design is named by its sources on the command line, or declares itself once in a `lyra.toml`
-beside it, which Lyra finds by walking up from where it is run.
+A design is named by its sources on the command line, or by a `lyra.toml` beside them, which
+declares a library and what is run of it and which Lyra finds by walking up from where it is run.
 
 ## Architecture
 

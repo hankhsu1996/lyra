@@ -108,10 +108,10 @@ without bound, and nobody should have to remember to clear it.
 ### D6. There is no directory in the project
 
 `build` writes one file, the program, to `-o` or to the working directory under the design's name --
-the manifest's `name` for a declared design, the top for an anonymous one with a single top, and
-nothing for an anonymous design with several, which then has to be named. It refuses to replace a
-directory. `run` writes nothing. So there is no project directory to name, and no command to remove
-one; `cache clear` empties the store, prepared headers and objects included.
+the declared library's name where a manifest was read, the top for an anonymous one with a single
+top, and nothing for an anonymous design with several, which then has to be named. It refuses to
+replace a directory. `run` writes nothing. So there is no project directory to name, and no command
+to remove one; `cache clear` empties the store, prepared headers and objects included.
 
 ### D7. A run can be told not to read the store
 

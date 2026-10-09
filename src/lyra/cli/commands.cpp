@@ -31,7 +31,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/cli/command_line.hpp"
-#include "lyra/cli/design_manifest.hpp"
+#include "lyra/cli/manifest.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -544,13 +544,13 @@ auto PlaceProgram(
 }
 
 // Where `build` writes the program when it was not told: the working
-// directory, under the design's own name -- the name its declaration gives it,
-// or its top when it is anonymous and has one. An anonymous design with several
-// tops has no name to take, so it has to be given one.
+// directory, under the name of the library a declaration was read for, or the
+// design's top when no declaration was read and it has one. Several tops with
+// no declaration have no name to take, so the program has to be given one.
 auto DefaultProgramPath(const CommandContext& ctx)
     -> std::optional<std::filesystem::path> {
-  if (ctx.args->design_name) {
-    return std::filesystem::path(*ctx.args->design_name);
+  if (ctx.args->library_name) {
+    return std::filesystem::path(*ctx.args->library_name);
   }
   const auto tops = ctx.elaborated->compilation->getRoot().topInstances;
   if (tops.size() == 1) {
@@ -643,15 +643,15 @@ auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
   // reads: the manifest to apply and re-read, and an absent search kept for the
   // no-input-files note below. That note is the only place absence still speaks
   // -- a named source means there are files, so no search reaches that branch.
-  const DesignManifest* manifest = nullptr;
+  const Manifest* manifest = nullptr;
   std::optional<ManifestAbsent> absent;
   std::visit(
       Overloaded{
-          [&](const DesignManifest& m) { manifest = &m; },
+          [&](const Manifest& m) { manifest = &m; },
           [&](const ManifestAbsent& a) { absent = a; }, [&](NoSearchNeeded) {}},
       *declaration_or);
   if (manifest != nullptr) {
-    if (auto applied = ApplyDesignManifest(*manifest, driver); !applied) {
+    if (auto applied = ApplyManifest(*manifest, driver); !applied) {
       report(std::move(applied.error()));
       return std::nullopt;
     }
@@ -680,11 +680,12 @@ auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
     // declaration at all unless the message says which one applied -- and the
     // one that applied may be several directories above the caller.
     if (manifest != nullptr) {
-      diagnostic = std::move(diagnostic)
-                       .WithNote(
-                           std::format(
-                               "design '{}' at {} declares no source files",
-                               manifest->name, manifest->path.string()));
+      diagnostic =
+          std::move(diagnostic)
+              .WithNote(
+                  std::format(
+                      "library '{}' at {} declares no source files",
+                      manifest->library.name, manifest->path.string()));
     }
     report(std::move(diagnostic));
     return std::nullopt;

@@ -395,7 +395,7 @@ cc_library(
     hdrs = glob(["include/lyra/cli/*.hpp"]),
     copts = LYRA_COPTS,
     includes = ["include"],
-    # A malformed design declaration is a recoverable failure the caller
+    # A malformed `lyra.toml` is a recoverable failure the caller
     # reports, so the TOML parser has to hand its error back rather than throw
     # one; the library reads this at include time and cannot be told later.
     local_defines = ["TOML_EXCEPTIONS=0"],

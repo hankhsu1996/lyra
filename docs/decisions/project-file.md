@@ -1,6 +1,6 @@
-# `lyra.toml` declares a design, and the command line selects within it
+# `lyra.toml` declares a library and what is run of it, and the command line selects within it
 
-Date: 2026-09-01. Status: accepted.
+Date: 2026-09-01, revised 2026-10-09 (what the declared object is). Status: accepted.
 
 ## The question this settles
 
@@ -20,17 +20,18 @@ A. The file describes the invocation.  It is a place to keep arguments. No new c
    them. Fields are named after command-line options. Precedence is "arguments given earlier".
    Paths resolve against the working directory, because that is where the invocation happens.
 
-B. The file declares a design.  A design is an object with an identity, made of parts. The
-   compiler compiles a design; a command line naming loose files is the degenerate case of an
-   anonymous one. Fields are named after the design's parts. The command line selects within what
-   the design declares. Paths resolve against the design's root, because they are parts of it.
+B. The file declares an object.  It has an identity and is made of parts. The compiler compiles
+   that object; a command line naming loose files is the degenerate case of an anonymous one.
+   Fields are named after the object's parts. The command line selects within what is declared.
+   Paths resolve against the object's root, because they are parts of it.
 ```
 
 `-f` command files are A, and so is every simulator whose project description is an argument list.
 Cargo and npm are B.
 
 **This entry chooses B.** The rest of it is that choice worked out, plus what it deliberately does
-not build.
+not build. Which object the file declares is its own section below: a library, and the design run of
+it apart.
 
 ## Why B, on Lyra's own terms
 
@@ -106,9 +107,51 @@ an object rather than for an argument list, and that instinct is what section B 
 independently. Only the mechanics -- a mode, a default that fails, a flag to escape it -- were
 wrong.
 
+## What the object is: a library, and the design run of it apart
+
+The destination named above is a body of SystemVerilog that something else depends on. So the file
+has to say two things a single list of sources cannot: what the body is, which is what a dependent
+receives, and what is run where the body is developed, which a dependent must never receive -- its
+testbenches, the defines and include directories only they read, the foreign stubs only they link.
+
+The standard already has both words. A library is "a named collection of cells" (LRM 33.2.1), and
+the `design` statement of a configuration names which cells are the roots (33.4.1.1). The file takes
+them as they are: `[library]` is the named collection, `[design]` is the roots and what only the
+roots need. `package` was not available, because the language owns it; Go met the same collision and
+named its distributed unit a module for that reason.
+
+**The declared library is the build's default library, under its own name.** Every cell compiled
+where the file is -- the library's and the design's alike -- belongs to it. The alternative reads
+more literally and loses: making the library's sources library files of a named library, and leaving
+the design's in `work`.
+
+| Candidate                                                     | What it costs                                                                                                                                                              |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The library's sources are a named library beside `work`       | The front end treats a library file's cells as used only if referenced and never as roots: `--top <a library cell>` is refused and `check` says nothing about unused cells |
+| Everything compiled here is the default library, by that name | Nothing: roots, checking and selection behave as for any source                                                                                                            |
+
+The first also puts the roots in a library the file never declared. The second is what the field
+does with the thing being built: Cargo compiles and checks the root package whole and treats only
+its dependencies as libraries, and VHDL's `work` denotes whichever library is being compiled. It
+also maps onto the front end's two kinds of file as they are: the library being built is the build's
+own source, and a library it depends on is a named library beside it.
+
+The name has a reader today: a configuration in the source may name its own library by it
+(`design soc.soc_tb; default liblist soc;`), which resolves only because the front end is told the
+name. It is therefore an identifier, as a library's name is in a library map (Syntax 33-2).
+
+**What `[design]` holds is added after what `[library]` holds**, by the same rule that adds the
+command line after both: material accumulates. A define of the design's reaches the library's
+sources in the build made here, exactly as a `-D` does. What a dependent's build hands a library is
+a question for the day a dependent exists.
+
+**One design, and room for more.** A library is commonly run several ways -- a simulation testbench,
+a lint top, a compliance harness. That is not built: a named design is a table beside the keys
+`[design]` has now, so adding it moves nothing anyone has written.
+
 ## The axis inside B: shared versus local
 
-Choosing B says the file describes the design. It does not yet say which facts are the design's.
+Choosing B says the file describes what is built. It does not yet say which facts are the design's.
 That line is drawn by who the value is true for:
 
 ```text
@@ -132,11 +175,12 @@ run makes it a record of somebody's last experiment.
 ## The decisions
 
 ```text
-D1. `lyra.toml` declares a design: a named object whose parts are its sources, its search paths, its
-    defines, its roots, and the foreign sources its DPI-C imports resolve against. There is one way
-    to run the compiler. A command line naming sources compiles an anonymous design, which stays the
-    ordinary case; a manifest that is absent is simply no declaration, never a mode and never a
-    failure.
+D1. `lyra.toml` declares a library -- a named object whose parts are its sources, its search paths,
+    its defines, and the foreign sources its DPI-C imports resolve against -- and, apart from it,
+    the design run of it: its roots, their parameter values, and the same kinds of part where only
+    the roots need them. There is one way to run the compiler. A command line naming sources
+    compiles an anonymous design, which stays the ordinary case; a manifest that is absent is
+    simply no declaration, never a mode and never a failure.
 
 D2. A field is admitted only if it is true of the design for everyone who builds it. An invocation
     property (`-o`, `--release`, `--rebuild`, `--backend`, `--format`, `--color` / `--no-color`,
@@ -178,52 +222,60 @@ D9. The manifest supplies compiler inputs and nothing else. It never changes the
 ```toml
 # Every relative path below resolves against this file's own directory.
 
-[design]
-name      = "soc"                                    # identity, required
-top       = ["soc_tb"]                               # selection
+[library]
+name      = "soc"                                    # identity, required, an identifier
 files     = ["rtl/alu.sv", "rtl/regfile.sv", "..."]  # material, ordered
 incdir    = ["rtl/include"]                          # material
-defines   = ["TRACE", "WIDTH=8"]                     # material
+defines   = ["WIDTH=8"]                              # material
 undefines = ["VENDOR_HACK"]                          # material
+searchdir = ["vendor/prim"]                          # material
+searchext = [".v"]                                   # material
+dpi       = ["rtl/model.c"]                          # material, the foreign half
+
+[design]
+top       = ["soc_tb"]                               # selection
 params    = ["DEPTH=16"]                             # material
-libdir    = ["vendor/prim"]                          # material
-libext    = [".sv", ".v"]                            # material
+files     = ["tb/soc_tb.sv"]                         # material, read after the library's
+defines   = ["TRACE"]                                # material
+dpi       = ["tb/dpi_stubs.c"]                       # material
 
 [compile]
 std         = "1800-2023"                            # selection
 timescale   = "1ns/1ps"                              # selection
 single_unit = true                                   # selection
 assertions  = "check"                                # selection: "check" or "skip"
-
-[dpi]
-sources = ["tb/dpi_stubs.c"]                         # material, the foreign half
 ```
+
+The seven keys from `files` to `dpi` are one thing, a source set: source text and what reading it
+needs. `[library]` holds one beside its name and `[design]` holds one beside its roots, with the
+same keys meaning the same in both. `[design]` is optional; without it the roots are the standard's,
+every cell nothing instantiates (LRM 23.3.1). `params` is the design's alone, because a parameter
+override is applied to a root.
 
 `name` is what makes this a declaration rather than a bag of options, and it is the field a reader
 of A would leave out. It is **required**, because an optional identity is not one: a file that
 declines to say what it declares is the bag of options the command line already carries better. It
-has a reader the day it is written -- a declaration that named no sources says which design named
-none, which matters exactly when the declaration in effect is several directories above the caller
-and the bare message would describe a design the reader is not looking at. Every later cross-design
-mechanism refers to the same field.
+has readers the day it is written -- the front end, as the name of the library the cells are in, and
+the message for a declaration that named no sources, which matters exactly when the declaration in
+effect is several directories above the caller. Every later mechanism by which one library refers to
+another uses the same field.
 
 `files` is an ordered explicit list, and no path in the declaration may be a pattern. A pattern
-names whatever the filesystem happens to hold, which makes the design a function of the directory
+names whatever the filesystem happens to hold, which makes the library a function of the directory
 rather than of the file that declares it, and it leaves source order to the filesystem when source
-order is significant. Finding a module by name is what `libdir` and `libext` are for, so nothing is
-lost.
+order is significant. Finding a cell by name is what `searchdir` and `searchext` are for, so nothing
+is lost. Those two are the search every Verilog tool spells `-y` and `+libext+`; they are not named
+after a library, because here that word means the named collection and not a directory to look in.
 
 `assertions` names what the compiler does with an assertion rather than what it currently cannot do.
 `check` is the default and today refuses the forms Lyra does not implement; `skip` elides them,
 which changes no behaviour because an assertion observes and never drives.
 
-**This is not a configuration in the standard's sense, and does not become one.** LRM 3.10 and
-Clause 33 define library map files and `config` blocks, which bind particular instances to
-particular source and are named as invocation options in the way this manifest's fields are. Lyra
-implements none of it. A configuration chooses _which definition an instance binds to_, which is a
-language construct with its own syntax and elaboration semantics; the manifest only says what the
-compiler is pointed at. If configurations are ever implemented they are SystemVerilog source, read
-by the front end like any other, and a `config`'s presence is not a reason to grow a field here.
+**This is not a configuration in the standard's sense, and does not become one.** A `config` block
+(LRM 33.4) chooses _which definition an instance binds to_, which is a language construct with its
+own syntax and elaboration semantics; the manifest says which library the compiler is building and
+what it is made of. A configuration is SystemVerilog source, read by the front end like any other,
+and its presence is not a reason to grow a field here.
 
 ## The schema is a partition of the front end's option surface, not a selection from it
 
@@ -243,10 +295,10 @@ reading another tool's command files on the invocation side.
 The design side is larger than what is implemented here, and the remainder is named so the next
 person adds a field under the rule rather than re-deriving the line:
 
-- **Named libraries** -- library files, library maps, library order, the default library name. The
-  search half of the same system is carried, in `libdir` and `libext`; what is absent is everything
-  that requires a design to be divided into named libraries, because LRM 33 library support is not
-  implemented and a field for it would declare something the compiler cannot act on.
+- **Other named libraries** -- library files, library maps, library order. The default library's
+  name is carried, as `[library] name`, and so is the search by cell name, in `searchdir` and
+  `searchext`. What is absent is a second library beside the declared one, which is what a
+  dependency will be.
 - **The dialect knobs** -- legacy protect envelopes, translate-off formats, ignored directives,
   keyword-version mapping, local-include and include-order behaviour. Design material, because each
   changes what program the source text denotes. Absent because nothing has needed one.
@@ -277,12 +329,12 @@ evidence for unifying them; three consumers would be.
 
 ## Precedence, worked
 
-| Field                                   | Kind      | `lyra.toml` says | command line says   | result      |
-| --------------------------------------- | --------- | ---------------- | ------------------- | ----------- |
-| `defines`, `incdir`, `libdir`, `libext` | material  | `TRACE`          | `-D DEBUG`          | both        |
-| `files`, `[dpi] sources`                | material  | the source list  | (D7: none)          | the file's  |
-| `top`                                   | selection | `soc_tb`         | `--top alu`         | `alu` alone |
-| `std`, `single_unit`, `assertions`      | selection | `check`          | `--assertions skip` | `skip`      |
+| Field                              | Kind      | `lyra.toml` says | command line says   | result      |
+| ---------------------------------- | --------- | ---------------- | ------------------- | ----------- |
+| `defines`, `incdir`, `searchdir`   | material  | `TRACE`          | `-D DEBUG`          | both        |
+| `files`, `dpi`                     | material  | the source list  | (D7: none)          | the file's  |
+| `top`                              | selection | `soc_tb`         | `--top alu`         | `alu` alone |
+| `std`, `single_unit`, `assertions` | selection | `check`          | `--assertions skip` | `skip`      |
 
 The test that assigns a field is whether a second value adds to the first or chooses instead of it.
 A second include directory searches both; a second define defines both; a second top is where the
@@ -311,8 +363,8 @@ D3 and D6 are one answer read from two sides, and the front end already demonstr
 the choice. slang has two command-file options that differ in exactly this: `-f` resolves the paths
 inside the file against the process's working directory, `-F` against the file's own directory. The
 `-f` form is the one that makes a file mean different things depending on where it was invoked from,
-which is what a design's declaration may never do, since it is committed and read from every
-subdirectory of the design.
+which is what a declaration may never do, since it is committed and read from every subdirectory
+beneath it.
 
 So the walk in D6 is safe: a manifest found three directories up still names its own parts
 correctly, because it never depended on where the walk started. When no manifest is found, the
@@ -366,12 +418,11 @@ Five moves buy it, and each is worth more than the field it protects:
    schema-version field: strict keys already give the loud failure a version field would give, and a
    version with one value is speculation.
 
-   **There is no `[package]` to reserve, and that is a decision rather than an omission.** Cargo
-   separates `[package]` from `[lib]` and `[bin]` because one package holds several build targets; a
-   `lyra.toml` declares exactly one design, so a second identity would have nothing to distinguish.
-   `[design] name` is the identity, and what an ecosystem adds is `[dependencies]` -- a statement
-   about _other_ designs. Splitting identity out later would move `name` between tables, which is
-   the migration reserving space is supposed to avoid.
+   **There is no `[package]` above `[library]`, and that is a decision rather than an omission.**
+   Cargo separates `[package]` from `[lib]` and `[bin]` because one package holds several build
+   targets each with a name of its own. Here the identity is the library's, every cell compiled is
+   in that library, and a design is roots within it rather than a second named thing. What an
+   ecosystem adds is `[dependencies]` -- a statement about _other_ libraries.
 
 3. **Resolve every reference against what declares it.** D3 decides on its own whether a second
    manifest could ever contribute sources. Without it, dependencies are impossible; with it, they
@@ -431,7 +482,8 @@ is the split every package manager arrived at.
 
 ## Consequences
 
-- From a design's root, `lyra run` is the whole command line. From a subdirectory of it, so is it.
+- From the directory holding the file, `lyra run` is the whole command line. From a subdirectory of
+  it, so is it.
 - `lyra check` with no arguments and no manifest still answers "no input files", which is the
   diagnostic the placeholder made unreachable.
 - `--disable-assertions` is replaced by `--assertions check|skip`, and every caller of it moves in
@@ -461,4 +513,4 @@ than on a case-insensitive one, for no benefit.
 - `unit-signature.md` -- the identity machinery one scale down, and what a cross-design reference
   would be built from.
 - `conformance-case-shape.md` -- D9, which puts command-line behaviour outside the corpus.
-- `dpi-foreign-boundary.md` -- what `[dpi] sources` supplies symbols to.
+- `dpi-foreign-boundary.md` -- what a source set's `dpi` supplies symbols to.

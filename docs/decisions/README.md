@@ -866,8 +866,8 @@ the detail lives in the entry itself.
   compiles at once is stated by whoever invoked it and never chosen by the build, and told nothing
   it runs one at a time; each unit compiles to its own object, which concurrency requires rather
   than reuse, and every compile is attempted so every failure is reported. Defaulting to one per
-  processor, a field in the design declaration, emitting a graph for a build tool, and giving a
-  foreign source a schedule of its own are rejected.
+  processor, a field in `lyra.toml`, emitting a graph for a build tool, and giving a foreign source
+  a schedule of its own are rejected.
 - [the-front-end-has-one-reader](the-front-end-has-one-reader.md) -- a unit's bodies are lowered to
   HIR as the first step of its own pipeline, so no unit's HIR waits for another's and the peak no
   longer holds all of them, but the elaborated AST is read by one unit at a time: the front end
@@ -1189,11 +1189,12 @@ the detail lives in the entry itself.
 
 ### Compiler inputs
 
-- [project-file](project-file.md) -- `lyra.toml` is a manifest of the design, carrying what is true
-  of it for everyone who builds it and never an invocation or machine property; material accumulates
-  and selection is replaced, a path resolves against its own manifest, and naming sources on the
-  command line uses no manifest at all. A project mode, a merged cascade, and a flag to suppress
-  discovery are rejected.
+- [project-file](project-file.md) -- `lyra.toml` declares a library, which is the build's default
+  library under its own name, and apart from it the design run of it; it carries what is true for
+  everyone who builds it and never an invocation or machine property; material accumulates and
+  selection is replaced, a path resolves against its own manifest, and naming sources on the command
+  line uses no manifest at all. A project mode, a merged cascade, and a flag to suppress discovery
+  are rejected.
 
 ### Conformance testing
 

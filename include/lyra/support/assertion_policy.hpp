@@ -5,7 +5,8 @@
 namespace lyra::support {
 
 // What lowering does with an assertion construct (LRM 16). Shared vocabulary:
-// a design declares it, the command line selects it, and AST-to-HIR acts on it.
+// a declaration states it, the command line selects it, and AST-to-HIR acts on
+// it.
 enum class AssertionPolicy : std::uint8_t {
   // Hold the design to its assertions: a form Lyra lowers is checked, and one
   // it does not is refused rather than dropped, so no design is quietly

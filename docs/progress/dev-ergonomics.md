@@ -32,21 +32,25 @@ layer directly.
 
 - [x] D7 -- A design describes itself once, in a `lyra.toml` beside it, so a multi-file design is
       not respelled at every invocation: its sources, include directories, defines, undefines,
-      parameter overrides, library search, tops, language version, timescale, compilation-unit
-      model, assertion policy, and the native sources that give DPI-C its foreign symbols. The file
-      carries what is true of the design for everyone who builds it and never what is true of one
-      invocation or one machine, so a command line still names a design outright and a file that is
-      absent is simply no defaults. A command line adds to what the file lists where the field is
-      material and replaces it where the field is a choice; naming sources on the command line uses
-      no file at all. The file is found by walking up from the working directory, and a path inside
-      it means the same thing from wherever the compiler was invoked. `decisions/project-file.md`
-      settles the shape.
+      parameter overrides, search for a cell by name, tops, language version, timescale,
+      compilation-unit model, assertion policy, and the native sources that give DPI-C its foreign
+      symbols. The file names a library, which every cell compiled there belongs to, and states
+      apart from it what is run of it -- the tops and whatever only a testbench needs -- so that
+      what something depending on the library would be given is already separate. The file carries
+      what is true of the design for everyone who builds it and never what is true of one invocation
+      or one machine, so a command line still names a design outright and a file that is absent is
+      simply no defaults. A command line adds to what the file lists where the field is material and
+      replaces it where the field is a choice; naming sources on the command line uses no file at
+      all. The file is found by walking up from the working directory, and a path inside it means
+      the same thing from wherever the compiler was invoked. `decisions/project-file.md` settles the
+      shape.
 
 - [ ] D8 -- A design that finds its modules through a library rather than by listing them can
-      declare that: library files, library maps, the library search order, and the default library
-      name. Design material by the rule D7 already applies. The compiler acts on all four given on
-      the command line -- a design binding cells from several libraries, under a configuration or a
-      search order, builds and runs -- so what is absent is only the fields.
+      declare that: library files, library maps, and the library search order (the default library's
+      name is the declared library's). Design material by the rule D7 already applies. The compiler
+      acts on all three given on the command line -- a design binding cells from several libraries,
+      under a configuration or a search order, builds and runs -- so what is absent is only the
+      fields.
 
 - [ ] D9 -- A design written for a dialect another tool defined can declare that: legacy protect
       envelopes, translate-off comment formats, ignored directives, keyword-version mapping, and
