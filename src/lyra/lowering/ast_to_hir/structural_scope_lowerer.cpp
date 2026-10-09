@@ -782,12 +782,10 @@ auto StructuralScopeLowerer::PopulateSubroutineMember(
 
   // An `export "DPI-C"` (LRM 35.5) names a subroutine of its own scope, so the
   // exported subroutine reaches this ordinary body path and the export is
-  // additionally recorded here to drive a foreign-linkage entry. An import
-  // never reaches this path, so a C identifier here is the one an export gave.
-  if (const std::string_view foreign_name = sym.getDPICIdentifier();
-      !foreign_name.empty()) {
-    auto export_or =
-        LowerForeignExport(*owner_, sym, binding->subroutine_id, foreign_name);
+  // additionally recorded here to drive a foreign-linkage entry.
+  if (sym.isDPIExport()) {
+    auto export_or = LowerForeignExport(
+        *owner_, sym, binding->subroutine_id, sym.getDPICIdentifier());
     if (!export_or) return std::unexpected(std::move(export_or.error()));
     frame.current_structural_scope->foreign_exports.push_back(
         *std::move(export_or));

@@ -22,8 +22,7 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/lowering/ast_to_hir/climb.hpp"
-#include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
+#include "lyra/lowering/ast_to_hir/instance_context.hpp"
 
 namespace slang {
 class ConstantValue;
@@ -54,41 +53,6 @@ enum class ParameterValueSource {
   kFixedBySpecialization,
   kSuppliedAtConstruction,
   kComputedAtConstruction,
-};
-
-// A hierarchical name that lands outside the instance writing it (LRM 23.8):
-// which of that instance's names it is, in the order its body writes those
-// that leave it, and the scope it lands in.
-struct NameLanding {
-  std::uint32_t written = 0;
-  const slang::ast::Scope* lands_in = nullptr;
-};
-
-// One thing the design fixed for an instance by where the instance stands,
-// rather than at its instantiation: where a name lands, or what was written
-// elsewhere about an instance. `below` is the path from the instance to the
-// one the name is written in or the effect is about, empty for the instance
-// itself.
-//
-// A body's meaning is not settled by its definition and parameters alone,
-// since a name resolves per instance and an override reaches one instance and
-// not another, and a unit's code names the class of every instance it builds.
-// So whatever tells an instance apart tells apart every instance holding it,
-// and each such thing is an input of every instance it concerns: a name of
-// each one it leaves on its way to where it lands, an effect of each one above
-// the instance it is about.
-struct ContextInput {
-  std::string below;
-  std::variant<NameLanding, OverrideEffect> what;
-};
-
-// What follows for an instance from where it stands: where each name its own
-// body writes lands once it leaves the instance, in the order the body writes
-// them, and its context inputs, in the order the source writes what they come
-// from.
-struct InstanceContext {
-  std::vector<ClimbAnchor> climbs;
-  std::vector<ContextInput> inputs;
 };
 
 // The instantiation a body was elaborated for. A body is what one application
@@ -255,10 +219,7 @@ class SpecializationPolicy {
       const slang::ast::InstanceSymbol& inst,
       const slang::ast::ParameterSymbol& param) const -> ParameterValueSource;
 
-  // What follows for `inst` from where it stands. Each part is found where it
-  // is written and noted on the instances it concerns going outward, so asking
-  // for an instance's walks the instances below it once and settles theirs
-  // too.
+  // What follows for `inst` from where it stands, worked out once and kept.
   [[nodiscard]] auto ContextOf(const slang::ast::InstanceSymbol& inst) const
       -> const InstanceContext&;
 
@@ -334,8 +295,7 @@ class SpecializationPolicy {
   std::unordered_set<const slang::ast::DefinitionSymbol*> kept_whole_;
   mutable std::unordered_map<const slang::ast::InstanceSymbol*, PerInstance>
       per_instance_;
-  mutable std::unordered_map<const slang::ast::InstanceSymbol*, InstanceContext>
-      context_;
+  mutable InstanceContexts context_;
   mutable std::vector<const slang::ast::InstanceBodySymbol*> naming_;
   mutable std::unordered_map<const slang::ast::InstanceSymbol*, KeptName>
       names_;
