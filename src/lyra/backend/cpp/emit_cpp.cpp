@@ -1,4 +1,3 @@
-#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -74,35 +73,23 @@ void RenderIntegralConstants(
   }
 }
 
-// The header of a class of this unit. The file is written and included under
-// the name computed here, so the two agree. Only a class other units may name
-// has one, and only such a class is asked about: its bases have to be
-// nameable too, since a unit compiling against it sees them.
-auto FileDeclaring(const mir::CompilationUnit& unit, mir::ClassId id)
-    -> std::string {
-  return UnitClassFileOf(unit.name, CppClassName(unit.GetClass(id), id));
+// Includes, into the file `self`, each file `text` said it needs ahead of it.
+// A declaration may name what it declares, and a file does not include itself.
+void WriteRequiredIncludes(
+    TargetText& file, const TargetText& text, std::string_view self) {
+  for (const std::string& required : text.RequiredFiles()) {
+    if (required != self) {
+      WriteInclude(file, required);
+    }
+  }
 }
 
-// The header of a base class, which may belong to another unit; that unit's
-// name and the class name are all it takes to compute.
-auto FileDeclaring(
-    const mir::CompilationUnit& unit, const mir::DeclaredClassRef& rests_on)
-    -> std::string {
-  return std::visit(
-      Overloaded{
-          [&](const mir::IntraUnitClassRef& intra) {
-            return FileDeclaring(unit, intra.class_id);
-          },
-          [](const mir::CrossUnitClassRef& cross) {
-            return UnitClassFileOf(
-                cross.unit_name, ToCppName(cross.class_name));
-          }},
-      rests_on);
-}
-
-// The header for one thing this unit uses from another: the opening header for
-// its namespace, or one class's header. Including only those means a change
-// elsewhere in that unit does not recompile this one.
+// The header for one thing this unit's bodies read of another: the opening
+// header for its namespace, or one class's header. A body reaches a member of
+// another unit's object without writing the class's name, so its text cannot
+// ask for the class's definition; what the unit read is what says so.
+// Including only those means a change elsewhere in that unit does not
+// recompile this one.
 auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
   return std::visit(
       Overloaded{
@@ -118,24 +105,25 @@ auto FileConsumed(const mir::ConsumedSignature& consumed) -> std::string {
 
 // A unit becomes one C++ namespace, named after it, written across these files:
 //
-//   Top.types.hpp     the structs the unit declares under a name
-//   Top.forward.hpp   the classes other units may name, declared
-//   Top.opening.hpp   namespace functions and variables
-//   Top.<Class>.hpp   one per class other units may name, and per further name
-//                     one goes by
-//   Top.hpp           includes all of the above; what other units include
-//   Top.cpp           every other class, and every definition
+//   Top.<Struct>.types.hpp  one per struct the unit declares under a name
+//   Top.forward.hpp         the classes other units may name, declared
+//   Top.opening.hpp         namespace functions and variables
+//   Top.<Class>.hpp         one per class other units may name, and per
+//                           further name one goes by
+//   Top.hpp                 the opening and class headers; what other units
+//                           include
+//   Top.cpp                 every other class, and every definition
 //
-// The types header includes only other units' types headers, the forward
-// header nothing, the opening header only this unit's types header and forward
-// headers, and a class header the headers of its bases, so two units can
-// include each other's headers without a cycle.
-// Anything other units never name goes into the `.cpp`, so changing it
-// recompiles no other unit.
+// Every file includes what its own text asked for as it named things: the
+// forward header of a class reached through a pointer, the header of a base,
+// the header of a struct held by value. A class cannot be its own ancestor and
+// a struct cannot hold itself, and a forward header includes nothing, so two
+// units can include each other's headers without a cycle. Anything other units
+// never name goes into the `.cpp`, so changing it recompiles no other unit.
 auto RenderUnitFiles(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> CppUnitArtifacts {
-  const UnitText structs = RenderUnitStructs(unit, refusals);
+  UnitStructs structs = RenderUnitStructs(unit, refusals);
   const UnitText callables = RenderUnitCallables(unit, refusals);
   const UnitText variables = RenderUnitStaticVariables(unit);
   const UnitText forwards = RenderUnitForwardDeclarations(unit);
@@ -143,21 +131,21 @@ auto RenderUnitFiles(
   const UnitClosures closures = RenderUnitClosures(unit, refusals);
   const SourceName unit_namespace = UnitNamespaceOf(unit.name);
 
-  // A struct is built from structs of the units whose namespaces this one
-  // consumes, so their types headers come first.
-  TargetText types;
-  types += "#pragma once\n";
-  WriteInclude(types, support::kRuntimePreludeHeader);
-  for (const mir::ConsumedSignature& consumed : unit.consumed_signatures) {
-    if (const auto* consumed_namespace =
-            std::get_if<mir::ConsumedNamespace>(&consumed)) {
-      WriteInclude(types, UnitTypesFileOf(consumed_namespace->unit_name));
-    }
+  std::vector<CppArtifact> declarations;
+  for (const UnitStruct& declared : structs.declared) {
+    std::string relpath =
+        UnitStructFileOf(unit.name, CppStructName(unit.GetStruct(declared.id)));
+    TargetText file;
+    file += "#pragma once\n";
+    WriteInclude(file, support::kRuntimePreludeHeader);
+    WriteRequiredIncludes(file, declared.declaration, relpath);
+    file += "\n";
+    OpenNamespace(file, unit_namespace);
+    file += declared.declaration.View();
+    CloseNamespace(file, unit_namespace);
+    declarations.push_back(
+        {.relpath = std::move(relpath), .content = std::move(file).Take()});
   }
-  types += "\n";
-  OpenNamespace(types, unit_namespace);
-  types += structs.signature.View();
-  CloseNamespace(types, unit_namespace);
 
   TargetText forward;
   forward += "#pragma once\n\n";
@@ -170,61 +158,37 @@ auto RenderUnitFiles(
   AppendSection(opened, variables.signature);
   opened += "\n";
 
-  // A pointer to an object of another unit's class needs only its declaration,
-  // so the unit's declarations can point at objects of a unit whose own
-  // declarations point back. Every class this unit names is declared, whether
-  // the unit reads what that class published or only holds a pointer to one.
+  const std::string opening_file = UnitOpeningFileOf(unit.name);
   TargetText opening;
   opening += "#pragma once\n";
   WriteInclude(opening, support::kRuntimePreludeHeader);
-  WriteInclude(opening, UnitTypesFileOf(unit.name));
-  std::set<std::string> forward_files{UnitForwardFileOf(unit.name)};
-  for (const mir::ExternalClass& object : unit.external_classes) {
-    forward_files.insert(UnitForwardFileOf(object.unit_name));
-  }
-  for (const mir::Type& type : unit.types) {
-    const auto* object = type.As<mir::ObjectType>();
-    if (object == nullptr) continue;
-    if (const auto* named = std::get_if<mir::CrossUnitClassRef>(&object->of)) {
-      forward_files.insert(UnitForwardFileOf(named->unit_name));
-    }
-  }
-  for (const std::string& forward_file : forward_files) {
-    WriteInclude(opening, forward_file);
-  }
+  WriteRequiredIncludes(opening, opened, opening_file);
   opening += "\n";
   OpenNamespace(opening, unit_namespace);
   opening += opened.View();
   CloseNamespace(opening, unit_namespace);
 
-  std::vector<CppArtifact> declarations;
-  declarations.push_back(
-      {.relpath = UnitTypesFileOf(unit.name),
-       .content = std::move(types).Take()});
   declarations.push_back(
       {.relpath = UnitForwardFileOf(unit.name),
        .content = std::move(forward).Take()});
   declarations.push_back(
-      {.relpath = UnitOpeningFileOf(unit.name),
-       .content = std::move(opening).Take()});
+      {.relpath = opening_file, .content = std::move(opening).Take()});
 
   TargetText umbrella;
   umbrella += "#pragma once\n";
-  WriteInclude(umbrella, UnitOpeningFileOf(unit.name));
+  WriteInclude(umbrella, opening_file);
   for (const PublishedClass& published : classes.published) {
     const mir::Class& cls = unit.GetClass(published.id);
+    const std::string relpath =
+        UnitClassFileOf(unit.name, CppClassName(cls, published.id));
     TargetText file;
     file += "#pragma once\n";
-    WriteInclude(file, UnitOpeningFileOf(unit.name));
-    for (const mir::DeclaredClassRef& rests_on :
-         mir::RestsOnDeclaredClasses(cls)) {
-      WriteInclude(file, FileDeclaring(unit, rests_on));
-    }
+    WriteInclude(file, opening_file);
+    WriteRequiredIncludes(file, published.text, relpath);
     file += "\n";
     OpenNamespace(file, unit_namespace);
     file += published.text.View();
     CloseNamespace(file, unit_namespace);
-    const std::string relpath = FileDeclaring(unit, published.id);
     WriteInclude(umbrella, relpath);
     declarations.push_back(
         {.relpath = relpath, .content = std::move(file).Take()});
@@ -269,12 +233,14 @@ auto RenderUnitFiles(
   // The whole runtime through its one umbrella header, which is also what the
   // precompiled header covers; then, of every other unit, only the headers
   // this unit uses.
+  const std::string code_file = UnitCodeFileOf(unit.name);
   TargetText code;
   WriteInclude(code, support::kRuntimePreludeHeader);
   WriteInclude(code, UnitSignatureFileOf(unit.name));
   for (const mir::ConsumedSignature& consumed : unit.consumed_signatures) {
     WriteInclude(code, FileConsumed(consumed));
   }
+  WriteRequiredIncludes(code, realized, code_file);
   code += "\n";
   OpenNamespace(code, unit_namespace);
   code += realized.View();
@@ -282,9 +248,7 @@ auto RenderUnitFiles(
 
   return {
       .declarations = std::move(declarations),
-      .code = {
-          .relpath = UnitCodeFileOf(unit.name),
-          .content = std::move(code).Take()}};
+      .code = {.relpath = code_file, .content = std::move(code).Take()}};
 }
 
 // `main.cpp`: hands the root unit's label and its `sv_create` entry to the

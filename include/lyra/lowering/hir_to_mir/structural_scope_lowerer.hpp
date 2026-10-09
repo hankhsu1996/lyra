@@ -509,10 +509,11 @@ class StructuralScopeLowerer {
   // by the construct's position and then the block's, built with this one.
   std::vector<std::vector<std::unique_ptr<StructuralScopeLowerer>>>
       generate_children_;
-  // The classes this scope declares (LRM 23.9). A class declared here is a type
-  // of this scope's instance (LRM 6.22), so the scope both settles its shape
-  // and lowers its bodies -- which is what gives a class body the reach a
-  // process of the scope has, and the instance to record.
+  // The classes this scope replicates: those it declares (LRM 23.9), and the
+  // specializations of a generic on one (LRM 8.25), each a type of this scope's
+  // instance (LRM 6.22). So the scope both settles its shape and lowers its
+  // bodies -- which is what gives a class body the reach a process of the scope
+  // has, and the instance to record.
   std::vector<ClassDeclLowerer> class_lowerers_;
 };
 

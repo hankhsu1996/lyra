@@ -240,8 +240,7 @@ auto LowerUnpackedStruct(
       .declaration =
           hir::TypeDeclarationRef{
               .unit_name = CompilationUnitName(
-                  DeclaringCompilationUnit(struct_type),
-                  unit_lowerer.Specialization()),
+                  UnitHomeOf(struct_type), unit_lowerer.Specialization()),
               .name = TypeDeclarationName(
                   struct_type, unit_lowerer.Specialization())},
       .fields = *std::move(fields_or)};
@@ -1028,10 +1027,11 @@ auto UnitLowerer::ParentsOf(
                 ExternalClassOf(ext.unit_name, ext.class_name);
             ClassParents parents;
             if (published.base.has_value()) {
-              parents.base = *published.base;
+              parents.base = AsLocalOrPublished(*published.base);
             }
-            parents.implements.assign(
-                published.implements.begin(), published.implements.end());
+            for (const hir::ExternalClassRef& named : published.implements) {
+              parents.implements.push_back(AsLocalOrPublished(named));
+            }
             return parents;
           }},
       cls);
@@ -1248,20 +1248,58 @@ auto UnitLowerer::IntroducerOf(
   // one identity every class overriding it agrees on -- so a class overriding
   // it is a step on the way, not the answer. The walk follows what each class
   // published about the class it extends, and reading those signatures is what
-  // makes their units dependencies of this one.
+  // makes their units dependencies of this one. A lineage another unit
+  // published may pass back through a class of this unit, which is read off
+  // what this unit states it publishes.
   for (std::optional<hir::ExternalClassRef> at = cls; at.has_value();) {
-    const hir::ExternalClass& published =
-        ExternalClassOf(at->unit_name, at->class_name);
-    if (const std::optional<hir::PublishedBehaviorId> behavior =
-            hir::FindIntroducedVirtual(published.methods, method_name)) {
+    std::optional<hir::PublishedBehaviorId> behavior;
+    std::optional<hir::ExternalClassRef> base;
+    if (at->unit_name == unit_.name) {
+      const hir::ClassSignature& own = OwnClassSignature(at->class_name);
+      behavior = hir::FindIntroducedVirtual(own.methods, method_name);
+      base = own.base;
+    } else {
+      const hir::ExternalClass& published =
+          ExternalClassOf(at->unit_name, at->class_name);
+      behavior = hir::FindIntroducedVirtual(published.methods, method_name);
+      base = published.base;
+    }
+    if (behavior.has_value()) {
       return hir::ExternalDispatchSlot{
           .unit_name = at->unit_name,
           .class_name = at->class_name,
           .behavior = *behavior};
     }
-    at = published.base;
+    at = std::move(base);
   }
   return std::nullopt;
+}
+
+auto UnitLowerer::OwnClassSignature(const std::string& class_name) const
+    -> const hir::ClassSignature& {
+  const auto it = own_classes_by_name_.find(class_name);
+  if (it == own_classes_by_name_.end()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::OwnClassSignature: this unit holds no class '{}' -- "
+            "please report this as a bug",
+            class_name));
+  }
+  return own_class_signatures_.at(it->second);
+}
+
+auto UnitLowerer::AsLocalOrPublished(const hir::ExternalClassRef& named) const
+    -> LocalOrPublishedClass {
+  if (named.unit_name != unit_.name) return named;
+  const auto it = own_classes_by_name_.find(named.class_name);
+  if (it == own_classes_by_name_.end()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::AsLocalOrPublished: this unit holds no class '{}' -- "
+            "please report this as a bug",
+            named.class_name));
+  }
+  return it->second;
 }
 
 auto UnitLowerer::MakeExternalCalleeInterface(
@@ -1325,11 +1363,11 @@ auto UnitLowerer::ResolveClassRef(
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return it->second;
   }
-  const slang::ast::Symbol& decl_unit = DeclaringCompilationUnit(cls);
-  if (&decl_unit != &scope_->asSymbol()) {
+  const slang::ast::Symbol& home = UnitHomeOf(cls);
+  if (&home != home_) {
     const auto [it, _] = class_cache_.emplace(
         &cls, hir::ClassRef{hir::ExternalClassRef{
-                  .unit_name = CompilationUnitName(decl_unit, Specialization()),
+                  .unit_name = CompilationUnitName(home, Specialization()),
                   .class_name = SpecializationName(cls, Specialization())}});
     return it->second;
   }
@@ -1356,6 +1394,7 @@ auto UnitLowerer::InternLocalClass(
   const hir::ClassId id =
       unit_.classes.Declare(SpecializationName(cls, Specialization()));
   class_cache_.emplace(&cls, hir::ClassRef{hir::LocalClassRef{.class_id = id}});
+  own_classes_by_name_.emplace(unit_.classes.NameOf(id), &cls);
 
   auto decl_owner = std::make_unique<hir::ClassDecl>();
   hir::ClassDecl& decl = *decl_owner;
@@ -1366,17 +1405,17 @@ auto UnitLowerer::InternLocalClass(
   // body it declares, so that ownership is stated once here and each method,
   // prototype, and property initializer below lowers under it.
   //
-  // The frame descends from the structural scope that declares the class,
+  // The frame descends from the structural scope that replicates the class,
   // because a class is a scope of the name tree (LRM 23.9) and its bodies name
   // what encloses it the same way a process of that scope does. That scope's
-  // instance is what they name it against: the declaration is replicated with
-  // it, so each instance has a type of its own (LRM 6.22).
-  const slang::ast::Scope& declaring_scope = DeclaringStructuralScope(cls);
-  classes_by_scope_[&declaring_scope].push_back(id);
+  // instance is what they name it against: each instance has a type of its own
+  // (LRM 6.22), and a specialization on such a type is one too (LRM 8.25).
+  const slang::ast::Scope& replicating = ReplicatingScope(cls);
+  classes_by_scope_[&replicating].push_back(id);
+  DeclareClassStatics(cls, replicating);
   const WalkFrame class_frame =
       WalkFrame{}
-          .WithDeclaringScope(
-              DeclaringScopeChain(declaring_scope), &declaring_scope)
+          .WithDeclaringScope(DeclaringScopeChain(replicating), &replicating)
           .WithProceduralScopeOwner(&cls, &decl.procedural_scopes);
   DeclareProceduralScopes(cls, cls, *this, decl.procedural_scopes);
 
@@ -1602,12 +1641,12 @@ auto UnitLowerer::InternLocalClass(
   }
   own_class_signatures_.emplace(&cls, std::move(own_signature));
 
-  pending_class_bodies_[&declaring_scope].push_back(
+  pending_class_bodies_[&replicating].push_back(
       UnitLowerer::PendingClassBody{
           .cls = &cls,
           .id = id,
           .span = span,
-          .declaring_scope = &declaring_scope,
+          .replicating_scope = &replicating,
           .decl = std::move(decl_owner),
           .defined_methods = std::move(defined_methods),
           .pure_prototypes = std::move(pure_prototypes),
@@ -1615,9 +1654,9 @@ auto UnitLowerer::InternLocalClass(
   return id;
 }
 
-auto UnitLowerer::PopulateClassBodiesDeclaredIn(const slang::ast::Scope& scope)
-    -> diag::Result<void> {
-  // A class body reaches the declarations of the scope that declares it and
+auto UnitLowerer::PopulateClassBodiesReplicatedBy(
+    const slang::ast::Scope& scope) -> diag::Result<void> {
+  // A class body reaches the declarations of the scope that replicates it and
   // records its routes against that scope's frame, so it lowers while that
   // scope is being lowered -- with the same reach a process of the scope has,
   // and before the scope takes the routes recorded against it.
@@ -1634,12 +1673,22 @@ auto UnitLowerer::PopulateClassBodiesDeclaredIn(const slang::ast::Scope& scope)
 }
 
 void UnitLowerer::RequireEveryClassBodyLowered() const {
-  if (!pending_class_bodies_.empty()) {
-    throw InternalError(
-        "UnitLowerer::RequireEveryClassBodyLowered: every class this unit "
-        "declares is declared by a structural scope of it, and every such "
-        "scope lowers the classes it declares");
+  if (pending_class_bodies_.empty()) return;
+  std::string left;
+  for (const auto& [scope, bodies] : pending_class_bodies_) {
+    for (const PendingClassBody& body : bodies) {
+      left += std::format(
+          "{}'{}' in '{}'", left.empty() ? "" : ", ",
+          SpecializationName(*body.cls, Specialization()),
+          scope->asSymbol().name);
+    }
   }
+  throw InternalError(
+      std::format(
+          "UnitLowerer::RequireEveryClassBodyLowered: every class this unit "
+          "holds is replicated by a structural scope of it, and every such "
+          "scope lowers the classes it replicates; left: {}",
+          left));
 }
 
 void UnitLowerer::ReadSignaturesOfNamedClasses() {
@@ -1671,8 +1720,8 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   const WalkFrame class_frame =
       WalkFrame{}
           .WithDeclaringScope(
-              DeclaringScopeChain(*pending.declaring_scope),
-              pending.declaring_scope)
+              DeclaringScopeChain(*pending.replicating_scope),
+              pending.replicating_scope)
           .WithProceduralScopeOwner(&cls, &decl.procedural_scopes);
 
   for (const auto* method : defined_methods) {

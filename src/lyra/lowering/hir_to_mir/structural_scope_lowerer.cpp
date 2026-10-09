@@ -2428,19 +2428,18 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   process_static_bindings_ = {
       hir_scope.processes.size(), std::move(process_statics)};
 
-  // The classes this scope declares settle their shapes against this one, and
-  // before it is published: a class this scope replicates keeps its cells here,
-  // as fields of the instance, so what it places has to land while the shape is
-  // still open.
-  class_lowerers_.reserve(hir_scope.declared_classes.size());
-  for (const hir::ClassId hir_class : hir_scope.declared_classes) {
+  // The classes this scope replicates settle their shapes against this one, and
+  // before it is published: such a class keeps its cells here, as fields of the
+  // instance, so what it places has to land while the shape is still open.
+  class_lowerers_.reserve(hir_scope.replicated_classes.size());
+  for (const hir::ClassId hir_class : hir_scope.replicated_classes) {
     class_lowerers_.emplace_back(
         unit_lowerer, hir_class, unit_lowerer.TranslateClass(hir_class),
         unit_lowerer.ClassObjectType(hir_class),
         unit_lowerer.Hir().classes.Get(hir_class), this);
   }
   for (auto&& [class_lowerer, hir_class] :
-       std::views::zip(class_lowerers_, hir_scope.declared_classes)) {
+       std::views::zip(class_lowerers_, hir_scope.replicated_classes)) {
     if (auto r =
             class_lowerer.DeclareShape(&shape, placed_class_statics[hir_class]);
         !r) {
@@ -3022,7 +3021,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         support::BuiltinFn::kRegisterInitial);
   }
 
-  // The classes this scope declares, lowered against it: their bodies reach
+  // The classes this scope replicates, lowered against it: their bodies reach
   // this scope's declarations the way a process of it does, and the frame they
   // stand on is this scope's own.
   for (ClassDeclLowerer& class_lowerer : class_lowerers_) {

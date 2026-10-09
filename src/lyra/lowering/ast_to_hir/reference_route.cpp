@@ -1186,7 +1186,7 @@ auto UnitLowerer::StartReaching(const slang::ast::Scope& target)
 auto UnitLowerer::RouteToClassScope(
     const WalkFrame& frame, const slang::ast::ClassType& cls)
     -> std::optional<ScopeRoute> {
-  const slang::ast::Scope& scope = DeclaringStructuralScope(cls);
+  const slang::ast::Scope& scope = ReplicatingScope(cls);
   auto origin = StartReaching(scope);
   if (!origin.has_value()) return std::nullopt;
   return RouteToScope(frame, scope, *std::move(origin));
@@ -1199,7 +1199,7 @@ auto UnitLowerer::DeclaringInstanceFrom(
   auto takes = TakesDeclaringInstance(cls, span);
   if (!takes) return std::unexpected(std::move(takes.error()));
   if (!*takes) return std::nullopt;
-  if (DeclaredByAnotherDesignElement(cls)) {
+  if (HeldByAnotherDesignElement(cls)) {
     auto route = RouteToClassScope(frame, cls);
     const auto* on = route.has_value()
                          ? std::get_if<InExternalScope>(&route->place)
@@ -1309,7 +1309,7 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
       Overloaded{
           [&](const hir::LocalClassRef& local) { return local_cell(local); },
           [&](const hir::ExternalClassRef& ext) {
-            return DeclaredByAnotherDesignElement(owner_class)
+            return HeldByAnotherDesignElement(owner_class)
                        ? other_instance_cell(ext)
                        : namespace_cell(ext);
           }},

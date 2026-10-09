@@ -57,7 +57,7 @@ struct ExternalClass {
   // through one (LRM 8.26).
   bool is_interface_class = false;
   // The interfaces its declaration names, in the order written.
-  std::vector<CrossUnitClassRef> implements;
+  std::vector<DeclaredClassRef> implements;
   // The fields it published, in the order it published them, each counted to
   // the same position by both sides; and which of them answer to an
   // identifier. A scope's published class also holds what a name steps through

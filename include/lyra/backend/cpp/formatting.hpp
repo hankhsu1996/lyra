@@ -128,7 +128,7 @@ void CloseNamespace(TargetText& out, const Name& name) {
 // line, unless it is empty.
 inline void AppendSection(TargetText& out, const TargetText& section) {
   const TargetText::Section placed(out);
-  out += section.View();
+  out += section;
 }
 
 // The same, inside the namespace `name`, which is opened only around text
@@ -141,7 +141,7 @@ void AppendSectionInNamespace(
   }
   const TargetText::Section placed(out);
   OpenNamespace(out, name);
-  out += section.View();
+  out += section;
   CloseNamespace(out, name);
 }
 

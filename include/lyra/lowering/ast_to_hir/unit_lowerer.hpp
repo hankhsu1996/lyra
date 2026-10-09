@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -38,6 +39,7 @@
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
+#include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -496,14 +498,22 @@ struct ScopeDeclarations {
       instance_members;
 };
 
+// The specializations of a generic class a namespace declares that a design
+// element holds, by the body of that element: each is specialized on a type an
+// instance of it replicates (LRM 6.22, 8.25), so the element's own walk, which
+// never reaches the namespace, is not where it finds them.
+using PlacedSpecializations = std::unordered_map<
+    const slang::ast::Symbol*, std::vector<const slang::ast::ClassType*>>;
+
 // What every unit's lowering reads and none of them changes: where a
 // construct was written, the shared sensitivity analysis (one cache across the
 // design), whether assertions are elided rather than rejected, the foreign
-// export names, which are resolved design-wide before any unit is walked, and
-// what decides the name of every unit, which every party naming one reads.
-// The slang compilation itself is deliberately absent: walking top instances is
-// the driver's job, and a unit lowering that could reach it would be able to
-// read another unit.
+// export names, which are resolved design-wide before any unit is walked, what
+// decides the name of every unit, which every party naming one reads, and the
+// specializations placed in a unit from a generic declared elsewhere, which
+// only the design as a whole lists. The slang compilation itself is
+// deliberately absent: walking top instances is the driver's job, and a unit
+// lowering that could reach it would be able to read another unit.
 class LoweringFacts {
  public:
   LoweringFacts(
@@ -511,12 +521,22 @@ class LoweringFacts {
       SensitivityAnalyzer& sensitivity_analyzer,
       const ForeignExportNames& foreign_export_names,
       support::AssertionPolicy assertion_policy,
-      const SpecializationPolicy& specialization)
+      const SpecializationPolicy& specialization,
+      const PlacedSpecializations& placed)
       : source_mapper_(&source_mapper),
         sensitivity_analyzer_(&sensitivity_analyzer),
         foreign_export_names_(&foreign_export_names),
         assertion_policy_(assertion_policy),
-        specialization_(&specialization) {
+        specialization_(&specialization),
+        placed_(&placed) {
+  }
+
+  // The specializations placed in the unit `home` is the body of.
+  [[nodiscard]] auto PlacedIn(const slang::ast::Symbol& home) const
+      -> std::span<const slang::ast::ClassType* const> {
+    const auto it = placed_->find(&home);
+    if (it == placed_->end()) return {};
+    return it->second;
   }
 
   [[nodiscard]] auto SourceMapper() const
@@ -553,6 +573,7 @@ class LoweringFacts {
   const ForeignExportNames* foreign_export_names_;
   support::AssertionPolicy assertion_policy_;
   const SpecializationPolicy* specialization_;
+  const PlacedSpecializations* placed_;
 };
 
 // Per-unit lowerer, over a module instance body or a package. It holds the
@@ -568,8 +589,12 @@ class LoweringFacts {
 // by the second's return; afterwards the lowerer holds no IR.
 class UnitLowerer {
  public:
+  // The unit holding the declarations whose own source `home` is: a design
+  // element's body, a package, a `$unit` scope, or a specialization that is a
+  // unit of its own, which is lowered from the scope declaring its generic and
+  // holds nothing of that scope but itself.
   UnitLowerer(
-      const LoweringFacts& facts, const slang::ast::Scope& scope,
+      const LoweringFacts& facts, const slang::ast::Symbol& home,
       std::string name, hir::UnitRole role);
 
   // The declaration phase: everything this unit states about itself, including
@@ -601,6 +626,12 @@ class UnitLowerer {
   [[nodiscard]] auto SourceScope() const -> const slang::ast::Scope& {
     return *scope_;
   }
+
+  // Whether this unit holds `decl`. Every walk of the scope this unit is
+  // lowered from asks it, since that scope may declare what another unit
+  // holds: a generic's specializations, or everything but the one
+  // specialization a unit of its own holds.
+  [[nodiscard]] auto Owns(const slang::ast::Symbol& decl) const -> bool;
 
   // Lowers a slang type to a HIR TypeId. Identity is the pool's and is
   // structural, so what the frontend-keyed memo here adds is only a shortcut
@@ -727,10 +758,10 @@ class UnitLowerer {
 
   // Mints a class of this unit into the unit's class registry: allocates the
   // `ClassId`, populates the shape, and returns the id. The caller carries the
-  // proof that the class belongs to this unit -- the pre-pass walks this
-  // unit's own scope, and a same-unit base link resolves through the reference
-  // translator before flowing back here -- so no parent-chain query runs. A
-  // repeat call for the same class is idempotent: the cache entry the first
+  // proof that the class belongs to this unit -- the pre-pass walks only what
+  // this unit holds, and a same-unit base link resolves through the reference
+  // translator before flowing back here -- so no parent-chain query runs here.
+  // A repeat call for the same class is idempotent: the cache entry the first
   // mint installed returns without re-work, which admits mutual reference
   // during body population.
   auto InternLocalClass(const slang::ast::ClassType& cls, diag::SourceSpan span)
@@ -738,11 +769,11 @@ class UnitLowerer {
 
   // Translates a slang class pointer -- reached from an expression site or a
   // base-class link -- into HIR's owner-qualified reference form. The result
-  // is a `LocalClassRef` when the class is declared by this unit, an
-  // `ExternalClassRef{unit_name, class_name}` when it is declared by another.
+  // is a `LocalClassRef` when this unit holds the class, an
+  // `ExternalClassRef{unit_name, class_name}` when another does.
   // Classification runs at most once per class per unit: the first encounter
-  // walks `cls.getParentScope()` up to the enclosing compilation unit and
-  // caches the answer; every later encounter reads it. A local class not yet
+  // walks `cls.getParentScope()` to find the unit holding it and caches the
+  // answer; every later encounter reads it. A local class not yet
   // interned is minted lazily on this path, so a body reads the same identity
   // regardless of which route saw the class first.
   auto ResolveClassRef(const slang::ast::ClassType& cls, diag::SourceSpan span)
@@ -778,6 +809,15 @@ class UnitLowerer {
   auto ReadAsLocalOrPublished(
       const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<LocalOrPublishedClass>;
+
+  // Which of the two a class a signature names is: this unit's own where the
+  // signature names this unit, as a lineage another unit published may.
+  [[nodiscard]] auto AsLocalOrPublished(
+      const hir::ExternalClassRef& named) const -> LocalOrPublishedClass;
+
+  // What this unit publishes about its own class `class_name`.
+  [[nodiscard]] auto OwnClassSignature(const std::string& class_name) const
+      -> const hir::ClassSignature&;
 
   // What a class's declaration names beside itself: the class it extends, and
   // the interface classes it implements or, for an interface class, extends
@@ -1129,22 +1169,22 @@ class UnitLowerer {
   [[nodiscard]] auto DeclaringScopeChain(const slang::ast::Scope& scope) const
       -> std::vector<ScopeFrameId>;
 
-  // Whether a design element other than this unit declares `cls`, so that an
+  // Whether a design element other than this unit holds `cls`, so that an
   // object of it belongs to an instance of that element, which no count of
   // this unit's own scopes reaches.
-  [[nodiscard]] auto DeclaredByAnotherDesignElement(
+  [[nodiscard]] auto HeldByAnotherDesignElement(
       const slang::ast::ClassType& cls) const -> bool;
 
   // Whether a construction of `cls` and a call of a method of the class itself
   // are handed the instance it belongs to, as the class states it: its own
-  // declaration where this unit declares it, and its signature otherwise.
+  // declaration where this unit holds it, and its signature otherwise.
   auto TakesDeclaringInstance(
       const slang::ast::ClassType& cls, diag::SourceSpan span)
       -> diag::Result<bool>;
 
   // How far out of `frame`'s own structural scope the instance an object of
-  // `cls` belongs to sits, for a class this unit declares in one of its
-  // structural scopes.
+  // `cls` belongs to sits, for a class one of this unit's structural scopes
+  // replicates.
   [[nodiscard]] auto DeclaringScopeHopsFrom(
       const slang::ast::ClassType& cls, const WalkFrame& frame,
       diag::SourceSpan span) const -> diag::Result<hir::StructuralHops>;
@@ -1152,7 +1192,7 @@ class UnitLowerer {
   // How a body at `frame` reaches the instance an object of `cls` belongs to,
   // for a construction or a call of a method of the class itself written
   // there, or nothing where the class takes no such instance: as above where
-  // this unit declares the class, and by a route to the declaring scope's
+  // this unit holds the class, and by a route to the replicating scope's
   // object where another design element does (LRM 6.22).
   [[nodiscard]] auto DeclaringInstanceFrom(
       const slang::ast::ClassType& cls, const WalkFrame& frame,
@@ -1166,10 +1206,10 @@ class UnitLowerer {
   [[nodiscard]] auto TakePublication(const slang::ast::Scope& scope)
       -> hir::ScopePublication;
 
-  // Hands a structural scope the classes it declares, once. Every class the
-  // unit declares is named by exactly one scope, so a scope that declares none
+  // Hands a structural scope the classes it replicates, once. Every class the
+  // unit holds is named by exactly one scope, so a scope that replicates none
   // takes the empty list rather than being absent from the relation.
-  [[nodiscard]] auto TakeDeclaredClasses(const slang::ast::Scope& scope)
+  [[nodiscard]] auto TakeReplicatedClasses(const slang::ast::Scope& scope)
       -> std::vector<hir::ClassId>;
 
   // Records the identity a declaration scope minted for one of its procedural
@@ -1218,21 +1258,17 @@ class UnitLowerer {
   // it.
   [[nodiscard]] auto NextWithClauseId() -> hir::WithClauseId;
 
-  // Interns every class this unit declares -- a non-parameterized class as a
-  // single entry, and a parameterized class as one entry per live
-  // specialization slang deduplicated during elaboration. Runs before any
-  // body lowering so the unit's class registry is complete before any
-  // reference resolves; a specialization reached only from another unit
-  // still lands here, in its declaring unit.
-  auto InternOwnClassDeclarations(const slang::ast::Scope& scope)
-      -> diag::Result<void>;
+  // Interns every class this unit holds -- a non-parameterized class as a
+  // single entry, and each live specialization of a parameterized one the unit
+  // holds as one. Runs before any body lowering so the unit's class registry
+  // is complete before any reference resolves.
+  auto InternOwnClassDeclarations() -> diag::Result<void>;
 
   // Interns every unpacked structure a typedef of this unit declares outside a
   // body, in the same scopes classes are declared in, so the structure's type
   // -- and with it the operations its declaration brings -- is in the unit that
   // declares it whatever the unit's bodies use.
-  auto InternOwnStructureDeclarations(const slang::ast::Scope& scope)
-      -> diag::Result<void>;
+  auto InternOwnStructureDeclarations() -> diag::Result<void>;
 
   // A class whose declarations are settled and whose bodies are not. A class
   // body names what encloses the class the way any other body does, so it
@@ -1242,7 +1278,7 @@ class UnitLowerer {
     const slang::ast::ClassType* cls;
     hir::ClassId id;
     diag::SourceSpan span;
-    const slang::ast::Scope* declaring_scope;
+    const slang::ast::Scope* replicating_scope;
     // Held by pointer because its identity is its address: the procedural
     // scopes a body may name are minted into `decl->procedural_scopes` in the
     // declaration half and looked up by the registry they belong to, so the
@@ -1253,15 +1289,15 @@ class UnitLowerer {
     const slang::ast::SubroutineSymbol* constructor_sym;
   };
 
-  // Lowers the body half of every class `scope` declares: each method, the
+  // Lowers the body half of every class `scope` replicates: each method, the
   // constructor, and every property initializer. Called while that scope is
   // lowered, so a class body has the reach a process of the scope has.
-  auto PopulateClassBodiesDeclaredIn(const slang::ast::Scope& scope)
+  auto PopulateClassBodiesReplicatedBy(const slang::ast::Scope& scope)
       -> diag::Result<void>;
   auto PopulateClassBody(PendingClassBody& pending) -> diag::Result<void>;
 
-  // Every class a unit declares is declared by one of its structural scopes,
-  // and every such scope lowers what it declares, so nothing is left over.
+  // Every class a unit holds is replicated by one of its structural scopes, and
+  // every such scope lowers what it replicates, so nothing is left over.
   void RequireEveryClassBodyLowered() const;
 
   // Reads the signature of every class of another unit this one named, once
@@ -1605,12 +1641,11 @@ class UnitLowerer {
   void DeclareProcess(
       const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
       ScopePublicationRecord& published, ScopeFrameId frame);
-  // A class declared in a scope is a type of each instance of it (LRM 6.22),
-  // so what the class `declared` keeps for itself (LRM 8.9) is a cell the
-  // scope publishes, and so is what each class declared inside it keeps.
-  // Anything else declares no class and keeps nothing.
-  static void DeclareClassStatics(
-      const slang::ast::Symbol& declared, ScopePublicationRecord& published);
+  // A class is a type of each instance of the scope replicating it (LRM 6.22,
+  // 8.25), so what `cls` keeps for itself (LRM 8.9) is a cell that scope
+  // publishes.
+  void DeclareClassStatics(
+      const slang::ast::ClassType& cls, const slang::ast::Scope& replicating);
 
   // The class of the scope `published` records, in this unit's own types.
   auto PublishScopeClass(const ScopePublicationRecord& published)
@@ -1630,7 +1665,15 @@ class UnitLowerer {
   [[nodiscard]] auto DiffersPerObject(
       const slang::ast::ParameterSymbol& param) const -> bool;
 
+  // Hands `visit` every declaration outside a body this unit holds, each before
+  // anything inside it: those its own scope declares, then each specialization
+  // placed in it from a generic another unit declares.
+  template <typename Visit>
+  auto WalkOwnDeclarations(Visit& visit)
+      -> std::invoke_result_t<Visit&, const slang::ast::Symbol&>;
+
   LoweringFacts facts_;
+  const slang::ast::Symbol* home_;
   const slang::ast::Scope* scope_;
 
   hir::CompilationUnit unit_;
@@ -1653,6 +1696,10 @@ class UnitLowerer {
   // signature.
   std::unordered_map<const slang::ast::ClassType*, hir::ClassSignature>
       own_class_signatures_;
+  // Each class this unit holds, by the name it publishes it under, which is how
+  // a lineage another unit published names one coming back through this unit.
+  std::map<std::string, const slang::ast::ClassType*, std::less<>>
+      own_classes_by_name_;
   // Which record this unit made of each referenced scope class, by unit and
   // class, so every reference into one names the same entry.
   std::map<std::pair<std::string, std::string>, hir::ExternalScopeClassId>
@@ -1725,6 +1772,30 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::Symbol*, MintedProceduralScope>
       procedural_scopes_;
 };
+
+template <typename Visit>
+auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
+    -> std::invoke_result_t<Visit&, const slang::ast::Symbol&> {
+  using Result = std::invoke_result_t<Visit&, const slang::ast::Symbol&>;
+  const auto owned = [&](const slang::ast::Symbol& member) -> Result {
+    if (Owns(member)) return visit(member);
+    return Result();
+  };
+  if constexpr (std::is_void_v<Result>) {
+    WalkDeclarationScopes(*scope_, owned);
+    for (const slang::ast::ClassType* spec : facts_.PlacedIn(*home_)) {
+      owned(*spec);
+      WalkDeclarationScopes(*spec, owned);
+    }
+  } else {
+    if (auto r = WalkDeclarationScopes(*scope_, owned); !r) return r;
+    for (const slang::ast::ClassType* spec : facts_.PlacedIn(*home_)) {
+      if (auto r = owned(*spec); !r) return r;
+      if (auto r = WalkDeclarationScopes(*spec, owned); !r) return r;
+    }
+    return {};
+  }
+}
 
 // Mints the identity of every procedural scope the bodies of `slang_scope`
 // declare, into the registry of the declaration scope that owns them -- a

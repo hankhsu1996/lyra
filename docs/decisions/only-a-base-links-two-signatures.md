@@ -44,7 +44,11 @@ type:
 - **A handle to a class another unit declares** carries no class name at all. A handle is an opaque
   object reference, whose identity is compared and carried without naming what it points at.
 - **A type another unit declares** is not a cross-unit name. A referrer interns the type into its
-  own types, so what the declaration carries is this unit's own spelling of it.
+  own types, so what the declaration carries is this unit's own spelling of it. A struct is the
+  exception since it became a type named by its declaration: one held by value needs its definition,
+  and
+  [a-specialization-is-held-where-its-arguments-are](a-specialization-is-held-where-its-arguments-are.md)
+  D5 gives it a file of its own as D3 gives a class.
 - **The object of a unit this one instantiates, connects a port to, or holds a published member of**
   is reached through a pointer to that object.
 

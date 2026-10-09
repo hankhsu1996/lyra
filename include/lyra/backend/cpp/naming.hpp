@@ -249,8 +249,9 @@ void WriteOne(TargetText& out, UnitScope scope);
 }
 
 // `Top.opening.hpp`: the cells and functions the unit's namespace declares. Of
-// the program it includes only the unit's types file and forward files, so any
-// class file, of this unit or another, can include it first.
+// the program it includes only forward files and the files of the structs its
+// declarations name, so any class file, of this unit or another, can include
+// it first.
 [[nodiscard]] inline auto UnitOpeningFileOf(std::string_view unit_name)
     -> std::string {
   return TextOf(ToCppName(unit_name), ".opening.hpp");
@@ -266,14 +267,15 @@ void WriteOne(TargetText& out, UnitScope scope);
   return TextOf(ToCppName(unit_name), ".forward.hpp");
 }
 
-// `Top.types.hpp`: the structs the unit declares under a name, which a value of
-// one needs complete wherever it is held. It includes the types files of every
-// unit whose namespace this one consumes, which covers every unit a struct here
-// is built from; those files form no cycle, because a struct can only be built
-// from one declared before it (LRM 6.22).
-[[nodiscard]] inline auto UnitTypesFileOf(std::string_view unit_name)
-    -> std::string {
-  return TextOf(ToCppName(unit_name), ".types.hpp");
+// `Top.Pair.types.hpp`: one struct a unit declares, alone in its file, which a
+// value of it needs complete wherever it is held. It includes the file of each
+// struct it holds by value, so whichever file is included first, every struct
+// is defined after what it is built from. A struct cannot hold itself by value,
+// so those files form no cycle -- while two units' structs may each hold the
+// other's, so a file holding all of one unit's would.
+[[nodiscard]] inline auto UnitStructFileOf(
+    std::string_view unit_name, const CppName& struct_name) -> std::string {
+  return TextOf(ToCppName(unit_name), ".", struct_name, ".types.hpp");
 }
 
 // `Top.Base.hpp`: one class another unit may name, alone in its file. It
@@ -436,6 +438,26 @@ void WriteOne(TargetText& out, UnitScope scope);
 // struct under its own name.
 [[nodiscard]] inline auto CppStructTypesNamespace() -> MintedWord {
   return MintedWord{.word = "types"};
+}
+
+// A struct as every unit names it, `::Unit::sv_types::Name`. A value of it is
+// held whole, so text naming it needs the struct defined ahead of it, and
+// writing the name says which file that is.
+struct StructRef {
+  std::string_view unit_name;
+  SourceName name;
+};
+
+[[nodiscard]] inline auto CppStructRef(
+    std::string_view unit_name, std::string_view struct_name) -> StructRef {
+  return StructRef{.unit_name = unit_name, .name = ToCppName(struct_name)};
+}
+
+inline void WriteOne(TargetText& out, StructRef ref) {
+  out.Require(UnitStructFileOf(ref.unit_name, ref.name));
+  Write(
+      out, CppUnitScope(ref.unit_name), "::", CppStructTypesNamespace(),
+      "::", ref.name);
 }
 
 // The name of a closure's type, `sv_closure_<n>`: a position in the unit's

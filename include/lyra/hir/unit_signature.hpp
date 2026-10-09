@@ -7,7 +7,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/external_class.hpp"
 #include "lyra/hir/external_scope_class.hpp"
@@ -15,7 +14,6 @@
 #include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_method.hpp"
-#include "lyra/hir/published_modport.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/published_target.hpp"
 #include "lyra/hir/type.hpp"
@@ -104,11 +102,11 @@ struct ClassSignature {
   // take, because its own properties are placed after them.
   std::vector<TypeId> local_property_types;
   // The properties of the class itself rather than of an object of it (LRM
-  // 8.9) that another unit may name. Where a namespace unit declares the class,
+  // 8.9) that another unit may name. Where a namespace unit holds the class,
   // each is one cell that unit holds and a referrer reaches by name, so no
-  // position is counted out of this list; where a design element declares it,
+  // position is counted out of this list; where a design element holds it,
   // each is a cell of the instance the class belongs to (LRM 6.22), which the
-  // scope declaring the class publishes among its members.
+  // scope replicating the class publishes among its members.
   std::vector<PublishedProperty> static_properties;
   // What a construction of the class is entered with (LRM 8.7): each formal's
   // direction and type, as a method's prototype states them. Absent for an

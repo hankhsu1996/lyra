@@ -410,15 +410,8 @@ auto PublishObjectEntry(
           .virtual_dispatch = std::nullopt});
 }
 
-// What a signature names of another unit's class or behavior, in MIR's terms.
-// Reading a signature records no dependency, so neither does this; a reference
-// that names the class records it where it takes the name.
-auto PublishedClass(const hir::ExternalClassRef& ref)
-    -> mir::CrossUnitClassRef {
-  return mir::CrossUnitClassRef{
-      .unit_name = ref.unit_name, .class_name = ref.class_name};
-}
-
+// What a signature names of another unit's behavior, in MIR's terms. Reading a
+// signature records no dependency, so neither does this.
 auto PublishedSlot(const hir::ExternalDispatchSlot& slot)
     -> mir::OverridesExternalSlot {
   return mir::OverridesExternalSlot{
@@ -541,6 +534,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   classes.reserve(hir_->classes.size());
   for (const hir::ClassId hir_id : hir_->classes.Ids()) {
     classes.push_back(TakeClassIdentities(hir_->classes.Get(hir_id)));
+    declared_classes_.emplace(hir_->classes.NameOf(hir_id), classes.back().id);
   }
   class_translations_ = {hir_->classes.size(), std::move(classes)};
 
@@ -599,9 +593,10 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
 
   PublishAssignmentPatternTexts();
 
-  // Every class this unit declares is declared by one of its structural scopes
-  // (LRM 23.9), which settles that class's shape and lowers its bodies -- so a
-  // class body stands where the scope stands and reaches what it reaches. A
+  // Every class this unit holds is a type of one of its structural scopes'
+  // instance (LRM 23.9, 6.22), which settles that class's shape and lowers its
+  // bodies -- so a class body stands where the scope stands and reaches what it
+  // reaches. A
   // class identity is minted on first reference, which a scope's own shape may
   // be, so nothing is minted ahead of the walk.
   return {};
@@ -757,15 +752,15 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
     return std::unexpected(std::move(own.error()));
   }
 
-  // The classes this unit declares. A namespace replicates nothing, so an
-  // object of one belongs to no instance and its bodies name no scope's
-  // declarations -- which is the same relation a module's scope carries, with
-  // the instance absent rather than a second arrangement. Nothing replicates
-  // the class, so its type-associated cells are its own and come up where the
-  // namespace brings up the rest of what it owns (LRM 8.9, 10.5).
+  // The classes this unit holds. A namespace replicates nothing, so an object
+  // of one belongs to no instance and its bodies name no scope's declarations
+  // -- which is the same relation a module's scope carries, with the instance
+  // absent rather than a second arrangement. Nothing replicates the class, so
+  // its type-associated cells are its own and come up where the namespace
+  // brings up the rest of what it owns (LRM 8.9, 10.5).
   std::vector<ClassDeclLowerer> class_lowerers;
-  class_lowerers.reserve(scope.declared_classes.size());
-  for (const hir::ClassId hir_class : scope.declared_classes) {
+  class_lowerers.reserve(scope.replicated_classes.size());
+  for (const hir::ClassId hir_class : scope.replicated_classes) {
     class_lowerers.emplace_back(
         *this, hir_class, TranslateClass(hir_class), ClassObjectType(hir_class),
         hir_->classes.Get(hir_class), nullptr);
@@ -834,11 +829,35 @@ auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)
       mir::Type{mir::ObjectType{.of = MakeExternalClassRef(ref)}});
 }
 
+auto UnitLowerer::PublishedClass(const hir::ExternalClassRef& ref) const
+    -> mir::DeclaredClassRef {
+  return DeclaredClassIdentityOf(ref.unit_name, ref.class_name);
+}
+
+auto UnitLowerer::DeclaredClassIdentityOf(
+    const std::string& unit_name, const std::string& class_name) const
+    -> mir::DeclaredClassRef {
+  if (unit_name != unit_.name) {
+    return mir::CrossUnitClassRef{
+        .unit_name = unit_name, .class_name = class_name};
+  }
+  const auto it = declared_classes_.find(class_name);
+  if (it == declared_classes_.end()) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::DeclaredClassIdentityOf: this unit declares no class "
+            "'{}' -- please report this as a bug",
+            class_name));
+  }
+  return mir::IntraUnitClassRef{.class_id = it->second};
+}
+
 auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)
     -> mir::DeclaredClassRef {
-  unit_.ConsumeClassOf(ref.unit_name, ref.class_name);
-  return mir::CrossUnitClassRef{
-      .unit_name = ref.unit_name, .class_name = ref.class_name};
+  if (ref.unit_name != unit_.name) {
+    unit_.ConsumeClassOf(ref.unit_name, ref.class_name);
+  }
+  return DeclaredClassIdentityOf(ref.unit_name, ref.class_name);
 }
 
 auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref)
@@ -857,13 +876,12 @@ auto UnitLowerer::TranslateClassRef(const hir::ClassRef& ref)
 
 auto UnitLowerer::MakeCrossUnitClassFieldTarget(
     const hir::ExternalClassPropertyTarget& target) -> mir::ClassFieldTarget {
-  unit_.ConsumeClassOf(target.unit_name, target.class_name);
   // The properties a class publishes are a prefix of its own storage, so the
   // position counted out of the signature is the slot that class gave.
   return mir::ClassFieldTarget{
-      .owner =
-          mir::CrossUnitClassRef{
-              .unit_name = target.unit_name, .class_name = target.class_name},
+      .owner = MakeExternalClassRef(
+          hir::ExternalClassRef{
+              .unit_name = target.unit_name, .class_name = target.class_name}),
       .slot = mir::FieldId{target.property.value}};
 }
 
@@ -876,7 +894,7 @@ auto UnitLowerer::TakePublishedClass(const hir::ExternalClass& published)
   std::optional<mir::ClassRef> base;
   if (!published.is_interface_class) {
     base = published.base.has_value()
-               ? mir::ClassRef{PublishedClass(*published.base)}
+               ? mir::AsClassRef(PublishedClass(*published.base))
                : mir::ClassRef{mir::ManagedObjectRootRef{}};
   }
   mir::ExternalClass record{

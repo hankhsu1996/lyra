@@ -3,19 +3,43 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace lyra::backend::cpp {
 
-// An output file, written front to back. It also keeps two things writers
+// An output file, written front to back. It also keeps three things writers
 // would otherwise have to pass around: the current indentation, which
-// `OpenLine` applies, and the blank lines between sections, which are written
-// only once the next section actually writes something.
+// `OpenLine` applies; the blank lines between sections, which are written only
+// once the next section actually writes something; and the files what was
+// written needs included ahead of it, which whoever lays the text into a file
+// reads once the text is whole.
 class TargetText {
  public:
   auto operator+=(std::string_view text) -> TargetText&;
+
+  // Lays text written elsewhere into this one, with what it needs included.
+  auto operator+=(const TargetText& written) -> TargetText& {
+    *this += written.View();
+    required_files_.insert(
+        written.required_files_.begin(), written.required_files_.end());
+    return *this;
+  }
+
+  // States that what is being written needs `file` included ahead of it: a
+  // type it names has to be defined there before this text is read. The writer
+  // naming the type says so as it names it, since that is where the need
+  // arises.
+  void Require(std::string file) {
+    required_files_.insert(std::move(file));
+  }
+
+  [[nodiscard]] auto RequiredFiles() const -> const std::set<std::string>& {
+    return required_files_;
+  }
 
   // Starts a line at the current indentation; the writer ends it with a
   // newline.
@@ -84,6 +108,7 @@ class TargetText {
   std::string text_;
   std::size_t depth_ = 0;
   std::size_t owed_blank_lines_ = 0;
+  std::set<std::string> required_files_;
 };
 
 // Writes an integer in the given base.

@@ -9,13 +9,14 @@
 // extending the base from another unit holds its own properties beside that
 // storage without being able to name it. The lineage here crosses three units,
 // and every level writes and reads back its own properties and the ones it
-// inherited.
+// inherited. A lineage may also leave a package and come back to it, and a
+// method the first class introduced is still overridden through it (LRM 8.20).
 package first_pkg;
   class FirstBase;
     local int first_hidden = 11;
     int first_value = 1;
 
-    function int first_hidden_value();
+    virtual function int first_hidden_value();
       return first_hidden;
     endfunction
 
@@ -26,6 +27,17 @@ package first_pkg;
 
   class FirstDerived extends second_pkg::SecondBase;
     int first_own = 3;
+  endclass
+
+  // A lineage that leaves this package and comes back: what the other package
+  // publishes about the class in between names this package's own class as
+  // its base, and overriding a method it introduced still reaches it.
+  class FirstAgain extends second_pkg::SecondDerived;
+    int again_own = 6;
+
+    function int first_hidden_value();
+      return 99;
+    endfunction
   endclass
 endpackage
 
@@ -66,11 +78,24 @@ module Top;
   int leaf_second_own;
   int leaf_second_derived_hidden;
   int leaf_own;
+  int again_first_value;
+  int again_second_own;
+  int again_own;
+  int again_dispatched;
 
   initial begin
     first_pkg::FirstDerived a;
     second_pkg::SecondDerived b;
     Leaf c;
+    first_pkg::FirstAgain g;
+    first_pkg::FirstBase g_as_base;
+
+    g = new;
+    g_as_base = g;
+    again_first_value = g.first_value;
+    again_second_own = g.second_own;
+    again_own = g.again_own;
+    again_dispatched = g_as_base.first_hidden_value();
 
     a = new;
     b = new;
@@ -122,6 +147,13 @@ module Top;
           leaf_second_derived_hidden);
     if (leaf_own !== 105)
       $fatal(1, "leaf_own was %0d, expected 105", leaf_own);
+    if (again_first_value !== 1)
+      $fatal(1, "again_first_value was %0d, expected 1", again_first_value);
+    if (again_second_own !== 4)
+      $fatal(1, "again_second_own was %0d, expected 4", again_second_own);
+    if (again_own !== 6) $fatal(1, "again_own was %0d, expected 6", again_own);
+    if (again_dispatched !== 99)
+      $fatal(1, "again_dispatched was %0d, expected 99", again_dispatched);
     $display("All checks passed");
   end
 endmodule

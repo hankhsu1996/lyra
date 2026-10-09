@@ -485,28 +485,30 @@ void VerifyClass(const CompilationUnit& unit, const Class& cls) {
 // class two identities in one unit, which both backends would then have to
 // agree are one.
 void VerifyOwnClassesNamedAsOwn(const CompilationUnit& unit) {
-  const auto refuse = [&](std::string_view where) {
+  const auto refuse = [&](std::string_view class_name, std::string_view where) {
     throw InternalError(
         std::format(
-            "mir verify: unit '{}' names a class of its own as another unit's, "
+            "mir verify: unit '{}' names its own class '{}' as another unit's, "
             "in {} -- please report this as a bug",
-            unit.name, where));
+            unit.name, class_name, where));
   };
   for (const Type& type : unit.types) {
     const auto* object = type.As<ObjectType>();
     if (object == nullptr) continue;
     const auto* other = std::get_if<CrossUnitClassRef>(&object->of);
-    if (other != nullptr && other->unit_name == unit.name) refuse("a type");
+    if (other != nullptr && other->unit_name == unit.name) {
+      refuse(other->class_name, "a type");
+    }
   }
   for (const ExternalClass& record : unit.external_classes) {
     if (record.unit_name == unit.name) {
-      refuse("its record of what a unit published");
+      refuse(record.class_name, "its record of what a unit published");
     }
   }
   for (const ConsumedSignature& consumed : unit.consumed_signatures) {
     const auto* cls = std::get_if<ConsumedClass>(&consumed);
     if (cls != nullptr && cls->unit_name == unit.name) {
-      refuse("what it consumed of a signature");
+      refuse(cls->class_name, "what it consumed of a signature");
     }
   }
 }
