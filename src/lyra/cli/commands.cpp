@@ -640,25 +640,26 @@ auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
     return std::nullopt;
   }
   // The declaration is flattened once into the two things the rest of the run
-  // reads: the manifest to apply and re-read, and an absent search kept for the
-  // no-input-files note below. That note is the only place absence still speaks
-  // -- a named source means there are files, so no search reaches that branch.
-  const Manifest* manifest = nullptr;
+  // reads: what was declared, to apply and re-read, and an absent search kept
+  // for the no-input-files note below. That note is the only place absence
+  // still speaks -- a named source means there are files, so no search reaches
+  // that branch.
+  const Declarations* declared = nullptr;
   std::optional<ManifestAbsent> absent;
   std::visit(
       Overloaded{
-          [&](const Manifest& m) { manifest = &m; },
+          [&](const Declarations& d) { declared = &d; },
           [&](const ManifestAbsent& a) { absent = a; }, [&](NoSearchNeeded) {}},
       *declaration_or);
-  if (manifest != nullptr) {
-    if (auto applied = ApplyManifest(*manifest, driver); !applied) {
+  if (declared != nullptr) {
+    if (auto applied = ApplyDeclarations(*declared, driver); !applied) {
       report(std::move(applied.error()));
       return std::nullopt;
     }
   }
 
   auto parsed = ResolveCliOptions(
-      *invocation.options, manifest, invocation.command,
+      *invocation.options, declared, invocation.command,
       invocation.simulation_args);
   if (!parsed) {
     report(diag::Make(diag::DiagCode::kHostInvalidCliArgs, parsed.error()));
@@ -679,13 +680,13 @@ auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
     // A declaration was in effect and still named nothing, which reads as no
     // declaration at all unless the message says which one applied -- and the
     // one that applied may be several directories above the caller.
-    if (manifest != nullptr) {
-      diagnostic =
-          std::move(diagnostic)
-              .WithNote(
-                  std::format(
-                      "library '{}' at {} declares no source files",
-                      manifest->library.name, manifest->path.string()));
+    if (declared != nullptr) {
+      diagnostic = std::move(diagnostic)
+                       .WithNote(
+                           std::format(
+                               "library '{}' at {} declares no source files",
+                               declared->root.library.name,
+                               declared->root.path.string()));
     }
     report(std::move(diagnostic));
     return std::nullopt;

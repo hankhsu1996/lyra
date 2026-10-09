@@ -35,6 +35,16 @@ struct SourceSet {
 struct DeclaredLibrary {
   std::string name;
   SourceSet sources;
+  // Include directories of this library that a library depending on it
+  // searches too. The ones in `sources` are searched by this library alone.
+  std::vector<std::string> export_incdir;
+};
+
+// Another library whose cells this one's cells may name: what it is called and
+// the file declaring it.
+struct DeclaredDependency {
+  std::string name;
+  std::filesystem::path manifest;
 };
 
 // What is run where the library is developed: the cells elaboration starts at,
@@ -51,6 +61,9 @@ struct Manifest {
   std::filesystem::path path;
   DeclaredLibrary library;
   DeclaredDesign design;
+  // In the order the file writes them, which is the order a cell is searched
+  // for in them.
+  std::vector<DeclaredDependency> dependencies;
   std::optional<std::string> language_version;
   std::optional<std::string> timescale;
   std::optional<bool> single_unit;
@@ -77,10 +90,26 @@ using ManifestSearch = std::variant<ManifestFound, ManifestAbsent>;
 // contribute to it.
 auto FindManifest(const std::filesystem::path& start) -> ManifestSearch;
 
-// Reads and validates one declaration. Every key is checked against the schema
-// -- an unrecognized one is an error rather than a warning, so a typo cannot
-// silently compile something else and so a table this version does not know is
-// a loud failure rather than a quiet one.
-auto LoadManifest(const std::filesystem::path& path) -> diag::Result<Manifest>;
+// The declarations one build is made from: the library being built, and before
+// it every library it reaches through a dependency, each once and after
+// everything it depends on itself.
+struct Declarations {
+  std::vector<Manifest> dependencies;
+  Manifest root;
+};
+
+// Reads and validates the declaration at `path` and every declaration it
+// reaches. Every key is checked against the schema -- an unrecognized one is an
+// error rather than a warning, so a typo cannot silently compile something else
+// and so a table this version does not know is a loud failure rather than a
+// quiet one.
+//
+// A library is one thing in a build, so a name declared by two files is
+// refused, as is a library that reaches itself. What a library that is depended
+// on asks for and one build cannot give each library separately is refused
+// rather than read under the root's answer: a language version or a time scale
+// other than the root's.
+auto LoadDeclarations(const std::filesystem::path& path)
+    -> diag::Result<Declarations>;
 
 }  // namespace lyra::cli

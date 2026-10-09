@@ -423,6 +423,13 @@ TEST(LyraManifest, CommandLineJoinsMaterialAndReplacesSelection) {
   EXPECT_NE(joined.stdout_text.find("alu width 16"), std::string::npos)
       << joined.stdout_text;
 
+  // Where both define one macro, the command line's is the one that stands.
+  const auto overridden =
+      RunLyraFrom(lyra, *tmp_or, "run --backend llvm -D TRACE=5");
+  ASSERT_EQ(overridden.exit_code, 0) << overridden.stderr_text;
+  EXPECT_NE(overridden.stdout_text.find("tb trace 5"), std::string::npos)
+      << overridden.stdout_text;
+
   const auto narrowed =
       RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top alu");
   ASSERT_EQ(narrowed.exit_code, 0) << narrowed.stderr_text;
@@ -497,6 +504,222 @@ TEST(LyraManifest, RefusesWhatAFileCannotDeclare) {
     EXPECT_NE(checked.exit_code, 0) << refusal.name << ": accepted";
     EXPECT_NE(checked.stderr_text.find(refusal.expected), std::string::npos)
         << refusal.name << ": " << checked.stderr_text;
+  }
+}
+
+auto WriteFile(const std::filesystem::path& path, std::string_view text)
+    -> void {
+  std::filesystem::create_directories(path.parent_path());
+  std::ofstream(path) << text;
+}
+
+// Three libraries in a chain, `soc` on `prim` on `base`, written so that each
+// thing one library could leak into another is observable: `soc` and `prim`
+// each hold a cell `fifo`, a header `who.svh` and a define `FLAVOUR`, `soc`
+// is one compilation unit that defines a macro before `prim` is read, and only
+// `prim` declares that it uses `base`. `base` calls a foreign function only its
+// own declaration supplies, and `soc` and `base` each find a cell `found_cell`
+// by searching a directory of their own.
+auto WriteLibraryChain(const std::filesystem::path& root) -> void {
+  WriteFile(
+      root / "base" / "lyra.toml",
+      "[library]\nname = \"base\"\nfiles = [\"base_cell.sv\"]\n"
+      "dpi = [\"base_answer.c\"]\n"
+      "defines = [\"FLAVOUR=7\"]\n"
+      "searchdir = [\"found\"]\nsearchext = [\".sv\"]\n");
+  WriteFile(
+      root / "base" / "base_cell.sv",
+      "module base_cell;\n"
+      "  import \"DPI-C\" function int base_answer();\n"
+      "  found_cell f ();\n"
+      "  initial $display(\"base cell %0d\", base_answer());\n"
+      "endmodule\n");
+  WriteFile(
+      root / "base" / "found" / "found_cell.sv",
+      "module found_cell;\n"
+      "  initial $display(\"base found flavour %0d\", `FLAVOUR);\n"
+      "endmodule\n");
+  WriteFile(
+      root / "base" / "base_answer.c",
+      "int base_answer(void) { return 42; }\n");
+
+  WriteFile(
+      root / "prim" / "lyra.toml",
+      "[library]\n"
+      "name = \"prim\"\n"
+      "files = [\"fifo.sv\", \"prim_user.sv\"]\n"
+      "incdir = [\"inc\"]\n"
+      "export_incdir = [\"include\"]\n"
+      "defines = [\"FLAVOUR=1\"]\n"
+      "\n[dependencies]\nbase = { path = \"../base\" }\n");
+  WriteFile(root / "prim" / "inc" / "who.svh", "`define WHO \"prim\"\n");
+  WriteFile(
+      root / "prim" / "include" / "prim_macros.svh",
+      "`define PRIM_GREETING \"from prim\"\n");
+  WriteFile(
+      root / "prim" / "fifo.sv",
+      "`include \"who.svh\"\n"
+      "module fifo;\n"
+      "  initial $display(\"prim fifo: who %s flavour %0d soc macro %0d\",\n"
+      "                   `WHO, `FLAVOUR,\n"
+      "`ifdef SOC_MACRO\n"
+      "                   1\n"
+      "`else\n"
+      "                   0\n"
+      "`endif\n"
+      "  );\n"
+      "endmodule\n");
+  WriteFile(
+      root / "prim" / "prim_user.sv",
+      "module prim_user;\n  fifo f ();\n  base_cell b ();\nendmodule\n");
+
+  WriteFile(
+      root / "soc" / "lyra.toml",
+      "[library]\n"
+      "name = \"soc\"\n"
+      "files = [\"top.sv\", \"fifo.sv\"]\n"
+      "incdir = [\"inc\"]\n"
+      "defines = [\"FLAVOUR=2\"]\n"
+      "searchdir = [\"found\"]\nsearchext = [\".sv\"]\n"
+      "\n[design]\ntop = [\"Top\"]\n"
+      "\n[dependencies]\nprim = { path = \"../prim\" }\n"
+      "\n[compile]\nsingle_unit = true\n");
+  WriteFile(root / "soc" / "inc" / "who.svh", "`define WHO \"soc\"\n");
+  WriteFile(
+      root / "soc" / "top.sv",
+      "`define SOC_MACRO\n"
+      "`include \"prim_macros.svh\"\n"
+      "module Top;\n"
+      "  prim_user u ();\n"
+      "  fifo f ();\n"
+      "  found_cell c ();\n"
+      "  initial $display(\"top: %s\", `PRIM_GREETING);\n"
+      "endmodule\n");
+  WriteFile(
+      root / "soc" / "found" / "found_cell.sv",
+      "module found_cell;\n"
+      "  initial $display(\"soc found flavour %0d\", `FLAVOUR);\n"
+      "endmodule\n");
+  WriteFile(
+      root / "soc" / "fifo.sv",
+      "module fifo;\n  initial $display(\"soc fifo\");\nendmodule\n");
+
+  // The same library with a root that names a cell of `base`, which `soc`
+  // never declared it uses.
+  WriteFile(
+      root / "soc" / "reach.toml",
+      "[library]\n"
+      "name = \"soc\"\n"
+      "files = [\"reach.sv\"]\n"
+      "\n[design]\ntop = [\"Reach\"]\n"
+      "\n[dependencies]\nprim = { path = \"../prim\" }\n");
+  WriteFile(
+      root / "soc" / "reach.sv",
+      "module Reach;\n  prim_user u ();\n  base_cell b ();\nendmodule\n");
+}
+
+// What a library's cells are is decided by its own declaration, whoever uses
+// it. A cell it instantiates is its own before anyone else's of that name
+// (LRM 33.4.1.5 names the parent cell's library for the same reason), and its
+// text is read under its own defines and include directories and no other
+// compilation unit's macros (LRM 3.12.1). What crosses to a dependent is what
+// the library exports, and what the command line says reaches everything.
+TEST(LyraManifest, ALibraryIsReadAsItDeclaresItselfWhoeverUsesIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteLibraryChain(*tmp_or);
+
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or / "soc", std::format("run --backend {}", backend));
+    ASSERT_EQ(run.exit_code, 0) << backend << ": " << run.stderr_text;
+    for (const std::string_view line :
+         {"prim fifo: who prim flavour 1 soc macro 0", "soc fifo",
+          "base cell 42", "base found flavour 7", "soc found flavour 2",
+          "top: from prim"}) {
+      EXPECT_NE(run.stdout_text.find(line), std::string::npos)
+          << backend << ": no '" << line << "' in: " << run.stdout_text;
+    }
+  }
+
+  const auto told =
+      RunLyraFrom(lyra, *tmp_or / "soc", "run --backend llvm -D FLAVOUR=3");
+  ASSERT_EQ(told.exit_code, 0) << told.stderr_text;
+  EXPECT_NE(told.stdout_text.find("flavour 3"), std::string::npos)
+      << told.stdout_text;
+
+  // The library alone is the same library: nothing above was supplied by the
+  // one that used it.
+  const auto alone =
+      RunLyraFrom(lyra, *tmp_or / "prim", "run --backend llvm --top fifo");
+  ASSERT_EQ(alone.exit_code, 0) << alone.stderr_text;
+  EXPECT_NE(
+      alone.stdout_text.find("prim fifo: who prim flavour 1 soc macro 0"),
+      std::string::npos)
+      << alone.stdout_text;
+
+  const auto reached =
+      RunLyraFrom(lyra, *tmp_or / "soc", "check --config reach.toml");
+  EXPECT_NE(reached.exit_code, 0) << reached.stdout_text;
+  EXPECT_NE(
+      reached.stderr_text.find("unknown module 'base_cell'"), std::string::npos)
+      << reached.stderr_text;
+}
+
+// A library is one thing in a build and is found where its dependent says it
+// is. Each case is a root declaration beside the chain above.
+TEST(LyraManifest, RefusesADependencyThatIsNotOneLibrary) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteLibraryChain(*tmp_or);
+  WriteFile(
+      *tmp_or / "other" / "lyra.toml",
+      "[library]\nname = \"base\"\nfiles = []\n");
+  WriteFile(
+      *tmp_or / "loop" / "lyra.toml",
+      "[library]\nname = \"loop\"\n"
+      "\n[dependencies]\napp = { path = \"../app\" }\n");
+  WriteFile(
+      *tmp_or / "older" / "lyra.toml",
+      "[library]\nname = \"older\"\n\n[compile]\nstd = \"1800-2017\"\n");
+
+  struct Refusal {
+    std::string_view dependencies;
+    std::string_view expected;
+  };
+  static constexpr std::array<Refusal, 8> kRefusals = {
+      {{.dependencies = "prim = \"../prim\"\n",
+        .expected = "expected a table saying where the library is declared"},
+       {.dependencies = "prim = { git = \"https://example.com/prim\" }\n",
+        .expected = "[dependencies.prim] git: unrecognized key"},
+       {.dependencies = "prim = {}\n",
+        .expected = "a dependency has to say which directory declares it"},
+       {.dependencies = "prim = { path = \"../nowhere\" }\n",
+        .expected = "[dependencies] prim: there is no"},
+       {.dependencies = "primitives = { path = \"../prim\" }\n",
+        .expected = "declares library 'prim'"},
+       {.dependencies =
+            "prim = { path = \"../prim\" }\nbase = { path = \"../other\" }\n",
+        .expected = "the build already holds a library of that name"},
+       {.dependencies = "loop = { path = \"../loop\" }\n",
+        .expected = "a library cannot depend on itself (app -> loop -> app)"},
+       {.dependencies = "older = { path = \"../older\" }\n",
+        .expected = "different language versions is not yet supported"}}};
+
+  for (const auto& refusal : kRefusals) {
+    WriteFile(
+        *tmp_or / "app" / "lyra.toml",
+        std::format(
+            "[library]\nname = \"app\"\n\n[dependencies]\n{}",
+            refusal.dependencies));
+    const auto checked = RunLyraFrom(lyra, *tmp_or / "app", "check");
+    EXPECT_NE(checked.exit_code, 0) << refusal.dependencies << ": accepted";
+    EXPECT_NE(checked.stderr_text.find(refusal.expected), std::string::npos)
+        << refusal.dependencies << ": " << checked.stderr_text;
   }
 }
 

@@ -611,7 +611,7 @@ auto ResolveDesignDeclaration(
     -> diag::Result<DesignDeclaration> {
   const auto load =
       [](const std::filesystem::path& path) -> diag::Result<DesignDeclaration> {
-    auto loaded = LoadManifest(path);
+    auto loaded = LoadDeclarations(path);
     if (!loaded) {
       return std::unexpected(std::move(loaded.error()));
     }
@@ -636,72 +636,181 @@ auto ResolveDesignDeclaration(
   return load(std::get<ManifestFound>(search).path);
 }
 
-auto ApplyManifest(const Manifest& manifest, slang::driver::Driver& driver)
-    -> diag::Result<void> {
-  // The design is read after the library it stands on, as the command line is
-  // read after both.
-  const std::array<const SourceSet*, 2> sets = {
-      &manifest.library.sources, &manifest.design.sources};
-  // Inserted ahead of the command line's, because the last definition of a
-  // macro, or of a parameter, stands.
-  auto defines_at = driver.options.defines.begin();
-  auto undefines_at = driver.options.undefines.begin();
-  for (const SourceSet* set : sets) {
-    for (const auto& file : set->files) {
-      driver.sourceLoader.addFiles(file);
+namespace {
+
+// A directory every unit of the build searches, after the ones given to that
+// unit alone and after any added before it: the first directory holding a file
+// wins.
+auto AddIncludeDirectories(
+    const Manifest& manifest, std::span<const std::string> dirs,
+    slang::driver::Driver& driver) -> diag::Result<void> {
+  for (const auto& dir : dirs) {
+    if (const std::error_code ec =
+            driver.sourceManager.addUserDirectories(dir)) {
+      return diag::Fail(
+          diag::DiagCode::kHostInvalidManifest,
+          std::format(
+              "{}: include directory '{}': {}", manifest.path.string(), dir,
+              ec.message()));
     }
-    // Added after the command line's, which is what keeps a search path given
-    // there ahead of a declared one: the first directory holding a file wins.
+  }
+  return {};
+}
+
+// What a cell of this library may name: its own library's cells first, then
+// those of each library it declared, in the order it wrote them.
+auto LibraryListOf(const Manifest& manifest, std::string own_name)
+    -> std::vector<std::string> {
+  std::vector<std::string> list = {std::move(own_name)};
+  for (const DeclaredDependency& dependency : manifest.dependencies) {
+    list.push_back(dependency.name);
+  }
+  return list;
+}
+
+// What the command line said about reading source, which every library of the
+// build is read under ahead of what it declared for itself: the front end
+// keeps the first definition it is given of a macro, and an include is taken
+// from the first directory holding it.
+struct InvocationMaterial {
+  std::vector<std::string> defines;
+  std::vector<std::string> undefines;
+  std::vector<std::string> incdir;
+};
+
+// Where one library of a build stands in it.
+struct LibraryInBuild {
+  const Manifest* declaration;
+  // The sources read for it, the more specific after what they stand on: the
+  // library's alone where something depends on it, and the design's after
+  // them where it is the one being built.
+  std::vector<const SourceSet*> sets;
+  // What the front end calls its library; empty for the build's default one.
+  std::string front_end_library;
+  bool single_unit;
+};
+
+// Reads one library in compilation units of its own, one for all its files or
+// one per file (LRM 3.12.1), each under what the command line said and what
+// the library declared for itself and nothing else of the build's. What it
+// offers its dependents is searched by every unit of the build besides, after
+// what each was given for itself.
+auto AddLibrary(
+    const LibraryInBuild& library, const InvocationMaterial& invocation,
+    slang::driver::Driver& driver) -> diag::Result<void> {
+  const Manifest& manifest = *library.declaration;
+  slang::driver::SeparateUnitOptions how{
+      .includePaths = invocation.incdir,
+      .defines = invocation.defines,
+      .undefines = invocation.undefines,
+      .libraryName = library.front_end_library,
+      .warningOptions = {},
+      .searchDirectories = {},
+      .searchExtensions = {},
+      .standalone = true};
+  std::vector<std::string> files;
+  const auto add = [](std::vector<std::string>& to,
+                      std::span<const std::string> more) {
+    to.insert(to.end(), more.begin(), more.end());
+  };
+  for (const SourceSet* set : library.sets) {
+    add(files, set->files);
+    add(how.includePaths, set->incdir);
+    add(how.undefines, set->undefines);
+    add(how.searchDirectories, set->searchdir);
+    add(how.searchExtensions, set->searchext);
+    // A directory given to a unit alone is not looked at until an include is
+    // searched for, so one that does not exist would otherwise go unreported.
     for (const auto& dir : set->incdir) {
-      if (const std::error_code ec =
-              driver.sourceManager.addUserDirectories(dir)) {
+      std::error_code ec;
+      if (!std::filesystem::is_directory(dir, ec)) {
         return diag::Fail(
             diag::DiagCode::kHostInvalidManifest,
             std::format(
-                "{}: include directory '{}': {}", manifest.path.string(), dir,
-                ec.message()));
+                "{}: include directory '{}': not a directory",
+                manifest.path.string(), dir));
       }
     }
-    for (const auto& dir : set->searchdir) {
-      driver.sourceLoader.addSearchDirectories(dir);
-    }
-    for (const auto& extension : set->searchext) {
-      driver.sourceLoader.addSearchExtension(extension);
-    }
-    defines_at = std::next(
-        driver.options.defines.insert(
-            defines_at, set->defines.begin(), set->defines.end()),
-        std::ssize(set->defines));
-    undefines_at = std::next(
-        driver.options.undefines.insert(
-            undefines_at, set->undefines.begin(), set->undefines.end()),
-        std::ssize(set->undefines));
   }
-  driver.options.paramOverrides.insert(
-      driver.options.paramOverrides.begin(), manifest.design.params.begin(),
-      manifest.design.params.end());
-  if (driver.options.topModules.empty()) {
-    driver.options.topModules = manifest.design.top;
+  for (const SourceSet* set : library.sets | std::views::reverse) {
+    add(how.defines, set->defines);
   }
+  add(how.includePaths, manifest.library.export_incdir);
+
+  const std::span<const std::string> all_files = files;
+  const std::size_t files_per_unit = library.single_unit ? files.size() : 1;
+  for (std::size_t at = 0; at < files.size(); at += files_per_unit) {
+    driver.sourceLoader.addSeparateUnit(
+        all_files.subspan(at, files_per_unit), how);
+  }
+  return AddIncludeDirectories(
+      manifest, manifest.library.export_incdir, driver);
+}
+
+}  // namespace
+
+auto ApplyDeclarations(
+    const Declarations& declared, slang::driver::Driver& driver)
+    -> diag::Result<void> {
+  const Manifest& root = declared.root;
+  InvocationMaterial invocation{
+      .defines = driver.options.defines,
+      .undefines = driver.options.undefines,
+      .incdir = {}};
+  for (const auto& dir : driver.sourceManager.getUserDirectories()) {
+    invocation.incdir.push_back(dir.string());
+  }
+
   // Every cell compiled here belongs to the declared library: it is this
   // build's default library (LRM 33.3.1), under its own name.
   if (!driver.options.defaultLibName) {
-    driver.options.defaultLibName = manifest.library.name;
+    driver.options.defaultLibName = root.library.name;
+  }
+  driver.options.libraryLiblists[*driver.options.defaultLibName] =
+      LibraryListOf(root, *driver.options.defaultLibName);
+  if (auto ok = AddLibrary(
+          {.declaration = &root,
+           .sets = {&root.library.sources, &root.design.sources},
+           .front_end_library = "",
+           .single_unit = driver.options.singleUnit.value_or(
+               root.single_unit.value_or(false))},
+          invocation, driver);
+      !ok) {
+    return std::unexpected(std::move(ok.error()));
+  }
+  for (const Manifest& reached : declared.dependencies) {
+    driver.options.libraryLiblists[reached.library.name] =
+        LibraryListOf(reached, reached.library.name);
+    if (auto ok = AddLibrary(
+            {.declaration = &reached,
+             .sets = {&reached.library.sources},
+             .front_end_library = reached.library.name,
+             .single_unit = reached.single_unit.value_or(false)},
+            invocation, driver);
+        !ok) {
+      return std::unexpected(std::move(ok.error()));
+    }
+  }
+
+  // The front end keeps the first override it is given of a parameter, so the
+  // command line's go ahead of the declared ones.
+  driver.options.paramOverrides.insert(
+      driver.options.paramOverrides.end(), root.design.params.begin(),
+      root.design.params.end());
+  if (driver.options.topModules.empty()) {
+    driver.options.topModules = root.design.top;
   }
   if (!driver.options.languageVersion) {
-    driver.options.languageVersion = manifest.language_version;
+    driver.options.languageVersion = root.language_version;
   }
   if (!driver.options.timeScale) {
-    driver.options.timeScale = manifest.timescale;
-  }
-  if (!driver.options.singleUnit) {
-    driver.options.singleUnit = manifest.single_unit;
+    driver.options.timeScale = root.timescale;
   }
   return {};
 }
 
 auto ResolveCliOptions(
-    const CliOptions& opts, const Manifest* manifest, CommandKind cmd,
+    const CliOptions& opts, const Declarations* declared, CommandKind cmd,
     std::span<const std::string> simulation_args)
     -> std::expected<ParsedArgs, std::string> {
   ParsedArgs out;
@@ -728,16 +837,25 @@ auto ResolveCliOptions(
           : std::nullopt);
   out.rebuild = opts.rebuild.value_or(false);
 
-  // The declared foreign sources are the base; the command line's are extras
-  // this invocation adds, so they follow.
-  if (manifest != nullptr) {
-    out.library_name = manifest->library.name;
-    out.dpi_link_sources = manifest->library.sources.dpi;
-    out.dpi_link_sources.insert(
-        out.dpi_link_sources.end(), manifest->design.sources.dpi.begin(),
-        manifest->design.sources.dpi.end());
-    if (manifest->assertions) {
-      out.assertions = *manifest->assertions;
+  // The declared foreign sources are the base, a library's before those of what
+  // depends on it; the command line's are extras this invocation adds, so they
+  // follow.
+  if (declared != nullptr) {
+    const Manifest& root = declared->root;
+    out.library_name = root.library.name;
+    const auto link = [&](const SourceSet& sources) {
+      out.dpi_link_sources.insert(
+          out.dpi_link_sources.end(), sources.dpi.begin(), sources.dpi.end());
+    };
+    for (const Manifest& reached : declared->dependencies) {
+      link(reached.library.sources);
+    }
+    link(root.library.sources);
+    link(root.design.sources);
+    // Whether an assertion is checked changes nothing the design computes, so
+    // it is the build's to say and the root's answer covers every library.
+    if (root.assertions) {
+      out.assertions = *root.assertions;
     }
   }
   out.dpi_link_sources.insert(

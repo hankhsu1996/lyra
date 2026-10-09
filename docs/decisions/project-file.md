@@ -140,14 +140,110 @@ The name has a reader today: a configuration in the source may name its own libr
 (`design soc.soc_tb; default liblist soc;`), which resolves only because the front end is told the
 name. It is therefore an identifier, as a library's name is in a library map (Syntax 33-2).
 
-**What `[design]` holds is added after what `[library]` holds**, by the same rule that adds the
-command line after both: material accumulates. A define of the design's reaches the library's
-sources in the build made here, exactly as a `-D` does. What a dependent's build hands a library is
-a question for the day a dependent exists.
+**What `[design]` holds is added to what `[library]` holds**, by the same rule that adds the command
+line to both: material accumulates. A define of the design's reaches the library's sources in the
+build made here, exactly as a `-D` does. A dependent's build hands a library nothing of its own,
+which is the next section.
 
 **One design, and room for more.** A library is commonly run several ways -- a simulation testbench,
 a lint top, a compliance harness. That is not built: a named design is a table beside the keys
 `[design]` has now, so adding it moves nothing anyone has written.
+
+## A library depends on another by name
+
+The requirement is one sentence: a named body of SystemVerilog is used by another through its name,
+and what its cells are is decided by its own declaration alone, whoever uses it and whatever is used
+beside it. The second half is what makes the first worth having. A library whose cells change with
+their user cannot be published, and cannot be compiled once for two users.
+
+```toml
+[dependencies]
+prim = { path = "../prim" }    # a directory whose lyra.toml declares library prim
+```
+
+The key is the library's name, because that name is written in source (`prim.fifo` in a
+configuration) and is the library's own to choose; a declaration found there under another name is
+refused. A build holds one library of a name, each read once however many libraries depend on it,
+and a library that reaches itself is refused.
+
+**A named library beside the root's is not yet a dependency.** Run against the front end as it
+stood, with a root and one named library each holding a cell `fifo`:
+
+| What was run                                         | What happened                     |
+| ---------------------------------------------------- | --------------------------------- |
+| The root instantiates its own `fifo`                 | Bound to the named library's      |
+| The root is one compilation unit and defines a macro | Defined in the library's text too |
+
+The first is the standard's rule read literally: with no configuration every instance searches the
+libraries in one order for the whole build (LRM 33.6.1). The standard has the other rule too --
+under a configuration that selects no library list, the list is "the library in which the cell
+containing the unbound instance is found" (33.4.1.5) -- but its configuration language cannot extend
+that list per library: a library list is inherited by instance, and a cell clause naming a library
+may not expand to one (33.4.1.4). So the search order per library is the tool's to supply, which
+33.8.1 expects of a tool anyway.
+
+**What a library of a build is, then, the one being built and one it depends on alike:**
+
+```text
+its cells           in a library of its own name
+its text            read in compilation units of its own (LRM 3.12.1): one for all its files where it
+                    declares single_unit, else one per file
+read under          the command line's defines and include directories, then its own
+never under         another library's defines or incdir, or a macro another unit defined
+a cell it names     searched for in its own library, then in each library it declared, in the order
+                    it wrote them, and nowhere else
+a cell no file of   searched for by name in its own searchdir, read as its other text is, and in its
+its lists holds     library
+its dpi sources     linked into the program
+```
+
+Two things differ by where a library stands. The one being built is also read under what its
+`[design]` declares -- the design's sources are part of its units, and the design's defines reach
+the library's text as a `-D` does -- and a dependency's `[design]` is not read at all: roots, their
+parameters and their sources are for where a library is developed. Everything else is one path, so a
+library is the same thing in both positions.
+
+A cell held only by a library the instantiating one did not declare is not found, so a library
+cannot come to rely on what a dependency happens to depend on. One thing still crosses that should
+not: an include a library does not find in its own directories is searched for in every exported
+directory of the build, whether or not it declared the library exporting it. That can supply a
+header a library is missing and can never replace one it has, so a library that builds alone is read
+the same here. The command line stays the invocation's and reaches every library, as it does in
+every SystemVerilog tool; a kept object is found by its content, so that costs sharing and never
+correctness.
+
+**What crosses to a dependent is cells and exported include directories.** Every cell is public,
+because the language has no private one. A header is different: `incdir` is searched by the
+library's own text alone, and `export_incdir` by the library and by everything that reaches it,
+after what each was given for itself. Bender draws the same line with `include_dirs` and
+`export_include_dirs`, for the same reason -- a library's macros are part of what it offers, and its
+private headers are not. Nothing else crosses: no define, no setting of `[compile]`.
+
+| Candidate for a difference from the field                        | Still true once the front end can do more? |
+| ---------------------------------------------------------------- | ------------------------------------------ |
+| A cell is searched for in its own library, then its dependencies | Yes                                        |
+| A dependency's `[design]` is not read                            | Yes                                        |
+| One build has one `std` and one `timescale`                      | No: a gap                                  |
+
+The gap is refused rather than papered over. The front end reads one build under one language
+version and one default time scale, so a dependency declaring another `std` or `timescale` than the
+root would be read under the root's answer -- a different library from the one its own build makes.
+`assertions` is not on that list: eliding an assertion changes nothing the design computes, so the
+root's choice covers the build.
+
+**A cell is spelled two ways, and that is left.** A unit is named `cell` in the build's default
+library and `library.cell` in any other (`specialization-identity.md` F8), so a library's cell has
+one name where the library is built and another where it is depended on. A kept object is found by
+content that includes its unit's name, so the two builds are not expected to share one; that was
+reasoned and not measured. Spelling a declared library's cells `library.cell` everywhere would give
+one name, and costs the readable file names of every declared project on the C++ path for as long as
+an emitted file is named after its unit.
+
+**Not built:** fetching, versions, a lockfile, a registry; a dependent choosing among variants of a
+dependency (Cargo's features, Bender's `pass_targets`); dependencies only the design needs (Cargo's
+dev-dependencies), so the one list serves the library and its design alike. Two libraries declaring
+a package of one name cannot be used together: the standard has one package name space and forbids a
+configuration to rebind a package (LRM 3.13, 33.4), and the front end reports the duplicate.
 
 ## The axis inside B: shared versus local
 
@@ -192,8 +288,9 @@ D3. Every relative path resolves against the directory of the manifest that decl
     used is visible rather than inferred.
 
 D4. The manifest declares; the command line selects within the declaration. Material -- what the
-    design is made of, and where to look for more of it -- accumulates: the manifest's values first,
-    the command line's after, both in effect. Selection -- which of several declared things to do
+    design is made of, and where to look for more of it -- accumulates: the manifest's values and
+    the command line's are both in effect, and where the two give one name a value -- a macro, a
+    parameter -- the command line's stands. Selection -- which of several declared things to do
     this time -- is replaced outright by the command line.
 
 D5. A top is selection, not material. IEEE 1800-2023 permits multiple top-level blocks (3.11), so a
@@ -225,7 +322,8 @@ D9. The manifest supplies compiler inputs and nothing else. It never changes the
 [library]
 name      = "soc"                                    # identity, required, an identifier
 files     = ["rtl/alu.sv", "rtl/regfile.sv", "..."]  # material, ordered
-incdir    = ["rtl/include"]                          # material
+incdir    = ["rtl/include"]                          # material, this library's alone
+export_incdir = ["include"]                          # material, a dependent's too
 defines   = ["WIDTH=8"]                              # material
 undefines = ["VENDOR_HACK"]                          # material
 searchdir = ["vendor/prim"]                          # material
@@ -238,6 +336,9 @@ params    = ["DEPTH=16"]                             # material
 files     = ["tb/soc_tb.sv"]                         # material, read after the library's
 defines   = ["TRACE"]                                # material
 dpi       = ["tb/dpi_stubs.c"]                       # material
+
+[dependencies]
+prim      = { path = "../prim" }                     # material: another library, by name
 
 [compile]
 std         = "1800-2023"                            # selection
@@ -295,10 +396,9 @@ reading another tool's command files on the invocation side.
 The design side is larger than what is implemented here, and the remainder is named so the next
 person adds a field under the rule rather than re-deriving the line:
 
-- **Other named libraries** -- library files, library maps, library order. The default library's
-  name is carried, as `[library] name`, and so is the search by cell name, in `searchdir` and
-  `searchext`. What is absent is a second library beside the declared one, which is what a
-  dependency will be.
+- **Library maps and a library order of the build's own.** The default library's name is carried, as
+  `[library] name`; the search by cell name, in `searchdir` and `searchext`; another library, as a
+  dependency, with its search order. A library map file (LRM 33.3.1) and a `-L` order have no field.
 - **The dialect knobs** -- legacy protect envelopes, translate-off formats, ignored directives,
   keyword-version mapping, local-include and include-order behaviour. Design material, because each
   changes what program the source text denotes. Absent because nothing has needed one.
@@ -337,8 +437,10 @@ evidence for unifying them; three consumers would be.
 | `std`, `single_unit`, `assertions` | selection | `check`          | `--assertions skip` | `skip`      |
 
 The test that assigns a field is whether a second value adds to the first or chooses instead of it.
-A second include directory searches both; a second define defines both; a second top is where the
-question gets interesting, because the LRM genuinely allows several and so does the front end.
+A second include directory searches both; a second define defines both, and a second definition of
+the same macro is the one case where two materials meet, which the command line wins: it is what
+this invocation said, over what the file says every time. A second top is where the question gets
+interesting, because the LRM genuinely allows several and so does the front end.
 
 **It is still selection, and the reason is what the alternative does.** A manifest names the
 testbench as the design's root; a developer wants one module on its own and types `--top alu`. Under
@@ -403,20 +505,21 @@ the `-f` behaviour this entry rejected.
 
 ## The direction, and what is deliberately not built
 
-Choosing B commits to a concept, not to a package manager. Whether Lyra grows publishing, fetching
-and a dependency graph is open; what follows makes either future cheap.
+Choosing B commits to a concept, not to a package manager. A library depends on another that is
+already on the machine; whether Lyra grows publishing and fetching is open, and what follows makes
+either future cheap.
 
 Five moves buy it, and each is worth more than the field it protects:
 
-1. **Fix the boundary, not the feature.** What `[dependencies]` would look like is unknowable; that
-   "what the design is" and "how this run produces it" are different questions is not. Every future
-   feature lands on one side of that line.
+1. **Fix the boundary, not the feature.** What fetching a dependency would look like is unknowable;
+   that "what the design is" and "how this run produces it" are different questions is not. Every
+   future feature lands on one side of that line.
 2. **Close the namespace.** D8 makes an unknown key an error, usually justified as typo detection.
-   Its larger effect is that a table this version does not know -- `[dependencies]` and
-   `[workspace]` being the obvious two -- is reserved for free, and an older Lyra meeting a newer
-   manifest fails loudly instead of building a subtly different design. That is also why there is no
-   schema-version field: strict keys already give the loud failure a version field would give, and a
-   version with one value is speculation.
+   Its larger effect is that a table or a key this version does not know -- `[workspace]`, a `git`
+   or `version` beside a dependency's `path` -- is reserved for free, and an older Lyra meeting a
+   newer manifest fails loudly instead of building a subtly different design. That is also why there
+   is no schema-version field: strict keys already give the loud failure a version field would give,
+   and a version with one value is speculation.
 
    **There is no `[package]` above `[library]`, and that is a decision rather than an omission.**
    Cargo separates `[package]` from `[lib]` and `[bin]` because one package holds several build
