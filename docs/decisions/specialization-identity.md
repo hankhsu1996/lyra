@@ -25,11 +25,13 @@ handed different values share one unit.
 A cross-unit reference is resolved by the referrer, which cannot see the target's body: a unit
 compiles against another unit's interface (name and signature), never its body or internal layout
 (`compilation_unit_model.md` inv 8, `reference_resolution.md`). So when a parent constructs a child,
-it must be able to name which specialization it wants from what it has -- the module name plus what
-it selected at the instantiation site -- without inspecting the child's compiled code.
+it must be able to name which specialization it wants from what it has -- which definition it
+instantiates (F8) plus what it selected at the instantiation site -- without inspecting the child's
+compiled code.
 
-Consequence: the identity is `f(def name, selections)`, never `f(body)`. Fingerprinting the lowered
-body is ruled out, because the consumer that must compute the same identity has no access to it.
+Consequence: the identity is `f(definition, selections)`, never `f(body)`. Fingerprinting the
+lowered body is ruled out, because the consumer that must compute the same identity has no access to
+it.
 
 Two kinds of selection meet that test today. A parameter binding is one. An interface-port
 connection (LRM 25.3) is the other: the parent names which interface instance the port carries, and
@@ -155,9 +157,44 @@ the MIR dump, not a demangled symbol, and determinism alone makes the producer a
 a name without a global view. So Lyra can content-address (hash) the binding encoding where C++ and
 Rust cannot.
 
+### F8. A definition is found by more than its name
+
+The front end tells one design element from another by three things: the library it was compiled
+into, the scope declaring it, and its name. Two libraries may each hold a cell of one name (LRM
+33.2.1, 33.3), and two modules may each declare a module of one name inside them (LRM 23.4, 3.13).
+It holds that identity as an address, which serves inside one run and cannot be a name: a unit's
+name is computed from one instance by the unit and by every unit naming it (F2), and a kept artifact
+is found by it in a later run.
+
+So the name spells all three, each by what is stable about it. A cell is written as a person writes
+one, `cell` in the default library and `library.cell` in any other, which is the spelling a top
+level and a configuration's use clause already take. A design element declared inside another is
+named in the unit declaring it, `Outer::Inner`, the way everything else a unit declares is; it reads
+that element's parameters (LRM 23.9), and its instance is handed none of them when it is built, so
+each one it reads is fixed by the enclosing specialization.
+
+Three other spellings of an address fail what a name is for. The declaration's file and position
+moves with the checkout and with any edit above it. A hash of the declaration's text makes one unit
+of one text in two libraries, whose children are searched for through different library lists. A
+suffix added only where two names collide makes a unit's name depend on what else is in the design;
+Verilator names that way (`V3LinkCells.cpp`, `readModNames`, `lib__LIB__name`) and can, because it
+has read the whole design before it names anything. rustc starts every symbol with the crate, a hash
+of its name and metadata beside the name, for the local crate too
+(`rustc_symbol_mangling/src/v0.rs`, `print_crate_name`); clang prefixes an entity of a named module
+with the module and one of the global module, which has no name, with nothing (`ItaniumMangle.cpp`,
+`mangleModuleName`). The default library has a name, `work`, and is left out all the same: it is
+what a bare cell name means everywhere a person writes one.
+
+Which cell a held instance is belongs to its holder's key wherever the holder's text does not say
+(F6). With no configuration the library search order is one for the whole build, so the text says.
+Under one it follows where the instance stands: a library list is inherited by every instance below
+the one it was set on (LRM 33.4.1.5), so two instances of one module bind one instantiation to two
+cells with no rule naming either child. So the cell is stated for every instance standing under a
+configuration, and not only for one a rule selected.
+
 ## The decision
 
-1. **The identity is a key: the definition, plus what the design fixed for the instance -- its
+1. **The identity is a key: the definition (F8), plus what the design fixed for the instance -- its
    parameter bindings, the interface each of its interface ports carries, every effect written
    elsewhere that lands below it (a parameter a `defparam` or a configuration sets, an instantiation
    a `bind` inserts, a cell a configuration chose), and the scope each hierarchical name written in
@@ -170,11 +207,11 @@ Rust cannot.
    directive that inserted it -- the declaration holding the directive and its position among that
    declaration's binds -- since its connections are text of the directive.
 
-   **The name is derived from the key** -- the definition's name, plus a content hash of the key
-   when anything was fixed. The producer and the consumer both build the same key from the same
-   selections and so reach the same name. Folding to a name happens once, where a bounded identifier
-   is needed, and never while a key is still being composed: hashing is lossy, and a component
-   compressed early takes its collisions up with it, invisibly.
+   **The name is derived from the key** -- the definition as F8 spells it, plus a content hash of
+   the key when anything was fixed. The producer and the consumer both build the same key from the
+   same selections and so reach the same name. Folding to a name happens once, where a bounded
+   identifier is needed, and never while a key is still being composed: hashing is lossy, and a
+   component compressed early takes its collisions up with it, invisibly.
 
 2. **The key's parts hold identities, not renderings.** A value's identity is its constant; a type's
    is its structure, except a class and an unpacked structure, which SystemVerilog identifies by
@@ -245,15 +282,18 @@ Rust cannot.
    times, and so does a loop of N instances each naming their parent. This is not the shared table
    F2 rules out: nobody agrees through it, and deleting it leaves every name what it was. What makes
    that true is one rule. A name asked while another is being worked out can differ from the one the
-   instance has alone, where a hierarchical name it writes lands in an instance still being named
-   and is stated by how far out that instance is. So a name is kept only when it met nothing outside
-   itself, together with the instances it looked for among those being named and did not find, and
-   it answers a later asking only while none of those is being named. clang keeps a declaration's
-   mangled name the same way and declines where the name "depends on whether the variable is
-   referenced by a host or device host function" (`CodeGenModule::getMangledName`); rustc's symbol
-   name is a query per instance, and its trait solver refuses a kept answer "if a nested goal of the
-   global cache entry is on the stack" (`search_graph`, `candidate_is_applicable`), which is the
-   rule taken here. Two keys folding to one name are refused where a name is kept.
+   instance has alone, where a hierarchical name it writes lands in an instance still being named,
+   or the design element declaring it is one, and is stated by how far out that instance is. An
+   instance is among those being named for the whole of its key, since any part may ask for a name
+   that leads back to it: an interface it carries may carry one standing inside it. So a name is
+   kept only when it met nothing outside itself, together with the instances it looked for among
+   those being named and did not find, and it answers a later asking only while none of those is
+   being named. clang keeps a declaration's mangled name the same way and declines where the name
+   "depends on whether the variable is referenced by a host or device host function"
+   (`CodeGenModule::getMangledName`); rustc's symbol name is a query per instance, and its trait
+   solver refuses a kept answer "if a nested goal of the global cache entry is on the stack"
+   (`search_graph`, `candidate_is_applicable`), which is the rule taken here. Two keys folding to
+   one name are refused where a name is kept.
 
    **A design element does not ask what it is called to name the scopes it declares.** It is handed
    its name when it is made, and names each generate block by joining it onto the scope holding it.

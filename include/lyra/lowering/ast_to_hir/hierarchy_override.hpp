@@ -12,6 +12,7 @@
 #include <vector>
 
 namespace slang::ast {
+class DefinitionSymbol;
 class Expression;
 class InstanceBodySymbol;
 class InstanceSymbol;
@@ -37,9 +38,13 @@ struct InsertedByBind {
   std::string directive;
 };
 
-// A configuration rule chose which cell the instance is (LRM 33.4.1.6).
+// The cell a configuration bound the instance to. A configuration chooses by
+// a rule naming the instance or its cell (LRM 33.4.1.4, 33.4.1.6) and by the
+// library list in force where the instance stands, which every instance below
+// the one it was set on inherits (LRM 33.4.1.5, 33.4.2). So it is stated for
+// each instance standing under a configuration.
 struct CellChosenByConfiguration {
-  std::string cell;
+  const slang::ast::DefinitionSymbol* cell;
 };
 
 using OverrideEffect = std::variant<

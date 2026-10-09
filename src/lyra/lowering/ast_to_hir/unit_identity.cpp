@@ -36,6 +36,7 @@
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
+#include "lyra/lowering/ast_to_hir/library_cell.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -380,7 +381,7 @@ auto InputOf(const FixedBelow& fixed, const SpecializationPolicy& policy)
                     [&](const CellChosenByConfiguration& chosen) {
                       return SpecializationInput{
                           .name = fixed.path,
-                          .kind = BoundToCell{.cell = chosen.cell}};
+                          .kind = BoundToCell{.cell = CellName(*chosen.cell)}};
                     }},
                 effect);
           }},
@@ -401,11 +402,46 @@ auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
 
 namespace {
 
+// Which design element `inst` is an instance of. A name alone does not say: a
+// library cell is found by its library and its name (LRM 33.2.1), and a module
+// declared inside another by the module declaring it and its name (LRM 23.4).
+// The nested one reads the parameters of the element declaring it (LRM 23.9),
+// so it is named after the unit that element's instance is, the way everything
+// else a unit declares is.
+auto DefinitionName(
+    const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)
+    -> std::string {
+  const slang::ast::DefinitionSymbol& definition = inst.getDefinition();
+  if (IsLibraryCell(definition)) return CellName(definition);
+
+  // A nested declaration is one of the body declaring it, and that body is one
+  // the instance stands in, since the name is visible nowhere else.
+  const auto* holder = definition.getParentScope()
+                           ->asSymbol()
+                           .as_if<slang::ast::InstanceBodySymbol>();
+  if (holder == nullptr) {
+    throw InternalError(
+        "DefinitionName: a design element is declared outside every other or "
+        "in the body of one");
+  }
+  // The holder may be an instance whose own name is still being worked out.
+  if (const auto levels = policy.LevelsOutTo(*holder)) {
+    return std::format("^{}::{}", *levels, definition.name);
+  }
+  return std::format(
+      "{}::{}", policy.NameOf(InstantiationOf(*holder)), definition.name);
+}
+
 auto SpecializationKeyOf(
     const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)
     -> SpecializationKey {
+  // Every part may ask for another instance's name, and that name may lead
+  // back here: an interface this instance carries may itself carry one that
+  // stands inside it (LRM 25.3). So the instance is among those being named
+  // for the whole of its key.
+  policy.EnterNaming(inst.body);
   SpecializationKey key{
-      .definition = std::string{inst.getDefinition().name}, .inputs = {}};
+      .definition = DefinitionName(inst, policy), .inputs = {}};
   for (const auto* param : inst.body.getParameters()) {
     const auto* value = param->symbol.as_if<slang::ast::ParameterSymbol>();
     if (value == nullptr) {
@@ -434,7 +470,6 @@ auto SpecializationKeyOf(
     }
   }
   const InstanceContext& context = policy.ContextOf(inst);
-  policy.EnterNaming(inst.body);
   // A name is no parameter and declares no name of its own, so it is told
   // apart from its writer's other names by its place among them.
   for (std::size_t written = 0; written < context.climbs.size(); ++written) {

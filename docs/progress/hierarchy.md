@@ -97,9 +97,25 @@ Unlocks the runtime side of `instantiation/param_slots`.
 - [ ] B10 -- A `defparam` on a `parameter` a named block, task or function declares (LRM 23.10.2) is
       refused by the front end, which makes such a parameter a `localparam`; LRM 6.20.1 makes only a
       generate block's, a package's, a compilation-unit scope's and a class's parameter local.
-- [ ] B11 -- Two cells of one name in different libraries, chosen between by a configuration, are
-      taken for one unit, and the build stops with an internal error: a unit's identity names a
-      definition without its library.
+- [x] B11 -- A design element is told apart by which one it is and not by its name alone. Two
+      libraries may each hold a cell of one name (LRM 33.2.1, 33.3) and one design may hold both,
+      whichever way a configuration chose between them: an instance clause, a cell clause, a library
+      list inherited from an instance above, or a configuration an instance above was handed to (LRM
+      33.4.1.4 to 33.4.1.6, 33.4.2). Two modules may each declare a module of one name inside them,
+      beside one declared outside both (LRM 23.4), and a nested module reads the parameters of the
+      module declaring it. A `bind` written in each of two cells of one name is two directives.
+- [ ] B12 -- A module declared inside another that reads a variable or a net of the module declaring
+      it (LRM 23.9) is refused: a body reaches storage outside itself only through a hierarchical
+      name or a port.
+- [ ] B13 -- `%l` and `%L` (LRM 33.7), which print the library and cell an instance is bound to, are
+      refused as unknown format specifiers.
+- [ ] B14 -- Two cells of one name mapped to one library stop the build as a duplicate definition,
+      where LRM 33.3.1 has the later one replace the earlier with a warning. The front end binds the
+      later one and reports the error under a warning option a caller may lower.
+- [x] B15 -- A module carrying an interface that itself carries an interface standing inside that
+      module (LRM 25.3, 25.3.3) builds and runs, whether the inner interface is one the module
+      declares or one writing a name that lands in the module. It used to end the compiler with no
+      message.
 
 Unlocks `instantiation/multiple_instances`, `instantiation/nested_hierarchy`,
 `instantiation/local_variables`, the runtime side of `instantiation/param_slots`, and

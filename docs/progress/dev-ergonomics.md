@@ -44,10 +44,9 @@ layer directly.
 
 - [ ] D8 -- A design that finds its modules through a library rather than by listing them can
       declare that: library files, library maps, the library search order, and the default library
-      name. Design material by the rule D7 already applies, and absent only because the language's
-      library and configuration system (LRM 33) is not implemented, so a field for it would declare
-      something the compiler cannot act on. Until then such a design passes those settings on the
-      command line.
+      name. Design material by the rule D7 already applies. The compiler acts on all four given on
+      the command line -- a design binding cells from several libraries, under a configuration or a
+      search order, builds and runs -- so what is absent is only the fields.
 
 - [ ] D9 -- A design written for a dialect another tool defined can declare that: legacy protect
       envelopes, translate-off comment formats, ignored directives, keyword-version mapping, and

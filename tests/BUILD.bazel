@@ -362,6 +362,7 @@ CONFORMANCE_DATA = [
         "conformance/**/*.sv.deferred",
         "conformance/**/*.c",
         "conformance/**/*.cpp",
+        "conformance/**/lib.map",
         "paths/*.yaml",
     ],
     allow_empty = True,

@@ -1,0 +1,2 @@
+library lib1 lib1_cells.sv;
+library lib2 lib2_cells.sv;

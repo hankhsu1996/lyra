@@ -122,7 +122,8 @@ void CheckNameAlphabet(
   }
 }
 
-// The sources beside the entry one, and the native sources built with them. A
+// The sources beside the entry one, the native sources built with them, and
+// the library map saying which library each source belongs to. A
 // case's directory holds exactly what the case needs, so this is a listing
 // rather than a lookup of anything the case had to declare.
 void CollectCompanions(
@@ -133,7 +134,9 @@ void CollectCompanions(
     }
     const std::filesystem::path& path = entry.path();
     const std::string extension = path.extension().string();
-    if (extension == ".sv") {
+    if (path.filename() == kCaseLibraryMap) {
+      c.library_map = path;
+    } else if (extension == ".sv") {
       if (path.filename() != kCaseEntrySource) {
         c.supporting_sources.push_back(path);
       }
