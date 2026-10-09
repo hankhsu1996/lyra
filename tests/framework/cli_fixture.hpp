@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
 
@@ -26,5 +27,10 @@ auto FindDefaultCxx() -> std::optional<std::filesystem::path>;
 // are about is what surrounds a design, so the design itself carries no weight
 // beyond proving the program ran.
 auto WriteTrivialSource(const std::filesystem::path& path) -> void;
+
+// A file a run wrote about itself, parsed. A file that is absent or is not
+// JSON answers with a discarded value, so the caller reports it as the run
+// having written nothing rather than crashing on it.
+auto ReadJson(const std::filesystem::path& path) -> nlohmann::json;
 
 }  // namespace lyra::test

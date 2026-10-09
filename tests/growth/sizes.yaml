@@ -1,0 +1,11 @@
+# The N each design beside this file is compiled at, by the design's name. It
+# is compiled again at twice that, and the two runs are held to each other.
+#
+# A size is chosen so that the larger run takes long enough to time and stays
+# inside what the front end allows a generate loop to count.
+instance_array: 512
+loop_choosing_by_outer_index: 64
+loop_of_instances: 512
+loop_of_one_body: 512
+loop_selecting_by_index: 512
+unread_parameter_width: 16384

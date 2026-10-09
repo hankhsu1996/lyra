@@ -226,6 +226,17 @@ layer directly.
       3.26 s in declaring the unit's structural identities, where the reported symptom had pointed
       at lowering its bodies.
 
+- [x] D21 -- A cost that grows with how often a design repeats something is refused at the merge
+      gate. Six designs each state one thing N times -- a loop of one body, a loop selecting by its
+      index, a loop of instances, an instance array, a loop choosing by an outer index, an unread
+      parameter's width -- and are compiled at N and at twice N on both backends: the larger run may
+      leave behind no more units or files and no more than a quarter more bytes, and each stage may
+      take under three times the time and the peak memory. What `main` exceeds today is recorded per
+      path and has to go on being exceeded, so the record only shrinks. It opens with three: the C++
+      backend writes files and bytes per generate block, both backends declare a loop's blocks in
+      the square of their count (0.3 s at 512 blocks, 1.2 s at 1024), and an instance array's
+      emitted bytes follow its element count on both.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language
