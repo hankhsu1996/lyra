@@ -70,7 +70,9 @@ The record needs correcting, because the correction is what decides the method.
 There was a project mode. It was built, alongside a non-project mode, before the Architecture Reset
 of 2026-04-24 -- and it went with everything else that reset replaced. The pre-reset tree was
 audited before being deleted, and what was judged worth carrying forward was carried forward; this
-was not on that list. Its history is gone, so its shape is not recoverable and no argument here is
+was not on that list. Its history is gone. Its file format outlived it, in the declarations the
+shipped examples went on carrying: a `[package]` table holding a name and a top beside a `[sources]`
+table holding the files, which is the shape a package manager gives a manifest. No argument here is
 made from it.
 
 What crossed the reset was the escape hatch, without the thing it escaped:

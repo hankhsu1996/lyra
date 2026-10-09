@@ -1,8 +1,6 @@
-[package]
+[design]
 name = "riscv-cpu"
-top = "all_tests"
-
-[sources]
+top = ["all_tests"]
 files = [
     "riscv_package.sv",
     "register_file.sv",

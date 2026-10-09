@@ -22,6 +22,13 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# Everything a reader is handed to run, each directory as it is shipped.
+filegroup(
+    name = "examples",
+    srcs = glob(["examples/**"]),
+    visibility = ["//tests:__pkg__"],
+)
+
 # The surface an emitted project compiles against, under a root of its own. The
 # compiler copies what it finds around one of these headers, so what shares that
 # root is what a user's project receives -- and beside the sources it would be

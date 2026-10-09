@@ -7,14 +7,14 @@ Sample designs, each of which runs end to end.
 | `hello/`     | A single module printing with `$display`                             |
 | `riscv-cpu/` | Packages, a module hierarchy, parameterized modules, and `$readmemh` |
 
-Each carries a `lyra.toml` naming its top and its sources. Reading that manifest is not implemented,
-so the commands below name the sources on the command line instead.
+Each carries a `lyra.toml` declaring its name, its top and its sources, so a command run from the
+example's directory names none of them.
 
 ## hello
 
 ```bash
 cd examples/hello
-../../bazel-bin/lyra run --top Top hello.sv
+../../bazel-bin/lyra run
 ```
 
 ## riscv-cpu
@@ -24,7 +24,7 @@ and check the result register.
 
 ```bash
 cd examples/riscv-cpu
-../../bazel-bin/lyra run --top all_tests *.sv tests/*.sv
+../../bazel-bin/lyra run
 ```
 
 ```

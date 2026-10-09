@@ -36,6 +36,7 @@ using lyra::test::MakeScratchDir;
 using lyra::test::ReadJson;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
+using lyra::test::RunLyraFrom;
 using lyra::test::TerminationKind;
 using lyra::test::WriteTrivialSource;
 using namespace std::chrono_literals;
@@ -347,20 +348,6 @@ auto WriteDeclaredDesign(const std::filesystem::path& root) -> void {
            << "incdir = [\"include\"]\n"
            << "defines = [\"TRACE=1\"]\n"
            << "\n[compile]\nsingle_unit = true\n";
-}
-
-// Runs lyra from `dir`, which is what a declaration search reads and what no
-// argument can express.
-auto RunLyraFrom(
-    const std::filesystem::path& lyra, const std::filesystem::path& dir,
-    std::string_view args) -> lyra::test::ProcessOutcome {
-  auto sh_or = lyra::driver::FindOnPath("sh");
-  EXPECT_TRUE(sh_or.has_value());
-  if (!sh_or) return {};
-  const std::vector<std::string> argv = {
-      "-c",
-      std::format("cd '{}' && '{}' {}", dir.string(), lyra.string(), args)};
-  return RunChildProcess(*sh_or, argv, 60s);
 }
 
 // The whole point of the file: a design describes itself once, and the command

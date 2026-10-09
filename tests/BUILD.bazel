@@ -252,6 +252,24 @@ cc_test(
     ],
 )
 
+# The command a reader types builds on the default backend, so each example is
+# an emitted C++ project built and run by whichever host compiler the executing
+# machine has. It is one build per shipped example, seconds each, so it gates.
+cc_test(
+    name = "examples_tests",
+    size = "medium",
+    srcs = ["examples_test.cpp"],
+    copts = LYRA_COPTS,
+    data = [
+        "//:examples",
+        "//:lyra",
+    ],
+    deps = [
+        ":framework",
+        "@googletest//:gtest_main",
+    ],
+)
+
 # Each design is compiled at one size and at twice that, on both backends, and
 # a time found past its bound is measured again, so the cost is a few compiles
 # per design and is spread over shards. The execution backend links a program

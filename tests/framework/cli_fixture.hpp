@@ -1,10 +1,14 @@
 #pragma once
 
+#include <chrono>
 #include <expected>
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
+#include <string_view>
+
+#include "tests/framework/process.hpp"
 
 namespace lyra::test {
 
@@ -16,6 +20,16 @@ auto MakeScratchDir() -> std::expected<std::filesystem::path, std::string>;
 
 // Where the compiler under test is, as this run was given it.
 auto ResolveLyra() -> std::filesystem::path;
+
+// Where the examples a reader is handed are, as this run was given them.
+auto ResolveShippedExamples() -> std::filesystem::path;
+
+// Runs lyra from `dir`, which is what a declaration search reads and what no
+// argument can express.
+auto RunLyraFrom(
+    const std::filesystem::path& lyra, const std::filesystem::path& dir,
+    std::string_view args,
+    std::chrono::seconds timeout = std::chrono::seconds{60}) -> ProcessOutcome;
 
 // The host compiler an emitted project's own recipe defaults to, where this
 // host has one. What such a build costs is a fact about that compiler, so a
