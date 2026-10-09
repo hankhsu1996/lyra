@@ -1,11 +1,14 @@
 // @measure: build
 // @work: bit
+// @work-max: 16777215
 //
 // A few processes over packed values of one declared width, so what a bit of
 // that width costs to compile is what this case says. Where its neighbours
 // grow how many things a design holds, this one grows how wide each thing is,
 // and a representation whose cost is per value rather than per bit shows up
-// here as a flat line.
+// here as a flat line. A flat line never reaches a target duration, so the
+// case states the widest packed type the front end takes (LRM 6.9.1 lets an
+// implementation set one, at 65536 bits or more).
 module Top #(parameter int WORK = 512);
   localparam int W = WORK;
   localparam int NUM_CYCLES = 10;

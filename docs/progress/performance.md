@@ -31,7 +31,9 @@ What a case reports is a **rate**, and no amount of work is written down anywher
 raises the amount until a measurement reaches a target duration, separately for each tool, and
 divides it back out. So a case is never sized by hand, an engine that gets a thousand times faster
 is followed rather than re-tuned around, and a reference simulator hundreds of times quicker is
-measured over hundreds of times the work instead of over a millisecond of process startup.
+measured over hundreds of times the work instead of over a millisecond of process startup. Beside
+each rate the report says how the cost grew with the amount, because a rate holds at every amount
+only where that growth is a line, and a case whose work is the size of a design may not be one.
 `../decisions/benchmark-case-shape.md` carries why.
 
 Two things still decide how a number is read. Every case that times a simulation is built optimized,

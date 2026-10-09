@@ -1,4 +1,4 @@
-# Benchmark Result Schema (v5)
+# Benchmark Result Schema (v6)
 
 Schema for the `bench.json` output produced by `run_benchmarks.py`. The corpus it reads and the
 reasoning behind the shape are in `docs/decisions/benchmark-case-shape.md`; this file describes only
@@ -14,7 +14,7 @@ measurement independent of whether any diagnostic happens to be available.
 
 | Field            | Type   | Description                                        |
 | ---------------- | ------ | -------------------------------------------------- |
-| `schema_version` | int    | Always `5`.                                        |
+| `schema_version` | int    | Always `6`.                                        |
 | `git`            | string | Short git SHA of the tested commit.                |
 | `target_seconds` | float  | The duration each measurement was scaled to reach. |
 | `timestamp`      | string | ISO 8601 UTC timestamp of the run.                 |
@@ -37,7 +37,8 @@ All fields are always present. A field that does not apply carries its zero valu
 | `rate`      | float  | Units per second, with the fixed part removed. **The number.** |
 | `build_s`   | float  | What building the case cost.                                   |
 | `binary_kb` | int    | Size of the produced binary in KB.                             |
-| `probes`    | int    | How many measurements were taken to reach the target.          |
+| `readings`  | array  | Every measurement taken, in order, each `[work, seconds]`.     |
+| `growth`    | float  | The power of `work` the cost grew as; zero where unseen.       |
 | `detail`    | string | The diagnostic behind a non-`ok` status; empty when `ok`.      |
 
 ## Reading `rate`
@@ -55,6 +56,17 @@ why at least two are always taken. With only one -- a case so slow that a single
 overshoots the target -- there is nothing to separate and the whole duration is charged to the work,
 so such a case's rate is a lower bound on its speed.
 
+## Reading `growth`
+
+**A rate divides the amount out only where the cost was proportional to it, and `growth` says
+whether it was.** Repeating a simulation's work is proportional by construction. A build's work is
+the design, and a design twice the size may cost four times as much; there the rate belongs to the
+`work` it was taken at, and two tools given different amounts were not measured on the same thing.
+
+`growth` is the exponent read off the last measurement and the nearest one at most half its amount,
+once the fixed part is taken out of each: `1.0` is a line and `2.0` a square. It is zero where the
+work did not show in both.
+
 ## Statuses
 
 `unsupported` is a tool that cannot measure this case: Verilator absent from `PATH`, or a construct
@@ -69,6 +81,7 @@ that produced it.
 - Consumers must check `schema_version` before parsing.
 - Fields may be added; consumers should ignore unknown ones.
 - Removing a field or changing its type requires a version bump.
+- The v5 field `probes` does not appear; it was the length of `readings`.
 - The v4 fields `intent`, `primary`, `secondary`, `focus`, `optimized`, `params`, `rss_max_mb`,
   `wall_s`, `sim_s` and `subcategory` do not appear, and neither do the scale profiles and tiers
   that `params` recorded.
