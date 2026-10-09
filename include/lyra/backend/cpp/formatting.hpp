@@ -45,7 +45,7 @@ struct VariableDeclaration {
   bool is_const = false;
   CppType type;
   CppName name;
-  std::optional<CppName> qualifier = std::nullopt;
+  std::optional<OwnClassPath> qualifier = std::nullopt;
 };
 
 [[nodiscard]] inline auto StorageSpecifiers(VariableForm form)

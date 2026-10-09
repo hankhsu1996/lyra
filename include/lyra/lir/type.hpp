@@ -13,6 +13,7 @@
 #include "lyra/lir/closure_id.hpp"
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 
@@ -228,11 +229,11 @@ struct ObjectType {
 };
 
 // A class another compilation unit declares, named by that unit and the class's
-// canonical name. A backend spells the pair in its own target language; nothing
+// path in it. A backend spells the pair in its own target language; nothing
 // here composes one.
 struct CrossUnitClassType {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
 
   auto operator==(const CrossUnitClassType&) const -> bool = default;
 };
@@ -303,11 +304,12 @@ struct VectorType {
   auto operator==(const VectorType&) const -> bool = default;
 };
 
-// The declaration a type is: the unit that declares it and the name it has
-// there, which identifies it from anywhere.
+// The declaration a type is: the unit that holds it and which declaration of
+// that unit it is, which identifies it from anywhere. A backend spells the pair
+// in its own target language; nothing here composes one.
 struct TypeDeclarationRef {
   std::string unit_name;
-  std::string name;
+  support::DefPath path;
 
   auto operator==(const TypeDeclarationRef&) const -> bool = default;
 };
@@ -321,7 +323,8 @@ struct TupleType {
 };
 
 // The declaration a struct type is: one this unit declares, by its position in
-// the unit's registry, or one another unit declares, by the name it has there.
+// the unit's registry, or one another unit declares, by that unit and which
+// declaration of it the struct is.
 using StructRef = std::variant<StructId, TypeDeclarationRef>;
 
 // A product named by its declaration, each component reached by its position

@@ -12,6 +12,7 @@
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/symbols/BlockSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/numeric/SVInt.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -84,27 +85,94 @@ namespace lyra::lowering::ast_to_hir {
   return *value;
 }
 
-// A generate block (LRM 27.6) as a path to a declaration inside it spells it,
-// the way the hierarchy does, which is what tells two of them apart. A block
-// standing on its own answers to its own label; a loop's block carries no
-// label of its own and answers to the construct's label together with the
-// index it elaborated at (LRM 27.4), so both halves are needed for it. The
-// alternatives of one conditional may share a label (LRM 27.5), and one loop
-// body can hold several of them where its blocks selected differently, so an
-// alternative is told apart by its position among them as well.
-[[nodiscard]] inline auto GenerateBlockStep(
-    const slang::ast::GenerateBlockSymbol& block) -> std::string {
-  if (block.getArrayIndex() == nullptr) {
-    if (!IsAlternative(block)) return std::string{block.name};
-    const auto alternatives = AlternativesOfConstruct(block);
-    const auto position = std::ranges::find(alternatives, &block);
-    return std::format(
-        "{}#{}", block.name, std::distance(alternatives.begin(), position));
+// The implicit localparam the index name denotes inside one block of a loop
+// (LRM 27.4), or nothing for a block no loop counted out. Every block declares
+// its own, holding the value the index had when that block elaborated. The
+// clause gives it the genvar's name, and the front end marks which declaration
+// it is; the mark is what this asks, because a block's other parameters share
+// the loop's name with nothing and must not be taken for it.
+[[nodiscard]] inline auto LoopIndexParameterOf(
+    const slang::ast::GenerateBlockSymbol& block)
+    -> const slang::ast::ParameterSymbol* {
+  for (const auto& member : block.members()) {
+    const auto* parameter = member.as_if<slang::ast::ParameterSymbol>();
+    if (parameter != nullptr && parameter->isFromGenvar()) {
+      return parameter;
+    }
   }
-  const slang::ast::Scope* array = block.getHierarchicalParent();
-  return std::format(
-      "{}[{}]", array == nullptr ? std::string_view{} : array->asSymbol().name,
-      LoopIndexOf(block));
+  return nullptr;
+}
+
+// Where among its construct's alternatives the source wrote `block`, counted
+// from the first. A block no conditional produced is the one its construct
+// holds.
+[[nodiscard]] inline auto AlternativePositionOf(
+    const slang::ast::GenerateBlockSymbol& block) -> std::uint32_t {
+  if (!IsAlternative(block)) return 0;
+  const auto alternatives = AlternativesOfConstruct(block);
+  const auto position = std::ranges::find(alternatives, &block);
+  return static_cast<std::uint32_t>(
+      std::distance(alternatives.begin(), position));
+}
+
+// The label a generate block answers to (LRM 27.6), which every block instance
+// built from that text shares: its own for a block standing on its own or
+// chosen by a conditional, and for a loop's block the label of its construct
+// (LRM 27.4).
+[[nodiscard]] inline auto GenerateBlockLabel(
+    const slang::ast::GenerateBlockSymbol& block) -> std::string {
+  if (block.getArrayIndex() != nullptr) {
+    const slang::ast::Scope* array = block.getHierarchicalParent();
+    return std::string{
+        array == nullptr ? std::string_view{} : array->asSymbol().name};
+  }
+  return std::string{block.name};
+}
+
+// Which one `block` is among the generate blocks of its scope that carry its
+// label, counted in the order the source wrote them: zero for the first, and
+// so for a label nothing shares. Alternatives may share a label, those of one
+// conditional and those of two of which a scope builds only one (LRM 27.5), and
+// the count runs over every alternative the source wrote, built or not, so
+// every elaboration of the scope reaches the same number. The blocks of a loop
+// are one definition (LRM 27.4) and take the loop's count.
+[[nodiscard]] inline auto LabelDisambiguatorOf(
+    const slang::ast::GenerateBlockSymbol& block) -> std::uint32_t {
+  const slang::ast::Symbol* written = &block;
+  if (block.getArrayIndex() != nullptr) {
+    const slang::ast::Scope* loop = block.getParentScope();
+    if (loop == nullptr) return 0;
+    written = &loop->asSymbol();
+  }
+  const slang::ast::Scope* scope = written->getParentScope();
+  if (scope == nullptr) return 0;
+  std::uint32_t earlier = 0;
+  for (const auto& member : scope->members()) {
+    if (&member == written) return earlier;
+    const bool is_generate_block =
+        member.kind == slang::ast::SymbolKind::GenerateBlock ||
+        member.kind == slang::ast::SymbolKind::GenerateBlockArray;
+    if (is_generate_block && member.name == written->name) ++earlier;
+  }
+  throw InternalError(
+      "LabelDisambiguatorOf: a generate block is a member of the scope "
+      "holding it");
+}
+
+// One block instance as the path of an instance below it spells it: its label,
+// which one it is among the blocks of its scope sharing that label where it is
+// not the first (LRM 27.5), and for a loop's block the index it elaborated at
+// (LRM 27.4).
+[[nodiscard]] inline auto BlockInstancePathName(
+    const slang::ast::GenerateBlockSymbol& block) -> std::string {
+  std::string name = GenerateBlockLabel(block);
+  if (const std::uint32_t which = LabelDisambiguatorOf(block); which != 0) {
+    name += std::format("#{}", which);
+  }
+  if (block.getArrayIndex() != nullptr) {
+    name += std::format("[{}]", LoopIndexOf(block));
+  }
+  return name;
 }
 
 // Whether the visit at this block is the visit that handles its construct,

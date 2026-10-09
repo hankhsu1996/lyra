@@ -495,6 +495,20 @@ specializations, not with instance count.
       removed where the block does share, and the blocks paying it are the ones compiled apart for a
       reason of their own.
 
+      **How many classes a loop publishes used to follow from comparing its blocks, and no longer
+      does.** Each block was published under the path to it and the blocks found alike were merged
+      afterwards, the others' names kept as further names of one class, so the C++ backend wrote a
+      file per block and a module's forward header changed when one body did. A block instance is
+      now an application of its block, named from the source: one published class per application,
+      and blocks of one application whose code differs are that class realized more than once. A
+      child naming the block that holds it is one unit where it was one per block, and a struct a
+      block declares is one type where it was one per block. On the C++ backend the classes of a
+      module's scopes are nested classes in the one header that carries the module's name, so file
+      count and emitted bytes no longer grow with the iteration count for any loop design the growth
+      check holds. A loop whose blocks declare a class is still one class per index.
+      [../decisions/a-generate-block-is-a-nested-definition.md](../decisions/a-generate-block-is-a-nested-definition.md)
+      holds what an index decides and why.
+
       What this does **not** touch is the front end's own elaboration, which still produces a symbol
       per block, so the lowering phase stays linear in the iteration count and its wall clock and
       peak memory stay roughly where they were. What goes away is the emit and the host compile.

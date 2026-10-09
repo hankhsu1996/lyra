@@ -33,6 +33,7 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -77,6 +78,15 @@ struct PublishedScopeLayout {
   return mir::CallableId{published.value};
 }
 
+// One class realizing a class the unit published of its scopes: what a scope
+// lowered to, extending the published class with what the lowering adds, and
+// its body for each subroutine the class published, by the position the
+// signature gave the subroutine.
+struct ScopeRealization {
+  mir::ClassId id{};
+  base::Translation<hir::PublishedCallableId, mir::CallableId> subroutines;
+};
+
 // What this unit knows of a scope class some unit published: the class, the
 // type each of its fields holds, and where it placed each thing the scope
 // published.
@@ -84,6 +94,18 @@ struct ScopeClassLayout {
   mir::DeclaredClassRef cls;
   std::vector<mir::TypeId> field_types;
   PublishedScopeLayout published;
+};
+
+// A class this unit published of its scopes. Several scopes may be published
+// as one class -- the block instances of one application of a generate block
+// that lowered apart (LRM 27.3) -- so what the signature fixes is held once:
+// where it placed what was published, and the identifier a referrer spells
+// each published subroutine by, in the order the signature gave them. The
+// classes realizing it follow, in the order their scopes were lowered.
+struct PublishedScope {
+  ScopeClassLayout layout;
+  std::vector<std::string> subroutine_names;
+  std::vector<ScopeRealization> realizations;
 };
 
 // Lowers one HIR compilation unit into one MIR compilation unit, holding that
@@ -159,27 +181,44 @@ class UnitLowerer {
   [[nodiscard]] auto UnitObjectType(hir::ExternalScopeClassId hir_id) const
       -> mir::TypeId;
 
-  // A class a unit published of one of its scopes, `class_name` of
+  // A class a unit published of one of its scopes, `class_path` of
   // `unit_name`, as this unit names it: one of its own where `unit_name` is
   // this unit, however the name reaching it was written, and otherwise the
   // other unit's. One class has one identity here (LRM 23.6 lets a name leave
   // an instance and reach another instance of the same unit).
   [[nodiscard]] auto ClassIdentityOf(
-      const std::string& unit_name, const std::string& class_name) const
+      const std::string& unit_name, const support::DefPath& class_path) const
       -> mir::DeclaredClassRef;
 
-  // The class this unit published of the scope it published under
-  // `class_name`, or one of the further names a scope standing for several
-  // blocks answers to. Every one is minted before any type translates, since a
-  // type a signature states may name one.
-  [[nodiscard]] auto PublishedScopeClassNamed(std::string_view class_name) const
-      -> mir::ClassId;
+  // The class this unit published of the scopes it published under
+  // `class_path`. Every one is minted before any type translates, since a type
+  // a signature states may name one.
+  [[nodiscard]] auto PublishedScopeClassAt(
+      const support::DefPath& class_path) const -> mir::ClassId;
 
   // Takes the identity of the class the unit published of one of its scopes,
-  // under each name `published` says it answers to. The lowering of the scope
-  // takes it as it is built, which is before any type translates.
+  // which is one class for every scope published under one path. The lowering
+  // of the scope takes it as it is built, which is before any type translates.
   auto TakePublishedScopeClass(const hir::ScopePublication& published)
       -> mir::ClassId;
+
+  // Where the class `published` places what `scope` published, laying the
+  // class out from the scope's signature the first time a scope published as
+  // it asks. Every scope published as one class states one signature, so
+  // whichever asks first settles the same shape.
+  auto SettlePublishedScope(
+      mir::ClassId published, const hir::StructuralScope& scope)
+      -> const PublishedScopeLayout&;
+
+  // Records that `realization` realizes the class `published`, once its own
+  // class is settled in the unit.
+  void AddRealization(mir::ClassId published, ScopeRealization realization);
+
+  // Every class the unit published of its scopes.
+  [[nodiscard]] auto PublishedScopes() const
+      -> const std::map<mir::ClassId, PublishedScope>& {
+    return published_scopes_;
+  }
 
   // What this unit knows of the scope class `hir_id` records: of one of its
   // own, where that scope's shape placed what was published; of another
@@ -188,13 +227,6 @@ class UnitLowerer {
   // one finds it.
   [[nodiscard]] auto ScopeClassLayoutOf(hir::ExternalScopeClassId hir_id) const
       -> const ScopeClassLayout&;
-
-  // Where a scope's own shape placed what the unit published of it, in the
-  // class `published` -- what a name reaching another instance of this unit
-  // reaches it through.
-  void RecordOwnScopeLayout(
-      mir::ClassId published, std::vector<mir::TypeId> field_types,
-      PublishedScopeLayout layout);
 
   // The fields of the class a scope publishes, in the order `signature`
   // states them: one per member, named as it was published, then one per
@@ -243,12 +275,12 @@ class UnitLowerer {
         "UnitLowerer::ImportedRuntimeObjectType: unknown imported class");
   }
 
-  // A class some unit declared, `class_name` of `unit_name`, as this unit names
+  // A class some unit declared, `class_path` of `unit_name`, as this unit names
   // it: one of its own where `unit_name` is this unit -- a signature of another
   // unit names it so -- and otherwise the other unit's. Naming one records no
   // dependency; the builders below are what record one.
   [[nodiscard]] auto DeclaredClassIdentityOf(
-      const std::string& unit_name, const std::string& class_name) const
+      const std::string& unit_name, const support::DefPath& class_path) const
       -> mir::DeclaredClassRef;
 
   // What a signature names of a class, in MIR's terms. Reading a signature
@@ -461,17 +493,15 @@ class UnitLowerer {
   base::Translation<hir::ClassId, ClassTranslation> class_translations_;
   // This unit's record of each of those classes, by the HIR record of it.
   std::map<hir::ExternalScopeClassId, ScopeClassLayout> external_scope_layouts_;
-  // Keyed by name, because a signature names a unit's scope class by name and
+  // Keyed by path, because a signature names a unit's scope class by path and
   // nothing else: a class of this unit reached through another unit's
   // signature arrives as one, and is resolved to this unit's class here.
-  std::map<std::string, mir::ClassId, std::less<>> published_scope_classes_;
+  std::map<support::DefPath, mir::ClassId> published_scope_classes_;
   // The same, for the classes this unit declares: a signature of another unit
-  // names one by name -- a specialization of another unit's generic holding a
+  // names one by path -- a specialization of another unit's generic holding a
   // value of it, say -- and it is resolved to this unit's class here.
-  std::map<std::string, mir::ClassId, std::less<>> declared_classes_;
-  // Where each scope's own shape placed what the unit published of it, by the
-  // class it was published as.
-  std::map<mir::ClassId, ScopeClassLayout> own_scope_layouts_;
+  std::map<support::DefPath, mir::ClassId> declared_classes_;
+  std::map<mir::ClassId, PublishedScope> published_scopes_;
   std::uint32_t next_synthesized_site_ = 0;
   // What the declare stage settled about each class, read by every body that
   // names a peer. Lives only on the lowerer; the finished compilation unit

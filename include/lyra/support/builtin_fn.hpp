@@ -655,10 +655,15 @@ enum class BuiltinFn : std::uint16_t {
   kFinish,
   kStop,
   // Where a hierarchical name leaving an instance starts (LRM 23.6 / 23.8):
-  // the nearest instance above the receiver that is of the class handed in, or
-  // past the topmost a top-level instance of it. Called once per reference in
-  // the resolve phase.
-  kEnclosingInstance,
+  // the nearest scope above the receiver that is of the class handed in, an
+  // instance or a generate block, or past the topmost a top-level instance of
+  // it. Called once per reference in the resolve phase.
+  kEnclosingScope,
+  // Whether the receiver, a scope of the design hierarchy, is an object of the
+  // class handed in or of one extending it. A class a unit published of a
+  // scope may be realized by several classes of that unit, and a body entered
+  // on the object as the published class asks which of them it is.
+  kIsOfClass,
   // A constructor hands a freshly-built child to its parent to own: this
   // consumes the built child (a unique pointer) and returns the parent-owned
   // handle -- the child's own `Segment()` supplies the LRM display form, so the

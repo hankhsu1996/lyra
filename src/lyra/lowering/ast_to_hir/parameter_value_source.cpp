@@ -23,9 +23,10 @@
 // Beside each the front end keeps the expression it settled it from, and the
 // walk reads that like any other reference. Anything still unseen is caught
 // where it matters: the lowering compares every instance handed a different
-// value against the unit it shares, and a difference keeps the definition
-// whole. So this answers how much is shared and never whether the program is
-// right.
+// value against the unit it shares, and the classes the block instances of
+// one generate block published against each other, and a difference keeps the
+// definition whole. So this answers how much is shared and never whether the
+// program is right.
 
 #include <algorithm>
 #include <span>
@@ -107,9 +108,29 @@ struct EveryReference
 
   const ParameterSet* own;
   References found;
+  // Each reference in the order the walk met it, with the expression the front
+  // end settled a constant from that it sits in, or nothing where it sits in
+  // none. That expression is the whole of what the reference decides there:
+  // two values it folds alike leave the same constant behind.
+  struct Use {
+    const slang::ast::ParameterSymbol* param;
+    const slang::ast::Expression* reference;
+    const slang::ast::Expression* settled_from;
+  };
+  std::vector<Use> uses;
+  const slang::ast::Expression* settling = nullptr;
+
+  void Note(const slang::ast::ValueExpressionBase& e) {
+    const auto* param = e.symbol.as_if<slang::ast::ParameterSymbol>();
+    if (param == nullptr || !own->contains(param)) return;
+    if (found[param].insert(&e).second) {
+      uses.push_back(
+          Use{.param = param, .reference = &e, .settled_from = settling});
+    }
+  }
 
   void handle(const slang::ast::NamedValueExpression& e) {
-    Record(e, *own, found);
+    Note(e);
     VisitSpecializationParameters(e.specializationParameters);
     visitDefault(e);
   }
@@ -209,7 +230,7 @@ struct EveryReference
   // one elaboration gave it rather than to what its instance is handed, so
   // such a reference is one no evaluated place accepts.
   void handle(const slang::ast::HierarchicalValueExpression& e) {
-    Record(e, *own, found);
+    Note(e);
     VisitSelectors(e.ref);
     VisitSpecializationParameters(e.specializationParameters);
     visitDefault(e);
@@ -379,7 +400,11 @@ struct EveryReference
   }
 
   void VisitSettledFrom(const slang::ast::Expression* expr) {
-    if (expr != nullptr) expr->visit(*this);
+    if (expr == nullptr) return;
+    const slang::ast::Expression* outer = settling;
+    if (outer == nullptr) settling = expr;
+    expr->visit(*this);
+    settling = outer;
   }
 };
 
@@ -416,25 +441,47 @@ struct ValueReference
 
 // Collects the value references in the places a run evaluates, walking the
 // body's members and skipping everything that is not one of those places.
+// Two more sets are collected apart, because what each means depends on which
+// parameter is read there: the references in what selects an alternative of a
+// conditional generate, and every reference in the code of a process, a
+// continuous assignment or a subroutine, wherever in it the reference sits.
 struct EvaluatedPlaces
     : slang::ast::ASTVisitor<EvaluatedPlaces, slang::ast::VisitFlags::Symbols> {
-  EvaluatedPlaces(ValueReference& values, const SpecializationPolicy& policy)
-      : values(&values), policy(&policy) {
+  EvaluatedPlaces(
+      ValueReference& values, ValueReference& selections, EveryReference& code,
+      const SpecializationPolicy& policy)
+      : values(&values), selections(&selections), code(&code), policy(&policy) {
   }
 
   ValueReference* values;
+  ValueReference* selections;
+  EveryReference* code;
   const SpecializationPolicy* policy;
+
+  // The condition or the case items an alternative stands under (LRM 27.5).
+  void handle(const slang::ast::GenerateBlockSymbol& block) {
+    for (const slang::ast::GenerateSelection& level : block.selectionPath) {
+      if (level.condition != nullptr) level.condition->visit(*selections);
+      for (const slang::ast::Expression* item : level.caseItems) {
+        if (item != nullptr) item->visit(*selections);
+      }
+    }
+    visitDefault(block);
+  }
 
   void handle(const slang::ast::ProceduralBlockSymbol& b) const {
     b.getBody().visit(*values);
+    b.getBody().visit(*code);
   }
 
   void handle(const slang::ast::ContinuousAssignSymbol& a) const {
     a.getAssignment().visit(*values);
+    a.getAssignment().visit(*code);
   }
 
   void handle(const slang::ast::SubroutineSymbol& s) {
     s.getBody().visit(*values);
+    s.getBody().visit(*code);
     visitDefault(s);
   }
 
@@ -447,9 +494,15 @@ struct EvaluatedPlaces
     }
   }
 
+  // A variable of automatic lifetime exists only while its body runs (LRM
+  // 6.21), so what it is declared as is part of that body's code.
   void handle(const slang::ast::VariableSymbol& v) const {
     if (const slang::ast::Expression* init = v.getInitializer()) {
       init->visit(*values);
+    }
+    if (v.kind == slang::ast::SymbolKind::Variable &&
+        v.lifetime == slang::ast::VariableLifetime::Automatic) {
+      v.visit(*code);
     }
   }
 
@@ -469,13 +522,21 @@ struct EvaluatedPlaces
 
   // What a child is handed is a value this body states, and whether that is a
   // place the run evaluates is the child's own answer about that parameter.
-  // The child's body is no place this body evaluates and is not walked.
+  // What a port is connected to is one end of the continuous assignment the
+  // connection implies (LRM 23.3.3), which the run evaluates. The child's body
+  // is no place this body evaluates and is not walked.
   void handle(const slang::ast::InstanceSymbol& child) const {
     for (const slang::ast::ParameterSymbol* param :
          policy->SuppliedParametersOf(child)) {
       if (const slang::ast::Expression* given =
               ValueWrittenAtInstantiation(child, *param)) {
         given->visit(*values);
+      }
+    }
+    for (const slang::ast::PortConnection* connection :
+         child.getPortConnections()) {
+      if (const slang::ast::Expression* actual = connection->getExpression()) {
+        actual->visit(*values);
       }
     }
   }
@@ -537,43 +598,119 @@ auto Reached(ParameterSet from, const ParameterEdges& edges, Admits admits)
   return from;
 }
 
-// The parameters of `body` its instance is handed when it is built, in the
-// order the body declares them: every one the instantiation overrides that
-// decides nothing about what is compiled.
-auto SuppliedOf(
+auto DeclaredByAGenerateBlock(const slang::ast::ParameterSymbol& param)
+    -> bool {
+  const slang::ast::Scope* declaring = param.getParentScope();
+  return declaring != nullptr &&
+         declaring->asSymbol().kind == slang::ast::SymbolKind::GenerateBlock;
+}
+
+// The parameters of a body whose value decides what is compiled, and for each
+// of them that is the index of a loop's block (LRM 27.4), what tells two of
+// its values apart: the constants the front end settled from it wherever it
+// decides, in the order the body states them, so two values that fold alike
+// everywhere are told apart by nothing. Where one of those places kept no
+// constant, or the index decides through another parameter written from it,
+// its own value is what is left.
+struct Deciding {
+  ParameterSet parameters;
+  std::unordered_map<
+      const slang::ast::ParameterSymbol*, std::vector<std::string>>
+      folded_to;
+};
+
+// What decides for `body`: a parameter read outside the places the run
+// evaluates, or whose type is the type of its value; and what a deciding
+// parameter is written from decides with it.
+//
+// A parameter a generate block declares decides less, because a block is
+// built once per object of its scope, each with its own value, and the blocks
+// of one text are objects of one class whose code may still be compiled once
+// per block. So for such a parameter two more places decide nothing. What
+// selects an alternative of a conditional generate: the construction building
+// the block chooses it (LRM 27.5), and the class holds every alternative any
+// of its objects selected. And the code of a process, a continuous assignment
+// or a subroutine, wherever in it the parameter is read: it is no part of what
+// the class declares, and blocks whose code comes out different are that class
+// realized more than once. A parameter of the unit has one value for the whole
+// of an instance, which elaborated one alternative and one code, and those are
+// all the unit holds.
+auto DecidingParametersOf(
     const slang::ast::InstanceBodySymbol& body, const ParameterSet& own,
     const ParameterEdges& written_from, const SpecializationPolicy& policy)
-    -> std::vector<const slang::ast::ParameterSymbol*> {
+    -> Deciding {
   EveryReference every(own);
   body.visit(every);
 
   ValueReference values(own);
-  EvaluatedPlaces places(values, policy);
+  ValueReference selections(own);
+  EveryReference code(own);
+  EvaluatedPlaces places(values, selections, code, policy);
   body.visit(places);
 
-  // Whether some reference to `param` sits outside the places the run
-  // evaluates.
+  const auto found_in = [](const References& in,
+                           const slang::ast::ParameterSymbol* param,
+                           const slang::ast::Expression* use) {
+    const auto uses = in.find(param);
+    return uses != in.end() && uses->second.contains(use);
+  };
+  const auto decides_there = [&](const slang::ast::ParameterSymbol* param,
+                                 const slang::ast::Expression* use) {
+    return !found_in(values.found, param, use) &&
+           !(DeclaredByAGenerateBlock(*param) &&
+             (found_in(selections.found, param, use) ||
+              found_in(code.found, param, use)));
+  };
   const auto read_elsewhere = [&](const slang::ast::ParameterSymbol* param) {
     const auto all = every.found.find(param);
     if (all == every.found.end()) return false;
-    const auto evaluated = values.found.find(param);
     return std::ranges::any_of(all->second, [&](const auto* use) {
-      return evaluated == values.found.end() ||
-             !evaluated->second.contains(use);
+      return decides_there(param, use);
     });
   };
-  // A parameter decides what is compiled where it is read outside those
-  // places, or where its type is the type of its value; and what a deciding
-  // parameter is written from decides with it.
   ParameterSet roots;
   for (const slang::ast::ParameterSymbol* param : own) {
     if (read_elsewhere(param) || TypeFollowsValue(*param)) {
       roots.insert(param);
     }
   }
-  const ParameterSet decides =
-      Reached(std::move(roots), written_from, [](const auto&) { return true; });
+  Deciding deciding{
+      .parameters = Reached(
+          std::move(roots), written_from, [](const auto&) { return true; }),
+      .folded_to = {}};
 
+  ParameterSet by_own_value;
+  for (const slang::ast::ParameterSymbol* param : deciding.parameters) {
+    for (const slang::ast::ParameterSymbol* source : written_from.at(param)) {
+      if (source->isFromGenvar()) by_own_value.insert(source);
+    }
+  }
+  for (const EveryReference::Use& use : every.uses) {
+    if (!use.param->isFromGenvar() ||
+        !deciding.parameters.contains(use.param) ||
+        !decides_there(use.param, use.reference)) {
+      continue;
+    }
+    const slang::ConstantValue* settled =
+        use.settled_from == nullptr ? nullptr : use.settled_from->getConstant();
+    if (settled == nullptr) {
+      by_own_value.insert(use.param);
+    } else {
+      deciding.folded_to[use.param].push_back(ValueIdentity(*settled));
+    }
+  }
+  for (const slang::ast::ParameterSymbol* index : by_own_value) {
+    deciding.folded_to[index] = {ValueIdentity(index->getValue())};
+  }
+  return deciding;
+}
+
+// The parameters of `body` its instance is handed when it is built, in the
+// order the body declares them: every one the instantiation overrides that
+// decides nothing about what is compiled.
+auto SuppliedOf(
+    const slang::ast::InstanceBodySymbol& body, const ParameterSet& decides)
+    -> std::vector<const slang::ast::ParameterSymbol*> {
   // A value given anywhere -- by the instantiation, a defparam, or a
   // configuration (LRM 23.10) -- is one value the instance is handed.
   std::vector<const slang::ast::ParameterSymbol*> supplied;
@@ -622,10 +759,25 @@ auto SpecializationPolicy::Classify(
       written_into.at(source).insert(param);
     }
   }
+  // A definition kept whole shares nothing, so every value decides, and every
+  // value of a loop's index is told apart from every other.
+  ParameterSet decides;
+  if (kept_whole_.contains(&inst.getDefinition())) {
+    decides = own;
+    for (const slang::ast::ParameterSymbol* param : own) {
+      if (param->isFromGenvar()) {
+        out.folded_to[param] = {ValueIdentity(param->getValue())};
+      }
+    }
+  } else {
+    Deciding deciding = DecidingParametersOf(body, own, written_from, *this);
+    decides = std::move(deciding.parameters);
+    out.folded_to = std::move(deciding.folded_to);
+  }
   // A top-level instance is built by the design root, which hands nothing, and
   // is the only instance of its unit, so a value it is given is compiled in.
-  if (!kept_whole_.contains(&inst.getDefinition()) && !inst.isTopLevel()) {
-    out.supplied = SuppliedOf(body, own, written_from, *this);
+  if (!inst.isTopLevel()) {
+    out.supplied = SuppliedOf(body, decides);
   }
 
   // What varies to begin with is what the unit is handed and what a generate
@@ -634,11 +786,7 @@ auto SpecializationPolicy::Classify(
   // comes from elsewhere is not written by its declaration.
   ParameterSet roots(out.supplied.begin(), out.supplied.end());
   for (const slang::ast::ParameterSymbol* param : own) {
-    const slang::ast::Scope* declaring = param->getParentScope();
-    if (declaring != nullptr &&
-        declaring->asSymbol().kind == slang::ast::SymbolKind::GenerateBlock) {
-      roots.insert(param);
-    }
+    if (DeclaredByAGenerateBlock(*param)) roots.insert(param);
   }
   out.varying = Reached(
       std::move(roots), written_into,
@@ -659,6 +807,16 @@ auto SpecializationPolicy::ValueSourceOf(
     return ParameterValueSource::kSuppliedAtConstruction;
   }
   return ParameterValueSource::kComputedAtConstruction;
+}
+
+auto SpecializationPolicy::WhatItDecides(
+    const slang::ast::InstanceSymbol& inst,
+    const slang::ast::ParameterSymbol& index) const
+    -> std::span<const std::string> {
+  const PerInstance& known = Of(inst);
+  const auto folded = known.folded_to.find(&index);
+  if (folded == known.folded_to.end()) return {};
+  return folded->second;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -36,6 +36,7 @@
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -217,13 +218,13 @@ auto LocalLabel(const mir::CallableCode& code, mir::LocalId local)
 }
 
 // A method of another unit's class is reached by the symbol that unit emits it
-// under, composed from the same three names that unit composed it from.
+// under, composed from the same parts that unit composed it from.
 auto ExternalMethodSymbol(
-    std::string_view unit_name, std::string_view class_name,
+    std::string_view unit_name, const support::DefPath& class_path,
     std::string_view method_name) -> lir::SymbolTarget {
   return lir::SymbolTarget{
       .symbol = lir::ClassCallableSymbol(
-          unit_name, lir::SymbolPart::Name(class_name),
+          unit_name, lir::SymbolPartOf(class_path),
           lir::SymbolPart::Name(method_name))};
 }
 
@@ -296,7 +297,7 @@ auto FunctionLowerer::LowerCallTarget(
                     [&](const mir::ExternalUnitClassMethodTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{ExternalMethodSymbol(
-                          t.unit_name, t.class_name, t.method_name)};
+                          t.unit_name, t.class_path, t.method_name)};
                     },
                     // Reached by the symbol its declaring unit emits it under,
                     // from that unit and from any other alike.
@@ -304,7 +305,7 @@ auto FunctionLowerer::LowerCallTarget(
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{lir::SymbolTarget{
                           .symbol = lir::StructMethodSymbol(
-                              t.declaration.unit_name, t.declaration.name,
+                              t.declaration.unit_name, t.declaration.path,
                               t.answers)}};
                     },
                     [&](const mir::ExternalUnitMintedEntryTarget& t)
@@ -604,11 +605,10 @@ auto FunctionLowerer::ConstructorOf(const mir::DeclaredClassRef& cls)
           [&](const mir::CrossUnitClassRef& ext) {
             return EnteredConstructor{
                 .object_type = unit_->ExternalClassValueType(
-                    ext.unit_name, ext.class_name),
+                    ext.unit_name, ext.class_path),
                 .callee = lir::CallTarget{lir::SymbolTarget{
                     .symbol = lir::ConstructorSymbol(
-                        ext.unit_name,
-                        lir::SymbolPart::Name(ext.class_name))}}};
+                        ext.unit_name, lir::SymbolPartOf(ext.class_path))}}};
           }},
       cls);
 }
@@ -1667,7 +1667,7 @@ auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
                         },
                         [&](const mir::CrossUnitClassRef& other) {
                           return unit_->ExternalClassValueType(
-                              other.unit_name, other.class_name);
+                              other.unit_name, other.class_path);
                         }},
                     t.owner),
                 t.slot);
@@ -2166,7 +2166,7 @@ auto FunctionLowerer::ReferencePlace(
             return SymbolPlace(
                 lir::StaticPropertySymbol(
                     unit_->Mir().name,
-                    lir::SymbolPartOf(cls.name, ref.owner.value),
+                    lir::SymbolPartOf(cls.path, ref.owner.value),
                     lir::SymbolPartOf(
                         mir::NameOf(cls.named_static_properties, ref.prop),
                         ref.prop.value)),
@@ -2176,7 +2176,7 @@ auto FunctionLowerer::ReferencePlace(
               -> diag::Result<lir::Place> {
             return SymbolPlace(
                 lir::StaticPropertySymbol(
-                    ref.unit_name, lir::SymbolPart::Name(ref.class_name),
+                    ref.unit_name, lir::SymbolPartOf(ref.class_path),
                     lir::SymbolPart::Name(ref.property_name)),
                 type);
           },

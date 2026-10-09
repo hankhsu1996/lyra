@@ -70,7 +70,7 @@ auto HashClassRef(std::size_t seed, const ClassRef& ref) -> std::size_t {
           },
           [seed](const ExternalClassRef& external) {
             return Combine(
-                Combine(seed, external.unit_name), external.class_name);
+                Combine(seed, external.unit_name), external.class_path);
           }},
       ref);
 }
@@ -113,7 +113,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           },
           [seed](const UnpackedStructType& t) {
             return Combine(
-                Combine(seed, t.declaration.unit_name), t.declaration.name);
+                Combine(seed, t.declaration.unit_name), t.declaration.path);
           },
           [seed](const UnpackedUnionType& t) {
             return HashFields(seed, t.fields);
@@ -140,7 +140,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             return Combine(seed, static_cast<std::size_t>(t.klass));
           },
           [seed](const UnitObjectType& t) {
-            return Combine(Combine(seed, t.unit_name), t.class_name);
+            return Combine(Combine(seed, t.unit_name), t.class_path);
           },
           [seed](const UnitObjectsType& t) {
             std::size_t h = seed;
@@ -148,7 +148,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
               h = Combine(Combine(h, range.left), range.right);
             }
             for (const UnitObjectType& kind : t.kinds) {
-              h = Combine(Combine(h, kind.unit_name), kind.class_name);
+              h = Combine(Combine(h, kind.unit_name), kind.class_path);
             }
             for (const std::uint32_t taken : t.taken) {
               h = Combine(h, static_cast<std::size_t>(taken));

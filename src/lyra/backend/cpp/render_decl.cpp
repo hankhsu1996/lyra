@@ -1,5 +1,7 @@
 #include "lyra/backend/cpp/render_decl.hpp"
 
+#include <map>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -29,6 +31,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -188,7 +191,7 @@ void RenderClassCallableDef(
     const mir::CallableDecl& m, TargetText& out) {
   if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(m))) return;
   RenderMemberFunctionDef(
-      unit, refusals, CppClassName(s, cls_id),
+      unit, refusals, CppClassPath(unit, cls_id),
       CppClassCallableName(unit, s, id), m.code, out);
 }
 
@@ -212,7 +215,7 @@ void RenderConstructor(
         "yet states no receiver -- please report this as a bug");
   }
   const ScopeView scope_view = ScopeView::ForCode(unit, ctor_code, refusals);
-  const CppName cpp_name = CppClassName(s, cls_id);
+  const CppName cpp_name = CppClassName(unit, cls_id);
   const std::span<const mir::LocalId> formals = ctor_code.ParamsAfterReceiver();
 
   signature.OpenLine();
@@ -220,7 +223,7 @@ void RenderConstructor(
   WriteParameters(unit, ctor_code, formals, signature);
   signature += ");\n";
 
-  Write(code, cpp_name, "::", cpp_name, "(");
+  Write(code, CppClassPath(unit, cls_id), "::", cpp_name, "(");
   WriteParameters(unit, ctor_code, formals, code);
   code += ")";
   if (s.base.has_value()) {
@@ -243,7 +246,7 @@ void RenderConstructor(
 // is fixed and the others are positions.
 void RenderClassConstant(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId id, const mir::Class& s, mir::TypeId type, const CppName& name,
+    mir::ClassId id, mir::TypeId type, const CppName& name,
     const mir::ValueBuild& build, TargetText& announced, TargetText& defined) {
   WriteDeclaration(
       announced, VariableDeclaration{
@@ -259,56 +262,107 @@ void RenderClassConstant(
           .is_const = true,
           .type = CppType(unit, type),
           .name = name,
-          .qualifier = CppClassName(s, id)},
+          .qualifier = CppClassPath(unit, id)},
       [&](TargetText& value) { Write(view, value, build.value); });
+}
+
+// Which classes of a unit C++ declares inside another, by each class's
+// position in the unit: the class each is declared inside, and the classes
+// each declares inside itself, in the unit's order. A generate block is a
+// declaration nested in the scope holding it (LRM 27.3), so the class of one
+// is declared inside the class the unit published under its path short of the
+// last step.
+struct ClassNesting {
+  std::vector<std::optional<mir::ClassId>> declared_inside;
+  std::vector<std::vector<mir::ClassId>> declares_inside;
+};
+
+auto NestingOf(const mir::CompilationUnit& unit) -> ClassNesting {
+  std::map<support::DefPath, mir::ClassId> published_at;
+  for (const mir::ClassId id : unit.classes.Ids()) {
+    if (const auto& path = unit.GetClass(id).path) {
+      published_at.emplace(*path, id);
+    }
+  }
+  ClassNesting nesting{
+      .declared_inside =
+          std::vector<std::optional<mir::ClassId>>(unit.classes.size()),
+      .declares_inside =
+          std::vector<std::vector<mir::ClassId>>(unit.classes.size())};
+  for (const mir::ClassId id : unit.classes.Ids()) {
+    const std::optional<support::DefPath>& path = unit.GetClass(id).path;
+    if (!path.has_value() || !IsNestedClass(*path)) continue;
+    const auto enclosing = published_at.find(support::EnclosingPath(*path));
+    if (enclosing == published_at.end()) {
+      throw InternalError(
+          "backend::cpp: the unit published the class of a generate block and "
+          "not the class of the scope holding it -- please report this as a "
+          "bug");
+    }
+    nesting.declared_inside[id.value] = enclosing->second;
+    nesting.declares_inside[enclosing->second.value].push_back(id);
+  }
+  return nesting;
 }
 
 void RenderClass(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId id, const mir::Class& s, TargetText& signature,
+    mir::ClassId id, const mir::Class& s,
+    std::span<const mir::ClassId> declares_inside, TargetText& signature,
     TargetText& code);
 
-// Writes a class after every class of this unit it derives from, which the
-// unit's class list does not guarantee, marking written classes in `emitted`.
-// The order matters for the classes written into the code file; a class
-// another unit may name has its own file, which includes its bases' files, so
-// its position here does not matter.
+// Writes a class after every class of this unit it derives from or is
+// declared inside, which the unit's class list does not guarantee, marking
+// written classes in `emitted`. The order matters wherever several classes
+// share a file: the code file, and the header a unit's scope classes share.
 void AppendClassInDependencyOrder(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId id, std::vector<bool>& emitted, UnitClasses& text) {
+    const ClassNesting& nesting, mir::ClassId id, std::vector<bool>& emitted,
+    UnitClasses& text) {
   if (emitted[id.value]) return;
   emitted[id.value] = true;
   const mir::Class& cls = unit.GetClass(id);
+  if (const auto& enclosing = nesting.declared_inside[id.value]) {
+    AppendClassInDependencyOrder(
+        unit, refusals, nesting, *enclosing, emitted, text);
+  }
   for (const mir::DeclaredClassRef& rests_on :
        mir::RestsOnDeclaredClasses(cls)) {
     std::visit(
         Overloaded{
             [&](const mir::IntraUnitClassRef& intra) {
               AppendClassInDependencyOrder(
-                  unit, refusals, intra.class_id, emitted, text);
+                  unit, refusals, nesting, intra.class_id, emitted, text);
             },
             // Another unit's class is declared in that unit's own header,
             // which the file declaring this one includes.
             [](const mir::CrossUnitClassRef&) {}},
         rests_on);
   }
+  const std::span<const mir::ClassId> declares_inside =
+      nesting.declares_inside[id.value];
   const TargetText::Section defined(text.definitions);
   if (mir::IsPublished(unit, id)) {
     PublishedClass published{.id = id, .text = TargetText{}};
-    RenderClass(unit, refusals, id, cls, published.text, text.definitions);
+    RenderClass(
+        unit, refusals, id, cls, declares_inside, published.text,
+        text.definitions);
     text.published.push_back(std::move(published));
     return;
   }
   const TargetText::Section declared(text.internal);
-  RenderClass(unit, refusals, id, cls, text.internal, text.definitions);
+  RenderClass(
+      unit, refusals, id, cls, declares_inside, text.internal,
+      text.definitions);
 }
 
 void RenderClass(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId id, const mir::Class& s, TargetText& signature,
+    mir::ClassId id, const mir::Class& s,
+    std::span<const mir::ClassId> declares_inside, TargetText& signature,
     TargetText& code) {
   TargetText& out = signature;
-  Write(out, "class ", CppClassName(s, id));
+  Write(out, "class ", CppClassPath(unit, id));
   if (s.is_final) {
     out += " final";
   }
@@ -340,6 +394,16 @@ void RenderClass(
   out += " public:\n";
   out.Indent();
 
+  // A class declared inside this one is declared here and defined after it,
+  // outside, so each reads as a class of its own.
+  {
+    const TargetText::Section nested(out);
+    for (const mir::ClassId inside : declares_inside) {
+      out.OpenLine();
+      Write(out, "class ", CppClassName(unit, inside), ";\n");
+    }
+  }
+
   if (s.constructor.has_value()) {
     const TargetText::Section declared(out);
     const TargetText::Section defined(code);
@@ -355,14 +419,14 @@ void RenderClass(
     const TargetText::Section ended(out);
     out.OpenLine();
     if (s.base.has_value()) {
-      Write(out, "~", CppClassName(s, id), "() override;\n");
+      Write(out, "~", CppClassName(unit, id), "() override;\n");
     } else {
-      Write(out, "virtual ~", CppClassName(s, id), "();\n");
+      Write(out, "virtual ~", CppClassName(unit, id), "();\n");
     }
     const TargetText::Section defined(code);
     code.OpenLine();
     Write(
-        code, CppClassName(s, id), "::~", CppClassName(s, id),
+        code, CppClassPath(unit, id), "::~", CppClassName(unit, id),
         "() = default;\n");
   }
 
@@ -398,11 +462,11 @@ void RenderClass(
     for (const mir::ClassConstantId constant : s.constants.Ids()) {
       const mir::ClassConstantDecl& decl = s.constants.Get(constant);
       RenderClassConstant(
-          unit, refusals, id, s, decl.type, CppClassConstantName(constant),
+          unit, refusals, id, decl.type, CppClassConstantName(constant),
           decl.initializer, out, code);
     }
     RenderClassConstant(
-        unit, refusals, id, s, mir::ClassDefinitionType(unit.types),
+        unit, refusals, id, mir::ClassDefinitionType(unit.types),
         CppDefinitionName(), s.object_definition_initializer, out, code);
   }
 
@@ -498,12 +562,9 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
   UnitText text;
   for (const mir::ClassId id : unit.classes.Ids()) {
     const mir::Class& cls = unit.GetClass(id);
-    const CppName name = CppClassName(cls, id);
+    if (cls.path.has_value() && IsNestedClass(*cls.path)) continue;
     TargetText& out = mir::IsPublished(unit, id) ? text.signature : text.code;
-    Write(out, "class ", name, ";\n");
-    for (const std::string& alias : cls.aliases) {
-      Write(out, "using ", ToCppName(alias), " = ", name, ";\n");
-    }
+    Write(out, "class ", CppClassName(unit, id), ";\n");
   }
   return text;
 }
@@ -512,9 +573,10 @@ auto RenderUnitClasses(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> UnitClasses {
   UnitClasses text;
+  const ClassNesting nesting = NestingOf(unit);
   std::vector<bool> emitted(unit.classes.size(), false);
   for (const mir::ClassId id : unit.classes.Ids()) {
-    AppendClassInDependencyOrder(unit, refusals, id, emitted, text);
+    AppendClassInDependencyOrder(unit, refusals, nesting, id, emitted, text);
   }
   return text;
 }

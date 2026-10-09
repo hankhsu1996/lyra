@@ -112,20 +112,19 @@ struct BuiltPublishedClass {
 // Builds what a unit published of its object from the shape settled for it --
 // the published members, its first fields -- over the base that roots an
 // object in the runtime's tree, with a method per published subroutine that
-// enters the realizing class's body on the object. Nothing is virtual: the
-// unit an instance is of is settled where a referrer compiles, so a call names
-// its method outright.
+// enters, on the object, the body of whichever of `realizations` the object
+// is. Nothing is virtual: the class a name reaches is settled where a referrer
+// compiles, so a call names its method outright, and which class realizes the
+// object is a question only this unit can ask.
 //
-// It is this class rather than the realization that stands directly in the
+// It is this class rather than a realization that stands directly in the
 // tree, so what the tree's class is entered with is entered here, and that
-// includes the definition the object carries. The object is of the realizing
+// includes the definition the object carries. The object is of a realizing
 // class, which is the only one that knows it, so its constructor hands the
 // definition in and this one passes it on.
 auto BuildPublishedClass(
     const mir::CompilationUnit& unit, const ClassShape& shape,
-    std::span<const PublishedSubroutine> subroutines,
-    mir::ClassId realization_id, const mir::Class& realization)
-    -> BuiltPublishedClass {
+    const PublishedScope& published) -> BuiltPublishedClass {
   mir::CallableCode ctor = mir::CallableCode::Defined();
   const mir::LocalId ctor_self = ctor.AddLocal(shape.self_pointer_type);
   std::vector<mir::LocalId> prefix;
@@ -140,19 +139,27 @@ auto BuildPublishedClass(
   ctor.result_type = unit.builtins.void_type;
 
   // The shape reserved one method per published subroutine, each where the
-  // subroutine's published position says.
+  // subroutine's published position says, and every realization states its
+  // body for that position.
   mir::Class cls = shape.OpenClass();
-  for (const PublishedSubroutine& subroutine : subroutines) {
-    const mir::CallableId id = PublishedMethodOf(subroutine.published);
+  for (std::uint32_t at = 0; at < published.subroutine_names.size(); ++at) {
+    const hir::PublishedCallableId subroutine{at};
+    std::vector<mir::CallableTarget> bodies;
+    bodies.reserve(published.realizations.size());
+    for (const ScopeRealization& realization : published.realizations) {
+      bodies.push_back(
+          mir::CallableTarget{
+              .owner = realization.id,
+              .slot = realization.subroutines.Get(subroutine)});
+    }
+    const mir::CallableId id = PublishedMethodOf(subroutine);
     cls.callables.Define(
         id, mir::CallableDecl{
-                .code = ForwardingMethod(
-                    unit, realization_id, realization, subroutine.body,
-                    shape.self_pointer_type),
+                .code = ForwardingMethod(unit, bodies, shape.self_pointer_type),
                 .foreign = std::nullopt,
                 .virtual_dispatch = std::nullopt});
     cls.named_callables.push_back(
-        mir::NamedCallable{.name = subroutine.name, .body = id});
+        mir::NamedCallable{.name = published.subroutine_names[at], .body = id});
   }
 
   return BuiltPublishedClass{
@@ -582,7 +589,7 @@ auto DisableTargetPointerType(mir::TypePool& types) -> mir::TypeId {
 
 // Settles how each route of one use is reached. A route made only of parent
 // edges within this unit is walked where it is used and takes no member. Any
-// other -- downward, sideways, or starting at an enclosing instance -- takes
+// other -- downward, sideways, or starting at an enclosing scope -- takes
 // one slot, typed by `slot_type` from what the route ends at, so a body
 // reaching through it meets the target's own access protocol and no other. The
 // type is interned per slot rather than once per use, so a unit that keeps no
@@ -643,7 +650,7 @@ auto OwnScopeOf(const ReachedPlace& from, std::string_view site)
 
 // Establishes the place the route starts from its base. An in-unit base climbs
 // `hops` typed parent edges to an ancestor scope of this unit, which keeps the
-// place typed. A base outside this unit is the enclosing instance of a class,
+// place typed. A base outside this unit is the enclosing scope of a class,
 // which the runtime finds above this unit's own object: starting there rather
 // than at the reader is what keeps an instance of this same unit from answering
 // for one enclosing it.
@@ -662,7 +669,7 @@ auto BuildRouteAnchor(
                     frame, unit, mir::EnclosingHops{.value = ib.hops.value}),
                 .place = InOwnScope{&lowerer.EnclosingScopeAtHops(ib.hops)}};
           },
-          [&](const hir::EnclosingInstanceBase& eb) {
+          [&](const hir::EnclosingScopeBase& eb) {
             std::uint32_t to_unit_object = 0;
             for (const StructuralScopeLowerer* at = &lowerer;
                  at->Parent() != nullptr; at = at->Parent()) {
@@ -675,7 +682,7 @@ auto BuildRouteAnchor(
                             .callee =
                                 mir::Direct{
                                     .target =
-                                        support::BuiltinFn::kEnclosingInstance,
+                                        support::BuiltinFn::kEnclosingScope,
                                     .receiver = BuildObjectDeref(
                                         unit, block,
                                         BuildEnclosingScopeReceiver(
@@ -2061,47 +2068,10 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // published, through the one layout every referrer's record of the object
   // uses too, and each published declaration of this scope takes the field its
   // publication was given. Everything else is placed in this scope's own
-  // class, after them. A scope standing for several blocks of a loop is
-  // published under one name per block, the others naming the same class.
-  const hir::ScopeClassSignature& signature = hir_scope.published.signature;
-  ClassShape published;
-  published.name = signature.class_name;
-  published.aliases = hir_scope.published.aliases;
-  published.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
-  published.self_pointer_type = unit_lowerer.Unit().types.Intern(
-      mir::Type{mir::PointerType{
-          .pointee = unit_lowerer.Unit().types.Intern(
-              mir::Type{mir::ObjectType{
-                  .of = mir::IntraUnitClassRef{published_class_id_}}}),
-          .ownership = mir::PointerOwnership::kBorrowed}});
-  // It is the unit's object as other units see it, so it is the same time
-  // scope (LRM 3.14.2.2) as the class extending it.
-  published.time_resolution = hir_scope.time_resolution;
-  // Each published subroutine is a method of it, its identity reserved here at
-  // the position the signature gave the subroutine, so a body reaching another
-  // instance of this unit calls it by position before its body is built.
-  published.callable_signatures = {
-      hir_scope.published.callables.size(),
-      std::vector<CallableSignature>(
-          hir_scope.published.callables.size(),
-          CallableSignature{.virtual_dispatch = std::nullopt})};
-
+  // class, after them.
   const mir::ClassId owner = published_class_id_;
-  std::vector<mir::FieldId> published_slots;
-  std::vector<mir::TypeId> published_types;
-  for (PublishedField& field : unit_lowerer.PublishedFieldsOf(signature)) {
-    published_types.push_back(field.type);
-    published_slots.push_back(
-        field.name.has_value()
-            ? published.AddNamedField(*std::move(field.name), field.type)
-            : published.AddField(field.type));
-  }
-  const PublishedScopeLayout layout =
-      UnitLowerer::PublishedLayoutAt(signature, published_slots);
-  unit_lowerer.RecordOwnScopeLayout(
-      owner, std::move(published_types),
-      UnitLowerer::PublishedLayoutAt(signature, published_slots));
-  unit_lowerer.DefineClassShape(owner, std::move(published));
+  const PublishedScopeLayout& layout =
+      unit_lowerer.SettlePublishedScope(owner, hir_scope);
   const auto on_published = [&](mir::FieldId slot) {
     return mir::ClassFieldTarget{
         .owner = mir::IntraUnitClassRef{owner}, .slot = slot};
@@ -2401,17 +2371,13 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       hir_scope.structural_subroutines.size(), std::move(signatures)};
   declared_subroutines_ = {
       hir_scope.structural_subroutines.size(), std::move(declared_subroutines)};
-  // Which published method enters each published subroutine; a subroutine the
-  // unit kept to itself has none.
-  for (const hir::PublishedCallableId published :
-       hir_scope.published.callables.Ids()) {
-    const hir::StructuralSubroutineId id =
-        hir_scope.published.callables.Get(published);
-    published_subroutines_.push_back(
-        PublishedSubroutine{
-            .published = published,
-            .name = hir_scope.structural_subroutines.Get(id).name,
-            .body = declared_subroutines_.Get(id).callable});
+  // Which body each published subroutine enters; a subroutine the unit kept to
+  // itself is none of them.
+  published_subroutines_ =
+      base::Translation<hir::PublishedCallableId, mir::CallableId>{
+          hir_scope.published.callables.size()};
+  for (const hir::StructuralSubroutineId id : hir_scope.published.callables) {
+    published_subroutines_.Append(declared_subroutines_.Get(id).callable);
   }
 
   std::vector<StaticVarBindings> process_statics;
@@ -3178,17 +3144,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       activate_code, activate_self_id,
       support::LibraryVirtual::kScopeCreateProcesses);
 
-  // What the unit published passes the definition it was handed on to the
-  // tree. Every referrer names that class through the unit's signature, and no
-  // instance is built of it alone, so it tells the library nothing of its own.
-  BuiltPublishedClass published = BuildPublishedClass(
-      unit, unit_lowerer.GetClassShape(published_class_id_),
-      published_subroutines_, class_id_, mir_class);
-  FinalizeConstructor(
-      unit, published.cls, std::move(published.ctor), published.ctor_prefix,
-      {});
-  StateNamedClassDefinition(unit, published.cls);
-  unit.DefineClass(published_class_id_, std::move(published.cls));
+  // The object is of this class, which is the only one that knows it, so its
+  // constructor hands the published class the definition the tree is told.
   const mir::ExprId definition = BuildDefinitionRead(
       unit, ctor_code.Body(), mir::IntraUnitClassRef{.class_id = class_id_});
   FinalizeConstructor(
@@ -3197,7 +3154,27 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
 
   StateScopeDefinition(unit, class_id_, mir_class, exports);
   unit.DefineClass(class_id_, std::move(mir_class));
+  unit_lowerer.AddRealization(
+      published_class_id_,
+      ScopeRealization{
+          .id = class_id_, .subroutines = std::move(published_subroutines_)});
   return {};
+}
+
+// What the unit published passes the definition it was handed on to the tree.
+// Every referrer names that class through the unit's signature, and no instance
+// is built of it alone, so it tells the library nothing of its own.
+void StructuralScopeLowerer::DefinePublishedClasses(UnitLowerer& unit_lowerer) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  for (const auto& [id, scope] : unit_lowerer.PublishedScopes()) {
+    BuiltPublishedClass published =
+        BuildPublishedClass(unit, unit_lowerer.GetClassShape(id), scope);
+    FinalizeConstructor(
+        unit, published.cls, std::move(published.ctor), published.ctor_prefix,
+        {});
+    StateNamedClassDefinition(unit, published.cls);
+    unit.DefineClass(id, std::move(published.cls));
+  }
 }
 
 }  // namespace lyra::lowering::hir_to_mir

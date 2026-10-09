@@ -2,7 +2,7 @@
 
 #include <optional>
 #include <span>
-#include <string_view>
+#include <string>
 
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
@@ -18,7 +18,7 @@ namespace lyra::lir {
 // unit published it, and a closure holds the captures its values own.
 struct MemberList {
   std::span<const Member> members;
-  std::string_view owner;
+  std::string owner;
 };
 
 // The members the type names, absent for a type that declares none -- which is

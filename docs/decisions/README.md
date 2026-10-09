@@ -269,7 +269,20 @@ the detail lives in the entry itself.
   instance of the class it landed on, which tells the unit apart; a loop's blocks keep their own
   names over shared code; nothing resolves a hierarchical name while the design runs. Resolving by
   name at elaboration, handing over the size, a dispatched base class, a behaviors-only promise, and
-  keying by the climb's path are rejected.
+  keying by the climb's path are rejected. **Its D5, a loop's blocks each under their own name, is
+  reversed by the next entry.**
+- [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) -- a
+  generate block is a definition nested in the scope holding it, and a block instance is an
+  application of it, named from the front end by the function that names a unit: one published class
+  per application, a loop an array of them, a child naming the block that holds it one unit. Read it
+  for what an index decides -- the constants the front end settled from it, and nothing where it is
+  only read, selects an alternative, or sits in a body's code -- for why blocks of one application
+  that lower apart are one class realized more than once, with a published subroutine entering the
+  body of whichever realization the object is, for why a class of a unit is identified by a path of
+  steps and never by a composed name, and for why a unit's scope classes are nested in one another
+  and written in the file that carries the unit's name. A file per class with its name shortened by
+  a digest, deciding by comparing published classes, and a virtual method per published subroutine
+  are rejected.
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) -- one semantic shape per
   hierarchical reference; per-segment classification by layout visibility; sealed endpoint on the
   hot path. **Its D2 is reversed by

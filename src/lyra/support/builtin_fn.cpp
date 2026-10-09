@@ -875,10 +875,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = FreeFunction{"lyra::runtime::Stop"},
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kDeparts};
-    case BuiltinFn::kEnclosingInstance:
+    case BuiltinFn::kEnclosingScope:
       return {
-          .name = "enclosing_instance",
-          .declaration = Method{"EnclosingInstance"}};
+          .name = "enclosing_scope", .declaration = Method{"EnclosingScope"}};
+    case BuiltinFn::kIsOfClass:
+      return {.name = "is_of_class", .declaration = Method{"IsOfClass"}};
     case BuiltinFn::kAddOwnedChild:
       return {
           .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};

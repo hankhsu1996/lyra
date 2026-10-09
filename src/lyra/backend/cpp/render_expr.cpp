@@ -185,7 +185,7 @@ void WriteQualifiedField(
           [&](const mir::CrossUnitClassRef& other)
               -> const std::vector<mir::NamedField>& {
             const mir::ExternalClass* declaring = mir::FindExternalClass(
-                unit.external_classes, other.unit_name, other.class_name);
+                unit.external_classes, other.unit_name, other.class_path);
             if (declaring == nullptr ||
                 field.slot.value >= declaring->fields.size()) {
               throw InternalError(
@@ -239,7 +239,7 @@ void RenderReferenceExpr(
           [&](const mir::StaticPropertyRef& r) {
             const mir::Class& owner_cls = view.Unit().GetClass(r.owner);
             Write(
-                out, CppClassName(owner_cls, r.owner), "::",
+                out, CppClassPath(view.Unit(), r.owner), "::",
                 CppStaticPropertyName(
                     owner_cls.named_static_properties, r.prop));
           },
@@ -258,18 +258,18 @@ void RenderReferenceExpr(
           },
           [&](const mir::ExternalStaticPropertyRef& r) {
             Write(
-                out, CppUnitScope(r.unit_name), "::", ToCppName(r.class_name),
+                out, CppExternalClassPath(r.unit_name, r.class_path),
                 "::", ToCppName(r.property_name));
           },
           [&](const mir::ClassConstantRef& r) {
             Write(
-                out, CppClassName(view.Unit().GetClass(r.owner), r.owner),
+                out, CppClassPath(view.Unit(), r.owner),
                 "::", CppClassConstantName(r.constant));
           },
           [&](const mir::FunctionRef& r) {
             const mir::Class& owner = view.Unit().GetClass(r.body.owner);
             Write(
-                out, CppClassName(owner, r.body.owner),
+                out, CppClassPath(view.Unit(), r.body.owner),
                 "::", CppClassCallableName(view.Unit(), owner, r.body.slot));
           }},
       reference.target);

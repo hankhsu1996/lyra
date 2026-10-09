@@ -125,26 +125,21 @@ auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
 
 auto MergeBlocks(const hir::StructuralScope& a, const hir::StructuralScope& b)
     -> std::optional<hir::StructuralScope> {
-  if (a.generates.size() != b.generates.size()) return std::nullopt;
+  if (a.published.signature.class_path != b.published.signature.class_path ||
+      a.generates.size() != b.generates.size()) {
+    return std::nullopt;
+  }
 
   // A selection sits in a generate construct or beneath one, so the generates
-  // are one part allowed to differ; what the two blocks published is the
-  // other, since each block's class and the blocks below it have names of their
-  // own, and everything else it states follows from the declarations compared
-  // here. Reading one block with the other's in place of its own says whether
-  // anything else did, over every field there is rather than over a list
-  // someone has to keep up to date.
+  // are the one part allowed to differ. Reading one block with the other's in
+  // place of its own says whether anything else did, over every field there is
+  // rather than over a list someone has to keep up to date. What a block
+  // published is among those fields, so two blocks that are objects of
+  // different classes are never one body.
   hir::StructuralScope merged = a;
   merged.generates = b.generates;
-  merged.published = b.published;
   if (!(merged == b)) return std::nullopt;
 
-  // The one scope stands for both blocks, so it answers to the names of each.
-  merged.published = a.published;
-  merged.published.aliases.push_back(b.published.signature.class_name);
-  merged.published.aliases.insert(
-      merged.published.aliases.end(), b.published.aliases.begin(),
-      b.published.aliases.end());
   base::Registry<hir::Generate, hir::GenerateId> generates;
   for (const hir::GenerateId id : a.generates.Ids()) {
     auto one = MergeGenerates(a.generates.Get(id), b.generates.Get(id));

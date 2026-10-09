@@ -19,6 +19,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/hir/type_import.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
@@ -67,8 +68,8 @@ struct PortDecl {
 };
 
 // One class of the source language a unit publishes (LRM 26.2 puts a package's
-// declarations on its signature), named by the canonical name a referrer
-// reaches it under. It is the class's own declaration as the front end
+// declarations on its signature), named by the path a referrer reaches it
+// under. It is the class's own declaration as the front end
 // elaborated it, so everything another unit's compiled output depends on about
 // the class is here and a change to any of it is a change to the signature.
 // The lists are ordered rather than sets: a property's slot and a virtual
@@ -80,9 +81,9 @@ struct PortDecl {
 // class it is only by way of one it names -- so a referrer reads each of those
 // off the class that declares it.
 struct ClassSignature {
-  std::string class_name;
+  support::DefPath class_path;
   // The class this one extends, named the way every class named on a signature
-  // is -- by declaring unit and canonical name -- and absent where it extends
+  // is -- by declaring unit and path in it -- and absent where it extends
   // nothing. A referrer reaches an inherited property or method by walking
   // this chain, reading each class's own signature.
   std::optional<ExternalClassRef> base;
@@ -134,12 +135,12 @@ struct PublishedDesignElement {
   std::vector<ScopeClassSignature> blocks;
 
   // The class of a scope an instance of this unit is or holds, published under
-  // `class_name`, or nothing where the unit published no such scope.
-  [[nodiscard]] auto FindScopeClass(std::string_view class_name) const
+  // `class_path`, or nothing where the unit published no such scope.
+  [[nodiscard]] auto FindScopeClass(const support::DefPath& class_path) const
       -> const ScopeClassSignature* {
-    if (instance_class.class_name == class_name) return &instance_class;
+    if (instance_class.class_path == class_path) return &instance_class;
     for (const ScopeClassSignature& block : blocks) {
-      if (block.class_name == class_name) return &block;
+      if (block.class_path == class_path) return &block;
     }
     return nullptr;
   }
@@ -175,7 +176,7 @@ struct UnitSignature {
   // the publishing unit's pool: a signature is read where that unit's arenas
   // are not, so an identity on one has to index storage the signature carries.
   // For the same reason a class named in here is named by declaring unit and
-  // class name, never by an id.
+  // path in it, never by an id.
   TypePool types;
   // The classes of the source language this unit declares and other units may
   // name (LRM 26.2), each reached by its own name rather than through any
@@ -183,27 +184,16 @@ struct UnitSignature {
   std::vector<ClassSignature> classes;
   std::variant<PublishedDesignElement, PublishedNamespace> unit;
 
-  // The class published under `name`, or nothing where the unit published no
-  // such name.
-  [[nodiscard]] auto FindClass(std::string_view name) const
+  // The class published under `class_path`, or nothing where the unit published
+  // no such class.
+  [[nodiscard]] auto FindClass(const support::DefPath& class_path) const
       -> const ClassSignature* {
     for (const ClassSignature& published : classes) {
-      if (published.class_name == name) return &published;
+      if (published.class_path == class_path) return &published;
     }
     return nullptr;
   }
 };
-
-// The class an instance of the unit named `unit_name` is. The unit both
-// publishes this on its signature and builds the class under it, so the
-// signature and the code cannot name different classes. A referrer holding the
-// signature reads the name it carries; a unit stating in its own signature
-// what type a member of it holds computes it here, because every signature is
-// derived without reading another.
-[[nodiscard]] inline auto InstanceClassName(std::string_view unit_name)
-    -> std::string {
-  return std::string{unit_name};
-}
 
 // What `signature` publishes as a design element. A unit that is instantiated
 // is one, so a caller holding the signature of a unit it instantiates reaches

@@ -33,10 +33,10 @@ auto BuildDesignRootHir(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures) -> hir::CompilationUnit {
   hir::CompilationUnit root{std::string{kDesignRootUnitName}};
-  // Like any module, its object is published under the unit's class name, and
-  // what it publishes is every instance it builds (LRM 23.6).
+  // Like any module, its object is published as the class an instance of the
+  // unit is, and what it publishes is every instance it builds (LRM 23.6).
   hir::ScopeClassSignature published{
-      .class_name = hir::InstanceClassName(kDesignRootUnitName),
+      .class_path = {},
       .members = {},
       .callables = {},
       .generates = {},
@@ -65,18 +65,17 @@ auto BuildDesignRootHir(
                           .scope_class = scope_class, .arguments = {}}},
                       .taken = {0}});
     const std::array kind{hir::UnitObjectType{
-        .unit_name = top.unit_name, .class_name = instance_class.class_name}};
+        .unit_name = top.unit_name, .class_path = instance_class.class_path}};
     published.members.Add(
         hir::PublishedMember{
             .name = top.instance_name,
-            .within = {},
+            .holder = published.class_path,
             .type = root.types.Intern(hir::Type{hir::ObjectsOf({}, kind)}),
             .storage = hir::BorrowedObjectStorage{}});
     instances.emplace_back(instance);
   }
   root.root_scope.published = hir::ScopePublication{
       .signature = std::move(published),
-      .aliases = {},
       .members = {instances.size(), std::move(instances)},
       .generates = {},
       .disable_targets = {},

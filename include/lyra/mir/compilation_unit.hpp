@@ -32,6 +32,7 @@
 #include "lyra/mir/type_descriptor_pool.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/value_build.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 
 namespace lyra::mir {
@@ -104,7 +105,7 @@ struct ConsumedNamespace {
 
 struct ConsumedClass {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
 
   auto operator==(const ConsumedClass&) const -> bool = default;
 };
@@ -520,11 +521,11 @@ struct CompilationUnit {
 
   // A class of this unit is named by its id, so only another unit's class is
   // ever consumed.
-  void ConsumeClassOf(std::string unit_name, std::string class_name) {
+  void ConsumeClassOf(std::string unit_name, support::DefPath class_path) {
     Consume(
         ConsumedClass{
             .unit_name = std::move(unit_name),
-            .class_name = std::move(class_name)});
+            .class_path = std::move(class_path)});
   }
 
   void Consume(ConsumedSignature consumed) {
@@ -551,14 +552,14 @@ struct CompilationUnit {
 }
 
 // Whether another unit can name this class, which is what a unit contributes to
-// the program deciding. Every class another unit names carries the name it is
+// the program deciding. Every class another unit names carries the path it is
 // named by: what a design element published of its scopes, the classes it and
 // a namespace unit declare (LRM 23.6, 26.2). A class the lowering builds for
 // its own use answers to none. Every consumer deciding which artifact a
 // declaration belongs in asks here, so none of them answers it a second way.
 [[nodiscard]] inline auto IsPublished(const CompilationUnit& unit, ClassId id)
     -> bool {
-  return unit.GetClass(id).name.has_value();
+  return unit.GetClass(id).path.has_value();
 }
 
 // The class some unit declares that `cls` extends, where it extends one -- the
@@ -714,7 +715,7 @@ using NamespaceReach = std::variant<
       Overloaded{
           [&](StructId id) -> TypeDeclarationRef {
             return TypeDeclarationRef{
-                .unit_name = unit.name, .name = unit.GetStruct(id).name};
+                .unit_name = unit.name, .path = unit.GetStruct(id).path};
           },
           [](const TypeDeclarationRef& ref) -> TypeDeclarationRef {
             return ref;

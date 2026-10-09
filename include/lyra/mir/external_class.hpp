@@ -10,6 +10,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::mir {
 
@@ -29,7 +30,7 @@ struct PublishedOverride {
 };
 
 // A class of another unit this one reaches into, as far as that unit published
-// it, named by the unit that declares it and its canonical name -- both
+// it, named by the unit that declares it and its path in it -- both
 // resolved at link time. The lists below are ordered rather than sets: a
 // field's slot and a behavior's ordinal are counted out of them, and the named
 // fields are a prefix of the class's own storage, so a slot counted here is
@@ -46,7 +47,7 @@ struct PublishedOverride {
 // emit a second definition of a symbol another unit already defines.
 struct ExternalClass {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   // What its storage is placed after: the class it extends, or the root it
   // extends in the library. Absent for an interface class, which holds no
   // storage (LRM 8.26).
@@ -73,14 +74,14 @@ struct ExternalClass {
   std::vector<PublishedOverride> overrides;
 };
 
-// The record kept of the class `class_name` of unit `unit_name`, or nothing
+// The record kept of the class `class_path` of unit `unit_name`, or nothing
 // where this unit holds no published record of it -- a class no signature the
 // design compiles carries.
 [[nodiscard]] inline auto FindExternalClass(
     std::span<const ExternalClass> records, std::string_view unit_name,
-    std::string_view class_name) -> const ExternalClass* {
+    const support::DefPath& class_path) -> const ExternalClass* {
   for (const ExternalClass& record : records) {
-    if (record.unit_name == unit_name && record.class_name == class_name) {
+    if (record.unit_name == unit_name && record.class_path == class_path) {
       return &record;
     }
   }

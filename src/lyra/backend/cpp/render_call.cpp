@@ -194,7 +194,8 @@ void WriteDirectCallee(
           [&](const mir::CallableTarget& t) {
             const auto& cls = view.Unit().GetClass(t.owner);
             callee.Named(
-                ReceiverPlacement::kIntoCalleeName, CppClassName(cls, t.owner),
+                ReceiverPlacement::kIntoCalleeName,
+                CppClassPath(view.Unit(), t.owner),
                 "::", CppClassCallableName(view.Unit(), cls, t.slot));
           },
           // A function of this unit's namespace is qualified the same way as
@@ -222,8 +223,9 @@ void WriteDirectCallee(
           // `super`).
           [&](const mir::ExternalUnitClassMethodTarget& t) {
             callee.Named(
-                ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),
-                "::", ToCppName(t.class_name), "::", ToCppName(t.method_name));
+                ReceiverPlacement::kIntoCalleeName,
+                CppExternalClassPath(t.unit_name, t.class_path),
+                "::", ToCppName(t.method_name));
           },
           // A struct's method, qualified by the struct the way a class method
           // is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the value it is
@@ -232,7 +234,7 @@ void WriteDirectCallee(
           [&](const mir::StructMethodTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppStructRef(t.declaration.unit_name, t.declaration.name),
+                CppStructRef(t.declaration.unit_name, t.declaration.path),
                 "::", CppStructMethodName(t.answers));
           },
           // One of another unit's fixed entries: `::Pkg::sv_create`.
@@ -275,7 +277,7 @@ void WriteCallee(
                       callee.Named(
                           ReceiverPlacement::kIntoCalleeName,
                           CppExternalBehaviorName(
-                              view.Unit(), e.unit_name, e.class_name,
+                              view.Unit(), e.unit_name, e.class_path,
                               e.ordinal));
                     }},
                 v.slot);

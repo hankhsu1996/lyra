@@ -19,6 +19,7 @@
 #include "lyra/hir/published_modport.hpp"
 #include "lyra/lowering/ast_to_hir/expression/view_names.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -88,7 +89,8 @@ auto ReachThroughHandle(
   const hir::ExternalScopeClassId scope_class = descent->place.scope_class;
   const hir::ScopeClassSignature& scope =
       unit_lowerer.Unit().external_scope_classes.Get(scope_class).signature;
-  const auto published = scope.FindMember(item->name, descent->place.within);
+  const auto published = scope.FindMember(
+      item->name, support::Extended(scope.class_path, descent->place.within));
   if (!published.has_value()) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,

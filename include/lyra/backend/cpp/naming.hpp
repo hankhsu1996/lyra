@@ -18,6 +18,7 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
@@ -25,6 +26,7 @@
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/value_operation.hpp"
 
@@ -186,13 +188,45 @@ struct VerbatimName {
   std::string_view text;
 };
 
+// A name made from the scopes leading to a declaration, for one whose own name
+// does not tell it from every other name of the namespace it is declared in:
+// `sv_class_b1_g_c1_C` for class `C` declared in block `g`, and
+// `sv_struct_b1_g_t7_entry_t` for a structure `entry_t` declared there. `what`
+// says which kind of declaration it is. Each step is the letter of its kind
+// and then the length of its name as a C++ identifier and that identifier, or
+// for a step with no name the position it stands at, and after a name whatever
+// else tells the step from its siblings, each behind a letter of its own. So
+// where one step ends is stated rather than read off a separator and two paths
+// never spell alike.
+struct MintedPathName {
+  std::string_view what;
+  std::span<const support::DefPathData> steps;
+};
+
+// The name of a declaration whose source name alone does not tell it from the
+// others of its scope: a generate block that is not the first of its scope
+// under its label (LRM 27.5), `sv_gen_1_g`; an application of one the design
+// fixed something for (LRM 27.3), `sv_gen_<digest>_g`; a specialization of a
+// generic class (LRM 8.25), `sv_spec_<digest>_Box`. What tells it apart comes
+// first, and the source name follows so the output reads like the design.
+struct MintedAppliedName {
+  std::string_view what;
+  std::uint32_t disambiguator;
+  std::optional<std::uint64_t> arguments;
+  std::string_view source;
+};
+
 // Any of the above, for a declaration whose kind decides which.
-using CppName = std::variant<SourceName, MintedName, MintedWord, VerbatimName>;
+using CppName = std::variant<
+    SourceName, MintedName, MintedWord, VerbatimName, MintedPathName,
+    MintedAppliedName>;
 
 void WriteOne(TargetText& out, SourceName name);
 void WriteOne(TargetText& out, const MintedName& name);
 void WriteOne(TargetText& out, MintedWord name);
 void WriteOne(TargetText& out, VerbatimName name);
+void WriteOne(TargetText& out, MintedPathName name);
+void WriteOne(TargetText& out, const MintedAppliedName& name);
 void WriteOne(TargetText& out, const CppName& name);
 
 [[nodiscard]] inline auto ToCppName(std::string_view name) -> SourceName {
@@ -241,8 +275,9 @@ void WriteOne(TargetText& out, UnitScope scope);
 // string rather than output text, because what uses it first is the code that
 // writes the file to disk.
 
-// `Top.hpp`: what another unit includes. It includes the opening file and every
-// class file below, in an order that compiles.
+// `Top.hpp`: the classes of the unit's scopes, the class of a generate block
+// declared inside the class of the scope holding it. It carries the unit's
+// name alone, since it is the unit as the source declared it.
 [[nodiscard]] inline auto UnitSignatureFileOf(std::string_view unit_name)
     -> std::string {
   return TextOf(ToCppName(unit_name), ".hpp");
@@ -257,11 +292,10 @@ void WriteOne(TargetText& out, UnitScope scope);
   return TextOf(ToCppName(unit_name), ".opening.hpp");
 }
 
-// `Top.forward.hpp`: every class another unit may name, declared and not
-// defined, and each further name such a class goes by. It includes nothing, so
-// any file can include it first, and a unit holding another's class by pointer
-// takes its name from here rather than declaring it again -- which a further
-// name, being no class of its own, could not be.
+// `Top.forward.hpp`: every class another unit may name that is declared in no
+// other class, declared and not defined. It includes nothing, so any file can
+// include it first, and a unit holding another's class by pointer takes its
+// name from here rather than declaring it again.
 [[nodiscard]] inline auto UnitForwardFileOf(std::string_view unit_name)
     -> std::string {
   return TextOf(ToCppName(unit_name), ".forward.hpp");
@@ -278,12 +312,13 @@ void WriteOne(TargetText& out, UnitScope scope);
   return TextOf(ToCppName(unit_name), ".", struct_name, ".types.hpp");
 }
 
-// `Top.Base.hpp`: one class another unit may name, alone in its file. It
-// includes the file of each class it derives from, so whichever file is
-// included first, every class is defined after its bases and only once.
+// `Top.Base.hpp`: one class the source declared, alone in its file, which a
+// class of another unit extending it needs complete. It includes the file of
+// each class it derives from, so whichever file is included first, every class
+// is defined after its bases and only once.
 [[nodiscard]] inline auto UnitClassFileOf(
-    std::string_view unit_name, const CppName& class_name) -> std::string {
-  return TextOf(ToCppName(unit_name), ".", class_name, ".hpp");
+    std::string_view unit_name, const CppName& declared_as) -> std::string {
+  return TextOf(ToCppName(unit_name), ".", declared_as, ".hpp");
 }
 
 // `Top.cpp`: the translation unit defining everything the headers declare.
@@ -308,9 +343,10 @@ void WriteOne(TargetText& out, UnitScope scope);
 // it must spell it the same way, so both take it from here.
 [[nodiscard]] inline auto CppExternalBehaviorName(
     const mir::CompilationUnit& unit, std::string_view unit_name,
-    std::string_view class_name, mir::BehaviorOrdinal ordinal) -> SourceName {
+    const support::DefPath& class_path, mir::BehaviorOrdinal ordinal)
+    -> SourceName {
   const mir::ExternalClass* introducer =
-      mir::FindExternalClass(unit.external_classes, unit_name, class_name);
+      mir::FindExternalClass(unit.external_classes, unit_name, class_path);
   if (introducer == nullptr || ordinal.value >= introducer->behaviors.size()) {
     throw InternalError(
         "backend::cpp: a behavior is named that no consumed signature "
@@ -357,7 +393,7 @@ void WriteOne(TargetText& out, UnitScope scope);
           },
           [&](const mir::OverridesExternalSlot& taken) -> CppName {
             return CppExternalBehaviorName(
-                unit, taken.unit_name, taken.class_name, taken.ordinal);
+                unit, taken.unit_name, taken.class_path, taken.ordinal);
           },
           [](const mir::OverridesLibraryVirtual& taken) -> CppName {
             return VerbatimName{
@@ -412,22 +448,277 @@ void WriteOne(TargetText& out, UnitScope scope);
   return MintedCppName("variable", variable.value);
 }
 
-// The name of a class: the name other units reach it by, or `sv_scope_<n>` for
-// a class no other unit names, which is what realizes a scope of the design
-// hierarchy.
-[[nodiscard]] inline auto CppClassName(const mir::Class& cls, mir::ClassId id)
-    -> CppName {
-  if (cls.name.has_value()) {
-    return ToCppName(*cls.name);
+// The name the class of the generate block `block` has inside the class of the
+// scope holding it, which `enclosing` names, as the step `depth` steps down
+// its path. A block its label alone does not tell from the others of that
+// scope -- one that is not the first under the label, or an application the
+// design fixed something for -- takes a name carrying what does. C++ gives a
+// class's own name to the class inside itself, so a nested class cannot take
+// it, while a generate block may carry the label of the scope holding it; such
+// a one is `sv_block_<depth>_<name>`. The depth is what keeps a run of blocks
+// under one label from each taking the name of the one before it.
+[[nodiscard]] inline auto CppNestedClassName(
+    std::string_view enclosing, const support::GenerateBlockStep& block,
+    std::size_t depth) -> CppName {
+  if (block.disambiguator != 0 || block.arguments.has_value()) {
+    return MintedAppliedName{
+        .what = "gen",
+        .disambiguator = block.disambiguator,
+        .arguments = block.arguments,
+        .source = block.label};
+  }
+  if (block.label == enclosing) {
+    return MintedCppNameWith(
+        "block", static_cast<std::uint32_t>(depth), block.label);
+  }
+  return ToCppName(block.label);
+}
+
+// A path naming a class ends in a generate block, whose class realizes a scope
+// of the design hierarchy (LRM 23.6), or in a class the source declared (LRM
+// 8.3). One ending in anything else reached a class's name by a defect.
+[[noreturn]] inline void ThrowNamesNoClass() {
+  throw InternalError(
+      "backend::cpp: a class is named by a path ending in neither a generate "
+      "block nor a class -- please report this as a bug");
+}
+
+// The generate block `step` is, for a step above the class of a scope of the
+// design hierarchy: a generate block stands in an instance's body or in
+// another generate block (LRM 27.3), so every step down to one is a block.
+[[nodiscard]] inline auto BlockStepAt(const support::DefPathData& step)
+    -> const support::GenerateBlockStep& {
+  const auto* block = std::get_if<support::GenerateBlockStep>(&step);
+  if (block == nullptr) {
+    throw InternalError(
+        "backend::cpp: the class of a generate block is named as standing in "
+        "something other than a generate block -- please report this as a bug");
+  }
+  return *block;
+}
+
+// The name the class another unit reaches as `class_path` of `unit_name` is
+// declared under. The declaring unit and every unit naming the class ask here
+// with the same two facts, so they spell it alike with no record between them.
+//
+// The class an instance of the unit is takes the unit's name, and the class of
+// a generate block the name the block has inside the class of the scope
+// holding it. A class the source declared (LRM 8.3) is declared in the unit's
+// namespace whichever scope of the unit wrote it, since a class of another
+// unit may extend it; it keeps its own name where the unit itself declares it
+// and that name is not the unit's, which the instance's class has taken; a
+// specialization of a generic class (LRM 8.25) declared so takes a name
+// carrying the digest of its bindings; and every other takes one made from its
+// whole path.
+[[nodiscard]] inline auto CppPublishedClassName(
+    std::string_view unit_name, const support::DefPath& class_path) -> CppName {
+  const std::span<const support::DefPathData> steps{class_path.data};
+  if (steps.empty()) {
+    return ToCppName(unit_name);
+  }
+  return std::visit(
+      Overloaded{
+          [&](const support::GenerateBlockStep& block) -> CppName {
+            const std::string_view enclosing =
+                steps.size() == 1
+                    ? unit_name
+                    : std::string_view{
+                          BlockStepAt(steps[steps.size() - 2]).label};
+            return CppNestedClassName(enclosing, block, steps.size() - 1);
+          },
+          [&](const support::ClassStep& cls) -> CppName {
+            if (steps.size() != 1 || cls.name == unit_name) {
+              return MintedPathName{.what = "class", .steps = steps};
+            }
+            if (cls.arguments.has_value()) {
+              return MintedAppliedName{
+                  .what = "spec",
+                  .disambiguator = 0,
+                  .arguments = cls.arguments,
+                  .source = cls.name};
+            }
+            return ToCppName(cls.name);
+          },
+          [](const support::SubroutineStep&) -> CppName {
+            ThrowNamesNoClass();
+          },
+          [](const support::NamedBlockStep&) -> CppName {
+            ThrowNamesNoClass();
+          },
+          [](const support::UnnamedBlockStep&) -> CppName {
+            ThrowNamesNoClass();
+          },
+          [](const support::TypeStep&) -> CppName { ThrowNamesNoClass(); },
+          [](const support::UnnamedTypeStep&) -> CppName {
+            ThrowNamesNoClass();
+          }},
+      steps.back());
+}
+
+// Whether a class is declared inside another, which is what keeps it from
+// being declared ahead of its definition: C++ declares a nested class only
+// inside the class holding it. The class of a generate block is, in the class
+// of the scope holding the block.
+[[nodiscard]] inline auto IsNestedClass(const support::DefPath& class_path)
+    -> bool {
+  return !class_path.data.empty() && support::NamesScopeClass(class_path);
+}
+
+// A class another unit may name as text anywhere in its unit's namespace names
+// it: its own name, after that of each class it is nested in, `Top::g::inner`.
+struct ClassPathInUnit {
+  std::string_view unit_name;
+  const support::DefPath* class_path;
+};
+
+inline void WriteOne(TargetText& out, ClassPathInUnit path) {
+  const support::DefPath& class_path = *path.class_path;
+  if (!support::NamesScopeClass(class_path)) {
+    Write(out, CppPublishedClassName(path.unit_name, class_path));
+    return;
+  }
+  Write(out, ToCppName(path.unit_name));
+  std::string_view enclosing = path.unit_name;
+  for (std::size_t depth = 0; depth < class_path.data.size(); ++depth) {
+    const support::GenerateBlockStep& block =
+        BlockStepAt(class_path.data[depth]);
+    Write(out, "::", CppNestedClassName(enclosing, block, depth));
+    enclosing = block.label;
+  }
+}
+
+// The name of a class of this unit where it is declared: the name other units
+// reach it by, or `sv_scope_<n>` for a class no other unit names, which is what
+// realizes a scope of the design hierarchy.
+[[nodiscard]] inline auto CppClassName(
+    const mir::CompilationUnit& unit, mir::ClassId id) -> CppName {
+  const mir::Class& cls = unit.GetClass(id);
+  if (cls.path.has_value()) {
+    return CppPublishedClassName(unit.name, *cls.path);
   }
   return MintedCppName("scope", id.value);
 }
 
-// The name of a struct this unit declares: its declared name, which is what
-// every other unit writes after the unit's types namespace below.
+// A class of this unit as text anywhere in the unit's namespace names it.
+class OwnClassPath {
+ public:
+  OwnClassPath(const mir::CompilationUnit& unit, mir::ClassId id)
+      : unit_(&unit), id_(id) {
+  }
+
+  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
+    return *unit_;
+  }
+  [[nodiscard]] auto Id() const -> mir::ClassId {
+    return id_;
+  }
+
+ private:
+  const mir::CompilationUnit* unit_;
+  mir::ClassId id_;
+};
+
+[[nodiscard]] inline auto CppClassPath(
+    const mir::CompilationUnit& unit, mir::ClassId id) -> OwnClassPath {
+  return {unit, id};
+}
+
+inline void WriteOne(TargetText& out, const OwnClassPath& path) {
+  const mir::Class& cls = path.Unit().GetClass(path.Id());
+  if (cls.path.has_value()) {
+    Write(
+        out, ClassPathInUnit{
+                 .unit_name = path.Unit().name, .class_path = &*cls.path});
+    return;
+  }
+  Write(out, CppClassName(path.Unit(), path.Id()));
+}
+
+// A class of another unit from anywhere: `::Top::Top::g` for the class of a
+// generate block, `::Pkg::C` for a class the source declared.
+struct ExternalClassPath {
+  std::string_view unit_name;
+  const support::DefPath* class_path;
+};
+
+[[nodiscard]] inline auto CppExternalClassPath(
+    std::string_view unit_name, const support::DefPath& class_path)
+    -> ExternalClassPath {
+  return ExternalClassPath{.unit_name = unit_name, .class_path = &class_path};
+}
+
+inline void WriteOne(TargetText& out, ExternalClassPath path) {
+  Write(
+      out, CppUnitScope(path.unit_name), "::",
+      ClassPathInUnit{
+          .unit_name = path.unit_name, .class_path = path.class_path});
+}
+
+// The file that declares a class another unit may name, for text that only
+// points at it, and the file that defines it, for text that needs it complete.
+// Every party asks here with the unit and the class's path in it, so the unit
+// writing a class and a unit including it reach the same file.
+//
+// A class nested in another is declared nowhere but where that one is
+// defined, in the unit's header; every other is declared in the forward
+// header. What a unit published of a scope of the design hierarchy (LRM 23.6)
+// stands in the runtime's tree, and no class outside its unit extends it, so
+// those are defined together in the unit's header; a class the source declared
+// (LRM 8.3) is defined in a file of its own, which a class extending it
+// includes.
+[[nodiscard]] inline auto ClassDeclarationFileOf(
+    std::string_view unit_name, const support::DefPath& class_path)
+    -> std::string {
+  return IsNestedClass(class_path) ? UnitSignatureFileOf(unit_name)
+                                   : UnitForwardFileOf(unit_name);
+}
+
+[[nodiscard]] inline auto ClassDefinitionFileOf(
+    std::string_view unit_name, const support::DefPath& class_path)
+    -> std::string {
+  return support::NamesScopeClass(class_path)
+             ? UnitSignatureFileOf(unit_name)
+             : UnitClassFileOf(
+                   unit_name, CppPublishedClassName(unit_name, class_path));
+}
+
+// The name the struct any unit reaches as `path` of its unit is declared
+// under, in the unit's types namespace below. The declaring unit and every
+// unit naming the struct ask here with the same path, so they spell it alike
+// with no record between them.
+//
+// A struct the unit's own scope declares under a name keeps that name, so the
+// output reads as the source does. Every other shares that namespace with
+// structs of other scopes that may carry its name -- one a generate block, a
+// class or a subroutine declares (LRM 6.22) -- or has none, and takes a name
+// made from its whole path.
+[[nodiscard]] inline auto CppStructNameOf(const support::DefPath& path)
+    -> CppName {
+  const std::span<const support::DefPathData> steps{path.data};
+  const auto from_whole_path = [&]() -> CppName {
+    return MintedPathName{.what = "struct", .steps = steps};
+  };
+  if (steps.size() != 1) {
+    return from_whole_path();
+  }
+  return std::visit(
+      Overloaded{
+          [](const support::TypeStep& type) -> CppName {
+            return ToCppName(type.name);
+          },
+          [&](const support::UnnamedTypeStep&) { return from_whole_path(); },
+          [&](const support::GenerateBlockStep&) { return from_whole_path(); },
+          [&](const support::ClassStep&) { return from_whole_path(); },
+          [&](const support::SubroutineStep&) { return from_whole_path(); },
+          [&](const support::NamedBlockStep&) { return from_whole_path(); },
+          [&](const support::UnnamedBlockStep&) { return from_whole_path(); }},
+      steps.front());
+}
+
+// The name of a struct this unit declares.
 [[nodiscard]] inline auto CppStructName(const mir::StructDecl& decl)
     -> CppName {
-  return ToCppName(decl.name);
+  return CppStructNameOf(decl.path);
 }
 
 // The namespace inside a unit's own that the structs the source declares are
@@ -445,15 +736,15 @@ void WriteOne(TargetText& out, UnitScope scope);
 // writing the name says which file that is.
 struct StructRef {
   std::string_view unit_name;
-  SourceName name;
+  CppName name;
 };
 
 [[nodiscard]] inline auto CppStructRef(
-    std::string_view unit_name, std::string_view struct_name) -> StructRef {
-  return StructRef{.unit_name = unit_name, .name = ToCppName(struct_name)};
+    std::string_view unit_name, const support::DefPath& path) -> StructRef {
+  return StructRef{.unit_name = unit_name, .name = CppStructNameOf(path)};
 }
 
-inline void WriteOne(TargetText& out, StructRef ref) {
+inline void WriteOne(TargetText& out, const StructRef& ref) {
   out.Require(UnitStructFileOf(ref.unit_name, ref.name));
   Write(
       out, CppUnitScope(ref.unit_name), "::", CppStructTypesNamespace(),

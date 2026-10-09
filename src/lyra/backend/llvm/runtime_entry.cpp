@@ -865,7 +865,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDistErlang:
     case support::BuiltinFn::kFinish:
     case support::BuiltinFn::kStop:
-    case support::BuiltinFn::kEnclosingInstance:
+    case support::BuiltinFn::kEnclosingScope:
+    case support::BuiltinFn::kIsOfClass:
     case support::BuiltinFn::kAddOwnedChild:
     case support::BuiltinFn::kExtendSequence:
     // Recovering the object a handle names, or a handle naming the object a

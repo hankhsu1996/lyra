@@ -1,11 +1,11 @@
 #pragma once
 
-#include <string>
 #include <vector>
 
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::mir {
@@ -19,14 +19,14 @@ struct StructMethod {
   CallableCode code;
 };
 
-// A struct this unit declares: the name the source declared it under (LRM
-// 7.2), which is what another unit reaches it by, its members' types in
-// declaration order, which an access reaches by position, and a method for
-// every operation on a whole value its type has -- a real member leaves no case
-// equality (LRM 11.4.5), a real or a chandle no bit stream (LRM 6.24.3), and a
-// member not valid for a net nothing to resolve (LRM 6.7.1).
+// A struct this unit declares (LRM 7.2): which declaration of the unit it is,
+// which is what another unit reaches it by, its members' types in declaration
+// order, which an access reaches by position, and a method for every operation
+// on a whole value its type has -- a real member leaves no case equality (LRM
+// 11.4.5), a real or a chandle no bit stream (LRM 6.24.3), and a member not
+// valid for a net nothing to resolve (LRM 6.7.1).
 struct StructDecl {
-  std::string name;
+  support::DefPath path;
   std::vector<TypeId> elements;
   std::vector<StructMethod> methods;
 };

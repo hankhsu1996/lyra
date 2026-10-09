@@ -154,7 +154,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
                     },
                     [&](const CrossUnitClassRef& cross) {
                       HashField(seed, cross.unit_name);
-                      HashField(seed, cross.class_name);
+                      HashField(seed, cross.class_path);
                     }},
                 t.of);
           },
@@ -193,7 +193,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
                     [&](StructId id) { HashField(seed, id.value); },
                     [&](const TypeDeclarationRef& ref) {
                       HashField(seed, ref.unit_name);
-                      HashField(seed, ref.name);
+                      HashField(seed, ref.path);
                     }},
                 t.declaration);
           },

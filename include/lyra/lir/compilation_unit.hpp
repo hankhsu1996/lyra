@@ -20,6 +20,7 @@
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lir {
@@ -130,7 +131,7 @@ struct GlobalConstant {
   Constant initializer;
 };
 
-// One compiled class: its name, the members it declares, what it adds to
+// One compiled class: its path, the members it declares, what it adds to
 // dispatch, and the interface classes it names -- what a target needs to hold a
 // value of it and lay one out.
 //
@@ -140,12 +141,12 @@ struct GlobalConstant {
 // definition links under are two different symbols over the same parts, each
 // composed by the one function that owns its category.
 struct Class {
-  // The name another unit reaches this class by, absent where nothing outside
+  // The path another unit reaches this class by, absent where nothing outside
   // this unit names it -- a class the lowering built for its own use. Every
   // symbol qualified by this class is composed from it where it is present and
   // from the class's own position where it is not, so the two ranges never
   // meet.
-  std::optional<std::string> name;
+  std::optional<support::DefPath> path;
   // The type of what this class's members are placed after -- the class it
   // extends, of this unit or another, or a class of the runtime library -- and
   // absent for an interface class, which holds no storage and of which no value
@@ -165,7 +166,7 @@ struct Class {
 };
 
 // A class of another unit this one reaches into, as that unit published it:
-// which unit declares it and its canonical name, both resolved at link time,
+// which unit declares it and its path there, both resolved at link time,
 // what it extends, and its members at the slots that class gave them -- the
 // ones another unit may name first, then its `local` ones, which this unit
 // never names but a class of it extending this one is placed after -- and what
@@ -182,7 +183,7 @@ struct Class {
 // above.
 struct ExternalClass {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   // What its members are placed after, as for a class of this unit.
   std::optional<TypeId> base;
   std::vector<Member> members;
@@ -210,16 +211,16 @@ struct StructMethod {
   FunctionId function;
 };
 
-// A struct this unit declares: the name another unit reaches it by (LRM 7.2),
-// its components' types in position order, and the function it answers each
-// operation on a whole value with.
+// A struct this unit declares (LRM 7.2): which declaration of the unit it is,
+// which is what another unit reaches it by, its components' types in position
+// order, and the function it answers each operation on a whole value with.
 //
 // The runtime asks the same questions of values it holds, and it was compiled
 // before the type existed, so a target hands it these methods along with what
 // it derives of the type itself: where the components lie, and how a value is
 // copied, moved and ended.
 struct Struct {
-  std::string name;
+  support::DefPath path;
   std::vector<TypeId> elements;
   std::vector<StructMethod> methods;
 };
@@ -287,14 +288,14 @@ struct CompilationUnit {
   std::optional<ClassId> root;
 };
 
-// The record kept of the class `class_name` of unit `unit_name`, or nothing
+// The record kept of the class `class_path` of unit `unit_name`, or nothing
 // where this unit holds no published record of it -- a class no signature the
 // design compiles carries.
 [[nodiscard]] inline auto FindExternalClass(
     const CompilationUnit& unit, std::string_view unit_name,
-    std::string_view class_name) -> const ExternalClass* {
+    const support::DefPath& class_path) -> const ExternalClass* {
   for (const ExternalClass& record : unit.external_classes) {
-    if (record.unit_name == unit_name && record.class_name == class_name) {
+    if (record.unit_name == unit_name && record.class_path == class_path) {
       return &record;
     }
   }
@@ -336,7 +337,7 @@ struct CompilationUnit {
       Overloaded{
           [&](StructId id) -> TypeDeclarationRef {
             return TypeDeclarationRef{
-                .unit_name = unit.name, .name = unit.structs.Get(id).name};
+                .unit_name = unit.name, .path = unit.structs.Get(id).path};
           },
           [](const TypeDeclarationRef& ref) -> TypeDeclarationRef {
             return ref;

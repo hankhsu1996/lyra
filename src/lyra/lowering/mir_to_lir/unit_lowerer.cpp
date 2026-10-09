@@ -31,6 +31,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/value_build.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -64,7 +65,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   for (const mir::ExternalClass& cls : mir_->external_classes) {
     lir::ExternalClass record{
         .unit_name = cls.unit_name,
-        .class_name = cls.class_name,
+        .class_path = cls.class_path,
         .base = cls.base.transform(
             [&](const mir::ClassRef& base) { return BaseType(base); }),
         .members = {},
@@ -83,7 +84,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     }
     const auto body = [&](std::string_view method) {
       return lir::ClassCallableSymbol(
-          cls.unit_name, lir::SymbolPart::Name(cls.class_name),
+          cls.unit_name, lir::SymbolPartOf(cls.class_path),
           lir::SymbolPart::Name(method));
     };
     for (const mir::PublishedBehavior& behavior : cls.behaviors) {
@@ -94,7 +95,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       record.dispatch.overrides.push_back(
           lir::Override{
               .behavior = ExternalMethodRef(
-                  overriding.behavior.unit_name, overriding.behavior.class_name,
+                  overriding.behavior.unit_name, overriding.behavior.class_path,
                   overriding.behavior.ordinal),
               .body = body(overriding.method)});
     }
@@ -123,7 +124,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   for (const mir::StructId id : mir_->structs.Ids()) {
     const mir::StructDecl& decl = mir_->GetStruct(id);
     lir::Struct lowered{
-        .name = decl.name,
+        .path = decl.path,
         .elements = TranslateTypes(decl.elements),
         .methods = {}};
     for (const mir::StructMethod& method : decl.methods) {
@@ -160,7 +161,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       out_.static_storage.push_back(
           lir::StaticStorage{
               .symbol = lir::StaticPropertySymbol(
-                  mir_->name, lir::SymbolPartOf(cls.name, id.value),
+                  mir_->name, lir::SymbolPartOf(cls.path, id.value),
                   lir::SymbolPartOf(
                       mir::NameOf(cls.named_static_properties, prop_id),
                       prop_id.value)),
@@ -210,7 +211,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       auto fn =
           FunctionLowerer(
               *this, method.code,
-              lir::StructMethodSymbol(mir_->name, decl.name, method.answers))
+              lir::StructMethodSymbol(mir_->name, decl.path, method.answers))
               .Run();
       if (!fn) {
         return std::unexpected(std::move(fn.error()));
@@ -328,7 +329,7 @@ auto UnitLowerer::ClassRefValueType(const mir::DeclaredClassRef& of)
             return ClassValueType(intra.class_id);
           },
           [&](const mir::CrossUnitClassRef& cross) {
-            return ExternalClassValueType(cross.unit_name, cross.class_name);
+            return ExternalClassValueType(cross.unit_name, cross.class_path);
           }},
       of);
 }
@@ -396,7 +397,7 @@ auto UnitLowerer::TakeClassIdentities(const mir::Class& cls)
 auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
-  out.name = cls.name;
+  out.path = cls.path;
   out.base = cls.base.transform(
       [&](const mir::ClassRef& base) { return BaseType(base); });
 
@@ -417,9 +418,9 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
             *this, cls, *cls.constructor,
             lir::ConstructorPrologueSymbol(
                 lir::ClassDefinitionSymbol(
-                    mir_->name, lir::SymbolPartOf(cls.name, owner.value))),
+                    mir_->name, lir::SymbolPartOf(cls.path, owner.value))),
             lir::ConstructorSymbol(
-                mir_->name, lir::SymbolPartOf(cls.name, owner.value)))
+                mir_->name, lir::SymbolPartOf(cls.path, owner.value)))
             .Run();
     if (!constructor) {
       return std::unexpected(std::move(constructor.error()));
@@ -438,18 +439,10 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     auto fn =
         FunctionLowerer(
             *this, cls.callables.Get(cid).code,
-            ClassBodySymbol(lir::SymbolPartOf(cls.name, owner.value), cls, cid))
+            ClassBodySymbol(lir::SymbolPartOf(cls.path, owner.value), cls, cid))
             .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
-    }
-    // A referrer names a body by the class it reached and the name the body
-    // answers to, so only a named body answers under the class's other names.
-    if (mir::NameOf(cls.named_callables, cid).has_value()) {
-      for (const std::string& alias : cls.aliases) {
-        fn->aliases.push_back(
-            ClassBodySymbol(lir::SymbolPart::Name(alias), cls, cid));
-      }
     }
     out_.functions.Define(*body, *std::move(fn));
   }
@@ -493,11 +486,11 @@ auto UnitLowerer::DefinitionSymbolOf(const mir::DeclaredClassRef& of) const
             return lir::ClassDefinitionSymbol(
                 mir_->name,
                 lir::SymbolPartOf(
-                    mir_->GetClass(intra.class_id).name, intra.class_id.value));
+                    mir_->GetClass(intra.class_id).path, intra.class_id.value));
           },
           [](const mir::CrossUnitClassRef& cross) {
             return lir::ClassDefinitionSymbol(
-                cross.unit_name, lir::SymbolPart::Name(cross.class_name));
+                cross.unit_name, lir::SymbolPartOf(cross.class_path));
           }},
       of);
 }
@@ -678,7 +671,7 @@ auto UnitLowerer::SlotRef(const mir::VirtualSlot& slot)
           },
           [&](const mir::ExternalVirtualSlot& external) {
             return ExternalMethodRef(
-                external.unit_name, external.class_name, external.ordinal);
+                external.unit_name, external.class_path, external.ordinal);
           }},
       slot);
 }
@@ -696,7 +689,7 @@ auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
     const std::optional<std::string> body =
         class_identities_.Get(owner).methods.Get(cid).has_value()
             ? std::optional{ClassBodySymbol(
-                  lir::SymbolPartOf(cls.name, owner.value), cls, cid)}
+                  lir::SymbolPartOf(cls.path, owner.value), cls, cid)}
             : std::nullopt;
     const auto override_with_body = [&](lir::StatedDispatchRef behavior) {
       // Overriding a behavior without a body leaves it as the lineage already
@@ -717,7 +710,7 @@ auto UnitLowerer::LowerDispatch(mir::ClassId owner, const mir::Class& cls)
             },
             [&](const mir::OverridesExternalSlot& overridden) {
               override_with_body(ExternalMethodRef(
-                  overridden.unit_name, overridden.class_name,
+                  overridden.unit_name, overridden.class_path,
                   overridden.ordinal));
             },
             // The library's class introduced it, at the position its class
@@ -764,10 +757,10 @@ auto UnitLowerer::MethodRef(mir::ClassId owner, mir::CallableId callable)
 }
 
 auto UnitLowerer::ExternalMethodRef(
-    const std::string& unit_name, const std::string& class_name,
+    const std::string& unit_name, const support::DefPath& class_path,
     mir::BehaviorOrdinal ordinal) const -> lir::StatedDispatchRef {
   return lir::StatedDispatchRef{
-      .introduced_by = ExternalClassValueType(unit_name, class_name),
+      .introduced_by = ExternalClassValueType(unit_name, class_path),
       .ordinal = lir::DispatchOrdinal{ordinal.value}};
 }
 
@@ -814,11 +807,11 @@ auto UnitLowerer::ClassValueType(mir::ClassId cls) -> lir::TypeId {
 }
 
 auto UnitLowerer::ExternalClassValueType(
-    const std::string& unit_name, const std::string& class_name) const
+    const std::string& unit_name, const support::DefPath& class_path) const
     -> lir::TypeId {
   return out_.types.Intern(
       lir::Type{lir::CrossUnitClassType{
-          .unit_name = unit_name, .class_name = class_name}});
+          .unit_name = unit_name, .class_path = class_path}});
 }
 
 }  // namespace lyra::lowering::mir_to_lir

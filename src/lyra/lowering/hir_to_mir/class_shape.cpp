@@ -31,7 +31,7 @@ auto CanonicalVirtualSlot(
           [](const mir::OverridesExternalSlot& e) -> mir::VirtualSlot {
             return mir::ExternalVirtualSlot{
                 .unit_name = e.unit_name,
-                .class_name = e.class_name,
+                .class_path = e.class_path,
                 .ordinal = e.ordinal};
           },
           // Only the library calls one of its own virtual functions, so no
@@ -60,7 +60,7 @@ auto AsIntroducer(
                       -> mir::DeclaredClassRef {
                     return mir::CrossUnitClassRef{
                         .unit_name = external.unit_name,
-                        .class_name = external.class_name};
+                        .class_path = external.class_path};
                   }},
               slot)}});
   const auto& held =
@@ -88,8 +88,7 @@ auto ClassShape::AddField(mir::TypeId type) -> mir::FieldId {
 
 auto ClassShape::OpenClass() const -> mir::Class {
   mir::Class cls{
-      .name = name,
-      .aliases = aliases,
+      .path = path,
       .base = base,
       .implements = implements,
       .conforming = {},

@@ -112,7 +112,7 @@ auto UnitLowerer::TranslateTypes(std::span<const mir::TypeId> source)
 
 auto UnitLowerer::TranslateDeclaration(const mir::TypeDeclarationRef& ref)
     -> lir::TypeDeclarationRef {
-  return lir::TypeDeclarationRef{.unit_name = ref.unit_name, .name = ref.name};
+  return lir::TypeDeclarationRef{.unit_name = ref.unit_name, .path = ref.path};
 }
 
 auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
@@ -209,7 +209,7 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                     [](const mir::CrossUnitClassRef& other) {
                       return lir::Type{lir::CrossUnitClassType{
                           .unit_name = other.unit_name,
-                          .class_name = other.class_name}};
+                          .class_path = other.class_path}};
                     }},
                 ob.of);
           },

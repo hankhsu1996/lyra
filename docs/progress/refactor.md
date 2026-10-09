@@ -1836,6 +1836,12 @@ enough to warrant its own focused review.
       means the identity stops being settled before the blocks are compared, which is the same
       shape as keying a record by what it states rather than by which declaration spelled it.
 
+      A block instance is now an application of its block, named from the source, and blocks of one
+      application are objects of one published class whether or not their code came out alike. The
+      class-declaring block is the one position still told apart by its index, for the reason above
+      seen from the other side: a class's bodies are compiled against the scope its block lowered
+      to, and how many scopes that is, is known only after the blocks are compared.
+
       Measured, because the argument for the shape was twice made from an assumption instead. At 256
       iterations the whole semantic and generic-IR pipeline is under half a second and the elaborated
       duplication inside it costs 0.019s; the optimizer and code generation cost 4.2s and compiling
@@ -2844,13 +2850,13 @@ enough to warrant its own focused review.
       or label -- and the referrer reads a member as it reads its own and calls a subroutine
       directly. A name the scope did not declare, or one used with the wrong type, is refused at
       compile time rather than at elaboration. An upward name (LRM 23.8) starts from the nearest
-      enclosing instance of the scope it landed on, and two instances whose upward names land on
-      different classes compile separately. Nothing is looked up by name while the design is built
-      or runs; a scope keeps only its name for `%m` and its DPI-C exports. Each block of a generate
-      loop keeps its own name even where its code is shared with its siblings. An edit confined to a
-      module's bodies changes nothing emitted for the units that reach into it, on either backend;
-      an edit that adds or changes a declaration changes what the module publishes and re-emits
-      them.
+      enclosing scope of the class it landed on, an instance or a generate block, and two instances
+      whose upward names land on different classes compile separately. Nothing is looked up by name
+      while the design is built or runs; a scope keeps only its name for `%m` and its DPI-C exports.
+      The blocks of a generate loop that are one application of it are objects of one class. An edit
+      confined to a module's bodies changes nothing emitted for the units that reach into it, on
+      either backend; an edit that adds or changes a declaration changes what the module publishes
+      and re-emits them.
 
 - [ ] R179 -- What the lowering to MIR does with an operand it names at more than one place carries
       a name of its own, where rustc's MIR building names the same contract an operand: a place or a
@@ -2922,6 +2928,28 @@ enough to warrant its own focused review.
       statement to stand ahead of in a loop header, and cannot move a block past a scope that
       declares a local it names. Not blocked. No corpus case writes either run, so the check that
       holds every case's written text to the nesting a C++ compiler must accept does not see them.
+
+- [ ] R190 -- Two instances that agree on everything a unit is told apart by and still lower apart
+      end the compile as a compiler bug, where two block instances of one application that lower
+      apart are one published class realized twice and the program runs. Both are the same event --
+      an identity computed from the source that the lowering did not bear out -- and the top-level
+      objectives give it one answer: a correct program is never refused because sharing could not be
+      applied. Target: a unit realized more than once the way a block's class is, its published
+      class named by the identity and each realization beneath it. Not blocked.
+
+- [ ] R191 -- What a unit declares is identified by a path of steps and no longer by a composed
+      name, but two neighbours on the same axis still compose strings. A unit's own name joins a
+      library to its cell, a nested design element to the one declaring it, a specialization of a
+      generic class to the unit declaring the generic, and a definition to its binding digest. And
+      what is written elsewhere about an instance below -- a parameter set from outside, a bind, a
+      configured cell -- enters a unit's key under the path down to that instance, joined with
+      separators and with a loop's index in brackets, so a label holding those characters can
+      compose another path (read off the lowering, not run). Target: the same shape -- parts under a
+      kind, composed nowhere. The first crosses every reference to a unit. Not blocked.
+
+- [ ] R192 -- An emitted C++ project carries headers only the compiler reads, because the runtime it
+      ships is gathered by directory and the directory holds both. Nothing emitted includes them.
+      Target: the shipped set stated by what the runtime's own headers include. Not blocked.
 
 ## Out of Scope
 

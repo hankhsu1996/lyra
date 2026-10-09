@@ -183,14 +183,15 @@ auto StartOfReach(
     const slang::ast::InstanceBodySymbol& reader,
     std::span<const ClimbAnchor> climbs) -> std::optional<ReachStart> {
   if (StandsIn(target, reader)) return FromReader{};
+  if (StandsIn(reader, target)) return FromScope{.scope = &target};
   for (const ClimbAnchor& climb : climbs) {
     if (std::ranges::find(climb.carries, &target) != climb.carries.end()) {
-      return FromInstance{.body = climb.instance};
+      return FromScope{.scope = climb.scope};
     }
   }
   const slang::ast::InstanceBodySymbol* holder = InstanceBodyAround(&target);
   if (holder != nullptr && Encloses(*holder, reader)) {
-    return FromInstance{.body = holder};
+    return FromScope{.scope = holder};
   }
   return std::nullopt;
 }

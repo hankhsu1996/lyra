@@ -6,7 +6,9 @@
 
 ## Status
 
-Accepted. Reverses [unit-signature](unit-signature.md) D1 and D5,
+Accepted. Its D5 is reversed, and its D2 and D4 narrowed, by
+[a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md). Reverses
+[unit-signature](unit-signature.md) D1 and D5,
 [hierarchical-callable-dispatch](hierarchical-callable-dispatch.md) D3, D4 and D5's second leaf,
 [a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md) D1 to D4,
 [hierarchical-reference-routing](hierarchical-reference-routing.md) D2, and the premise of
@@ -107,10 +109,12 @@ and that class tells the unit apart.** The anchor is one runtime query -- the ne
 instance of that class, or past the topmost a top-level instance of it -- and a static downcast. Two
 instances whose upward names land on different classes are different units (fact 2).
 
-**D5. Each block of a loop keeps its own identity; sharing lies beneath it.** A block is published
-under its own name. Where the blocks compile to one class, each block's name is an alias of that
-class: a type alias in C++, and in LLVM a symbol alias for each named body. Data needs no alias,
-since its offsets come from the publication.
+**D5. Each block of a loop keeps its own identity; sharing lies beneath it.** Reversed by
+[a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md): a block
+published under its own name, with the names of blocks found to compile alike kept as aliases of one
+class, made the set of names depend on a comparison of bodies, so a body edit changed a header --
+the requirement above, failed. A block instance is an application of its block, named from the front
+end alone, and blocks of one application that lower apart are that class realized more than once.
 
 **D6. Nothing resolves a hierarchical name while the design runs.** No scope registers a signal, a
 static or a disable target by name, no scope or class carries a table of subroutine or member names,

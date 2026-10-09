@@ -10,6 +10,7 @@
 #include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 
 namespace lyra::mir {
@@ -89,13 +90,13 @@ struct OverridesIntraUnitSlot {
 // A method that overrides a virtual dispatch slot introduced by a class in
 // another compilation unit -- LRM 8.20 across the unit boundary. The behavior's
 // canonical identity carries no unit-local ids: it names the declaring unit and
-// the introducing class's canonical name, together with which of that class's
+// the introducing class's path in it, together with which of that class's
 // introductions it is, counted out of what that class published. That is the
 // same coordinate an intra-unit override carries, with the class named by its
 // parts rather than by an id.
 struct OverridesExternalSlot {
   std::string unit_name;
-  std::string class_name;
+  support::DefPath class_path;
   BehaviorOrdinal ordinal;
 
   auto operator==(const OverridesExternalSlot&) const -> bool = default;

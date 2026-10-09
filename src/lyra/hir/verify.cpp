@@ -40,6 +40,7 @@
 #include "lyra/hir/timing.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::hir {
 
@@ -983,7 +984,8 @@ void VerifyClass(
   const ClassDecl& cls = unit.classes.Get(id);
   const auto owner = [&] {
     return std::format(
-        "class '{}' in unit '{}'", unit.classes.NameOf(id), unit.name);
+        "class '{}' in unit '{}'", support::DisplayOf(unit.classes.PathOf(id)),
+        unit.name);
   };
   for (const MethodId method : cls.methods.Ids()) {
     const SubroutineDecl& decl = cls.methods.Get(method);

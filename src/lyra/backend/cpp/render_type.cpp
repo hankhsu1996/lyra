@@ -15,6 +15,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 
 namespace lyra::backend::cpp {
@@ -203,10 +204,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                     [&](mir::StructId id) {
                       Write(
                           out,
-                          CppStructRef(unit.name, unit.GetStruct(id).name));
+                          CppStructRef(unit.name, unit.GetStruct(id).path));
                     },
                     [&](const mir::TypeDeclarationRef& ref) {
-                      Write(out, CppStructRef(ref.unit_name, ref.name));
+                      Write(out, CppStructRef(ref.unit_name, ref.path));
                     }},
                 s.declaration);
           },
@@ -574,15 +575,16 @@ void WriteOne(TargetText& out, const CppClassRef& ref) {
           // A class no other unit names is declared in the unit's code file,
           // the one file that names it.
           [&](const mir::IntraUnitClassRef& i) {
-            if (mir::IsPublished(unit, i.class_id)) {
-              out.Require(UnitForwardFileOf(unit.name));
+            if (const std::optional<support::DefPath>& path =
+                    unit.GetClass(i.class_id).path;
+                path.has_value()) {
+              out.Require(ClassDeclarationFileOf(unit.name, *path));
             }
-            Write(out, CppClassName(unit.GetClass(i.class_id), i.class_id));
+            Write(out, CppClassPath(unit, i.class_id));
           },
           [&](const mir::CrossUnitClassRef& e) {
-            out.Require(UnitForwardFileOf(e.unit_name));
-            Write(
-                out, CppUnitScope(e.unit_name), "::", ToCppName(e.class_name));
+            out.Require(ClassDeclarationFileOf(e.unit_name, e.class_path));
+            Write(out, CppExternalClassPath(e.unit_name, e.class_path));
           },
           // The tree's root is the library's scope class, spelled as a value
           // of that class's type is.
@@ -602,14 +604,14 @@ void WriteOne(TargetText& out, const CppBaseClass& base) {
           // A class no other unit names is defined in the unit's code file,
           // ahead of the classes there that derive from it.
           [&](const mir::IntraUnitClassRef& i) {
-            if (mir::IsPublished(unit, i.class_id)) {
-              out.Require(UnitClassFileOf(
-                  unit.name,
-                  CppClassName(unit.GetClass(i.class_id), i.class_id)));
+            if (const std::optional<support::DefPath>& path =
+                    unit.GetClass(i.class_id).path;
+                path.has_value()) {
+              out.Require(ClassDefinitionFileOf(unit.name, *path));
             }
           },
           [&](const mir::CrossUnitClassRef& e) {
-            out.Require(UnitClassFileOf(e.unit_name, ToCppName(e.class_name)));
+            out.Require(ClassDefinitionFileOf(e.unit_name, e.class_path));
           },
           [](const mir::ObjectTreeRootRef&) {},
           [](const mir::ManagedObjectRootRef&) {}},

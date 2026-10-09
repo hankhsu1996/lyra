@@ -45,6 +45,7 @@
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 #include "lyra/support/assertion_policy.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace slang::ast {
 class Expression;
@@ -170,12 +171,13 @@ struct ScopePublicationRecord {
     hir::StructuralDataObjectId id;
   };
   // A static-lifetime variable of one of the scope's bodies (LRM 6.21),
-  // published under the named blocks and subroutine `within` it.
+  // published as a declaration of `within`: the subroutine or named block of
+  // the unit declaring it.
   struct LocalStatic {
     const slang::ast::VariableSymbol* symbol = nullptr;
     hir::ProceduralBodyRef body;
     hir::ProceduralVarId var;
-    std::vector<std::string> within;
+    support::DefPath within;
   };
   // A static property of a class the scope declares (LRM 6.22, 8.9).
   struct ClassStatic {
@@ -221,19 +223,21 @@ struct ScopePublicationRecord {
     hir::GenerateId id;
     const slang::ast::GenerateBlockArraySymbol* loop = nullptr;
   };
-  // A conditional generate (LRM 27.5), with the alternatives this elaboration
+  // A conditional generate (LRM 27.5): where the source wrote it among the
+  // generate constructs of its scope, and the alternatives this elaboration
   // built a scope for.
   struct Choice {
     hir::GenerateId id;
+    std::uint32_t construct = 0;
     std::vector<const slang::ast::GenerateBlockSymbol*> built;
   };
   using Construct = std::variant<Loop, Choice>;
 
-  // A named block or task a `disable` ends (LRM 9.6.2), under the path of
-  // named scopes a name spells to reach it.
+  // A named block or task a `disable` ends (LRM 9.6.2), and which declaration
+  // of the unit it is.
   struct DisableTarget {
     const slang::ast::Symbol* symbol = nullptr;
-    std::vector<std::string> path;
+    support::DefPath path;
   };
 
   // A name a view defines with an expression of its own (LRM 25.5.4): one
@@ -251,7 +255,10 @@ struct ScopePublicationRecord {
     std::vector<ViewName> names;
   };
 
-  std::string class_name;
+  // Which class of the unit an object of the scope is: each generate block
+  // down to this scope as the application of its definition it is, and no step
+  // for the unit's own scope.
+  support::DefPath class_path;
   std::vector<Member> members;
   std::vector<Callable> callables;
   std::vector<Construct> generates;
@@ -345,10 +352,11 @@ struct InOwnScope {};
 // The scope of another unit a walk stands on: this unit's record of what that
 // scope published, and the named blocks and subroutines of it the name went on
 // through, outermost first (LRM 23.9). Those are no objects, so they take no
-// step; a declaration the name reaches there is published under this path.
+// step; a declaration the name reaches there is one the scope published as
+// held by the scope those lead to.
 struct InExternalScope {
   hir::ExternalScopeClassId scope_class;
-  std::vector<std::string> within;
+  std::vector<support::DefPathData> within;
 };
 
 // The walk stands on several objects of another unit: a set it stepped onto
@@ -398,9 +406,12 @@ struct InUnitReach {
 // the name reached it: an instance, with the coordinates the name wrote for
 // it; a block of a loop generate, by the label of the loop and the value its
 // index stood at (LRM 27.4); a block that stands alone or that a conditional
-// chose, by its own label (LRM 27.5); or a named block or subroutine, which is
-// no object (LRM 23.9). It is resolved against what the scope standing above
-// it published, which is known only once the whole descent is in hand.
+// chose, by where the source wrote its construct among those of its scope and
+// the block among that construct's alternatives, since a label does not tell
+// the alternatives of a conditional apart (LRM 27.5); or a named block or
+// subroutine, which is no object (LRM 23.9). It is resolved against what the
+// scope standing above it published, which is known only once the whole
+// descent is in hand.
 struct InstanceHop {
   std::string name;
   std::vector<std::uint32_t> indices;
@@ -409,14 +420,15 @@ struct LoopBlockHop {
   std::string loop;
   std::int64_t index;
 };
-struct LabeledBlockHop {
-  std::string name;
+struct ChosenBlockHop {
+  std::uint32_t construct;
+  std::uint32_t position;
 };
 struct ProceduralHop {
-  std::string name;
+  support::DefPathData step;
 };
 using NamedHop =
-    std::variant<InstanceHop, LoopBlockHop, LabeledBlockHop, ProceduralHop>;
+    std::variant<InstanceHop, LoopBlockHop, ChosenBlockHop, ProceduralHop>;
 
 // A hop of a descent this unit declares: the step it stands as, where that
 // leaves the walk -- on the scope of another unit where this unit's
@@ -462,7 +474,7 @@ struct PortReach {
 // Where a name that leaves the reader's instance starts: the base the route
 // takes, the hop that brings it to stand in `below` where one does, and
 // `below`, the scope the rest of the descent starts under. A name searched
-// upward starts at the enclosing instance it landed in (LRM 23.8) and needs no
+// upward starts at the enclosing scope it landed in (LRM 23.8) and needs no
 // hop; one written through an interface port starts at the port and stands in
 // the instance bound there (LRM 25.3).
 struct RouteStart {
@@ -583,6 +595,15 @@ class UnitLowerer {
   // ones it may read.
   [[nodiscard]] auto TakeSignature() -> hir::UnitSignature;
 
+  // Whether two block instances this unit took for one application of their
+  // definition published different classes, which its declaration phase finds.
+  // Something in the block held a value its index decided where the index was
+  // taken to be only read, so the unit's definition has to be declared again
+  // with every index deciding.
+  [[nodiscard]] auto BlocksPublishedApart() const -> bool {
+    return blocks_published_apart_;
+  }
+
   // The body phase: everything this unit executes, resolved against what the
   // design's units published. Which of those publications this unit ends up
   // depending on is the set it reads, so nothing decides that set in advance.
@@ -655,10 +676,10 @@ class UnitLowerer {
   auto ExternalScopeClassOf(const std::string& unit_name)
       -> hir::ExternalScopeClassId;
 
-  // The same record of the scope class `class_name` that unit published: the
+  // The same record of the scope class `class_path` that unit published: the
   // class of an instance of it, or of a generate block inside one.
   auto ExternalScopeClassOf(
-      const std::string& unit_name, const std::string& class_name)
+      const std::string& unit_name, const support::DefPath& class_path)
       -> hir::ExternalScopeClassId;
 
   // The type of an object of the scope class `scope_class` records.
@@ -673,13 +694,13 @@ class UnitLowerer {
       hir::PublishedMemberId member) const -> hir::ExternalMemberLeaf;
 
   // This unit's record of what `unit_name` published about its class
-  // `class_name`, taken from that unit's signature the first time this unit
+  // `class_path`, taken from that unit's signature the first time this unit
   // asks and answered from the record every later time. Every class a unit
   // declares is published, so the record always exists. Reading another
   // signature may move the records, so a caller takes what it needs from one
   // before asking for the next.
   auto ExternalClassOf(
-      const std::string& unit_name, const std::string& class_name)
+      const std::string& unit_name, const support::DefPath& class_path)
       -> const hir::ExternalClass&;
 
   // Which storage the declaration `value` holds. One answer, so what this unit
@@ -746,7 +767,7 @@ class UnitLowerer {
   // Translates a slang class pointer -- reached from an expression site or a
   // base-class link -- into HIR's owner-qualified reference form. The result
   // is a `LocalClassRef` when this unit holds the class, an
-  // `ExternalClassRef{unit_name, class_name}` when another does.
+  // `ExternalClassRef{unit_name, class_path}` when another does.
   // Classification runs at most once per class per unit: the first encounter
   // walks `cls.getParentScope()` to find the unit holding it and caches the
   // answer; every later encounter reads it. A local class not yet
@@ -759,8 +780,8 @@ class UnitLowerer {
   // callee symbol. Local when the class was interned by this unit -- the
   // method's arena position is queryable through the `SubroutineSymbol`-keyed
   // cache the interning populated. External when the class lives in another
-  // compilation unit -- the method is named by (declaring unit, class
-  // canonical name, method name).
+  // compilation unit -- the method is named by (declaring unit, class path,
+  // method name).
   [[nodiscard]] auto MakeClassMethodTarget(
       const hir::ClassRef& class_ref,
       const slang::ast::SubroutineSymbol& method) const
@@ -791,8 +812,8 @@ class UnitLowerer {
   [[nodiscard]] auto AsLocalOrPublished(
       const hir::ExternalClassRef& named) const -> LocalOrPublishedClass;
 
-  // What this unit publishes about its own class `class_name`.
-  [[nodiscard]] auto OwnClassSignature(const std::string& class_name) const
+  // What this unit publishes about its own class `class_path`.
+  [[nodiscard]] auto OwnClassSignature(const support::DefPath& class_path) const
       -> const hir::ClassSignature&;
 
   // What a class's declaration names beside itself: the class it extends, and
@@ -805,7 +826,7 @@ class UnitLowerer {
   auto ParentsOf(const LocalOrPublishedClass& cls, diag::SourceSpan span)
       -> diag::Result<ClassParents>;
 
-  // The declaring unit and canonical name of `cls`, which identify it whichever
+  // The declaring unit of `cls` and its path there, which identify it whichever
   // way it was read.
   [[nodiscard]] auto NameOf(const LocalOrPublishedClass& cls) const
       -> hir::ExternalClassRef;
@@ -1123,9 +1144,15 @@ class UnitLowerer {
   // its frame along the way. A body or sensitivity read then resolves any of
   // them regardless of which sibling scope or body lowered first. Registers no
   // executable HIR. What each scope publishes is recorded in the same walk,
-  // under `class_name`, the name of the class an object of the scope is.
+  // under `class_path`, the class an object of the scope is.
   void DeclareStructuralIdentities(
-      const slang::ast::Scope& scope, std::string class_name);
+      const slang::ast::Scope& scope, support::DefPath class_path);
+
+  // The same for the generate block `block`, a declaration nested in the scope
+  // that published `holder`.
+  void DeclareBlockIdentities(
+      const slang::ast::GenerateBlockSymbol& block,
+      const ScopePublicationRecord& holder);
 
   // The frame assigned to `scope` by the declaration pass. Every scope a
   // structural lowerer is built for was assigned one, so absence is a
@@ -1368,28 +1395,30 @@ class UnitLowerer {
       RouteOrigin origin) -> std::optional<ScopeRoute>;
 
   // Where `reference`, written in this unit, starts: through an interface port
-  // or upward at the enclosing instance it landed in, where it leaves the
-  // unit's instance, and at the reader for a name that never leaves and for
-  // every name a namespace unit writes, since a namespace has no instance to
-  // leave.
+  // or upward at the enclosing scope it landed in, where it leaves the unit's
+  // instance, and at the reader for a name that never leaves and for every
+  // name a namespace unit writes, since a namespace has no instance to leave.
   [[nodiscard]] auto StartOf(
       const WalkFrame& frame,
       const slang::ast::HierarchicalReference& reference) -> RouteOrigin;
 
   // Where a route to `target` starts when no name says so -- a scope reached
   // because a type belongs to it: at the reader where `target` stands in this
-  // unit's instance or below it, and otherwise at the instance one of this
-  // unit's names lands in once it leaves, or at the enclosing instance a type
-  // handed down came from. The anchor is the same in every instance this unit
-  // serves, since what tells the unit apart is where those names land. Nothing
-  // where none of these applies, which leaves no route to the scope.
+  // unit's instance or below it, and otherwise at `target` where this unit's
+  // instance stands in it, at the scope one of this unit's names lands in once
+  // it leaves, or at the enclosing scope a type handed down came from. The
+  // anchor is the same in every instance this unit serves, since what tells
+  // the unit apart is where those names land. Nothing where none of these
+  // applies, which leaves no route to the scope.
   [[nodiscard]] auto StartReaching(const slang::ast::Scope& target)
       -> std::optional<RouteOrigin>;
 
-  // A route starting at the enclosing instance `body` is, which stands for the
-  // object of whichever unit that instance is.
-  [[nodiscard]] auto StartInEnclosing(
-      const slang::ast::InstanceBodySymbol& body) -> RouteStart;
+  // A route starting where `scope` stands for this reader: `scope` is an
+  // instance's body or a generate block outside the reader, and the route
+  // starts at the nearest scope enclosing the reader that is an object of the
+  // same class, or past the topmost of them at a top-level instance of it.
+  [[nodiscard]] auto StartInEnclosing(const slang::ast::Scope& scope)
+      -> RouteStart;
 
   // How this reader reaches the scope whose instance `cls` belongs to (LRM
   // 6.22), where another design element declares it.
@@ -1580,16 +1609,16 @@ class UnitLowerer {
   // identity is minted -- what is declared, including the initializer, is an
   // expression of the body and is filled when that body lowers.
   //
-  // What a name reaches here from elsewhere is published under the path of
-  // named scopes `within` spells (LRM 23.9): each static-lifetime variable,
-  // and each named block as what a `disable` of it ends (LRM 9.6.2). A block
-  // the source left unnamed puts nothing below it on any path, which is what
-  // an absent path says.
+  // What a name reaches here from elsewhere is published as a declaration of
+  // `within`, which scope of the unit `block` is (LRM 23.9): each
+  // static-lifetime variable, and each named block as what a `disable` of it
+  // ends (LRM 9.6.2). A block the source left unnamed puts nothing below it on
+  // any path a name spells, which is what an absent `within` says.
   void DeclareProceduralStatics(
       const slang::ast::Scope& block, const slang::ast::Symbol& body_symbol,
       hir::ProceduralBodyRef body, ScopeFrameId frame,
       ScopePublicationRecord& published,
-      const std::optional<std::vector<std::string>>& within);
+      const std::optional<support::DefPath>& within);
 
   // The identities one member of a scope brings, minted into `decls`, the
   // scope's own, at `frame`, the scope's frame, and what of it the scope
@@ -1668,13 +1697,12 @@ class UnitLowerer {
   // signature.
   std::unordered_map<const slang::ast::ClassType*, hir::ClassSignature>
       own_class_signatures_;
-  // Each class this unit holds, by the name it publishes it under, which is how
+  // Each class this unit holds, by the path it publishes it under, which is how
   // a lineage another unit published names one coming back through this unit.
-  std::map<std::string, const slang::ast::ClassType*, std::less<>>
-      own_classes_by_name_;
+  std::map<support::DefPath, const slang::ast::ClassType*> own_classes_by_path_;
   // Which record this unit made of each referenced scope class, by unit and
   // class, so every reference into one names the same entry.
-  std::map<std::pair<std::string, std::string>, hir::ExternalScopeClassId>
+  std::map<std::pair<std::string, support::DefPath>, hir::ExternalScopeClassId>
       external_scope_classes_;
   // What each of this unit's interface ports stands for.
   std::unordered_map<const slang::ast::Symbol*, hir::TypeId>
@@ -1695,6 +1723,7 @@ class UnitLowerer {
   // the signature states in its own and the walk lowering the scope hands on.
   std::unordered_map<const slang::ast::Scope*, hir::ScopeClassSignature>
       scope_classes_;
+  bool blocks_published_apart_ = false;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the
@@ -1753,17 +1782,20 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
     if (Owns(member)) return visit(member);
     return Result();
   };
+  const auto name_of = [&](const slang::ast::ClassType& cls) {
+    return SpecializationName(cls, Specialization());
+  };
   if constexpr (std::is_void_v<Result>) {
-    WalkDeclarationScopes(*scope_, owned);
+    WalkDeclarationScopes(*scope_, owned, name_of);
     for (const slang::ast::ClassType* spec : facts_.PlacedIn(*home_)) {
       owned(*spec);
-      WalkDeclarationScopes(*spec, owned);
+      WalkDeclarationScopes(*spec, owned, name_of);
     }
   } else {
-    if (auto r = WalkDeclarationScopes(*scope_, owned); !r) return r;
+    if (auto r = WalkDeclarationScopes(*scope_, owned, name_of); !r) return r;
     for (const slang::ast::ClassType* spec : facts_.PlacedIn(*home_)) {
       if (auto r = owned(*spec); !r) return r;
-      if (auto r = WalkDeclarationScopes(*spec, owned); !r) return r;
+      if (auto r = WalkDeclarationScopes(*spec, owned, name_of); !r) return r;
     }
     return {};
   }

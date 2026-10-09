@@ -13,7 +13,7 @@ namespace lyra::hir {
 
 // The unit a source pool still belongs to, for a pool whose class references
 // are that unit's own ids. A pool that has left its unit -- a
-// signature's -- names every class by declaring unit and class name instead, so
+// signature's -- names every class by declaring unit and class path instead, so
 // it has no owner, and a local id appearing in one is a compiler-bug invariant
 // rather than a case to translate.
 struct TypePoolOwner {
@@ -44,7 +44,7 @@ class TypeImporter {
   auto Import(const Type& type) -> Type;
 
   // The class a reference names, as the destination reaches it. A class the
-  // source's own unit declares is renamed to that unit and the class's name,
+  // source's own unit declares is renamed to that unit and the class's path,
   // which is what identifies it from anywhere; a class already named that way
   // needs nothing.
   [[nodiscard]] auto ImportClassRef(const ClassRef& ref) const -> ClassRef;

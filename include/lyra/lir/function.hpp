@@ -771,9 +771,6 @@ enum class Definition : std::uint8_t { kOwned, kShared };
 // realizes through the scheduling protocol rather than a single call.
 struct Function {
   std::string name;
-  // Further symbols the same body is linked under, each reaching it exactly as
-  // `name` does.
-  std::vector<std::string> aliases;
   base::Arena<Local, ValueId> values;
   std::vector<ValueId> params;
   std::vector<TypeId> variables;
