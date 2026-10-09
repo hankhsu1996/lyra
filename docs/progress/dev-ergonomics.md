@@ -252,6 +252,23 @@ layer directly.
       the whole corpus. What a simulation's own memory does while it runs is not something this run
       sees.
 
+- [x] D23 -- A library uses another by naming it. A `lyra.toml` lists the libraries its own depends
+      on, each by name and the directory declaring it, and a build reads every library it reaches
+      once. A library that is depended on is read as its own declaration says, whoever uses it: its
+      cells are in a library of its name, its text is read under its own defines and include
+      directories and no other library's, a cell it instantiates is its own before any other of that
+      name, and it finds only cells of the libraries it declared. A dependent receives its cells and
+      the include directories it exports; what is run where the library is developed stays there.
+      The command line reaches every library. Where the command line and a declaration both define a
+      macro or override a parameter, the command line's is the one in effect.
+
+- [ ] D24 -- What a library that is depended on may not yet declare. Refused with the reason: a
+      language version or a default time scale other than the root's. Two libraries declaring a
+      package of one name cannot be used in one build, which the standard's single package name
+      space decides. Not built: fetching a library that is not on the machine, versions, a dependent
+      choosing among variants of a library, and dependencies only a testbench needs. A library's
+      unit has one name where the library is built and another where it is depended on.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

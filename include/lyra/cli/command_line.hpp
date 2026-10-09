@@ -146,7 +146,7 @@ auto UseColor(const CliOptions& opts) -> bool;
 struct NoSearchNeeded {};
 
 using DesignDeclaration =
-    std::variant<Manifest, ManifestAbsent, NoSearchNeeded>;
+    std::variant<Declarations, ManifestAbsent, NoSearchNeeded>;
 
 // A declaration named outright is read whatever else was said. Otherwise one is
 // searched for, and only when the command line named no source of its own --
@@ -156,14 +156,23 @@ auto ResolveDesignDeclaration(
     const CliOptions& opts, const slang::driver::Driver& driver)
     -> diag::Result<DesignDeclaration>;
 
-// Adds a declaration's material to what the command line already named, and
-// makes a selection only where the command line left one unmade.
+// Adds the declared material to what the command line already named, and makes
+// a selection only where the command line left one unmade.
+//
+// Every library of the build is read apart from the others (LRM 3.12.1): in
+// compilation units of its own, under what the command line said and what the
+// library declared for itself, with nothing of another library's. The one
+// being built is read under what its design declares besides. A cell
+// instantiated from a library's cell is searched for in that library and then
+// in the ones it declared it depends on, in the order it wrote them, and
+// nowhere else.
 //
 // Call this after the command line is parsed. The order is load-bearing: the
 // front end's parser keeps the first value a single-valued option is given, so
 // applying a declaration ahead of the command line makes it win every selection
 // rather than lose them.
-auto ApplyManifest(const Manifest& manifest, slang::driver::Driver& driver)
+auto ApplyDeclarations(
+    const Declarations& declared, slang::driver::Driver& driver)
     -> diag::Result<void>;
 
 // Turns what the parser recorded into the choices the rest of the run needs,
@@ -171,7 +180,7 @@ auto ApplyManifest(const Manifest& manifest, slang::driver::Driver& driver)
 // declaration is read first and the command line over it, which is the whole of
 // the precedence rule: material accumulates, selection replaces.
 auto ResolveCliOptions(
-    const CliOptions& opts, const Manifest* manifest, CommandKind cmd,
+    const CliOptions& opts, const Declarations* declared, CommandKind cmd,
     std::span<const std::string> simulation_args)
     -> std::expected<ParsedArgs, std::string>;
 

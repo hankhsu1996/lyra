@@ -44,7 +44,8 @@ A program Lyra builds is kept in your cache directory under a name computed from
 running an unchanged design again skips the compile, and nothing is written into your project.
 
 A design is named by its sources on the command line, or by a `lyra.toml` beside them, which
-declares a library and what is run of it and which Lyra finds by walking up from where it is run.
+declares a library, what is run of it and the libraries it depends on, and which Lyra finds by
+walking up from where it is run.
 
 ## Architecture
 

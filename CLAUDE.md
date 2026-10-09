@@ -85,12 +85,14 @@ Lyra's command line; what follows is the simulation's own argv, where LRM 21.6 p
 invocation.** `[library]` names a library and the sources, search paths, defines and native DPI-C
 sources it is made of; `[design]` states what is run of it -- the tops, their parameter overrides,
 and the same kinds of source where only a testbench needs them. Every cell compiled there is in the
-declared library. The file is found by walking up from the working directory, and every path in it
-resolves against the file's own directory. A command line naming sources uses no declaration at all,
-and `--config <file>` names one outright. What is true of one invocation or one machine -- `-o`,
-`--release`, `--backend`, `--cxx`, `--cache-dir` -- is refused by name, because the file is
-committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence rule:
-material accumulates, selection is replaced.
+declared library. `[dependencies]` names the libraries it uses, each by its name and the directory
+declaring it; a library that is depended on is read under its own declaration and the command line,
+and nothing of whoever uses it. The file is found by walking up from the working directory, and
+every path in it resolves against the file's own directory. A command line naming sources uses no
+declaration at all, and `--config <file>` names one outright. What is true of one invocation or one
+machine -- `-o`, `--release`, `--backend`, `--cxx`, `--cache-dir` -- is refused by name, because the
+file is committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence
+rule: material accumulates, selection is replaced.
 
 **`--release` trades build time for simulation speed.** By default the design's own code is compiled
 unoptimized on either backend, because iterating pays that compile on every edit; `--release`

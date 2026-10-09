@@ -1190,11 +1190,11 @@ the detail lives in the entry itself.
 ### Compiler inputs
 
 - [project-file](project-file.md) -- `lyra.toml` declares a library, which is the build's default
-  library under its own name, and apart from it the design run of it; it carries what is true for
-  everyone who builds it and never an invocation or machine property; material accumulates and
-  selection is replaced, a path resolves against its own manifest, and naming sources on the command
-  line uses no manifest at all. A project mode, a merged cascade, and a flag to suppress discovery
-  are rejected.
+  library under its own name, apart from it the design run of it, and the libraries it depends on by
+  name, each read as its own declaration says whoever uses it; it carries what is true for everyone
+  who builds it and never an invocation or machine property; material accumulates and selection is
+  replaced, a path resolves against its own manifest, and naming sources on the command line uses no
+  manifest at all. A project mode, a merged cascade, and a flag to suppress discovery are rejected.
 
 ### Conformance testing
 
