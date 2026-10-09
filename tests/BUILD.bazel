@@ -295,6 +295,22 @@ cc_test(
     ],
 )
 
+# How long an expression the compiler follows is set by the size of its own
+# frames, which a build under the sanitizer changes several times over.
+cc_test(
+    name = "compile_stack_tests",
+    size = "medium",
+    srcs = ["compile_stack_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"],
+    tags = ["cost"],
+    deps = [
+        ":framework",
+        "//:driver",
+        "@googletest//:gtest_main",
+    ],
+)
+
 cc_test(
     name = "emitted_project_tests",
     # Each case builds an emitted project with the host compiler, several of

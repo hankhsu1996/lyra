@@ -115,6 +115,7 @@ On top of the default set, what a change touches selects what else to run:
 - **A shipped example, its declaration, or the command its README gives** -- `examples_tests`,
   already in the gate.
 - **What a repeated construct costs to compile** -- `growth_tests`, already in the gate.
+- **How long an expression the compiler follows** -- `compile_stack_tests`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
   default set is the whole answer.
 
@@ -223,7 +224,9 @@ user's link is told nothing about a sanitizer. So the job reports on lowering an
 the memory a simulation touches while it runs. And `growth_tests` is left out of its set: moving a
 pool on every append makes an append cost the pool, so anything a design repeats compiles in the
 square of its count there, and a bound on what a compile costs would be measuring the
-instrumentation.
+instrumentation. `compile_stack_tests` is left out for the same reason on another axis: how long an
+expression the compiler follows is set by the size of its frames, which the instrumentation
+multiplies.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` and times it beside Verilator on
 the same sources, giving each tool the amount of work it needs to reach the same duration. It gates
