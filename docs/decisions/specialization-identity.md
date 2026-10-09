@@ -109,6 +109,18 @@ the same question by never sharing a body an override reaches, and the ancestors
 `defparam` lies beneath it). A content key keeps two instances overridden alike one unit, which a
 path cannot.
 
+A hierarchical name is the same thing in the other direction. It is written below and lands above:
+the upward search resolves it per instance (LRM 23.8), and the class of the scope it lands in
+decides what the instance writing it compiles to. So where it lands is fixed for every instance
+between the one writing it and the scope it lands in, since each of them builds the writer or an
+instance that does. A lockstep pair shows it: a core holds a stage that holds a controller writing
+`u_core.hart_id`, and the design has the core once as `u_core` and once more under another name
+beside it. From the first the name lands in the core itself; from the second it leaves the core and
+lands in the module holding both. The two controllers differ, so the two stages and the two cores do
+too. A name stops being carried at the instance it lands in or below, which is what leaves the first
+core's key without it. slang declines to share a body when a name inside it extends upward out of
+the instance (`DiagnosticVisitor::tryApplyFromCache`, on `upwardNames`).
+
 ### F7. Generic-language precedent points to injective mangling for a reason that does not bind us
 
 C++ (Itanium ABI) and Rust (v0) encode template / generic arguments into an injective mangled symbol
@@ -122,15 +134,16 @@ Rust cannot.
 ## The decision
 
 1. **The identity is a key: the definition, plus what the design fixed for the instance -- its
-   parameter bindings, the interface each of its interface ports carries, and every effect written
+   parameter bindings, the interface each of its interface ports carries, every effect written
    elsewhere that lands below it (a parameter a `defparam` or a configuration sets, an instantiation
-   a `bind` inserts, a cell a configuration chose), each under its path from the instance (F6).**
-   The key holds those as its parts, each named and each carrying the identity of what it was fixed
-   to, and two keys are equal when their parts are. Nothing compares keys through a rendering of
-   them. An effect written inside the instance's own text is the same for every instance of it, so
-   stating it changes no sharing. A bound instance is named by the directive that inserted it -- the
-   declaration holding the directive and its position among that declaration's binds -- since its
-   connections are text of the directive.
+   a `bind` inserts, a cell a configuration chose), and the scope each hierarchical name written in
+   it or below it lands in once it leaves the instance, each under its path from the instance
+   (F6).** The key holds those as its parts, each named and each carrying the identity of what it
+   was fixed to, and two keys are equal when their parts are. Nothing compares keys through a
+   rendering of them. An effect written inside the instance's own text is the same for every
+   instance of it, so stating it changes no sharing. A bound instance is named by the directive that
+   inserted it -- the declaration holding the directive and its position among that declaration's
+   binds -- since its connections are text of the directive.
 
    **The name is derived from the key** -- the definition's name, plus a content hash of the key
    when anything was fixed. The producer and the consumer both build the same key from the same

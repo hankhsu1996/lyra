@@ -1847,6 +1847,23 @@ class HirDumper {
           "StructuralSubroutine", id.value, s.structural_subroutines.Get(id),
           s.procedural_scopes);
     }
+    for (const ForeignExportDecl& exported : s.foreign_exports) {
+      Line(
+          std::format(
+              R"(ForeignExport StructuralSubroutine[{}] c_name="{}" ret={})",
+              exported.subroutine.value, exported.foreign_name,
+              support::DpiScalarAbiName(exported.ret_abi)));
+      Indent();
+      for (std::size_t i = 0; i < exported.params.size(); ++i) {
+        Line(
+            std::format(
+                "Param[{}] {} {} : Type[{}]", i,
+                support::DpiDirectionName(exported.params[i].direction),
+                support::DpiCarrierName(exported.params[i].carrier),
+                exported.params[i].sv_type.value));
+      }
+      Dedent();
+    }
     if (!s.exprs.empty()) {
       Line("Exprs:");
       Indent();

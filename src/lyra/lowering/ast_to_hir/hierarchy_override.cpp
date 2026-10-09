@@ -125,11 +125,6 @@ auto OverridesOn(const slang::ast::InstanceSymbol& inst)
   return out;
 }
 
-auto OverridesMayReachBelow(const slang::ast::InstanceSymbol& inst) -> bool {
-  return inst.body.hierarchyOverrideNode != nullptr ||
-         inst.resolvedConfig != nullptr;
-}
-
 auto ValueSetElsewhere(
     const slang::ast::InstanceBodySymbol& body,
     const slang::ast::ParameterSymbol& param) -> bool {
