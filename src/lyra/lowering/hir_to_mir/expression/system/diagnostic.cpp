@@ -51,7 +51,7 @@ auto LowerDiagnosticSystemSubroutineCall(
     items_offset = 1;
   }
 
-  auto items_or = BuildRuntimePrintItemsFromCallArgs(
+  auto items_or = BuildDisplayListPrintItems(
       process, frame, call, support::PrintRadix::kDecimal, items_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 

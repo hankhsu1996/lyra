@@ -146,7 +146,7 @@ auto LowerStrobeCall(
   // through the closure's own `self` capture and re-reads at fire time
   // (LRM 21.2.2 sample-at-end-of-slot for signals).
   const std::size_t arg_offset = is_file_sink ? 1 : 0;
-  auto items_or = BuildRuntimePrintItemsFromCallArgs(
+  auto items_or = BuildDisplayListPrintItems(
       process, body_frame, call, print.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
   const mir::ExprId items_array = body.exprs.Add(
@@ -197,8 +197,8 @@ auto LowerPrintSystemSubroutineCall(
     arg_offset = 1;
   }
 
-  auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      process, frame, call, print.radix, arg_offset);
+  auto items_or =
+      BuildDisplayListPrintItems(process, frame, call, print.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   const auto time_unit_power =

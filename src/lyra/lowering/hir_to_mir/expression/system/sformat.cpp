@@ -33,17 +33,15 @@ auto BuildSFormatCallExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const support::SFormatSystemSubroutineInfo& info, std::size_t arg_offset)
     -> diag::Result<mir::Expr> {
-  // LRM 21.3.3: `$sformat` / `$sformatf` always take a format string, but it
-  // need not be constant. A literal is parsed now, binding every operand to its
-  // conversion at compile time; anything else carries its text only at
-  // simulation time, so the parse and the binding happen there.
-  if (info.expects_format_string &&
-      !HasLiteralFormatString(lowerer, call, arg_offset)) {
-    return BuildRuntimeFormatCallExpr(lowerer, frame, call, arg_offset);
+  // LRM 21.3.3: `$sformat` / `$sformatf` read one argument as the format
+  // string and no other, while `$swrite` reads its list as the display tasks
+  // do.
+  if (info.expects_format_string) {
+    return BuildFormatStringTextExpr(lowerer, frame, call, arg_offset);
   }
 
-  auto items_or = BuildRuntimePrintItemsFromCallArgs(
-      lowerer, frame, call, info.radix, arg_offset);
+  auto items_or =
+      BuildDisplayListPrintItems(lowerer, frame, call, info.radix, arg_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
 
   auto& unit = lowerer.Owner().Unit();

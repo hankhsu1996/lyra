@@ -90,6 +90,28 @@ refused outright rather than left-justified.
       other one is diagnosed where it is written, or rejected by the formatter where the format
       string is one the program computed.
 
+## Argument list follow-ups
+
+What LRM 21.2.1 says of the list of arguments itself, apart from any one conversion.
+
+- [x] A list of any length. The syntax gives the list no length (LRM 21.2.1 Syntax 21-1), and a call
+      carrying several hundred arguments is carried out; a ceiling of 255 used to stop it as a
+      compiler error. The same holds for every system subroutine whose syntax is such a list, the
+      control bits of `$countbits` among them (LRM 20.9).
+- [x] Every string literal in the list is output literally and may carry format specifications for
+      the arguments after it (LRM 21.2.1), so `$display("a=", x, " b=", y)` prints both labels. Only
+      a literal in the first position used to be read that way, a later one printing as the number
+      its characters encode. This holds for the `$display` / `$write` / `$strobe` / `$swrite`
+      families, their file forms, and the severity tasks; `$sformat` and `$sformatf` read their one
+      format argument as a format string and no other (LRM 21.3.3).
+- [x] Arguments are output one after another with nothing between them, and an empty argument
+      produces a single space (LRM 21.2.1). A space used to be written between every two arguments
+      no format specification took, and an empty argument stopped the build as a compiler error.
+- [x] A `$sformat` / `$sformatf` call whose literal format string takes fewer arguments than the
+      call supplies is carried out as one whose format string is known only at run time: the surplus
+      is evaluated and contributes nothing (LRM 21.3.3, which asks for a warning and for execution
+      to continue). The surplus used to be appended in decimal.
+
 ## Scan family follow-ups
 
 Tracks remaining LRM 21.3.4.3 corners explicitly rejected by the scan family. Each item is a
@@ -134,6 +156,13 @@ should close as the corresponding behaviour lands.
       conversion path unblocks `$display("%s", x)` on a packed integral operand, which previously
       built but threw at runtime; x/z bits in that path render as `'\0'` since LRM does not pin `%s`
       behaviour for 4-state operands.
+- [x] `$sscanf` reading from a variable of `string` type, or under a control string held in one, on
+      the execution backend. The build used to be refused there with no source location: the x/z
+      rule asked the operand at run time, where a type holding no unknown bit already answers.
+- [x] `$sscanf` / `$fscanf` with several hundred output arguments on the C++ backend. The outputs
+      come back as one product, and a product of more than 256 components did not compile there --
+      which stopped a structure declaring that many members and a task with that many outputs the
+      same way.
 - [x] `$fseek` / `$rewind` cancelling pending `$ungetc` operations (LRM 21.3.5). The Lyra-owned
       per-FD putback slot is cleared whenever the file position is repositioned, so any subsequent
       read consults the underlying stream rather than the stale pushback byte.
@@ -158,8 +187,9 @@ string-output core.
       any other such operand takes.
 
 Not yet closed: LRM 21.3.3 asks for a warning when the operand count does not match the format
-string's directives. The compile-time-parsed path reports the mismatch as an error, which LRM 21.3.3
-sanctions; the runtime-parsed path continues silently.
+string's directives. A literal format string with too few operands is an error, which LRM 21.3.3
+sanctions; one with too many continues silently, and so does a format string known only at run time
+either way.
 
 ## Strobe family follow-ups
 
