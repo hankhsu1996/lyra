@@ -93,6 +93,9 @@ struct CliOptions {
   std::optional<std::string> out;
   std::optional<std::string> backend;
   std::vector<std::string> dpi_link;
+  std::optional<std::string> time_trace;
+  std::optional<std::int32_t> time_trace_granularity;
+  std::optional<std::string> stats_file;
 };
 
 // What Lyra parses and what it hands the simulation, told apart by a standalone

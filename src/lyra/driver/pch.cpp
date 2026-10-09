@@ -11,8 +11,8 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/driver/artifact_store.hpp"
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/driver/subprocess.hpp"
 #include "lyra/support/runtime_prelude.hpp"
-#include "lyra/support/subprocess.hpp"
 
 namespace lyra::driver::pch {
 
@@ -86,7 +86,7 @@ auto BuildAt(
   args.insert(
       args.end(), {"-I", include_root.string(), "-xc++-header",
                    prelude.string(), "-o", tmp.string()});
-  auto result_or = support::RunProcessCaptured(cxx, args);
+  auto result_or = RunProcessCaptured(cxx, args);
   if (!result_or) {
     return IoError(std::move(result_or.error()));
   }

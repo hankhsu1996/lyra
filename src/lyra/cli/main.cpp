@@ -62,7 +62,13 @@ auto main(int argc, char** argv) -> int {
       return 1;
     }
 
-    return lyra::cli::RunCommand(
+    if (auto started = lyra::cli::StartSelfReport(cli_options); !started) {
+      report(
+          lyra::diag::Make(
+              lyra::diag::DiagCode::kHostInvalidCliArgs, started.error()));
+      return 1;
+    }
+    const int exit_code = lyra::cli::RunCommand(
         lyra::cli::Invocation{
             .driver = &driver,
             .options = &cli_options,
@@ -70,6 +76,13 @@ auto main(int argc, char** argv) -> int {
             .simulation_args = std::move(argv_split.child),
             .program_path = program_path,
             .report = &report});
+    if (auto written = lyra::cli::WriteSelfReport(cli_options); !written) {
+      report(
+          lyra::diag::Make(
+              lyra::diag::DiagCode::kHostIoError, written.error()));
+      return exit_code == 0 ? 1 : exit_code;
+    }
+    return exit_code;
   } catch (const std::exception& failure) {
     // Nothing a command reads is left to render against here, so the report is
     // plain and names no place.

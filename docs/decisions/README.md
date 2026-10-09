@@ -1194,6 +1194,12 @@ the detail lives in the entry itself.
 - [benchmark-case-shape](benchmark-case-shape.md) -- a case fixes the shape of its work and takes
   the amount as a runtime argument, so the harness picks the amount and reports a rate; no iteration
   count is written down anywhere.
+- [the-compiler-reports-where-its-cost-went](the-compiler-reports-where-its-cost-went.md) -- asked,
+  a run writes a trace of where its time went, per stage, unit, scope and function, through LLVM's
+  profiler, and a file of numbers: each stage's peak memory, what each unit left behind, and how
+  long each tool it ran took. The compiler prints no summary, and records no tool's memory, since
+  the system's figure for a child starts at its parent's peak. A single file of both, a printed
+  table, memory sampled at stage boundaries, and a helper process to start tools from are rejected.
 
 ## File Naming
 

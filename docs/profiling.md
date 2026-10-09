@@ -1,6 +1,33 @@
 # Profiling
 
-How to measure where a simulation spends its time, and how to read what comes back.
+How to measure where a simulation spends its time, and how to read what comes back. Where the
+compiler's own time and memory go is the next section, and needs nothing but the compiler and a
+script in this repository.
+
+## Where a compile's cost went
+
+The compiler records its own run when asked:
+
+```bash
+./bazel-bin/lyra build --top Top --time-trace trace.json --stats-file stats.json design.sv
+```
+
+`trace.json` is a Chrome trace: open it in ui.perfetto.dev, where each thread is a lane and each
+span names the stage, unit, scope or function it timed. Its `Total` rows sum each span name over the
+run, which is the quickest answer to which step took the time. `stats.json` holds what a span
+cannot: each stage's peak resident memory, every file each unit left behind and whether this run
+made it, and how long every tool the build ran took. What such a tool holds in memory is not in it:
+the system's figure for a spawned child starts at the compiler's own peak, so measure a host compile
+or a link from outside the run. Spans under 500 us are left out of the trace;
+`--time-trace-granularity 0` keeps all of them.
+
+```bash
+python3 tools/trace/report.py summary --stats stats.json --trace trace.json
+python3 tools/trace/report.py compare base.stats.json stats.json
+```
+
+`summary` prints one run; `compare` prints what grew against a base run and exits with how many
+things did, so a check can be built on it.
 
 ## Ask what you are measuring before you measure
 

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <functional>
@@ -42,13 +43,15 @@
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
+#include "lyra/driver/subprocess.hpp"
 #include "lyra/hir/dump.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/dump.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/dump.hpp"
+#include "lyra/profiling/time_trace.hpp"
 #include "lyra/program/program_sink.hpp"
-#include "lyra/support/subprocess.hpp"
+#include "lyra/support/statistics.hpp"
 #include "lyra/support/temporary_directory.hpp"
 
 namespace lyra::cli {
@@ -77,7 +80,7 @@ constexpr std::array<std::string_view, 2> kUsualCompilers = {"clang++", "c++"};
 auto ResolveCompiler(const CommandContext& ctx)
     -> std::optional<std::filesystem::path> {
   if (ctx.args->cxx) {
-    auto named = support::FindOnPath(*ctx.args->cxx);
+    auto named = driver::FindOnPath(*ctx.args->cxx);
     if (!named) {
       ctx.sink->Report(
           diag::Make(diag::DiagCode::kHostIoError, std::move(named.error())));
@@ -86,7 +89,7 @@ auto ResolveCompiler(const CommandContext& ctx)
     return *std::move(named);
   }
   for (const std::string_view usual : kUsualCompilers) {
-    if (auto found = support::FindOnPath(usual)) {
+    if (auto found = driver::FindOnPath(usual)) {
       return *std::move(found);
     }
   }
@@ -155,6 +158,7 @@ auto RunDumpAst(const CommandContext& ctx) -> int {
 // the last of them has been lowered.
 auto DesignOf(const CommandContext& ctx)
     -> std::optional<compiler::ElaboratedDesign> {
+  const profiling::StageScope stage("declare units");
   return compiler::DeclareUnits(
       std::move(ctx.elaborated->compilation), ctx.elaborated->source_mapper,
       compiler::LoweringPolicy{.assertions = ctx.args->assertions}, *ctx.sink);
@@ -179,7 +183,12 @@ auto WriteCppSources(
   if (!lowered) {
     return std::nullopt;
   }
-  if (auto written = sources.Finish(lowered->root); !written) {
+  if (auto written =
+          [&] {
+            const profiling::StageScope stage("emit C++ root");
+            return sources.Finish(lowered->root);
+          }();
+      !written) {
     ctx.sink->Report(std::move(written.error()));
     return std::nullopt;
   }
@@ -291,8 +300,12 @@ auto RunEmitCpp(const CommandContext& ctx) -> int {
   if (!sources) {
     return 1;
   }
-  if (auto assembled = driver::AssembleProject(
-          *runtime, *sources, dir, *host, ctx.dpi_inputs);
+  if (auto assembled =
+          [&] {
+            const profiling::StageScope stage("assemble project");
+            return driver::AssembleProject(
+                *runtime, *sources, dir, *host, ctx.dpi_inputs);
+          }();
       !assembled) {
     ctx.sink->Report(std::move(assembled.error()));
     return 1;
@@ -322,6 +335,7 @@ auto BuildDpiObjects(
     const driver::RuntimeLocation& runtime, const driver::HostBuild& host,
     const std::filesystem::path& dir)
     -> std::optional<std::vector<std::filesystem::path>> {
+  const profiling::StageScope stage("foreign sources");
   if (auto surface = driver::WriteDpiSurface(runtime, fragments, dir);
       !surface) {
     ctx.sink->Report(std::move(surface.error()));
@@ -374,6 +388,7 @@ auto CppProgramRecipe(
       .build = [project, units = std::move(sources->translation_units), runtime,
                 foreign = *std::move(foreign),
                 host](const std::filesystem::path& built) {
+        const profiling::StageScope stage("host compile");
         return driver::CompileProgram(
             project, units, runtime, foreign, built, host);
       }};
@@ -434,7 +449,10 @@ auto LlvmProgramRecipe(
   if (!lowered) {
     return std::nullopt;
   }
-  auto built = std::move(sink).Finish(lowered->root, objects);
+  auto built = [&] {
+    const profiling::StageScope stage("generate root object");
+    return std::move(sink).Finish(lowered->root, objects);
+  }();
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
     return std::nullopt;
@@ -461,6 +479,7 @@ auto LlvmProgramRecipe(
       .name = namer.Finish(),
       .build = [linked = std::move(linked), runtime_lib = runtime.lib,
                 cxx = host.cxx](const std::filesystem::path& program) {
+        const profiling::StageScope stage("link");
         return driver::LinkProgram(linked, runtime_lib, program, cxx);
       }};
 }
@@ -584,7 +603,7 @@ auto RunProgram(const CommandContext& ctx) -> int {
     return 1;
   }
   auto exit_code =
-      support::RunProcessStreaming(program, ctx.args->simulation_args);
+      driver::RunProcessStreaming(program, ctx.args->simulation_args);
   if (!exit_code) {
     ctx.sink->Report(
         diag::Make(diag::DiagCode::kHostIoError, std::move(exit_code.error())));
@@ -680,7 +699,11 @@ auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
     return std::nullopt;
   }
 
-  auto front_end = compiler::RunFrontEnd(driver);
+  support::RecordWidth(parsed->compile_width);
+  auto front_end = [&] {
+    const profiling::StageScope stage("front end");
+    return compiler::RunFrontEnd(driver);
+  }();
   // An account that refuses the source is printed whatever the command is,
   // because then there is no program whose streams need protecting.
   const bool shows_warnings =
@@ -791,6 +814,45 @@ auto RunCommand(const Invocation& invocation) -> int {
       return RunCacheClear(invocation);
   }
   throw InternalError("a command has no handler");
+}
+
+auto StartSelfReport(const CliOptions& options)
+    -> std::expected<void, std::string> {
+  if (options.time_trace_granularity.has_value() && !options.time_trace) {
+    return std::unexpected(
+        "--time-trace-granularity: there is no time trace to apply it to; "
+        "name one with --time-trace");
+  }
+  if (options.time_trace) {
+    // The default is clang's, so a trace of either reads at the same grain.
+    constexpr std::int32_t kGranularityUs = 500;
+    const std::int32_t granularity =
+        options.time_trace_granularity.value_or(kGranularityUs);
+    if (granularity < 0) {
+      return std::unexpected(
+          std::format(
+              "--time-trace-granularity: '{}' is not a duration", granularity));
+    }
+    profiling::TimeTraceStart(static_cast<unsigned>(granularity));
+  }
+  if (options.stats_file) {
+    support::EnableStatistics();
+  }
+  return {};
+}
+
+auto WriteSelfReport(const CliOptions& options)
+    -> std::expected<void, std::string> {
+  if (options.time_trace) {
+    if (auto written = profiling::TimeTraceWrite(*options.time_trace);
+        !written) {
+      return written;
+    }
+  }
+  if (options.stats_file) {
+    return support::WriteStatistics(*options.stats_file);
+  }
+  return {};
 }
 
 }  // namespace lyra::cli

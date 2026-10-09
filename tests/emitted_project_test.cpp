@@ -20,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-#include "lyra/support/subprocess.hpp"
+#include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tests/framework/process.hpp"
 
@@ -82,7 +82,7 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
   // The directory builds standalone, with no Lyra checkout, through the
   // build.sh it ships.
   const auto program = out_dir / "program";
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   const std::vector<std::string> rebuild = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
@@ -101,7 +101,7 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
   // is the rest of what portable means: the headers satisfy a second
   // implementation, and the program still links the runtime library the first
   // one compiled. Skipped where no second implementation is installed.
-  auto other_or = lyra::support::FindOnPath("g++");
+  auto other_or = lyra::driver::FindOnPath("g++");
   if (!other_or) return;
   std::filesystem::remove(program);
   const std::vector<std::string> rebuild_other = {
@@ -130,7 +130,7 @@ TEST(LyraEmittedProject, RebuildsAfterSwitchingOptimization) {
   const auto out_dir = *tmp_or / "out";
   const auto program = out_dir / "program";
 
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   const std::vector<std::string> rebuild = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
@@ -174,7 +174,7 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
   const auto emitted = RunChildProcess(lyra, emit, 120s);
   ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   const std::vector<std::string> recipe = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
@@ -266,7 +266,7 @@ TEST(LyraEmittedProject, TakesTheWidthItIsGiven) {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
   const auto emitted = RunChildProcess(lyra, emit, 120s);
   ASSERT_EQ(emitted.exit_code, 0) << emitted.stderr_text;
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   // Zero asks the recipe for one compile per processor, which is the spelling
   // a caller uses to say the machine is its own.
@@ -302,7 +302,7 @@ TEST(LyraEmittedProject, BuildsTwiceIntoOneDirectory) {
   const auto out_dir = *tmp_or / "out";
   const auto program = out_dir / "program";
 
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   const std::vector<std::string> emit = {
       "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
@@ -349,7 +349,7 @@ TEST(LyraEmittedProject, PortableProjectBuildsItsDpiSources) {
   ASSERT_TRUE(std::filesystem::exists(out_dir / "dpi/foreign.c"));
   std::filesystem::remove(foreign);
 
-  auto sh_or = lyra::support::FindOnPath("sh");
+  auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
   const std::vector<std::string> build = {
       "-c", "cd '" + out_dir.string() + "' && sh build.sh"};

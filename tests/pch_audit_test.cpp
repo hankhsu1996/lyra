@@ -18,8 +18,8 @@
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
+#include "lyra/driver/subprocess.hpp"
 #include "lyra/support/runtime_prelude.hpp"
-#include "lyra/support/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 
 namespace {
@@ -83,7 +83,7 @@ auto SystemIncludeDirs(const std::filesystem::path& cxx)
     -> std::vector<std::filesystem::path> {
   const std::vector<std::string> args = {"-E",        "-x", "c++",      "-v",
                                          "/dev/null", "-o", "/dev/null"};
-  auto result_or = lyra::support::RunProcessCaptured(cxx, args);
+  auto result_or = lyra::driver::RunProcessCaptured(cxx, args);
   if (!result_or) return {};
 
   constexpr std::string_view kBegin = "#include <...> search starts here:";
@@ -186,7 +186,7 @@ TEST(PchCoverage, EveryInputIsCovered) {
       "-xc++-header", prelude.string(),
       "-o",           "/dev/null"};
 
-  auto result_or = lyra::support::RunProcessCaptured(*cxx_or, args);
+  auto result_or = lyra::driver::RunProcessCaptured(*cxx_or, args);
   ASSERT_TRUE(result_or) << result_or.error();
   ASSERT_EQ(result_or->exit_code, 0) << "PCH-trace build failed:\n"
                                      << result_or->stderr_text;
@@ -290,7 +290,7 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
         unit.string(),
         "-o",
         (project / "unit.o").string()};
-    return lyra::support::RunProcessCaptured(*cxx, args);
+    return lyra::driver::RunProcessCaptured(*cxx, args);
   };
 
   auto baseline = compile_against(*built);

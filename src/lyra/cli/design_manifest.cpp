@@ -29,9 +29,15 @@ constexpr std::string_view kManifestFileName = "lyra.toml";
 // Keys naming a property of one invocation or one machine. They are refused
 // with the rule rather than as unrecognized, because whoever wrote one had a
 // coherent idea and needs to hear why this file is not its home.
-constexpr std::array<std::string_view, 12> kInvocationKeys = {
-    "out",     "backend",   "release", "cxx",      "format", "no_pch",
-    "rebuild", "cache_dir", "color",   "no_color", "jobs",   "remarks"};
+constexpr std::array<std::string_view, 15> kInvocationKeys = {
+    "out",        "backend",
+    "release",    "cxx",
+    "format",     "no_pch",
+    "rebuild",    "cache_dir",
+    "color",      "no_color",
+    "jobs",       "remarks",
+    "time_trace", "time_trace_granularity",
+    "stats_file"};
 
 auto Contains(std::span<const std::string_view> names, std::string_view name)
     -> bool {

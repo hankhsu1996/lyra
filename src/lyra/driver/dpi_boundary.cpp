@@ -14,7 +14,7 @@
 #include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/file_output.hpp"
 #include "lyra/driver/project_layout.hpp"
-#include "lyra/support/subprocess.hpp"
+#include "lyra/driver/subprocess.hpp"
 
 namespace lyra::driver {
 
@@ -101,7 +101,7 @@ auto CompileDpiObjects(
         std::format(
             "failed to create '{}': {}", work_dir.string(), created.message()));
   }
-  std::vector<support::ProcessRequest> requests;
+  std::vector<ProcessRequest> requests;
   requests.reserve(inputs.size());
   for (const DpiLinkInput& input : inputs) {
     // One compilation per input, because the language each is compiled as is
@@ -115,11 +115,10 @@ auto CompileDpiObjects(
         args.end(), {std::string(OptimizationFlag(optimization)), "-c",
                      input.source.string(), "-I", header_dir.string(), "-o",
                      objects.back().string()});
-    requests.push_back(
-        support::ProcessRequest{.exe = cxx, .args = std::move(args)});
+    requests.push_back(ProcessRequest{.exe = cxx, .args = std::move(args)});
   }
 
-  auto compiled = support::RunProcessesCaptured(requests, width);
+  auto compiled = RunProcessesCaptured(requests, width);
   if (!compiled) {
     return diag::Fail(
         diag::DiagCode::kHostIoError, std::move(compiled.error()));

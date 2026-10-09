@@ -65,6 +65,22 @@ cc_library(
     deps = [
         ":base",
         ":diag",
+        "@nlohmann_json//:json",
+    ],
+)
+
+# The compiler's record of where a run's time went, kept apart from `support`
+# because it is LLVM's profiler and `support` reaches the runtime library.
+cc_library(
+    name = "profiling",
+    srcs = glob(["src/lyra/profiling/*.cpp"]),
+    hdrs = glob(["include/lyra/profiling/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":support",
+        "@llvm-project//llvm:Support",
     ],
 )
 
@@ -202,6 +218,7 @@ cc_library(
     deps = [
         ":diag",
         ":hir",
+        ":profiling",
         ":slang_source",
         ":support",
         "@slang",
@@ -234,6 +251,7 @@ cc_library(
         ":diag",
         ":lir",
         ":mir",
+        ":profiling",
         ":support",
     ],
 )
@@ -261,6 +279,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":lir",
+        ":profiling",
         ":runtime",
         ":support",
         "@llvm-project//llvm:CodeGen",
@@ -306,7 +325,9 @@ cc_library(
         ":driver",
         ":lir",
         ":mir",
+        ":profiling",
         ":runtime",
+        ":support",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Passes",
     ],
@@ -328,6 +349,7 @@ cc_library(
         ":lir",
         ":mir",
         ":mir_to_lir",
+        ":profiling",
         ":support",
     ],
 )
@@ -348,6 +370,7 @@ cc_library(
         ":diag",
         ":dpi",
         ":mir",
+        ":profiling",
         ":support",
         "@bazel_tools//tools/cpp/runfiles",
     ],
@@ -378,6 +401,7 @@ cc_library(
         ":hir",
         ":lir",
         ":mir",
+        ":profiling",
         ":program",
         ":support",
         "@fmt",

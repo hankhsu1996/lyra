@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <span>
 #include <string>
 #include <string_view>
@@ -66,6 +67,14 @@ inline constexpr int kCompilerFailureExit = 2;
 
 // Carries out the command and answers with the process exit code.
 auto RunCommand(const Invocation& invocation) -> int;
+
+// Whether the run records where its cost went is settled before the command
+// starts, so the record covers all of it, and what was recorded is written once
+// the command is done.
+auto StartSelfReport(const CliOptions& options)
+    -> std::expected<void, std::string>;
+auto WriteSelfReport(const CliOptions& options)
+    -> std::expected<void, std::string>;
 
 // What a command that reads a design receives: the request, what the front end
 // elaborated from it, and the channel for anything it has to report. A command
