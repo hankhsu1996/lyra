@@ -531,9 +531,9 @@ each meets the same lifetime question above.
       to compose a design inside the compiler is gone: measured, it was not faster on a first run,
       and a second run of the kept program pays no compile at all
       (`../decisions/a-program-is-kept-by-what-built-it.md`).
-- [ ] An AOT CI job. Neither the smoke job nor the benchmark runs this path: both run against the
-      C++ path, per merge and nightly respectively. The artifact they would time now exists; what is
-      still missing is the job that drives it.
+- [ ] An AOT CI job. Neither the shipped examples' run nor the benchmark runs this path: both run
+      against the C++ path, per merge and nightly respectively. The artifact they would time now
+      exists; what is still missing is the job that drives it.
 - [x] **An optimization pipeline.** A module goes through the toolchain's standard pipeline at the
       level the build asked for -- unoptimized by default, optimized under `--release`, as the C++
       path's design code is -- and that pipeline is also what makes a suspending body executable, at

@@ -44,6 +44,15 @@ The two sides of `nightly` are complements, so every test target is covered once
 That is the property to preserve: a new target joins whichever side its tag puts it on, and neither
 list is maintained by hand.
 
+One target on the gate's side builds an emitted C++ project and runs it: `examples_tests`, which
+runs every directory under `examples/` the way its README tells a reader to, from that directory,
+with a command that names nothing. That command builds on the default backend, so a change that
+leaves the renderer's output uncompilable goes red at merge time and not the next morning, and an
+example whose `lyra.toml` the compiler refuses, or whose documented command no longer works, goes
+red with it. It is one build per shipped example, seconds each, which is why it is not on the other
+side. An example there has to end in a failure when what it checks is wrong: the test reads how the
+run ended and nothing it printed.
+
 ## How the corpus divides into targets
 
 The conformance corpus is one set of cases, and a target is the path that runs it. A case carrying
@@ -103,6 +112,8 @@ On top of the default set, what a change touches selects what else to run:
   from the build rather than from the text.
 - **The command line, the prelude PCH, or what the shipped runtime headers oblige a unit to emit**
   -- `cli_tests`, `pch_audit_test` and `runtime_surface_test`, already in the gate.
+- **A shipped example, its declaration, or the command its README gives** -- `examples_tests`,
+  already in the gate.
 - **What a repeated construct costs to compile** -- `growth_tests`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
   default set is the whole answer.
@@ -171,13 +182,6 @@ Each runs on push to `main` and on pull requests.
 | `exception-policy.yml` | The thrown-type policy, on the same diff                       |
 | `architecture.yml`     | Layer boundaries between the IRs and the backends              |
 | `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)    |
-| `smoke-test.yml`       | A handful of whole designs compiled and run through the driver |
-
-`smoke-test.yml` is the only thing at merge time that builds an emitted C++ project, since the
-target that compiles the corpus is nightly. That is worth a minute of every pull request: a change
-to what the renderer produces can leave every emitted file uncompilable while the default test set
-stays green, because that set never compiles emitted text. It runs whole designs rather than corpus
-cases, which is also the only place a multi-file project is exercised end to end.
 
 `bazel-build.yml` runs its two commands as steps of one job rather than as two jobs. The separate
 durations are worth having, but a second runner would not inherit the first's analysis: Bazel holds

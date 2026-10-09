@@ -47,6 +47,7 @@ module all_tests
     $display("");
     $display("Results: %0d passed, %0d failed", pass_count, fail_count);
 
+    if (fail_count != 0) $fatal(1, "%0d of the tests failed", fail_count);
     $finish;
   end
 

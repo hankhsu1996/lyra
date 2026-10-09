@@ -20,7 +20,7 @@ module fib_test
       $display("fib_test: PASS (x3 = 55, fib(10))");
     end else begin
       $display("fib_test: FAIL (x3 = %0d, expected 55)", dut.regfile.registers[3]);
-      $error("Test failed");
+      $fatal(1, "Test failed");
     end
 
     $finish;

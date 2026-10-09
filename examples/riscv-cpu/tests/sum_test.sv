@@ -20,7 +20,7 @@ module sum_test
       $display("sum_test: PASS (x3 = 55)");
     end else begin
       $display("sum_test: FAIL (x3 = %0d, expected 55)", dut.regfile.registers[3]);
-      $error("Test failed");
+      $fatal(1, "Test failed");
     end
 
     $finish;
