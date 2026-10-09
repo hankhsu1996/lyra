@@ -54,6 +54,7 @@ auto main(int argc, char** argv) -> int {
       return 1;
     }
     driver.setTerminalColorsEnabled(use_color);
+    lyra::cli::PredefineToolIdentity(driver);
 
     if (auto taken = lyra::cli::RefuseOptionsNotTaken(
             cli_options, *command, !argv_split.child.empty());

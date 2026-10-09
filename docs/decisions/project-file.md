@@ -188,7 +188,8 @@ may not expand to one (33.4.1.4). So the search order per library is the tool's 
 its cells           in a library of its own name
 its text            read in compilation units of its own (LRM 3.12.1): one for all its files where it
                     declares single_unit, else one per file
-read under          the command line's defines and include directories, then its own
+read under          the macro naming the tool, the command line's defines and include directories,
+                    then its own
 never under         another library's defines or incdir, or a macro another unit defined
 a cell it names     searched for in its own library, then in each library it declared, in the order
                     it wrote them, and nowhere else

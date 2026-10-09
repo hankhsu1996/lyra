@@ -269,6 +269,11 @@ layer directly.
       choosing among variants of a library, and dependencies only a testbench needs. A library's
       unit has one name where the library is built and another where it is depended on.
 
+- [x] D25 -- A source can tell it is being read by Lyra. `__lyra__` is defined as 1 for every text
+      of a build: the library being built, one it depends on, and a file named on the command line.
+      The front end's own `__slang__` stays beside it. An invocation can undefine either and cannot
+      give either another value. No macro states a version, since Lyra shows none.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

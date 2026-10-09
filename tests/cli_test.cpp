@@ -722,6 +722,72 @@ TEST(LyraManifest, RefusesADependencyThatIsNotOneLibrary) {
   }
 }
 
+// A text can ask whether the tool reading it is Lyra, and gets the same answer
+// wherever it stands in a build: in the library being built, in one that is
+// depended on, or in a file named outright. The name is the tool's own, so an
+// invocation can take it away and cannot give it another value.
+TEST(LyraCommandLine, ATextCanTellItIsReadByLyra) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto asking = [](std::string_view module, std::string_view body) {
+    return std::format(
+        "module {0};\n"
+        "{1}"
+        "`ifdef __lyra__\n"
+        "  initial $display(\"{0} is read by lyra %0d\", `__lyra__);\n"
+        "`else\n"
+        "  initial $display(\"{0} is read by another tool\");\n"
+        "`endif\n"
+        "endmodule\n",
+        module, body);
+  };
+  WriteFile(
+      *tmp_or / "part" / "lyra.toml",
+      "[library]\nname = \"part\"\nfiles = [\"leaf.sv\"]\n");
+  WriteFile(*tmp_or / "part" / "leaf.sv", asking("leaf", ""));
+  WriteFile(
+      *tmp_or / "app" / "lyra.toml",
+      "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+      "\n[design]\ntop = [\"Top\"]\n"
+      "\n[dependencies]\npart = { path = \"../part\" }\n");
+  WriteFile(*tmp_or / "app" / "top.sv", asking("Top", "  leaf l ();\n"));
+  WriteFile(*tmp_or / "app" / "alone.sv", asking("Alone", ""));
+
+  const auto declared =
+      RunLyraFrom(lyra, *tmp_or / "app", "run --backend llvm");
+  ASSERT_EQ(declared.exit_code, 0) << declared.stderr_text;
+  for (const std::string_view line :
+       {"Top is read by lyra 1", "leaf is read by lyra 1"}) {
+    EXPECT_NE(declared.stdout_text.find(line), std::string::npos)
+        << "no '" << line << "' in: " << declared.stdout_text;
+  }
+
+  const auto named = RunLyraFrom(
+      lyra, *tmp_or / "app", "run --backend llvm --top Alone alone.sv");
+  ASSERT_EQ(named.exit_code, 0) << named.stderr_text;
+  EXPECT_NE(
+      named.stdout_text.find("Alone is read by lyra 1"), std::string::npos)
+      << named.stdout_text;
+
+  const auto given =
+      RunLyraFrom(lyra, *tmp_or / "app", "run --backend llvm -D __lyra__=0");
+  ASSERT_EQ(given.exit_code, 0) << given.stderr_text;
+  EXPECT_NE(given.stdout_text.find("leaf is read by lyra 1"), std::string::npos)
+      << given.stdout_text;
+
+  const auto taken =
+      RunLyraFrom(lyra, *tmp_or / "app", "run --backend llvm -U __lyra__");
+  ASSERT_EQ(taken.exit_code, 0) << taken.stderr_text;
+  for (const std::string_view line :
+       {"Top is read by another tool", "leaf is read by another tool"}) {
+    EXPECT_NE(taken.stdout_text.find(line), std::string::npos)
+        << "no '" << line << "' in: " << taken.stdout_text;
+  }
+}
+
 // An interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) may not be
 // left unconnected, and a top's ports are connected to nothing, so a module
 // declaring either is a design element and not a design. Every name inside such

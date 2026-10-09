@@ -542,6 +542,10 @@ auto ParseCommandWords(slang::driver::Driver& driver, std::vector<char*>& words)
   return command->first;
 }
 
+void PredefineToolIdentity(slang::driver::Driver& driver) {
+  driver.options.defines.emplace(driver.options.defines.begin(), "__lyra__=1");
+}
+
 auto RefuseOptionsNotTaken(
     const CliOptions& opts, CommandKind cmd, bool has_simulation_args)
     -> std::expected<void, std::string> {
@@ -668,10 +672,10 @@ auto LibraryListOf(const Manifest& manifest, std::string own_name)
   return list;
 }
 
-// What the command line said about reading source, which every library of the
-// build is read under ahead of what it declared for itself: the front end
-// keeps the first definition it is given of a macro, and an include is taken
-// from the first directory holding it.
+// What every library of the build is read under ahead of what it declared for
+// itself -- the macro naming the tool, then what the command line said about
+// reading source: the front end keeps the first definition it is given of a
+// macro, and an include is taken from the first directory holding it.
 struct InvocationMaterial {
   std::vector<std::string> defines;
   std::vector<std::string> undefines;

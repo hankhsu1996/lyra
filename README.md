@@ -38,7 +38,8 @@ bazel build //:lyra
 Alongside `run` there is `check` for diagnostics alone, `dump` for reading any stage of the
 pipeline, `build` for a program you keep, and `emit cpp` for a standalone C++ project. Everything
 after the command word is one command line shared with the slang driver, so slang's front-end
-options reach Lyra unchanged, and `lyra --help` is authoritative on all of it.
+options reach Lyra unchanged, and `lyra --help` is authoritative on all of it. A source that has to
+know it is being read by Lyra tests the predefined macro `__lyra__`.
 
 A program Lyra builds is kept in your cache directory under a name computed from what built it, so
 running an unchanged design again skips the compile, and nothing is written into your project.
