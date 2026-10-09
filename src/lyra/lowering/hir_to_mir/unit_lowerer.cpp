@@ -524,6 +524,7 @@ auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
 
 auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   unit_.name = hir_->name;
+  unit_.source_name = hir_->source_name;
 
   // Every identity another declaration can name is taken before any
   // declaration settles: a class handle type resolves to the pointee that names

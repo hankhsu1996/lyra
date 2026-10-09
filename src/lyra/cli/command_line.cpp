@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -28,6 +29,7 @@
 #include "lyra/driver/artifact_store.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/status/status.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
 namespace lyra::cli {
@@ -56,6 +58,7 @@ enum class LyraOption : std::uint8_t {
   kTimeTrace,
   kTimeTraceGranularity,
   kStatsFile,
+  kProgress,
   kSimulationArgs,
 };
 
@@ -90,14 +93,16 @@ class OptionSet {
 };
 
 // What every command reading a design acts on: how its report is coloured,
-// where the design's declaration is, and whether the run reports on itself.
+// where the design's declaration is, whether the run reports on itself, and
+// how it shows what it is doing meanwhile.
 constexpr OptionSet kReadsADesign = {
     LyraOption::kColor,
     LyraOption::kNoColor,
     LyraOption::kConfig,
     LyraOption::kTimeTrace,
     LyraOption::kTimeTraceGranularity,
-    LyraOption::kStatsFile};
+    LyraOption::kStatsFile,
+    LyraOption::kProgress};
 // What every command lowering the design acts on besides: the policy lowering
 // follows, and whether what it could have done better reaches the report.
 constexpr OptionSet kLowersADesign =
@@ -109,18 +114,26 @@ constexpr OptionSet kBuildsAProgram =
                                LyraOption::kCxx,      LyraOption::kJobs,
                                LyraOption::kBackend,  LyraOption::kDpiLink};
 
+// Where a command shows what it is doing when nobody said. The error stream
+// carries it, so the answer follows from what else the command's streams are
+// for: one whose product is what it prints shows nothing, one that runs the
+// design leaves a stream that is not a terminal to the program, and the rest
+// show it wherever that stream goes.
+enum class SaysStatus : std::uint8_t { kNever, kOnATerminal, kAlways };
+
 // Every command in one place: how it is spelled, and the facts a command
-// decides rather than inherits -- whether it needs somewhere to write, and
-// which options it acts on. A command is named by a verb and an object, with an
-// empty object for a verb that stands alone. The usage text, the parse, the
-// output check, and the check that refuses an option a command does not act on
-// all read this table, so adding a command is one row that has to say all of
-// it, rather than several lists that drift apart.
+// decides rather than inherits -- whether it needs somewhere to write, where it
+// says how far it has got, and which options it acts on. A command is named by
+// a verb and an object, with an empty object for a verb that stands alone. The
+// usage text, the parse, the output check, and the check that refuses an option
+// a command does not act on all read this table, so adding a command is one row
+// that has to say all of it, rather than several lists that drift apart.
 struct CommandSpec {
   std::string_view verb;
   std::string_view object;
   CommandKind kind;
   bool requires_out;
+  SaysStatus status;
   OptionSet takes;
 };
 
@@ -131,31 +144,37 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .object = "",
       .kind = CommandKind::kCheck,
       .requires_out = false,
+      .status = SaysStatus::kAlways,
       .takes = kReadsADesign},
      {.verb = "dump",
       .object = "ast",
       .kind = CommandKind::kDumpAst,
       .requires_out = false,
+      .status = SaysStatus::kNever,
       .takes = kReadsADesign},
      {.verb = "dump",
       .object = "hir",
       .kind = CommandKind::kDumpHir,
       .requires_out = false,
+      .status = SaysStatus::kNever,
       .takes = kLowersADesign},
      {.verb = "dump",
       .object = "mir",
       .kind = CommandKind::kDumpMir,
       .requires_out = false,
+      .status = SaysStatus::kNever,
       .takes = kLowersADesign},
      {.verb = "dump",
       .object = "lir",
       .kind = CommandKind::kDumpLir,
       .requires_out = false,
+      .status = SaysStatus::kNever,
       .takes = kLowersADesign},
      {.verb = "dump",
       .object = "llvm",
       .kind = CommandKind::kDumpLlvm,
       .requires_out = false,
+      .status = SaysStatus::kNever,
       .takes = kLowersADesign},
      // The project's recipe is written with the compiler and the level it
      // compiles at baked in, and takes its own width and precompiled header
@@ -164,6 +183,7 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .object = "cpp",
       .kind = CommandKind::kEmitCpp,
       .requires_out = true,
+      .status = SaysStatus::kAlways,
       .takes = kLowersADesign |
                OptionSet{
                    LyraOption::kFormat, LyraOption::kRelease, LyraOption::kCxx,
@@ -172,16 +192,19 @@ constexpr auto kCommands = std::to_array<CommandSpec>(
       .object = "",
       .kind = CommandKind::kBuild,
       .requires_out = false,
+      .status = SaysStatus::kAlways,
       .takes = kBuildsAProgram | OptionSet{LyraOption::kOut}},
      {.verb = "run",
       .object = "",
       .kind = CommandKind::kRun,
       .requires_out = false,
+      .status = SaysStatus::kOnATerminal,
       .takes = kBuildsAProgram | OptionSet{LyraOption::kSimulationArgs}},
      {.verb = "cache",
       .object = "clear",
       .kind = CommandKind::kCacheClear,
       .requires_out = false,
+      .status = SaysStatus::kNever,
       .takes = {
           LyraOption::kColor, LyraOption::kNoColor, LyraOption::kCacheDir}}});
 
@@ -224,6 +247,8 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--time-trace-granularity";
     case LyraOption::kStatsFile:
       return "--stats-file";
+    case LyraOption::kProgress:
+      return "--progress";
     case LyraOption::kSimulationArgs:
       return "arguments after `--`";
   }
@@ -271,6 +296,8 @@ auto IsGiven(
       return opts.time_trace_granularity.has_value();
     case LyraOption::kStatsFile:
       return opts.stats_file.has_value();
+    case LyraOption::kProgress:
+      return opts.progress.has_value();
     case LyraOption::kSimulationArgs:
       return has_simulation_args;
   }
@@ -307,6 +334,37 @@ auto ParseAssertionPolicy(std::string_view name)
     return std::nullopt;
   }
   return it->second;
+}
+
+// What `--progress` asks for: the display the command would choose for itself,
+// lines whatever the stream is, or nothing.
+enum class Progress : std::uint8_t { kAuto, kPlain, kNone };
+
+auto ParseProgress(std::string_view name) -> std::optional<Progress> {
+  static constexpr std::array<std::pair<std::string_view, Progress>, 3> kNames =
+      {{{"auto", Progress::kAuto},
+        {"plain", Progress::kPlain},
+        {"none", Progress::kNone}}};
+  const auto* const it =
+      std::ranges::find(kNames, name, &decltype(kNames)::value_type::first);
+  if (it == kNames.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
+// Whether the terminal shows how far a command has got on its own window when
+// told. The sequence that tells it means something else to some terminals that
+// were not written for it, so it is sent only to the ones known to take it,
+// each recognized by what it sets in the environment of what it runs.
+auto TerminalShowsProgress() -> bool {
+  const auto set_to = [](const char* variable) -> std::string_view {
+    const char* const value = std::getenv(variable);
+    return value == nullptr ? std::string_view{} : std::string_view(value);
+  };
+  const std::string_view program = set_to("TERM_PROGRAM");
+  return !set_to("WT_SESSION").empty() || set_to("ConEmuANSI") == "ON" ||
+         program == "WezTerm" || program == "ghostty";
 }
 
 // Whether diagnostics carry ANSI colour. `kAuto` asks the terminal; the other
@@ -488,6 +546,12 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "write this run's numbers as JSON: each stage's peak memory, what each "
       "unit wrote, and how long each tool the build ran took",
       "<file>", slang::CommandLineFlags::FilePath);
+  cmd.add(
+      "--progress", opts.progress,
+      "how the command shows what it is doing: redrawn in place on a "
+      "terminal and a line at intervals elsewhere (auto), lines wherever it "
+      "is written (plain), or nothing (none)",
+      "auto|plain|none");
 }
 
 auto SplitAtSeparator(std::span<char* const> raw) -> SplitArgv {
@@ -584,6 +648,55 @@ auto UseColor(const CliOptions& opts) -> bool {
       return ::isatty(STDERR_FILENO) != 0;
   }
   return false;
+}
+
+namespace {
+
+// The display a command chooses when nobody said.
+auto OwnDisplayOf(CommandKind cmd) -> status::Display {
+  // A terminal that says it is dumb takes no instruction to redraw a line.
+  const char* const terminal = std::getenv("TERM");
+  const bool redraws = ::isatty(STDERR_FILENO) != 0 && terminal != nullptr &&
+                       std::string_view(terminal) != "dumb";
+  switch (FindCommand(cmd).status) {
+    case SaysStatus::kNever:
+      return status::Display::kNone;
+    case SaysStatus::kOnATerminal:
+      return redraws ? status::Display::kInPlace : status::Display::kNone;
+    case SaysStatus::kAlways:
+      return redraws ? status::Display::kInPlace
+                     : status::Display::kPeriodicLines;
+  }
+  throw InternalError("a command does not say where it shows its status");
+}
+
+auto DisplayOf(CommandKind cmd, Progress asked) -> status::Display {
+  switch (asked) {
+    case Progress::kAuto:
+      return OwnDisplayOf(cmd);
+    case Progress::kPlain:
+      return status::Display::kPeriodicLines;
+    case Progress::kNone:
+      return status::Display::kNone;
+  }
+  throw InternalError("a request for progress names no display");
+}
+
+}  // namespace
+
+auto StatusLookOf(CommandKind cmd, const CliOptions& opts, bool use_color)
+    -> std::expected<status::Look, std::string> {
+  const auto asked = ParseProgress(opts.progress.value_or("auto"));
+  if (!asked) {
+    return std::unexpected(
+        std::format(
+            "--progress: '{}' is not one of auto, plain, none",
+            *opts.progress));
+  }
+  return status::Look{
+      .display = DisplayOf(cmd, *asked),
+      .color = use_color,
+      .tells_the_terminal = TerminalShowsProgress()};
 }
 
 // How many host compiles this invocation may run at once, resolved to a

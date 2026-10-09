@@ -274,6 +274,22 @@ layer directly.
       The front end's own `__slang__` stays beside it. An invocation can undefine either and cannot
       give either another value. No macro states a version, since Lyra shows none.
 
+- [x] D26 -- A build answers for what it starts. A place a request names that cannot be written --
+      the program, an emitted project's directory, the time trace, the statistics -- is refused
+      before the design is read, and a directory that is only missing is made. A build that fails or
+      is ended leaves no partial file at a place it was told to write. A build that is interrupted,
+      terminated or hung up on removes the directory it was building in and ends the host tool it
+      was waiting on; one killed outright leaves that directory, and the next build removes it.
+      While it works, `check`, `emit cpp`, `build` and `run` show on a terminal which phase they are
+      in, how many modules are done, how many were up to date, how many errors there are so far, and
+      the modules being worked on with how long each has taken; the display starts a second in and
+      ends as a line per phase with how long each took. Where the error stream is not a terminal the
+      same is one line at ten seconds, thirty, and each minute after, and `run` prints none.
+      `--progress` overrides either. A command over sooner prints nothing of the kind.
+      `decisions/a-build-answers-for-what-it-starts.md` settles the shape. Not built: two versions
+      of one module compiled for different parameters are shown under one name, and the C++
+      backend's compile does not say what was up to date.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

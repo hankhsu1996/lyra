@@ -31,6 +31,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
+#include "lyra/status/status.hpp"
 #include "lyra/support/statistics.hpp"
 
 namespace lyra::program {
@@ -1819,6 +1820,9 @@ auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
   }();
   if (!object) {
     return std::unexpected(std::move(object.error()));
+  }
+  if (!object->made) {
+    status::UpToDate();
   }
   auto artifact = ArtifactOf(*object);
   if (!artifact) {

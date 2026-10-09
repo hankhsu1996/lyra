@@ -49,6 +49,13 @@ auto RunProcessesCaptured(
     std::span<const ProcessRequest> requests, std::size_t max_concurrent)
     -> std::expected<std::vector<ProcessResult>, std::string>;
 
+// The same, with every request a piece of the phase the command says it is in:
+// counted, and shown under its entry in `names` for as long as it runs.
+auto RunProcessesCaptured(
+    std::span<const ProcessRequest> requests, std::size_t max_concurrent,
+    std::span<const std::string> names)
+    -> std::expected<std::vector<ProcessResult>, std::string>;
+
 // Run `exe args...` inheriting this process's stdout and stderr, so the child's
 // output streams straight to the terminal. Returns the child's exit code. This
 // is the program a run executes and not a tool the build ran, so the run's

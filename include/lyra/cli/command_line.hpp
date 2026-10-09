@@ -17,6 +17,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/status/status.hpp"
 #include "lyra/support/assertion_policy.hpp"
 
 namespace lyra::cli {
@@ -96,6 +97,7 @@ struct CliOptions {
   std::optional<std::string> time_trace;
   std::optional<std::int32_t> time_trace_granularity;
   std::optional<std::string> stats_file;
+  std::optional<std::string> progress;
 };
 
 // What Lyra parses and what it hands the simulation, told apart by a standalone
@@ -145,6 +147,14 @@ auto RefuseOptionsNotTaken(
 // Answered from what the parser recorded, so a command line that fails to
 // resolve can still report why in the colour the caller asked for.
 auto UseColor(const CliOptions& opts) -> bool;
+
+// How the command shows what it is doing while it works. Left to itself that
+// follows from where its error stream goes: redrawn in place on a terminal, a
+// line at intervals elsewhere, and nothing for a command whose streams are
+// spoken for. `--progress` overrides it in either direction, and a value it
+// does not have is the error.
+auto StatusLookOf(CommandKind cmd, const CliOptions& opts, bool use_color)
+    -> std::expected<status::Look, std::string>;
 
 // Nothing was searched for, because the command line named its own sources.
 // This is not the absence of a search: there is nowhere to report having

@@ -69,6 +69,15 @@ code changed. `--rebuild` builds as though nothing were kept; `--cache-dir` name
 one is the default. What a build produces is the same however many ran at once.
 `docs/decisions/a-build-is-told-how-wide-to-run.md` holds why.
 
+**A command that takes long shows what it is doing, on the error stream.** On a terminal `check`,
+`emit cpp`, `build` and `run` show the phase, how many modules are done, and the modules being
+worked on, redrawn in place from one second in; at the end what is left is how long each phase took.
+Where that stream is not a terminal the first three print one line at ten seconds, at thirty, and
+every minute after, each opening with a bracket, so a command over in seconds prints nothing but
+diagnostics. `--progress` takes `auto`, `plain` or `none`. A place the command line names that
+cannot be written is refused before the design is read, and a build that is interrupted removes what
+it was building. `docs/decisions/a-build-answers-for-what-it-starts.md` holds why.
+
 **Where a run's cost went is read off the run, never found by comparing builds.**
 `--time-trace <file>` writes a Chrome trace (open it in ui.perfetto.dev) with a span per stage,
 unit, scope and function; `--stats-file <file>` writes each stage's peak memory, what each unit left

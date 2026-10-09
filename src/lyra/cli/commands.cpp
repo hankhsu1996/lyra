@@ -39,10 +39,12 @@
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/driver/artifact_store.hpp"
+#include "lyra/driver/claimed_file.hpp"
 #include "lyra/driver/cpp_build.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
+#include "lyra/driver/scratch_directory.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "lyra/hir/dump.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -51,8 +53,8 @@
 #include "lyra/mir/dump.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/program/program_sink.hpp"
+#include "lyra/status/status.hpp"
 #include "lyra/support/statistics.hpp"
-#include "lyra/support/temporary_directory.hpp"
 
 namespace lyra::cli {
 
@@ -159,6 +161,7 @@ auto RunDumpAst(const CommandContext& ctx) -> int {
 auto DesignOf(const CommandContext& ctx)
     -> std::optional<compiler::ElaboratedDesign> {
   const profiling::StageScope stage("declare units");
+  const status::Phase phase("Elaborating");
   return compiler::DeclareUnits(
       std::move(ctx.elaborated->compilation), ctx.elaborated->source_mapper,
       compiler::LoweringPolicy{.assertions = ctx.args->assertions}, *ctx.sink);
@@ -175,6 +178,7 @@ auto WriteCppSources(
   if (!design) {
     return std::nullopt;
   }
+  const status::Phase phase("Generating C++");
   driver::CppProjectSink sources(dir, ctx.args->formatting, *ctx.sink);
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink, ctx.args->compile_width,
@@ -303,6 +307,7 @@ auto RunEmitCpp(const CommandContext& ctx) -> int {
   if (auto assembled =
           [&] {
             const profiling::StageScope stage("assemble project");
+            const status::Phase phase("Copying runtime");
             return driver::AssembleProject(
                 *runtime, *sources, dir, *host, ctx.dpi_inputs);
           }();
@@ -310,6 +315,7 @@ auto RunEmitCpp(const CommandContext& ctx) -> int {
     ctx.sink->Report(std::move(assembled.error()));
     return 1;
   }
+  status::Finished();
   fmt::print("emitted: {}\n", dir.string());
   return 0;
 }
@@ -317,8 +323,8 @@ auto RunEmitCpp(const CommandContext& ctx) -> int {
 // A directory of this invocation's own, which a program is built in and which
 // goes when the command is done with it.
 auto ScratchDir(const CommandContext& ctx)
-    -> std::optional<support::TemporaryDirectory> {
-  auto dir = support::TemporaryDirectory::Create();
+    -> std::optional<driver::ScratchDirectory> {
+  auto dir = driver::ScratchDirectory::Create();
   if (!dir) {
     ctx.sink->Report(
         diag::Make(diag::DiagCode::kHostIoError, std::move(dir.error())));
@@ -440,6 +446,7 @@ auto LlvmProgramRecipe(
     return std::nullopt;
   }
   program::ProgramSink sink;
+  const status::Phase phase("Compiling");
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink, host.compile_width,
       [&objects](mir::CompilationUnit unit) {
@@ -566,28 +573,34 @@ auto DefaultProgramPath(const CommandContext& ctx)
   return std::nullopt;
 }
 
-auto RunBuild(const CommandContext& ctx) -> int {
-  const auto destination =
-      ctx.args->out.or_else([&] { return DefaultProgramPath(ctx); });
-  if (!destination) {
-    return 1;
-  }
-  std::error_code ec;
-  if (std::filesystem::is_directory(*destination, ec)) {
-    ctx.sink->Report(
-        diag::Make(
-            diag::DiagCode::kHostInvalidCliArgs,
-            std::format(
-                "'{}' is a directory, and a program is one file; name the "
-                "program with -o",
-                destination->string())));
-    return 1;
+// Builds the design's program into the place claimed for it. A program the
+// request named is claimed before the design is read; one that takes the
+// design's name is claimed here, which is the first moment that name is known.
+auto RunBuild(
+    const CommandContext& ctx, std::optional<driver::ClaimedFile> named)
+    -> int {
+  if (!named) {
+    const auto destination = DefaultProgramPath(ctx);
+    if (!destination) {
+      return 1;
+    }
+    auto claimed = driver::ClaimedFile::Claim(*destination);
+    if (!claimed) {
+      ctx.sink->Report(std::move(claimed.error()));
+      return 1;
+    }
+    named = *std::move(claimed);
   }
   auto scratch = ScratchDir(ctx);
-  if (!scratch || !PlaceProgram(ctx, scratch->Path(), *destination)) {
+  if (!scratch || !PlaceProgram(ctx, scratch->Path(), named->WorkingPath())) {
     return 1;
   }
-  fmt::print("built: {}\n", destination->string());
+  if (auto placed = named->Finish(); !placed) {
+    ctx.sink->Report(std::move(placed.error()));
+    return 1;
+  }
+  status::Finished();
+  fmt::print("built: {}\n", named->Destination().string());
   return 0;
 }
 
@@ -602,6 +615,7 @@ auto RunProgram(const CommandContext& ctx) -> int {
   if (!PlaceProgram(ctx, scratch->Path(), program)) {
     return 1;
   }
+  status::Finished();
   auto exit_code =
       driver::RunProcessStreaming(program, ctx.args->simulation_args);
   if (!exit_code) {
@@ -618,19 +632,18 @@ auto RunProgram(const CommandContext& ctx) -> int {
 // outright. A remark was asked for, so it is not withheld.
 enum class CompilerWarnings : std::uint8_t { kShown, kWithheld };
 
-// A design found and elaborated, with the request resolved against its
-// declaration.
-struct LoadedDesign {
+// The request resolved against the design's declaration: everything that is
+// known before the design is read.
+struct Request {
   ParsedArgs args;
   std::vector<driver::DpiLinkInput> dpi_inputs;
-  frontend::ParseResult elaborated;
 };
 
-// Finds the design the command line and its declaration describe and
-// elaborates it, reporting whatever stops that. Arriving at a design is the
-// whole of what `check` asks.
-auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
-    -> std::optional<LoadedDesign> {
+// Finds the design the command line and its declaration describe and resolves
+// the request against it, reporting whatever stops that. Nothing of the design
+// is read yet, so what a command can refuse from the request alone it refuses
+// after this and before the front end runs.
+auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
   const Reporter& report = *invocation.report;
   slang::driver::Driver& driver = *invocation.driver;
 
@@ -700,29 +713,33 @@ auto LoadDesign(const Invocation& invocation, CompilerWarnings warnings)
     report(std::move(dpi_inputs.error()));
     return std::nullopt;
   }
+  return Request{
+      .args = *std::move(parsed), .dpi_inputs = *std::move(dpi_inputs)};
+}
 
-  support::RecordWidth(parsed->compile_width);
+// Elaborates the design the request describes, reporting whatever stops that.
+// Arriving at a design is the whole of what `check` asks.
+auto Elaborate(
+    const Invocation& invocation, const Request& request,
+    CompilerWarnings warnings) -> std::optional<frontend::ParseResult> {
+  support::RecordWidth(request.args.compile_width);
   auto front_end = [&] {
     const profiling::StageScope stage("front end");
-    return compiler::RunFrontEnd(driver);
+    const status::Phase phase("Elaborating");
+    return compiler::RunFrontEnd(*invocation.driver);
   }();
   // An account that refuses the source is printed whatever the command is,
   // because then there is no program whose streams need protecting.
   const bool shows_warnings =
       warnings == CompilerWarnings::kShown || !front_end.elaborated;
   if (shows_warnings && !front_end.diagnostics.empty()) {
+    status::Clear();
     fmt::print(stderr, "{}", front_end.diagnostics);
   }
-  if (!front_end.elaborated) {
-    return std::nullopt;
-  }
-  return LoadedDesign{
-      .args = *std::move(parsed),
-      .dpi_inputs = *std::move(dpi_inputs),
-      .elaborated = *std::move(front_end.elaborated)};
+  return std::move(front_end.elaborated);
 }
 
-using DesignCommand = auto (*)(const CommandContext&) -> int;
+using DesignCommand = std::move_only_function<int(const CommandContext&)>;
 
 // Carries out `command` and answers with its exit code. A failure of the
 // compiler's own that no unit contained ends the command here, while the
@@ -736,32 +753,97 @@ auto Attempt(DesignCommand command, const CommandContext& ctx) -> int {
   }
 }
 
-// Loads the design and hands it to `command`. Everything the command reports
-// goes into one sink, which is rendered here once the command is done. A
-// failure of the compiler's own anywhere in the run, contained by a unit or
-// not, is what the exit status says.
-auto RunOnDesign(
-    const Invocation& invocation, CompilerWarnings warnings,
-    DesignCommand command) -> int {
-  auto design = LoadDesign(invocation, warnings);
-  if (!design) {
+// Elaborates the design the request describes and hands it to `command`.
+// Everything the command reports goes into one sink, which is rendered here
+// once the command is done. A failure of the compiler's own anywhere in the
+// run, contained by a unit or not, is what the exit status says.
+auto RunOnRequest(
+    const Invocation& invocation, const Request& request,
+    CompilerWarnings warnings, DesignCommand command) -> int {
+  auto elaborated = Elaborate(invocation, request, warnings);
+  if (!elaborated) {
     return 1;
   }
   diag::DiagnosticSink sink;
   const int exit_code = Attempt(
-      command, CommandContext{
-                   .args = &design->args,
-                   .elaborated = &design->elaborated,
-                   .sink = &sink,
-                   .dpi_inputs = design->dpi_inputs,
-                   .program_path = invocation.program_path});
+      std::move(command), CommandContext{
+                              .args = &request.args,
+                              .elaborated = &*elaborated,
+                              .sink = &sink,
+                              .dpi_inputs = request.dpi_inputs,
+                              .program_path = invocation.program_path});
   const Reporter& report = *invocation.report;
   if (warnings == CompilerWarnings::kWithheld && !sink.HasErrors()) {
-    report.WithoutWarnings()(sink, &design->elaborated.diag_sources);
+    report.WithoutWarnings()(sink, &elaborated->diag_sources);
   } else {
-    report(sink, &design->elaborated.diag_sources);
+    report(sink, &elaborated->diag_sources);
   }
   return sink.HasInternalErrors() ? kCompilerFailureExit : exit_code;
+}
+
+// The same for a command that asks nothing of the request before the design is
+// read.
+auto RunOnDesign(
+    const Invocation& invocation, CompilerWarnings warnings,
+    DesignCommand command) -> int {
+  const auto request = ResolveRequest(invocation);
+  if (!request) {
+    return 1;
+  }
+  return RunOnRequest(invocation, *request, warnings, std::move(command));
+}
+
+// `check` asks only whether the request arrives at a design.
+auto RunCheck(const Invocation& invocation) -> int {
+  const auto request = ResolveRequest(invocation);
+  if (!request || !Elaborate(invocation, *request, CompilerWarnings::kShown)) {
+    return 1;
+  }
+  status::Finished();
+  return 0;
+}
+
+// The program a build was asked to write is claimed before the design is read,
+// so a place that cannot be written costs no compile.
+auto RunBuildCommand(const Invocation& invocation) -> int {
+  const auto request = ResolveRequest(invocation);
+  if (!request) {
+    return 1;
+  }
+  std::optional<driver::ClaimedFile> named;
+  if (request->args.out) {
+    auto claimed = driver::ClaimedFile::Claim(*request->args.out);
+    if (!claimed) {
+      (*invocation.report)(std::move(claimed.error()));
+      return 1;
+    }
+    named = *std::move(claimed);
+  }
+  return RunOnRequest(
+      invocation, *request, CompilerWarnings::kShown,
+      [named = std::move(named)](const CommandContext& ctx) mutable {
+        return RunBuild(ctx, std::move(named));
+      });
+}
+
+// The directory a project is emitted into is made before the design is read,
+// for the same reason.
+auto RunEmitCommand(const Invocation& invocation) -> int {
+  const auto request = ResolveRequest(invocation);
+  if (!request) {
+    return 1;
+  }
+  const std::filesystem::path& dir = *request->args.out;
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  if (ec) {
+    (*invocation.report)(diag::Make(
+        diag::DiagCode::kHostIoError,
+        std::format("cannot write '{}': {}", dir.string(), ec.message())));
+    return 1;
+  }
+  return RunOnRequest(
+      invocation, *request, CompilerWarnings::kShown, RunEmitCpp);
 }
 
 // Empties the store. It consults no design and never reaches the compiler, so
@@ -795,7 +877,7 @@ auto RunCacheClear(const Invocation& invocation) -> int {
 auto RunCommand(const Invocation& invocation) -> int {
   switch (invocation.command) {
     case CommandKind::kCheck:
-      return LoadDesign(invocation, CompilerWarnings::kShown) ? 0 : 1;
+      return RunCheck(invocation);
     case CommandKind::kDumpAst:
       return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpAst);
     case CommandKind::kDumpHir:
@@ -807,9 +889,9 @@ auto RunCommand(const Invocation& invocation) -> int {
     case CommandKind::kDumpLlvm:
       return RunOnDesign(invocation, CompilerWarnings::kShown, RunDumpLlvm);
     case CommandKind::kEmitCpp:
-      return RunOnDesign(invocation, CompilerWarnings::kShown, RunEmitCpp);
+      return RunEmitCommand(invocation);
     case CommandKind::kBuild:
-      return RunOnDesign(invocation, CompilerWarnings::kShown, RunBuild);
+      return RunBuildCommand(invocation);
     case CommandKind::kRun:
       return RunOnDesign(invocation, CompilerWarnings::kWithheld, RunProgram);
     case CommandKind::kCacheClear:
@@ -818,43 +900,62 @@ auto RunCommand(const Invocation& invocation) -> int {
   throw InternalError("a command has no handler");
 }
 
-auto StartSelfReport(const CliOptions& options)
-    -> std::expected<void, std::string> {
+auto StartSelfReport(const CliOptions& options) -> diag::Result<SelfReport> {
   if (options.time_trace_granularity.has_value() && !options.time_trace) {
-    return std::unexpected(
+    return diag::Fail(
+        diag::DiagCode::kHostInvalidCliArgs,
         "--time-trace-granularity: there is no time trace to apply it to; "
         "name one with --time-trace");
   }
+  SelfReport report;
   if (options.time_trace) {
     // The default is clang's, so a trace of either reads at the same grain.
     constexpr std::int32_t kGranularityUs = 500;
     const std::int32_t granularity =
         options.time_trace_granularity.value_or(kGranularityUs);
     if (granularity < 0) {
-      return std::unexpected(
+      return diag::Fail(
+          diag::DiagCode::kHostInvalidCliArgs,
           std::format(
               "--time-trace-granularity: '{}' is not a duration", granularity));
     }
+    auto claimed = driver::ClaimedFile::Claim(*options.time_trace);
+    if (!claimed) {
+      return std::unexpected(std::move(claimed.error()));
+    }
+    report.time_trace = *std::move(claimed);
     profiling::TimeTraceStart(static_cast<unsigned>(granularity));
   }
   if (options.stats_file) {
+    auto claimed = driver::ClaimedFile::Claim(*options.stats_file);
+    if (!claimed) {
+      return std::unexpected(std::move(claimed.error()));
+    }
+    report.statistics = *std::move(claimed);
     support::EnableStatistics();
   }
-  return {};
+  return report;
 }
 
-auto WriteSelfReport(const CliOptions& options)
-    -> std::expected<void, std::string> {
-  if (options.time_trace) {
-    if (auto written = profiling::TimeTraceWrite(*options.time_trace);
-        !written) {
-      return written;
+auto WriteSelfReport(SelfReport& report) -> diag::Result<void> {
+  using Write =
+      auto (*)(const std::filesystem::path&)->std::expected<void, std::string>;
+  const auto write = [](std::optional<driver::ClaimedFile>& file,
+                        Write how) -> diag::Result<void> {
+    if (!file) {
+      return {};
     }
+    if (auto written = how(file->WorkingPath()); !written) {
+      return diag::Fail(
+          diag::DiagCode::kHostIoError, std::move(written.error()));
+    }
+    return file->Finish();
+  };
+  if (auto written = write(report.time_trace, profiling::TimeTraceWrite);
+      !written) {
+    return written;
   }
-  if (options.stats_file) {
-    return support::WriteStatistics(*options.stats_file);
-  }
-  return {};
+  return write(report.statistics, support::WriteStatistics);
 }
 
 }  // namespace lyra::cli

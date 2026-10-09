@@ -47,6 +47,11 @@ struct BuiltinHirTypes {
 
 struct CompilationUnit {
   std::string name;
+  // The identifier the source declares this unit's design element, package or
+  // class under, which is what its author knows it by. Units of one definition
+  // compiled once per specialization share it, and a unit the source gave no
+  // identifier has none.
+  std::string source_name;
   UnitRole role = UnitRole::kObjectRoot;
   TypePool types;
   BuiltinHirTypes builtins;

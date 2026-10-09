@@ -41,12 +41,20 @@ struct HostBuild {
   std::optional<std::filesystem::path> store;
 };
 
+// A file a build compiles: where it is in the project, and the identifier the
+// source declares the unit it was written for under. A file written for
+// nothing the source named has none.
+struct TranslationUnit {
+  std::string relpath;
+  std::string source_name;
+};
+
 // What the steps after emission need, carried rather than recovered by reading
 // the directory back: the translation units a build compiles, and what each
 // unit stated of the program's foreign name space (LRM 35), which the project's
 // own assembly writes because the party that reads it is the user's C compiler.
 struct EmittedCppSources {
-  std::vector<std::string> translation_units;
+  std::vector<TranslationUnit> translation_units;
   std::vector<dpi::AbiFragment> dpi_fragments;
 };
 
@@ -55,7 +63,7 @@ struct EmittedCppSources {
 // foreign name space where it states anything.
 struct WrittenUnit {
   std::vector<std::string> files;
-  std::string translation_unit;
+  TranslationUnit translation_unit;
   std::optional<std::string> dpi_fragment;
 };
 
@@ -119,7 +127,7 @@ class CppProjectSink {
   // Formatting runs one process over every file rather than one per file, so
   // what was written is remembered while the text itself is not.
   std::vector<std::string> written_;
-  std::vector<std::string> translation_units_;
+  std::vector<TranslationUnit> translation_units_;
   std::vector<dpi::AbiFragment> dpi_fragments_;
 };
 
@@ -150,7 +158,7 @@ auto AssembleProject(
 // regardless.
 auto CompileProgram(
     const std::filesystem::path& dir,
-    std::span<const std::string> translation_units,
+    std::span<const TranslationUnit> translation_units,
     const RuntimeLocation& runtime,
     std::span<const std::filesystem::path> foreign_objects,
     const std::filesystem::path& program, const HostBuild& host)
