@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -112,17 +112,15 @@ auto LiftStringFormat(
 
 // LRM 21.3.4.3: a source or format that contains x or z makes the call answer
 // -1 and convert nothing. The test is on the operand as written, since the lift
-// to string silently drops the unknown bits. A format is always an operand the
-// rule covers; a source is one only where the call names it, which `$fscanf`
-// does not -- its source is the file's buffered text. An operand whose type
-// holds no unknown bit, a `string` among them, is known by that type and is
-// asked nothing.
+// to string silently drops the unknown bits. An operand whose type holds no
+// unknown bit, a `string` among them, is known by that type and is asked
+// nothing.
 auto EmitScanOperandsKnown(
     const mir::CompilationUnit& unit, mir::Block& body, mir::TypeId bit_t,
-    std::optional<mir::ExprId> source, mir::ExprId format) -> mir::ExprId {
+    std::span<const mir::ExprId> operands) -> mir::ExprId {
   std::vector<mir::ExprId> known;
-  const auto ask = [&](mir::ExprId operand) {
-    if (!CarriesUnknowns(unit, body.exprs.Get(operand).type)) return;
+  for (const mir::ExprId operand : operands) {
+    if (!CarriesUnknowns(unit, body.exprs.Get(operand).type)) continue;
     const mir::ExprId unknown_id = body.exprs.Add(
         mir::Expr{
             .data =
@@ -134,9 +132,7 @@ auto EmitScanOperandsKnown(
                     .arguments = {}},
             .type = bit_t});
     known.push_back(BuildLogicalNot(body, unknown_id));
-  };
-  if (source.has_value()) ask(*source);
-  ask(format);
+  }
   return BuildMirLogicalAnd(unit, body, bit_t, known);
 }
 
@@ -232,13 +228,18 @@ auto LowerScanSystemSubroutineCall(
           .init =
               BuildIntegerLiteral(unit, body, static_cast<std::int64_t>(-1))});
 
-  const std::optional<mir::ExprId> rule_source =
-      is_file ? std::nullopt
-              : std::optional{body.exprs.Add(
-                    mir::MakeLocalRefExpr(source_var, raw_source_type))};
-  const mir::ExprId known_id = EmitScanOperandsKnown(
-      unit, body, bit_t, rule_source,
+  // The format is always an operand the rule covers. The source is one only
+  // where the call names it, which `$fscanf` does not: its source is the file's
+  // buffered text.
+  std::vector<mir::ExprId> rule_operands;
+  if (!is_file) {
+    rule_operands.push_back(
+        body.exprs.Add(mir::MakeLocalRefExpr(source_var, raw_source_type)));
+  }
+  rule_operands.push_back(
       body.exprs.Add(mir::MakeLocalRefExpr(format_var, format_type)));
+  const mir::ExprId known_id =
+      EmitScanOperandsKnown(unit, body, bit_t, rule_operands);
 
   mir::Block scan_body;
   const WalkFrame scan_frame = step_frame.WithBlock(&scan_body);

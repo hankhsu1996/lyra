@@ -1161,10 +1161,8 @@ auto UnitLowerer::StateConformance(
                 if (!answered_by) {
                   return std::unexpected(std::move(answered_by.error()));
                 }
-                decl.conforming.push_back(
-                    hir::ConformingBehavior{
-                        .interface_behavior = *std::move(behavior),
-                        .answered_by = *std::move(answered_by)});
+                decl.conforming.emplace_back(
+                    *std::move(behavior), *std::move(answered_by));
               }
               return {};
             },
@@ -1186,14 +1184,12 @@ auto UnitLowerer::StateConformance(
                 if (!answered_by) {
                   return std::unexpected(std::move(answered_by.error()));
                 }
-                decl.conforming.push_back(
-                    hir::ConformingBehavior{
-                        .interface_behavior =
-                            hir::ExternalDispatchSlot{
-                                .unit_name = ext.unit_name,
-                                .class_name = ext.class_name,
-                                .behavior = ordinal},
-                        .answered_by = *std::move(answered_by)});
+                decl.conforming.emplace_back(
+                    hir::ExternalDispatchSlot{
+                        .unit_name = ext.unit_name,
+                        .class_name = ext.class_name,
+                        .behavior = ordinal},
+                    *std::move(answered_by));
                 ++ordinal.value;
               }
               return {};
