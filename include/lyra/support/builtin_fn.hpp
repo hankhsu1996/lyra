@@ -796,7 +796,18 @@ enum class BuiltinFn : std::uint16_t {
   // (`kRegisterFinal`) lifecycle. Distinct callees, not one tagged call --
   // initial and final are different registrations. Each dispatches on the
   // scope handle; the coroutine to register is a regular argument.
+  //
+  // What starts at time zero is registered by the kind of process it is,
+  // because the kinds start in turn: an `always` procedure
+  // (`kRegisterAlways`), a continuous assignment or a port connection
+  // (`kRegisterContinuousDriver`, LRM 4.9.1), an `initial` procedure
+  // (`kRegisterInitial`), and an `always_comb` or `always_latch`, which is
+  // triggered once the others have started (`kRegisterTriggered`, LRM
+  // 9.2.2.2).
+  kRegisterAlways,
+  kRegisterContinuousDriver,
   kRegisterInitial,
+  kRegisterTriggered,
   kRegisterFinal,
   // The extent a static initializer draws inside (LRM 18.14.1): entered before
   // the initializers a body runs and left on every way out of them, so a

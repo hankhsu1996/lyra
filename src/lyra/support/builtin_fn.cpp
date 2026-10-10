@@ -1204,10 +1204,22 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "process_resume",
           .declaration = RuntimeFunction("ProcessResume"),
           .takes_the_runtime_handle = true};
+    case BuiltinFn::kRegisterAlways:
+      return {
+          .name = "register_always",
+          .declaration = RuntimeFunction("RegisterAlwaysProcess")};
+    case BuiltinFn::kRegisterContinuousDriver:
+      return {
+          .name = "register_continuous_driver",
+          .declaration = RuntimeFunction("RegisterContinuousDriver")};
     case BuiltinFn::kRegisterInitial:
       return {
           .name = "register_initial",
           .declaration = RuntimeFunction("RegisterInitialProcess")};
+    case BuiltinFn::kRegisterTriggered:
+      return {
+          .name = "register_triggered",
+          .declaration = RuntimeFunction("RegisterTriggeredProcess")};
     case BuiltinFn::kRegisterFinal:
       return {
           .name = "register_final",

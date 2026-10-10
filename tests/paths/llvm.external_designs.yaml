@@ -26,13 +26,7 @@ OpenPiton:1x1:hello:
 OpenTitan:default:hello:
   stops: run
   says: did not end within
-VeeR-EH1:default:hello:
-  stops: run
-  says: did not end within
 VeeR-EH2:default:hello:
-  stops: run
-  says: did not end within
-VeeR-EL2:default:hello:
   stops: run
   says: did not end within
 Vortex:mini:hello:

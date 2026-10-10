@@ -35,7 +35,9 @@ module Top;
 
   final begin
     if (c.saw !== 1'b1) $fatal(1, "an upward net read %b, expected 1", c.saw);
-    if (c.woke !== 2) $fatal(1, "an upward net triggered %0d times, expected 2", c.woke);
+    // The first value the driver gives the net at time zero is a change too
+    // (LRM 4.9.1), then the two writes.
+    if (c.woke !== 3) $fatal(1, "an upward net triggered %0d times, expected 3", c.woke);
     $display("All checks passed");
   end
 endmodule

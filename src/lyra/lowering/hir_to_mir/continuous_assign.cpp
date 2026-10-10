@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <expected>
 #include <optional>
@@ -28,7 +27,6 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -37,8 +35,9 @@ namespace {
 
 // The driver a continuous assign drives its target net through. A field on the
 // enclosing class holds the handle; it is attached at Resolve, and every store
-// the assignment makes -- the Initialize seed and each body re-evaluation --
-// reaches the net through it.
+// the assignment makes reaches the net through it. Until the first one the
+// driver contributes nothing, so the net holds what an undriven one does and
+// the first value is a change to it (LRM 4.9.1).
 struct AttachedDriver {
   mir::FieldId field;
   mir::TypeId type;
@@ -93,10 +92,10 @@ auto StateContinuousDriver(
 // changes. HIR keeps continuous assignment as a distinct scope-level node so
 // source diagnostics retain provenance; at HIR -> MIR we materialise the
 // runtime shape as a coroutine body `forever { <store>; wait on reads; }`,
-// which the caller registers as a startup activation. The body executes once
-// at t=0 (the natural fall-through of the eternal loop) before the first
-// wait, matching LRM 9.2.2.2's "evaluate at time 0" requirement for inferred
-// sensitivity.
+// which the caller registers as a continuous driver. The body executes once
+// when it starts (the natural fall-through of the eternal loop) before the
+// first wait, which is the evaluation LRM 4.9.1 asks for to propagate constant
+// values.
 //
 // The target is an lvalue (LRM Table 10-1), and where each store lands follows
 // the type of the place it reaches. A net accepts no store, only a drive (LRM
@@ -175,10 +174,8 @@ auto LowerContinuousDrive(
   }
 
   // One evaluation: the right-hand side read once and each place written its
-  // share, a net's re-rooted onto its driver's contribution. The seed below
-  // asks for the driven places alone.
-  const auto emit_stores = [&](const WalkFrame& frame,
-                               bool only_driven) -> diag::Result<void> {
+  // share, a net's re-rooted onto its driver's contribution.
+  const auto emit_stores = [&](const WalkFrame& frame) -> diag::Result<void> {
     mir::Block& block = *frame.current_block;
     auto value_or = lowerer.LowerExpr(source, frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
@@ -192,8 +189,6 @@ auto LowerContinuousDrive(
       const std::optional<AttachedDriver>& driver = drivers[i];
       if (driver.has_value()) {
         share.place.owner = DriverAccess(unit, frame, block, *driver);
-      } else if (only_driven) {
-        continue;
       }
       block.AppendStmt(
           mir::ExprStmt{
@@ -202,19 +197,6 @@ auto LowerContinuousDrive(
     }
     return {};
   };
-
-  // A driver that has attached but not yet driven contributes the resolution
-  // identity, so a net would read as undriven to anything that reads it before
-  // the body first runs -- including another unit's Initialize, which the
-  // parent-first order can place after this one. Seeding the contribution in
-  // Initialize is what closes that window. A variable needs no seed: it holds
-  // its declared initial value until the body's own first pass.
-  if (std::ranges::any_of(
-          drivers, [](const auto& d) { return d.has_value(); })) {
-    if (auto seeded = emit_stores(init_frame, true); !seeded) {
-      return std::unexpected(std::move(seeded.error()));
-    }
-  }
 
   // A variable shows, once nothing overrides it, what its continuous driver
   // last produced (LRM 10.6.2), so the variable each place lies in is told it
@@ -241,7 +223,7 @@ auto LowerContinuousDrive(
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
 
-  if (auto stored = emit_stores(body_frame, false); !stored) {
+  if (auto stored = emit_stores(body_frame); !stored) {
     return std::unexpected(std::move(stored.error()));
   }
 

@@ -124,6 +124,7 @@ void Runtime::RunSimulation() {
     // reported and ends the run.
     RunAsLanding(*this, [this] { WalkInitialize(design_->Root()); });
     RunAsLanding(*this, [this] { WalkActivate(design_->Root()); });
+    StartFrom(0);
 
     // LRM 4.4: slots run in time order and the simulator never goes backwards,
     // so the earliest pending slot is always the next one. Time moves only to a
@@ -292,6 +293,39 @@ void Runtime::QueueFinal(Activation* top) {
   top->Queue(finals_);
 }
 
+namespace {
+
+// The turn a kind of process starts in at time zero.
+auto TurnOf(StartKind kind) -> std::size_t {
+  switch (kind) {
+    case StartKind::kAlwaysProcedure:
+      return 0;
+    case StartKind::kContinuousDriver:
+      return 1;
+    case StartKind::kInitialProcedure:
+      return 2;
+    case StartKind::kTriggeredProcedure:
+      return 3;
+  }
+  throw InternalError("TurnOf: a kind of starting process has no turn");
+}
+
+}  // namespace
+
+void Runtime::QueueStart(StartKind kind, Activation* top) {
+  top->Queue(starting_.at(TurnOf(kind)));
+}
+
+void Runtime::StartFrom(std::size_t turn) {
+  if (turn == starting_.size()) {
+    return;
+  }
+  starting_.at(turn).SpliceBackOnto(SlotAt(now_)[Region::kActive].activations);
+  // The Inactive region is reached once the Active one is empty (LRM 4.4.2.3),
+  // which is when every process of this turn has run to its first wait.
+  Submit(now_, Region::kInactive, [this, turn] { StartFrom(turn + 1); });
+}
+
 auto Runtime::ClaimNamespaceInitialization(std::string_view name) -> bool {
   return initialized_namespaces_.emplace(name).second;
 }
@@ -429,16 +463,51 @@ void Runtime::RunProcess(Activation* activation) {
   RuntimeProcess::ReleaseTerminatedLineage(process);
 }
 
-void RegisterInitialProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    const char* written_at) {
+namespace {
+
+void RegisterStartingProcess(
+    StartKind kind, Scope* owning_scope, Scope* unit_instance,
+    Coroutine<void> coroutine, const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
   auto process = std::make_shared<RuntimeProcess>(
       owning_scope, std::move(coroutine),
       unit_instance->InitializationSeeds().NextSeed(), written_at);
-  // LRM 9.2: an `initial` or `always` starts on the Active queue at time 0.
-  rt.Schedule(rt.Now(), Region::kActive, process->TopActivation());
+  rt.QueueStart(kind, process->TopActivation());
   rt.RegisterProcessInRegistry(std::move(process));
+}
+
+}  // namespace
+
+void RegisterAlwaysProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at) {
+  RegisterStartingProcess(
+      StartKind::kAlwaysProcedure, owning_scope, unit_instance,
+      std::move(coroutine), written_at);
+}
+
+void RegisterContinuousDriver(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at) {
+  RegisterStartingProcess(
+      StartKind::kContinuousDriver, owning_scope, unit_instance,
+      std::move(coroutine), written_at);
+}
+
+void RegisterInitialProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at) {
+  RegisterStartingProcess(
+      StartKind::kInitialProcedure, owning_scope, unit_instance,
+      std::move(coroutine), written_at);
+}
+
+void RegisterTriggeredProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at) {
+  RegisterStartingProcess(
+      StartKind::kTriggeredProcedure, owning_scope, unit_instance,
+      std::move(coroutine), written_at);
 }
 
 void RegisterFinalProcess(

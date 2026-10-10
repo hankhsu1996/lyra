@@ -21,14 +21,14 @@ This workstream reasons from these and does not restate them:
   is forbidden.
 - `../decisions/net-driver-resolution.md` -- the settled model: a resolution node with node-owned
   driver contributions and capability-handle drivers; attach during Resolve; the materialized Seal
-  barrier; seed in Initialize; inline resolution reusing publish-on-change.
+  barrier; a driver's first value at time zero; inline resolution reusing publish-on-change.
 - `../decisions/net-type-is-a-fold-and-a-contribution.md` -- what a net type states: which truth
   table resolves contributions of equal strength, and the contribution the net type makes to the
   net's own resolution.
 - `../decisions/joined-nets-are-one-resolution.md` -- what one resolution covers: the nets a
   bidirectional connection has joined, pooling their contributions rather than their results.
-- `../architecture/elaboration_lifecycle.md` -- the phase protocol the attach / seal / seed steps
-  ride on.
+- `../architecture/elaboration_lifecycle.md` -- the phase protocol the attach and seal steps ride
+  on, and the order processes start in at time zero.
 
 ## Lifecycle prerequisite
 
@@ -44,9 +44,10 @@ This workstream reasons from these and does not restate them:
 
 - [x] N1 -- A `wire` / `tri` net declaration is a single-driver signal driven by one continuous
       assignment, in either form: an explicit `assign` or a net-declaration assignment
-      (`wire w = expr`). The driver attaches at Resolve, seeds at Initialize, and updates in the
-      activation process; a read observes the driver's value. Single-driver is the identity case of
-      the resolution model, not a special path.
+      (`wire w = expr`). The driver attaches at Resolve contributing nothing, and gives its first
+      value at time zero once every `always` procedure is waiting, so that value is a change they
+      see (LRM 4.9.1); a read observes the driver's value from then on. Single-driver is the
+      identity case of the resolution model, not a special path.
 - [x] N2 -- Net-typed port connections (LRM 23.3.3), single-driver, both directions: a parent net or
       variable drives a child's input net, and a child's output net drives a parent variable or net,
       distributed across an instance array and through multi-level chains. A connection is one
