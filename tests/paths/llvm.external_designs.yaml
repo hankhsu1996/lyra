@@ -10,7 +10,7 @@
 # getting all the way.
 BlackParrot:1x1:hello:
   stops: run
-  says: the current time slot did not settle
+  says: did not end within
 Caliptra:default:hello:
   stops: build
   says: taking over part of a target is not yet supported

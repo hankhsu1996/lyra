@@ -1099,6 +1099,35 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
       << run.stderr_text;
   EXPECT_EQ(run.stdout_text.find("reached time 1"), std::string::npos)
       << "stdout: " << run.stdout_text;
+
+  // A clock whose period is zero, and more registers than a report names.
+  // What keeps the slot going is the one generator, which comes back more
+  // often than any register, so it is named first and is never among those
+  // left out.
+  const auto clocked = *tmp_or / "clocked.sv";
+  std::ofstream(clocked) << "module Register (input bit clk);\n"
+                         << "  int count;\n"
+                         << "  always @(posedge clk) count <= count + 1;\n"
+                         << "endmodule\n"
+                         << "module Test;\n"
+                         << "  bit clk;\n"
+                         << "  Register held [12] (.clk(clk));\n"
+                         << "  always #0 clk = ~clk;\n"
+                         << "endmodule\n";
+  const std::vector<std::string> clocked_args = {
+      "run", "--backend", "llvm", "--top", "Test", clocked.string()};
+  const auto stuck = RunChildProcess(lyra, clocked_args, 120s);
+  ASSERT_EQ(stuck.termination, TerminationKind::kExitedNonZero)
+      << stuck.stdout_text << stuck.stderr_text;
+  const auto generator =
+      stuck.stderr_text.find("clocked.sv:8:3: this procedure in Test ran");
+  const auto registers =
+      stuck.stderr_text.find("clocked.sv:3:3: this procedure in Test.held[");
+  ASSERT_NE(generator, std::string::npos) << stuck.stderr_text;
+  ASSERT_NE(registers, std::string::npos) << stuck.stderr_text;
+  EXPECT_LT(generator, registers) << stuck.stderr_text;
+  EXPECT_NE(stuck.stderr_text.find("and 5 more procedures"), std::string::npos)
+      << stuck.stderr_text;
 }
 
 // A procedure that never stops to wait cannot be told from one that is only

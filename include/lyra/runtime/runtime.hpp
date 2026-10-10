@@ -180,12 +180,13 @@ class Runtime final : public RuntimeEffects {
   // How many procedures the report of an unsettled slot names one by one.
   static constexpr std::size_t kMaxNamedProcedures = 8;
 
-  // One procedure an unsettled slot was still running: where it is written,
-  // the scope it runs in, and how many of the noted passes ran it.
-  struct StillRunning {
+  // One procedure an unsettled slot was still running: where it is written and
+  // the scope it runs in.
+  struct NotedProcedure {
     const char* written_at;
     const Scope* scope;
-    std::size_t runs;
+
+    auto operator<=>(const NotedProcedure&) const = default;
   };
 
   // The slot at `when`, created on first use. LRM 4.4 has the simulator never
@@ -211,13 +212,10 @@ class Runtime final : public RuntimeEffects {
   // through Re-NBA remains, then Postponed. Work a region produces lands back
   // in the slot, so the middle step repeats until the slot settles.
   void ExecuteTimeSlot(TimeSlot& slot);
-  // Runs what `region` holds, adding each procedure it runs to `noted` where
-  // the pass is one whose procedures are noted.
-  void RunRegion(
-      TimeSlot& slot, Region region, std::vector<StillRunning>* noted);
-  // The fatal report of a slot that met the bound on its passes, and the
-  // procedures its last passes ran.
-  void ReportUnsettledSlot(std::span<const StillRunning> still_running);
+  void RunRegion(TimeSlot& slot, Region region);
+  // The fatal report of a slot that met the bound on its passes, and what its
+  // last passes ran, a procedure once for each time it ran.
+  void ReportUnsettledSlot(std::span<const NotedProcedure> ran);
   void ExecuteFinalProcesses();
   // LRM 4: variable initialization and process activation are simulation
   // activity at time zero, so a run-time error raised by either is the design's
