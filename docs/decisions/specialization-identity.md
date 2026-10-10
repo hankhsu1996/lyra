@@ -83,6 +83,15 @@ marked a duplicate by the frontend while the two reach different types at the sa
 -- so the relation that looked safe to borrow was already wrong on a construct ordinary RTL writes,
 which is how a bundle of identical links between blocks is spelled.
 
+Skipping the reading of an occurrence the frontend marked a duplicate is a different thing from
+borrowing its relation, and a compile does it. It skips one only where its own comparison of what
+the instantiation fixes finds the two one application, and takes for it what the body it duplicates
+states. What holds that to this finding is a second lowering of every corpus design with every
+occurrence read through its own body, which must agree with the first. Each divergence found that
+way -- the interface range above, a real parameter compared as a number, a subroutine reached by an
+upward name -- was also wrong as the frontend's own answer, and was closed there or covered by a
+condition here.
+
 ### F5. The selections and the body come from the same instantiation
 
 A body's contents are elaborated under some particular set of fixed selections: the types of the

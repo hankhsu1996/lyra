@@ -78,10 +78,12 @@ auto ApplicationOf(
   return application;
 }
 
-// What the collection found: the distinct units, and every other instance,
-// each of which shares one of them. A unit compiles one body for all of its
-// instances, and that is sound only if each lowers to what the unit lowers to,
-// so each is checked against it.
+// What the collection found: the distinct units, and every other instance
+// read through a body of its own, each of which shares one of them. A unit
+// compiles one body for all of its instances, and that is sound only if each
+// lowers to what the unit lowers to, so each of these is checked against it.
+// An instance the front end left sharing another's body is not among them: it
+// is one application with an instance that is.
 //
 // The two kinds differ in what a difference means. A witness was handed values
 // none of the unit's earlier instances was, so a difference is those values
@@ -109,9 +111,10 @@ struct Collected {
 // instance at construction and never inside the unit, so the unit itself is the
 // same.
 //
-// Descending reaches each occurrence's own body, so a child is collected under
-// what its own parent fixed for it, and every occurrence is reached, because
-// each is held to the unit it shares.
+// Descending reaches an occurrence's own body, so a child is collected under
+// what its own parent fixed for it. An occurrence the front end left sharing
+// another's body is not descended into where it is one application with an
+// instance already found: what is below it was collected under that one.
 //
 // A virtual interface's type names an interface together with its parameters
 // (LRM 25.9), and code reaching through one compiles against that unit's
