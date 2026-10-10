@@ -310,12 +310,13 @@ class SpecializationPolicy {
   [[nodiscard]] auto NameOf(const slang::ast::InstanceSymbol& inst) const
       -> std::string;
 
-  // Naming one instance can ask for the name of another, where a name it writes
-  // lands there, and that one may land back in the first: a path from the top
-  // can name any instance (LRM 23.6), the one writing it included. These record
-  // the chain of instances whose names are being worked out, so a name landing
-  // on one of them is told by how far out on the chain it is rather than by a
-  // name nobody has yet.
+  // Naming one instance can ask which unit another is -- where a name it writes
+  // lands (LRM 23.6), where a type it is fixed to is declared (LRM 6.22), where
+  // its own definition is nested (LRM 23.4) -- and the answer may be an
+  // instance whose name is still being worked out, the one asking included.
+  // These record the chain of instances being named, so such an instance is
+  // told by how far out on the chain it is rather than by a name nobody has
+  // yet.
   void EnterNaming(const slang::ast::InstanceBodySymbol& body) const;
   void LeaveNaming() const;
   [[nodiscard]] auto LevelsOutTo(const slang::ast::InstanceBodySymbol& body)

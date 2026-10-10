@@ -3,7 +3,8 @@
 // packed structure or union, a type written in place of a name, a type holding
 // another, an array of one. Each instance of that module then holds a child
 // bound to its own declaration of the type (LRM 6.22), and each child carries
-// what its own holder drives.
+// what its own holder drives. A module may equally bind a type parameter of its
+// own to a type it declares (LRM 6.20.4), and hand that parameter on.
 module Carrier #(
     parameter type T = logic
 ) (
@@ -30,6 +31,9 @@ endclass
 interface Link;
   typedef struct packed {logic [3:0] lane;} beat_t;
   beat_t beat;
+
+  localparam type held_t = beat_t;
+  held_t held;
 endinterface
 
 module Through (
@@ -78,6 +82,15 @@ module Holder (
 
   struct packed {logic [3:0] code;} in_place_d, in_place_q;
 
+  class Note;
+    int count;
+  endclass
+
+  localparam type own_t = packet_t;
+  localparam type own_pair_t = own_t [1:0];
+  localparam type own_level_t = enum logic [1:0] {OFF, ON};
+  localparam type note_t = Note;
+
   packet_t packet_d, packet_q;
   word_t word_d, word_q;
   state_t state_d, state_q;
@@ -86,6 +99,11 @@ module Holder (
   record_t record_d, record_q;
   Box #(packet_t) box;
   int box_width = -1;
+  own_t own_d, own_q;
+  own_pair_t own_pair;
+  own_level_t own_level;
+  note_t note;
+  int note_count = -1;
 
   Carrier #(packet_t) packet_c (
       .d(packet_d),
@@ -115,6 +133,10 @@ module Holder (
       .d(in_place_d),
       .q(in_place_q)
   );
+  Carrier #(own_t) own_c (
+      .d(own_d),
+      .q(own_q)
+  );
 
   for (genvar i = 0; i < 2; i++) begin : lane
     typedef struct packed {logic [3:0] slot;} slot_t;
@@ -140,6 +162,13 @@ module Holder (
     in_place_d.code = seed;
     box = new();
     box_width = box.width();
+    own_d = '{tag: ~seed, flag: 1'b0};
+    own_pair[0] = '{tag: seed, flag: 1'b1};
+    own_pair[1] = own_d;
+    own_level = seed[0] ? ON : OFF;
+    note = new();
+    note.count = int'(seed) + 200;
+    note_count = note.count;
   end
 endmodule
 
@@ -155,6 +184,8 @@ module Top;
   initial begin
     through_a.d.lane = 4'd5;
     through_b.d.lane = 4'd6;
+    link_a.held.lane = 4'd11;
+    link_b.held.lane = 4'd12;
   end
 
   final begin
@@ -214,6 +245,27 @@ module Top;
       $fatal(1, "through_a.q.lane was %0d, expected 5", through_a.q.lane);
     if (through_b.q.lane !== 4'd6)
       $fatal(1, "through_b.q.lane was %0d, expected 6", through_b.q.lane);
+
+    if (first.own_q.tag !== 4'd12 || first.own_q.flag !== 1'b0)
+      $fatal(1, "first.own_q was %b, expected 11000", first.own_q);
+    if (second.own_q.tag !== 4'd6 || second.own_q.flag !== 1'b0)
+      $fatal(1, "second.own_q was %b, expected 01100", second.own_q);
+    if (first.own_c.width !== 5)
+      $fatal(1, "first.own_c.width was %0d, expected 5", first.own_c.width);
+    if ($bits(first.own_pair) !== 10 || first.own_pair[1].tag !== 4'd12)
+      $fatal(1, "first.own_pair was %b, expected 1100000111", first.own_pair);
+    if (second.own_pair[0].tag !== 4'd9 || second.own_pair[1].tag !== 4'd6)
+      $fatal(1, "second.own_pair was %b, expected 0110010011", second.own_pair);
+    if (first.own_level.name() != "ON")
+      $fatal(1, "first.own_level was %s, expected ON", first.own_level.name());
+    if (first.note_count !== 203)
+      $fatal(1, "first.note_count was %0d, expected 203", first.note_count);
+    if (second.note_count !== 209)
+      $fatal(1, "second.note_count was %0d, expected 209", second.note_count);
+    if (link_a.held.lane !== 4'd11)
+      $fatal(1, "link_a.held.lane was %0d, expected 11", link_a.held.lane);
+    if (link_b.held.lane !== 4'd12)
+      $fatal(1, "link_b.held.lane was %0d, expected 12", link_b.held.lane);
 
     $display("All checks passed");
   end
