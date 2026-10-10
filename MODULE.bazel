@@ -57,10 +57,10 @@ register_toolchains("@buildbuddy_toolchain//:all")
 
 # The designs Verilator's benchmark suite builds and runs, each with the tests
 # and the checks its authors gave it. Nothing here is Lyra's: the suite is read
-# as it is published, at one commit, so that a design that stops doing what it
-# did is a change of Lyra's and not of the suite's. It is fetched only when a
-# target that reads it is built, and those are named outright and never part of
-# `//...`.
+# at one commit, so that a design that stops doing what it did is a change of
+# Lyra's and not of the suite's, and what is applied on top is only what has
+# been sent to the suite itself. It is fetched only when a target that reads it
+# is built, and those are named outright and never part of `//...`.
 git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 
 git_repository(
@@ -76,6 +76,8 @@ filegroup(
 )
 """,
     commit = "5e38c1db13244990ef7a60071c430f2c0519f709",
+    patch_strip = 1,
+    patches = ["//third_party/rtlmeter:nvdla_test_done_level.patch"],
     remote = "https://github.com/verilator/rtlmeter.git",
 )
 

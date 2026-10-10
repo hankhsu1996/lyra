@@ -18,8 +18,8 @@ HammerBlade:16x8:hello:
   stops: run
   says: out of memory
 NVDLA:default:hello:
-  stops: check
-  says: "cmp: mem-dump-0.hex"
+  stops: run
+  says: out of memory
 OpenPiton:1x1:hello:
   stops: build
   says: the front end could give it no meaning

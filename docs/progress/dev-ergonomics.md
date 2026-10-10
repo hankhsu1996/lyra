@@ -309,11 +309,12 @@ layer directly.
 
 - [ ] D28 -- How far the designs of Verilator's benchmark suite get is measured every night and held
       to a record: for each design the case the suite marks as its quick check is built on the
-      execution backend, run, and checked by the suite's own script. Of seventeen cases none builds
-      yet: every one stops on a concatenation as the target of a continuous assignment or an output
-      port connection. The largest takes nine minutes to be refused with the compiler built
-      optimized. Not built: a case past its build has not been seen, so what running and checking
-      one needs is unmeasured.
+      execution backend, run, and checked by the suite's own script. Of seventeen cases six get all
+      the way; of the eleven that do not, four stop in their build and seven in their run (two
+      refused memory, four that do not end inside the limit, one whose time slot does not settle),
+      and none at its check. One correction to the suite is applied on top of it and has been
+      reported there: a testbench that took an unknown value on its done signal for the end of the
+      test.
 
 ## Out of Scope
 
