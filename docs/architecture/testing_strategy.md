@@ -12,6 +12,7 @@ published standard, and everything below follows from that.
 - What a case may state, and in what form.
 - Where a case lives, and why the location is the standard's structure.
 - Where a path's limitations and its defects are recorded, and how they are kept honest.
+- What a design written elsewhere, and its own check, may be taken to show.
 
 ## Does Not Own
 
@@ -87,6 +88,14 @@ published standard, and everything below follows from that.
     is what that path still owes on that question. A new question is a new body in this shape, never
     a second way of excusing a failure -- a skipped test, a tolerance widened to pass, an
     expectation edited to match.
+
+13. **What a design written elsewhere checks of itself is evidence, never the oracle.** Its
+    testbench and its check were validated on the simulator its authors ran. A check that passes
+    says a second tool agreed with that one; a check that fails says only that the two differ, and
+    which of them is right is read off the standard, where a case of the corpus states the clause. A
+    testbench that asks for something the standard does not grant is corrected in the suite it came
+    from, and that same correction is applied here until the suite holds it, so the design goes on
+    being measured on the work it was written to do.
 
 ## Boundary to Adjacent Layers
 

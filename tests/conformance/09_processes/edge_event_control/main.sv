@@ -1,10 +1,11 @@
 // A posedge is a transition toward 1 and a negedge a transition toward 0,
 // which by Table 9-2 makes 0 to x, 0 to z and x or z to 1 posedges and 1 to x,
-// 1 to z and x or z to 0 negedges; `edge` is either of them (LRM 9.4.2). On an
-// expression wider than one bit the edge is detected only on the least
-// significant bit of the expression, so a change confined to the other bits is
-// no edge whatever it does to the value, and the same rule reads a bit-select,
-// a part-select and an indexed part-select through the bits each of them names.
+// 1 to z and x or z to 0 negedges, and a move between x and z neither; `edge`
+// is either of the two (LRM 9.4.2). On an expression wider than one bit the
+// edge is detected only on the least significant bit of the expression, so a
+// change confined to the other bits is no edge whatever it does to the value,
+// and the same rule reads a bit-select, a part-select and an indexed
+// part-select through the bits each of them names.
 // The operand is any integral type (LRM 6.11.1), so an enumeration, a packed
 // structure and a packed union are read for their least significant bit like
 // any vector -- which is why a move to a numerically smaller enumerator can be
@@ -28,6 +29,12 @@ module Top;
   logic x_to_one = 1'bx;
   logic one_to_x = 1'b1;
   logic x_to_zero = 1'bx;
+  logic zero_to_z = 1'b0;
+  logic z_to_one = 1'bz;
+  logic one_to_z = 1'b1;
+  logic z_to_zero = 1'bz;
+  logic x_to_z = 1'bx;
+  logic z_to_x = 1'bz;
 
   logic [7:0] whole = 8'h00;
   logic [7:0] noisy = 8'h00;
@@ -48,6 +55,12 @@ module Top;
   time x_to_one_at;
   time one_to_x_at;
   time x_to_zero_at;
+  time zero_to_z_at;
+  time z_to_one_at;
+  time one_to_z_at;
+  time z_to_zero_at;
+  int x_to_z_woke;
+  int z_to_x_woke;
   time whole_at;
   time noisy_at;
   time ranged_at;
@@ -97,6 +110,36 @@ module Top;
   initial begin
     @(negedge x_to_zero);
     x_to_zero_at = $time;
+  end
+
+  initial begin
+    @(posedge zero_to_z);
+    zero_to_z_at = $time;
+  end
+
+  initial begin
+    @(posedge z_to_one);
+    z_to_one_at = $time;
+  end
+
+  initial begin
+    @(negedge one_to_z);
+    one_to_z_at = $time;
+  end
+
+  initial begin
+    @(negedge z_to_zero);
+    z_to_zero_at = $time;
+  end
+
+  initial begin
+    @(edge x_to_z);
+    x_to_z_woke = 1;
+  end
+
+  initial begin
+    @(edge z_to_x);
+    z_to_x_woke = 1;
   end
 
   initial begin
@@ -158,6 +201,12 @@ module Top;
     x_to_one = 1'b1;
     one_to_x = 1'bx;
     x_to_zero = 1'b0;
+    zero_to_z = 1'bz;
+    z_to_one = 1'b1;
+    one_to_z = 1'bz;
+    z_to_zero = 1'b0;
+    x_to_z = 1'bz;
+    z_to_x = 1'bx;
     whole = 8'hF1;
     noisy[3] = 1'b1;
     ranged[4] = 1'b1;
@@ -189,6 +238,18 @@ module Top;
       $fatal(1, "one_to_x_at was %0d, expected 10", one_to_x_at);
     if (x_to_zero_at !== 10)
       $fatal(1, "x_to_zero_at was %0d, expected 10", x_to_zero_at);
+    if (zero_to_z_at !== 10)
+      $fatal(1, "zero_to_z_at was %0d, expected 10", zero_to_z_at);
+    if (z_to_one_at !== 10)
+      $fatal(1, "z_to_one_at was %0d, expected 10", z_to_one_at);
+    if (one_to_z_at !== 10)
+      $fatal(1, "one_to_z_at was %0d, expected 10", one_to_z_at);
+    if (z_to_zero_at !== 10)
+      $fatal(1, "z_to_zero_at was %0d, expected 10", z_to_zero_at);
+    if (x_to_z_woke !== 0)
+      $fatal(1, "x_to_z_woke was %0d, expected 0", x_to_z_woke);
+    if (z_to_x_woke !== 0)
+      $fatal(1, "z_to_x_woke was %0d, expected 0", z_to_x_woke);
     if (whole_at !== 10)
       $fatal(1, "whole_at was %0d, expected 10", whole_at);
     if (noisy_at !== 10)

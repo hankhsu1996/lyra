@@ -184,12 +184,19 @@ write, so `external_design_tests` builds and runs the designs of Verilator's ben
 each, the case the suite itself marks as its quick check, built on the execution backend, run with
 the suite's arguments, and held to the suite's own check of the output.
 
-The suite is read as it publishes it and nothing of Lyra's is kept in it. `MODULE.bazel` names one
-commit of it, and the test writes each design's declaration from the descriptor the suite gives
-every simulator. Three things are said of every design that its descriptor does not say, because
-they are how the simulator the sources were prepared for reads them: the macros that simulator
-predefines, every file as one compilation unit, and, where the sources state one time scale and
-leave other elements without, that time scale for all of them.
+Nothing of Lyra's is kept in the suite. `MODULE.bazel` names one commit of it, and the test writes
+each design's declaration from the descriptor the suite gives every simulator. Three things are said
+of every design that its descriptor does not say, because they are how the simulator the sources
+were prepared for reads them: the macros that simulator predefines, every file as one compilation
+unit, and, where the sources state one time scale and leave other elements without, that time scale
+for all of them.
+
+What is applied on top of that commit is a correction the suite itself has been sent. Its
+testbenches were run on a simulator that keeps no unknown value, so one can ask for what the
+standard does not grant, and a design stopped there is measured on nothing. Such a correction is
+right for any simulator that follows the standard, is argued from the clause with a case of the
+corpus holding it, and sits under `third_party/rtlmeter/` until the named commit contains it. One
+the suite declines is taken out again, and the case is then recorded as stopping where it does.
 
 A step that takes more than half an hour, or asks for more memory than the smallest machine these
 run on holds, stops the case there. The first is set well past the slowest build measured, so that a
@@ -296,8 +303,10 @@ multiplies.
 
 `external-designs-nightly.yml` runs `external_design_tests`, one job per case, with the compiler
 built optimized. It **gates its own run**: a case that stops somewhere other than where it is
-recorded as stopping is either further along, which is an entry to update, or a regression. The jobs
-are the cases the test itself lists, so a design the suite gains is run without this file changing.
+recorded as stopping is either further along, which is an entry to update, or a regression. One that
+newly stops at its check is read against the standard before it is called either, since the check is
+the suite's and was written for another simulator. The jobs are the cases the test itself lists, so
+a design the suite gains is run without this file changing.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` and times it beside Verilator on
 the same sources, giving each tool the amount of work it needs to reach the same duration. It gates

@@ -3,11 +3,11 @@
 // what stops a real design is a hierarchy, a size, or a way of writing that no
 // clause-by-clause case thinks to write.
 //
-// The designs are those of Verilator's benchmark suite, read as that suite
-// publishes them. Each states its sources, what reading them needs, its tests
-// and the script that checks a run, once, for any simulator; what is built from
-// that here is a declaration of the design in Lyra's own form, so a case is
-// reproduced by building in the directory that declaration is written to.
+// The designs are those of Verilator's benchmark suite. Each states its
+// sources, what reading them needs, its tests and the script that checks a run,
+// once, for any simulator; what is built from that here is a declaration of the
+// design in Lyra's own form, so a case is reproduced by building in the
+// directory that declaration is written to.
 //
 // A case is the one the suite marks as a design's quick check. What it is
 // recorded as stopping on is held exactly: a case that stops somewhere else,
