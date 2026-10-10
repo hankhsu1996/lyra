@@ -290,14 +290,25 @@ auto DeclarationOf(
     native.push_back((design_dir / file).string());
   }
 
-  // A time scale is a fact about the design that the descriptor has no place
-  // for of its own, so it is written among the reference simulator's options.
-  // Where it is not, and the sources state exactly one, that one is it: the
-  // reference simulator reads an element stating none at the time scale the
-  // rest of the design states, where the standard has a design that states
-  // one for some elements and not others be an error (LRM 3.14.2.3).
-  std::string time_scale;
+  // A time scale and a value for a parameter of the top are facts about the
+  // design that the descriptor has no place for of their own, so they are
+  // written among the reference simulator's options. A design built without
+  // its values is another design: a clock whose period is left at a default
+  // of zero never lets time advance.
   const std::vector<std::string> options = ListOf(compile, "verilatorArgs");
+  std::vector<std::string> values;
+  for (const std::string& option : options) {
+    if (option.starts_with("-G")) {
+      values.push_back(option.substr(2));
+    }
+  }
+
+  // Where no time scale is among them, and the sources state exactly one, that
+  // one is it: the reference simulator reads an element stating none at the
+  // time scale the rest of the design states, where the standard has a design
+  // that states one for some elements and not others be an error (LRM
+  // 3.14.2.3).
+  std::string time_scale;
   if (const auto flag = std::ranges::find(options, "--timescale");
       flag != options.end() && std::next(flag) != options.end()) {
     time_scale = std::format("timescale = {}\n", TomlString(*std::next(flag)));
@@ -308,11 +319,12 @@ auto DeclarationOf(
 
   return std::format(
       "[library]\nname = {}\nfiles = {}\nincdir = {}\ndefines = {}\ndpi = {}\n"
-      "\n[design]\ntop = [{}]\n"
+      "\n[design]\ntop = [{}]\nparams = {}\n"
       "\n[compile]\n{}single_unit = true\nassertions = \"skip\"\n",
       TomlString(LibraryNameOf(design)), TomlArray(files), TomlArray(incdir),
       TomlArray(defines), TomlArray(native),
-      TomlString(LastOf(compile, "topModule").value_or("")), time_scale);
+      TomlString(LastOf(compile, "topModule").value_or("")), TomlArray(values),
+      time_scale);
 }
 
 // Every case of one design that the suite marks as its quick check.

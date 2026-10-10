@@ -6,7 +6,9 @@
 #include <ctime>
 #include <format>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -34,6 +36,10 @@ namespace {
 auto ProcessorSeconds() -> double {
   return static_cast<double>(std::clock()) /
          static_cast<double>(CLOCKS_PER_SEC);
+}
+
+auto Times(std::size_t count) -> std::string {
+  return count == 1 ? "once" : std::format("{} times", count);
 }
 
 }  // namespace
@@ -229,24 +235,41 @@ auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
       .procedure = process->WrittenAt()};
 }
 
-void Runtime::ReportUnsettledSlot(std::span<const StillRunning> still_running) {
+void Runtime::ReportUnsettledSlot(std::span<const NotedProcedure> ran) {
   ReportDesignError("the design keeps scheduling work and time never advances");
-  const std::span<const StillRunning> named =
-      still_running.first(std::min(still_running.size(), kMaxNamedProcedures));
-  for (const StillRunning& procedure : named) {
-    const std::string_view written_at = procedure.written_at;
-    diagnostic_.Note(
-        std::format(
-            "note: {}{}this procedure in {} ran {} times in the last {} passes",
-            written_at, written_at.empty() ? "" : ": ",
-            std::string_view{procedure.scope->HierarchicalPath().View()},
-            procedure.runs, kNotedRegionPasses));
+
+  // Each procedure once, in the order they first ran, with how many times it
+  // ran.
+  struct Counted {
+    NotedProcedure procedure;
+    std::size_t runs;
+  };
+  std::vector<Counted> counted;
+  std::map<NotedProcedure, std::size_t> index_of;
+  for (const NotedProcedure& procedure : ran) {
+    const auto [at, first] = index_of.try_emplace(procedure, counted.size());
+    if (first) {
+      counted.push_back(Counted{.procedure = procedure, .runs = 0});
+    }
+    ++counted.at(at->second).runs;
   }
-  if (named.size() < still_running.size()) {
+  // What keeps a slot going is what comes back most often, so that is named
+  // first.
+  std::ranges::stable_sort(counted, std::ranges::greater{}, &Counted::runs);
+
+  const std::size_t named = std::min(counted.size(), kMaxNamedProcedures);
+  for (const Counted& one : std::span{counted}.first(named)) {
+    const std::string_view written_at = one.procedure.written_at;
     diagnostic_.Note(
         std::format(
-            "note: and {} more procedures",
-            still_running.size() - named.size()));
+            "note: {}{}this procedure in {} ran {} in the last {} passes",
+            written_at, written_at.empty() ? "" : ": ",
+            std::string_view{one.procedure.scope->HierarchicalPath().View()},
+            Times(one.runs), kNotedRegionPasses));
+  }
+  if (named < counted.size()) {
+    diagnostic_.Note(
+        std::format("note: and {} more procedures", counted.size() - named));
   }
 }
 
@@ -353,9 +376,9 @@ auto Runtime::SlotAt(SimTime when) -> TimeSlot& {
 }
 
 void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
-  RunRegion(slot, Region::kPreponed, nullptr);
+  RunRegion(slot, Region::kPreponed);
   std::size_t passes = 0;
-  std::vector<StillRunning> still_running;
+  std::vector<NotedProcedure> ran;
   // LRM 4.5: take the earliest region that has anything, run it, and look
   // again -- what it produced lands back in the slot. The reactive group comes
   // after Observed in the order, so it is reached only once the active group is
@@ -364,13 +387,24 @@ void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
   while (std::optional<Region> region =
              slot.FirstPending(Region::kActive, Region::kReNba)) {
     if (++passes > kMaxRegionPassesPerSlot) {
-      ReportUnsettledSlot(still_running);
+      ReportUnsettledSlot(ran);
       return;
     }
-    const bool noted = passes > kMaxRegionPassesPerSlot - kNotedRegionPasses;
-    RunRegion(slot, *region, noted ? &still_running : nullptr);
+    if (passes > kMaxRegionPassesPerSlot - kNotedRegionPasses) {
+      // What a pass runs is what its region holds as the pass begins, and a
+      // procedure is noted from there because its run may be the one that ends
+      // it.
+      slot[*region].activations.ForEach([&ran](const QueuePlace& queued) {
+        const RuntimeProcess& process = queued.activation->Process();
+        ran.push_back(
+            NotedProcedure{
+                .written_at = process.WrittenAt(),
+                .scope = process.OwningScope()});
+      });
+    }
+    RunRegion(slot, *region);
   }
-  RunRegion(slot, Region::kPostponed, nullptr);
+  RunRegion(slot, Region::kPostponed);
   if (std::holds_alternative<Running>(state_) && !slot.Empty()) {
     ReportDesignError(
         "the postponed region scheduled work back into the time slot that "
@@ -378,8 +412,7 @@ void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
   }
 }
 
-void Runtime::RunRegion(
-    TimeSlot& slot, Region region, std::vector<StillRunning>* noted) {
+void Runtime::RunRegion(TimeSlot& slot, Region region) {
   RegionQueue& queue = slot[region];
   // LRM 9.3.2: work arriving while this pass runs belongs to the next pass, so
   // both snapshots move out of the region and new arrivals accumulate behind
@@ -393,24 +426,6 @@ void Runtime::RunRegion(
   while (QueuePlace* queued = draining_.PopFront()) {
     Activation* activation = queued->activation;
     ConsumeWait(activation);
-    if (noted != nullptr) {
-      // Taken before the process runs, which may be the run that ends it.
-      const RuntimeProcess& process = activation->Process();
-      const auto same =
-          std::ranges::find_if(*noted, [&](const StillRunning& procedure) {
-            return procedure.written_at == process.WrittenAt() &&
-                   procedure.scope == process.OwningScope();
-          });
-      if (same == noted->end()) {
-        noted->push_back(
-            StillRunning{
-                .written_at = process.WrittenAt(),
-                .scope = process.OwningScope(),
-                .runs = 1});
-      } else {
-        ++same->runs;
-      }
-    }
     RunProcess(activation);
   }
 }
