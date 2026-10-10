@@ -160,6 +160,21 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
 
   void handle(const slang::ast::InstanceSymbol& inst) {
     std::string name = policy->NameOf(inst);
+    if (!policy->HasBodyOfItsOwn(inst)) {
+      // One application with an instance already found: nothing of it is
+      // read, not its body and so nothing below it either.
+      if (named.contains(name) &&
+          applications.contains(ApplicationOf(inst, name, *policy))) {
+        return;
+      }
+      // The first instance its unit is met through, or the first handed
+      // these values: either is read through its own body after all, and
+      // named by what that body says. Which values are the same is this
+      // compiler's answer and not the front end's, whose own comparison calls
+      // 0.0 and -0.0 one value.
+      policy->ReadBodyOf(inst);
+      name = policy->NameOf(inst);
+    }
     const bool fresh = named.insert(name).second;
     const bool repeat =
         !applications.insert(ApplicationOf(inst, name, *policy)).second;
@@ -643,8 +658,8 @@ struct DeclaredDesign::Units {
 auto DeclaredDesign::Declare(
     std::unique_ptr<slang::ast::Compilation> front_end,
     const frontend::SlangSourceMapper& source_mapper,
-    support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
-    -> std::optional<DeclaredDesign> {
+    support::AssertionPolicy assertion_policy, support::BodiesRead bodies_read,
+    diag::DiagnosticSink& sink) -> std::optional<DeclaredDesign> {
   auto units = std::make_unique<Units>(
       std::move(front_end), source_mapper, assertion_policy);
   const LowerCompilationFacts facts(
@@ -652,7 +667,7 @@ auto DeclaredDesign::Declare(
 
   Definitions kept_whole;
   for (;;) {
-    units->specialization = SpecializationPolicy(kept_whole);
+    units->specialization = SpecializationPolicy(kept_whole, bodies_read);
     auto tops = TopLevelUnits(facts, units->specialization);
     if (!tops) {
       sink.Report(std::move(tops.error()));

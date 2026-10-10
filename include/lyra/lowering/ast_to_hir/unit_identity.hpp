@@ -11,7 +11,6 @@
 // same, because the unit naming itself and every unit naming it must reach the
 // same answer with no shared table.
 
-#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -25,6 +24,7 @@
 #include <vector>
 
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
+#include "lyra/support/bodies_read.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace slang {
@@ -215,9 +215,20 @@ struct SpecializationKey {
 class SpecializationPolicy {
  public:
   explicit SpecializationPolicy(
-      std::unordered_set<const slang::ast::DefinitionSymbol*> kept_whole = {})
-      : kept_whole_(std::move(kept_whole)) {
+      std::unordered_set<const slang::ast::DefinitionSymbol*> kept_whole = {},
+      support::BodiesRead bodies_read = support::BodiesRead::kElaborated)
+      : kept_whole_(std::move(kept_whole)), bodies_read_(bodies_read) {
   }
+
+  // Whether `inst` is read through a body of its own: one the front end
+  // elaborated for it, or one this compile decided to read.
+  [[nodiscard]] auto HasBodyOfItsOwn(
+      const slang::ast::InstanceSymbol& inst) const -> bool;
+
+  // Has `inst` read through its own body from here on, which makes the front
+  // end elaborate it. Whatever was worked out of it from where it is written
+  // is dropped, so a name asked for afterwards is the one its body gives it.
+  void ReadBodyOf(const slang::ast::InstanceSymbol& inst) const;
 
   // The parameters `inst` is handed when it is built, in the order its body
   // declares them -- which is the order a construction supplies their values
@@ -336,11 +347,34 @@ class SpecializationPolicy {
     InstanceBodies depends_on;
   };
 
+  using ParameterSet = std::unordered_set<const slang::ast::ParameterSymbol*>;
+
+  // What a body's own text says of its value parameters, whichever instance
+  // it is read for: the ones whose value decides what is compiled, what tells
+  // two values of a loop's index apart, and which parameters each one's
+  // declaration is written into.
+  struct PerBody {
+    ParameterSet own;
+    ParameterSet deciding;
+    std::unordered_map<const slang::ast::ParameterSymbol*, ParameterSet>
+        written_into;
+    std::unordered_map<
+        const slang::ast::ParameterSymbol*, std::vector<std::string>>
+        folded_to;
+  };
+
   auto Of(const slang::ast::InstanceSymbol& inst) const -> const PerInstance&;
   auto Classify(const slang::ast::InstanceSymbol& inst) const -> PerInstance;
+  auto OfBody(const slang::ast::InstanceBodySymbol& body) const
+      -> const PerBody&;
+  auto ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn;
   auto AnswersNow(const KeptName& kept) const -> bool;
 
   std::unordered_set<const slang::ast::DefinitionSymbol*> kept_whole_;
+  support::BodiesRead bodies_read_;
+  mutable std::unordered_set<const slang::ast::InstanceSymbol*> read_anyway_;
+  mutable std::unordered_map<const slang::ast::InstanceBodySymbol*, PerBody>
+      per_body_;
   mutable std::unordered_map<const slang::ast::InstanceSymbol*, PerInstance>
       per_instance_;
   mutable InstanceContexts context_;

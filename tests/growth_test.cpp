@@ -98,6 +98,9 @@ struct Reading {
   std::size_t units = 0;
   std::size_t files = 0;
   std::uint64_t bytes = 0;
+  // How many bodies the run lowered, a unit's own and every one lowered only
+  // to be held against a unit.
+  std::size_t bodies_lowered = 0;
   // The stages that ran alone, each with the peak it reached where the
   // platform offers one.
   std::map<std::string, std::optional<std::uint64_t>> stage_peak_bytes;
@@ -184,11 +187,15 @@ auto Compile(
   // The trace's writer adds one event per span name holding that name's time
   // summed over the run, under the name with this prefix.
   constexpr std::string_view kTotal = "Total ";
+  // The span a body's lowering runs under, one event each.
+  constexpr std::string_view kBodyLowered = "lower to HIR";
   for (const nlohmann::json& event : trace.at("traceEvents")) {
     const std::string name = event.value("name", "");
     if (name.starts_with(kTotal)) {
       reading.span_microseconds[name.substr(kTotal.size())] =
           event.at("dur").get<std::uint64_t>();
+    } else if (name == kBodyLowered) {
+      reading.bodies_lowered += 1;
     }
   }
   return reading;
@@ -216,8 +223,8 @@ auto OutgrewProportion(std::uint64_t small, std::uint64_t large) -> bool {
 // numbers that show it.
 using Outgrowths = std::map<std::string, std::string>;
 
-// What the larger run left behind that the smaller did not. These are counts
-// and sizes of files, the same on every run of one compiler.
+// What the larger run left behind or lowered that the smaller did not. These
+// are counts and sizes, the same on every run of one compiler.
 auto LeftBehindOutgrowths(const Reading& small, const Reading& large)
     -> Outgrowths {
   Outgrowths outgrew;
@@ -230,6 +237,10 @@ auto LeftBehindOutgrowths(const Reading& small, const Reading& large)
   if (large.bytes * kBytesAllowedDenominator >
       small.bytes * kBytesAllowedNumerator) {
     outgrew["bytes"] = std::format("{} -> {}", small.bytes, large.bytes);
+  }
+  if (large.bodies_lowered > small.bodies_lowered) {
+    outgrew["bodies lowered"] =
+        std::format("{} -> {}", small.bodies_lowered, large.bodies_lowered);
   }
   return outgrew;
 }

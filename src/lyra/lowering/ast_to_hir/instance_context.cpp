@@ -121,10 +121,13 @@ struct LeavingNames
 }  // namespace
 
 auto InstanceContextOf(
-    const slang::ast::InstanceSymbol& inst, InstanceContexts& known)
-    -> const InstanceContext& {
+    const slang::ast::InstanceSymbol& inst, InstanceContexts& known,
+    const HasBodyOfItsOwnFn& has_body_of_its_own) -> const InstanceContext& {
   if (const auto kept = known.find(&inst); kept != known.end()) {
     return kept->second;
+  }
+  if (!has_body_of_its_own(inst)) {
+    return known.emplace(&inst, InstanceContext{}).first->second;
   }
 
   LeavingNames names(inst.body);
@@ -136,13 +139,20 @@ auto InstanceContextOf(
     holds = InstancesHeldIn(inst.body);
   }
 
-  InstanceContext context{.climbs = std::move(names.climbs), .below = {}};
+  InstanceContext context{
+      .climbs = std::move(names.climbs),
+      .below = {},
+      .a_name_leaves_its_writer = false};
+  context.a_name_leaves_its_writer = !context.climbs.empty();
   for (const HeldInstance& held : holds) {
     for (OverrideEffect& effect : OverridesOn(*held.instance)) {
       context.below.push_back(
           FixedBelow{.path = held.path, .what = std::move(effect)});
     }
-    const InstanceContext& theirs = InstanceContextOf(*held.instance, known);
+    const InstanceContext& theirs =
+        InstanceContextOf(*held.instance, known, has_body_of_its_own);
+    context.a_name_leaves_its_writer =
+        context.a_name_leaves_its_writer || theirs.a_name_leaves_its_writer;
     // A name stops at the instance it lands in and concerns none above it.
     for (std::uint32_t written = 0; written < theirs.climbs.size(); ++written) {
       const ClimbAnchor& climb = theirs.climbs[written];
@@ -174,7 +184,8 @@ auto InstanceContextOf(
 }
 
 auto OverridesBelow(
-    const slang::ast::GenerateBlockSymbol& block, InstanceContexts& known)
+    const slang::ast::GenerateBlockSymbol& block, InstanceContexts& known,
+    const HasBodyOfItsOwnFn& has_body_of_its_own)
     -> std::vector<OverriddenBelow> {
   std::vector<OverriddenBelow> overrides;
   for (const HeldInstance& held : InstancesHeldIn(block)) {
@@ -183,7 +194,7 @@ auto OverridesBelow(
           OverriddenBelow{.path = held.path, .effect = std::move(effect)});
     }
     for (const FixedBelow& fixed :
-         InstanceContextOf(*held.instance, known).below) {
+         InstanceContextOf(*held.instance, known, has_body_of_its_own).below) {
       if (const auto* effect = std::get_if<OverrideEffect>(&fixed.what)) {
         overrides.push_back(
             OverriddenBelow{

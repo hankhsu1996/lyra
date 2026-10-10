@@ -705,27 +705,6 @@ auto DecidingParametersOf(
   return deciding;
 }
 
-// The parameters of `body` its instance is handed when it is built, in the
-// order the body declares them: every one the instantiation overrides that
-// decides nothing about what is compiled.
-auto SuppliedOf(
-    const slang::ast::InstanceBodySymbol& body, const ParameterSet& decides)
-    -> std::vector<const slang::ast::ParameterSymbol*> {
-  // A value given anywhere -- by the instantiation, a defparam, or a
-  // configuration (LRM 23.10) -- is one value the instance is handed.
-  std::vector<const slang::ast::ParameterSymbol*> supplied;
-  for (const auto& member : body.members()) {
-    const auto* param = member.as_if<slang::ast::ParameterSymbol>();
-    if (param == nullptr || param->isLocalParam() ||
-        !(param->isOverridden() || ValueSetElsewhere(body, *param)) ||
-        decides.contains(param)) {
-      continue;
-    }
-    supplied.push_back(param);
-  }
-  return supplied;
-}
-
 }  // namespace
 
 auto SpecializationPolicy::SuppliedParametersOf(
@@ -743,56 +722,114 @@ auto SpecializationPolicy::Of(const slang::ast::InstanceSymbol& inst) const
   return cached->second;
 }
 
-auto SpecializationPolicy::Classify(
-    const slang::ast::InstanceSymbol& inst) const -> PerInstance {
-  PerInstance out;
-  const slang::ast::InstanceBodySymbol& body = inst.body;
-  const ParameterSet own = ValueParametersOf(body);
+auto SpecializationPolicy::OfBody(
+    const slang::ast::InstanceBodySymbol& body) const -> const PerBody& {
+  if (const auto kept = per_body_.find(&body); kept != per_body_.end()) {
+    return kept->second;
+  }
+  PerBody out{
+      .own = ValueParametersOf(body),
+      .deciding = {},
+      .written_into = {},
+      .folded_to = {}};
   ParameterEdges written_from;
-  ParameterEdges written_into;
-  for (const slang::ast::ParameterSymbol* param : own) {
-    written_from.emplace(param, DependenciesOf(*param, own));
-    written_into.emplace(param, ParameterSet{});
+  for (const slang::ast::ParameterSymbol* param : out.own) {
+    written_from.emplace(param, DependenciesOf(*param, out.own));
+    out.written_into.emplace(param, ParameterSet{});
   }
   for (const auto& [param, sources] : written_from) {
     for (const slang::ast::ParameterSymbol* source : sources) {
-      written_into.at(source).insert(param);
+      out.written_into.at(source).insert(param);
     }
   }
   // A definition kept whole shares nothing, so every value decides, and every
   // value of a loop's index is told apart from every other.
-  ParameterSet decides;
-  if (kept_whole_.contains(&inst.getDefinition())) {
-    decides = own;
-    for (const slang::ast::ParameterSymbol* param : own) {
+  if (kept_whole_.contains(&body.getDefinition())) {
+    out.deciding = out.own;
+    for (const slang::ast::ParameterSymbol* param : out.own) {
       if (param->isFromGenvar()) {
         out.folded_to[param] = {ValueIdentity(param->getValue())};
       }
     }
   } else {
-    Deciding deciding = DecidingParametersOf(body, own, written_from, *this);
-    decides = std::move(deciding.parameters);
+    Deciding deciding =
+        DecidingParametersOf(body, out.own, written_from, *this);
+    out.deciding = std::move(deciding.parameters);
     out.folded_to = std::move(deciding.folded_to);
   }
+  return per_body_.emplace(&body, std::move(out)).first->second;
+}
+
+// What a body's text says of its parameters is one answer for every instance
+// that body serves; what an instance adds is which of them it was given a
+// value for, and whether anything builds it. So the text is asked of the body
+// the instance is read through, and the rest of the instance itself, a
+// parameter of the one standing for the parameter of the other declared at the
+// same place.
+auto SpecializationPolicy::Classify(
+    const slang::ast::InstanceSymbol& inst) const -> PerInstance {
+  const slang::ast::InstanceBodySymbol& read_through =
+      HasBodyOfItsOwn(inst) ? inst.body : *inst.getCanonicalBody();
+  const PerBody& text = OfBody(read_through);
+
+  const auto declared = read_through.getParameters();
+  const auto handed = inst.body.getParameters();
+  std::unordered_map<
+      const slang::ast::ParameterSymbol*, const slang::ast::ParameterSymbol*>
+      of_instance;
+  for (std::size_t at = 0; at < declared.size(); ++at) {
+    const auto* value =
+        declared[at]->symbol.as_if<slang::ast::ParameterSymbol>();
+    if (value == nullptr) continue;
+    of_instance.emplace(
+        value, &handed[at]->symbol.as<slang::ast::ParameterSymbol>());
+  }
+  // A value given anywhere -- by the instantiation, a defparam, or a
+  // configuration (LRM 23.10) -- is one value the instance is handed. A
+  // parameter a block or a subroutine declares is the read body's own.
+  const auto given_a_value = [&](const slang::ast::ParameterSymbol& param) {
+    const auto its = of_instance.find(&param);
+    if (its == of_instance.end()) {
+      return param.isOverridden() || ValueSetElsewhere(read_through, param);
+    }
+    return its->second->isOverridden() ||
+           ValueSetElsewhere(inst.body, *its->second);
+  };
+
+  PerInstance out;
+  out.folded_to = text.folded_to;
   // A top-level instance is built by the design root, which hands nothing, and
   // is the only instance of its unit, so a value it is given is compiled in.
+  // Every other instance is handed, in the order its body declares them, each
+  // value it was given that decides nothing about what is compiled.
+  ParameterSet roots;
   if (!inst.isTopLevel()) {
-    out.supplied = SuppliedOf(body, decides);
+    for (const slang::ast::ParameterSymbolBase* base : declared) {
+      const auto* param = base->symbol.as_if<slang::ast::ParameterSymbol>();
+      if (param == nullptr || param->isLocalParam() || !given_a_value(*param) ||
+          text.deciding.contains(param)) {
+        continue;
+      }
+      out.supplied.push_back(of_instance.at(param));
+      roots.insert(param);
+    }
   }
 
   // What varies to begin with is what the unit is handed and what a generate
   // block declares, since a block is built with its own. What a declaration
   // writes from a value that varies varies with it, and so on; one whose value
   // comes from elsewhere is not written by its declaration.
-  ParameterSet roots(out.supplied.begin(), out.supplied.end());
-  for (const slang::ast::ParameterSymbol* param : own) {
+  for (const slang::ast::ParameterSymbol* param : text.own) {
     if (DeclaredByAGenerateBlock(*param)) roots.insert(param);
   }
-  out.varying = Reached(
-      std::move(roots), written_into,
-      [&](const slang::ast::ParameterSymbol& param) {
-        return !param.isOverridden() && !ValueSetElsewhere(body, param);
-      });
+  for (const slang::ast::ParameterSymbol* param : Reached(
+           std::move(roots), text.written_into,
+           [&](const slang::ast::ParameterSymbol& param) {
+             return !given_a_value(param);
+           })) {
+    const auto its = of_instance.find(param);
+    out.varying.insert(its == of_instance.end() ? param : its->second);
+  }
   return out;
 }
 

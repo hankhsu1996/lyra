@@ -643,9 +643,40 @@ auto SpecializationPolicy::NameOf(const slang::ast::InstanceSymbol& inst) const
   return name;
 }
 
+auto SpecializationPolicy::HasBodyOfItsOwn(
+    const slang::ast::InstanceSymbol& inst) const -> bool {
+  const slang::ast::InstanceBodySymbol* shared = inst.getCanonicalBody();
+  if (bodies_read_ == support::BodiesRead::kEveryInstance ||
+      shared == nullptr || read_anyway_.contains(&inst)) {
+    return true;
+  }
+  // The front end shares a body a name leaves where the name is written from
+  // the top (LRM 23.6), since it resolves alike for every instance. Where it
+  // lands relative to the instance writing it still differs between two of
+  // them, and that is what a unit compiles, so an instance sharing a body
+  // such a name is written in or below is read through its own body like one
+  // the front end elaborated.
+  const InstanceContext& of_shared = ContextOf(InstantiationOf(*shared));
+  return of_shared.a_name_leaves_its_writer || !of_shared.below.empty();
+}
+
+void SpecializationPolicy::ReadBodyOf(
+    const slang::ast::InstanceSymbol& inst) const {
+  if (!read_anyway_.insert(&inst).second) return;
+  per_instance_.erase(&inst);
+  context_.erase(&inst);
+  names_.erase(&inst);
+}
+
 auto SpecializationPolicy::ContextOf(
     const slang::ast::InstanceSymbol& inst) const -> const InstanceContext& {
-  return InstanceContextOf(inst, context_);
+  return InstanceContextOf(inst, context_, ReadThroughItsOwnBody());
+}
+
+auto SpecializationPolicy::ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn {
+  return [this](const slang::ast::InstanceSymbol& inst) {
+    return HasBodyOfItsOwn(inst);
+  };
 }
 
 auto SpecializationPolicy::BlockStepOf(
@@ -669,7 +700,8 @@ auto SpecializationPolicy::BlockStepOf(
       }
     }
   }
-  for (const OverriddenBelow& overridden : OverridesBelow(block, context_)) {
+  for (const OverriddenBelow& overridden :
+       OverridesBelow(block, context_, ReadThroughItsOwnBody())) {
     key.inputs.push_back(
         OverrideInput(overridden.path, overridden.effect, *this));
   }
