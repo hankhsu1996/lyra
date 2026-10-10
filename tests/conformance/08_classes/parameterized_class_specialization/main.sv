@@ -7,6 +7,13 @@
 // resolution operator an explicit specialization form is required. A
 // parameterized class may extend a parameterized class, passing on its own
 // type parameter (LRM 8.25, 8.25.1).
+//
+// Two value parameters match when their values are the same and the types of
+// those values match (LRM 8.25). A parameter declared with no type is a vector
+// the size of the value it is given (LRM 6.20.2), so one number written at two
+// sizes gives it two types: those are two specializations, each reading its
+// own parameter and holding its own static properties, and the same number
+// written twice at one size is one.
 module Top;
   class Vec #(int W = 8);
     logic [W-1:0] data;
@@ -35,6 +42,19 @@ module Top;
     T y;
   endclass
 
+  class Sized #(parameter P = 1'b1);
+    static int count = 0;
+
+    static function int incr();
+      count = count + 1;
+      return count;
+    endfunction
+
+    static function int size();
+      return $bits(P);
+    endfunction
+  endclass
+
   int vec8_first;
   int vec8_second;
   int vec16_first;
@@ -50,6 +70,11 @@ module Top;
   byte box_byte_value;
   byte derived_x;
   byte derived_y;
+  int sized_four_bits;
+  int sized_eight_bits;
+  int sized_four_first;
+  int sized_four_second;
+  int sized_eight_first;
 
   initial begin
     Vec v8;
@@ -95,6 +120,12 @@ module Top;
     d.y = 8'sd6;
     derived_x = d.x;
     derived_y = d.y;
+
+    sized_four_bits = Sized #(4'd1)::size();
+    sized_eight_bits = Sized #(8'd1)::size();
+    sized_four_first = Sized #(4'd1)::incr();
+    sized_four_second = Sized #(4'd1)::incr();
+    sized_eight_first = Sized #(8'd1)::incr();
   end
 
   final begin
@@ -128,6 +159,16 @@ module Top;
       $fatal(1, "derived_x was %0d, expected 5", derived_x);
     if (derived_y !== 6)
       $fatal(1, "derived_y was %0d, expected 6", derived_y);
+    if (sized_four_bits !== 4)
+      $fatal(1, "sized_four_bits was %0d, expected 4", sized_four_bits);
+    if (sized_eight_bits !== 8)
+      $fatal(1, "sized_eight_bits was %0d, expected 8", sized_eight_bits);
+    if (sized_four_first !== 1)
+      $fatal(1, "sized_four_first was %0d, expected 1", sized_four_first);
+    if (sized_four_second !== 2)
+      $fatal(1, "sized_four_second was %0d, expected 2", sized_four_second);
+    if (sized_eight_first !== 1)
+      $fatal(1, "sized_eight_first was %0d, expected 1", sized_eight_first);
     $display("All checks passed");
   end
 endmodule
