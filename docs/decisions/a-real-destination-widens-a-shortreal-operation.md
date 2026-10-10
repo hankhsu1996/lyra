@@ -33,20 +33,14 @@ nothing about it -- that rule holds of signedness on either reading, since the l
 an integral expression its width and never its sign -- and 11.6 governs. Table 11-21 is written over
 bit lengths and has no entry for the real family.
 
-Tools split the same way. Measured 2026-09-22 on the fragment above:
-
-| Tool              | `direct`           | `staged`           |
-| ----------------- | ------------------ | ------------------ |
-| slang             | 1.0002441555261612 | 1.000244140625     |
-| Xcelium 25.03     | 1.0002441555261612 | 1.000244140625     |
-| VCS X-2025.06-SP1 | 1.000244140625     | 1.000244140625     |
-| Questa 2025.2     | 1.0002441555261612 | 1.0002441555261612 |
+The front end has the destination decide: it gives `direct` the wider value, `1.0002441555261612`,
+and `staged` the rounded one.
 
 The question was put to the front end's maintainer
 ([slang #1976](https://github.com/MikePopoloski/slang/issues/1976)). His answer: the standard is not
-explicit for reals, nothing in it says the bit-length rules stop at them, and on that view slang and
-Xcelium are right; on the view that those rules do not apply to reals, VCS is. The issue was closed
-on the agreement that 11.8.1 does not settle which view holds.
+explicit for reals, nothing in it says the bit-length rules stop at them, and on that view the wider
+value is right; on the view that those rules do not apply to reals, the narrower one is. The issue
+was closed on the agreement that 11.8.1 does not settle which view holds.
 
 ## Decision
 
@@ -91,9 +85,9 @@ be cleared, because the answer it called wrong is one the standard permits.
 
 ## Consequences
 
-- `real r = a * a` over `shortreal` operands gives the wider result, as Xcelium does and VCS does
-  not. A design that needs the narrower product in a `real` writes the intermediate into a
-  `shortreal` first, which every reading rounds.
+- `real r = a * a` over `shortreal` operands gives the wider result. A design that needs the
+  narrower product in a `real` writes the intermediate into a `shortreal` first, which every reading
+  rounds.
 - The front end's compatibility mode, which Lyra turns on by default, does not change this: the
   wider value is what a default run produces.
 - Should the standard or the front end settle the question the other way, the lowering changes

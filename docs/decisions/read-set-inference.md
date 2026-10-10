@@ -158,8 +158,10 @@ ruling out the first three. Function calls with output arguments remain reachabl
 does not understand them will over-collect.
 
 **Consequence:** any path that handles read-set inference must come from a data-flow analysis that
-distinguishes lvalue from rvalue position and excludes must-def reads. Hand walkers, no matter how
-careful about leaf enumeration, cannot reach this without re-implementing DFA.
+distinguishes lvalue from rvalue position and knows which bits are assigned. Hand walkers, no matter
+how careful about leaf enumeration, cannot reach this without re-implementing DFA. The front end's
+analysis keeps both and does not itself take one from the other: its read set holds every read, a
+write before it or not.
 
 ### F6. Local-symbol exclusion alone closes most but not all of the gap
 
@@ -205,6 +207,34 @@ and keeps a static variable declared inside, which exists from time zero. slang 
 after its own analysis for `always_comb` (`isLocal`). Leaving it to each consumer was tried: one
 consumer filtered, one did not and crashed on `always @(*) for (int j ...)`, and one counted an
 iterator as an automatic input and refused a legal `$changed`.
+
+**An `@*` list leaves out a variable its statement uses only to control its `for` loops.** LRM
+9.4.2.2 lists every identifier the statement reads, and a loop's condition reads its control
+variable. Read that way, two procedures that each run a loop over one variable declared outside both
+resume each other on every write of it and never stop, and RTL written before a loop could declare
+its own variable has exactly that: two `always @(*)` blocks, each a `for` over one `integer`
+declared in the module. A design holding it never left time zero here (HummingbirdV2 E203 of
+RTLMeter).
+
+The standard's committee met the same text in a vendor's library in 2009 (sv-bc, "Case @\*",
+`accellera.org/images/eda/sv-bc/9548.html` and the replies beside it): a strict reading puts the
+variable in the list, it is a known way for a simulation to hang, `always_comb` was written to
+exclude what its block writes, and tools had begun to exclude such variables from `@*` as well.
+Icarus Verilog documents the narrower form as a default it names for a shared loop index: a `for`
+loop's control variable used only inside the loop is left out of the list, "for strict compliance
+with the standards, this behaviour should be disabled". Verilator schedules such a block statically
+and waits on no event.
+
+The narrower form is the one taken, because it is the one that changes no value. A variable the loop
+assigns before every read of it carries nothing in from before the statement ran, so a write of it
+from outside cannot change what the statement computes; leaving it out changes how often the
+statement runs, and whether such a pair settles at all. The `always_comb` rule, applied to `@*`,
+would also stop the statement running again when another process writes a variable it both writes
+and reads, which LRM 9.2.2.2.2 says `@*` permits and which does change what it computes. A control
+variable the statement names outside its loop stays in the list for the same reason.
+
+There is no switch for the letter. Nothing a design that settles computes depends on it, and none
+has been asked for.
 
 **The analysis rules no path out by a value.** slang's flow analysis evaluates a condition against
 the elaborated instance and leaves out what is only read on a path a constant excludes: the side of

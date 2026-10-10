@@ -111,14 +111,14 @@ Decisions about the OUTPUT shape, independent of dispatch:
 1. **Output is `'{<e0>, <e1>, ...}` with `, ` between elements.** Empty container prints `'{}`.
 2. **Integral element radix is decimal, not hex.** LRM 21.2.1.6 says "as it would unformatted"; the
    unformatted `$display` radix is decimal (LRM 21.2.1.1 `%d` default). We diverge from Verilator's
-   `'{'ha, 'h14, 'h1e}` form intentionally to match the LRM text and the VCS convention.
+   `'{'ha, 'h14, 'h1e}` form intentionally to match the LRM text.
 3. **`%p` and `%0p` produce identical text in this scope.** LRM 21.2.1.6 permits `%0p` to be a
    shorter implementation-specific form, but for an integer-leaf aggregate there is nothing
    meaningfully shorter; divergent text would add a divergence surface without behavioral
    motivation.
 4. **No index labels on fixed-size or dynamic arrays.** LRM permits `'{0:e0, 1:e1, ...}` but does
    not require it. Labels matter for associative arrays where position is otherwise undefined; for
-   indexed containers position is implicit. Matches Verilator / VCS conventions.
+   indexed containers position is implicit. Matches Verilator's convention.
 
 ## Consequences
 

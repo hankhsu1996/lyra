@@ -10,52 +10,37 @@
 # getting all the way.
 BlackParrot:1x1:hello:
   stops: build
-  says: a concatenation is not yet supported as the target
+  says: unknown format specifier '%L'
 Caliptra:default:hello:
   stops: build
-  says: a concatenation is not yet supported as the target
+  says: taking over part of a target is not yet supported
 HammerBlade:16x8:hello:
   stops: build
-  says: a concatenation is not yet supported as the target
+  says: unknown format specifier '%L'
 HammerBlade:2x1:hello:
   stops: build
-  says: a concatenation is not yet supported as the target
-HummingbirdV2-E203:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
-HummingbirdV2-E203:nodelay:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
+  says: unknown format specifier '%L'
 NVDLA:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
+  stops: check
+  says: "cmp: mem-dump-0.hex"
 OpenPiton:1x1:hello:
   stops: build
-  says: a concatenation is not yet supported as the target
+  says: the front end could give it no meaning
 OpenTitan:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
+  stops: run
+  says: did not end within
 VeeR-EH1:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
+  stops: run
+  says: did not end within
 VeeR-EH2:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
+  stops: run
+  says: did not end within
 VeeR-EL2:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
+  stops: run
+  says: did not end within
 Vortex:mini:hello:
   stops: build
-  says: a concatenation is not yet supported as the target
-XuanTie-C906:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
+  says: an omitted subroutine argument is not yet supported
 XuanTie-C910:default:hello:
   stops: build
-  says: a concatenation is not yet supported as the target
-XuanTie-E902:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
-XuanTie-E906:default:hello:
-  stops: build
-  says: a concatenation is not yet supported as the target
+  says: delay on continuous assignment is not yet supported

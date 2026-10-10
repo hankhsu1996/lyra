@@ -79,9 +79,13 @@ under each item, and the conformance gaps at the end.
       `this` contribute nothing either. `@*` has no such exclusion, but an automatic variable its
       statement declares -- a `for` loop's variable, a block's local -- does not exist while the
       control waits and nothing outside can write it, so it contributes nothing; a static one the
-      statement declares is waited on. Nothing writes a foreach index, an array method's iterator
-      or a pattern's binding while a wait stands, so no wait of any form subscribes to one. **A read whose kind this compiler does not carry, or whose
-      storage it cannot reach from the reading scope, is refused by name** -- a subscription is never
+      statement declares is waited on. A variable the statement uses only to control its `for` loops
+      contributes nothing either, though LRM 9.4.2.2 lists it: read to the letter, two `@*`
+      procedures each running a loop over one variable declared outside both resume each other
+      without end, and real designs hold that shape. Nothing writes a foreach index, an array
+      method's iterator or a pattern's binding while a wait stands, so no wait of any form
+      subscribes to one. **A read whose kind this compiler does not carry, or whose storage it
+      cannot reach from the reading scope, is refused by name** -- a subscription is never
       quietly left out, because a process that does not wake gives a wrong answer with nothing to
       see.
 

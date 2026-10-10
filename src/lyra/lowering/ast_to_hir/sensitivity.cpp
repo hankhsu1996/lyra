@@ -21,7 +21,10 @@
 #include <slang/ast/Statement.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/ValuePath.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/MiscExpressions.h>
+#include <slang/ast/statements/LoopStatements.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
@@ -284,6 +287,83 @@ auto RunDfa(
   return accesses;
 }
 
+// The variables a statement uses only to control its `for` loops: each is
+// assigned by the initialization of a loop (LRM 12.7.1) before that loop reads
+// it, and the statement names it nowhere outside such a loop.
+class LoopControlCollector
+    : public slang::ast::ASTVisitor<
+          LoopControlCollector, slang::ast::VisitFlags::AllGood> {
+ public:
+  void handle(const slang::ast::ForLoopStatement& loop) {
+    // What an initialization reads, it reads before the variable it assigns is
+    // under the loop's control, so `for (i = i + 1; ...)` still names `i`.
+    std::vector<const slang::ast::Symbol*> controlled;
+    for (const slang::ast::Expression* initializer : loop.initializers) {
+      const slang::ast::Symbol* assigned = VariableAssignedWhole(*initializer);
+      if (assigned == nullptr) {
+        initializer->visit(*this);
+        continue;
+      }
+      initializer->as<slang::ast::AssignmentExpression>().right().visit(*this);
+      controlled.push_back(assigned);
+    }
+    for (const slang::ast::VariableSymbol* declared : loop.loopVars) {
+      if (const slang::ast::Expression* value = declared->getInitializer();
+          value != nullptr) {
+        value->visit(*this);
+      }
+    }
+    for (const slang::ast::Symbol* symbol : controlled) {
+      if (!std::ranges::contains(controls_, symbol)) {
+        controls_.push_back(symbol);
+      }
+    }
+    under_control_.insert(
+        under_control_.end(), controlled.begin(), controlled.end());
+    if (loop.stopExpr != nullptr) loop.stopExpr->visit(*this);
+    for (const slang::ast::Expression* step : loop.steps) {
+      step->visit(*this);
+    }
+    loop.body.visit(*this);
+    under_control_.resize(under_control_.size() - controlled.size());
+  }
+
+  void handle(const slang::ast::NamedValueExpression& name) {
+    if (!std::ranges::contains(under_control_, &name.symbol) &&
+        !std::ranges::contains(named_outside_, &name.symbol)) {
+      named_outside_.push_back(&name.symbol);
+    }
+  }
+
+  [[nodiscard]] auto OnlyLoopControls() const
+      -> std::vector<const slang::ast::Symbol*> {
+    std::vector<const slang::ast::Symbol*> only;
+    for (const slang::ast::Symbol* symbol : controls_) {
+      if (!std::ranges::contains(named_outside_, symbol)) {
+        only.push_back(symbol);
+      }
+    }
+    return only;
+  }
+
+ private:
+  // The variable `expr` assigns by name with a plain `=`, and null where it is
+  // any other expression.
+  static auto VariableAssignedWhole(const slang::ast::Expression& expr)
+      -> const slang::ast::Symbol* {
+    if (expr.kind != slang::ast::ExpressionKind::Assignment) return nullptr;
+    const auto& assignment = expr.as<slang::ast::AssignmentExpression>();
+    if (assignment.isCompound()) return nullptr;
+    const slang::ast::Expression& target = assignment.left();
+    if (target.kind != slang::ast::ExpressionKind::NamedValue) return nullptr;
+    return &target.as<slang::ast::NamedValueExpression>().symbol;
+  }
+
+  std::vector<const slang::ast::Symbol*> controls_;
+  std::vector<const slang::ast::Symbol*> under_control_;
+  std::vector<const slang::ast::Symbol*> named_outside_;
+};
+
 }  // namespace
 
 SensitivityAnalyzer::SensitivityAnalyzer()
@@ -315,7 +395,7 @@ auto SensitivityAnalyzer::AnalyzeReads(
   return inserted_it->second;
 }
 
-auto SensitivityAnalyzer::AnalyzeReads(
+auto SensitivityAnalyzer::AnalyzeImplicitEventList(
     const slang::ast::Statement& stmt,
     const slang::ast::Symbol& containing_symbol)
     -> const std::vector<AccessedPart>& {
@@ -323,9 +403,16 @@ auto SensitivityAnalyzer::AnalyzeReads(
       it != statement_cache_.end()) {
     return it->second;
   }
-  auto [inserted_it, _] = statement_cache_.emplace(
-      &stmt,
-      RunDfa(*context_, containing_symbol, stmt, DeclarationsOf(stmt)).reads);
+  std::vector<AccessedPart> reads =
+      RunDfa(*context_, containing_symbol, stmt, DeclarationsOf(stmt)).reads;
+  LoopControlCollector collector;
+  stmt.visit(collector);
+  const std::vector<const slang::ast::Symbol*> left_out =
+      collector.OnlyLoopControls();
+  std::erase_if(reads, [&](const AccessedPart& read) {
+    return std::ranges::contains(left_out, read.symbol);
+  });
+  auto [inserted_it, _] = statement_cache_.emplace(&stmt, std::move(reads));
   return inserted_it->second;
 }
 
