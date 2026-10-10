@@ -96,10 +96,10 @@ differently, which is why every instance with a body of its own is lowered and h
 - The front end's record of leaving names holds upward names only, is not exposed, and its
   definition has not been held against this compiler's own walk. Its instance cache has been wrong
   four times (an interface-array port left out of its key, a subroutine, sequence or property
-  reached by an upward name not recorded as leaving, and 0.0 and -0.0 keyed as one value, all three
-  fixed in the pin; one number at two sizes keyed as one value where the parameter is declared with
-  no type, standing), so nothing here takes the front end's word that two instances are alike
-  without a condition of its own.
+  reached by an upward name not recorded as leaving, 0.0 and -0.0 keyed as one value, and one number
+  at two sizes keyed as one value where the parameter is declared with no type, all four fixed in
+  the pin), so nothing here takes the front end's word that two instances are alike without a
+  condition of its own.
 - A module writing an upward name is elaborated once per instance by the front end itself. What such
   a module costs follows its instances, and the most these steps reach is not adding to it.
 - A holder's code naming its child's class is an object-model question, and the alternative (the
