@@ -288,8 +288,11 @@ all is that the class it catches is invisible to every other job: a reference he
 has since grown reads correctly until the storage happens to move, so a green ordinary run is
 consistent with the code being wrong. Under the sanitizer a pool moves its storage on every append,
 so such a reference is reported on every execution that reads it; what the job still cannot see is
-an execution the corpus does not reach. It runs under remote execution where the key is set, like
-the gate, because one image then both compiles the tests and runs them.
+an execution the corpus does not reach. It runs the set twice, once under each compiler that builds
+Lyra: under remote execution where the key is set, like the gate, which is the image's GCC, and on
+the runner under clang. The two evaluate a call's arguments and an operator's operands in opposite
+orders, which C++ leaves to the compiler, so a reference read in one operand and invalidated by
+another is reported under one of them only.
 
 Two things about it follow from what is instrumented. The compiler is; the runtime library a built
 program links is not, because that library is built as it ships whatever builds the compiler, and a

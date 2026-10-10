@@ -168,6 +168,9 @@ auto LowerHirConcatExpr(
   // when the counts differ (LRM 10.10). The front end has already rejected a
   // spread-free mismatch, so only the spread form can reach the run-time check.
   if (result_ty.Is<mir::UnpackedArrayType>()) {
+    // By value: the pool's view does not survive the interning below.
+    const std::uint64_t element_count =
+        result_ty.Get<mir::UnpackedArrayType>().Size();
     const mir::TypeId element_type =
         RequiredContainerElementType(unit, result_type);
     const bool has_spread =
@@ -186,9 +189,7 @@ auto LowerHirConcatExpr(
     const mir::ExprId dyn_id = block.exprs.Add(BuildUnpackedConcatChain(
         lowerer.Owner(), frame, dyn_type, element_default, operand_ids));
     const mir::ExprId count_id = BuildMachineIntLiteral(
-        unit, block,
-        static_cast<std::int64_t>(
-            result_ty.Get<mir::UnpackedArrayType>().Size()));
+        unit, block, static_cast<std::int64_t>(element_count));
     return mir::Expr{
         .data =
             mir::CallExpr{
@@ -340,13 +341,15 @@ auto BuildKeyedPatternBase(
         block.exprs.Add(BuildBitsReplication(unit, block, fill, copies)),
         result_type);
   }
-  const auto& array_ty =
-      unit.types.Get(result_type).Get<mir::UnpackedArrayType>();
+  // By value: building the element's default interns, and the pool's view
+  // does not survive that.
+  const std::uint64_t element_count =
+      unit.types.Get(result_type).Get<mir::UnpackedArrayType>().Size();
   return BuildArrayRepeatCall(
       unit, block, result_type,
       BuildElementDefault(lowerer.Owner(), block, hir_result_type), {fill},
       BuildMachineIntLiteral(
-          unit, block, static_cast<std::int64_t>(array_ty.dim.ElementCount())));
+          unit, block, static_cast<std::int64_t>(element_count)));
 }
 
 // LRM 10.9.1 `'{index: value, ..., default: value}`: the elements no index

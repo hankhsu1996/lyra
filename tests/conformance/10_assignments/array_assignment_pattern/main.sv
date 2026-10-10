@@ -25,6 +25,10 @@ module Top;
   int index_and_default [5] = '{0: 11, 2: 22, default: 33};
   int nested_default [2][3] = '{'{1, 2, 3}, '{default: 44}};
 
+  // A default whose value is itself an array is each element whole.
+  typedef int row_t[3];
+  row_t default_of_whole_rows [2] = '{default: row_t'{7, 8, 9}};
+
   int refilled [3] = '{1, 2, 3};
 
   initial refilled = '{default: 99};
@@ -124,6 +128,13 @@ module Top;
     if (nested_default[1][2] !== 44)
       $fatal(1, "nested_default[1][2] was %0d, expected 44",
              nested_default[1][2]);
+
+    if (default_of_whole_rows[0][0] !== 7)
+      $fatal(1, "default_of_whole_rows[0][0] was %0d, expected 7",
+             default_of_whole_rows[0][0]);
+    if (default_of_whole_rows[1][2] !== 9)
+      $fatal(1, "default_of_whole_rows[1][2] was %0d, expected 9",
+             default_of_whole_rows[1][2]);
 
     if (refilled[0] !== 99)
       $fatal(1, "refilled[0] was %0d, expected 99", refilled[0]);

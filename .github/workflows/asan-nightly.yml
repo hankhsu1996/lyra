@@ -16,6 +16,12 @@ name: Address Sanitizer (Nightly)
 # lowering, not in the emitted program that the host-compiling group builds.
 # `.bazelrc` states the one target of that set it leaves out, and why.
 #
+# It runs that set twice, once under each compiler that builds Lyra. C++ leaves
+# the order a call's arguments and an operator's operands are evaluated in to
+# the compiler, and GCC and clang choose opposite ones, so a reference read in
+# one operand and invalidated by another is wrong under one of them only. The
+# remote image has GCC alone; a checkout built here is built by clang.
+#
 # Like the host C++ nightly and unlike the clang-tidy sweep, this gates its own
 # run: a sanitizer report is a defect with a stack trace, not a backlog item.
 on:
@@ -24,8 +30,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  asan:
-    name: Run the gate under the address sanitizer
+  asan-gcc:
+    name: Run the gate under the address sanitizer, built by GCC
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -35,22 +41,45 @@ jobs:
         uses: bazel-contrib/setup-bazel@0.18.0
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
+          disk-cache: ${{ github.workflow }}-gcc-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      # Under remote execution, whose image has GCC and no other compiler. It
+      # compiles and runs under that one image, so the sanitizer runtime a test
+      # loads is the one its compiler linked against, and instrumenting every
+      # dependency costs the runner nothing. A checkout with no key has no GCC
+      # build to make, and the job beside this one is the whole of its run.
+      - name: Test
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          if [[ -z "$BUILDBUDDY_API_KEY" ]]; then
+            echo "::notice::No remote execution key, so nothing here is built by GCC."
+            exit 0
+          fi
+          bazel test //... --config=asan --verbose_failures \
+            --config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY
+
+  asan-clang:
+    name: Run the gate under the address sanitizer, built by clang
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-clang-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
       - name: Setup Clang
         uses: ./.github/actions/setup-clang
 
-      # Remote execution compiles and runs under one image, so the sanitizer
-      # runtime a test loads is the one its compiler linked against, and
-      # instrumenting every dependency costs the runner nothing. Without the key
-      # the same command builds here under the clang installed above.
+      # On the runner, under the clang installed above. No remote configuration
+      # is named, because every one that executes remotely resolves the image's
+      # GCC.
       - name: Test
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          RBE_FLAGS=""
-          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
-            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
-          fi
-          bazel test //... --config=asan --verbose_failures $RBE_FLAGS
+          bazel test //... --config=asan --verbose_failures
