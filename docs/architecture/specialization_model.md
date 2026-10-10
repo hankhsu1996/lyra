@@ -129,8 +129,10 @@ That pointer is bookkeeping about elaboration work. It has the same shape as the
 answers -- which occurrences may share -- and it is a different relation, computed for a different
 purpose, free to be coarser or finer. `front-end-semantic-boundary.md` establishes that a semantic
 fact the frontend resolved is translated here rather than re-derived; the frontend's account of its
-own work is not such a fact, and translating it puts a correctness decision in the keeping of an
-optimization.
+own work is not such a fact, and taking it as the answer puts a correctness decision in the keeping
+of an optimization. A compile may use it to skip reading an occurrence, where its own comparison of
+the arguments finds that occurrence one application with another; which occurrences share is then
+still this model's answer, and the same one reading every occurrence gives.
 
 ```mermaid
 flowchart TB
@@ -222,7 +224,9 @@ what the frontend happened to do.
    the class of each one it builds. The body an artifact compiles is one elaborated under those same
    arguments, so what it was named for and what it compiles against are one application; a body
    elaborated for a different application states different types at the same positions. The
-   frontend's record that two bodies duplicate each other is an input to neither half.
+   frontend's record that two bodies duplicate each other decides neither half: an occurrence it
+   marks is still the specialization its own arguments say, read off the body it duplicates only
+   where those arguments make the two one application.
 9. **Producer and consumer derive the identity independently and agree.** A unit's own identity and
    the identity a parent means when it instantiates that unit are computed from the same inputs by
    the same function, with no table between them -- which is what lets units compile in any order
@@ -249,8 +253,9 @@ what the frontend happened to do.
   handles) as part of the specialization key.
 - Specialization keys derived from instance path, instance ordinal, or instance enumeration.
 - Deriving a specialization, or which artifact an occurrence belongs to, from the frontend's record
-  that two bodies duplicate each other. Its subject is whether elaboration must be repeated, and a
-  relation of the same shape computed for another purpose is not evidence about compiled behavior.
+  that two bodies duplicate each other and nothing else. Its subject is whether elaboration must be
+  repeated, and a relation of the same shape computed for another purpose is not by itself evidence
+  about compiled behavior.
 - Compiling, for one specialization, a body elaborated for an occurrence outside it.
 - An identity stored as the name it renders to, so that two applications are told apart by comparing
   renderings. A name drops whatever the target it is written for recovers by other means; an

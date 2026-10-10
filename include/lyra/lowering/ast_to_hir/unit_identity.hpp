@@ -293,9 +293,9 @@ class SpecializationPolicy {
   // instances supplied different values are one unit.
   //
   // Every part is read off `inst` and what elaborated below it, which is where
-  // the parent naming a child already stands. What the frontend chose to
-  // elaborate once serves a question about its own work and settles nothing
-  // here.
+  // the parent naming a child already stands. An instance the front end left
+  // sharing another's body is read off that body, which states the same for
+  // both.
   //
   // The name is worked out once and kept. What is fixed for an instance states
   // everything below it, and every scope the instance holds and every unit

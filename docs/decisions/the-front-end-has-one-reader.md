@@ -77,10 +77,12 @@ standing only on that gap, and it goes when the gap does.
   pass and the AST can then be read concurrently. It is the one way to meet the alternative above,
   and it costs the largest measured design 11 GiB of front end, which this compile's memory cannot
   carry.
-- **Reading a duplicate instance through the body it duplicates.** It avoids elaborating the
-  duplicate, and it is wrong: the front end's notion of a duplicate is coarser than a specialization
-  here, and two instances of one module bound to differently parameterized interfaces were recorded
-  as duplicates while the children they build are not.
+- **Lowering a duplicate instance through the body it duplicates, on the front end's word alone.**
+  It avoids elaborating the duplicate, and it is wrong: the front end's notion of a duplicate has
+  been coarser than a specialization here, and two instances of one module bound to differently
+  parameterized interfaces were recorded as duplicates while the children they build are not. A
+  duplicate is named from the body it duplicates only where this compiler's own comparison finds the
+  two one application, and nothing is lowered from it a second time.
 
 ## Consequences
 

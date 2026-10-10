@@ -446,23 +446,6 @@ auto OverrideInput(
       effect);
 }
 
-// One thing an instance below fixed, as a part of the key of the instance
-// holding it.
-auto InputOf(const FixedBelow& fixed, const SpecializationPolicy& policy)
-    -> SpecializationInput {
-  return std::visit(
-      Overloaded{
-          [&](const NameLanding& name) {
-            return SpecializationInput{
-                .name = std::format("{}.^{}", fixed.path, name.written),
-                .kind = LandingOf(*name.scope, policy)};
-          },
-          [&](const OverrideEffect& effect) {
-            return OverrideInput(fixed.path, effect, policy);
-          }},
-      fixed.what);
-}
-
 // Whether `scope` declares a class (LRM 8.3), itself or in a generate block
 // inside it.
 auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
@@ -594,8 +577,15 @@ auto SpecializationKeyOf(
             .name = std::format("^{}", written),
             .kind = LandingOf(*context.climbs[written].scope, policy)});
   }
-  for (const FixedBelow& fixed : context.below) {
-    key.inputs.push_back(InputOf(fixed, policy));
+  for (const NameLandingBelow& name : context.names_below) {
+    key.inputs.push_back(
+        SpecializationInput{
+            .name = std::format("{}.^{}", name.path, name.written),
+            .kind = LandingOf(*name.scope, policy)});
+  }
+  for (const OverriddenBelow& overridden : context.overridden_below) {
+    key.inputs.push_back(
+        OverrideInput(overridden.path, overridden.effect, policy));
   }
   policy.LeaveNaming();
   return key;
@@ -650,14 +640,10 @@ auto SpecializationPolicy::HasBodyOfItsOwn(
       shared == nullptr || read_anyway_.contains(&inst)) {
     return true;
   }
-  // The front end shares a body a name leaves where the name is written from
-  // the top (LRM 23.6), since it resolves alike for every instance. Where it
-  // lands relative to the instance writing it still differs between two of
-  // them, and that is what a unit compiles, so an instance sharing a body
-  // such a name is written in or below is read through its own body like one
-  // the front end elaborated.
-  const InstanceContext& of_shared = ContextOf(InstantiationOf(*shared));
-  return of_shared.a_name_leaves_its_writer || !of_shared.below.empty();
+  // What is written elsewhere reaches one instance and not another (LRM
+  // 23.10.1, 23.11, 33.4), so where the shared body has any of it below, this
+  // instance is read through its own body like one the front end elaborated.
+  return !ContextOf(InstantiationOf(*shared)).overridden_below.empty();
 }
 
 void SpecializationPolicy::ReadBodyOf(

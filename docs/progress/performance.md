@@ -483,10 +483,11 @@ specializations, not with instance count.
       value. Reads now arrive in the order the text makes them.
       [../decisions/read-set-inference.md](../decisions/read-set-inference.md) holds why the order
       is settled there. Every corpus design is now lowered twice and held to stating one thing, and
-      every instance of every design is lowered and held to the unit it shares, on every run. That
-      costs a lowering per instance and nothing after it, since what is compared is dropped before
-      anything is compiled: 1.06 s to 1.15 s for Ibex's front half, 3.3 s to 15.2 s on 18,000
-      identical instances, with peak memory within 5%.
+      every instance read through a body of its own is lowered and held to the unit it shares, on
+      every run; one the front end left sharing another's body is neither read nor lowered. That
+      costs a lowering per instance read and nothing after it, since what is compared is dropped
+      before anything is compiled: 1.06 s to 1.15 s for Ibex's front half, and 3.3 s to 15.2 s on
+      18,000 identical instances while each of those was still read, with peak memory within 5%.
 
       What it costs where nothing is gained, measured rather than waved at: a block that cannot
       share either way now carries the declaration instead of the folded literal, which is **359

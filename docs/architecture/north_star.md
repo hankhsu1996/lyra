@@ -33,10 +33,10 @@ document conflicts with a North Star principle, the lower-level document is wron
    (parameter values, wiring, hierarchical position) flows in at runtime construction. The count of
    compile-time **artifacts** scales with the count of distinct unit specializations, not with
    instance count. Compile-time **work** is a different axis and is not this invariant's subject: a
-   front end that elaborates per instance makes some work proportional to instance count whatever is
-   built above it, and what the artifacts go on to cost dominates it by orders of magnitude. A
-   design that produces more artifacts in order to do less per-instance work has traded the wrong
-   way.
+   front end that elaborates every instance it does not find alike an earlier one makes some work
+   proportional to instance count whatever is built above it, and what the artifacts go on to cost
+   dominates it by orders of magnitude. A design that produces more artifacts in order to do less
+   per-instance work has traded the wrong way.
 3. **Correctness is independent of optimization.** The compiler produces correct output for every
    accepted program; the per-unit sharing of invariant 2 is admitted only when behavior-preserving,
    and a correct program is never rejected because an optimization cannot be applied.
@@ -84,6 +84,7 @@ separation it now draws was paid for. Measured on a repeated structure at 256 re
 front end and both semantic IRs cost under half a second, of which the per-instance duplication is
 0.019s, while optimization and code generation cost 4.2s and compiling the emitted target 16.8s. So
 the work clause named a few percent of the cost, was unsatisfiable anyway because the front end
-elaborates per instance, and -- being the half that reads as the demanding one -- was twice used to
-reject a correct design in favour of one that would have produced more artifacts. An invariant is
-worth keeping when it selects; this one did, in the wrong direction, until the two axes were split.
+elaborates every instance it does not find alike an earlier one, and -- being the half that reads as
+the demanding one -- was twice used to reject a correct design in favour of one that would have
+produced more artifacts. An invariant is worth keeping when it selects; this one did, in the wrong
+direction, until the two axes were split.

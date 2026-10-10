@@ -15,7 +15,6 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 #include "lyra/lowering/ast_to_hir/climb.hpp"
@@ -31,43 +30,40 @@ class Scope;
 namespace lyra::lowering::ast_to_hir {
 
 // A hierarchical name an instance below writes that leaves this one too:
-// which of its writer's names it is, in the order the writer's body writes
-// those that leave it, the scope it lands in, and the instance that scope
-// stands in.
-struct NameLanding {
+// `path` leads from this instance to its writer, `written` is which of the
+// writer's names it is, in the order the writer's body writes those that
+// leave it, and it lands in `scope`, which stands in `instance`.
+struct NameLandingBelow {
+  std::string path;
   std::uint32_t written = 0;
   const slang::ast::Scope* scope = nullptr;
   const slang::ast::InstanceBodySymbol* instance = nullptr;
 };
 
-// One thing an instance below fixes for this one: `path` leads from this
-// instance to that one, and `what` is the name that instance writes or what
-// was written elsewhere about it.
-struct FixedBelow {
+// Something written elsewhere about an instance below this one, or below a
+// generate block: `path` leads to that instance.
+struct OverriddenBelow {
   std::string path;
-  std::variant<NameLanding, OverrideEffect> what;
+  OverrideEffect effect;
 };
 
 // `climbs` is where each name the instance's own body writes lands once it
-// leaves the instance, in the order the body writes them. `below` is what the
-// instances below it fix for it. `a_name_leaves_its_writer` is whether the
-// instance or any instance below it writes a name that leaves the instance
-// writing it, wherever that name lands: one landing in this instance fixes
-// nothing for it, and still lands somewhere else for another instance of the
-// same text.
+// leaves the instance, in the order the body writes them. The other two are
+// what the instances below it fix for it: the names they write that leave it
+// too, and what is written elsewhere about them.
 struct InstanceContext {
   std::vector<ClimbAnchor> climbs;
-  std::vector<FixedBelow> below;
-  bool a_name_leaves_its_writer = false;
+  std::vector<NameLandingBelow> names_below;
+  std::vector<OverriddenBelow> overridden_below;
 };
 
 using InstanceContexts =
     std::unordered_map<const slang::ast::InstanceSymbol*, InstanceContext>;
 
 // Whether an instance is read through a body of its own. One that is not was
-// left by the front end pointing at another's, which it does only where no
-// name leaves the instance and nothing written elsewhere reaches it or an
-// instance below it.
+// left by the front end pointing at another's, which it does only where every
+// name leaving the body resolves alike from both instances and nothing
+// written elsewhere reaches either or an instance below it.
 using HasBodyOfItsOwnFn =
     std::function<bool(const slang::ast::InstanceSymbol&)>;
 
@@ -76,17 +72,11 @@ using HasBodyOfItsOwnFn =
 // instance's answer; it never reads the body of an instance it holds. So what
 // an instance passes upward is something it states about itself, and one
 // compiled alone asks for exactly the answers it needs. An instance with no
-// body of its own has nothing to state, and no body is read for it.
+// body of its own has the context of the instance whose body it shares, and
+// no body is read for it.
 [[nodiscard]] auto InstanceContextOf(
     const slang::ast::InstanceSymbol& inst, InstanceContexts& known,
     const HasBodyOfItsOwnFn& has_body_of_its_own) -> const InstanceContext&;
-
-// Something written elsewhere about an instance a generate block holds, or
-// about one below such an instance: `path` leads from the block to it.
-struct OverriddenBelow {
-  std::string path;
-  OverrideEffect effect;
-};
 
 // Everything written elsewhere that reaches an instance standing in `block`
 // or below one, in the order the block holds them. It tells block instances of

@@ -48,17 +48,21 @@ differently, which is why every instance with a body of its own is lowered and h
 - [x] **What a body's text says of its parameters is asked once per body.** Which parameters decide
       what is compiled is a fact of the elaborated text; which of them an instance was handed a
       value for is a fact of the instance.
-- [x] **An instance whose shared body no hierarchical name leaves is named where it is written.**
-      The front end elaborates one body for instances it finds alike and leaves the rest
-      unelaborated. Such an instance is one application with an earlier one when its values were
-      seen before, by this compiler's bit-exact comparison, and nothing of it is read: not its body,
-      and nothing below it. Every other instance is read through its own body and held to its unit,
-      as before.
+- [x] **An instance sharing a body is named where it is written.** The front end elaborates one body
+      for instances it finds alike and leaves the rest unelaborated. Such an instance is one
+      application with an earlier one when its values were seen before, by this compiler's bit-exact
+      comparison, and nothing of it is read: not its body, and nothing below it. Every other
+      instance is read through its own body and held to its unit, as before.
+- [x] **A name that resolves alike from every instance tells no two of them apart.** The front end
+      shares a body such a name leaves, one whose first part is a top-level module's name (LRM
+      23.6), and an instance sharing it has the landings the shared body states. A name found by the
+      upward search (LRM 23.8) resolves per instance, and the front end elaborates each instance
+      writing one.
 - [x] **Every corpus design is lowered both ways and held to one answer**: reading only what the
       front end elaborated, and reading every instance's body with each held to its unit.
-- [ ] **A name written from the top does not enter a key.** It names one object from every instance
-      (LRM 23.6), so it tells no two instances apart; today it is counted with the names that
-      resolve per instance, and a body holding one is read per instance.
+- [ ] **Instances whose upward names reach the same object share a body.** Two instances under one
+      parent reading that parent's variable are alike, and today each is elaborated, read and held
+      to its unit, because the front end shares no body an upward name leaves.
 - [ ] **A parameter read through a hierarchical name is read from what its unit published.** Today
       its value is folded into the reader from the front end's tree, and the key holds only the
       other unit's name.
@@ -87,13 +91,14 @@ differently, which is why every instance with a body of its own is lowered and h
 
 - The steps on what the lowering reads land in files more than one clone has open; each is a change
   of its own.
-- Whether a name written from the top is compiled relative to the instance writing it is not read.
-  If it is, the fourth step changes how such a name is lowered and not only what the key holds.
+- Sharing a body between instances whose upward names reach the same object is the front end's to
+  do, since it owns name resolution, and its own source names it as work not done.
 - The front end's record of leaving names holds upward names only, is not exposed, and its
   definition has not been held against this compiler's own walk. Its instance cache has been wrong
-  twice (an interface-array port left out of its key, fixed upstream and in the pin; 0.0 and -0.0 as
-  one value, standing), so nothing here takes the front end's word that two instances are alike
-  without a condition of its own.
+  three times (an interface-array port left out of its key, and a subroutine, sequence or property
+  reached by an upward name not recorded as leaving, both fixed in the pin; 0.0 and -0.0 as one
+  value, standing), so nothing here takes the front end's word that two instances are alike without
+  a condition of its own.
 - A module writing an upward name is elaborated once per instance by the front end itself. What such
   a module costs follows its instances, and the most these steps reach is not adding to it.
 - A holder's code naming its child's class is an object-model question, and the alternative (the

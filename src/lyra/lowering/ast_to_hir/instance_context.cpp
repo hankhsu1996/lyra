@@ -5,7 +5,6 @@
 #include <format>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <slang/ast/ASTVisitor.h>
@@ -15,7 +14,6 @@
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 
-#include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/ast_to_hir/climb.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
@@ -118,6 +116,24 @@ struct LeavingNames
   }
 };
 
+// Adds what is written elsewhere about `held` and about each instance below
+// it, the second known to `held` as `theirs`, each under its path from the
+// scope holding `held`.
+void AppendOverridesAtAndBelow(
+    const HeldInstance& held, const InstanceContext& theirs,
+    std::vector<OverriddenBelow>& overridden) {
+  for (OverrideEffect& effect : OverridesOn(*held.instance)) {
+    overridden.push_back(
+        OverriddenBelow{.path = held.path, .effect = std::move(effect)});
+  }
+  for (const OverriddenBelow& below : theirs.overridden_below) {
+    overridden.push_back(
+        OverriddenBelow{
+            .path = std::format("{}.{}", held.path, below.path),
+            .effect = below.effect});
+  }
+}
+
 }  // namespace
 
 auto InstanceContextOf(
@@ -127,7 +143,11 @@ auto InstanceContextOf(
     return kept->second;
   }
   if (!has_body_of_its_own(inst)) {
-    return known.emplace(&inst, InstanceContext{}).first->second;
+    // The front end shares a body only between instances every name leaving
+    // it resolves alike from, so what the shared body states holds for this
+    // instance too.
+    return InstanceContextOf(
+        *inst.getCanonicalBody()->parentInstance, known, has_body_of_its_own);
   }
 
   LeavingNames names(inst.body);
@@ -141,44 +161,32 @@ auto InstanceContextOf(
 
   InstanceContext context{
       .climbs = std::move(names.climbs),
-      .below = {},
-      .a_name_leaves_its_writer = false};
-  context.a_name_leaves_its_writer = !context.climbs.empty();
+      .names_below = {},
+      .overridden_below = {}};
   for (const HeldInstance& held : holds) {
-    for (OverrideEffect& effect : OverridesOn(*held.instance)) {
-      context.below.push_back(
-          FixedBelow{.path = held.path, .what = std::move(effect)});
-    }
     const InstanceContext& theirs =
         InstanceContextOf(*held.instance, known, has_body_of_its_own);
-    context.a_name_leaves_its_writer =
-        context.a_name_leaves_its_writer || theirs.a_name_leaves_its_writer;
     // A name stops at the instance it lands in and concerns none above it.
     for (std::uint32_t written = 0; written < theirs.climbs.size(); ++written) {
       const ClimbAnchor& climb = theirs.climbs[written];
       if (climb.instance == &inst.body) continue;
-      context.below.push_back(
-          FixedBelow{
+      context.names_below.push_back(
+          NameLandingBelow{
               .path = held.path,
-              .what = NameLanding{
-                  .written = written,
-                  .scope = climb.scope,
-                  .instance = climb.instance}});
+              .written = written,
+              .scope = climb.scope,
+              .instance = climb.instance});
     }
-    for (const FixedBelow& fixed : theirs.below) {
-      const bool lands_here = std::visit(
-          Overloaded{
-              [&](const NameLanding& name) {
-                return name.instance == &inst.body;
-              },
-              [](const OverrideEffect&) { return false; }},
-          fixed.what);
-      if (lands_here) continue;
-      context.below.push_back(
-          FixedBelow{
-              .path = std::format("{}.{}", held.path, fixed.path),
-              .what = fixed.what});
+    for (const NameLandingBelow& name : theirs.names_below) {
+      if (name.instance == &inst.body) continue;
+      context.names_below.push_back(
+          NameLandingBelow{
+              .path = std::format("{}.{}", held.path, name.path),
+              .written = name.written,
+              .scope = name.scope,
+              .instance = name.instance});
     }
+    AppendOverridesAtAndBelow(held, theirs, context.overridden_below);
   }
   return known.emplace(&inst, std::move(context)).first->second;
 }
@@ -189,19 +197,9 @@ auto OverridesBelow(
     -> std::vector<OverriddenBelow> {
   std::vector<OverriddenBelow> overrides;
   for (const HeldInstance& held : InstancesHeldIn(block)) {
-    for (OverrideEffect& effect : OverridesOn(*held.instance)) {
-      overrides.push_back(
-          OverriddenBelow{.path = held.path, .effect = std::move(effect)});
-    }
-    for (const FixedBelow& fixed :
-         InstanceContextOf(*held.instance, known, has_body_of_its_own).below) {
-      if (const auto* effect = std::get_if<OverrideEffect>(&fixed.what)) {
-        overrides.push_back(
-            OverriddenBelow{
-                .path = std::format("{}.{}", held.path, fixed.path),
-                .effect = *effect});
-      }
-    }
+    AppendOverridesAtAndBelow(
+        held, InstanceContextOf(*held.instance, known, has_body_of_its_own),
+        overrides);
   }
   return overrides;
 }
