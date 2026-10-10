@@ -2,7 +2,8 @@
 # is compiled again at twice that, and the two runs are held to each other.
 #
 # A size is chosen so that the larger run takes long enough to time and stays
-# inside what the front end allows a generate loop to count.
+# inside what the front end allows a generate loop to count, or a vector to be
+# wide.
 instance_array: 512
 loop_choosing_by_outer_index: 64
 loop_declaring_a_type: 512
@@ -13,4 +14,5 @@ loop_of_instances_reading_their_block: 512
 loop_of_instances_reading_upward: 512
 loop_of_one_body: 512
 loop_selecting_by_index: 512
+packed_value_width: 4194304
 unread_parameter_width: 16384

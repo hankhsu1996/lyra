@@ -50,8 +50,11 @@ auto StringBytesToConstant(
     -> mir::IntegralConstant {
   mir::IntegralConstant held = mir::BlankIntegralConstant(integral);
   value::FromBytes(
-      value::Planes{.value = held.value_words, .unknown = held.state_words},
-      integral.bit_width, text);
+      value::IntegralView{
+          .value = held.value_words,
+          .unknown = held.state_words,
+          .width = integral.bit_width},
+      text);
   return held;
 }
 

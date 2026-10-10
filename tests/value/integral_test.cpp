@@ -43,20 +43,127 @@ static_assert((Int::FromInt(-7) / Int::FromInt(2)).ToInt64() == -3);
 // than a word.
 template <IntegralValue T>
 auto ValueBits(const T& value) -> std::uint64_t {
-  return value.Load().value[0];
+  return value.View().value[0];
 }
 template <IntegralValue T>
 auto UnknownBits(const T& value) -> std::uint64_t {
-  return WordAt(value.Load().unknown, 0);
+  return WordOrZero(value.View().unknown, 0);
 }
 
 // A four-state value built from the two planes of its low word.
 template <IntegralValue T>
 auto FromPlanes(std::uint64_t value, std::uint64_t unknown) -> T {
-  typename T::Words words;
-  words.value[0] = value;
-  words.unknown[0] = unknown;
-  return T::FromWords(words);
+  T out = T::Zero();
+  SetWord(out.MutableView().value, 0, value);
+  SetWord(out.MutableView().unknown, 0, unknown);
+  return out;
+}
+
+// A value built from the low word of each plane, cut to the width of `T`. A
+// type that holds no x or z takes the value plane alone.
+template <IntegralValue T>
+auto TruncatedTo(std::uint64_t value, std::uint64_t unknown) -> T {
+  const std::uint64_t mask = T::kWidth >= 64
+                                 ? ~std::uint64_t{0}
+                                 : (std::uint64_t{1} << T::kWidth) - 1U;
+  if constexpr (T::kFourState) {
+    return FromPlanes<T>(value & mask, unknown & mask);
+  }
+  return T::FromInt(static_cast<std::int64_t>(value & mask));
+}
+
+// Holds every operator on values of the unsigned type `T` to what the same
+// operator answers on the same values at 100 bits, cut to the width of `T`.
+template <IntegralValue T>
+void ExpectMatchesWideResultTruncated() {
+  using Wide = Integral<100, Signedness::kUnsigned, T::kDomain>;
+  using Twice = Integral<T::kWidth * 2, Signedness::kUnsigned, T::kDomain>;
+  struct Planes {
+    std::uint64_t value;
+    std::uint64_t unknown;
+  };
+  constexpr std::array<Planes, 5> kOperands{
+      Planes{.value = 0, .unknown = 0}, Planes{.value = 1, .unknown = 0},
+      Planes{.value = 0xA5C3'96E1'5A3C'69B7ULL, .unknown = 0},
+      Planes{.value = ~std::uint64_t{0}, .unknown = 0},
+      Planes{
+          .value = 0x0F0F'3355'00FF'A5A5ULL,
+          .unknown = 0x8000'0001'0000'0011ULL}};
+  const auto cut = [](const auto& wide) { return Convert<T>(wide); };
+  for (const Planes& left : kOperands) {
+    const T a = TruncatedTo<T>(left.value, left.unknown);
+    const Wide wide_a = Convert<Wide>(a);
+    EXPECT_TRUE((~a).IsBitIdentical(cut(~wide_a)));
+    EXPECT_TRUE(a.ReductionOr().IsBitIdentical(wide_a.ReductionOr()));
+    EXPECT_TRUE(a.ReductionXor().IsBitIdentical(wide_a.ReductionXor()));
+    EXPECT_TRUE(a.Pow(Int::FromInt(3))
+                    .IsBitIdentical(cut(wide_a.Pow(Int::FromInt(3)))));
+    const Twice twice = Replicate<Twice>(a);
+    EXPECT_TRUE(a.IsBitIdentical(cut(twice)));
+    EXPECT_TRUE(a.IsBitIdentical(cut(twice.LogicalShiftRight(
+        Int::FromInt(static_cast<std::int64_t>(T::kWidth))))));
+    for (const std::int64_t amount : {0, 1, 5, 7}) {
+      const Int by = Int::FromInt(amount);
+      EXPECT_TRUE(a.ShiftLeft(by).IsBitIdentical(cut(wide_a.ShiftLeft(by))))
+          << amount;
+      EXPECT_TRUE(a.LogicalShiftRight(by).IsBitIdentical(
+          cut(wide_a.LogicalShiftRight(by))))
+          << amount;
+    }
+    for (const Planes& right : kOperands) {
+      const T b = TruncatedTo<T>(right.value, right.unknown);
+      const Wide wide_b = Convert<Wide>(b);
+      EXPECT_TRUE((a + b).IsBitIdentical(cut(wide_a + wide_b)));
+      EXPECT_TRUE((a - b).IsBitIdentical(cut(wide_a - wide_b)));
+      EXPECT_TRUE((a * b).IsBitIdentical(cut(wide_a * wide_b)));
+      EXPECT_TRUE((a / b).IsBitIdentical(cut(wide_a / wide_b)));
+      EXPECT_TRUE((a % b).IsBitIdentical(cut(wide_a % wide_b)));
+      EXPECT_TRUE((a & b).IsBitIdentical(cut(wide_a & wide_b)));
+      EXPECT_TRUE((a | b).IsBitIdentical(cut(wide_a | wide_b)));
+      EXPECT_TRUE((a ^ b).IsBitIdentical(cut(wide_a ^ wide_b)));
+      EXPECT_TRUE((a == b).IsBitIdentical(wide_a == wide_b));
+      EXPECT_TRUE((a < b).IsBitIdentical(wide_a < wide_b));
+      EXPECT_TRUE((a >= b).IsBitIdentical(wide_a >= wide_b));
+    }
+  }
+}
+
+// Holds the operators that read a sign, on values of the signed type `T`, to
+// what they answer on the same values at 100 bits, cut to the width of `T`.
+template <IntegralValue T>
+void ExpectSignedMatchesWideResultTruncated() {
+  using Wide = Integral<100, Signedness::kSigned, T::kDomain>;
+  const auto cut = [](const auto& wide) { return Convert<T>(wide); };
+  const T lowest = T::FromInt(-1).ShiftLeft(
+      Int::FromInt(static_cast<std::int64_t>(T::kWidth) - 1));
+  const std::array<T, 6> operands{T::FromInt(0),  T::FromInt(1), T::FromInt(-1),
+                                  T::FromInt(-7), T::FromInt(5), lowest};
+  for (const T& a : operands) {
+    const Wide wide_a = Convert<Wide>(a);
+    EXPECT_TRUE((-a).IsBitIdentical(cut(-wide_a)));
+    for (const std::int64_t amount : {0, 1, 5}) {
+      const Int by = Int::FromInt(amount);
+      EXPECT_TRUE(a.ArithmeticShiftRight(by).IsBitIdentical(
+          cut(wide_a.ArithmeticShiftRight(by))))
+          << amount;
+    }
+    for (const T& b : operands) {
+      const Wide wide_b = Convert<Wide>(b);
+      EXPECT_TRUE((a < b).IsBitIdentical(wide_a < wide_b));
+      EXPECT_TRUE((a >= b).IsBitIdentical(wide_a >= wide_b));
+      EXPECT_TRUE((a / b).IsBitIdentical(cut(wide_a / wide_b)));
+      EXPECT_TRUE((a % b).IsBitIdentical(cut(wide_a % wide_b)));
+      EXPECT_TRUE((a * b).IsBitIdentical(cut(wide_a * wide_b)));
+    }
+  }
+}
+
+// The value of type `T` that `words` holds.
+template <IntegralValue T>
+auto HeldIn(const WrittenWords& words) -> T {
+  T out = T::Zero();
+  Convert(out.MutableView(), words.View());
+  return out;
 }
 
 // The bit at `position` of a plane held as words, worked out without the
@@ -303,6 +410,21 @@ TEST(IntegralTest, ComparisonsAnswerOneBit) {
   EXPECT_EQ(
       (Logic100::FromInt(1) == FromPlanes<Logic100>(1, 2)).Lsb(),
       FourStateBit::kUnknown);
+  // A known mismatch in a word above one holding an x still settles it.
+  const Logic100 high_bit = Logic100::FromInt(1).ShiftLeft(Int::FromInt(70));
+  EXPECT_EQ(
+      (high_bit == FromPlanes<Logic100>(0, 2)).Lsb(), FourStateBit::kZero);
+  EXPECT_EQ((high_bit != FromPlanes<Logic100>(0, 2)).Lsb(), FourStateBit::kOne);
+  EXPECT_EQ(
+      FromPlanes<Logic100>(0, 2).WildcardEquals(high_bit).Lsb(),
+      FourStateBit::kZero);
+  EXPECT_EQ(
+      FromPlanes<Logic100>(0, 2).WildcardEquals(Logic100::FromInt(0)).Lsb(),
+      FourStateBit::kUnknown);
+  Logic100 high_bit_beside_x = high_bit;
+  InsertBits(high_bit_beside_x, 1, Logic{});
+  EXPECT_EQ(
+      high_bit.WildcardEquals(high_bit_beside_x).Lsb(), FourStateBit::kOne);
 
   const auto x_low = FromPlanes<Logic8>(0xAF, 0x0F);
   const auto z_low = FromPlanes<Logic8>(0xA0, 0x0F);
@@ -353,6 +475,44 @@ TEST(IntegralTest, LogicalOperatorsReadTruth) {
       FourStateBit::kUnknown);
   EXPECT_FALSE(unwritten.IsTruthy());
   EXPECT_TRUE(known_one_beside_x.IsTruthy());
+
+  // Each operator's whole table, over a value that is false, true and
+  // unknown.
+  const std::array<Logic8, 3> truths{
+      Logic8::FromInt(0), Logic8::FromInt(4), Logic8{}};
+  const std::array<FourStateBit, 3> scalars{
+      FourStateBit::kZero, FourStateBit::kOne, FourStateBit::kUnknown};
+  const std::array<std::array<FourStateBit, 3>, 3> and_table{{
+      {FourStateBit::kZero, FourStateBit::kZero, FourStateBit::kZero},
+      {FourStateBit::kZero, FourStateBit::kOne, FourStateBit::kUnknown},
+      {FourStateBit::kZero, FourStateBit::kUnknown, FourStateBit::kUnknown},
+  }};
+  const std::array<std::array<FourStateBit, 3>, 3> or_table{{
+      {FourStateBit::kZero, FourStateBit::kOne, FourStateBit::kUnknown},
+      {FourStateBit::kOne, FourStateBit::kOne, FourStateBit::kOne},
+      {FourStateBit::kUnknown, FourStateBit::kOne, FourStateBit::kUnknown},
+  }};
+  for (std::size_t a = 0; a < truths.size(); ++a) {
+    EXPECT_EQ((!truths.at(a)).Lsb(), Inverted(scalars.at(a))) << a;
+    for (std::size_t b = 0; b < truths.size(); ++b) {
+      EXPECT_EQ((truths.at(a) && truths.at(b)).Lsb(), and_table.at(a).at(b))
+          << a << " " << b;
+      EXPECT_EQ((truths.at(a) || truths.at(b)).Lsb(), or_table.at(a).at(b))
+          << a << " " << b;
+      EXPECT_EQ(LogicalAnd(scalars.at(a), scalars.at(b)), and_table.at(a).at(b))
+          << a << " " << b;
+    }
+  }
+  EXPECT_EQ(Inverted(FourStateBit::kZero), FourStateBit::kOne);
+  EXPECT_EQ(Inverted(FourStateBit::kOne), FourStateBit::kZero);
+  EXPECT_EQ(Inverted(FourStateBit::kUnknown), FourStateBit::kUnknown);
+  EXPECT_EQ(Inverted(FourStateBit::kHighImpedance), FourStateBit::kUnknown);
+  EXPECT_EQ(
+      LogicalAnd(FourStateBit::kHighImpedance, FourStateBit::kOne),
+      FourStateBit::kUnknown);
+  EXPECT_EQ(
+      LogicalAnd(FourStateBit::kHighImpedance, FourStateBit::kZero),
+      FourStateBit::kZero);
 }
 
 // LRM 11.4.10: a shift past a word boundary carries bits across it, `>>>`
@@ -377,6 +537,51 @@ TEST(IntegralTest, ShiftsMoveBitsByTheNumberTheAmountHolds) {
   const auto extended = x_sign.ArithmeticShiftRight(Int::FromInt(3));
   EXPECT_EQ(ValueBits(extended), 0xF0U);
   EXPECT_EQ(UnknownBits(extended), 0xF0U);
+
+  // The sign fills exactly the positions the shift vacates: none for an
+  // amount of 0, all of them from the width up, and across a word boundary the
+  // top of one word and the whole of each word above it.
+  EXPECT_EQ(
+      Byte8::FromInt(-128).ArithmeticShiftRight(Int::FromInt(0)).ToInt64(),
+      -128);
+  EXPECT_EQ(
+      Byte8::FromInt(-128).ArithmeticShiftRight(Int::FromInt(8)).ToInt64(), -1);
+  EXPECT_EQ(
+      Int::FromInt(-8).ArithmeticShiftRight(Int::FromInt(1)).ToInt64(), -4);
+  EXPECT_EQ(
+      Int::FromInt(-8).ArithmeticShiftRight(Int::FromInt(32)).ToInt64(), -1);
+  EXPECT_EQ(
+      Int::FromInt(8).ArithmeticShiftRight(Int::FromInt(32)).ToInt64(), 0);
+  const LongInt lowest =
+      LongInt::FromInt(std::numeric_limits<std::int64_t>::min());
+  EXPECT_EQ(lowest.ArithmeticShiftRight(Int::FromInt(63)).ToInt64(), -1);
+  EXPECT_EQ(lowest.ArithmeticShiftRight(Int::FromInt(64)).ToInt64(), -1);
+  EXPECT_EQ(lowest.LogicalShiftRight(Int::FromInt(63)).ToInt64(), 1);
+  EXPECT_EQ(lowest.LogicalShiftRight(Int::FromInt(64)).ToInt64(), 0);
+  using Signed150 = SignedLogicVector<150>;
+  using Words150 = std::array<std::uint64_t, 3>;
+  const std::uint64_t top150 = std::uint64_t{1} << 21U;
+  const Words150 filled_from_79{
+      0, ~std::uint64_t{0} << 15U, (top150 << 1U) - 1U};
+  const Signed150 negative150 =
+      Signed150::FromWords(Words150{5, 0, top150}, Words150{});
+  EXPECT_TRUE(
+      negative150.ArithmeticShiftRight(Int::FromInt(70))
+          .IsBitIdentical(Signed150::FromWords(filled_from_79, Words150{})));
+  EXPECT_TRUE(
+      negative150.LogicalShiftRight(Int::FromInt(70))
+          .IsBitIdentical(
+              Signed150::FromWords(
+                  Words150{0, std::uint64_t{1} << 15U, 0}, Words150{})));
+  EXPECT_TRUE(negative150.ArithmeticShiftRight(Int::FromInt(0))
+                  .IsBitIdentical(negative150));
+  EXPECT_TRUE(negative150.ArithmeticShiftRight(Int::FromInt(150))
+                  .IsBitIdentical(Signed150::FromInt(-1)));
+  const Signed150 x_sign150 =
+      Signed150::FromWords(Words150{0, 0, top150}, Words150{0, 0, top150});
+  EXPECT_TRUE(x_sign150.ArithmeticShiftRight(Int::FromInt(70))
+                  .IsBitIdentical(
+                      Signed150::FromWords(filled_from_79, filled_from_79)));
 
   EXPECT_EQ(Bits8::FromInt(0xff).ShiftLeft(Int::FromInt(8)).ToInt64(), 0);
   EXPECT_EQ(Bits8::FromInt(0xff).ShiftLeft(Int::FromInt(7)).ToInt64(), 0x80);
@@ -495,7 +700,7 @@ TEST(IntegralTest, ASelectReadsAcrossWords) {
   const Bits136 source = Bits136::FromWords(words, two_state);
 
   const auto wide = ExtractBits<BitVector<72>>(source, 60);
-  const auto wide_words = wide.Load();
+  const auto wide_words = wide.View();
   for (std::uint64_t at = 0; at < 72; ++at) {
     EXPECT_EQ(BitOf(wide_words.value, at), BitOf(words, 60 + at)) << at;
   }
@@ -505,7 +710,7 @@ TEST(IntegralTest, ASelectReadsAcrossWords) {
   EXPECT_EQ(ValueBits(word), 0x7654321001234567ULL);
 
   const auto past_the_top = ExtractBits<BitVector<72>>(source, 100);
-  const auto past_words = past_the_top.Load();
+  const auto past_words = past_the_top.View();
   for (std::uint64_t at = 0; at < 72; ++at) {
     EXPECT_EQ(BitOf(past_words.value, at), at < 36 && BitOf(words, 100 + at))
         << at;
@@ -513,7 +718,7 @@ TEST(IntegralTest, ASelectReadsAcrossWords) {
 
   const auto below =
       ExtractBits<LogicVector<72>>(Convert<LogicVector<136>>(source), -70);
-  const auto below_words = below.Load();
+  const auto below_words = below.View();
   for (std::uint64_t at = 0; at < 72; ++at) {
     EXPECT_EQ(BitOf(below_words.unknown, at), at < 70) << at;
   }
@@ -558,12 +763,9 @@ TEST(IntegralTest, AWriteLandsOnThePositionsItNames) {
 
   // A position that is itself a value names none where it holds x or z.
   const auto with_slice = [](Bits8 target, const auto& position) {
-    using P = std::remove_cvref_t<decltype(position)>;
-    typename Bits8::Words words = target.Load();
     WithSlice(
-        words.Write(), 8, position.Load().Read(), P::kWidth, P::kSignedness,
-        Bits4::FromInt(0x9).Load().Read(), 4);
-    return Bits8::FromWords(words).ToInt64();
+        target.MutableView(), position.View(), Bits4::FromInt(0x9).View());
+    return target.ToInt64();
   };
   EXPECT_EQ(with_slice(Bits8::FromInt(0), Int::FromInt(4)), 0x90);
   EXPECT_EQ(with_slice(Bits8::FromInt(0x11), Logic8{}), 0x11);
@@ -582,7 +784,7 @@ TEST(IntegralTest, AWriteLandsAcrossWords) {
   ASSERT_TRUE(reached.has_value());
   EXPECT_EQ(reached->lsb, 60U);
   EXPECT_EQ(reached->width, 72U);
-  const auto after = written.Load();
+  const auto after = written.View();
   for (std::uint64_t at = 0; at < 136; ++at) {
     const bool inside = at >= 60 && at < 132;
     EXPECT_EQ(
@@ -604,7 +806,7 @@ TEST(IntegralTest, AWriteLandsAcrossWords) {
   ASSERT_TRUE(clipped.has_value());
   EXPECT_EQ(clipped->lsb, 130U);
   EXPECT_EQ(clipped->width, 6U);
-  const auto top_words = top.Load();
+  const auto top_words = top.View();
   for (std::uint64_t at = 0; at < 136; ++at) {
     EXPECT_EQ(
         BitOf(top_words.value, at),
@@ -782,6 +984,13 @@ TEST(IntegralTest, ReductionsFoldEveryPositionOfTheValue) {
   Logic67 zero_beside_unknown = one_unknown;
   InsertBits(zero_beside_unknown, 0, Bit::FromInt(0));
   EXPECT_EQ(zero_beside_unknown.ReductionAnd().Lsb(), FourStateBit::kZero);
+  Logic67 unknown_among_zeros = zeros;
+  InsertBits(unknown_among_zeros, 66, Logic{});
+  EXPECT_EQ(unknown_among_zeros.ReductionAnd().Lsb(), FourStateBit::kZero);
+  EXPECT_EQ(unknown_among_zeros.ReductionNand().Lsb(), FourStateBit::kOne);
+  EXPECT_EQ(unknown_among_zeros.ReductionOr().Lsb(), FourStateBit::kUnknown);
+  EXPECT_EQ(unknown_among_zeros.ReductionNor().Lsb(), FourStateBit::kUnknown);
+  EXPECT_EQ(unknown_among_zeros.ReductionXnor().Lsb(), FourStateBit::kUnknown);
 
   using Bits67 = BitVector<67>;
   EXPECT_EQ(Bits67::FromInt(-1).ReductionAnd().ToInt64(), 1);
@@ -836,9 +1045,10 @@ TEST(IntegralTest, BitQueries) {
 TEST(IntegralTest, BlocksAreReversedInPlace) {
   const auto reversed = [](const auto& value, std::uint64_t block) {
     using T = std::remove_cvref_t<decltype(value)>;
-    typename T::Words out;
-    ReverseBlocks(out.Write(), value.Load().Read(), T::kWidth, block);
-    return T::FromWords(out);
+    T out = T::Zero();
+    ReverseBlocks(
+        out.AsMutableWords().MutableView(), value.AsWords().View(), block);
+    return out;
   };
   EXPECT_EQ(reversed(Bits8::FromInt(0b0011'0101), 1).ToInt64(), 0b1010'1100);
   EXPECT_EQ(reversed(Bits8::FromInt(0x35), 4).ToInt64(), 0x53);
@@ -851,11 +1061,13 @@ TEST(IntegralTest, BlocksAreReversedInPlace) {
   const std::array<std::uint64_t, 2> words{0x0123456789ABCDEFULL, 0x9ULL};
   const std::array<std::uint64_t, 0> two_state{};
   const auto wide = BitVector<100>::FromWords(words, two_state);
-  const auto bitwise = reversed(wide, 1).Load();
+  const auto bitwise_value = reversed(wide, 1);
+  const auto bitwise = bitwise_value.View();
   for (std::uint64_t at = 0; at < 100; ++at) {
     EXPECT_EQ(BitOf(bitwise.value, at), BitOf(words, 99 - at)) << at;
   }
-  const auto by_bytes = reversed(wide, 8).Load();
+  const auto by_bytes_value = reversed(wide, 8);
+  const auto by_bytes = by_bytes_value.View();
   for (std::uint64_t at = 0; at < 100; ++at) {
     // Twelve whole bytes and a top block of four bits.
     const std::uint64_t block = at < 4 ? 12 : 11 - ((at - 4) / 8);
@@ -869,39 +1081,39 @@ TEST(IntegralTest, BlocksAreReversedInPlace) {
 // with `_` between them; x and z cover a whole digit, and a two-state value
 // reads them as 0.
 TEST(IntegralTest, AWordIsReadInItsRadix) {
-  typename Logic8::Words read;
-  ASSERT_TRUE(FromDigits(read.Write(), 8, DigitRadix::kHex, "a_5"));
-  EXPECT_EQ(Logic8::FromWords(read).ToInt64(), 0xa5);
-  ASSERT_TRUE(FromDigits(read.Write(), 8, DigitRadix::kBinary, "1x0z"));
-  const auto with_unknown = Logic8::FromWords(read);
+  WrittenWords read(kShapeOf<Logic8>);
+  ASSERT_TRUE(FromDigits(read.MutableView(), DigitRadix::kHex, "a_5"));
+  EXPECT_EQ(HeldIn<Logic8>(read).ToInt64(), 0xa5);
+  ASSERT_TRUE(FromDigits(read.MutableView(), DigitRadix::kBinary, "1x0z"));
+  const auto with_unknown = HeldIn<Logic8>(read);
   EXPECT_EQ(ValueBits(with_unknown), 0b1100U);
   EXPECT_EQ(UnknownBits(with_unknown), 0b0101U);
-  ASSERT_TRUE(FromDigits(read.Write(), 8, DigitRadix::kHex, "?1"));
-  EXPECT_EQ(ValueBits(Logic8::FromWords(read)), 0x01U);
-  EXPECT_EQ(UnknownBits(Logic8::FromWords(read)), 0xF0U);
-  typename Byte8::Words two_state;
-  ASSERT_TRUE(FromDigits(two_state.Write(), 8, DigitRadix::kOctal, "z7"));
-  EXPECT_EQ(Byte8::FromWords(two_state).ToInt64(), 7);
-  ASSERT_TRUE(FromDigits(two_state.Write(), 8, DigitRadix::kHex, "x7"));
-  EXPECT_EQ(Byte8::FromWords(two_state).ToInt64(), 7);
+  ASSERT_TRUE(FromDigits(read.MutableView(), DigitRadix::kHex, "?1"));
+  EXPECT_EQ(ValueBits(HeldIn<Logic8>(read)), 0x01U);
+  EXPECT_EQ(UnknownBits(HeldIn<Logic8>(read)), 0xF0U);
+  WrittenWords two_state(kShapeOf<Byte8>);
+  ASSERT_TRUE(FromDigits(two_state.MutableView(), DigitRadix::kOctal, "z7"));
+  EXPECT_EQ(HeldIn<Byte8>(two_state).ToInt64(), 7);
+  ASSERT_TRUE(FromDigits(two_state.MutableView(), DigitRadix::kHex, "x7"));
+  EXPECT_EQ(HeldIn<Byte8>(two_state).ToInt64(), 7);
   // A longer word loses its leading digits, and a digit the width cuts keeps
   // the bits below it.
-  ASSERT_TRUE(FromDigits(read.Write(), 8, DigitRadix::kHex, "123"));
-  EXPECT_EQ(Logic8::FromWords(read).ToInt64(), 0x23);
-  typename BitVector<5>::Words five;
-  ASSERT_TRUE(FromDigits(five.Write(), 5, DigitRadix::kOctal, "77"));
-  EXPECT_EQ(BitVector<5>::FromWords(five).ToInt64(), 0x1f);
-  EXPECT_FALSE(FromDigits(read.Write(), 8, DigitRadix::kOctal, "9"));
-  EXPECT_FALSE(FromDigits(read.Write(), 8, DigitRadix::kBinary, "2"));
-  EXPECT_FALSE(FromDigits(read.Write(), 8, DigitRadix::kHex, "g"));
-  EXPECT_FALSE(FromDigits(read.Write(), 8, DigitRadix::kHex, "_"));
-  EXPECT_FALSE(FromDigits(read.Write(), 8, DigitRadix::kHex, ""));
+  ASSERT_TRUE(FromDigits(read.MutableView(), DigitRadix::kHex, "123"));
+  EXPECT_EQ(HeldIn<Logic8>(read).ToInt64(), 0x23);
+  WrittenWords five(kShapeOf<BitVector<5>>);
+  ASSERT_TRUE(FromDigits(five.MutableView(), DigitRadix::kOctal, "77"));
+  EXPECT_EQ(HeldIn<BitVector<5>>(five).ToInt64(), 0x1f);
+  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kOctal, "9"));
+  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kBinary, "2"));
+  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, "g"));
+  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, "_"));
+  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, ""));
 
   // An octal digit lying across two words lands in both.
-  typename BitVector<100>::Words wide;
+  WrittenWords wide(kShapeOf<BitVector<100>>);
   ASSERT_TRUE(FromDigits(
-      wide.Write(), 100, DigitRadix::kOctal, "7000000000000000000000"));
-  const auto across = BitVector<100>::FromWords(wide);
+      wide.MutableView(), DigitRadix::kOctal, "7000000000000000000000"));
+  const auto across = HeldIn<BitVector<100>>(wide);
   EXPECT_EQ(ExtractBits<Bits4>(across, 62).ToInt64(), 0b1110);
   EXPECT_EQ(across.CountBits(Bit::FromInt(1)).ToInt64(), 3);
 }
@@ -909,17 +1121,17 @@ TEST(IntegralTest, AWordIsReadInItsRadix) {
 // LRM 6.24.3 / 11.4.14.3: a stream holds its first item most significant, and
 // reading a two-state item out of a four-state stream takes x as 0.
 TEST(IntegralTest, StreamsHoldTheirFirstItemMostSignificant) {
-  typename LogicVector<12>::Words stream;
+  WrittenWords stream(kShapeOf<LogicVector<12>>);
   std::uint64_t filled =
-      WriteToStream(Bits4::FromInt(0xa), stream.Write(), 12, 0);
-  filled = WriteToStream(Logic8{}, stream.Write(), 12, filled);
+      WriteToStream(Bits4::FromInt(0xa), stream.MutableView(), 0);
+  filled = WriteToStream(Logic8{}, stream.MutableView(), filled);
   EXPECT_EQ(filled, 12U);
-  const auto whole = LogicVector<12>::FromWords(stream);
+  const auto whole = HeldIn<LogicVector<12>>(stream);
   EXPECT_EQ(ValueBits(whole), 0xAFFU);
   EXPECT_EQ(UnknownBits(whole), 0x0FFU);
-  EXPECT_EQ(ReadFromStream<Bits4>(stream.Read(), 12, 0).ToInt64(), 0xa);
-  EXPECT_TRUE(ReadFromStream<Logic8>(stream.Read(), 12, 4).HasUnknown());
-  EXPECT_EQ(ReadFromStream<BitVector<8>>(stream.Read(), 12, 4).ToInt64(), 0);
+  EXPECT_EQ(ReadFromStream<Bits4>(stream.View(), 0).ToInt64(), 0xa);
+  EXPECT_TRUE(ReadFromStream<Logic8>(stream.View(), 4).HasUnknown());
+  EXPECT_EQ(ReadFromStream<BitVector<8>>(stream.View(), 4).ToInt64(), 0);
 }
 
 // LRM 5.9: text is a value whose last character is least significant, and
@@ -928,11 +1140,11 @@ TEST(IntegralTest, TextIsBytesFromTheLeastSignificantEnd) {
   const std::string text = "AB";
   EXPECT_EQ(FromBytes<Int>(text).ToInt64(), 0x4142);
   EXPECT_EQ(FromBytes<Bits4>(text).ToInt64(), 0x2);
-  EXPECT_EQ(BytesOf(BitVector<16>::FromInt(0x4142).Load().View()), "AB");
-  EXPECT_EQ(BytesOf(LogicVector<16>{}.Load().View()), std::string(2, '\0'));
+  EXPECT_EQ(BytesOf(BitVector<16>::FromInt(0x4142).AsWords().View()), "AB");
+  EXPECT_EQ(BytesOf(LogicVector<16>{}.AsWords().View()), std::string(2, '\0'));
   const std::string long_text = "0123456789";
   const auto wide = FromBytes<BitVector<100>>(long_text);
-  EXPECT_EQ(BytesOf(wide.Load().View()).substr(3), long_text);
+  EXPECT_EQ(BytesOf(wide.AsWords().View()).substr(3), long_text);
 }
 
 // A constant states its planes as words.
@@ -946,15 +1158,16 @@ TEST(IntegralTest, AConstantIsItsWords) {
 // Code compiled once for every integral type reads a value through its planes,
 // width and signedness, and writes one the same way.
 TEST(IntegralTest, AValueIsReadAndWrittenThroughAView) {
-  const typename Logic8::Words read = Logic8{}.Load();
-  EXPECT_EQ(read.View().width, 8U);
-  EXPECT_EQ(read.View().signedness, Signedness::kUnsigned);
-  EXPECT_TRUE(read.View().IsFourState());
-  EXPECT_FALSE(Int::FromInt(1).Load().View().IsFourState());
-  EXPECT_EQ(Int::FromInt(1).Load().View().signedness, Signedness::kSigned);
-  typename Byte8::Words written;
-  FromInt(written.MutableView().planes, 8U, -2);
-  EXPECT_EQ(Byte8::FromWords(written).ToInt64(), -2);
+  const Logic8 logic;
+  const LoadedWords words = logic.AsWords();
+  EXPECT_EQ(words.View().width, 8U);
+  EXPECT_EQ(words.View().signedness, Signedness::kUnsigned);
+  EXPECT_TRUE(words.View().IsFourState());
+  EXPECT_FALSE(Int::FromInt(1).AsWords().View().IsFourState());
+  EXPECT_EQ(Int::FromInt(1).AsWords().View().signedness, Signedness::kSigned);
+  WrittenWords written(kShapeOf<Byte8>);
+  FromInt(written.MutableView(), -2);
+  EXPECT_EQ(HeldIn<Byte8>(written).ToInt64(), -2);
 }
 
 // A position is the one integer a select's operand stands for, or nothing: past
@@ -1004,20 +1217,21 @@ TEST(IntegralTest, BothPlanesSurviveLoadingAndStoringAtEveryLayout) {
   const auto round_trip = [](const auto& value) {
     using T = std::remove_cvref_t<decltype(value)>;
     const LoadedWords loaded = LoadedWords::Load(&value, kShapeOf<T>);
-    const typename T::Words words = value.Load();
-    const ConstPlanes planes = loaded.Read();
+    const ConstIntegralView planes = loaded.View();
+    const auto held = value.View();
     for (std::size_t i = 0; i < T::kWords; ++i) {
-      EXPECT_EQ(planes.value[i], words.value.at(i));
-      EXPECT_EQ(WordAt(planes.unknown, i), WordAt(words.unknown, i));
+      EXPECT_EQ(planes.value[i], held.value[i]);
+      EXPECT_EQ(WordOrZero(planes.unknown, i), WordOrZero(held.unknown, i));
     }
     EXPECT_EQ(loaded.View().IsFourState(), T::kFourState);
     T stored = T::FromInt(0);
-    loaded.StoreTo(&stored);
+    WrittenWords::CopyOf(&value, kShapeOf<T>).StoreTo(&stored);
     EXPECT_TRUE(stored.IsBitIdentical(value));
   };
   round_trip(FromPlanes<Logic8>(0xA5, 0x3C));
   round_trip(FromPlanes<LogicVector<12>>(0xA5A, 0x3C3));
   round_trip(FromPlanes<LogicVector<32>>(0xDEADBEEF, 0x0F0F0F0F));
+  round_trip(FromPlanes<LogicVector<40>>(0xA5DEADBEEFULL, 0x3C0F0F0F0FULL));
   round_trip(FromPlanes<LogicVector<64>>(0x0123456789ABCDEFULL, ~0ULL));
   round_trip(
       Logic100::FromWords(
@@ -1075,6 +1289,59 @@ TEST(IntegralTest, AWideValueKeepsBothPlanesHoweverItMoves) {
   EXPECT_TRUE(held_wide.HasUnknown());
   EXPECT_FALSE(WideBitVector(100, &narrow).HasUnknown());
   EXPECT_TRUE(WideLogicVector().IsUninitialized());
+}
+
+// A value is held in the integer its width asks for -- 8, 16, 32 or 64 bits of
+// each plane -- and an operator answers the same in every one of them: what it
+// answers at a width is what it answers at 100 bits, cut to the width.
+TEST(IntegralTest, OperatorsAgreeAtEveryStorageUnit) {
+  ExpectMatchesWideResultTruncated<BitVector<8>>();
+  ExpectMatchesWideResultTruncated<BitVector<12>>();
+  ExpectMatchesWideResultTruncated<BitVector<32>>();
+  ExpectMatchesWideResultTruncated<BitVector<40>>();
+  ExpectMatchesWideResultTruncated<BitVector<64>>();
+  ExpectMatchesWideResultTruncated<LogicVector<8>>();
+  ExpectMatchesWideResultTruncated<LogicVector<12>>();
+  ExpectMatchesWideResultTruncated<LogicVector<32>>();
+  ExpectMatchesWideResultTruncated<LogicVector<40>>();
+  ExpectMatchesWideResultTruncated<LogicVector<64>>();
+}
+
+// The same of the operators that read a sign, where a storage unit narrower
+// than 64 bits is widened as it is read.
+TEST(IntegralTest, SignedOperatorsAgreeAtEveryStorageUnit) {
+  ExpectSignedMatchesWideResultTruncated<SignedBitVector<8>>();
+  ExpectSignedMatchesWideResultTruncated<SignedBitVector<12>>();
+  ExpectSignedMatchesWideResultTruncated<SignedBitVector<32>>();
+  ExpectSignedMatchesWideResultTruncated<SignedBitVector<40>>();
+  ExpectSignedMatchesWideResultTruncated<SignedBitVector<64>>();
+  ExpectSignedMatchesWideResultTruncated<SignedLogicVector<12>>();
+  ExpectSignedMatchesWideResultTruncated<SignedLogicVector<40>>();
+}
+
+// A value past the size stored inline owns its words, and copying, moving and
+// assigning one keep the value.
+TEST(IntegralTest, AHeapStoredValueKeepsItsBitsHoweverItMoves) {
+  constexpr std::uint64_t kLargestInline = 8 * kMaxInlineBytes;
+  using Wide = BitVector<kLargestInline + 1>;
+  static_assert(UsesHeapWords(Wide::kWidth, Wide::kDomain));
+  static_assert(!UsesHeapWords(kLargestInline, StateDomain::kTwoState));
+  const Int to_the_top =
+      Int::FromInt(static_cast<std::int64_t>(kLargestInline));
+  const Wide one = Wide::FromInt(1);
+  const Wide top = one.ShiftLeft(to_the_top);
+  EXPECT_FALSE(top.IsBitIdentical(one));
+  EXPECT_EQ((top | one).LogicalShiftRight(to_the_top).ToInt64(), 1);
+
+  Wide copy = top;
+  EXPECT_TRUE(copy.IsBitIdentical(top));
+  Wide moved = std::move(copy);
+  EXPECT_TRUE(moved.IsBitIdentical(top));
+  copy = one;
+  EXPECT_TRUE(copy.IsBitIdentical(one));
+  moved = copy;
+  EXPECT_TRUE(moved.IsBitIdentical(one));
+  EXPECT_TRUE(top.IsBitIdentical(one.ShiftLeft(to_the_top)));
 }
 
 }  // namespace

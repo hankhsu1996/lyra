@@ -50,13 +50,14 @@ concept HoldsParts = requires(const T& c, T& m, std::size_t position) {
 };
 
 // A value of `T` written into a stream of bits and built back out of one, the
-// stream being planes whose width the caller states (LRM 6.24.3).
+// stream being an integral value (LRM 6.24.3).
 template <typename T>
-concept StreamsThroughPlanes = requires(
-    const T& value, Planes written, ConstPlanes read, std::uint64_t at) {
-  { value.WriteToStream(written, at, at) } -> std::same_as<std::uint64_t>;
+concept BitStreamable = requires(
+    const T& value, const IntegralView& written, const ConstIntegralView& read,
+    std::uint64_t at) {
+  { value.WriteToStream(written, at) } -> std::same_as<std::uint64_t>;
   {
-    value.ReadFromStream(read, at, at)
+    value.ReadFromStream(read, at)
   } -> std::same_as<std::pair<T, std::uint64_t>>;
 };
 
@@ -178,14 +179,11 @@ class ValueTypeOf final : public ValueType {
     }
   }
   void CountBits(
-      const void* value, const ConstPlanes& control_bits,
-      std::uint64_t control_width, void* out) const override {
-    const ConstIntegralView control{
-        .planes = control_bits,
-        .width = control_width,
-        .signedness = Signedness::kUnsigned};
-    if constexpr (requires { Of(value).CountBits(control); }) {
-      std::construct_at(static_cast<Int*>(out), Of(value).CountBits(control));
+      const void* value, const ConstIntegralView& control_bits,
+      void* out) const override {
+    if constexpr (requires { Of(value).CountBits(control_bits); }) {
+      std::construct_at(
+          static_cast<Int*>(out), Of(value).CountBits(control_bits));
     } else if constexpr (detail::kIsBitStreamType<T>) {
       detail::StreamNotYetSupported();
     } else {
@@ -193,10 +191,10 @@ class ValueTypeOf final : public ValueType {
     }
   }
   auto WriteToStream(
-      const void* value, const Planes& stream, std::uint64_t stream_width,
-      std::uint64_t filled) const -> std::uint64_t override {
-    if constexpr (detail::StreamsThroughPlanes<T>) {
-      return Of(value).WriteToStream(stream, stream_width, filled);
+      const void* value, const IntegralView& stream, std::uint64_t filled) const
+      -> std::uint64_t override {
+    if constexpr (detail::BitStreamable<T>) {
+      return Of(value).WriteToStream(stream, filled);
     } else if constexpr (detail::kIsBitStreamType<T>) {
       detail::StreamNotYetSupported();
     } else {
@@ -204,12 +202,10 @@ class ValueTypeOf final : public ValueType {
     }
   }
   auto ReadFromStream(
-      const ConstPlanes& stream, std::uint64_t stream_width,
-      std::uint64_t taken, const void* prototype, void* out) const
-      -> std::uint64_t override {
-    if constexpr (detail::StreamsThroughPlanes<T>) {
-      auto [read, after] =
-          Of(prototype).ReadFromStream(stream, stream_width, taken);
+      const ConstIntegralView& stream, std::uint64_t taken,
+      const void* prototype, void* out) const -> std::uint64_t override {
+    if constexpr (detail::BitStreamable<T>) {
+      auto [read, after] = Of(prototype).ReadFromStream(stream, taken);
       std::construct_at(static_cast<T*>(out), std::move(read));
       return after;
     } else if constexpr (detail::kIsBitStreamType<T>) {

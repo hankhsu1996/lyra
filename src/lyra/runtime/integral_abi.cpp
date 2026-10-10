@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -64,11 +65,12 @@ void Take(ToldType& type, IntegralTypeFact fact, const Word& word) {
   throw InternalError("unknown integral type fact");
 }
 
-auto Loaded(const void* bytes, value::IntegralExtent extent)
-    -> value::LoadedWords {
+auto Loaded(const void* bytes, const ToldType& type) -> value::LoadedWords {
   return value::LoadedWords::Load(
-      bytes,
-      value::IntegralShape{.width = extent.width, .domain = extent.domain});
+      bytes, value::IntegralShape{
+                 .width = type.extent.width,
+                 .signedness = type.signedness,
+                 .domain = type.extent.domain});
 }
 
 // Carries `op` out over the arguments its entry was handed: reads each as the
@@ -109,35 +111,23 @@ auto CarryOut(IntegralOp op, std::span<const Word> words)
         arguments.All()[i]);
   }
 
-  std::array<value::LoadedWords, kMostOperands> loaded{
-      value::LoadedWords(value::IntegralShape{}),
-      value::LoadedWords(value::IntegralShape{}),
-      value::LoadedWords(value::IntegralShape{})};
+  std::array<std::optional<value::LoadedWords>, kMostOperands> loaded{};
   std::array<value::IntegralOperand, kMostOperands> operands{};
   std::array<value::IntegralExtent, kMostOperands> extents{};
   std::size_t integral_count = 0;
   const auto integral = [&](std::size_t i, const ToldType& type) {
-    loaded.at(i) = Loaded(As<const void*>(handed.at(i)), type.extent);
     extents.at(integral_count++) = type.extent;
-    return loaded.at(i).Read();
+    loaded.at(i) = Loaded(As<const void*>(handed.at(i)), type);
+    return loaded.at(i)->View();
   };
   for (std::size_t i = 0; i < kinds.size(); ++i) {
     switch (kinds[i]) {
       case IntegralOperandKind::kBits:
-        operands.at(i) = value::BitsOperand{
-            .planes = integral(i, told.at(i)),
-            .width = told.at(i).extent.width};
-        break;
       case IntegralOperandKind::kNumber:
-        operands.at(i) = value::NumberOperand{
-            .planes = integral(i, told.at(i)),
-            .width = told.at(i).extent.width,
-            .signedness = told.at(i).signedness};
+        operands.at(i) = integral(i, told.at(i));
         break;
       case IntegralOperandKind::kSameType:
-        operands.at(i) = value::BitsOperand{
-            .planes = integral(i, told.front()),
-            .width = told.front().extent.width};
+        operands.at(i) = integral(i, told.front());
         break;
       case IntegralOperandKind::kMachineInt:
         operands.at(i) = As<std::int64_t>(handed.at(i));
@@ -168,15 +158,16 @@ auto CarryOut(IntegralOp op, std::span<const Word> words)
       std::span<const value::IntegralOperand>(operands).first(kinds.size());
   const auto answered_at =
       [&](value::IntegralExtent extent) -> value::MachineAnswer {
-    value::LoadedWords answer(
+    value::WrittenWords answer = value::WrittenWords::ZeroedAt(
+        answer_storage,
         value::IntegralShape{.width = extent.width, .domain = extent.domain});
-    value::MachineAnswer machine = value::ApplyIntegralOperation(
-        op, applied, answer.Write(), extent.width);
+    value::MachineAnswer machine =
+        value::ApplyIntegralOperation(op, applied, answer.MutableView());
     answer.StoreTo(answer_storage);
     return machine;
   };
   const auto answered_as_a_machine_value = [&]() -> value::MachineAnswer {
-    return value::ApplyIntegralOperation(op, applied, value::Planes{}, 0);
+    return value::ApplyIntegralOperation(op, applied, value::IntegralView{});
   };
   return std::visit(
       Overloaded{

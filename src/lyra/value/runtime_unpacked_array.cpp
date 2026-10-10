@@ -34,12 +34,12 @@ auto FromBytes(
     std::string_view bytes, const IntegralValueType& element,
     std::int64_t count) -> RuntimeUnpackedArray {
   const auto element_count = static_cast<std::size_t>(count);
-  const auto laid_out = [&](const LoadedWords& planes) {
-    return AnyValue::Built(element, [&](void* out) { planes.StoreTo(out); });
+  const auto laid_out = [&](const WrittenWords& words) {
+    return AnyValue::Built(element, [&](void* out) { words.StoreTo(out); });
   };
-  LoadedWords unknown(element.Shape());
-  FillScalar(unknown.Write(), element.Shape().width, FourStateBit::kUnknown);
-  const AnyValue element_default = laid_out(unknown);
+  WrittenWords unwritten(element.Shape());
+  FillDefault(unwritten.MutableView());
+  const AnyValue element_default = laid_out(unwritten);
   std::vector<AnyValue> elements;
   elements.reserve(element_count);
   for (std::size_t i = 0; i < element_count; ++i) {
@@ -47,10 +47,8 @@ auto FromBytes(
       elements.push_back(element_default);
       continue;
     }
-    LoadedWords byte(element.Shape());
-    FromInt(
-        byte.Write(), element.Shape().width,
-        static_cast<unsigned char>(bytes[i]));
+    WrittenWords byte(element.Shape());
+    FromInt(byte.MutableView(), static_cast<unsigned char>(bytes[i]));
     elements.push_back(laid_out(byte));
   }
   std::vector<const void*> items;
@@ -142,12 +140,9 @@ auto RuntimeUnpackedArray::ToByteString() const -> String {
   }
   std::string out;
   out.reserve(Count());
-  const IntegralShape shape = byte_type->Shape();
   for (std::size_t i = 0; i < Count(); ++i) {
     const LoadedWords element = byte_type->Load(ElementAt(i));
-    out.push_back(
-        static_cast<char>(
-            ToInt64(element.Read(), shape.width, shape.signedness) & 0xFF));
+    out.push_back(static_cast<char>(ToInt64(element.View()) & 0xFF));
   }
   return String{std::move(out)};
 }
@@ -302,15 +297,14 @@ auto RuntimeUnpackedArray::CountBits(
 }
 
 auto RuntimeUnpackedArray::WriteToStream(
-    Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
-    -> std::uint64_t {
-  return Installed().WriteToStream(stream, stream_width, filled);
+    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+  return Installed().WriteToStream(stream, filled);
 }
 
 auto RuntimeUnpackedArray::ReadFromStream(
-    ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+    const ConstIntegralView& stream, std::uint64_t taken) const
     -> std::pair<RuntimeUnpackedArray, std::uint64_t> {
-  auto [read, after] = Installed().ReadFromStream(stream, stream_width, taken);
+  auto [read, after] = Installed().ReadFromStream(stream, taken);
   return {RuntimeUnpackedArray(std::move(read)), after};
 }
 

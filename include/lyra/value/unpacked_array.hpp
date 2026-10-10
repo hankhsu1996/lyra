@@ -106,7 +106,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
   template <IntegralValue Bits>
   [[nodiscard]] static auto FromIntegral(const Bits& bits, std::int64_t count)
       -> UnpackedArray {
-    return OfBytes(BytesOf(bits.Load().View()), count);
+    return OfBytes(BytesOf(bits.AsWords().View()), count);
   }
 
   // LRM 10.10: adopt an unpacked concatenation's parts, accumulated into a
@@ -265,9 +265,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
   // wide (LRM 6.24.3).
   template <IntegralValue R>
   [[nodiscard]] auto ToBitstream() const -> R {
-    typename R::Words words;
-    WriteToStream(words.Write(), R::kWidth, 0);
-    return R::FromWords(words);
+    R out = R::Zero();
+    WriteToStream(out.AsMutableWords().MutableView(), 0);
+    return out;
   }
 
   // `prototype`'s shape with every bit set to `fill` (LRM 6.7.1).
@@ -305,15 +305,14 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
   // its `filled` most significant positions, answering how many are filled
   // after them; and the inverse, which reads an array of this one's count and
   // element shapes and answers how many positions it took.
-  auto WriteToStream(
-      Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+  auto WriteToStream(const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t {
-    return core_.WriteToStream(stream, stream_width, filled);
+    return core_.WriteToStream(stream, filled);
   }
   [[nodiscard]] auto ReadFromStream(
-      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+      const ConstIntegralView& stream, std::uint64_t taken) const
       -> std::pair<UnpackedArray, std::uint64_t> {
-    auto [read, after] = core_.ReadFromStream(stream, stream_width, taken);
+    auto [read, after] = core_.ReadFromStream(stream, taken);
     return {UnpackedArray(std::move(read)), after};
   }
 
@@ -322,8 +321,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
   template <IntegralValue Bits>
   [[nodiscard]] static auto FromBitstream(
       const Bits& bits, const UnpackedArray& prototype) -> UnpackedArray {
-    const typename Bits::Words words = bits.Load();
-    return prototype.ReadFromStream(words.Read(), Bits::kWidth, 0).first;
+    return prototype.ReadFromStream(bits.AsWords().View(), 0).first;
   }
 
  private:

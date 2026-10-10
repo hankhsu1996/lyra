@@ -68,12 +68,11 @@ class DpiOpenArray {
     return Rebuild(prototype, 0, position);
   }
 
-  // One element's canonical groups at an image position: written from the
-  // planes of a value as wide as an element, and read back into the planes of
-  // one (Annex H.7.3 gives a packed element one canonical representation, a
-  // flat vector of its own width).
-  void WriteElement(std::size_t position, ConstPlanes value);
-  void ReadElement(std::size_t position, Planes out) const;
+  // One element's canonical groups at an image position: written from a value
+  // as wide as an element, and read back into one (Annex H.7.3 gives a packed
+  // element one canonical representation, a flat vector of its own width).
+  void WriteElement(std::size_t position, const ConstIntegralView& value);
+  void ReadElement(std::size_t position, const IntegralView& out) const;
 
   // The storage ordinal of the element at C position `position` in a dimension:
   // the two agree while the declared range ascends and mirror each other while
@@ -177,7 +176,7 @@ class DpiOpenArray {
   template <typename T>
   void Fill(const T& value, std::size_t dimension, std::size_t& position) {
     if constexpr (IntegralValue<T>) {
-      WriteElement(position, value.Load().Read());
+      WriteElement(position, value.AsWords().View());
       ++position;
     } else {
       for (std::size_t p = 0; p < value.RawSize(); ++p) {
@@ -191,10 +190,10 @@ class DpiOpenArray {
       const T& prototype, std::size_t dimension, std::size_t& position) const
       -> T {
     if constexpr (IntegralValue<T>) {
-      typename T::Words read;
-      ReadElement(position, read.Write());
+      T read = T::Zero();
+      ReadElement(position, read.AsMutableWords().MutableView());
       ++position;
-      return T::FromWords(read);
+      return read;
     } else {
       const std::size_t count = prototype.RawSize();
       std::vector<typename T::ElementType> elements(count);

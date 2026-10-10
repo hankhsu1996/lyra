@@ -29,6 +29,7 @@
 #include <slang/ast/types/DeclaredType.h>
 #include <slang/ast/types/Type.h>
 #include <slang/numeric/ConstantValue.h>
+#include <slang/numeric/SVInt.h>
 #include <slang/text/SourceManager.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -282,6 +283,21 @@ auto ValueIdentity(const slang::ConstantValue& value) -> std::string {
                ? std::format("u{}:{}", *u.activeMember, ValueIdentity(u.value))
                : std::string{"u-"};
   }
+  // An integer by its width, how it is read, and its words. Written as digits
+  // it would cost the square of its width, which a parameter of a wide type
+  // then makes the cost of naming every unit it reaches.
+  if (value.isInteger()) {
+    const slang::SVInt& integer = value.integer();
+    std::string out = std::format(
+        "i{}{}{}:", integer.getBitWidth(), integer.isSigned() ? 's' : 'u',
+        integer.hasUnknown() ? 'x' : 'b');
+    const std::span<const std::uint64_t> words(
+        integer.getRawPtr(), integer.getNumWords());
+    for (const std::uint64_t word : words) {
+      out += std::format("{:016x}", word);
+    }
+    return out;
+  }
   constexpr slang::bitwidth_t kNeverShortened =
       std::numeric_limits<slang::bitwidth_t>::max();
   constexpr bool kExactUnknowns = true;
@@ -415,7 +431,7 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
 // Where a name that left an instance lands, as one input to that instance's
 // key: the class of the scope it lands in, or where that scope stands relative
 // to an instance whose name is being worked out.
-auto LandingOf(
+auto ResolveBitRange(
     const slang::ast::Scope& scope, const SpecializationPolicy& policy)
     -> SpecializationInputKind {
   support::DefPath blocks;
@@ -581,13 +597,13 @@ auto SpecializationKeyOf(
     key.inputs.push_back(
         SpecializationInput{
             .name = std::format("^{}", written),
-            .kind = LandingOf(*context.climbs[written].scope, policy)});
+            .kind = ResolveBitRange(*context.climbs[written].scope, policy)});
   }
   for (const NameLandingBelow& name : context.names_below) {
     key.inputs.push_back(
         SpecializationInput{
             .name = std::format("{}.^{}", name.path, name.written),
-            .kind = LandingOf(*name.scope, policy)});
+            .kind = ResolveBitRange(*name.scope, policy)});
   }
   for (const OverriddenBelow& overridden : context.overridden_below) {
     key.inputs.push_back(

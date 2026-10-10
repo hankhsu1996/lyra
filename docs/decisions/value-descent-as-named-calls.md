@@ -24,11 +24,12 @@ the boundary was found rather than stated, and two consumers can walk to differe
 This entry settles where a descent step's operation is decided and what MIR carries as a result.
 
 **It settles nothing about what an interior write does.** That is
-[value-projection-write](value-projection-write.md) D2 -- a functional whole-value update through
-the owner -- and [owner-transition-and-observation](owner-transition-and-observation.md), which
-fixes how a partial write reports its owner's transition and what it may compare. Both stand
-unchanged, and a target that can be written where it stands still is. The two questions are
-separate: one is which operation a step is, the other is how a target realizes it.
+[value-projection-write](value-projection-write.md) D2 -- the selected part of the owner's value is
+replaced, where it lies or through a rebuilt whole according to what the part is -- and
+[owner-transition-and-observation](owner-transition-and-observation.md), which fixes how a partial
+write reports its owner's transition and what it may compare. Both stand unchanged, and a target
+that can be written where it stands still is. The two questions are separate: one is which operation
+a step is, the other is how a target realizes it.
 
 ## What established compilers do about it
 
@@ -96,12 +97,14 @@ owner's place, one reaching call per level, and one store.
 
 ### D5. A target that must realize a reaching call differently reads that from the entry's declaration
 
-A value crosses to the execution backend as an opaque handle
-([jit-value-realization](jit-value-realization.md) invariant 6), so a call that answers with the
-part has nothing there to answer with, and that target realizes the write as a read of the whole, a
-rebuild, and a store back. That it must is a property of the target's representation, not a fact
-about which entries exist -- so the entry declares that it answers with the part, and the target
-reads it there instead of keeping its own list of which entries are.
+A string and an unpacked union cross to the execution backend as values only the library can see
+into ([jit-value-realization](jit-value-realization.md) invariant 6), so a call that answers with a
+character or a member has nothing there to answer with, and that target realizes the write as a read
+of the whole, a rebuild, and a store back. That it must is a property of the target's
+representation, not a fact about which entries exist -- so the entry declares that it answers with
+the part, and the target reads it there instead of keeping its own list of which entries are. Where
+the representation does not force it the target does not rebuild: an element or a member that is
+storage of its own is stepped to, and bits of a packed value are written where they lie.
 
 This is what separates a realization from a decision. Both targets are handed the same operation;
 neither chooses which operation it is.

@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -59,6 +61,9 @@ class CodeGenFunction::IntegralEmitter {
   auto Lower(
       IntegralOp op, std::span<const OperandRef> operands,
       lir::TypeId answer_type, llvm::Value* out) -> llvm::Value*;
+  auto StoreBitsOfPlace(
+      llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
+      OperandRef bits) -> bool;
 
  private:
   // The types `op` applied to `operands` and answering at `answer_type` is
@@ -78,6 +83,14 @@ class CodeGenFunction::IntegralEmitter {
       -> OneWord;
   void StorePlanes(
       OneWord planes, llvm::Value* at, const value::IntegralShape& shape);
+  // `target`, a value of `lying`, with `bits` written over the bits the parts
+  // from `at` on name in it. A part between the value and the bits is taken
+  // out as its bits lie -- at its own width and holding what `lying` holds, so
+  // nothing is converted on the way -- changed, and put back.
+  auto WithBitsWritten(
+      OneWord target, const value::IntegralShape& lying,
+      std::span<const BitsPartRef> parts, std::size_t at, OperandRef bits)
+      -> OneWord;
   // The library's entry carrying out `op`, read out of the table the library
   // publishes its entries in.
   auto EntryOf(IntegralOp op) -> llvm::Value*;
@@ -281,6 +294,89 @@ auto CodeGenFunction::IntegralEmitter::Lower(
   llvm::Value* const answered =
       function_->EmitCallOrInvoke(entry.callee, entry.args);
   return shapes.answer.has_value() ? out : answered;
+}
+
+auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
+    OneWord target, const value::IntegralShape& lying,
+    std::span<const BitsPartRef> parts, std::size_t at, OperandRef bits)
+    -> OneWord {
+  const BitsPartRef& part = parts[at];
+  const value::IntegralShape start_shape =
+      module_->Types().RequiredIntegralShapeOf(part.start.type);
+  const OneWord start = LoadPlanes(part.start.value, start_shape);
+  const auto no_machine_operand = [](std::size_t) -> llvm::Value* {
+    throw InternalError(
+        "llvm codegen: a part of an integral value is read or written over "
+        "integral values alone -- please report this as a bug");
+  };
+  // `op` over `target`, where the part starts, and whatever else it takes,
+  // answering a value of `answer`.
+  const auto applied =
+      [&](IntegralOp op, const value::IntegralShape& answer,
+          std::span<const OneWord> further,
+          std::span<const value::IntegralShape> further_shapes) {
+        IntegralShapes shapes{
+            .operands = {lying, start_shape}, .answer = answer};
+        shapes.operands.insert(
+            shapes.operands.end(), further_shapes.begin(),
+            further_shapes.end());
+        const std::array<OneWord, 2> leading{target, start};
+        const auto planes = [&](std::size_t index) -> OneWord {
+          return index < leading.size() ? leading[index]
+                                        : further[index - leading.size()];
+        };
+        const std::optional<OneWordAnswer> answered = LowerOnOneWord(
+            *builder_, op, shapes,
+            OneWordOperands{.planes = planes, .machine = no_machine_operand});
+        if (!answered.has_value()) {
+          throw InternalError(
+              "llvm codegen: a part of a value of one word does not fit one -- "
+              "please report this as a bug");
+        }
+        return std::get<OneWord>(*answered);
+      };
+  const auto with = [&](OneWord written, const value::IntegralShape& shape) {
+    return applied(
+        IntegralOp::kWithSlice, lying, std::span(&written, 1),
+        std::span(&shape, 1));
+  };
+  if (at + 1 == parts.size()) {
+    const value::IntegralShape bits_shape =
+        module_->Types().RequiredIntegralShapeOf(bits.type);
+    return with(LoadPlanes(bits.value, bits_shape), bits_shape);
+  }
+  const value::IntegralShape part_lying{
+      .width = module_->Types().RequiredIntegralShapeOf(part.type).width,
+      .signedness = value::Signedness::kUnsigned,
+      .domain = lying.domain};
+  const OneWord taken = applied(IntegralOp::kSlice, part_lying, {}, {});
+  return with(
+      WithBitsWritten(taken, part_lying, parts, at + 1, bits), part_lying);
+}
+
+auto CodeGenFunction::IntegralEmitter::StoreBitsOfPlace(
+    llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
+    OperandRef bits) -> bool {
+  const value::IntegralShape lying =
+      module_->Types().RequiredIntegralShapeOf(whole);
+  const auto fits_one_word = [&](lir::TypeId type) {
+    return IsSingleWord(module_->Types().RequiredIntegralShapeOf(type));
+  };
+  if (!fits_one_word(whole) || !fits_one_word(bits.type) ||
+      !std::ranges::all_of(parts, [&](const BitsPartRef& part) {
+        return fits_one_word(part.type) && fits_one_word(part.start.type);
+      })) {
+    return false;
+  }
+  StorePlanes(
+      WithBitsWritten(LoadPlanes(at, lying), lying, parts, 0, bits), at, lying);
+  return true;
+}
+
+auto CodeGenFunction::StoreBitsOnOneWord(
+    llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
+    OperandRef bits) -> bool {
+  return IntegralEmitter(*this).StoreBitsOfPlace(at, whole, parts, bits);
 }
 
 auto CodeGenFunction::LowerIntegral(

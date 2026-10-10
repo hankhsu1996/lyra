@@ -5,9 +5,14 @@ Runs every case under tests/benchmark/ against Lyra and a reference simulator,
 choosing how much work each one does so that every measurement lands in the
 same duration, and reports the rate each tool sustained.
 
+A case that cannot be measured costs only itself: the run goes on, the report
+carries every number that was obtained, and the case is named there with the
+step that failed and how it ended. The exit status is 0 when every case was
+measured and 1 when any was not, or when there was nothing to run.
+
 Usage:
     python3 tools/bench/run_benchmarks.py [--json PATH] [--filter SUBSTRING]
-                                          [--seconds N]
+                                          [--seconds N] [--lyra PATH]
 """
 
 import argparse
@@ -15,6 +20,7 @@ import json
 import math
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -54,6 +60,10 @@ BUILD_TARGET_SECONDS = 20.0
 
 TIMEOUT_SECONDS = 900
 
+# How much of what a failed step printed is kept. The reason is nearly always
+# at the end, and a host compiler that fails prints thousands of lines first.
+OUTPUT_TAIL_LINES = 20
+
 # A reading whose work took less than this share of the target is mostly what
 # a measurement costs before any work, so it says nothing about how far the
 # target is.
@@ -76,6 +86,15 @@ BINARY_NAME = "program"
 
 STATUS_OK = "ok"
 STATUS_ERROR = "error"
+
+# What a report says in place of a number, one word per way of having none, so
+# that neither can be read as the other or as a rate of zero.
+CELL_FAILED = "failed"
+CELL_NOT_RUN = "not run"
+
+# The tools a report has a column for.
+LYRA = "lyra"
+VERILATOR = "verilator"
 
 MEASURE_BUILD = "build"
 MEASURE_RUN = "run"
@@ -113,6 +132,7 @@ class Result:
     readings: tuple[tuple[int, float], ...] = ()
     growth: float = 0.0
     detail: str = ""
+    output: str = ""
 
 
 @dataclass
@@ -129,25 +149,42 @@ def run_process(
     cmd: list[str], cwd: str | None = None, env: dict | None = None,
 ) -> ProcessRun:
     """Run one command to completion and time it."""
+    # What a step printed is only ever shown to a reader, and a program that
+    # faults may have printed bytes that are no text at all.
     with (
-        tempfile.TemporaryFile(mode="w+") as out,
-        tempfile.TemporaryFile(mode="w+") as err,
+        tempfile.TemporaryFile(mode="w+", errors="backslashreplace") as out,
+        tempfile.TemporaryFile(mode="w+", errors="backslashreplace") as err,
     ):
         start = time.monotonic()
+        # The command leads a process group of its own, so that stopping it
+        # stops the host compiler it started too. One left running would be
+        # taking the machine from the measurement after it.
         proc = subprocess.Popen(
-            cmd, stdout=out, stderr=err, cwd=cwd, env=env, text=True)
+            cmd, stdout=out, stderr=err, cwd=cwd, env=env, text=True,
+            start_new_session=True)
 
         killed: list[bool] = []
 
+        def stop() -> None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
         def on_timeout() -> None:
             killed.append(True)
-            proc.kill()
+            stop()
 
         watchdog = threading.Timer(TIMEOUT_SECONDS, on_timeout)
         watchdog.start()
-        proc.wait()
-        elapsed = time.monotonic() - start
-        watchdog.cancel()
+        try:
+            proc.wait()
+            elapsed = time.monotonic() - start
+        finally:
+            watchdog.cancel()
+            if proc.poll() is None:
+                stop()
+                proc.wait()
 
         out.seek(0)
         err.seek(0)
@@ -419,19 +456,22 @@ def measure_run_case(
     build = run_process(tool.build(case, work, None), cwd=work, env=tool.env)
     result.build_s = build.elapsed_s
 
-    if not record_build_failure(result, build):
+    if record_failure(result, "build", build):
         return result
 
     binary = tool.binary(work)
     if not binary.is_file():
         result.status = STATUS_ERROR
-        result.detail = f"the build produced no {binary.name}"
+        result.detail = f"build produced no {binary.name}"
         return result
     result.binary_kb = round(binary.stat().st_size / 1024)
 
     amount, run, history = converge(
         lambda n: run_process([str(binary), f"+work={n}"]), target,
         case.work_max)
+    result.readings = tuple(history)
+    if record_failure(result, f"run at +work={amount}", run):
+        return result
     record_measurement(result, amount, run, history, target)
     return result
 
@@ -456,43 +496,63 @@ def measure_build_case(
 
     amount, build, history = converge(build_at, target, case.work_max)
     result.build_s = build.elapsed_s
+    result.readings = tuple(history)
 
-    if not record_build_failure(result, build):
+    if record_failure(result, f"build at {WORK_PARAM}={amount}", build):
         return result
 
     binary = tool.binary(builds[-1])
     if not binary.is_file():
         result.status = STATUS_ERROR
-        result.detail = f"the build produced no {binary.name}"
+        result.detail = (
+            f"build at {WORK_PARAM}={amount} produced no {binary.name}")
         return result
     result.binary_kb = round(binary.stat().st_size / 1024)
 
     # The artifact is run once, not timed: a build case earns its number from
     # the build, and running it is what says the build produced something real.
     proof = run_process([str(binary), "+work=1"])
-    if proof.returncode != 0:
-        result.status = STATUS_ERROR
-        result.detail = (
-            first_error_line(proof) or f"exit code {proof.returncode}")
+    if record_failure(
+            result, f"run of the program built at {WORK_PARAM}={amount}",
+            proof):
         return result
 
     record_measurement(result, amount, build, history, target)
     return result
 
 
-def record_build_failure(
-    result: Result, build: ProcessRun,
-) -> bool:
-    """Record why a build failed. Returns True when it did not."""
-    if build.timed_out:
-        result.status = STATUS_ERROR
-        result.detail = f"build timed out after {TIMEOUT_SECONDS}s"
+def how_it_ended(run: ProcessRun) -> str:
+    """How a step that did not succeed ended, as the rest of a sentence."""
+    if run.timed_out:
+        return f"was stopped after {TIMEOUT_SECONDS}s"
+    if run.returncode < 0:
+        number = -run.returncode
+        try:
+            name = signal.Signals(number).name
+        except ValueError:
+            name = f"signal {number}"
+        # The status is the one a shell reports for it, which is the number a
+        # reader who ran the program by hand has seen.
+        return f"was killed by {name} (status {128 + number})"
+    return f"exited with status {run.returncode}"
+
+
+def last_lines(run: ProcessRun) -> str:
+    """The end of what a step printed, from the stream that says why."""
+    for text in (run.stderr, run.stdout):
+        lines = text.rstrip().splitlines()
+        if lines:
+            return "\n".join(lines[-OUTPUT_TAIL_LINES:])
+    return ""
+
+
+def record_failure(result: Result, step: str, run: ProcessRun) -> bool:
+    """Record that a step did not succeed, and how. Returns True if so."""
+    if not run.timed_out and run.returncode == 0:
         return False
-    if build.returncode != 0:
-        result.status = STATUS_ERROR
-        result.detail = (
-            first_error_line(build) or f"build exit code {build.returncode}")
-        return False
+    result.status = STATUS_ERROR
+    result.detail = f"{step} {how_it_ended(run)}"
+    result.output = last_lines(run)
     return True
 
 
@@ -500,32 +560,15 @@ def record_measurement(
     result: Result, amount: int, run: ProcessRun,
     history: list[tuple[int, float]], target: float,
 ) -> None:
-    result.readings = tuple(history)
-    if run.timed_out:
-        result.status = STATUS_ERROR
-        result.detail = f"timed out after {TIMEOUT_SECONDS}s"
-        return
-    if run.returncode != 0:
-        result.status = STATUS_ERROR
-        result.detail = first_error_line(run) or f"exit code {run.returncode}"
-        return
     result.work = amount
     result.seconds = run.elapsed_s
     result.rate = marginal_rate(history)
     result.growth = growth_exponent(history, target)
 
 
-def first_error_line(run: ProcessRun) -> str:
-    for text in (run.stderr, run.stdout):
-        for line in text.splitlines():
-            if "error" in line.lower():
-                return line.strip()
-    return ""
-
-
 def lyra_tool(lyra: str) -> Tool:
     return Tool(
-        name="lyra",
+        name=LYRA,
         build=lambda case, out, amount: lyra_build_command(
             lyra, case, out, amount),
         binary=lambda out: Path(out) / BINARY_NAME,
@@ -538,7 +581,7 @@ def verilator_tool(verilator: str) -> Tool:
     env = os.environ.copy()
     env["CCACHE_DISABLE"] = "1"
     return Tool(
-        name="verilator",
+        name=VERILATOR,
         build=lambda case, out, amount: verilator_build_command(
             verilator, case, amount),
         binary=lambda out: Path(out) / "obj_dir" / f"V{CASE_TOP}",
@@ -557,10 +600,17 @@ def measure(case: Case, tool: Tool, tmpdir: str, target: float) -> Result:
     root = os.path.join(tmpdir, f"{case.name}-{tool.name}")
     os.makedirs(root, exist_ok=True)
 
-    if case.measure == MEASURE_BUILD:
-        return measure_build_case(
-            case, tool, result, root, BUILD_TARGET_SECONDS)
-    return measure_run_case(case, tool, result, root, target)
+    # A step the operating system would not start -- a program that is not one,
+    # a directory that cannot be made -- is this case's failure like any other.
+    try:
+        if case.measure == MEASURE_BUILD:
+            return measure_build_case(
+                case, tool, result, root, BUILD_TARGET_SECONDS)
+        return measure_run_case(case, tool, result, root, target)
+    except OSError as e:
+        result.status = STATUS_ERROR
+        result.detail = f"a step could not be carried out ({e})"
+        return result
 
 
 def fmt_rate(rate: float) -> str:
@@ -569,6 +619,15 @@ def fmt_rate(rate: float) -> str:
     if rate < 10.0:
         return f"{rate:.3g}"
     return f"{round(rate):,}"
+
+
+def fmt_cell(result: Result | None, measured: str) -> str:
+    """What a table says of one tool's measurement of one case."""
+    if result is None:
+        return CELL_NOT_RUN
+    if result.status != STATUS_OK:
+        return CELL_FAILED
+    return measured
 
 
 def fmt_growth(exponent: float) -> str:
@@ -603,13 +662,29 @@ def get_git_sha() -> str:
         return "unknown"
 
 
-def print_report(results: list[Result], target: float) -> None:
+def print_report(
+    cases: list[Case], tools_run: list[str], results: list[Result],
+    target: float,
+) -> None:
+    """Print every number obtained, and name each measurement that has none.
+
+    The table has a row for every case and a column for each tool whatever was
+    reached, so a run that was cut short still says which cases it never got
+    to.
+    """
     by_case: dict[str, dict[str, Result]] = {}
-    order: list[tuple[str, str]] = []
     for r in results:
-        if r.case not in by_case:
-            order.append((r.family, r.case))
         by_case.setdefault(r.case, {})[r.tool] = r
+
+    failed = [r for r in results if r.status == STATUS_ERROR]
+    not_reached = [
+        f"{case.name}/{tool}"
+        for case in cases
+        for tool in tools_run
+        if tool not in by_case.get(case.name, {})
+    ]
+    verilator_ran = VERILATOR in tools_run
+    not_run = len(not_reached) + (0 if verilator_ran else len(cases))
 
     print()
     print("## Lyra Benchmark Report")
@@ -620,12 +695,20 @@ def print_report(results: list[Result], target: float) -> None:
         "target, so a rate is comparable across tools, machines, and runs "
         "wherever the cost of the work grew as `n^1.0`. Where Lyra's did "
         "not, its rate holds only at the amount beside it.")
+    if failed or not_run:
+        absences = ((len(failed), CELL_FAILED), (not_run, CELL_NOT_RUN))
+        counts = [f"{count} {word}" for count, word in absences if count]
+        print(
+            f"> **Not every measurement has a number: "
+            f"{' and '.join(counts)}, of {len(results) + not_run}.** Each is "
+            f"named under \"Not measured\" below. A cell reading "
+            f"`{CELL_FAILED}` or `{CELL_NOT_RUN}` is never a rate of zero.")
 
-    families: dict[str, list[str]] = {}
-    for family, case in sorted(order):
-        families.setdefault(family, []).append(case)
+    families: dict[str, list[Case]] = {}
+    for case in cases:
+        families.setdefault(case.family, []).append(case)
 
-    for family, cases in families.items():
+    for family, members in families.items():
         print()
         print(f"## {family}")
         print()
@@ -635,31 +718,41 @@ def print_report(results: list[Result], target: float) -> None:
         print(
             "|------|------|--------:|-------------:|:-------------"
             "|----------:|:------------|------------:|")
-        for name in cases:
-            tools = by_case[name]
-            lyra = tools.get("lyra")
-            ver = tools.get("verilator")
+        for case in members:
+            tools = by_case.get(case.name, {})
+            lyra = tools.get(LYRA)
+            ver = tools.get(VERILATOR)
             lyra_ok = lyra is not None and lyra.status == STATUS_OK
             ver_ok = ver is not None and ver.status == STATUS_OK
             lyra_rate = lyra.rate if lyra_ok else 0.0
             ver_rate = ver.rate if ver_ok else 0.0
-            unit = lyra.work_unit if lyra else ""
             work = f"{lyra.work:,}" if lyra_ok else "-"
             growth = fmt_growth(lyra.growth) if lyra_ok else "-"
             binary = f"{lyra.binary_kb:,}" if lyra_ok else "-"
             print(
-                f"| {name} | {unit} | {fmt_rate(lyra_rate)} "
-                f"| {fmt_rate(ver_rate)} "
+                f"| {case.name} | {case.work_unit} "
+                f"| {fmt_cell(lyra, fmt_rate(lyra_rate))} "
+                f"| {fmt_cell(ver, fmt_rate(ver_rate))} "
                 f"| {fmt_comparison(lyra_rate, ver_rate)} "
                 f"| {work} | {growth} | {binary} |")
 
-    errors = [r for r in results if r.status == STATUS_ERROR]
-    if errors:
+    if failed or not_run:
         print()
-        print("### Errors")
+        print("### Not measured")
         print()
-        for r in errors:
+        for r in failed:
             print(f"- **{r.case}/{r.tool}**: {r.detail}")
+            if r.output:
+                print()
+                print("  ```")
+                for line in r.output.splitlines():
+                    print(f"  {line}")
+                print("  ```")
+        if not verilator_ran:
+            print(
+                f"- **{VERILATOR}**: not on PATH, so no case was run with it")
+        for name in not_reached:
+            print(f"- **{name}**: the run ended before measuring it")
 
     print()
 
@@ -680,6 +773,7 @@ def result_to_dict(r: Result) -> dict:
         "readings": [list(reading) for reading in r.readings],
         "growth": r.growth,
         "detail": r.detail,
+        "output": r.output,
     }
 
 
@@ -705,18 +799,26 @@ def main() -> None:
     parser.add_argument(
         "--seconds", type=float, default=DEFAULT_TARGET_SECONDS,
         help="Target duration of one measurement")
+    parser.add_argument(
+        "--lyra", default=str(REPO_ROOT / "bazel-bin" / "lyra"),
+        help="The compiler to measure; this checkout's bazel-bin/lyra if "
+             "not given")
     args = parser.parse_args()
 
-    lyra = str(REPO_ROOT / "bazel-bin" / "lyra")
+    lyra = os.path.abspath(args.lyra)
     if not os.path.isfile(lyra):
-        print(f"Error: lyra binary not found at {lyra}", file=sys.stderr)
+        print(f"error: lyra binary not found at {lyra}", file=sys.stderr)
         sys.exit(1)
 
-    cases = discover_cases(CORPUS_ROOT)
+    try:
+        cases = discover_cases(CORPUS_ROOT)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
     if args.filter:
         cases = [c for c in cases if args.filter in c.name]
     if not cases:
-        print("Error: no cases found", file=sys.stderr)
+        print("error: no cases found", file=sys.stderr)
         sys.exit(1)
 
     tools = [lyra_tool(lyra)]
@@ -724,24 +826,45 @@ def main() -> None:
     if verilator:
         tools.append(verilator_tool(verilator))
     else:
-        print("verilator not on PATH; Lyra only", file=sys.stderr)
+        print("note: verilator not on PATH; Lyra only", file=sys.stderr)
 
     print(f"Running {len(cases)} cases", file=sys.stderr)
 
-    results: list[Result] = []
-    with tempfile.TemporaryDirectory(prefix="lyra-bench-") as tmpdir:
-        for case in cases:
-            for tool in tools:
-                print(f"  {case.path}/{tool.name}", end="", flush=True,
-                      file=sys.stderr)
-                r = measure(case, tool, tmpdir, args.seconds)
-                results.append(r)
-                print(f" -> {r.status}", file=sys.stderr)
+    # A step runs in a process group of its own, so a signal sent to this one
+    # does not reach it. Being told to stop is made an exit from here, which
+    # unwinds through the step in flight and stops it on the way.
+    def exit_on(signum: int, _frame: object) -> None:
+        sys.exit(128 + signum)
 
-    print_report(results, args.seconds)
+    for stopping in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(stopping, exit_on)
+
+    # Whatever ends the loop, what it obtained is reported: a run stopped part
+    # way has still measured the cases before the one it stopped in. The result
+    # file is rewritten as each result arrives for the same reason, since a run
+    # that is killed outright prints no report at all.
+    results: list[Result] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="lyra-bench-") as tmpdir:
+            for case in cases:
+                for tool in tools:
+                    print(f"  {case.path}/{tool.name}", end="", flush=True,
+                          file=sys.stderr)
+                    r = measure(case, tool, tmpdir, args.seconds)
+                    results.append(r)
+                    if r.status == STATUS_OK:
+                        print(
+                            f" -> {r.status} "
+                            f"({fmt_rate(r.rate)} {r.work_unit}/s)",
+                            file=sys.stderr)
+                    else:
+                        print(f" -> {r.status}: {r.detail}", file=sys.stderr)
+                    if args.json:
+                        write_json(results, args.json, args.seconds)
+    finally:
+        print_report(cases, [t.name for t in tools], results, args.seconds)
 
     if args.json:
-        write_json(results, args.json, args.seconds)
         print(f"JSON written to {args.json}", file=sys.stderr)
 
     if any(r.status == STATUS_ERROR for r in results):

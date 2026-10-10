@@ -122,19 +122,19 @@ struct AnsweredWithNothing {};
 
 // How an operation's body takes and answers its integral values. The type the
 // library asks through answers an equality as its scalar and a case equality
-// as whether it holds, writes a stream into planes it is handed and reads one
-// out of them, and is handed a count's control bits as planes too, while the
-// function a structure states takes and answers each as a value of the type
-// its own code states.
+// as whether it holds, writes a stream into an integral value it is handed
+// and reads one out of one, and is handed a count's control bits as one too,
+// while the function a structure states takes and answers each as a value of
+// the type its own code states.
 struct TakenAsStated {};
 struct AnswerScalar {};
 struct AnswerWhetherItHolds {};
 struct AnswerIntoStream {};
-struct StreamOutOfPlanes {};
-struct ControlOutOfPlanes {};
+struct StreamOutOfValue {};
+struct ControlOutOfValue {};
 using IntegralCrossing = std::variant<
     TakenAsStated, AnswerScalar, AnswerWhetherItHolds, AnswerIntoStream,
-    StreamOutOfPlanes, ControlOutOfPlanes>;
+    StreamOutOfValue, ControlOutOfValue>;
 
 using SlotFilling = std::variant<
     TupleLifecycle, support::ValueOperation, NeverAskedOfAStructure,
@@ -208,13 +208,13 @@ auto TableSlots() -> std::vector<TableSlot> {
           BuiltinFn::kBitstreamWidth),
       Slot(
           "count_bits", &ValueType::CountBits, BuiltinFn::kCountBits,
-          ControlOutOfPlanes{}),
+          ControlOutOfValue{}),
       Slot(
           "write_to_stream", &ValueType::WriteToStream, BuiltinFn::kToBitstream,
           AnswerIntoStream{}),
       Slot(
           "read_from_stream", &ValueType::ReadFromStream,
-          BuiltinFn::kFromBitstream, StreamOutOfPlanes{}),
+          BuiltinFn::kFromBitstream, StreamOutOfValue{}),
       Slot(
           "resolve_tri_state", &ValueType::ResolveTriState,
           BuiltinFn::kResolveTriState),
@@ -433,14 +433,19 @@ auto CodeGenTuples::Body(
   return body;
 }
 
-// What an opened thunk holds for the slot filling it: the body, what it was
-// handed after the type, storage for a value of the integral type the method
-// states, and that type with its shape.
+// A thunk being built. The library asks a structure's type for an operation
+// through one signature for every type, and the function the design compiled
+// for that operation takes or answers one integral value at its own type. The
+// thunk stands between the two, and this is what building one needs.
 struct CodeGenTuples::ThunkBody {
+  // The thunk itself.
   llvm::Function* function;
-  std::vector<llvm::Value*> handed;
-  llvm::Value* laid_out;
-  lir::TypeId stated;
+  // The thunk's arguments after the first, which is the type.
+  std::vector<llvm::Value*> args;
+  // Storage for the one integral value that crosses at the design's type.
+  llvm::Value* storage;
+  // That value's type, and the same as the value library is told it.
+  lir::TypeId value_type;
   value::IntegralShape shape;
 };
 
@@ -458,10 +463,12 @@ auto CodeGenTuples::OpenThunkBody(
   llvm::Function* body = DeclareBody(tuple, slot, stands_in_for);
   llvm::IRBuilder<> b(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
-  const support::ObjectLayout storage = types_->StorageOf(stated);
-  llvm::AllocaInst* laid_out =
-      b.CreateAlloca(llvm::ArrayType::get(b.getInt8Ty(), storage.size));
-  laid_out->setAlignment(llvm::Align(storage.align));
+  // The value is a comparison's one-bit answer or a count's control bits,
+  // which a design does not make wide.
+  const support::ObjectLayout layout = types_->StorageOf(stated);
+  llvm::AllocaInst* const storage =
+      b.CreateAlloca(llvm::ArrayType::get(b.getInt8Ty(), layout.size));
+  storage->setAlignment(llvm::Align(layout.align));
   std::vector<llvm::Value*> args;
   args.reserve(stands_in_for.takes.size());
   for (std::size_t i = 1; i < body->arg_size(); ++i) {
@@ -469,45 +476,25 @@ auto CodeGenTuples::OpenThunkBody(
   }
   return ThunkBody{
       .function = body,
-      .handed = std::move(args),
-      .laid_out = laid_out,
-      .stated = stated,
+      .args = std::move(args),
+      .storage = storage,
+      .value_type = stated,
       .shape = *shape};
 }
 
-auto CodeGenTuples::ReadOutOfPlanes(
-    llvm::IRBuilderBase& b, llvm::Value* planes, llvm::Value* planes_width,
-    llvm::Value* taken, llvm::Value* laid_out, lir::TypeId read)
-    -> llvm::Value* {
-  const std::array<StatedOperand, 3> stated{
+auto CodeGenTuples::ReadOutOfStream(
+    llvm::IRBuilderBase& b, llvm::Value* stream, llvm::Value* taken,
+    llvm::Value* laid_out, lir::TypeId read) -> llvm::Value* {
+  const std::array<StatedOperand, 2> stated{
       MachineOperand{.type = types_->Ptr()},
-      MachineOperand{.type = b.getInt64Ty()},
       MachineOperand{.type = b.getInt64Ty()}};
-  const std::array<llvm::Value*, 3> operands{planes, planes_width, taken};
+  const std::array<llvm::Value*, 2> operands{stream, taken};
   return CallStreamEntry(
       *owner_, b, RuntimeOp::kStreamRead,
       FnAbiOf(
           *owner_, RuntimeOp::kStreamRead, stated, read,
           ReturnIndirect{.returned = b.getInt64Ty()}),
       operands, laid_out);
-}
-
-auto CodeGenTuples::WriteIntoStream(
-    llvm::IRBuilderBase& b, llvm::Value* value, lir::TypeId written,
-    llvm::Value* stream, llvm::Value* stream_width, llvm::Value* filled)
-    -> llvm::Value* {
-  const std::array<StatedOperand, 4> stated{
-      ValueOperand{.type = written}, MachineOperand{.type = types_->Ptr()},
-      MachineOperand{.type = b.getInt64Ty()},
-      MachineOperand{.type = b.getInt64Ty()}};
-  const std::array<llvm::Value*, 4> operands{
-      value, stream, stream_width, filled};
-  return CallStreamEntry(
-      *owner_, b, RuntimeOp::kStreamWrite,
-      FnAbiOf(
-          *owner_, RuntimeOp::kStreamWrite, stated, std::nullopt,
-          ReturnDirect{.type = b.getInt64Ty()}),
-      operands, std::nullopt);
 }
 
 // The function answers a comparison as a value of the one-bit type its own
@@ -520,11 +507,11 @@ auto CodeGenTuples::ScalarAnswerBody(
   const ThunkBody thunk = OpenThunkBody(
       tuple, slot, stands_in_for, unit_->functions.Get(method).result_type);
   llvm::IRBuilder<> b(&thunk.function->getEntryBlock());
-  std::vector<llvm::Value*> args = thunk.handed;
-  args.push_back(thunk.laid_out);
+  std::vector<llvm::Value*> args = thunk.args;
+  args.push_back(thunk.storage);
   b.CreateCall(owner_->UnitFunction(method), args);
   llvm::Value* const scalar =
-      LoadComparisonAnswer(b, thunk.laid_out, thunk.shape);
+      LoadComparisonAnswer(b, thunk.storage, thunk.shape);
   switch (answered) {
     case ComparisonAnswered::kAsItsScalar:
       b.CreateRet(scalar);
@@ -537,44 +524,67 @@ auto CodeGenTuples::ScalarAnswerBody(
   return thunk.function;
 }
 
-// The function answers its stream as a value of the type its own code states,
-// which is then written into the stream the type was handed.
+// A structure's own function answers its stream as a value of the type its
+// code states, and reads one as such a value, while the type is handed a
+// stream to write into or read out of. The library stands between: it is
+// handed the function, holds the value for it, and writes it into the stream
+// or reads it out first, so the body here holds nothing.
 auto CodeGenTuples::StreamWriteBody(
     lir::TypeId tuple, std::string_view slot,
     const VirtualSignature& stands_in_for, lir::FunctionId method)
     -> llvm::Constant* {
-  const ThunkBody thunk = OpenThunkBody(
-      tuple, slot, stands_in_for, unit_->functions.Get(method).result_type);
-  llvm::IRBuilder<> b(&thunk.function->getEntryBlock());
-  b.CreateCall(owner_->UnitFunction(method), {thunk.handed[0], thunk.laid_out});
-  b.CreateRet(WriteIntoStream(
-      b, thunk.laid_out, thunk.stated, thunk.handed[1], thunk.handed[2],
-      thunk.handed[3]));
-  return thunk.function;
+  llvm::Function* const body = DeclareBody(tuple, slot, stands_in_for);
+  llvm::IRBuilder<> b(
+      llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
+  const value::IntegralShape stream =
+      types_->RequiredIntegralShapeOf(unit_->functions.Get(method).result_type);
+  b.CreateRet(ForwardToEntry(
+      b, RuntimeOp::kStreamWrite, b.getInt64Ty(),
+      {owner_->UnitFunction(method), body->getArg(1), b.getInt64(stream.width),
+       b.getInt1(stream.IsFourState()), body->getArg(2), body->getArg(3)}));
+  return body;
 }
 
-// The function takes its stream as a value of the type its own code states,
-// which the planes the type was handed are read into first.
 auto CodeGenTuples::StreamReadBody(
     lir::TypeId tuple, std::string_view slot,
     const VirtualSignature& stands_in_for, lir::FunctionId method)
     -> llvm::Constant* {
+  llvm::Function* const body = DeclareBody(tuple, slot, stands_in_for);
+  llvm::IRBuilder<> b(
+      llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
   const lir::Function& fn = unit_->functions.Get(method);
-  const ThunkBody thunk = OpenThunkBody(
-      tuple, slot, stands_in_for, fn.values.Get(fn.params.at(0)).type);
-  llvm::IRBuilder<> b(&thunk.function->getEntryBlock());
-  llvm::Value* const after = ReadOutOfPlanes(
-      b, thunk.handed[0], thunk.handed[1], thunk.handed[2], thunk.laid_out,
-      thunk.stated);
-  b.CreateCall(
-      owner_->UnitFunction(method),
-      {thunk.laid_out, thunk.handed[3], thunk.handed[4]});
-  b.CreateRet(after);
-  return thunk.function;
+  const value::IntegralShape stream =
+      types_->RequiredIntegralShapeOf(fn.values.Get(fn.params.at(0)).type);
+  b.CreateRet(ForwardToEntry(
+      b, RuntimeOp::kStreamBuild, b.getInt64Ty(),
+      {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
+       b.getInt64(stream.width), b.getInt1(stream.IsFourState()),
+       body->getArg(3), body->getArg(4)}));
+  return body;
+}
+
+auto CodeGenTuples::ForwardToEntry(
+    llvm::IRBuilderBase& b, RuntimeOp op, llvm::Type* answers,
+    llvm::ArrayRef<llvm::Value*> args) -> llvm::Value* {
+  std::vector<llvm::Type*> takes;
+  takes.reserve(args.size());
+  for (llvm::Value* const arg : args) {
+    takes.push_back(arg->getType());
+  }
+  llvm::FunctionCallee entry = owner_->CreateRuntimeFunction(
+      llvm::FunctionType::get(answers, takes, false), RuntimeSymbol(op));
+  // The entry reads a flag as a C++ `bool`, a whole byte.
+  auto* const declared = llvm::cast<llvm::Function>(entry.getCallee());
+  for (unsigned i = 0; i < args.size(); ++i) {
+    if (args[i]->getType()->isIntegerTy(1)) {
+      declared->addParamAttr(i, llvm::Attribute::ZExt);
+    }
+  }
+  return b.CreateCall(entry, args);
 }
 
 // The function takes a count's control bits as a value of the type its own
-// code states, which the planes the type was handed are read into first.
+// code states, which the value the type was handed is read into first.
 auto CodeGenTuples::ControlReadBody(
     lir::TypeId tuple, std::string_view slot,
     const VirtualSignature& stands_in_for, lir::FunctionId method)
@@ -583,12 +593,11 @@ auto CodeGenTuples::ControlReadBody(
   const ThunkBody thunk = OpenThunkBody(
       tuple, slot, stands_in_for, fn.values.Get(fn.params.at(1)).type);
   llvm::IRBuilder<> b(&thunk.function->getEntryBlock());
-  ReadOutOfPlanes(
-      b, thunk.handed[1], thunk.handed[2], b.getInt64(0), thunk.laid_out,
-      thunk.stated);
+  ReadOutOfStream(
+      b, thunk.args[1], b.getInt64(0), thunk.storage, thunk.value_type);
   b.CreateCall(
       owner_->UnitFunction(method),
-      {thunk.handed[0], thunk.laid_out, thunk.handed[3]});
+      {thunk.args[0], thunk.storage, thunk.args[2]});
   b.CreateRetVoid();
   return thunk.function;
 }
@@ -722,11 +731,11 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
                         return StreamWriteBody(
                             tuple, slot.name, slot.stands_in_for, *method);
                       },
-                      [&](StreamOutOfPlanes) -> llvm::Constant* {
+                      [&](StreamOutOfValue) -> llvm::Constant* {
                         return StreamReadBody(
                             tuple, slot.name, slot.stands_in_for, *method);
                       },
-                      [&](ControlOutOfPlanes) -> llvm::Constant* {
+                      [&](ControlOutOfValue) -> llvm::Constant* {
                         return ControlReadBody(
                             tuple, slot.name, slot.stands_in_for, *method);
                       }},

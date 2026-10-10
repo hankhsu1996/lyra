@@ -241,9 +241,10 @@ configuration, and not only for one a rule selected.
    an identity is that each value's ends where it can be seen to end, so one joined into an
    aggregate never runs into its neighbour: a real is its bits in fixed-length hex, a string its
    length and its text, an aggregate its elements between brackets, and an integral its width,
-   signedness and every bit, unknowns included. The front end's own `==` is not this equality -- it
-   compares reals as numbers, calling 0.0 and -0.0 one value, and integrals after extending to a
-   common width.
+   signedness and every bit, unknowns included, written from its words so that spelling one costs
+   its width and not the square of it. The front end's own `==` is not this equality -- it compares
+   reals as numbers, calling 0.0 and -0.0 one value, and integrals after extending to a common
+   width.
 
    This is how C++ and Rust spell a value argument in a symbol. The Itanium ABI encodes a literal by
    its type and value, a floating-point one as "a fixed-length lowercase hexadecimal string

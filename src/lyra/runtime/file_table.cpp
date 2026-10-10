@@ -541,10 +541,11 @@ void ReadBigEndian(
     const value::IntegralView& dest, std::span<const char> bytes) {
   const std::uint64_t spanned = std::uint64_t{bytes.size()} * 8U;
   std::vector<std::uint64_t> read(value::WordCountForBits(spanned));
-  const value::Planes read_planes{.value = read, .unknown = {}};
-  value::FromBytes(read_planes, spanned, bytes);
+  const value::IntegralView read_bits{
+      .value = read, .unknown = {}, .width = spanned};
+  value::FromBytes(read_bits, bytes);
   value::Extract(
-      dest.planes, dest.width, read_planes.AsConst(), spanned,
+      dest, read_bits.AsConst(),
       static_cast<std::int64_t>(spanned) -
           static_cast<std::int64_t>(dest.width));
 }

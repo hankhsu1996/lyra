@@ -103,10 +103,11 @@ class Change {
   // reaches them. The words kept are the storage's own words those bits lie
   // in, so the bits cost the words they span and no value is built.
   [[nodiscard]] static auto Reaching(
-      value::ConstPlanes storage, value::BitPositions reached) -> Change;
+      const value::ConstIntegralView& storage, value::BitPositions reached)
+      -> Change;
 
   // The same words of the storage once the write has landed.
-  void SetAfter(value::ConstPlanes storage);
+  void SetAfter(const value::ConstIntegralView& storage);
 
   // The same two for storage that is one word in each plane, which is handed
   // over as those words; a plane a two-state value does not carry is clear.

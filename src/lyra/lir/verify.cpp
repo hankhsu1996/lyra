@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <format>
 #include <optional>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -59,6 +60,54 @@ void RequireViewedPart(
   }
 }
 
+// Bits are written within an integral value, through parts that are each bits
+// of one too and each start at a value of an integral type, and what is
+// written is a value of the last part's type.
+void RequireBitsStoreWellFormed(
+    const CompilationUnit& unit, const Function& fn, TypeId whole,
+    std::span<const BitsPart> parts, const Operand& bits) {
+  const auto is_integral = [&](TypeId type) {
+    return unit.types.Get(type).Is<IntegralType>();
+  };
+  if (!is_integral(whole)) {
+    throw InternalError(
+        "lir verify: bits are written into a value that is not integral");
+  }
+  if (parts.empty()) {
+    throw InternalError("lir verify: a write of bits names no part to write");
+  }
+  for (const BitsPart& part : parts) {
+    const std::optional<TypeId> start = OperandType(fn, part.start);
+    if (!is_integral(part.type) || !start.has_value() || !is_integral(*start)) {
+      throw InternalError(
+          "lir verify: a part of an integral value is stated at a type, or "
+          "starts at a value, that is not integral");
+    }
+  }
+  if (OperandType(fn, bits) != parts.back().type) {
+    throw InternalError(
+        "lir verify: the bits written are not a value of the type the part "
+        "written is stated at");
+  }
+}
+
+// What a call's target requires of the operands the call states. A write of
+// designated bits takes the designation and the bits.
+void RequireCallWellFormed(
+    const CompilationUnit& unit, const Function& fn, const CallTarget& target,
+    std::span<const Operand> args) {
+  const auto* bits = std::get_if<DesignatedBitsTarget>(&target);
+  if (bits == nullptr) {
+    return;
+  }
+  if (args.size() != 2) {
+    throw InternalError(
+        "lir verify: a write of designated bits takes the designation and "
+        "the bits");
+  }
+  RequireBitsStoreWellFormed(unit, fn, bits->value, bits->parts, args.back());
+}
+
 void VerifyInstr(
     const CompilationUnit& unit, const Function& fn, const Instr& instr) {
   const TypeId result_type = fn.values.Get(instr.result).type;
@@ -96,6 +145,34 @@ void VerifyInstr(
             }
             if (!IsVoid(unit, result_type)) {
               throw InternalError("lir verify: store must yield void");
+            }
+          },
+          [&](const BitsStoreInstr& store) {
+            RequireBitsStoreWellFormed(
+                unit, fn, PlaceType(unit, fn, store.place), store.parts,
+                store.bits);
+            if (!IsVoid(unit, result_type)) {
+              throw InternalError(
+                  "lir verify: a store of bits must yield void");
+            }
+          },
+          [&](const StorageInstr& storage) {
+            if (!IsVoid(unit, result_type)) {
+              throw InternalError(
+                  "lir verify: a statement of storage use must yield void");
+            }
+            // A made value's bytes come into use with the instruction that
+            // makes it, so only a slot is stated to.
+            switch (storage.op) {
+              case StorageInstr::Op::kLive:
+                if (!fn.values.Get(storage.of).NamesStorage()) {
+                  throw InternalError(
+                      "lir verify: storage is stated to come into use for a "
+                      "value that is not a slot");
+                }
+                break;
+              case StorageInstr::Op::kDead:
+                break;
             }
           },
           [&](const AddrOfInstr& addr) {
@@ -140,7 +217,10 @@ void VerifyInstr(
             RequireViewedPart(unit, fn, update.aggregate);
           },
           [](const HandleCastInstr&) {}, [](const DynamicCastInstr&) {},
-          [](const CallInstr&) {}, [](const TupleInstr&) {},
+          [&](const CallInstr& call) {
+            RequireCallWellFormed(unit, fn, call.target, call.args);
+          },
+          [](const TupleInstr&) {},
           [&](const ClosureInstr& built) {
             const auto* closure = unit.types.Get(result_type).As<ClosureType>();
             if (closure == nullptr ||
@@ -215,6 +295,10 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
   for (const BasicBlock& block : fn.blocks) {
     for (const Instr& instr : block.instrs) {
       VerifyInstr(unit, fn, instr);
+    }
+    if (const auto* call =
+            std::get_if<DepartingCallInstr>(&block.terminator.data)) {
+      RequireCallWellFormed(unit, fn, call->target, call->args);
     }
     // Only a body whose call protocol is the coroutine one can hand control
     // back to the scheduler; a suspension anywhere else has no one to resume

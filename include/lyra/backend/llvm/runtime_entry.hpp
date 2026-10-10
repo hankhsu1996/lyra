@@ -184,11 +184,23 @@ enum class RuntimeOp : std::uint8_t {
   kMakeDpiLogicBuffer,
   kMakeDpiOpenArray,
   kSettleDeparture,
-  // An integral value's bits written into a stream of bits, and the integral
-  // value planes hold laid out as one: what stands between a structure's own
-  // operations and the type the library asks them through.
+  // What stands between a structure's own operations and the type the library
+  // asks them through: the stream a structure's function answers written into
+  // the stream the type was handed, a stream's bits laid out as an integral
+  // value, and a structure built by its function out of such a stream.
   kStreamWrite,
   kStreamRead,
+  kStreamBuild,
+  // Bits written into an integral value where they lie (LRM 11.5.1): into the
+  // words of a value held at a place, and into the value a write in progress
+  // designates, which hears which of them moved and is named by the domain
+  // that value is held in.
+  kInsertBits,
+  kInsertDesignatedBits,
+  // The bytes a body keeps apart from its frame for one value, obtained and
+  // given back.
+  kAllocBytes,
+  kDeallocBytes,
   // Ending an object held in the generated body's own storage, copying one into
   // further storage, moving one into storage that takes it over -- a slot, or
   // what a caller gave for a body's answer -- and writing one into an object
@@ -351,8 +363,6 @@ auto RealizationsOf(lir::ValueCellTarget::Op op)
     -> std::span<const RealizedFor>;
 auto RealizationsOf(lir::OpenWriteTarget::Op op)
     -> std::span<const RealizedFor>;
-auto RealizationsOf(lir::DesignatedBitsTarget::Op op)
-    -> std::span<const RealizedFor>;
 
 // What the realization of an entry for `domain` is told. A representation the
 // library holds no realization of the entry for is a compiler defect, refused
@@ -360,8 +370,6 @@ auto RealizationsOf(lir::DesignatedBitsTarget::Op op)
 auto ToldOf(support::ValueDomain domain, RuntimeOp op) -> Told;
 auto ToldOf(support::ValueDomain domain, lir::ValueCellTarget::Op op) -> Told;
 auto ToldOf(support::ValueDomain domain, lir::OpenWriteTarget::Op op) -> Told;
-auto ToldOf(support::ValueDomain domain, lir::DesignatedBitsTarget::Op op)
-    -> Told;
 auto ToldOf(support::ValueDomain domain, support::BuiltinFn fn) -> Told;
 auto ToldOf(
     support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
@@ -396,9 +404,6 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::OpenWriteTarget::Op op)
     -> std::string;
-auto RuntimeSymbol(
-    support::ValueDomain domain, lir::DesignatedBitsTarget::Op op)
-    -> std::string;
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
     -> std::string;
@@ -422,9 +427,6 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings;
 auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold;
 auto OperandReadingsOf(lir::ValueCellTarget::Op op) -> support::OperandReadings;
 auto OperandReadingsOf(lir::OpenWriteTarget::Op op) -> support::OperandReadings;
-auto OperandReadingsOf(lir::DesignatedBitsTarget::Op op)
-    -> support::OperandReadings;
-auto AnswerToldOf(lir::DesignatedBitsTarget::Op op) -> support::AnswerTold;
 
 // The operation an operator of the layer above is over integral values (LRM
 // 11.4).

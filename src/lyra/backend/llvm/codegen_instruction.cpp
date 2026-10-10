@@ -86,8 +86,9 @@ constexpr std::int64_t kNoCastHint = -1;
 auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId result_type = fn_->values.Get(instr.result).type;
-  llvm::Value* const out =
-      lir::MakesValue(instr.data) ? StorageFor(result_type) : nullptr;
+  llvm::Value* const out = lir::MakesValue(instr.data)
+                               ? StorageForResult(instr.result, result_type)
+                               : nullptr;
   return std::visit(
       Overloaded{
           [&](const lir::CallInstr& call) -> diag::Result<llvm::Value*> {
@@ -111,13 +112,37 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           },
           [&](const lir::AggregateUpdateInstr& update)
               -> diag::Result<llvm::Value*> {
-            return LowerAggregateUpdate(update, result_type, out);
+            return LowerAggregateUpdate(update, out);
           },
           [&](const lir::LoadInstr& load) -> diag::Result<llvm::Value*> {
             return LowerLoad(load, result_type);
           },
           [&](const lir::StoreInstr& store) -> diag::Result<llvm::Value*> {
             return LowerStore(store);
+          },
+          [&](const lir::BitsStoreInstr& store) -> diag::Result<llvm::Value*> {
+            return LowerBitsStore(store);
+          },
+          // Bytes a frame keeps for a value come into use and go out of it
+          // with nothing to do where they lie in the frame; where they are
+          // allocated, coming into use allocates them and going out of use
+          // gives them back. Storage that comes into use while it is in use
+          // is given back first, and going out of use twice does nothing, so
+          // neither order of the two statements leaks or frees twice.
+          [&](const lir::StorageInstr& storage) -> diag::Result<llvm::Value*> {
+            if (!NeedsHeapStorage(fn_->values.Get(storage.of).type)) {
+              return nullptr;
+            }
+            switch (storage.op) {
+              case lir::StorageInstr::Op::kLive:
+                DeallocateBytes(storage.of);
+                AllocateBytes(storage.of);
+                return nullptr;
+              case lir::StorageInstr::Op::kDead:
+                DeallocateBytes(storage.of);
+                return nullptr;
+            }
+            throw InternalError("llvm codegen: unknown storage operation");
           },
           [&](const lir::AddrOfInstr& addr) -> diag::Result<llvm::Value*> {
             return LowerAddrOf(addr, result_type, out);
@@ -368,7 +393,7 @@ auto CodeGenFunction::ResolvePlaceAddress(
 
   const auto* use = std::get_if<lir::Use>(&place.base);
   if (lir::IsPlaceLocal(*fn_, place.base)) {
-    address = values_.at(use->value);
+    address = AddressOf(use->value);
   } else {
     // A value base refers to storage, so opening it is what the base value
     // already answers; the dereference is the step that says the storage is
@@ -1174,32 +1199,8 @@ auto CodeGenFunction::LowerCall(
             }
             throw InternalError("llvm codegen: unknown value cell operation");
           },
-          // Bits of a designated integral value are read, and placed, by the
-          // operation over integral values, applied to the value where the
-          // designation says it lies (LRM 11.5.1).
           [&](const lir::DesignatedBitsTarget& bits) -> Lowered {
-            const auto over_the_designated_value =
-                [&](support::IntegralOp op) -> Lowered {
-              auto operands = LowerOperandRefs(call.args);
-              if (!operands) {
-                return std::unexpected(std::move(operands.error()));
-              }
-              operands->front() = OperandRef{
-                  .value = DesignatedPart(operands->front().value),
-                  .type = bits.value};
-              return LowerIntegral(op, *operands, result_type, out);
-            };
-            switch (bits.op) {
-              case lir::DesignatedBitsTarget::Op::kRead:
-                return over_the_designated_value(support::IntegralOp::kSlice);
-              case lir::DesignatedBitsTarget::Op::kPlace:
-                return over_the_designated_value(
-                    support::IntegralOp::kWithSlice);
-              case lir::DesignatedBitsTarget::Op::kReport:
-                return called(bits);
-            }
-            throw InternalError(
-                "llvm codegen: unknown designated-bits operation");
+            return LowerDesignatedBitsWrite(bits, call, result_type);
           },
           [&](const lir::OpenWriteTarget& t) { return called(t); },
           // Entering a body builds the execution it becomes. Nothing ends that
@@ -1228,11 +1229,139 @@ auto CodeGenFunction::LowerCall(
       call.target);
 }
 
-auto CodeGenFunction::DesignatedPart(llvm::Value* designation) -> llvm::Value* {
-  return builder_.CreateLoad(
-      module_->Types().Ptr(),
-      builder_.CreateConstInBoundsGEP1_64(
-          builder_.getInt8Ty(), designation, runtime::DesignatedPartAt()));
+auto CodeGenFunction::LowerBitsParts(std::span<const lir::BitsPart> parts)
+    -> diag::Result<std::vector<BitsPartRef>> {
+  std::vector<BitsPartRef> lowered;
+  lowered.reserve(parts.size());
+  for (const lir::BitsPart& part : parts) {
+    // A part's start is a position, which is what the layer above states
+    // every ordinal as.
+    const lir::TypeId start_type = OperandType(part.start);
+    const std::optional<value::IntegralShape> stated =
+        module_->Types().IntegralShapeOf(start_type);
+    if (!stated.has_value() || *stated != value::kShapeOf<value::Position>) {
+      throw InternalError(
+          "llvm codegen: a part of an integral value starts at something "
+          "that is not stated as a position -- please report this as a bug");
+    }
+    auto start = LowerOperand(part.start);
+    if (!start) {
+      return std::unexpected(std::move(start.error()));
+    }
+    lowered.push_back(
+        BitsPartRef{
+            .start = OperandRef{.value = *start, .type = start_type},
+            .type = part.type});
+  }
+  return lowered;
+}
+
+auto CodeGenFunction::OuterBitsParts(std::span<const BitsPartRef> parts)
+    -> llvm::Value* {
+  llvm::Type* const count = builder_.getInt64Ty();
+  llvm::StructType* const crossing = module_->Types().BitsPartType();
+  auto* const all = llvm::ArrayType::get(crossing, parts.size());
+  llvm::Value* const storage = FrameStorage(all);
+  for (std::size_t i = 0; i < parts.size(); ++i) {
+    const BitsPartRef& part = parts[i];
+    llvm::Value* const slot =
+        builder_.CreateConstInBoundsGEP2_64(all, storage, 0, i);
+    builder_.CreateStore(
+        part.start.value, builder_.CreateStructGEP(crossing, slot, 0));
+    builder_.CreateStore(
+        llvm::ConstantInt::get(
+            count, module_->Types().RequiredIntegralShapeOf(part.type).width),
+        builder_.CreateStructGEP(crossing, slot, 1));
+  }
+  llvm::Value* span = llvm::UndefValue::get(module_->Types().Span());
+  span = builder_.CreateInsertValue(span, storage, {0});
+  return builder_.CreateInsertValue(
+      span,
+      llvm::ConstantInt::get(count, static_cast<std::uint64_t>(parts.size())),
+      {1});
+}
+
+// The entry takes the designation, the parts the bits lie in, where the bits
+// start, and the bits: every part but the one written crosses in the span, and
+// the one written as where the bits start.
+auto CodeGenFunction::LowerDesignatedBitsWrite(
+    const lir::DesignatedBitsTarget& bits, const lir::CallInstr& call,
+    lir::TypeId result_type) -> diag::Result<llvm::Value*> {
+  auto designation = LowerOperand(call.args.front());
+  if (!designation) {
+    return std::unexpected(std::move(designation.error()));
+  }
+  auto parts = LowerBitsParts(bits.parts);
+  if (!parts) {
+    return std::unexpected(std::move(parts.error()));
+  }
+  auto written = LowerOperand(call.args.back());
+  if (!written) {
+    return std::unexpected(std::move(written.error()));
+  }
+  auto abi = arranger_.FnAbiOf(call, result_type);
+  if (!abi) {
+    return std::unexpected(std::move(abi.error()));
+  }
+  const std::array<llvm::Value*, 4> operands{
+      *designation, OuterBitsParts(std::span(*parts).first(parts->size() - 1)),
+      parts->back().start.value, *written};
+  auto args = module_->BuildCallArgs(*abi, operands);
+  if (!args) {
+    return std::unexpected(std::move(args.error()));
+  }
+  auto callee = ResolveCallee(call, result_type, *abi, *args);
+  if (!callee) {
+    return std::unexpected(std::move(callee.error()));
+  }
+  return EmitCallOrInvoke(*callee, *args);
+}
+
+auto CodeGenFunction::LowerBitsStore(const lir::BitsStoreInstr& store)
+    -> diag::Result<llvm::Value*> {
+  auto address = ResolvePlaceAddress(store.place, Access::kWrite);
+  if (!address) {
+    return std::unexpected(std::move(address.error()));
+  }
+  const lir::TypeId whole =
+      ReachedType(store.place, std::ssize(store.place.chain));
+  llvm::Value* at = *address;
+  if (const std::optional<support::ValueDomain> held =
+          PlaceValueCellDomain(store.place, whole)) {
+    at = ValueCellContents(*held, at);
+  }
+  auto parts = LowerBitsParts(store.parts);
+  if (!parts) {
+    return std::unexpected(std::move(parts.error()));
+  }
+  auto written = LowerOperand(store.bits);
+  if (!written) {
+    return std::unexpected(std::move(written.error()));
+  }
+  const lir::TypeId written_type = OperandType(store.bits);
+  if (StoreBitsOnOneWord(
+          at, whole, *parts,
+          OperandRef{.value = *written, .type = written_type})) {
+    return nullptr;
+  }
+  const std::array<StatedOperand, 4> stated{
+      ValueOperand{.type = whole},
+      MachineOperand{.type = module_->Types().Span()},
+      ValueOperand{.type = parts->back().start.type},
+      ValueOperand{.type = written_type}};
+  const FnAbi abi = FnAbiOf(
+      *module_, RuntimeOp::kInsertBits, stated, std::nullopt,
+      ReturnDirect{.type = module_->Types().Void()});
+  const std::array<llvm::Value*, 4> operands{
+      at, OuterBitsParts(std::span(*parts).first(parts->size() - 1)),
+      parts->back().start.value, *written};
+  auto args = module_->BuildCallArgs(abi, operands);
+  if (!args) {
+    return std::unexpected(std::move(args.error()));
+  }
+  return builder_.CreateCall(
+      module_->RuntimeFunction(RuntimeSymbol(RuntimeOp::kInsertBits), abi),
+      *args);
 }
 
 // Every call is a symbol invoked with arguments; the target kinds differ only
@@ -1359,7 +1488,8 @@ auto CodeGenFunction::ResolveCallee(
             if (!domain) {
               return std::unexpected(std::move(domain.error()));
             }
-            return module_->RuntimeFunction(RuntimeSymbol(*domain, t.op), abi);
+            return module_->RuntimeFunction(
+                RuntimeSymbol(*domain, RuntimeOp::kInsertDesignatedBits), abi);
           },
           [&](const lir::EndValueTarget&)
               -> diag::Result<llvm::FunctionCallee> {
@@ -1592,8 +1722,8 @@ auto CodeGenFunction::LowerAggregateExtract(
 }
 
 auto CodeGenFunction::LowerAggregateUpdate(
-    const lir::AggregateUpdateInstr& update, lir::TypeId result_type,
-    llvm::Value* out) -> diag::Result<llvm::Value*> {
+    const lir::AggregateUpdateInstr& update, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
   auto aggregate = LowerOperand(update.aggregate);
   if (!aggregate) {
     return std::unexpected(std::move(aggregate.error()));
@@ -1604,17 +1734,6 @@ auto CodeGenFunction::LowerAggregateUpdate(
   }
   const lir::TypeId container = OperandType(update.aggregate);
   const lir::TypeId replacement_type = OperandType(update.replacement);
-  if (module_->Types().IntegralShapeOf(container).has_value()) {
-    auto position = IntegralPosition(update.selector);
-    if (!position) {
-      return std::unexpected(std::move(position.error()));
-    }
-    const std::array<OperandRef, 3> operands{
-        OperandRef{.value = *aggregate, .type = container}, *position,
-        OperandRef{.value = *replacement, .type = replacement_type}};
-    return LowerIntegral(
-        support::IntegralOp::kWithSlice, operands, result_type, out);
-  }
   auto domain = DomainOf(container);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
@@ -1681,7 +1800,7 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
   return std::visit(
       Overloaded{
           [&](const lir::Use& use) -> diag::Result<llvm::Value*> {
-            return values_.at(use.value);
+            return AddressOf(use.value);
           },
           [&](const lir::IntConst& c) -> diag::Result<llvm::Value*> {
             return LowerIntConst(c);

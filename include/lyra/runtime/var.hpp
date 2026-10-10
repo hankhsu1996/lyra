@@ -35,17 +35,6 @@ namespace lyra::runtime {
 template <class T>
 concept BitAddressed = value::IntegralValue<T> || value::HeldAsWords<T>;
 
-// Answers `read` asked of the planes and the width of a bit-addressed value.
-template <BitAddressed T, class Read>
-auto ReadPlanes(const T& bits, Read read) -> decltype(auto) {
-  if constexpr (value::IntegralValue<T>) {
-    const typename T::Words words = bits.Load();
-    return read(words.Read(), T::kWidth);
-  } else {
-    return read(bits.Read(), bits.Width());
-  }
-}
-
 // A bit-addressed value that is one word in each plane it carries.
 template <class T>
 concept HeldInOneWord = value::IntegralValue<T> && T::kWords == 1;
@@ -57,21 +46,15 @@ auto KeptBefore(
     const T& storage, std::optional<value::BitPositions> reached = std::nullopt)
     -> Change {
   if constexpr (HeldInOneWord<T>) {
-    const typename T::Words words = storage.Load();
-    std::uint64_t unknown = 0;
-    if constexpr (T::kFourState) {
-      unknown = words.unknown[0];
-    }
+    const auto read = storage.View();
     return Change::ReachingInWord(
-        words.value[0], unknown,
+        read.value[0], value::WordOrZero(read.unknown, 0),
         reached.value_or(value::BitPositions{.lsb = 0, .width = T::kWidth}));
   } else {
-    return ReadPlanes(
-        storage, [&](value::ConstPlanes planes, std::uint64_t width) {
-          return Change::Reaching(
-              planes,
-              reached.value_or(value::BitPositions{.lsb = 0, .width = width}));
-        });
+    const value::ConstIntegralView read = storage.View().AsDynamic();
+    return Change::Reaching(
+        read,
+        reached.value_or(value::BitPositions{.lsb = 0, .width = read.width}));
   }
 }
 
@@ -79,16 +62,10 @@ auto KeptBefore(
 template <BitAddressed T>
 void KeepAfter(Change& change, const T& storage) {
   if constexpr (HeldInOneWord<T>) {
-    const typename T::Words words = storage.Load();
-    std::uint64_t unknown = 0;
-    if constexpr (T::kFourState) {
-      unknown = words.unknown[0];
-    }
-    change.SetAfterInWord(words.value[0], unknown);
+    const auto read = storage.View();
+    change.SetAfterInWord(read.value[0], value::WordOrZero(read.unknown, 0));
   } else {
-    ReadPlanes(storage, [&](value::ConstPlanes planes, std::uint64_t) {
-      change.SetAfter(planes);
-    });
+    change.SetAfter(storage.View().AsDynamic());
   }
 }
 

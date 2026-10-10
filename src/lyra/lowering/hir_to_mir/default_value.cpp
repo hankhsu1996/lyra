@@ -35,8 +35,10 @@ auto DefaultIntegralConstant(const mir::IntegralType& integral)
     -> mir::IntegralConstant {
   mir::IntegralConstant held = mir::BlankIntegralConstant(integral);
   value::FillDefault(
-      value::Planes{.value = held.value_words, .unknown = held.state_words},
-      integral.bit_width);
+      value::IntegralView{
+          .value = held.value_words,
+          .unknown = held.state_words,
+          .width = integral.bit_width});
   return held;
 }
 

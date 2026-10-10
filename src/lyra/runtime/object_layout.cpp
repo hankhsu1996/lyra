@@ -318,10 +318,6 @@ auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
   throw InternalError("object layout: unknown member storage kind");
 }
 
-auto DesignatedPartAt() -> std::uint64_t {
-  return offsetof(ErasedDesignation, part);
-}
-
 // The Itanium ABI names a class's table `_ZTV` followed by the class's mangled
 // name, which is what its `type_info` reports as its name.
 auto LayoutOfIntegralTypeConstant() -> IntegralTypeConstantLayout {

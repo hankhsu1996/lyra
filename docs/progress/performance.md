@@ -5,22 +5,24 @@ optimization with a defined target shape, not a correctness gap: the feature alr
 correctly without it, and the item only makes the same behavior cheaper. Split into two domains that
 have different cost models and different measurement methods.
 
-Two items depart from that and each says so where it sits. The information a write discards is what
-makes it expensive here and what makes one construct answer wrongly elsewhere, so the same change
-closes both; the wrong answer is tracked with the construct it affects rather than here. And an
-artifact that grows with something the design chooses stops being a cost at some width and becomes a
-wall, because the host compiler is what runs out -- which is what the generate item below was.
+Two kinds of item depart from that and each says so where it sits. The information a write discards
+is what makes it expensive here and what makes one construct answer wrongly elsewhere, so the same
+change closes both; the wrong answer is tracked with the construct it affects rather than here. And
+a cost that grows with something the design chooses stops being a cost at some size and becomes a
+wall, because the host compiler or the stack is what runs out -- which is what the generate item and
+the packed-width item below were.
 
 ## Runtime performance
 
 Simulation execution speed: the cost of running processes, scheduling events, and reading and
 writing state once the object graph is built.
 
-How hard a program is compiled is settled and is not a tracked gap. The runtime library an emitted
-program links is optimized as shipped, independent of how the compiler that ships it was built,
-because a user recompiles none of it. The design's own code is compiled unoptimized by default and
-optimized under `--release`, on either backend, which is the one place the build-time / run-time
-trade is a choice: iterating pays the compile on every edit, while a long run earns it back.
+How hard a program is compiled is settled on one axis and open on another. The runtime library an
+emitted program links is optimized as shipped, independent of how the compiler that ships it was
+built, because a user recompiles none of it. The design's own code is compiled unoptimized by
+default and optimized under `--release`, on either backend, which is the one place the build-time /
+run-time trade is a choice: iterating pays the compile on every edit, while a long run earns it
+back. Which level `--release` asks the host compiler for is the open one, and is an entry below.
 
 Runtime performance is tracked by the benchmark over the corpus under `tests/benchmark/`, which
 builds every case under both Lyra and Verilator and puts the two rates side by side. It runs nightly
@@ -360,6 +362,16 @@ closed below.
       whether to use it. It is the run-time half of the same axis `--release` already names, so it
       belongs to that flag's question rather than to a new one.
 
+- [ ] Which optimization level a release build asks the host compiler for, and whether a user names
+      it. `--release` asks for the second level on the C++ backend. An operation on a value of one
+      word is reduced to a few instructions by the host compiler folding the value library's short
+      functions into the design's code, and how large a function a compiler folds in is a number
+      that differs by compiler and by level: gcc 13 inlines a function of up to 70 of its size units
+      at `-O2` and 200 at `-O3`. Every one-word operation counted folds at the second level under
+      both clang 20 and gcc 13, so what the level decides is the operations larger than those.
+      Undecided: what `--release` asks for, and whether an invoker names the level. Not measured: a
+      benchmark design's build time and rate at each level under clang and under gcc.
+
 - [ ] An array's `unique` and `unique_index` (LRM 7.12.1) compare each element against every
       distinct one seen before it, so they cost the square of the element count. Two elements are
       the same where they are bit-identical (`===`), and the relational order that `sort` uses is no
@@ -576,6 +588,24 @@ specializations, not with instance count.
       This is a rate rather than a count, so no coverage record holds it and the corpus cannot see
       it: every conformance case is one small design, and what it measures only shows at a scale
       none of them reach.
+
+- [x] What a design costs to build and to start no longer follows the width of a packed type it
+      declares. This was a wall and not a cost, on three counts. A value lay in the frame of
+      whatever evaluated it, so a program declaring a vector of some millions of bits ended on a
+      fault with no message, and at the 65,536 bits every tool must take (LRM 6.9.1) a body of five
+      hundred statements did the same on the C++ backend. A fill, a default and a small number
+      widened were each folded into data as large as the type, so a module of twenty lines at
+      4,194,304 bits took about two minutes to build on either backend, against one to three seconds
+      at 262,144. And an integer parameter was spelled into a unit's name as digits, which cost the
+      square of its width.
+
+      A value past a fixed size now owns its words and a frame keeps their address, folding makes
+      no data the source did not write, and a parameter is spelled from its words. Measured on the
+      design the growth check holds, a vector filled, added to and written in part: the execution
+      backend builds it in 0.7, 1.1 and 1.6 s at 262,144, 4,194,304 and 8,388,608 bits, the C++
+      backend in under 6 s at the last two, and the program is the same size within three hundred
+      bytes at all three. `../decisions/a-packed-value-is-its-words.md` holds why the line is drawn by
+      size and what folding declines.
 
 ### Open questions
 

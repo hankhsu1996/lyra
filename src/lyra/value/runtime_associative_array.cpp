@@ -19,7 +19,7 @@ namespace lyra::value {
 
 namespace {
 
-// The planes of an index the clause admits only as an integral (LRM 7.8.1).
+// An index the clause admits only as an integral (LRM 7.8.1), read as words.
 auto IntegralIndex(IndexView index) -> LoadedWords {
   const IntegralValueType* type = index.type->AsIntegral();
   if (type == nullptr) {

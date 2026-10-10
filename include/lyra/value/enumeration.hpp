@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -49,26 +48,28 @@ struct Enumeration {
 
   // LRM 6.24.2: where a value lies among the declared members, and nothing for
   // one that is no member.
-  [[nodiscard]] auto PositionOf(ConstPlanes value) const
+  [[nodiscard]] auto PositionOf(const ConstIntegralView& value) const
       -> std::optional<std::size_t>;
   // LRM 6.19.5.6: the member's name, or the empty string for a value that is
   // no member.
-  [[nodiscard]] auto NameOf(ConstPlanes value) const -> String;
+  [[nodiscard]] auto NameOf(const ConstIntegralView& value) const -> String;
   // LRM 6.19.5.3 / 6.19.5.4: the member `count` places after or before the
   // value in declared order, wrapping at either end, and nothing for a value
   // that is no member. `count` is the `int unsigned` the source passed, read
   // as a machine integer.
-  [[nodiscard]] auto MemberAfter(ConstPlanes value, std::int64_t count) const
-      -> std::optional<ConstPlanes>;
-  [[nodiscard]] auto MemberBefore(ConstPlanes value, std::int64_t count) const
-      -> std::optional<ConstPlanes>;
+  [[nodiscard]] auto MemberAfter(
+      const ConstIntegralView& value, std::int64_t count) const
+      -> std::optional<ConstIntegralView>;
+  [[nodiscard]] auto MemberBefore(
+      const ConstIntegralView& value, std::int64_t count) const
+      -> std::optional<ConstIntegralView>;
 
  private:
-  [[nodiscard]] auto MemberAt(std::size_t position) const -> ConstPlanes;
+  [[nodiscard]] auto MemberAt(std::size_t position) const -> ConstIntegralView;
 
   // The member `steps` places after the one `value` is, wrapping.
-  [[nodiscard]] auto Stepped(ConstPlanes value, std::size_t steps) const
-      -> std::optional<ConstPlanes>;
+  [[nodiscard]] auto Stepped(const ConstIntegralView& value, std::size_t steps)
+      const -> std::optional<ConstIntegralView>;
 };
 
 // An enumeration's members as a unit compiled with the base type states them:
@@ -83,23 +84,23 @@ struct EnumerationMembers {
 
   template <IntegralValue T>
   [[nodiscard]] auto Has(const T& value) const -> bool {
-    return Read().PositionOf(value.Load().Read()).has_value();
+    return Read().PositionOf(value.AsWords().View()).has_value();
   }
 
   template <IntegralValue T>
   [[nodiscard]] auto Name(const T& value) const -> String {
-    return Read().NameOf(value.Load().Read());
+    return Read().NameOf(value.AsWords().View());
   }
 
   // A value that is no member steps to the base type's default (LRM Table
   // 6-7).
   template <IntegralValue T>
   [[nodiscard]] auto Next(const T& value, std::int64_t count) const -> T {
-    return MemberOr<T>(Read().MemberAfter(value.Load().Read(), count));
+    return MemberOr<T>(Read().MemberAfter(value.AsWords().View(), count));
   }
   template <IntegralValue T>
   [[nodiscard]] auto Prev(const T& value, std::int64_t count) const -> T {
-    return MemberOr<T>(Read().MemberBefore(value.Load().Read(), count));
+    return MemberOr<T>(Read().MemberBefore(value.AsWords().View(), count));
   }
 
  private:
@@ -113,14 +114,14 @@ struct EnumerationMembers {
   }
 
   template <IntegralValue T>
-  [[nodiscard]] static auto MemberOr(std::optional<ConstPlanes> member) -> T {
+  [[nodiscard]] static auto MemberOr(std::optional<ConstIntegralView> member)
+      -> T {
     if (!member) {
       return T{};
     }
-    typename T::Words words;
-    std::ranges::copy(member->value, words.value.begin());
-    std::ranges::copy(member->unknown, words.unknown.begin());
-    return T::FromWords(words);
+    T out = T::Zero();
+    Convert(out.MutableView(), *member);
+    return out;
   }
 };
 

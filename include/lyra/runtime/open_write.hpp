@@ -191,7 +191,7 @@ class OpenWrite {
 
   // What the landing room holds, asked of the part one write landed on. Ending
   // it tells the bracket what the landing found.
-  struct LandingOf {
+  struct ResolveBitRange {
     void (*end)(void* room, const BracketOf& bracket_of, void* bracket);
   };
 
@@ -203,7 +203,7 @@ class OpenWrite {
   }
 
   template <typename Part>
-  static constexpr LandingOf kLandingOf{
+  static constexpr ResolveBitRange kLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
         auto* landing = Landing<PartLanding<Part>>(room);
         if (const std::optional<Change> change =
@@ -213,7 +213,7 @@ class OpenWrite {
         std::destroy_at(landing);
       }};
 
-  static constexpr LandingOf kTupleLandingOf{
+  static constexpr ResolveBitRange kTupleLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
         auto* landing = Landing<TupleLanding>(room);
         if (!value::RuntimeTuple::BitIdentical(
@@ -224,7 +224,7 @@ class OpenWrite {
       }};
 
   template <value::HeldAsWords Wide>
-  static constexpr LandingOf kWideLandingOf{
+  static constexpr ResolveBitRange kWideLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
         auto* landing = Landing<WideLanding<Wide>>(room);
         if (const std::optional<Change> change =
@@ -237,7 +237,7 @@ class OpenWrite {
   alignas(void*) std::array<std::byte, kBracketCapacity> bracket_{};
   alignas(void*) std::array<std::byte, kLandingCapacity> landing_{};
   const BracketOf* bracket_of_;
-  const LandingOf* landing_of_ = nullptr;
+  const ResolveBitRange* landing_of_ = nullptr;
 };
 
 }  // namespace lyra::runtime

@@ -69,7 +69,7 @@ class IntegralValueType final : public ValueType {
   // constant data places the shape by.
   [[nodiscard]] auto ShapeOffset() const -> std::size_t;
 
-  // The planes of the value laid out at `value`.
+  // The value laid out at `value`, read as words.
   [[nodiscard]] auto Load(const void* value) const -> LoadedWords {
     return LoadedWords::Load(value, shape_);
   }
@@ -89,15 +89,14 @@ class IntegralValueType final : public ValueType {
 
   void BitstreamWidth(const void* value, void* out) const override;
   void CountBits(
-      const void* value, const ConstPlanes& control_bits,
-      std::uint64_t control_width, void* out) const override;
+      const void* value, const ConstIntegralView& control_bits,
+      void* out) const override;
   auto WriteToStream(
-      const void* value, const Planes& stream, std::uint64_t stream_width,
-      std::uint64_t filled) const -> std::uint64_t override;
-  auto ReadFromStream(
-      const ConstPlanes& stream, std::uint64_t stream_width,
-      std::uint64_t taken, const void* prototype, void* out) const
+      const void* value, const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t override;
+  auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken,
+      const void* prototype, void* out) const -> std::uint64_t override;
 
   void ResolveTriState(
       const void* lhs, const void* rhs, void* out) const override;
@@ -120,8 +119,8 @@ class IntegralValueType final : public ValueType {
   [[nodiscard]] auto AsIntegral() const -> const IntegralValueType* override;
 
  private:
-  // A fold of two values of this type into a third, which `fold` carries out
-  // over their planes.
+  // A fold of two values of this type into a third, which `fold` carries
+  // out.
   template <typename Fold>
   void Folded(const void* lhs, const void* rhs, void* out, Fold fold) const;
 

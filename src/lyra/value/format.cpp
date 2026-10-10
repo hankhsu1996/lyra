@@ -81,7 +81,7 @@ auto FormatRealBody(const FormatSpec& spec, double v) -> std::string {
 }
 
 auto LowWord(const ConstIntegralView& value) -> std::uint64_t {
-  return value.planes.value.empty() ? 0U : value.planes.value[0];
+  return value.value.empty() ? 0U : value.value[0];
 }
 
 }  // namespace

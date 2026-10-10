@@ -75,7 +75,8 @@ void KeepWords(
 
 }  // namespace
 
-auto Change::Reaching(value::ConstPlanes storage, value::BitPositions reached)
+auto Change::Reaching(
+    const value::ConstIntegralView& storage, value::BitPositions reached)
     -> Change {
   Change change;
   change.reached_ = reached;
@@ -89,7 +90,7 @@ auto Change::Reaching(value::ConstPlanes storage, value::BitPositions reached)
   return change;
 }
 
-void Change::SetAfter(value::ConstPlanes storage) {
+void Change::SetAfter(const value::ConstIntegralView& storage) {
   KeepWords(storage.value, first_word_, WordsOf(kAfterValue));
   KeepWords(storage.unknown, first_word_, WordsOf(kAfterUnknown));
 }

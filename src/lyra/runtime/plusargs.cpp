@@ -122,8 +122,7 @@ auto ValuePlusargsInto(
   if (!base.has_value()) return value::Int::FromInt(0);
   const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
   if (!match.has_value()) return value::Int::FromInt(0);
-  value::FromInt(
-      out.planes, out.width, ConvertIntegralRemainder(*match, *base));
+  value::FromInt(out, ConvertIntegralRemainder(*match, *base));
   return value::Int::FromInt(1);
 }
 

@@ -878,13 +878,13 @@ enough to warrant its own focused review.
       arrive as another per-type branch. A write target is now built rooted where the write lands,
       as one call per level of the descent, each naming the entry the lowering settled from the type
       that level descends into. Each backend is a fixed function of those calls: the C++ backend
-      reaches the part in place, the execution backend reads the whole value and rebuilds it,
-      because that is what its representation allows. The nested write encoding, the target
-      decomposition, and its per-type predicate are gone. Every interior write -- struct component,
-      union member, packed slice, packed or unpacked element, string character -- and every
-      increment through one takes the same path on both backends. The model is recorded in
-      `../decisions/value-projection-write.md`, and how it is stated in
-      `../decisions/value-descent-as-named-calls.md`.
+      reaches the part in place, and the execution backend reads the whole value and rebuilds it
+      only where its representation leaves no other way, which is a string's character and an
+      unpacked union's member. The nested write encoding, the target decomposition, and its per-type
+      predicate are gone. Every interior write -- struct component, union member, packed slice,
+      packed or unpacked element, string character -- and every increment through one takes the same
+      path on both backends. The model is recorded in `../decisions/value-projection-write.md`, and
+      how it is stated in `../decisions/value-descent-as-named-calls.md`.
   - [ ] A `ref` / `output` / `inout` actual bound to an interior is rejected on the execution
         backend today. Landing it needs a reference into a value to exist as a runtime value on both
         backends, able to cross a suspension. A nonblocking assignment into an interior is not one
@@ -2294,16 +2294,20 @@ enough to warrant its own focused review.
       taking it soon rather than for taking it then.
 
 - [ ] R140 -- The benchmark over the corpus is how simulation speed is tracked, and it has gone
-      unmaintained. Three defects are measured. The runner uses the compiler it finds rather than
-      building it, so a run after a pull measures a stale one -- once as twenty-one identical
-      failures that named neither a cause nor a file. A case whose emitted program does not compile
-      reports none of the host compiler's error. And the whole corpus, 21 cases at a two-second
-      target, ran past ten minutes and prints nothing until it ends: stopped on 2026-09-23 with 20
-      cases done, every one of them lost. Whether each case still measures what its own header says
-      it measures has not been checked since the cases were written.
+      unmaintained. The runner uses the compiler it finds rather than building it, so a run after a
+      pull measures a stale one -- once as twenty-one identical failures that named neither a cause
+      nor a file. Whether each case still measures what its own header says it measures has not been
+      checked since the cases were written.
 
-      Target: a run builds what it measures, a case that fails names why, and each result is kept as
-      it arrives. Not blocked.
+      Two defects measured beside those are closed. A case that cannot be measured is named with the
+      step that failed, how it ended and the last lines it printed, where a case whose emitted
+      program did not compile used to report none of the host compiler's error. And each result is
+      printed and kept as it arrives, with the report printed whatever ends the run, where the whole
+      corpus, 21 cases at a two-second target, ran past ten minutes printing nothing and lost every
+      one of 20 finished cases when it was stopped on 2026-09-23.
+
+      Target: a run builds what it measures, and every case is read against its own header. Not
+      blocked.
 
 - [x] R141 -- What the runtime is told about a class is stated once, in MIR. A scope's definition
       used to reach the C++ backend as a constant MIR held, built out of runtime-library record
@@ -3058,6 +3062,30 @@ enough to warrant its own focused review.
       an operation over more than a word that is handed its own identity while the program runs, and
       reads its arguments back out of a list it just built, under a template that already has both.
       Found by reading. Target: each is brought to the form its siblings have. Not blocked.
+
+- [ ] R216 -- Three places in the value library do by hand what the library already does once. Text
+      read into an integral value has its digits classified twice, by the scan that finds the run
+      and again by the conversion that reads it, the second with an arm that refuses what the first
+      let through. The formatter negates a value and takes its low word with code of its own. And
+      one function carries out an integral operation for two different shapes of caller. Found by
+      reading. Target: a run of digits is classified where it is found, the formatter asks the
+      library, and each shape of caller has its own entry. Not blocked.
+
+- [ ] R217 -- A structure answers its stream of bits as a value, where every other kind writes its
+      bits into a stream it is handed. A structure inside a structure therefore copies the inner
+      stream once more for each level it is nested, and wherever the library holds a structure -- an
+      element of an array or a queue -- it is handed the structure's function, holds the whole
+      stream as a temporary while that function makes it, and copies it into the stream. Both
+      backends do this. Found by reading. Target: a structure writes its members into the stream it
+      is handed and reads them out of one, as an array does, and the value form is that written into
+      a fresh value. Not blocked.
+
+- [ ] R218 -- A concatenation of several operands is carried out two at a time, each step making a
+      value as wide as everything joined so far, so joining N operands of W bits in all costs about
+      N times W where it should cost W. That holds of a concatenation a design writes and of a
+      structure's stream, which is the concatenation of its members' streams. Found by reading.
+      Target: a concatenation states all its operands and writes each into its answer once. Not
+      blocked.
 
 ## Out of Scope
 

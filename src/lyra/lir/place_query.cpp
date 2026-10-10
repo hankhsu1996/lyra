@@ -112,17 +112,9 @@ auto CallMakesValue(const CallTarget& target) -> bool {
     }
     throw InternalError("lir: unknown open-write operation");
   }
-  // Reading bits and placing them each answer with a value; reporting the
-  // write answers nothing.
-  if (const auto* bits = std::get_if<DesignatedBitsTarget>(&target)) {
-    switch (bits->op) {
-      case DesignatedBitsTarget::Op::kRead:
-      case DesignatedBitsTarget::Op::kPlace:
-        return true;
-      case DesignatedBitsTarget::Op::kReport:
-        return false;
-    }
-    throw InternalError("lir: unknown designated-bits operation");
+  // Writing bits lands them where they lie and answers nothing.
+  if (std::holds_alternative<DesignatedBitsTarget>(target)) {
+    return false;
   }
   const auto* builtin = std::get_if<BuiltinTarget>(&target);
   if (builtin == nullptr) {
@@ -158,6 +150,8 @@ auto MakesValue(const InstrData& instr) -> bool {
           [](const ArrayInstr&) { return true; },
           [](const AddrOfInstr&) { return true; },
           [](const StoreInstr&) { return false; },
+          [](const BitsStoreInstr&) { return false; },
+          [](const StorageInstr&) { return false; },
           [](const ReceiveDepartureInstr&) { return true; },
           [](const OpenVariablesInstr&) { return true; },
           [](const VariableAddressInstr&) { return true; },

@@ -1147,13 +1147,16 @@ enum class EntryAnswer : std::uint8_t {
 
 // How an entry that reaches one part of the value it acts on names that part:
 // by a coordinate the program computes (LRM 7.4.5, 7.8, 7.10.1), by a
-// declaration-order position (LRM 7.2, 7.3), or as a slice of consecutive
-// elements (LRM 7.4.6). Reading the part and writing into it name it the same
-// way, so the entry for each shares the answer.
+// declaration-order position (LRM 7.2, 7.3), as a slice of consecutive
+// elements (LRM 7.4.6), or as bits of an integral value (LRM 11.5.1), which
+// lie inside the value rather than being storage of their own. Reading the
+// part and writing into it name it the same way, so the entry for each shares
+// the answer.
 enum class PartSelection : std::uint8_t {
   kElement,
   kComponent,
   kSlice,
+  kBits,
 };
 
 // How an entry reads one operand it is handed, which is the whole of what a
@@ -1237,9 +1240,6 @@ enum class AnswerTold : std::uint8_t {
   // or z, where its operands fix neither: a stream of bits as wide as what the
   // value it is asked of holds (LRM 6.24.3).
   kIntegralExtent,
-  // How wide the integral type it is called at is, and nothing else of it:
-  // how many bits a write placed into a designated value (LRM 11.5.1).
-  kIntegralWidth,
 };
 
 // Every property of one runtime entry: what the library calls it, how a call

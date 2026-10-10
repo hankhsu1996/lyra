@@ -48,10 +48,11 @@ bound to a component observes the new value and stays valid across it.
 
 **D4. A component with no storage identity stays a value projection.** A packed bit or part select,
 a packed struct or union member, an unpacked union member, and a string character select are views
-of one storage object, so each keeps the functional whole-value update.
-[value-projection-write](value-projection-write.md)'s D1 -- that a target is either a place or a
-value projection, stated structurally rather than re-derived per backend -- survives intact; what
-moves is only which components fall on which side of it.
+of one storage object, so none is addressable. How such a view is written is
+[value-projection-write](value-projection-write.md) D2's, bits of a packed value where they lie and
+a union member and a string character as a functional whole-value update. That entry's D1 -- that a
+target is either a place or a value projection, stated structurally rather than re-derived per
+backend -- survives intact; what moves is only which components fall on which side of it.
 
 **D5. The variable-size containers are not settled here.** A dynamic array, a queue, and an
 associative array each need element identity that survives position changes and membership changes,

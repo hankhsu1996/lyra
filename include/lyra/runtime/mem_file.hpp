@@ -69,11 +69,7 @@ using MemoryLoad = value::Tuple<Memory>;
 template <value::IntegralValue T>
 [[nodiscard]] auto ParsedMemoryWord(std::string_view token, unsigned base)
     -> std::optional<T> {
-  typename T::Words words;
-  if (!value::FromDigits(words.Write(), T::kWidth, MemoryRadix(base), token)) {
-    return std::nullopt;
-  }
-  return T::FromWords(words);
+  return value::FromDigits<T>(MemoryRadix(base), token);
 }
 
 // A word written out at full width in radix `base`, x and z per digit (LRM
@@ -84,7 +80,7 @@ template <value::IntegralValue T>
 template <value::IntegralValue T>
 [[nodiscard]] auto RenderedMemoryWord(const T& word, unsigned base)
     -> std::string {
-  return RenderedMemoryWord(word.Load().View(), base);
+  return RenderedMemoryWord(word.AsWords().View(), base);
 }
 
 // Stores the word a token names at one grid coordinate, answering whether the

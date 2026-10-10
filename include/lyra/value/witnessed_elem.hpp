@@ -77,10 +77,8 @@ class WitnessedElem {
   [[nodiscard]] auto CountBits(
       const void* value, const ConstIntegralView& control_bits) const
       -> std::int64_t {
-    return TakeBuilt<Int>([&](void* out) {
-             type_->CountBits(
-                 value, control_bits.planes, control_bits.width, out);
-           })
+    return TakeBuilt<Int>(
+               [&](void* out) { type_->CountBits(value, control_bits, out); })
         .ToInt64();
   }
 
@@ -106,14 +104,14 @@ class WitnessedElem {
     type_->FilledLike(prototype, &fill, out);
   }
   auto WriteToStream(
-      const void* value, Planes stream, std::uint64_t stream_width,
-      std::uint64_t filled) const -> std::uint64_t {
-    return type_->WriteToStream(value, stream, stream_width, filled);
+      const void* value, const IntegralView& stream, std::uint64_t filled) const
+      -> std::uint64_t {
+    return type_->WriteToStream(value, stream, filled);
   }
   auto ReadFromStream(
-      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken,
+      const ConstIntegralView& stream, std::uint64_t taken,
       const void* prototype, void* out) const -> std::uint64_t {
-    return type_->ReadFromStream(stream, stream_width, taken, prototype, out);
+    return type_->ReadFromStream(stream, taken, prototype, out);
   }
 
  private:

@@ -521,6 +521,7 @@ auto StartsAtAnOrdinal(std::optional<support::PartSelection> selects) -> bool {
   }
   switch (*selects) {
     case support::PartSelection::kSlice:
+    case support::PartSelection::kBits:
       return true;
     case support::PartSelection::kElement:
     case support::PartSelection::kComponent:

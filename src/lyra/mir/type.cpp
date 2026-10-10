@@ -11,6 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::mir {
@@ -60,6 +61,21 @@ void HashEnum(std::size_t& seed, E value) {
 }
 
 }  // namespace
+
+auto StateDomainOf(IntegralStateKind state) -> value::StateDomain {
+  switch (state) {
+    case IntegralStateKind::kTwoState:
+      return value::StateDomain::kTwoState;
+    case IntegralStateKind::kFourState:
+      return value::StateDomain::kFourState;
+  }
+  throw InternalError("mir: unknown integral state kind");
+}
+
+auto UsesHeapWords(const IntegralType& integral) -> bool {
+  return value::UsesHeapWords(
+      integral.bit_width, StateDomainOf(integral.state_kind));
+}
 
 auto BlankIntegralConstant(const IntegralType& integral) -> IntegralConstant {
   const std::size_t words = value::WordCountForBits(integral.bit_width);

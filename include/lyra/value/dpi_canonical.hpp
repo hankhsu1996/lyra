@@ -17,21 +17,18 @@
 // `aval` the value plane and `bval` the unknown (X/Z) plane -- the two planes a
 // value is held as, split into 32-bit groups. An open array crosses as an
 // opaque handle instead (LRM Annex H.8.6).
-#ifndef LYRA_SV_CANONICAL_DEFINED
-#define LYRA_SV_CANONICAL_DEFINED
 using svBitVecVal = std::uint32_t;
 struct svLogicVecVal {
   std::uint32_t aval;
   std::uint32_t bval;
 };
 using svOpenArrayHandle = void*;
-#endif
 
 namespace lyra::value {
 
 // The 32-bit groups a value of `width` bits takes in canonical form (LRM Annex
 // H.7.7).
-[[nodiscard]] LYRA_FOLDED constexpr auto CanonicalGroups(std::uint64_t width)
+[[nodiscard]] constexpr auto CanonicalGroups(std::uint64_t width)
     -> std::size_t {
   return static_cast<std::size_t>((width + 31U) / 32U);
 }
@@ -40,8 +37,8 @@ namespace detail {
 
 // Group `group` of a plane: groups 2k and 2k+1 are the low and the high half
 // of word k.
-[[nodiscard]] LYRA_FOLDED constexpr auto CanonicalGroupOf(
-    std::span<const std::uint64_t> plane, std::size_t group) -> std::uint32_t {
+[[nodiscard]] constexpr auto CanonicalGroupOf(
+    ConstWordSpan auto plane, std::size_t group) -> std::uint32_t {
   return static_cast<std::uint32_t>(BitsAt(plane, 32U * group, 32U));
 }
 
@@ -49,39 +46,45 @@ namespace detail {
 
 // A 1-bit value as an `svLogic` (LRM Annex H.10.1.1), which is the number its
 // scalar is.
-[[nodiscard]] LYRA_FOLDED constexpr auto ToSvLogic(ConstPlanes sv)
+[[nodiscard]] constexpr auto ToSvLogic(AnyConstIntegralView auto sv)
     -> unsigned char {
   return std::to_underlying(LeastSignificantBit(sv));
 }
 template <IntegralValue T>
-[[nodiscard]] LYRA_FOLDED constexpr auto ToSvLogic(const T& sv)
-    -> unsigned char {
-  return ToSvLogic(sv.Load().Read());
+[[nodiscard]] constexpr auto ToSvLogic(const T& sv) -> unsigned char {
+  return ToSvLogic(sv.View());
 }
 
-// A canonical vector read into the planes of a value of `width` bits. A
-// two-state value has no group to read an unknown plane from, and holds each
-// x or z a four-state vector carries as 0. The bits a vector holds above the
-// width are undetermined and are not read.
-LYRA_FOLDED constexpr void ReadCanonicalBitVec(
-    const svBitVecVal* src, Planes out, std::uint64_t width) {
-  for (std::uint64_t& word : out.value) {
-    word = 0U;
-  }
-  for (std::uint64_t& word : out.unknown) {
-    word = 0U;
-  }
-  const std::span<const svBitVecVal> groups{src, CanonicalGroups(width)};
+// A canonical vector read into a value. A two-state value has no group to
+// read an unknown plane from, and holds each x or z a four-state vector
+// carries as 0. The bits a vector holds above the value's width are
+// undetermined and are not read.
+template <
+    PlaneWord WrittenWord, std::size_t kWrittenValueWords,
+    std::size_t kWrittenUnknownWords>
+constexpr void ReadCanonicalBitVec(
+    const svBitVecVal* src,
+    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out) {
+  detail::Fill(out.value, 0U);
+  detail::Fill(out.unknown, 0U);
+  const std::span<const svBitVecVal> groups{src, CanonicalGroups(out.width)};
   for (std::size_t group = 0; group < groups.size(); ++group) {
-    out.value[group / 2U] |= static_cast<std::uint64_t>(groups[group])
-                             << (32U * (group % 2U));
+    const std::size_t word = group / 2U;
+    SetWord(
+        out.value, word,
+        WordAt(out.value, word) | (static_cast<std::uint64_t>(groups[group])
+                                   << (32U * (group % 2U))));
   }
-  ClearAboveWidth(out.value, width);
+  ClearAboveWidth(out.value, out.width);
 }
 
-LYRA_FOLDED constexpr void ReadCanonicalLogicVec(
-    const svLogicVecVal* src, Planes out, std::uint64_t width) {
-  const std::span<const svLogicVecVal> groups{src, CanonicalGroups(width)};
+template <
+    PlaneWord WrittenWord, std::size_t kWrittenValueWords,
+    std::size_t kWrittenUnknownWords>
+constexpr void ReadCanonicalLogicVec(
+    const svLogicVecVal* src,
+    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out) {
+  const std::span<const svLogicVecVal> groups{src, CanonicalGroups(out.width)};
   for (std::size_t i = 0; i < out.value.size(); ++i) {
     std::uint64_t value = 0;
     std::uint64_t unknown = 0;
@@ -93,62 +96,65 @@ LYRA_FOLDED constexpr void ReadCanonicalLogicVec(
                    << (32U * half);
       }
     }
-    const std::uint64_t valid = ValidBitsMask(i, width);
+    const std::uint64_t valid = ValidBitsMask(i, out.width);
     if (out.unknown.empty()) {
-      out.value[i] = value & ~unknown & valid;
+      SetWord(out.value, i, value & ~unknown & valid);
     } else {
-      out.value[i] = value & valid;
-      out.unknown[i] = unknown & valid;
+      SetWord(out.value, i, value & valid);
+      SetWord(out.unknown, i, unknown & valid);
     }
   }
 }
 
 template <IntegralValue R>
-[[nodiscard]] LYRA_FOLDED constexpr auto ReadCanonicalBitVec(
-    const svBitVecVal* src) -> R {
-  typename R::Words built;
-  ReadCanonicalBitVec(src, built.Write(), R::kWidth);
-  return R::FromWords(built);
+[[nodiscard]] constexpr auto ReadCanonicalBitVec(const svBitVecVal* src) -> R {
+  R out = R::Zero();
+  ReadCanonicalBitVec(src, out.MutableView());
+  return out;
 }
 template <IntegralValue R>
-[[nodiscard]] LYRA_FOLDED constexpr auto ReadCanonicalLogicVec(
-    const svLogicVecVal* src) -> R {
-  typename R::Words built;
-  ReadCanonicalLogicVec(src, built.Write(), R::kWidth);
-  return R::FromWords(built);
+[[nodiscard]] constexpr auto ReadCanonicalLogicVec(const svLogicVecVal* src)
+    -> R {
+  R out = R::Zero();
+  ReadCanonicalLogicVec(src, out.MutableView());
+  return out;
 }
 
 // A 1-bit value read from its `svLogic` scalar encoding, as the canonical
 // vector of one group that encoding is.
-LYRA_FOLDED constexpr void FromSvLogic(unsigned char encoded, Planes out) {
+template <
+    PlaneWord WrittenWord, std::size_t kWrittenValueWords,
+    std::size_t kWrittenUnknownWords>
+constexpr void FromSvLogic(
+    unsigned char encoded,
+    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out) {
   const svLogicVecVal group{
       .aval = (encoded >> kScalarValueBit) & 1U,
       .bval = (encoded >> kScalarUnknownBit) & 1U};
-  ReadCanonicalLogicVec(&group, out, 1);
+  ReadCanonicalLogicVec(&group, out);
 }
 template <IntegralValue R>
-[[nodiscard]] LYRA_FOLDED constexpr auto FromSvLogic(unsigned char encoded)
-    -> R {
-  typename R::Words built;
-  FromSvLogic(encoded, built.Write());
-  return R::FromWords(built);
+[[nodiscard]] constexpr auto FromSvLogic(unsigned char encoded) -> R {
+  R out = R::Zero();
+  FromSvLogic(encoded, out.MutableView());
+  return out;
 }
 
-// A value of `width` bits written into a canonical vector at `dst`, which is
-// either a boundary buffer or a foreign caller's own storage. A two-state
-// vector has no group to carry an unknown plane, so an x or z bit of a
-// four-state value is written as 0.
-LYRA_FOLDED constexpr void WriteCanonicalBitVec(
-    svBitVecVal* dst, ConstPlanes sv, std::uint64_t width) {
-  const std::span<svBitVecVal> groups{dst, CanonicalGroups(width)};
+// A value written into a canonical vector at `dst`, which is either a
+// boundary buffer or a foreign caller's own storage. A two-state vector has
+// no group to carry an unknown plane, so an x or z bit of a four-state value
+// is written as 0.
+constexpr void WriteCanonicalBitVec(
+    svBitVecVal* dst, AnyConstIntegralView auto sv) {
+  const std::span<svBitVecVal> groups{dst, CanonicalGroups(sv.width)};
   for (std::size_t group = 0; group < groups.size(); ++group) {
     groups[group] = detail::CanonicalGroupOf(sv.value, group) &
                     ~detail::CanonicalGroupOf(sv.unknown, group);
   }
 }
-LYRA_FOLDED constexpr void WriteCanonicalLogicVec(
-    svLogicVecVal* dst, ConstPlanes sv, std::uint64_t width) {
-  const std::span<svLogicVecVal> groups{dst, CanonicalGroups(width)};
+constexpr void WriteCanonicalLogicVec(
+    svLogicVecVal* dst, AnyConstIntegralView auto sv) {
+  const std::span<svLogicVecVal> groups{dst, CanonicalGroups(sv.width)};
   for (std::size_t group = 0; group < groups.size(); ++group) {
     groups[group] = svLogicVecVal{
         .aval = detail::CanonicalGroupOf(sv.value, group),
@@ -157,13 +163,12 @@ LYRA_FOLDED constexpr void WriteCanonicalLogicVec(
 }
 
 template <IntegralValue T>
-LYRA_FOLDED constexpr void WriteCanonicalBitVec(svBitVecVal* dst, const T& sv) {
-  WriteCanonicalBitVec(dst, sv.Load().Read(), T::kWidth);
+constexpr void WriteCanonicalBitVec(svBitVecVal* dst, const T& sv) {
+  WriteCanonicalBitVec(dst, sv.View());
 }
 template <IntegralValue T>
-LYRA_FOLDED constexpr void WriteCanonicalLogicVec(
-    svLogicVecVal* dst, const T& sv) {
-  WriteCanonicalLogicVec(dst, sv.Load().Read(), T::kWidth);
+constexpr void WriteCanonicalLogicVec(svLogicVecVal* dst, const T& sv) {
+  WriteCanonicalLogicVec(dst, sv.View());
 }
 
 // A DPI boundary buffer: a canonical vector the foreign side reads and writes
@@ -173,10 +178,9 @@ LYRA_FOLDED constexpr void WriteCanonicalLogicVec(
 // the foreign call and the copy-back read.
 class DpiBitBuffer {
  public:
-  DpiBitBuffer(ConstPlanes sv, std::uint64_t width);
+  explicit DpiBitBuffer(const ConstIntegralView& sv);
   template <IntegralValue T>
-  explicit DpiBitBuffer(const T& sv)
-      : DpiBitBuffer(sv.Load().Read(), T::kWidth) {
+  explicit DpiBitBuffer(const T& sv) : DpiBitBuffer(sv.AsWords().View()) {
   }
   [[nodiscard]] auto Data() -> svBitVecVal*;
 
@@ -186,10 +190,9 @@ class DpiBitBuffer {
 
 class DpiLogicBuffer {
  public:
-  DpiLogicBuffer(ConstPlanes sv, std::uint64_t width);
+  explicit DpiLogicBuffer(const ConstIntegralView& sv);
   template <IntegralValue T>
-  explicit DpiLogicBuffer(const T& sv)
-      : DpiLogicBuffer(sv.Load().Read(), T::kWidth) {
+  explicit DpiLogicBuffer(const T& sv) : DpiLogicBuffer(sv.AsWords().View()) {
   }
   [[nodiscard]] auto Data() -> svLogicVecVal*;
 

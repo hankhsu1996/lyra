@@ -229,10 +229,11 @@ layer directly.
       3.26 s in declaring the unit's structural identities, where the reported symptom had pointed
       at lowering its bodies.
 
-- [x] D21 -- A cost that grows with how often a design repeats something is refused at the merge
-      gate. Seven designs each state one thing N times -- a loop of one body, a loop selecting by
-      its index, a loop of instances, a loop of instances each reading a variable of their parent,
-      an instance array, a loop choosing by an outer index, an unread parameter's width -- and are
+- [x] D21 -- A cost that grows with how often a design repeats something, or with how wide it
+      declares something, is refused at the merge gate. Designs that each state one thing at a size
+      N -- a loop of one body, a loop selecting by its index, a loop of instances, a loop of
+      instances each reading a variable of their parent, an instance array, a loop choosing by an
+      outer index, an unread parameter's width, the width of one packed value among them -- are
       compiled at N and at twice N on both backends: the larger run may leave behind no more units
       or files and no more than a quarter more bytes, and each stage may take under three times the
       time and the peak memory. What `main` exceeds today is recorded per path and has to go on
@@ -314,6 +315,14 @@ layer directly.
       refused memory, four that do not end inside the limit), and none at its check. One correction
       to the suite is applied on top of it and has been reported there: a testbench that took an
       unknown value on its done signal for the end of the test.
+
+- [x] D30 -- A program behaves the same whoever starts it, and one that runs out of stack says so. A
+      command does its work on a thread of its own and leaves the process's stack limit as its
+      invoker set it, so a program `run` starts has the stack a program started directly has. A
+      program whose subroutines call themselves or each other past that stack prints
+      `error: the simulation ran out of stack`, with what that means, and then ends as the fault
+      ends it, on both backends. Not built: what the design had printed and the program had not yet
+      written out when the fault came is lost.
 
 ## Out of Scope
 

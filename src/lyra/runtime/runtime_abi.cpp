@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <concepts>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <cxxabi.h>
 #include <deque>
 #include <exception>
@@ -87,6 +89,8 @@
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unpacked_range.hpp"
+#include "lyra/value/wide.hpp"
+#include "lyra/value/word_recycler.hpp"
 
 namespace lyra::runtime {
 
@@ -453,8 +457,7 @@ auto NumberShape(std::int64_t width, bool is_signed, bool is_four_state)
                               : value::StateDomain::kTwoState};
 }
 
-// The planes of such an operand, and of one the entry reads the bits of, whose
-// signedness it is told nothing of.
+// Such an operand read as words.
 auto NumberAt(
     const void* value, std::int64_t width, bool is_signed, bool is_four_state)
     -> value::LoadedWords {
@@ -462,16 +465,37 @@ auto NumberAt(
       value, NumberShape(width, is_signed, is_four_state));
 }
 
-auto BitsAt(const void* value, std::int64_t width, bool is_four_state)
-    -> value::LoadedWords {
-  return value::LoadedWords::Load(
-      value, NumberShape(width, false, is_four_state));
+// Storage for one integral value of a shape, held while a function of the
+// design makes it or reads it. It ends with the scope that holds it, on a
+// departure out of that function as on its return.
+class StorageForBits {
+ public:
+  explicit StorageForBits(const value::IntegralShape& shape)
+      : words_(value::WordCountForBits(shape.Bytes() * 8U)) {
+  }
+
+  [[nodiscard]] auto Bytes() -> void* {
+    return words_.data();
+  }
+
+ private:
+  std::vector<std::uint64_t> words_;
+};
+
+// The shape of an operand the entry reads the bits of, whose signedness it is
+// told nothing of and reads none of.
+auto BitsShape(std::int64_t width, bool is_four_state) -> value::IntegralShape {
+  return NumberShape(width, false, is_four_state);
 }
 
-// The machine number such planes hold.
+auto BitsAt(const void* value, std::int64_t width, bool is_four_state)
+    -> value::LoadedWords {
+  return value::LoadedWords::Load(value, BitsShape(width, is_four_state));
+}
+
+// The machine number such an operand holds.
 auto IntOf(const value::LoadedWords& number) -> std::int64_t {
-  return value::ToInt64(
-      number.Read(), number.Shape().width, number.Shape().signedness);
+  return value::ToInt64(number.View());
 }
 
 // The position a position value names, none where it holds x or z (LRM
@@ -605,8 +629,8 @@ class LentWide {
   [[nodiscard]] auto Bytes() const -> void* {
     return bytes_;
   }
-  [[nodiscard]] auto Read() const -> value::ConstPlanes {
-    return value::WidePlanesAt(
+  [[nodiscard]] auto Read() const -> value::ConstIntegralView {
+    return value::WideViewAt(
         static_cast<const void*>(bytes_), width_, T::kDomain);
   }
 
@@ -951,8 +975,7 @@ auto StreamWidthOf(const void* value, void* out) -> void* {
 template <typename T>
 auto StreamCountBitsOf(
     const void* value, const value::LoadedWords& control, void* out) -> void* {
-  value::LibraryTypeOf<T>().CountBits(
-      value, control.Read(), control.Shape().width, out);
+  value::LibraryTypeOf<T>().CountBits(value, control.View(), out);
   return out;
 }
 
@@ -961,8 +984,8 @@ auto StreamCountBitsOf(
 template <typename Write>
 auto StreamInto(void* out, std::int64_t width, bool is_four_state, Write write)
     -> void* {
-  value::LoadedWords stream(NumberShape(width, false, is_four_state));
-  write(stream.Write(), stream.Shape().width);
+  value::WrittenWords stream(BitsShape(width, is_four_state));
+  write(stream.MutableView());
   stream.StoreTo(out);
   return out;
 }
@@ -972,9 +995,8 @@ auto StreamOf(
     const void* value, std::int64_t width, bool is_four_state, void* out)
     -> void* {
   return StreamInto(
-      out, width, is_four_state,
-      [&](value::Planes stream, std::uint64_t stream_width) {
-        value::LibraryTypeOf<T>().WriteToStream(value, stream, stream_width, 0);
+      out, width, is_four_state, [&](const value::IntegralView& stream) {
+        value::LibraryTypeOf<T>().WriteToStream(value, stream, 0);
       });
 }
 
@@ -997,7 +1019,7 @@ auto Dominating(const void* stronger, const void* weaker, void* out) -> void* {
 auto FillAt(const void* fill, std::int64_t width, bool is_four_state)
     -> value::Logic {
   return value::Logic::Filled(
-      value::LeastSignificantBit(BitsAt(fill, width, is_four_state).Read()));
+      value::LeastSignificantBit(BitsAt(fill, width, is_four_state).View()));
 }
 
 template <value::NetResolvable T>
@@ -1020,9 +1042,9 @@ auto IntegralFormatArg(const void* value, value::IntegralShape shape)
   arg.format_fn = [](const value::FormatSpec& spec,
                      const value::FormatArg& operand,
                      const value::FormatContext& ctx) -> std::string {
-    const value::LoadedWords planes =
+    const value::LoadedWords words =
         value::LoadedWords::Load(operand.ptr, operand.read_as);
-    return value::FormatIntegralOperand(spec, planes.View(), ctx);
+    return value::FormatIntegralOperand(spec, words.View(), ctx);
   };
   return arg;
 }
@@ -1183,14 +1205,15 @@ auto EmplaceScan(
         value::AnyValue::CopyOf(
             *stated[i].type, value::RuntimeTuple::ComponentAt(prototypes, i)));
   }
-  std::deque<value::LoadedWords> parsed;
+  std::deque<value::WrittenWords> parsed;
   std::vector<value::ScanTarget> targets;
   targets.reserve(stated.size());
   for (std::size_t i = 2; i < components.size(); ++i) {
     value::AnyValue& component = components[i];
     if (const value::IntegralValueType* integral =
             component.Type().AsIntegral()) {
-      parsed.push_back(integral->Load(component.Bytes()));
+      parsed.push_back(
+          value::WrittenWords::CopyOf(component.Bytes(), integral->Shape()));
       targets.emplace_back(parsed.back().MutableView());
     } else if (&component.Type() == &lyra_rt_string_value_type) {
       targets.emplace_back(static_cast<value::String*>(component.Bytes()));
@@ -1202,11 +1225,11 @@ auto EmplaceScan(
 
   const value::ScanCount count =
       value::detail::ScanImpl(input, format, null_byte, targets);
-  auto planes = parsed.cbegin();
+  auto words = parsed.cbegin();
   for (std::size_t i = 2; i < components.size(); ++i) {
     if (components[i].Type().AsIntegral() != nullptr) {
-      planes->StoreTo(components[i].Bytes());
-      ++planes;
+      words->StoreTo(components[i].Bytes());
+      ++words;
     }
   }
   components[0] = Held(value::Integer::FromInt(count.items));
@@ -1219,7 +1242,7 @@ auto EmplaceScan(
 // its second component.
 template <typename First>
 auto EmplaceWithWords(
-    void* out, const First& first, const value::LoadedWords& second) -> void* {
+    void* out, const First& first, const value::WrittenWords& second) -> void* {
   constexpr std::size_t kComponents = 2;
   const std::span<const value::TupleComponent> stated =
       value::RuntimeTuple::TypeAt(out).Components();
@@ -1278,14 +1301,14 @@ auto EmplaceBoth(void* out, const value::Tuple<First, Second>& completion)
 // the value is no member.
 auto EmplaceEnumerationMember(
     void* out, value::IntegralShape held,
-    std::optional<value::ConstPlanes> member) -> void* {
-  value::LoadedWords landed(held);
-  const value::Planes planes = landed.Write();
+    std::optional<value::ConstIntegralView> member) -> void* {
+  value::WrittenWords landed(held);
+  const value::IntegralView written = landed.MutableView();
   if (member.has_value()) {
-    std::ranges::copy(member->value, planes.value.begin());
-    std::ranges::copy(member->unknown, planes.unknown.begin());
+    std::ranges::copy(member->value, written.value.begin());
+    std::ranges::copy(member->unknown, written.unknown.begin());
   } else {
-    value::FillDefault(planes, held.width);
+    value::FillDefault(written);
   }
   landed.StoreTo(out);
   return out;
@@ -1297,9 +1320,9 @@ auto EmplaceEnumerationMember(
 // Each memory is read into a copy, which the load answers with.
 auto StoreMemoryWord(
     value::MemoryWord word, std::string_view token, unsigned base) -> bool {
-  value::LoadedWords parsed = word.type->Load(word.bytes);
-  if (!value::FromDigits(
-          parsed.Write(), parsed.Shape().width, MemoryRadix(base), token)) {
+  value::WrittenWords parsed =
+      value::WrittenWords::CopyOf(word.bytes, word.type->Shape());
+  if (!value::FromDigits(parsed.MutableView(), MemoryRadix(base), token)) {
     return false;
   }
   parsed.StoreTo(word.bytes);
@@ -1307,8 +1330,8 @@ auto StoreMemoryWord(
 }
 
 auto RenderedWord(value::ConstMemoryWord word, unsigned base) -> std::string {
-  const value::LoadedWords planes = word.type->Load(word.bytes);
-  return RenderedMemoryWord(planes.View(), base);
+  const value::LoadedWords words = word.type->Load(word.bytes);
+  return RenderedMemoryWord(words.View(), base);
 }
 
 auto ReadUnpackedMemory(
@@ -1394,10 +1417,10 @@ auto ReadKeyedMemory(
   ReadMemKeyedCore(
       runtime, filename, radix, start, finish,
       [&](std::int64_t key, std::string_view token) {
-        value::LoadedWords planes(index_type.Shape());
-        value::FromInt(planes.Write(), index_type.Shape().width, key);
+        value::WrittenWords words(index_type.Shape());
+        value::FromInt(words.MutableView(), key);
         const value::AnyValue index = value::AnyValue::Built(
-            index_type, [&](void* out) { planes.StoreTo(out); });
+            index_type, [&](void* out) { words.StoreTo(out); });
         value::Formation formed{};
         void* word = loaded.ElementRef(
             value::IndexView{.bytes = index.Bytes(), .type = &index_type},
@@ -1466,8 +1489,8 @@ void FillImage(
     value::DpiOpenArray& image, const void* level, const value::ValueType& type,
     std::size_t dimension, std::size_t dimensions, std::size_t& position) {
   if (dimension == dimensions) {
-    const value::LoadedWords planes = ImageLeafType(type).Load(level);
-    image.WriteElement(position, planes.Read());
+    const value::LoadedWords words = ImageLeafType(type).Load(level);
+    image.WriteElement(position, words.View());
     ++position;
     return;
   }
@@ -1484,9 +1507,10 @@ void ReadImageBack(
     const value::DpiOpenArray& image, void* level, const value::ValueType& type,
     std::size_t dimension, std::size_t dimensions, std::size_t& position) {
   if (dimension == dimensions) {
-    value::LoadedWords planes = ImageLeafType(type).Load(level);
-    image.ReadElement(position, planes.Write());
-    planes.StoreTo(level);
+    {
+      value::ScopedWordsWrite words(level, ImageLeafType(type).Shape());
+      image.ReadElement(position, words.MutableView());
+    }
     ++position;
     return;
   }
@@ -1603,61 +1627,140 @@ void JoinNets(
   NetOf<T>(net).Join(static_cast<ConnectableNet*>(other), here, there, width);
 }
 
-// Bits of a designated value of one layout written where they lie (LRM 11.5.1):
-// `count` of them at the position `start` names, in a value whose declared
-// type has `width` positions. `written` is that value as it stands once the
-// bits are in it, which the caller builds, placing bits in a value being
-// arithmetic on the value's own type. What is done here is what only the write
-// can do: keep the bits it reaches from before it, where anything reads what
-// it did, and tell the write which of them moved. A start naming no position
-// reaches none, and `written` is then the value as it was.
-template <value::IntegralValue T>
-void AssignDesignatedBits(
-    const void* designation, std::int64_t width, const void* start,
-    std::int64_t count, const void* written) {
-  const ErasedDesignation& within = DesignationAt(designation);
-  T& whole = *static_cast<T*>(within.part);
-  const std::optional<std::int64_t> at = PositionNamedAt(start);
-  const std::optional<value::BitPositions> reached =
-      at.has_value() && within.write->Undecided()
-          ? value::Reached(
-                static_cast<std::uint64_t>(width),
-                static_cast<std::uint64_t>(count), *at)
-          : std::nullopt;
+// Where bits a write is handed land in a value: the position their start names
+// in the value's own numbering, and the positions of the value they reach.
+struct ResolvedBitRange {
+  std::int64_t start;
+  value::BitPositions clamped;
+};
+
+// Where `count` bits starting at `start` within the innermost of `outer_parts`
+// land in a value `width` bits wide (LRM 11.5.1). Each part starts where it
+// says within the part before it, the value itself for the first, so the
+// starts add up and each part reaches no further than the one it is taken in.
+// None where a start names no position, and none where the bits are left no
+// position of the value.
+auto ResolveBitRange(
+    std::int64_t width, LyraSpan outer_parts, const void* start,
+    std::int64_t count) -> std::optional<ResolvedBitRange> {
+  const auto whole = static_cast<std::uint64_t>(width);
+  std::int64_t at = 0;
+  std::optional<value::BitPositions> window =
+      value::BitPositions{.lsb = 0, .width = whole};
+  for (const LyraBitsPart& part : std::span<const LyraBitsPart>(
+           static_cast<const LyraBitsPart*>(outer_parts.data),
+           outer_parts.count)) {
+    const std::optional<std::int64_t> named = PositionNamedAt(part.start);
+    if (!named.has_value()) {
+      return std::nullopt;
+    }
+    at += *named;
+    window = value::ClampedBitRange(
+        whole, static_cast<std::uint64_t>(part.width), at, *window);
+    if (!window.has_value()) {
+      return std::nullopt;
+    }
+  }
+  const std::optional<std::int64_t> named = PositionNamedAt(start);
+  if (!named.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<value::BitPositions> reached = value::ClampedBitRange(
+      whole, static_cast<std::uint64_t>(count), at + *named, *window);
   if (!reached.has_value()) {
-    whole = Read<T>(written);
+    return std::nullopt;
+  }
+  return ResolvedBitRange{.start = at + *named, .clamped = *reached};
+}
+
+// Writes the `count` bits laid out at `bits` into `whole` where `range`
+// says. The bits are read where they lie, whatever integer they are laid out
+// in.
+template <
+    value::PlaneWord Word, std::size_t kValueWords, std::size_t kUnknownWords>
+void InsertBitsInto(
+    value::IntegralViewOf<Word, kValueWords, kUnknownWords> whole,
+    const void* bits, std::int64_t count, bool bits_are_four_state,
+    const ResolvedBitRange& range) {
+  value::VisitLaidOut(
+      bits, BitsShape(count, bits_are_four_state),
+      [&](value::AnyConstIntegralView auto read) {
+        value::InsertWithin(whole, read, range.start, range.clamped);
+      });
+}
+
+// Bits of a designated value of one layout written where they lie (LRM
+// 11.5.1), in a value whose declared type has `width` positions. A value of
+// one layout is no more than a word of each plane, so what the write keeps of
+// it from before is the value: a write that leaves it as it was has nothing
+// to tell, and only one that moved it asks whether anything reads which bits
+// moved.
+template <value::IntegralValue T>
+void InsertDesignatedBits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t count,
+    bool bits_are_four_state) {
+  const std::optional<ResolvedBitRange> range =
+      ResolveBitRange(width, outer_parts, start, count);
+  if (!range.has_value()) {
     return;
   }
-  KeptPart<T> kept(whole, *reached);
-  whole = Read<T>(written);
+  const ErasedDesignation& within = DesignationAt(designation);
+  T& whole = *static_cast<T*>(within.part);
+  const T before = whole;
+  InsertBitsInto(
+      whole.MutableView().Truncated(static_cast<std::uint64_t>(width)), bits,
+      count, bits_are_four_state, *range);
+  if (whole.IsBitIdentical(before) || !within.write->Undecided()) {
+    return;
+  }
+  KeptPart<T> kept(before, range->clamped);
   if (const std::optional<Change> change = kept.ChangeTo(whole)) {
     within.write->Landed(*change);
   }
 }
 
 // The same over a designated value wider than a word, which is `width` bits of
-// the bytes the designation names.
+// the bytes the designation names. What the write keeps of it from before is
+// the bits it reaches, and only where anything reads what it did.
 template <value::HeldAsWords T>
-void AssignDesignatedWideBits(
-    const void* designation, std::int64_t width, const void* start,
-    std::int64_t count, const void* written) {
+void InsertDesignatedWideBits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t count,
+    bool bits_are_four_state) {
+  const std::optional<ResolvedBitRange> range =
+      ResolveBitRange(width, outer_parts, start, count);
+  if (!range.has_value()) {
+    return;
+  }
   const ErasedDesignation& within = DesignationAt(designation);
   const value::WideAt<T::kDomain> whole{
       .bytes = within.part, .width = static_cast<std::uint64_t>(width)};
-  const std::optional<std::int64_t> at = PositionNamedAt(start);
-  const std::optional<value::BitPositions> reached =
-      at.has_value() && within.write->Undecided()
-          ? value::Reached(whole.width, static_cast<std::uint64_t>(count), *at)
-          : std::nullopt;
-  if (!reached.has_value()) {
-    std::memcpy(whole.bytes, written, whole.ByteSize());
+  if (!within.write->Undecided()) {
+    InsertBitsInto(
+        whole.MutableView(), bits, count, bits_are_four_state, *range);
     return;
   }
-  KeptPart<value::WideAt<T::kDomain>> kept(whole, *reached);
-  std::memcpy(whole.bytes, written, whole.ByteSize());
+  KeptPart<value::WideAt<T::kDomain>> kept(whole, range->clamped);
+  InsertBitsInto(whole.MutableView(), bits, count, bits_are_four_state, *range);
   if (const std::optional<Change> change = kept.ChangeTo(whole)) {
     within.write->Landed(*change);
   }
+}
+
+// Bits written into an integral value `width` bits wide lying at `bytes`,
+// which nothing is told of (LRM 11.5.1).
+void InsertBitsAt(
+    void* bytes, std::int64_t width, bool is_four_state, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t count,
+    bool bits_are_four_state) {
+  const std::optional<ResolvedBitRange> range =
+      ResolveBitRange(width, outer_parts, start, count);
+  if (!range.has_value()) {
+    return;
+  }
+  value::ScopedWordsWrite whole(bytes, BitsShape(width, is_four_state));
+  InsertBitsInto(whole.MutableView(), bits, count, bits_are_four_state, *range);
 }
 
 // What a comparison answered, as it crosses: the number its scalar is.
@@ -1674,7 +1777,6 @@ using lyra::runtime::Activation;
 using lyra::runtime::ActivationValueCell;
 using lyra::runtime::AdoptObject;
 using lyra::runtime::AllocateValueCell;
-using lyra::runtime::AssignDesignatedBits;
 using lyra::runtime::AssignDesignatedSlice;
 using lyra::runtime::Bit16;
 using lyra::runtime::Bit32;
@@ -1720,6 +1822,7 @@ using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::HandleTo;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::HistoryAt;
+using lyra::runtime::InsertDesignatedBits;
 using lyra::runtime::IntegralTypeAt;
 using lyra::runtime::IntOf;
 using lyra::runtime::JoinNets;
@@ -1892,8 +1995,9 @@ auto lyra_rt_file_error(void* files, std::int64_t fd, void* out) -> void* {
 auto lyra_rt_file_read(
     void* files, const void* dest, std::int64_t dest_width, bool dest_is_signed,
     bool dest_is_four_state, std::int64_t fd, void* out) -> void* {
-  lyra::value::LoadedWords read_into =
-      NumberAt(dest, dest_width, dest_is_signed, dest_is_four_state);
+  lyra::value::WrittenWords read_into = lyra::value::WrittenWords::CopyOf(
+      dest, lyra::runtime::NumberShape(
+                dest_width, dest_is_signed, dest_is_four_state));
   const lyra::value::Int read =
       static_cast<FileTable*>(files)->ReadInto(read_into.MutableView(), fd);
   return lyra::runtime::EmplaceWithWords(out, read, read_into);
@@ -1913,7 +2017,7 @@ auto lyra_rt_file_read_memory(
   const std::int32_t read = lyra::runtime::ReadMemoryWords(
       *static_cast<FileTable*>(files), fd, word_type.Shape().width, range,
       start, count, [&](std::int64_t sv, std::span<const char> bytes) {
-        lyra::value::LoadedWords word(word_type.Shape());
+        lyra::value::WrittenWords word(word_type.Shape());
         lyra::runtime::ReadBigEndian(word.MutableView(), bytes);
         word.StoreTo(lyra::value::MemoryLeaf(memory, dims, sv, 0).bytes);
       });
@@ -2532,9 +2636,10 @@ auto lyra_rt_integral_value_plusargs(
     void* runtime, const void* user_string, const void* destination,
     std::int64_t destination_width, bool destination_is_signed,
     bool destination_is_four_state, void* out) -> void* {
-  lyra::value::LoadedWords written = NumberAt(
-      destination, destination_width, destination_is_signed,
-      destination_is_four_state);
+  lyra::value::WrittenWords written = lyra::value::WrittenWords::CopyOf(
+      destination,
+      lyra::runtime::NumberShape(
+          destination_width, destination_is_signed, destination_is_four_state));
   const lyra::value::Int matched = lyra::runtime::ValuePlusargsInto(
       *static_cast<RuntimeEffects*>(runtime), Read<String>(user_string),
       written.MutableView());
@@ -2759,6 +2864,25 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
       std::unique_ptr<Scope>(static_cast<Scope*>(child)));
 }
 
+auto lyra_rt_alloc_bytes(std::uint64_t size) -> void* {
+  return lyra::value::AllocateWords(lyra::value::WordCountForBits(size * 8U));
+}
+
+void lyra_rt_dealloc_bytes(void* bytes, std::uint64_t size) {
+  lyra::value::DeallocateWords(
+      static_cast<std::uint64_t*>(bytes),
+      lyra::value::WordCountForBits(size * 8U));
+}
+
+void lyra_rt_insert_bits(
+    void* whole, std::int64_t whole_width, bool whole_is_four_state,
+    LyraSpan outer_parts, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state) {
+  lyra::runtime::InsertBitsAt(
+      whole, whole_width, whole_is_four_state, outer_parts, start, bits,
+      bits_width, bits_are_four_state);
+}
+
 auto lyra_rt_enclosing_scope(void* self, const void* definition) -> void* {
   return static_cast<Scope*>(self)->EnclosingScope(
       static_cast<const ObjectDefinition*>(definition));
@@ -2829,7 +2953,7 @@ auto lyra_rt_enumeration_has(
     bool value_is_four_state) -> std::int64_t {
   const lyra::value::LoadedWords asked =
       BitsAt(value, value_width, value_is_four_state);
-  return Read<Enumeration>(enumeration).PositionOf(asked.Read()).has_value()
+  return Read<Enumeration>(enumeration).PositionOf(asked.View()).has_value()
              ? 1
              : 0;
 }
@@ -2839,7 +2963,7 @@ auto lyra_rt_enumeration_name(
     bool value_is_four_state, void* out) -> void* {
   const lyra::value::LoadedWords asked =
       BitsAt(value, value_width, value_is_four_state);
-  return Emplace(out, Read<Enumeration>(enumeration).NameOf(asked.Read()));
+  return Emplace(out, Read<Enumeration>(enumeration).NameOf(asked.View()));
 }
 
 auto lyra_rt_enumeration_next(
@@ -2849,7 +2973,7 @@ auto lyra_rt_enumeration_next(
       BitsAt(value, value_width, value_is_four_state);
   return lyra::runtime::EmplaceEnumerationMember(
       out, from.Shape(),
-      Read<Enumeration>(enumeration).MemberAfter(from.Read(), count));
+      Read<Enumeration>(enumeration).MemberAfter(from.View(), count));
 }
 
 auto lyra_rt_enumeration_prev(
@@ -2859,7 +2983,7 @@ auto lyra_rt_enumeration_prev(
       BitsAt(value, value_width, value_is_four_state);
   return lyra::runtime::EmplaceEnumerationMember(
       out, from.Shape(),
-      Read<Enumeration>(enumeration).MemberBefore(from.Read(), count));
+      Read<Enumeration>(enumeration).MemberBefore(from.View(), count));
 }
 
 auto lyra_rt_run_program(
@@ -3507,7 +3631,7 @@ auto lyra_rt_require(
   const lyra::value::LoadedWords asked =
       BitsAt(condition, condition_width, condition_is_four_state);
   lyra::value::RequireCondition(
-      lyra::value::Truth(asked.Read()) ==
+      lyra::value::Truth(asked.View()) ==
           lyra::value::Truthiness::kKnownNonzero,
       message);
   return value;
@@ -3516,9 +3640,9 @@ auto lyra_rt_require(
 auto lyra_rt_string_from_bits(
     const void* bits, std::int64_t bits_width, bool bits_are_four_state,
     void* out) -> void* {
-  const lyra::value::LoadedWords planes =
+  const lyra::value::LoadedWords words =
       BitsAt(bits, bits_width, bits_are_four_state);
-  return Emplace(out, String::FromIntegral(planes.View()));
+  return Emplace(out, String::FromIntegral(words.View()));
 }
 
 auto lyra_rt_string_from_byte_array(const void* bytes, void* out) -> void* {
@@ -4678,11 +4802,11 @@ auto lyra_rt_byte_array_from_string(
 auto lyra_rt_byte_array_from_bits(
     const void* bits, std::int64_t bits_width, bool bits_are_four_state,
     std::int64_t count, const void* element_type, void* out) -> void* {
-  const lyra::value::LoadedWords planes =
+  const lyra::value::LoadedWords words =
       BitsAt(bits, bits_width, bits_are_four_state);
   return Emplace(
       out, RuntimeUnpackedArray::FromIntegral(
-               planes.View(), IntegralTypeAt(element_type), count));
+               words.View(), IntegralTypeAt(element_type), count));
 }
 
 auto lyra_rt_unpackedarray_count_bits(
@@ -4737,35 +4861,50 @@ auto lyra_rt_from_bitstream(
   const lyra::value::LoadedWords stream =
       BitsAt(bits, bits_width, bits_are_four_state);
   lyra::runtime::TypeAt(prototype_type)
-      .ReadFromStream(stream.Read(), stream.Shape().width, 0, prototype, out);
+      .ReadFromStream(stream.View(), 0, prototype, out);
   return out;
 }
 
 auto lyra_rt_stream_write(
-    const void* bits, std::int64_t bits_width, bool bits_are_four_state,
-    const void* stream, std::uint64_t stream_width, std::uint64_t filled)
+    LyraStreamOf stream_of, const void* value, std::int64_t bits_width,
+    bool bits_are_four_state, const void* stream, std::uint64_t filled)
     -> std::uint64_t {
+  lyra::runtime::StorageForBits made(
+      lyra::runtime::BitsShape(bits_width, bits_are_four_state));
+  stream_of(value, made.Bytes());
   const lyra::value::LoadedWords written =
-      BitsAt(bits, bits_width, bits_are_four_state);
-  const std::uint64_t width = written.Shape().width;
+      BitsAt(made.Bytes(), bits_width, bits_are_four_state);
+  const auto& into = *static_cast<const lyra::value::IntegralView*>(stream);
+  const std::uint64_t width = written.View().width;
   lyra::value::Insert(
-      *static_cast<const lyra::value::Planes*>(stream), stream_width,
-      written.Read(), width,
-      static_cast<std::int64_t>(stream_width - filled - width));
+      into, written.View(),
+      static_cast<std::int64_t>(into.width - filled - width));
   return filled + width;
 }
 
+auto lyra_rt_stream_build(
+    LyraBuiltFromStream built_from, const void* stream, std::uint64_t taken,
+    std::int64_t bits_width, bool bits_are_four_state, const void* prototype,
+    void* out) -> std::uint64_t {
+  lyra::runtime::StorageForBits read(
+      lyra::runtime::BitsShape(bits_width, bits_are_four_state));
+  const std::uint64_t after = lyra_rt_stream_read(
+      stream, taken, bits_width, bits_are_four_state, read.Bytes());
+  built_from(read.Bytes(), prototype, out);
+  return after;
+}
+
 auto lyra_rt_stream_read(
-    const void* stream, std::uint64_t stream_width, std::uint64_t taken,
-    std::int64_t out_width, bool out_is_four_state, void* out)
-    -> std::uint64_t {
-  lyra::value::LoadedWords read(
-      lyra::runtime::NumberShape(out_width, false, out_is_four_state));
-  const std::uint64_t width = read.Shape().width;
+    const void* stream, std::uint64_t taken, std::int64_t out_width,
+    bool out_is_four_state, void* out) -> std::uint64_t {
+  lyra::value::WrittenWords read(
+      lyra::runtime::BitsShape(out_width, out_is_four_state));
+  const auto& from =
+      *static_cast<const lyra::value::ConstIntegralView*>(stream);
+  const auto width = static_cast<std::uint64_t>(out_width);
   lyra::value::Extract(
-      read.Write(), width,
-      *static_cast<const lyra::value::ConstPlanes*>(stream), stream_width,
-      static_cast<std::int64_t>(stream_width - taken - width));
+      read.MutableView(), from,
+      static_cast<std::int64_t>(from.width - taken - width));
   read.StoreTo(out);
   return taken + width;
 }
@@ -6501,17 +6640,15 @@ auto lyra_rt_managedref_make_format_arg(const void* value, void* out) -> void* {
 auto lyra_rt_make_dpi_bit_buffer(
     const void* sv, std::int64_t sv_width, bool sv_is_four_state, void* out)
     -> void* {
-  const lyra::value::LoadedWords planes =
-      BitsAt(sv, sv_width, sv_is_four_state);
-  return Emplace(out, DpiBitBuffer(planes.Read(), planes.Shape().width));
+  const lyra::value::LoadedWords words = BitsAt(sv, sv_width, sv_is_four_state);
+  return Emplace(out, DpiBitBuffer(words.View()));
 }
 
 auto lyra_rt_make_dpi_logic_buffer(
     const void* sv, std::int64_t sv_width, bool sv_is_four_state, void* out)
     -> void* {
-  const lyra::value::LoadedWords planes =
-      BitsAt(sv, sv_width, sv_is_four_state);
-  return Emplace(out, DpiLogicBuffer(planes.Read(), planes.Shape().width));
+  const lyra::value::LoadedWords words = BitsAt(sv, sv_width, sv_is_four_state);
+  return Emplace(out, DpiLogicBuffer(words.View()));
 }
 
 auto lyra_rt_dpi_bit_buffer_data(void* buffer) -> void* {
@@ -6524,26 +6661,23 @@ auto lyra_rt_dpi_logic_buffer_data(void* buffer) -> void* {
 
 void lyra_rt_write_canonical_bit_vec(
     void* dst, const void* sv, std::int64_t sv_width, bool sv_is_four_state) {
-  const lyra::value::LoadedWords planes =
-      BitsAt(sv, sv_width, sv_is_four_state);
+  const lyra::value::LoadedWords words = BitsAt(sv, sv_width, sv_is_four_state);
   lyra::value::WriteCanonicalBitVec(
-      static_cast<svBitVecVal*>(dst), planes.Read(), planes.Shape().width);
+      static_cast<svBitVecVal*>(dst), words.View());
 }
 
 void lyra_rt_write_canonical_logic_vec(
     void* dst, const void* sv, std::int64_t sv_width, bool sv_is_four_state) {
-  const lyra::value::LoadedWords planes =
-      BitsAt(sv, sv_width, sv_is_four_state);
+  const lyra::value::LoadedWords words = BitsAt(sv, sv_width, sv_is_four_state);
   lyra::value::WriteCanonicalLogicVec(
-      static_cast<svLogicVecVal*>(dst), planes.Read(), planes.Shape().width);
+      static_cast<svLogicVecVal*>(dst), words.View());
 }
 
 auto lyra_rt_to_sv_logic(
     const void* sv, std::int64_t sv_width, bool sv_is_four_state)
     -> std::uint8_t {
-  const lyra::value::LoadedWords planes =
-      BitsAt(sv, sv_width, sv_is_four_state);
-  return lyra::value::ToSvLogic(planes.Read());
+  const lyra::value::LoadedWords words = BitsAt(sv, sv_width, sv_is_four_state);
+  return lyra::value::ToSvLogic(words.View());
 }
 
 // The image takes the actual erased, because it is element-type-independent
@@ -7405,10 +7539,13 @@ auto lyra_rt_bit8_sampled_history_at(
 auto lyra_rt_bit8_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit8>(designation);
 }
-void lyra_rt_bit8_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  AssignDesignatedBits<Bit8>(designation, width, start, bits_width, written);
+void lyra_rt_bit8_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  InsertDesignatedBits<Bit8>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 
 void lyra_rt_bit16_cell_construct(void* storage) {
@@ -7506,10 +7643,13 @@ auto lyra_rt_bit16_sampled_history_at(
 auto lyra_rt_bit16_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit16>(designation);
 }
-void lyra_rt_bit16_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  AssignDesignatedBits<Bit16>(designation, width, start, bits_width, written);
+void lyra_rt_bit16_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  InsertDesignatedBits<Bit16>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 
 void lyra_rt_bit32_cell_construct(void* storage) {
@@ -7607,10 +7747,13 @@ auto lyra_rt_bit32_sampled_history_at(
 auto lyra_rt_bit32_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit32>(designation);
 }
-void lyra_rt_bit32_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  AssignDesignatedBits<Bit32>(designation, width, start, bits_width, written);
+void lyra_rt_bit32_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  InsertDesignatedBits<Bit32>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 
 void lyra_rt_bit64_cell_construct(void* storage) {
@@ -7708,10 +7851,13 @@ auto lyra_rt_bit64_sampled_history_at(
 auto lyra_rt_bit64_land(const void* designation) noexcept -> void* {
   return LandDesignation<Bit64>(designation);
 }
-void lyra_rt_bit64_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  AssignDesignatedBits<Bit64>(designation, width, start, bits_width, written);
+void lyra_rt_bit64_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  InsertDesignatedBits<Bit64>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 
 void lyra_rt_logic8_cell_construct(void* storage) {
@@ -7810,10 +7956,13 @@ auto lyra_rt_logic8_sampled_history_at(
 auto lyra_rt_logic8_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic8>(designation);
 }
-void lyra_rt_logic8_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  AssignDesignatedBits<Logic8>(designation, width, start, bits_width, written);
+void lyra_rt_logic8_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  InsertDesignatedBits<Logic8>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 void lyra_rt_logic8_net_construct(void* storage) {
   BuildAt<ResolvedNet<Logic8>>(storage);
@@ -7965,10 +8114,13 @@ auto lyra_rt_logic16_sampled_history_at(
 auto lyra_rt_logic16_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic16>(designation);
 }
-void lyra_rt_logic16_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  AssignDesignatedBits<Logic16>(designation, width, start, bits_width, written);
+void lyra_rt_logic16_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  InsertDesignatedBits<Logic16>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 void lyra_rt_logic16_net_construct(void* storage) {
   BuildAt<ResolvedNet<Logic16>>(storage);
@@ -8120,10 +8272,13 @@ auto lyra_rt_logic32_sampled_history_at(
 auto lyra_rt_logic32_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic32>(designation);
 }
-void lyra_rt_logic32_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  AssignDesignatedBits<Logic32>(designation, width, start, bits_width, written);
+void lyra_rt_logic32_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  InsertDesignatedBits<Logic32>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 void lyra_rt_logic32_net_construct(void* storage) {
   BuildAt<ResolvedNet<Logic32>>(storage);
@@ -8275,10 +8430,13 @@ auto lyra_rt_logic64_sampled_history_at(
 auto lyra_rt_logic64_land(const void* designation) noexcept -> void* {
   return LandDesignation<Logic64>(designation);
 }
-void lyra_rt_logic64_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  AssignDesignatedBits<Logic64>(designation, width, start, bits_width, written);
+void lyra_rt_logic64_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  InsertDesignatedBits<Logic64>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 void lyra_rt_logic64_net_construct(void* storage) {
   BuildAt<ResolvedNet<Logic64>>(storage);
@@ -8449,11 +8607,13 @@ auto lyra_rt_bit_wide_land(const void* designation, std::int64_t width) noexcept
     -> void* {
   return lyra::runtime::LandWideDesignation<BitWide>(designation, width);
 }
-void lyra_rt_bit_wide_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  lyra::runtime::AssignDesignatedWideBits<BitWide>(
-      designation, width, start, bits_width, written);
+void lyra_rt_bit_wide_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  lyra::runtime::InsertDesignatedWideBits<BitWide>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 
 void lyra_rt_logic_wide_cell_construct(void* storage) {
@@ -8574,11 +8734,13 @@ auto lyra_rt_logic_wide_land(
     const void* designation, std::int64_t width) noexcept -> void* {
   return lyra::runtime::LandWideDesignation<LogicWide>(designation, width);
 }
-void lyra_rt_logic_wide_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width) {
-  lyra::runtime::AssignDesignatedWideBits<LogicWide>(
-      designation, width, start, bits_width, written);
+void lyra_rt_logic_wide_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state) {
+  lyra::runtime::InsertDesignatedWideBits<LogicWide>(
+      designation, width, outer_parts, start, bits, bits_width,
+      bits_are_four_state);
 }
 void lyra_rt_logic_wide_net_construct(void* storage) {
   BuildAt<ResolvedNet<LogicWide>>(storage);

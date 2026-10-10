@@ -110,12 +110,11 @@ auto DelayForTicks(
 auto DelayTicks(
     const value::ConstIntegralView& duration, std::int8_t unit_power,
     std::int8_t precision_power) -> SimDuration {
-  if (value::HasUnknown(duration.planes)) {
+  if (value::HasUnknown(duration)) {
     return 0;
   }
   return ScaleByPowerOfTen(
-      static_cast<SimDuration>(
-          value::ToInt64(duration.planes, duration.width, duration.signedness)),
+      static_cast<SimDuration>(value::ToInt64(duration)),
       unit_power - precision_power);
 }
 

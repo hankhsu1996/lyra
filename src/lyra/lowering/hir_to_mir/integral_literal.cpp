@@ -71,9 +71,64 @@ auto MakeIntegralLiteral(
       .type = type};
 }
 
+namespace {
+
+// The narrowest integral type a value of `integral` extends from: the bits up
+// to the highest one that differs from the value's top bit, read unsigned where
+// every position above them holds 0 and signed, with one more bit to carry the
+// sign, where they hold 1, x or z (LRM 11.6.1). `canonical` is the value's
+// planes at `integral`.
+auto MinimalExtendingType(
+    const mir::IntegralType& integral, const mir::IntegralConstant& canonical)
+    -> mir::IntegralType {
+  const std::span<const std::uint64_t> value(canonical.value_words);
+  const std::span<const std::uint64_t> unknown(canonical.state_words);
+  const std::uint64_t top = integral.bit_width - 1U;
+  const bool value_above = lyra::value::BitAt(value, top);
+  const bool unknown_above = lyra::value::BitAt(unknown, top);
+  std::uint64_t differing = 0;
+  for (std::uint64_t position = integral.bit_width; position-- > 0U;) {
+    if (lyra::value::BitAt(value, position) != value_above ||
+        lyra::value::BitAt(unknown, position) != unknown_above) {
+      differing = position + 1U;
+      break;
+    }
+  }
+  const bool extends_zero = !value_above && !unknown_above;
+  return mir::IntegralType{
+      .bit_width = std::min(
+          integral.bit_width, extends_zero
+                                  ? std::max<std::uint64_t>(differing, 1U)
+                                  : differing + 1U),
+      .signedness =
+          extends_zero ? mir::Signedness::kUnsigned : mir::Signedness::kSigned,
+      .state_kind = integral.state_kind};
+}
+
+}  // namespace
+
 auto BuildIntegralLiteral(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     const mir::IntegralConstant& value) -> mir::ExprId {
+  // A value of a type that owns its words is as large as the type, however
+  // little it says: a fill, a default and a small number widened are one scalar
+  // above a few bits. So it is stated as the extension of those bits, and what
+  // the unit holds as data is as long as what differs.
+  if (const auto* integral = unit.types.Get(type).As<mir::IntegralType>();
+      integral != nullptr && mir::UsesHeapWords(*integral)) {
+    const mir::IntegralConstant canonical =
+        CanonicalIntegralConstant(*integral, value);
+    const mir::IntegralType narrowest =
+        MinimalExtendingType(*integral, canonical);
+    if (lyra::value::WordCountForBits(narrowest.bit_width) <
+        lyra::value::WordCountForBits(integral->bit_width)) {
+      const mir::ExprId extended_from = block.exprs.Add(MakeIntegralLiteral(
+          unit, unit.types.Intern(mir::Type{narrowest}), canonical));
+      return block.exprs.Add(MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kIntegralConvert, std::nullopt,
+          {extended_from}, type));
+    }
+  }
   return block.exprs.Add(MakeIntegralLiteral(unit, type, value));
 }
 

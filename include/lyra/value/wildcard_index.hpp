@@ -30,7 +30,7 @@ namespace lyra::value {
     -> std::vector<std::uint64_t> {
   std::vector<std::uint64_t> words(WordCountForBits(index.width));
   for (std::size_t i = 0; i < words.size(); ++i) {
-    words[i] = WordAt(index.planes.value, i) & ~WordAt(index.planes.unknown, i);
+    words[i] = WordOrZero(index.value, i) & ~WordOrZero(index.unknown, i);
   }
   while (!words.empty() && words.back() == 0U) {
     words.pop_back();

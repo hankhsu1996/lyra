@@ -193,10 +193,9 @@ class BasicDynamicArray {
   // significant -- the order a `foreach` traverses them in (LRM 11.4.14.1).
   // Answers how many are filled after them.
   [[nodiscard]] auto WriteToStream(
-      Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
-      -> std::uint64_t {
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
     for (std::size_t i = 0; i < count_; ++i) {
-      filled = elem_.WriteToStream(At(i), stream, stream_width, filled);
+      filled = elem_.WriteToStream(At(i), stream, filled);
     }
     return filled;
   }
@@ -206,11 +205,11 @@ class BasicDynamicArray {
   // shape, both of which a sequence of bits carries nothing of. Answers the
   // array and how many positions are taken after it.
   [[nodiscard]] auto ReadFromStream(
-      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+      const ConstIntegralView& stream, std::uint64_t taken) const
       -> std::pair<BasicDynamicArray, std::uint64_t> {
     BasicDynamicArray read =
         Built(elem_, count_, [&](std::size_t i, void* out) {
-          taken = elem_.ReadFromStream(stream, stream_width, taken, At(i), out);
+          taken = elem_.ReadFromStream(stream, taken, At(i), out);
         });
     return {std::move(read), taken};
   }

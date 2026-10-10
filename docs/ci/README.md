@@ -118,7 +118,8 @@ On top of the default set, what a change touches selects what else to run:
   -- `cli_tests`, `pch_audit_test` and `runtime_surface_test`, already in the gate.
 - **A shipped example, its declaration, or the command its README gives** -- `examples_tests`,
   already in the gate.
-- **What a repeated construct costs to compile** -- `growth_tests`, already in the gate.
+- **What a repeated construct or a wide type costs to compile** -- `growth_tests`, already in the
+  gate.
 - **Which units an edit makes again** -- `incremental_tests`, already in the gate.
 - **How long an expression the compiler follows** -- `compile_stack_tests`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
@@ -315,7 +316,10 @@ a design the suite gains is run without this file changing.
 the same sources, giving each tool the amount of work it needs to reach the same duration. It gates
 its own run on a narrower claim than a timing: a case that fails to build, fails to run, or outlives
 the time limit is red, while the rates themselves are printed for a reader. Failing a run on a rate
-would be reporting on the machine that ran it.
+would be reporting on the machine that ran it. Such a case costs only itself: the runner goes on to
+the others and exits non-zero only after printing its report, so a red run's summary still carries
+every rate that was obtained and names each case that has none, with the step that failed, how it
+ended, and the last lines it printed.
 
 The comparison it prints needs no stored history, which is what makes it worth running unattended:
 both tools are measured on one machine in one run, so the ratio between them survives a slow runner

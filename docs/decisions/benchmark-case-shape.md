@@ -102,9 +102,13 @@ D8. The outer directory is the cost family the case isolates; the inner one is t
     with one case per family cannot say which family a regression landed in, and that question is
     the only reason to have more than one case.
 
-D9. A tool that cannot measure a case says so and does not fail the run: a reference simulator that
-    is not installed, or a construct Lyra does not yet carry out, is a fact about the tool and not
-    about the case. A build or run that fails for any other reason does fail it.
+D9. A reference simulator that is not installed is said so and does not fail the run. It is a fact
+    about the machine, and says nothing of Lyra or of the case. Every other measurement a tool
+    cannot make does fail it, a build Lyra refuses because it does not yet carry a construct out
+    included. A case exists to give Lyra a rate for its cost family (D8), so a case Lyra cannot
+    build is a family with no number, which is what the scheduled run gates on (D10). The run goes
+    on to every other case and fails only after its report, so such a case costs the report its own
+    number and nothing else.
 
 D10. The benchmark is not a Bazel test and not a merge gate. A timing needs a machine that is not
      running anything else, and a build system deliberately runs its tests in parallel. Its
@@ -148,6 +152,14 @@ D12. Where the language or a tool bounds how much of its work a case can hold --
   `benchstat`, LLVM has a results service, Criterion keeps a stored baseline. Comparison needs
   history and a statistical model; a runner needs neither, and a runner that owns both cannot be
   used to answer a one-off question.
+
+- **Reporting a construct Lyra does not yet carry out without failing the run.** It was this entry's
+  first answer, on the ground that a refusal is a fact about the tool and not about the case. It is
+  a fact about the one tool the corpus exists to measure. A reference simulator's absence leaves
+  every Lyra rate standing; a refusal by Lyra leaves a cost family with no rate, and a case that
+  built last month and is refused today is a regression a green run would not show. Where a refusal
+  is expected and accepted, the conformance corpus records it per case and fails when the record
+  stops being true, and a rule that lets any refusal through is weaker than that.
 
 - **Running the suite as Bazel tests.** It would give the corpus discovery, sharding and caching for
   free, and each of those is actively wrong here: sharding runs cases concurrently, and caching

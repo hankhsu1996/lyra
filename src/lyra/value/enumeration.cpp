@@ -6,6 +6,7 @@
 #include <span>
 #include <vector>
 
+#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
 
@@ -19,25 +20,27 @@ auto EnumerationPlanes(
   planes.reserve(members.size() * EnumerationMemberWords(width, four_state));
   for (const ConstPlanes& member : members) {
     for (std::size_t i = 0; i < words; ++i) {
-      planes.push_back(WordAt(member.value, i));
+      planes.push_back(WordOrZero(member.value, i));
     }
     for (std::size_t i = 0; four_state && i < words; ++i) {
-      planes.push_back(WordAt(member.unknown, i));
+      planes.push_back(WordOrZero(member.unknown, i));
     }
   }
   return planes;
 }
 
-auto Enumeration::MemberAt(std::size_t position) const -> ConstPlanes {
-  const std::size_t words = WordCountForBits(width);
+auto Enumeration::MemberAt(std::size_t position) const -> ConstIntegralView {
   const std::size_t stride = EnumerationMemberWords(width, four_state);
-  const std::span<const std::uint64_t> member =
-      std::span(planes, members * stride).subspan(position * stride, stride);
-  return ConstPlanes{
-      .value = member.first(words), .unknown = member.subspan(words)};
+  return ViewOfWords(
+      std::span(planes, members * stride).subspan(position * stride).data(),
+      IntegralShape{
+          .width = width,
+          .signedness = Signedness::kUnsigned,
+          .domain =
+              four_state ? StateDomain::kFourState : StateDomain::kTwoState});
 }
 
-auto Enumeration::PositionOf(ConstPlanes value) const
+auto Enumeration::PositionOf(const ConstIntegralView& value) const
     -> std::optional<std::size_t> {
   for (std::size_t i = 0; i < members; ++i) {
     if (CaseEqual(MemberAt(i), value)) {
@@ -47,13 +50,13 @@ auto Enumeration::PositionOf(ConstPlanes value) const
   return std::nullopt;
 }
 
-auto Enumeration::NameOf(ConstPlanes value) const -> String {
+auto Enumeration::NameOf(const ConstIntegralView& value) const -> String {
   const std::optional<std::size_t> at = PositionOf(value);
   return at ? String(std::span(names, members)[*at]) : String();
 }
 
-auto Enumeration::Stepped(ConstPlanes value, std::size_t steps) const
-    -> std::optional<ConstPlanes> {
+auto Enumeration::Stepped(const ConstIntegralView& value, std::size_t steps)
+    const -> std::optional<ConstIntegralView> {
   const std::optional<std::size_t> at = PositionOf(value);
   if (!at) {
     return std::nullopt;
@@ -61,8 +64,9 @@ auto Enumeration::Stepped(ConstPlanes value, std::size_t steps) const
   return MemberAt((*at + steps) % members);
 }
 
-auto Enumeration::MemberAfter(ConstPlanes value, std::int64_t count) const
-    -> std::optional<ConstPlanes> {
+auto Enumeration::MemberAfter(
+    const ConstIntegralView& value, std::int64_t count) const
+    -> std::optional<ConstIntegralView> {
   return Stepped(
       value,
       static_cast<std::size_t>(static_cast<std::uint64_t>(count) % members));
@@ -70,8 +74,9 @@ auto Enumeration::MemberAfter(ConstPlanes value, std::int64_t count) const
 
 // Stepping back `count` places lands where stepping on by the rest of a whole
 // turn through the members does.
-auto Enumeration::MemberBefore(ConstPlanes value, std::int64_t count) const
-    -> std::optional<ConstPlanes> {
+auto Enumeration::MemberBefore(
+    const ConstIntegralView& value, std::int64_t count) const
+    -> std::optional<ConstIntegralView> {
   return Stepped(
       value, members - static_cast<std::size_t>(
                            static_cast<std::uint64_t>(count) % members));
