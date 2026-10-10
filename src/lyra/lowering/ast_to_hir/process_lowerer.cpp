@@ -14,6 +14,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
@@ -61,8 +62,7 @@ auto ProcessLowerer::Run(
   // whole procedure reads, including what any function it calls reads, less
   // what either writes. What it watches is stated in the body, so it is stated
   // while the body is still open.
-  const diag::SourceSpan span =
-      owner_->SourceMapper().PointSpanOf(proc.location);
+  const diag::SourceSpan span = frontend::PointSpanOf(proc.location);
   auto kind = KindOf(proc, frame, span);
   if (!kind) return std::unexpected(std::move(kind.error()));
   body.root_scope = parent_frame.SealScope(std::move(root));
@@ -128,7 +128,7 @@ auto ProcessLowerer::RunConcurrentAssertion(
       labelled.has_value() ? root_frame.WithOpenScope(&*labelled) : root_frame;
 
   AnalyzeLifetimeExtended(proc.getBody());
-  const auto span = owner_->SourceMapper().PointSpanOf(proc.location);
+  const auto span = frontend::PointSpanOf(proc.location);
   auto assertion_or = LowerConcurrentAssertion(*this, frame, as, span);
   if (!assertion_or) return std::unexpected(std::move(assertion_or.error()));
 
@@ -199,7 +199,7 @@ auto ProcessLowerer::DeclarePerObjectConstants(
     const hir::ProceduralVarId id =
         DeclareProceduralVar(frame, body, *constant);
 
-    const auto span = owner_->SourceMapper().PointSpanOf(constant->location);
+    const auto span = frontend::PointSpanOf(constant->location);
     auto type = owner_->InternType(constant->getType(), span);
     if (!type) return std::unexpected(std::move(type.error()));
     const slang::ast::Expression* initializer = constant->getInitializer();

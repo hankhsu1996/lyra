@@ -74,10 +74,7 @@ MAX_AMOUNT = 1_000_000_000
 
 BINARY_NAME = "program"
 
-UNSUPPORTED_MARKER = "lyra: unsupported:"
-
 STATUS_OK = "ok"
-STATUS_UNSUPPORTED = "unsupported"
 STATUS_ERROR = "error"
 
 MEASURE_BUILD = "build"
@@ -411,7 +408,6 @@ class Tool:
     build: Callable[[Case, str, int | None], list[str]]
     binary: Callable[[str], Path]
     env: dict | None = None
-    unsupported_marker: str = ""
 
 
 def measure_run_case(
@@ -423,7 +419,7 @@ def measure_run_case(
     build = run_process(tool.build(case, work, None), cwd=work, env=tool.env)
     result.build_s = build.elapsed_s
 
-    if not record_build_failure(result, build, tool):
+    if not record_build_failure(result, build):
         return result
 
     binary = tool.binary(work)
@@ -461,7 +457,7 @@ def measure_build_case(
     amount, build, history = converge(build_at, target, case.work_max)
     result.build_s = build.elapsed_s
 
-    if not record_build_failure(result, build, tool):
+    if not record_build_failure(result, build):
         return result
 
     binary = tool.binary(builds[-1])
@@ -485,7 +481,7 @@ def measure_build_case(
 
 
 def record_build_failure(
-    result: Result, build: ProcessRun, tool: Tool,
+    result: Result, build: ProcessRun,
 ) -> bool:
     """Record why a build failed. Returns True when it did not."""
     if build.timed_out:
@@ -493,10 +489,7 @@ def record_build_failure(
         result.detail = f"build timed out after {TIMEOUT_SECONDS}s"
         return False
     if build.returncode != 0:
-        refused = (
-            tool.unsupported_marker != ""
-            and tool.unsupported_marker in build.stderr)
-        result.status = STATUS_UNSUPPORTED if refused else STATUS_ERROR
+        result.status = STATUS_ERROR
         result.detail = (
             first_error_line(build) or f"build exit code {build.returncode}")
         return False
@@ -525,7 +518,7 @@ def record_measurement(
 def first_error_line(run: ProcessRun) -> str:
     for text in (run.stderr, run.stdout):
         for line in text.splitlines():
-            if "error" in line.lower() or "unsupported" in line.lower():
+            if "error" in line.lower():
                 return line.strip()
     return ""
 
@@ -536,7 +529,6 @@ def lyra_tool(lyra: str) -> Tool:
         build=lambda case, out, amount: lyra_build_command(
             lyra, case, out, amount),
         binary=lambda out: Path(out) / BINARY_NAME,
-        unsupported_marker=UNSUPPORTED_MARKER,
     )
 
 
@@ -661,17 +653,12 @@ def print_report(results: list[Result], target: float) -> None:
                 f"| {fmt_comparison(lyra_rate, ver_rate)} "
                 f"| {work} | {growth} | {binary} |")
 
-    for status, heading in (
-        (STATUS_UNSUPPORTED, "Not measured"),
-        (STATUS_ERROR, "Errors"),
-    ):
-        rows = [r for r in results if r.status == status]
-        if not rows:
-            continue
+    errors = [r for r in results if r.status == STATUS_ERROR]
+    if errors:
         print()
-        print(f"### {heading}")
+        print("### Errors")
         print()
-        for r in rows:
+        for r in errors:
             print(f"- **{r.case}/{r.tool}**: {r.detail}")
 
     print()

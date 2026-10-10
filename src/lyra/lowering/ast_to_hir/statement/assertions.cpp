@@ -18,6 +18,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/statement/timing.hpp"
@@ -84,13 +85,12 @@ auto TimingOf(const slang::ast::ImmediateAssertionStatement& as)
 // diagnostics about these nodes through it, so that is the channel a location
 // comes from here. A node built from no syntax has none, and the nearest
 // enclosing span answers for it.
-auto NodeSpan(
-    const ProcessLowerer& proc, const slang::ast::AssertionExpr& expr,
-    diag::SourceSpan enclosing) -> diag::SourceSpan {
+auto NodeSpan(const slang::ast::AssertionExpr& expr, diag::SourceSpan enclosing)
+    -> diag::SourceSpan {
   if (expr.syntax == nullptr) {
     return enclosing;
   }
-  return proc.Owner().SourceMapper().SpanOf(expr.syntax->sourceRange());
+  return frontend::SpanOf(expr.syntax->sourceRange());
 }
 
 auto RefuseAssertionForm(diag::SourceSpan span, std::string_view what)
@@ -289,7 +289,7 @@ auto LowerSequenceExpr(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssertionExpr& expr, diag::SourceSpan enclosing)
     -> diag::Result<hir::SequenceExpr> {
-  const diag::SourceSpan span = NodeSpan(proc, expr, enclosing);
+  const diag::SourceSpan span = NodeSpan(expr, enclosing);
   if (CarriesLocalVars(expr)) {
     return RefuseAssertionForm(span, "a local variable (LRM 16.10)");
   }
@@ -401,7 +401,7 @@ auto LowerPropertyExpr(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssertionExpr& expr, hir::SequenceStrength strength,
     diag::SourceSpan enclosing) -> diag::Result<hir::PropertyExpr> {
-  const diag::SourceSpan span = NodeSpan(proc, expr, enclosing);
+  const diag::SourceSpan span = NodeSpan(expr, enclosing);
   if (CarriesLocalVars(expr)) {
     return RefuseAssertionForm(span, "a local variable (LRM 16.10)");
   }

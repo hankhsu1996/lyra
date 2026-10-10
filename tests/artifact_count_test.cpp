@@ -64,7 +64,7 @@ auto LowerDesignInto(std::string_view source, lyra::diag::DiagnosticSink& sink)
   if (!front.elaborated.has_value()) return std::nullopt;
 
   auto design = lyra::compiler::DeclareUnits(
-      std::move(front.elaborated->compilation), front.elaborated->source_mapper,
+      std::move(front.elaborated->compilation),
       lyra::compiler::LoweringPolicy{}, sink);
   EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
   if (!design.has_value()) return std::nullopt;

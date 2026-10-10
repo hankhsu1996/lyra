@@ -30,6 +30,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_builders.hpp"
@@ -127,7 +128,7 @@ auto LowerConstructorArguments(
       arguments.push_back(*std::move(lowered));
       continue;
     }
-    const auto span = owner.SourceMapper().PointSpanOf(child.location);
+    const auto span = frontend::PointSpanOf(child.location);
     auto type = owner.InternType(source.parameter->getType(), span);
     if (!type) return std::unexpected(std::move(type.error()));
     auto value = MakeConstantValueExpr(
@@ -325,7 +326,7 @@ auto StructuralScopeLowerer::DeclareSettledValue(
     hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
     hir::StructuralDataObjectKind kind) -> diag::Result<void> {
   auto type_or = owner_->InternType(
-      value.getType(), owner_->SourceMapper().PointSpanOf(value.location));
+      value.getType(), frontend::PointSpanOf(value.location));
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   const hir::StructuralDataObjectId declared =
       scope.structural_data_objects.Add(
@@ -346,8 +347,7 @@ auto StructuralScopeLowerer::DeclareSettledValue(
 auto StructuralScopeLowerer::PopulateMember(
     const slang::ast::Symbol& member, WalkFrame frame) -> diag::Result<void> {
   using slang::ast::SymbolKind;
-  const diag::FailureContext at(
-      owner_->SourceMapper().PointSpanOf(member.location));
+  const diag::FailureContext at(frontend::PointSpanOf(member.location));
   switch (member.kind) {
     case SymbolKind::Variable:
       return PopulateVariableMember(
@@ -410,7 +410,7 @@ auto StructuralScopeLowerer::PopulateMember(
         return {};
       }
       return diag::Fail(
-          owner_->SourceMapper().PointSpanOf(member.location),
+          frontend::PointSpanOf(member.location),
           diag::DiagCode::kUnsupportedStructuralMember,
           "assertion and checker declarations are not supported; pass "
           "--assertions skip to elide them");
@@ -422,7 +422,7 @@ auto StructuralScopeLowerer::PopulateMember(
     case SymbolKind::AnonymousProgram:
     case SymbolKind::UninstantiatedDef:
       return diag::Fail(
-          owner_->SourceMapper().PointSpanOf(member.location),
+          frontend::PointSpanOf(member.location),
           diag::DiagCode::kUnsupportedStructuralMember,
           "this declaration form is not supported yet");
 
@@ -549,15 +549,14 @@ auto StructuralScopeLowerer::PopulateMember(
 auto StructuralScopeLowerer::PopulateVariableMember(
     const slang::ast::VariableSymbol& var, WalkFrame frame)
     -> diag::Result<void> {
-  const auto& mapper = owner_->SourceMapper();
   if (var.lifetime != slang::ast::VariableLifetime::Static) {
     return diag::Fail(
-        mapper.PointSpanOf(var.location),
+        frontend::PointSpanOf(var.location),
         diag::DiagCode::kUnsupportedNonStaticVariableLifetime,
         "only static variables are supported");
   }
   auto type_id_or =
-      owner_->InternType(var.getType(), mapper.PointSpanOf(var.location));
+      owner_->InternType(var.getType(), frontend::PointSpanOf(var.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
   // Slang rejects `void` in any variable-declaration position before
   // elaboration, so a void-typed VariableSymbol can only reach this path
@@ -573,7 +572,7 @@ auto StructuralScopeLowerer::PopulateVariableMember(
     kind = hir::StructuralReferenceDecl{.binding = *binding};
   } else if (const auto* init = var.getInitializer(); init != nullptr) {
     if (auto refused = RefuseGivingAnEventAValue(
-            var.getType(), mapper.PointSpanOf(var.location));
+            var.getType(), frontend::PointSpanOf(var.location));
         !refused) {
       return std::unexpected(std::move(refused.error()));
     }
@@ -619,8 +618,7 @@ auto StructuralScopeLowerer::PopulateInterfacePortMember(
 
 auto StructuralScopeLowerer::PopulateNetMember(
     const slang::ast::NetSymbol& net, WalkFrame frame) -> diag::Result<void> {
-  const auto& mapper = owner_->SourceMapper();
-  const auto span = mapper.PointSpanOf(net.location);
+  const auto span = frontend::PointSpanOf(net.location);
   auto type_id_or = owner_->InternType(net.getType(), span);
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
   auto net_type = TranslateNetType(net.netType, span);
@@ -687,7 +685,7 @@ auto StructuralScopeLowerer::PopulateNetMember(
 auto StructuralScopeLowerer::DefineEvaluator(
     const slang::ast::Symbol& holder, std::string name,
     const slang::ast::Expression& expr, WalkFrame frame) -> diag::Result<void> {
-  const auto span = owner_->SourceMapper().PointSpanOf(holder.location);
+  const auto span = frontend::PointSpanOf(holder.location);
   auto result_type = owner_->InternType(*expr.type, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
 
@@ -854,8 +852,7 @@ auto StructuralScopeLowerer::PopulateContinuousAssignMember(
 auto StructuralScopeLowerer::PopulateNetAliasMember(
     const slang::ast::NetAliasSymbol& alias, WalkFrame frame)
     -> diag::Result<void> {
-  const diag::SourceSpan span =
-      owner_->SourceMapper().PointSpanOf(alias.location);
+  const diag::SourceSpan span = frontend::PointSpanOf(alias.location);
   std::vector<hir::NetSide> sides;
   for (const slang::ast::Expression* member : alias.getNetReferences()) {
     auto side = NetPositionsOfLvalue(

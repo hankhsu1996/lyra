@@ -28,6 +28,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/published_modport.hpp"
@@ -346,7 +347,7 @@ auto UnitLowerer::ExternalMemberLeafOf(
 auto UnitLowerer::ResolveRouteTarget(
     const slang::ast::ValueSymbol& value, const ScopeRoute& route)
     -> diag::Result<hir::DataLeaf> {
-  const auto span = SourceMapper().PointSpanOf(value.location);
+  const auto span = frontend::PointSpanOf(value.location);
   const auto unsupported = [&] {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -1331,7 +1332,7 @@ auto UnitLowerer::ResolveStaticPropertyTarget(
 auto UnitLowerer::ObservedThroughModport(
     const slang::ast::ModportPortSymbol& offered, const WalkFrame& frame,
     RouteOrigin origin) -> diag::Result<std::vector<hir::SensitivityEntry>> {
-  const auto span = SourceMapper().PointSpanOf(offered.location);
+  const auto span = frontend::PointSpanOf(offered.location);
   const auto refuse = [&](std::string message) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
@@ -1441,7 +1442,7 @@ auto UnitLowerer::WatchedEntriesOf(
       continue;
     }
 
-    const auto span = SourceMapper().PointSpanOf(read.symbol->location);
+    const auto span = frontend::PointSpanOf(read.symbol->location);
     auto resolved = ResolveReferent(*read.symbol, span);
     if (!resolved) return std::unexpected(std::move(resolved.error()));
     const slang::ast::ValueSymbol& target = *resolved->symbol;

@@ -22,6 +22,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -459,8 +460,7 @@ auto LowerNamedValueProc(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr> {
   auto& unit_lowerer = proc.Owner();
-  const auto& mapper = unit_lowerer.SourceMapper();
-  const auto span = mapper.SpanOf(named.sourceRange);
+  const auto span = frontend::SpanOf(named.sourceRange);
   const auto& sym = named.symbol;
 
   if (auto clause = frame.FindIterationClause(sym)) {
@@ -549,7 +549,7 @@ auto LowerHierarchicalValue(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::HierarchicalValueExpression& hve)
     -> diag::Result<hir::Expr> {
-  const auto span = unit_lowerer.SourceMapper().SpanOf(hve.sourceRange);
+  const auto span = frontend::SpanOf(hve.sourceRange);
 
   auto resolved = ResolveReferent(hve.symbol, span);
   if (!resolved) return std::unexpected(std::move(resolved.error()));
@@ -610,8 +610,7 @@ auto LowerHierarchicalValue(
 auto LowerNamedValueStructural(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::NamedValueExpression& named) -> diag::Result<hir::Expr> {
-  const auto& mapper = unit_lowerer.SourceMapper();
-  const auto span = mapper.SpanOf(named.sourceRange);
+  const auto span = frontend::SpanOf(named.sourceRange);
   const auto& sym = named.symbol;
   if (auto clause = frame.FindIterationClause(sym)) {
     return MakeIterationElementRefExpr(unit_lowerer, named, *clause, span);

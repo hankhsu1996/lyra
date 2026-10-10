@@ -164,7 +164,7 @@ auto DesignOf(const CommandContext& ctx)
   const profiling::StageScope stage("declare units");
   const status::Phase phase("Elaborating");
   return compiler::DeclareUnits(
-      std::move(ctx.elaborated->compilation), ctx.elaborated->source_mapper,
+      std::move(ctx.elaborated->compilation),
       compiler::LoweringPolicy{
           .assertions = ctx.args->assertions,
           .bodies_read = support::BodiesRead::kElaborated},
@@ -721,11 +721,18 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
       .args = *std::move(parsed), .dpi_inputs = *std::move(dpi_inputs)};
 }
 
+// What the front end made of a request: the design, where it arrived at one,
+// and what it said of the source that has not been printed.
+struct Elaboration {
+  std::optional<frontend::ParseResult> design;
+  std::string withheld;
+};
+
 // Elaborates the design the request describes, reporting whatever stops that.
 // Arriving at a design is the whole of what `check` asks.
 auto Elaborate(
     const Invocation& invocation, const Request& request,
-    CompilerWarnings warnings) -> std::optional<frontend::ParseResult> {
+    CompilerWarnings warnings) -> Elaboration {
   support::RecordWidth(request.args.compile_width);
   auto front_end = [&] {
     const profiling::StageScope stage("front end");
@@ -736,11 +743,16 @@ auto Elaborate(
   // because then there is no program whose streams need protecting.
   const bool shows_warnings =
       warnings == CompilerWarnings::kShown || !front_end.elaborated;
-  if (shows_warnings && !front_end.diagnostics.empty()) {
+  if (!shows_warnings) {
+    return Elaboration{
+        .design = std::move(front_end.elaborated),
+        .withheld = std::move(front_end.diagnostics)};
+  }
+  if (!front_end.diagnostics.empty()) {
     status::Clear();
     fmt::print(stderr, "{}", front_end.diagnostics);
   }
-  return std::move(front_end.elaborated);
+  return Elaboration{.design = std::move(front_end.elaborated), .withheld = {}};
 }
 
 using DesignCommand = std::move_only_function<int(const CommandContext&)>;
@@ -764,23 +776,28 @@ auto Attempt(DesignCommand command, const CommandContext& ctx) -> int {
 auto RunOnRequest(
     const Invocation& invocation, const Request& request,
     CompilerWarnings warnings, DesignCommand command) -> int {
-  auto elaborated = Elaborate(invocation, request, warnings);
-  if (!elaborated) {
+  auto elaboration = Elaborate(invocation, request, warnings);
+  if (!elaboration.design) {
     return 1;
   }
+  frontend::ParseResult& elaborated = *elaboration.design;
   diag::DiagnosticSink sink;
   const int exit_code = Attempt(
       std::move(command), CommandContext{
                               .args = &request.args,
-                              .elaborated = &*elaborated,
+                              .elaborated = &elaborated,
                               .sink = &sink,
                               .dpi_inputs = request.dpi_inputs,
                               .program_path = invocation.program_path});
   const Reporter& report = *invocation.report;
   if (warnings == CompilerWarnings::kWithheld && !sink.HasErrors()) {
-    report.WithoutWarnings()(sink, &elaborated->diag_sources);
+    report.WithoutWarnings()(sink);
   } else {
-    report(sink, &elaborated->diag_sources);
+    // No program runs, so nothing of the compiler's is withheld any longer,
+    // and what the front end said comes first because it read the source
+    // first.
+    fmt::print(stderr, "{}", elaboration.withheld);
+    report(sink);
   }
   return sink.HasInternalErrors() ? kCompilerFailureExit : exit_code;
 }
@@ -800,7 +817,8 @@ auto RunOnDesign(
 // `check` asks only whether the request arrives at a design.
 auto RunCheck(const Invocation& invocation) -> int {
   const auto request = ResolveRequest(invocation);
-  if (!request || !Elaborate(invocation, *request, CompilerWarnings::kShown)) {
+  if (!request ||
+      !Elaborate(invocation, *request, CompilerWarnings::kShown).design) {
     return 1;
   }
   status::Finished();

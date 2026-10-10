@@ -20,6 +20,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/failure_context.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/dynamic_cast.hpp"
@@ -58,10 +59,9 @@ auto LowerVariableDeclStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::VariableDeclStatement& vd, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  const auto& mapper = proc.Owner().SourceMapper();
   const auto& sym = vd.symbol;
-  auto type_id_or =
-      proc.Owner().InternType(sym.getType(), mapper.PointSpanOf(sym.location));
+  auto type_id_or = proc.Owner().InternType(
+      sym.getType(), frontend::PointSpanOf(sym.location));
   if (!type_id_or) return std::unexpected(std::move(type_id_or.error()));
   // The identity is minted before the initializer lowers, because the
   // initializer is bound in the scope the declaration has already entered
@@ -267,8 +267,7 @@ auto LowerReturnStmt(
 auto LowerStatement(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::Statement& stmt)
     -> diag::Result<hir::Stmt> {
-  const auto& mapper = proc.Owner().SourceMapper();
-  const auto span = mapper.SpanOf(stmt.sourceRange);
+  const auto span = frontend::SpanOf(stmt.sourceRange);
   const diag::FailureContext at(span);
   switch (stmt.kind) {
     case slang::ast::StatementKind::Empty:
@@ -428,10 +427,32 @@ auto LowerStatement(
           span, diag::DiagCode::kUnsupportedStatementForm,
           "`randsequence` is not yet supported (LRM 18.17)");
 
-    // Lowering runs only over an AST the front end accepted, so a statement it
-    // could not build never reaches here.
-    case slang::ast::StatementKind::Invalid:
-      throw InternalError("LowerStatement: an invalid statement was lowered");
+    // The front end reports some departures from the standard as warnings and
+    // goes on, and where it could give the text no meaning it leaves this in
+    // its place. Its own diagnostic says what the text was.
+    //
+    // The placeholder also wraps every statement around the one that has no
+    // meaning, outward to the procedure's body, so what it wraps is lowered as
+    // written and the refusal comes from inside it. The innermost statement so
+    // wrapped is the smallest text the refusal can be placed at, since the
+    // placeholders themselves cover none.
+    case slang::ast::StatementKind::Invalid: {
+      const auto* wrapped = stmt.as<slang::ast::InvalidStatement>().child;
+      if (wrapped == nullptr) {
+        return diag::Fail(
+            diag::DiagCode::kUnsupportedStatementForm,
+            "this statement cannot be simulated: the front end could give it "
+            "no meaning");
+      }
+      auto lowered = LowerStatement(proc, frame, *wrapped);
+      const auto place = frontend::SpanOf(wrapped->sourceRange);
+      if (!lowered && place != diag::SourceSpan{} &&
+          std::holds_alternative<diag::UnknownSpan>(
+              lowered.error().primary.span)) {
+        lowered.error().primary.span = place;
+      }
+      return lowered;
+    }
   }
   throw InternalError("LowerStatement: unknown slang StatementKind");
 }

@@ -111,13 +111,12 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":base",
-        "@fmt",
     ],
 )
 
 cc_library(
     name = "slang_source",
-    hdrs = ["include/lyra/frontend/slang_source_mapper.hpp"],
+    hdrs = ["include/lyra/frontend/slang_source_span.hpp"],
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],

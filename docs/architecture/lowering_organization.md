@@ -140,9 +140,9 @@ threaded down, a per-callable-body temp counter) is defined separately under "Re
    current write-target nested builder, the current block depth, an optional closure context, and
    any future stack-discipline state. It is passed by value between walker methods. Each recursion
    may construct a new frame with different fields set; the cost of copying is trivial.
-   Walk-invariant facts (the unit currently being constructed, source mapper, builtins table) are
-   class members on the pass class, not `WalkFrame` fields -- only state that genuinely changes from
-   one recursion to the next belongs on `WalkFrame`. Writes to nested scopes go through
+   Walk-invariant facts (the unit currently being constructed, builtins table) are class members on
+   the pass class, not `WalkFrame` fields -- only state that genuinely changes from one recursion to
+   the next belongs on `WalkFrame`. Writes to nested scopes go through
    `frame.current_*_scope->Add...`; writes to the root output go through the pass class's narrow
    methods (see invariant 5).
 

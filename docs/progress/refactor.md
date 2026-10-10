@@ -908,19 +908,18 @@ enough to warrant its own focused review.
       reaches further than making each control construct value-producing, is in
       `../decisions/block-expression.md`.
 
-- [ ] R62 -- Diagnostics reaches its source files through a hand-rolled pool. The source manager
-      keeps its files in a plain sequence, mints a file identity from that sequence's running count,
-      and reserves zero to mean "no file", so every reader tests the identity for the reserved value
-      and the lookup answers with a pointer that may be null. Two different facts are fused into one
-      integer: which file, and whether there is one. An identity a pool confers should answer only
-      the first; whether a source span has a file is the span's own question and belongs in an
-      optional. Fusing them leaves the identity type unable to state what it is, moves the check to
-      every read, and leaves the pool's bounds hand-written -- the unnamed-pool shape
-      `../architecture/lowering_organization.md` names under Pool Selection. Target: the files are a
-      pool like any other, minting the identity and answering totally, and a source span carries an
-      optional file identity so a span with none says so. No prerequisite blocks it, but the span
-      type is read across most of the compiler and pinned by every case that asserts a diagnostic's
-      text, so the optionality change is broad enough to warrant its own focused review.
+- [ ] R62 -- "No place" is said two ways. A diagnostic's place is either a span or the marker that
+      there is none, and a span whose two ends are zero is also no place, so a reader has both to
+      ask. A construct with no place should hold the marker and a span should always be one. Target:
+      the span type cannot be empty, and wherever a place may be missing the type holding it says
+      so. The span type is read across the first two lowerings, so the change is broad enough to
+      warrant its own focused review.
+
+- [ ] R210 -- The forms after the first hold no place, so whatever they refuse is reported with
+      none: a construct the later lowerings or a backend cannot carry out names no line. A place is
+      now a value of two words that nothing but the front end reads, so it can be carried on those
+      forms' statements as it is on the first form's, and a refusal raised there can be shown the
+      same way. Nothing reads it yet.
 
 - [ ] R63 -- A function's basic blocks are a bare sequence indexed by a typed identity, so the
       identity's bounds are unchecked. The reason was real: a block used to be filled in place after

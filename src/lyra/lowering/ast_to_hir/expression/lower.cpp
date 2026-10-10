@@ -21,6 +21,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/failure_context.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/real_bits.hpp"
 #include "lyra/lowering/ast_to_hir/expression/aggregates.hpp"
@@ -115,7 +116,7 @@ auto LowerExprImpl(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& expr)
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
-  const auto span = unit_lowerer.SourceMapper().SpanOf(expr.sourceRange);
+  const auto span = frontend::SpanOf(expr.sourceRange);
   const diag::FailureContext at(span);
   constexpr bool kProcedural = std::same_as<Lowerer, ProcessLowerer>;
 
@@ -392,10 +393,16 @@ auto LowerExprImpl(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "a clocking event in an expression is not yet supported");
 
-    // Lowering runs only over an AST the front end accepted, so an expression
-    // it could not build never reaches here.
+    // The front end reports some departures from the standard as warnings and
+    // goes on, and where it could give the text no meaning it leaves this in
+    // its place. Its own diagnostic says what the text was. The placeholder
+    // covers no text, so the refusal names no place; the statement holding it
+    // does.
     case slang::ast::ExpressionKind::Invalid:
-      throw InternalError("LowerExpr: an invalid expression was lowered");
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          "this expression cannot be simulated: the front end could give it no "
+          "meaning");
   }
   throw InternalError("LowerExpr: unknown slang ExpressionKind");
 }

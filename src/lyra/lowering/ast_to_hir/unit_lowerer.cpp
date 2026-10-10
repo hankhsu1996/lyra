@@ -37,6 +37,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/verify.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
@@ -141,8 +142,7 @@ auto UnitLowerer::InternOwnStructureDeclarations() -> diag::Result<void> {
     if (!declared.isUnpackedStruct()) {
       return {};
     }
-    if (auto r =
-            InternType(declared, SourceMapper().PointSpanOf(member.location));
+    if (auto r = InternType(declared, frontend::PointSpanOf(member.location));
         !r) {
       return std::unexpected(std::move(r.error()));
     }
@@ -192,7 +192,7 @@ auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
     }
     if (auto r = InternLocalClass(
             member.as<slang::ast::ClassType>(),
-            SourceMapper().PointSpanOf(member.location));
+            frontend::PointSpanOf(member.location));
         !r) {
       return std::unexpected(std::move(r.error()));
     }

@@ -35,6 +35,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/external_class.hpp"
@@ -383,8 +384,7 @@ auto UnitLowerer::PublishedCallableOf(
   const auto evaluator = [&](std::string name, const slang::ast::Type& type,
                              const slang::ast::Symbol& holder)
       -> diag::Result<hir::PublishedCallable> {
-    auto result_type =
-        InternType(type, SourceMapper().PointSpanOf(holder.location));
+    auto result_type = InternType(type, frontend::PointSpanOf(holder.location));
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     return hir::PublishedCallable{
         .name = std::move(name),
@@ -398,7 +398,7 @@ auto UnitLowerer::PublishedCallableOf(
           [&](const ScopePublicationRecord::Subroutine& declared)
               -> diag::Result<hir::PublishedCallable> {
             const slang::ast::SubroutineSymbol& sym = *declared.symbol;
-            const auto span = SourceMapper().PointSpanOf(sym.location);
+            const auto span = frontend::PointSpanOf(sym.location);
             auto interface = MakeExternalCalleeInterface(sym, span);
             if (!interface) {
               return std::unexpected(std::move(interface.error()));
@@ -465,7 +465,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
 
   const auto publish_part =
       [&](const slang::ast::PortSymbol& port) -> diag::Result<hir::PortPart> {
-    const auto span = SourceMapper().PointSpanOf(port.location);
+    const auto span = frontend::PointSpanOf(port.location);
     auto interned = InternType(port.getType(), span);
     if (!interned) return std::unexpected(std::move(interned.error()));
     const hir::PortDirection direction =
@@ -614,7 +614,7 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
       [&](const slang::ast::ValueSymbol& declared,
           support::DefPath holder) -> diag::Result<hir::PublishedMember> {
     auto interned = InternType(
-        declared.getType(), SourceMapper().PointSpanOf(declared.location));
+        declared.getType(), frontend::PointSpanOf(declared.location));
     if (!interned) return std::unexpected(std::move(interned.error()));
     return hir::PublishedMember{
         .name = std::string{declared.name},
@@ -669,7 +669,7 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
   // rather than while the design elaborates.
   const auto interface_port = [&](const slang::ast::InterfacePortSymbol& port)
       -> diag::Result<hir::PublishedMember> {
-    const auto span = SourceMapper().PointSpanOf(port.location);
+    const auto span = frontend::PointSpanOf(port.location);
     const auto refuse = [&](std::string message) {
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedStructuralMember,
@@ -858,7 +858,7 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
       -> diag::Result<hir::PublishedModportPort> {
     const slang::ast::ModportPortSymbol& port =
         *std::visit([](const auto& defined) { return defined.port; }, name);
-    const auto span = SourceMapper().PointSpanOf(port.location);
+    const auto span = frontend::PointSpanOf(port.location);
     const auto* connection = port.getConnectionExpr();
     if (connection == nullptr) {
       throw InternalError(

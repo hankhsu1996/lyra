@@ -377,6 +377,40 @@ cc_test(
     ],
 )
 
+# Designs written elsewhere, for other simulators, and kept outside this
+# repository: today those of Verilator's benchmark suite, each built and run
+# through the case the suite itself marks as its quick check. A design is tens
+# of thousands to hundreds of thousands of lines, so one case is minutes and
+# gigabytes, and the suite is half a gigabyte to fetch. `manual` is what keeps both out of
+# every run that does not name this target: a tag the test filter leaves out
+# is still analyzed, and analysis is what fetches. The program is linked with
+# the host C++ compiler, and the cases run one at a time because a machine
+# holds one such build comfortably and not several. It runs outside the
+# sandbox because a case that stops is looked into from the directory it was
+# built in, which a sandbox's own temporary directory does not outlive.
+cc_test(
+    name = "external_design_tests",
+    timeout = "eternal",
+    srcs = ["external_design_test.cpp"],
+    copts = LYRA_COPTS,
+    data = [
+        "paths/llvm.external_designs.yaml",
+        "//:lyra",
+        "@rtlmeter//:suite",
+    ],
+    tags = [
+        "manual",
+        "no-remote-exec",
+        "no-sandbox",
+    ],
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@googletest//:gtest_main",
+        "@yaml-cpp//:yaml-cpp",
+    ],
+)
+
 # How long an expression the compiler follows is set by the size of its own
 # frames, which a build under the sanitizer changes several times over.
 cc_test(

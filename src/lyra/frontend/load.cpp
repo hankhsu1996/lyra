@@ -8,33 +8,12 @@
 #include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/driver/CompatSettings.h>
 #include <slang/driver/Driver.h>
-#include <slang/text/SourceManager.h>
 
-#include "lyra/diag/source_manager.hpp"
-#include "lyra/frontend/slang_source_mapper.hpp"
+#include "lyra/frontend/slang_source_manager.hpp"
 
 namespace lyra::frontend {
 
 namespace {
-
-// Copies every buffer slang loaded into Lyra's own source table, so a span
-// raised during lowering renders against the same text the front end read.
-// Driven from the loaded set rather than from what the caller named, because
-// an include or a filelist entry reaches the compilation without ever being
-// named on the command line.
-void RegisterBuffers(
-    const slang::SourceManager& sources, diag::SourceManager& diag_sources,
-    SlangSourceMapper& mapper) {
-  for (const auto buffer : sources.getAllBuffers()) {
-    if (mapper.Contains(buffer)) {
-      continue;
-    }
-    const auto file_id = diag_sources.AddFile(
-        sources.getFullPath(buffer).string(),
-        std::string(sources.getSourceText(buffer)));
-    mapper.Register(buffer, file_id);
-  }
-}
 
 // Where Lyra reads SystemVerilog differently from the tool whose front end it
 // borrows. Applied before the caller's own options, so the caller still
@@ -47,11 +26,10 @@ void ApplyBaseline(slang::driver::Driver& driver) {
   // slang answers to the standard; Lyra answers to the designs people already
   // simulate, and those were written against tools that depart from it in
   // well-known ways. Rejecting a design every other simulator runs helps
-  // nobody, so the tolerant reading is the default and strictness is asked
-  // for. This is the whole of that policy: no per-diagnostic list of Lyra's
-  // own, which would drift from the front end that defines them.
+  // nobody, so the most tolerant reading the front end has is the default and
+  // strictness is asked for.
   if (!driver.options.compat) {
-    driver.options.compat = slang::driver::CompatMode::Vcs;
+    driver.options.compat = slang::driver::CompatMode::All;
   }
 }
 
@@ -63,10 +41,9 @@ auto Elaborate(slang::driver::Driver& driver) -> std::optional<ParseResult> {
     return std::nullopt;
   }
 
-  ParseResult out;
-  out.compilation = driver.createCompilation();
-  RegisterBuffers(driver.sourceManager, out.diag_sources, out.source_mapper);
-  return out;
+  return ParseResult{
+      .compilation = driver.createCompilation(),
+      .diag_sources = SlangSourceManager(driver.sourceManager)};
 }
 
 auto ReportSlangDiagnostics(

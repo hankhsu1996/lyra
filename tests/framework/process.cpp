@@ -124,9 +124,18 @@ auto RunChildProcess(
   }
   argv.push_back(nullptr);
 
+  // The child leads a process group of its own, so that ending it ends what it
+  // started too: a descendant left running holds the pipes open, and the wait
+  // for them would last as long as the descendant does.
+  posix_spawnattr_t attributes{};
+  posix_spawnattr_init(&attributes);
+  posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+  posix_spawnattr_setpgroup(&attributes, 0);
+
   pid_t pid = 0;
   int spawn_result = posix_spawn(
-      &pid, exe_str.c_str(), &actions, nullptr, argv.data(), environ);
+      &pid, exe_str.c_str(), &actions, &attributes, argv.data(), environ);
+  posix_spawnattr_destroy(&attributes);
   posix_spawn_file_actions_destroy(&actions);
 
   close(stdout_pipe[1]);
@@ -161,7 +170,7 @@ auto RunChildProcess(
     const int poll_timeout_ms = ComputePollTimeoutMs(deadline, has_timeout);
     const int ready = poll(fds.data(), fds.size(), poll_timeout_ms);
     if (ready < 0 && errno != EINTR) {
-      kill(pid, SIGKILL);
+      kill(-pid, SIGKILL);
       ReapKilledChild(pid);
       outcome.termination = TerminationKind::kWaitFailed;
       outcome.stderr_text =
@@ -211,7 +220,7 @@ auto RunChildProcess(
 
     if (!child_reaped && has_timeout &&
         std::chrono::steady_clock::now() >= deadline) {
-      kill(pid, SIGKILL);
+      kill(-pid, SIGKILL);
       timed_out = true;
       auto reap_result = WaitPidBlocking(pid, &status);
       if (!reap_result) {
