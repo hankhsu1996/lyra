@@ -114,8 +114,11 @@ Unlocks the runtime side of `instantiation/param_slots`.
 - [ ] B12 -- A module declared inside another that reads a variable or a net of the module declaring
       it (LRM 23.9) is refused: a body reaches storage outside itself only through a hierarchical
       name or a port.
-- [ ] B13 -- `%l` and `%L` (LRM 33.7), which print the library and cell an instance is bound to, are
-      refused as unknown format specifiers.
+- [x] B13 -- `%l` and `%L` (LRM 33.7) print the library and cell an instance is bound to, as
+      `library.cell`, in a literal format string and in one known only when it is formatted. The
+      text is the same for every instance of a cell. A module declared inside another prints the
+      enclosing cell, a package's text prints `library.package`, and text in the compilation-unit
+      scope, which the standard gives no cell, prints `library.$unit`.
 - [x] B14 -- Two cells of one name mapped to one library build as LRM 33.3.1 has it: the later one
       replaces the earlier, with a warning. `--compat default` makes it an error.
 - [x] B15 -- A module carrying an interface that itself carries an interface standing inside that

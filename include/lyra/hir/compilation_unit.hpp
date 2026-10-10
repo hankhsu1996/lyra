@@ -52,6 +52,10 @@ struct CompilationUnit {
   // compiled once per specialization share it, and a unit the source gave no
   // identifier has none.
   std::string source_name;
+  // The library and cell the unit's text was compiled into, as `library.cell`
+  // (LRM 33.2.1), which is what a `%l` written anywhere in it prints (LRM
+  // 33.7).
+  std::string library_binding;
   UnitRole role = UnitRole::kObjectRoot;
   TypePool types;
   BuiltinHirTypes builtins;

@@ -2038,12 +2038,14 @@ auto lyra_rt_managedref_make_print_value_item(
 // literal and so no print item could be built for it at compile time: the text
 // is parsed against the arguments as it is rendered. Each argument borrows the
 // value it formats, which holds because both belong to the full-expression that
-// performs the format. The hierarchical name a `%m` renders and the
-// time scale a `%t` is read against are facts of the call site, so they arrive
-// as operands rather than being reached from here.
+// performs the format. The hierarchical name a `%m` renders, the library and
+// cell a `%l` renders and the time scale a `%t` is read against are facts of
+// the call site, so they arrive as operands rather than being reached from
+// here.
 auto lyra_rt_format_runtime(
     const void* format, LyraSpan args, const void* scope_path,
-    const void* time_format, std::int64_t timeunit_power, void* out) -> void*;
+    const void* library_binding, const void* time_format,
+    std::int64_t timeunit_power, void* out) -> void*;
 auto lyra_rt_integral_make_format_arg(
     const void* value, std::int64_t value_width, bool value_is_signed,
     bool value_is_four_state, void* out) -> void*;

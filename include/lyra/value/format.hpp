@@ -345,15 +345,16 @@ using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
 // here and each one takes the next operand in turn, which is the whole
 // difference from the walk above: there the directives are already parsed and
 // each operand already carries its spec. `scope_path` is the hierarchical name
-// a `%m` directive renders (LRM 21.2.1.5) and `timeunit_power` scales a `%t`
-// against the calling scope's time unit (LRM 21.2.1.3) -- both are facts of the
-// call site, which cannot be read off the format string. Supplying too few
-// operands leaves the unsatisfied directives empty and too many ignores the
+// a `%m` directive renders (LRM 21.2.1.5), `library_binding` the library and
+// cell a `%l` directive renders (LRM 33.7), and `timeunit_power` scales a `%t`
+// against the calling scope's time unit (LRM 21.2.1.3) -- all three are facts
+// of the call site, which cannot be read off the format string. Supplying too
+// few operands leaves the unsatisfied directives empty and too many ignores the
 // excess, so a count mismatch does not stop the simulation (LRM 21.3.3). A
 // malformed directive throws.
 [[nodiscard]] auto FormatRuntime(
     const String& format, std::span<const FormatArg> args,
-    const String& scope_path, const TimeFormat& time_format,
-    std::int64_t timeunit_power) -> String;
+    const String& scope_path, const String& library_binding,
+    const TimeFormat& time_format, std::int64_t timeunit_power) -> String;
 
 }  // namespace lyra::value

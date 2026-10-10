@@ -15,8 +15,8 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/format_parse.hpp"
-#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_format.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/string.hpp"
@@ -138,8 +138,8 @@ auto Format(std::span<const PrintItem> items, const TimeFormat& time_format)
 
 auto FormatRuntime(
     const String& format, std::span<const FormatArg> args,
-    const String& scope_path, const TimeFormat& time_format,
-    std::int64_t timeunit_power) -> String {
+    const String& scope_path, const String& library_binding,
+    const TimeFormat& time_format, std::int64_t timeunit_power) -> String {
   const auto power = static_cast<std::int32_t>(timeunit_power);
   const FormatParseResult parsed = ParseFormatString(format.View());
   if (parsed.error != FormatParseError::kNone) {
@@ -150,6 +150,7 @@ auto FormatRuntime(
 
   const FormatContext ctx{.time_format = &time_format};
   const FormatArg path_arg{scope_path};
+  const FormatArg binding_arg{library_binding};
   std::string out;
   std::size_t next_arg = 0;
   for (const FormatDirective& directive : parsed.directives) {
@@ -169,6 +170,9 @@ auto FormatRuntime(
         break;
       case FormatDirective::Role::kModulePath:
         out.append(Format(spec(FormatKind::kString), path_arg, ctx));
+        break;
+      case FormatDirective::Role::kLibraryBinding:
+        out.append(Format(spec(FormatKind::kString), binding_arg, ctx));
         break;
       case FormatDirective::Role::kValue:
         // LRM 21.3.3: a directive with no operand left to take contributes

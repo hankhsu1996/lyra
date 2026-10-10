@@ -437,8 +437,9 @@ auto Carry(
   }
 
   if (design.check) {
-    const auto checked = RunFrom(
-        run, std::format("bash {}", ShellQuoted(design.check->string())));
+    // The suite runs a check as a program of its own, so each is written in
+    // whatever its first line names.
+    const auto checked = RunFrom(run, ShellQuoted(design.check->string()));
     if (checked.termination != TerminationKind::kExitedNormally) {
       return Stop{.at = Step::kCheck, .said = Said(checked)};
     }

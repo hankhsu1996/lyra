@@ -43,11 +43,10 @@ once per `PrintValueItem`; the call resolves through `arg.format_fn` into the ri
 central catalog of formattable types.
 
 Each `Formatter<T>` declares the signature it actually needs. Formatters that consult design-wide
-context (`%t` needs `TimeFormat`, future `%m` would need the scope) take `FormatContext`; those that
-do not (string, aggregate -- which never carries a context-bound spec kind) take just
-`(spec, value)`. `MakeFormatArg`'s lambda absorbs the variance via
-`if constexpr (requires { Format(spec, v, ctx); })`, so `FormatArg.format_fn` stays uniform without
-forcing every formatter to accept an unused parameter.
+context (`%t` needs `TimeFormat`) take `FormatContext`; those that do not (string, aggregate --
+which never carries a context-bound spec kind) take just `(spec, value)`. `MakeFormatArg`'s lambda
+absorbs the variance via `if constexpr (requires { Format(spec, v, ctx); })`, so
+`FormatArg.format_fn` stays uniform without forcing every formatter to accept an unused parameter.
 
 ### Why not a central `RuntimeValueView` variant
 

@@ -532,16 +532,9 @@ auto DefinitionName(
 
   // A nested declaration is one of the body declaring it, and that body is one
   // the instance stands in, since the name is visible nowhere else.
-  const auto* holder = definition.getParentScope()
-                           ->asSymbol()
-                           .as_if<slang::ast::InstanceBodySymbol>();
-  if (holder == nullptr) {
-    throw InternalError(
-        "DefinitionName: a design element is declared outside every other or "
-        "in the body of one");
-  }
   return std::format(
-      "{}::{}", UnitWhileNaming(*holder, policy), definition.name);
+      "{}::{}", UnitWhileNaming(BodyDeclaring(definition), policy),
+      definition.name);
 }
 
 auto SpecializationKeyOf(
