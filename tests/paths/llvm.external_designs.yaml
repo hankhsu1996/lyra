@@ -9,14 +9,14 @@
 # stands between Lyra and each design, and an entry leaves it only by the design
 # getting all the way.
 BlackParrot:1x1:hello:
-  stops: build
-  says: unknown format specifier '%L'
+  stops: run
+  says: the current time slot did not settle
 Caliptra:default:hello:
   stops: build
   says: taking over part of a target is not yet supported
 HammerBlade:16x8:hello:
-  stops: build
-  says: unknown format specifier '%L'
+  stops: run
+  says: Segmentation fault
 HammerBlade:2x1:hello:
   stops: build
   says: unknown format specifier '%L'
