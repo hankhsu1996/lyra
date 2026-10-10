@@ -189,6 +189,10 @@ void RequirePositive(
 
 }  // namespace
 
+auto RandomDraw(std::int32_t& seed) -> std::int32_t {
+  return UniformIn(seed, kDistIntMin, kDistIntMax);
+}
+
 auto DistUniform(std::int64_t seed, std::int64_t start, std::int64_t end)
     -> DistributionDraw {
   DistInt state = IntegerArgument(seed);

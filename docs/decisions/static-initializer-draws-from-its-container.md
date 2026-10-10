@@ -40,9 +40,9 @@ lowering supplies. It is state the runtime holds while something runs, for the s
 engine handle is, and the entry reads it rather than being told.
 
 Read from the other end and the same answer falls out: every randomization entry -- `$urandom`,
-`$urandom_range`, `$random`, and `shuffle`, `randcase`, `randsequence` and `randomize` when they
-land -- does one thing with what it is given, which is draw the next value from it. None branches on
-it, so what they are given is one generator and never a choice between two kinds of owner.
+`$urandom_range`, and `shuffle`, `randcase`, `randsequence` and `randomize` when they land -- does
+one thing with what it is given, which is draw the next value from it. None branches on it, so what
+they are given is one generator and never a choice between two kinds of owner.
 
 ### The container is the one the standard names, and it names the seed
 

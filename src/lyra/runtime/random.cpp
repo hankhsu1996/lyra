@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 
+#include "lyra/runtime/distribution.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/integral.hpp"
@@ -43,8 +44,7 @@ auto UrandomRange(
 }
 
 auto Random(RuntimeEffects& runtime) -> value::Int {
-  return value::Int::FromInt(
-      static_cast<std::int32_t>(runtime.Running().rng.NextValue()));
+  return value::Int::FromInt(RandomDraw(runtime.UnseededRandomSeed()));
 }
 
 }  // namespace lyra::runtime

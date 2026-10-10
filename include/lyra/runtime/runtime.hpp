@@ -140,10 +140,10 @@ class Runtime final : public RuntimeEffects {
   void QueueStart(StartKind kind, Activation* top);
 
   // Takes a static initialization on as what is running, and gives it back.
-  // Its generator starts from `seed`, which the container's initialization RNG
-  // chose (LRM 18.14.1). Public because the entries generated code reaches live
+  // Its generator is `rng`, which the container's initialization RNG handed
+  // out (LRM 18.14.1). Public because the entries generated code reaches live
   // outside this class.
-  void EnterStaticInit(RandomSeed seed);
+  void EnterStaticInit(DrawRng rng);
   void LeaveStaticInit();
 
   // Takes the one bring-up a namespace's initializers get, answering false
@@ -270,6 +270,10 @@ class Runtime final : public RuntimeEffects {
   // 35.5.3). Whichever is running installs one: a process the state it owns,
   // a static initialization one of its own.
   RunningState* running_ = nullptr;
+  // The stream of every `$random` called with no seed (LRM 20.14.1). The
+  // standard states no start for it; zero is what the algorithm itself
+  // replaces with its own constant (LRM Annex N).
+  std::int32_t unseeded_random_seed_ = 0;
   // The static initializations under way, which own no object to keep their
   // state on, and whose entry and exit are two separate calls from generated
   // code with no frame spanning them -- so the runtime holds the stack. A deque

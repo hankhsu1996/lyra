@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <deque>
 #include <exception>
+#include <list>
 #include <memory>
 #include <vector>
 
@@ -98,9 +98,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // to the same scope the outer body's would. The registration site owns
   // the process's shared handle; the process's `owning_scope_` is a
   // borrowed pointer whose lifetime is that of the owning scope.
-  // `seed` starts this process's own generator. LRM 18.14.1 fixes where it
-  // comes from by how the process was created: a dynamically created one draws
-  // it from the process that created it, a static one from the initialization
+  // `rng` is this process's own generator. LRM 18.14.1 fixes where it comes
+  // from by how the process was created: a dynamically created one takes it
+  // out of the process that created it, a static one out of the initialization
   // RNG of the unit instance its declaration belongs to.
   // `written_at` is where the source writes the procedure this process runs,
   // as text that stands for the whole run; a process the design spawns takes
@@ -108,7 +108,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // cannot wait for a safe moment -- the run being stopped from outside -- may
   // neither allocate nor call anything that does.
   RuntimeProcess(
-      Scope* owning_scope, Coroutine<void> coroutine, RandomSeed seed,
+      Scope* owning_scope, Coroutine<void> coroutine, DrawRng rng,
       const char* written_at);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
@@ -553,9 +553,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   std::vector<std::shared_ptr<RuntimeProcess>> children_;
   // The disable targets enclosing this execution, outermost first: those
   // inherited from the spawner, then those entered by this execution's own
-  // frames. Entering a target pushes it and leaving pops it. A deque because
-  // each target's list points at the memberships held here.
-  std::deque<EnclosingTarget> enclosing_targets_;
+  // frames. Entering a target pushes it and leaving pops it. Each is on its
+  // own because its target's list points at the membership it holds, and most
+  // processes are inside none.
+  std::list<EnclosingTarget> enclosing_targets_;
   // The `wait fork` condition: every `wait fork` wait this thread holds enrols
   // here, and only the one it is stopped at is parked.
   IntrusiveList<WaitMembership> wait_fork_condition_;

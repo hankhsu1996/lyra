@@ -1,8 +1,10 @@
 #include "lyra/runtime/wait.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/observable.hpp"
@@ -13,6 +15,9 @@
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
+
+Awaiter::Awaiter(std::size_t places) : memberships_(places) {
+}
 
 Awaiter::~Awaiter() = default;
 
@@ -34,7 +39,12 @@ void Awaiter::EnrolOn(IntrusiveList<WaitMembership>& target) {
 void Awaiter::Enrol(
     IntrusiveList<WaitMembership>& target, const ErasedReference* through,
     value::BitPositions reads, Observation observation) {
-  WaitMembership& membership = memberships_.emplace_back();
+  if (enrolled_ == memberships_.size()) {
+    throw InternalError(
+        "Awaiter::Enrol: an awaiter enrolled on more places than it was built "
+        "to watch");
+  }
+  WaitMembership& membership = memberships_[enrolled_++];
   membership.awaiter = this;
   membership.through = through;
   membership.reads = reads;

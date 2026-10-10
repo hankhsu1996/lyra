@@ -26,7 +26,8 @@ class JoinAwaiter final : public StateAwaiter {
   JoinAwaiter(
       std::vector<std::shared_ptr<RuntimeProcess>> branches,
       std::size_t terminations_needed)
-      : branches_(std::move(branches)),
+      : StateAwaiter(branches.size()),
+        branches_(std::move(branches)),
         terminations_needed_(terminations_needed) {
     for (const std::shared_ptr<RuntimeProcess>& branch : branches_) {
       EnrolOn(branch->Termination());
@@ -58,7 +59,8 @@ class JoinAwaiter final : public StateAwaiter {
 // its own on a restart, where another process is the one running.
 class WaitForkAwaiter final : public StateAwaiter {
  public:
-  explicit WaitForkAwaiter(RuntimeProcess& process) : process_(&process) {
+  explicit WaitForkAwaiter(RuntimeProcess& process)
+      : StateAwaiter(1), process_(&process) {
     EnrolOn(process.WaitForkCondition());
   }
 

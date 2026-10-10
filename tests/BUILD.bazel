@@ -470,6 +470,22 @@ cc_test(
     ],
 )
 
+# How much a program holds for each process is set by what the runtime keeps
+# in one, and a build under the sanitizer adds its own to every allocation.
+cc_test(
+    name = "run_memory_tests",
+    size = "medium",
+    srcs = ["run_memory_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"],
+    tags = ["cost"],
+    deps = [
+        ":framework",
+        "//:driver",
+        "@googletest//:gtest_main",
+    ],
+)
+
 cc_test(
     name = "emitted_project_tests",
     # Each case builds an emitted project with the host compiler, several of

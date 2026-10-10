@@ -188,6 +188,9 @@ class RuntimeEffects {
   // imported subroutine (LRM 35.5.3) reports a null scope rather than faulting.
   [[nodiscard]] auto TryRunning() -> RunningState*;
 
+  // The seed every `$random` called with no seed advances (LRM 20.14.1).
+  [[nodiscard]] auto UnseededRandomSeed() -> std::int32_t&;
+
   // A fatal report Lyra writes for the design, followed by the end of the run
   // (LRM 20.10). It is the composition a `$fatal` makes, minus the departure --
   // for a condition found where nothing may leave by unwinding, which is any

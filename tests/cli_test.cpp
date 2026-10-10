@@ -40,6 +40,7 @@ using lyra::test::ReadJson;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
 using lyra::test::RunLyraFrom;
+using lyra::test::RunUnderAddressLimit;
 using lyra::test::TerminationKind;
 using lyra::test::WriteTrivialSource;
 using namespace std::chrono_literals;
@@ -1414,11 +1415,7 @@ TEST(LyraBuild, AValueEndsWithTheExpressionThatMadeIt) {
   ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
       << built.stdout_text << built.stderr_text;
 
-  auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value());
-  const std::vector<std::string> capped = {
-      "-c", std::format("ulimit -v 524288 && exec '{}'", program.string())};
-  const auto ran = RunChildProcess(*sh_or, capped, 60s);
+  const auto ran = RunUnderAddressLimit(program, 524288);
   EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
       << ran.stdout_text << ran.stderr_text;
   EXPECT_NE(ran.stdout_text.find("low=64"), std::string::npos)

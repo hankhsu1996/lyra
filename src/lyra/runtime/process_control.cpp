@@ -32,7 +32,7 @@ auto ProcessNodeOf(const value::ObjectRef& self) -> RuntimeProcess& {
 class ProcessTerminationAwaiter final : public StateAwaiter {
  public:
   explicit ProcessTerminationAwaiter(value::ObjectRef target)
-      : target_(std::move(target)) {
+      : StateAwaiter(1), target_(std::move(target)) {
     EnrolOn(ProcessNodeOf(target_).Termination());
   }
 

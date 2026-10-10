@@ -291,12 +291,13 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
         "RuntimeEffects::Spawn: no ambient process to parent the branch to");
   }
   RuntimeProcess& parent = *rt.current_process_.load();
-  // Hierarchical seeding (LRM 18.14.1): the branch starts from the spawner's
-  // next value, so a whole subtree of threads follows from the seed of the one
-  // at its root and the order the branches then run in does not move any of it.
+  // Hierarchical seeding (LRM 18.14.1): the branch's generator is taken out of
+  // the spawner's, so a whole subtree of threads follows from the seed of the
+  // one at its root and the order the branches then run in does not move any
+  // of it.
   auto child = std::make_shared<RuntimeProcess>(
-      parent.OwningScope(), std::move(coroutine),
-      parent.Running().rng.NextSeed(), parent.WrittenAt());
+      parent.OwningScope(), std::move(coroutine), parent.Running().rng.Split(),
+      parent.WrittenAt());
   Activation* const activation = child->TopActivation();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than
@@ -319,10 +320,10 @@ void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
   }
   // The carrier evaluates nothing of the design -- what it writes and where it
   // writes it were both settled where the statement was reached -- so it draws
-  // no random values, and taking a seed from the process that reached the
-  // statement would move that process's own stream (LRM 18.14.1).
+  // no random values, and taking a generator out of the process that reached
+  // the statement would move that process's own stream (LRM 18.14.1).
   auto carrier = std::make_shared<RuntimeProcess>(
-      reached_by->OwningScope(), std::move(coroutine), RandomSeed{0},
+      reached_by->OwningScope(), std::move(coroutine), DrawRng{RandomSeed{0}},
       reached_by->WrittenAt());
   Activation* const activation = carrier->TopActivation();
   // No lineage and no disable membership: the standard makes no process of the
@@ -363,6 +364,10 @@ auto RuntimeEffects::Running() -> RunningState& {
 
 auto RuntimeEffects::TryRunning() -> RunningState* {
   return AsRuntime(*this).running_;
+}
+
+auto RuntimeEffects::UnseededRandomSeed() -> std::int32_t& {
+  return AsRuntime(*this).unseeded_random_seed_;
 }
 
 void RuntimeEffects::ReportDesignFailure(std::string_view message) {

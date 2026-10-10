@@ -24,13 +24,12 @@ auto UrandomRange(
     RuntimeEffects& runtime, std::int64_t maxval, std::int64_t minval)
     -> value::IntUnsigned;
 
-// $random called with no seed (LRM 20.14.1). The standard gives the seeded form
-// a generator of its own and states no source for the bits when the call
-// carries no seed, and LRM 18.14 does not list `$random` among what random
-// stability covers, so nothing fixes where an unseeded draw comes from. It
-// comes from the generator the call draws from, which makes it a signed
-// reading of the same 32 bits `$urandom` answers with and gives it the same
-// locality.
+// $random called with no seed (LRM 20.14.1). The algorithm is the standard's
+// whether or not the call names a seed (LRM 20.14, Annex N), so this is the
+// seeded draw over a seed the run keeps. The run keeps one because the values
+// are meant to be the same in every implementation (LRM 20.14), which a start
+// taken from a process's own generator would not be, and because LRM 18.14
+// does not list `$random` among what random stability covers.
 auto Random(RuntimeEffects& runtime) -> value::Int;
 
 }  // namespace lyra::runtime

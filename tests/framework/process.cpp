@@ -18,6 +18,8 @@
 #include <unistd.h>
 #include <vector>
 
+#include "lyra/driver/subprocess.hpp"
+
 namespace lyra::test {
 namespace {
 
@@ -247,6 +249,19 @@ auto RunChildProcess(
 
   DecodeWaitStatus(status, outcome);
   return outcome;
+}
+
+auto RunUnderAddressLimit(
+    const std::filesystem::path& program, int kibibytes,
+    std::chrono::seconds timeout) -> ProcessOutcome {
+  const auto sh = driver::FindOnPath("sh");
+  if (!sh) {
+    return {};
+  }
+  const std::vector<std::string> args = {
+      "-c",
+      std::format("ulimit -v {} && exec '{}'", kibibytes, program.string())};
+  return RunChildProcess(*sh, args, timeout);
 }
 
 }  // namespace lyra::test

@@ -1,10 +1,11 @@
 // $random returns a new 32-bit random number each time it is called, as a
 // signed integer that may be positive or negative (LRM 20.14.1). Called with no
-// seed it names no stream of its own, and the standard fixes no values for it,
-// so what a case can hold it to is the shape of what it returns rather than
-// which numbers come out: 32 bits wide, the range LRM 20.14.1 gives as its own
-// example, and that the numbers move at all -- an implementation answering with
-// one number forever is not returning a new one each call.
+// seed it names no variable of its own, and the standard states no start for
+// the stream it then advances, so what this case holds it to is the shape of
+// what it returns rather than which numbers come out: 32 bits wide, the range
+// LRM 20.14.1 gives as its own example, and that the numbers move at all -- an
+// implementation answering with one number forever is not returning a new one
+// each call.
 module Top;
   int drawn;
   int previous;

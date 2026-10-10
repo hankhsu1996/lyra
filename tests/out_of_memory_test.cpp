@@ -8,23 +8,21 @@
 // runtime, so this is a statement about the program as it is shipped.
 
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "lyra/driver/subprocess.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tests/framework/process.hpp"
 
 namespace {
 
 using lyra::test::MakeScratchDir;
-using lyra::test::ProcessOutcome;
 using lyra::test::ResolveLyra;
 using lyra::test::RunChildProcess;
+using lyra::test::RunUnderAddressLimit;
 using lyra::test::TerminationKind;
 using namespace std::chrono_literals;
 
@@ -82,19 +80,6 @@ endmodule
 )";
 
 constexpr std::string_view kSaidInWords = "lyra: out of memory";
-
-// Runs `program` in a shell that has first limited its own address space to
-// `kibibytes`.
-auto RunUnderAddressLimit(const std::filesystem::path& program, int kibibytes)
-    -> ProcessOutcome {
-  auto sh_or = lyra::driver::FindOnPath("sh");
-  EXPECT_TRUE(sh_or.has_value());
-  if (!sh_or) return {};
-  const std::vector<std::string> args = {
-      "-c",
-      std::format("ulimit -v {} && exec '{}'", kibibytes, program.string())};
-  return RunChildProcess(*sh_or, args, 60s);
-}
 
 TEST(OutOfMemory, IsSaidInWordsWhereverTheRequestWasMade) {
   const auto lyra = ResolveLyra();

@@ -368,6 +368,12 @@ closed below.
       Here it needs a hash, or a total order, that agrees with `===` for every type an element or a
       `with` clause can have, on both backends. Not blocked.
 
+- [x] A waiting process holds what it has: the place it resumes at, a record for each place it
+      watches and each disable target it is inside, and a small random generator. It costs about a
+      kilobyte and a half, and a test holds a design of many waiting processes to an address limit.
+
+- [ ] How many processes a design makes is not looked at: a port connection is still one.
+
 ## Construction / compile-time performance
 
 The cost of producing compiled artifacts and of building the object graph at time zero. The primary

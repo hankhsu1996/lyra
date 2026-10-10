@@ -31,4 +31,10 @@ auto RunChildProcess(
     const std::filesystem::path& exe, std::span<const std::string> args,
     std::chrono::seconds timeout = std::chrono::seconds{30}) -> ProcessOutcome;
 
+// Runs `program` in a shell that has first limited its own address space to
+// `kibibytes`, so a program that asks for more is refused by its host.
+auto RunUnderAddressLimit(
+    const std::filesystem::path& program, int kibibytes,
+    std::chrono::seconds timeout = std::chrono::seconds{60}) -> ProcessOutcome;
+
 }  // namespace lyra::test
