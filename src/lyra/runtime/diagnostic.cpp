@@ -111,10 +111,15 @@ void DiagnosticDispatcher::Emit(
   line += SeverityText(severity);
   line += ": ";
   line += body;
-  const std::string context = context_ ? context_() : std::string{};
-  if (!context.empty()) {
+  if (context_) {
+    const Context context = context_();
     line += " (";
-    line += context;
+    line += context.scope_and_time;
+    // A report with a call site of its own already says where it was made.
+    if (origin.empty() && !context.procedure.empty()) {
+      line += ", in the procedure at ";
+      line += context.procedure;
+    }
     line += ")";
   }
   line += "\n";

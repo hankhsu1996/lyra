@@ -1,0 +1,14 @@
+# What the cpp path makes again that an edit gave no other meaning, or keeps
+# that it gave one: one entry per incremental case, the case's name and how its
+# build departs from what the case states, in the words the check reports it in.
+# `made X` is a unit made again that the edit left meaning what it did, and
+# `kept X` one kept that it did not.
+#
+# A case is held to exactly what is listed for it. A new departure fails the
+# run, and so does one listed that has stopped, until it goes -- so this file
+# only ever shrinks, which makes it the record of what an edit still costs on
+# this path that it should not.
+class_a_referrer_never_named: [made UsesLogger]
+comment_inside_a_module: [made Commented]
+local_variable_renamed: [made Renames]
+text_moved_down: [made Connects, made Drives, made Reports, made Runs]

@@ -2621,16 +2621,17 @@ auto lyra_rt_dist_erlang(
 }
 
 void lyra_rt_register_initial(
-    void* self, void* unit_instance, void* coroutine) {
+    void* self, void* unit_instance, void* coroutine, const char* written_at) {
   RegisterInitialProcess(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)));
+      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
 }
 
-void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine) {
+void lyra_rt_register_final(
+    void* self, void* unit_instance, void* coroutine, const char* written_at) {
   RegisterFinalProcess(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)));
+      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
 }
 
 void lyra_rt_enter_scope_static_init(void* runtime, void* unit_instance) {

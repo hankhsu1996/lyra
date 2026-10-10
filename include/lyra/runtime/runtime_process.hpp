@@ -102,8 +102,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // comes from by how the process was created: a dynamically created one draws
   // it from the process that created it, a static one from the initialization
   // RNG of the unit instance its declaration belongs to.
+  // `written_at` is where the source writes the procedure this process runs,
+  // as text that stands for the whole run; a process the design spawns takes
+  // its spawner's. It is held as plain characters because the one reader that
+  // cannot wait for a safe moment -- the run being stopped from outside -- may
+  // neither allocate nor call anything that does.
   RuntimeProcess(
-      Scope* owning_scope, Coroutine<void> coroutine, RandomSeed seed);
+      Scope* owning_scope, Coroutine<void> coroutine, RandomSeed seed,
+      const char* written_at);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -134,6 +140,11 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // outer body's would.
   [[nodiscard]] auto OwningScope() const -> Scope* {
     return owning_scope_;
+  }
+
+  // Empty where no source text states the procedure.
+  [[nodiscard]] auto WrittenAt() const noexcept -> const char* {
+    return written_at_;
   }
 
   // The process's internal execution state. A `process` handle (LRM 9.7) reads
@@ -492,6 +503,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   void EraseChild(RuntimeProcess& child);
 
   Scope* owning_scope_;
+  const char* written_at_;
   Coroutine<void> coroutine_;
   RunningState running_;
   // The frame the engine will resume next for this process (invariant: a

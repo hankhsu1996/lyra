@@ -985,9 +985,14 @@ void InstallScopeRoutes(
 // instance is the scope the artifact's own class tree is rooted at, a fixed
 // number of steps out from wherever the process is declared, so the call
 // reaches it by typed navigation over a distance this walk already knows.
+//
+// `written_at` is the source text the process runs, which the registration
+// hands on as the text a run names the process by when it has to say what was
+// running; a process no source text states passes no place.
 void AppendProcessRegistration(
     UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
-    mir::CallableId body, support::BuiltinFn registration) {
+    mir::CallableId body, support::BuiltinFn registration,
+    diag::SourceSpan written_at) {
   mir::Block& block = *activate_frame.current_block;
   const mir::TypeId self_ptr_type =
       activate_frame.current_class->self_pointer_type;
@@ -1011,12 +1016,20 @@ void AppendProcessRegistration(
       block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
   const mir::ExprId unit_instance = BuildEnclosingScopeReceiver(
       activate_frame, unit_lowerer.Unit(), activate_frame.HopsToUnitRoot());
+  const mir::ExprId place = block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::StringLiteral{
+                  .value = FormatRuntimeOriginString(
+                      written_at, unit_lowerer.SourceManager())},
+          .type = unit_lowerer.Unit().types.Intern(
+              mir::Type{mir::MachineCStringType{}})});
   const mir::ExprId reg_call = block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = registration},
-                  .arguments = {reg_self, unit_instance, body_call}},
+                  .arguments = {reg_self, unit_instance, body_call, place}},
           .type = unit_lowerer.Unit().builtins.void_type});
   block.AppendStmt(mir::ExprStmt{.expr = reg_call});
 }
@@ -1396,7 +1409,7 @@ auto BindInputPort(
   if (!drive) return std::unexpected(std::move(drive.error()));
   AppendProcessRegistration(
       unit_lowerer, activate_frame, mir_class.callables.Add(*std::move(drive)),
-      support::BuiltinFn::kRegisterInitial);
+      support::BuiltinFn::kRegisterInitial, source.span);
   return {};
 }
 
@@ -1510,7 +1523,7 @@ auto InstallPortConnections(
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body,
-        support::BuiltinFn::kRegisterInitial);
+        support::BuiltinFn::kRegisterInitial, pc.span);
   }
   return {};
 }
@@ -3061,7 +3074,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             [](const hir::AlwaysCombProcess&) { return kStarts; },
             [](const hir::AlwaysLatchProcess&) { return kStarts; }},
         p.kind);
-    AppendProcessRegistration(unit_lowerer, activate_frame, body, registration);
+    AppendProcessRegistration(
+        unit_lowerer, activate_frame, body, registration, p.span);
     for (const StaticVarBinding& binding : statics) {
       auto integ = IntegrateStaticInitializer(
           process_lowerer, p.body,
@@ -3078,14 +3092,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   InstallScopeRoutes(*this, resolve_frame);
 
   for (const hir::ContinuousAssignId id : hir_scope.continuous_assigns.Ids()) {
+    const hir::ContinuousAssign& assign = hir_scope.continuous_assigns.Get(id);
     auto method_or = LowerContinuousAssign(
-        *this, ctor_frame, resolve_frame, init_frame,
-        hir_scope.continuous_assigns.Get(id));
+        *this, ctor_frame, resolve_frame, init_frame, assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body,
-        support::BuiltinFn::kRegisterInitial);
+        support::BuiltinFn::kRegisterInitial, assign.span);
   }
 
   // One sampler per history, not one per clocking event. Two histories under
@@ -3099,9 +3113,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (!sampler_or) return std::unexpected(std::move(sampler_or.error()));
     const mir::CallableId body =
         mir_class.callables.Add(std::move(*sampler_or));
+    // A sampler is the tool's own, kept for the sampled value functions that
+    // read its history, and no one place in the source writes it.
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body,
-        support::BuiltinFn::kRegisterInitial);
+        support::BuiltinFn::kRegisterInitial, diag::SourceSpan{});
   }
 
   // The classes this scope replicates, lowered against it: their bodies reach
@@ -3124,14 +3140,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   installed_assertions.reserve(hir_scope.concurrent_assertions.size());
   for (const hir::ConcurrentAssertionId id :
        hir_scope.concurrent_assertions.Ids()) {
+    const hir::ConcurrentAssertionDecl& assertion =
+        hir_scope.concurrent_assertions.Get(id);
     auto installed = LowerConcurrentAssertion(
-        *this, mir_class, ctor_frame, scopes_, id,
-        hir_scope.concurrent_assertions.Get(id));
+        *this, mir_class, ctor_frame, scopes_, id, assertion);
     if (!installed) return std::unexpected(std::move(installed.error()));
     for (const mir::CallableId process : installed->processes) {
       AppendProcessRegistration(
           unit_lowerer, activate_frame, process,
-          support::BuiltinFn::kRegisterInitial);
+          support::BuiltinFn::kRegisterInitial, assertion.span);
     }
     installed_assertions.emplace_back(id, *installed);
   }

@@ -57,7 +57,11 @@ under each item, and the conformance gaps at the end.
       reported and runs nothing.
 - [x] P3 -- `always` / `always_ff` (LRM 9.2.2). `always_ff` collapses to the same shape as `always`
       because the LRM 9.2.2.4 restrictions are lint-only and the frontend already enforces them.
-      Pathological zero-delay loops are caught by the engine's settle limit.
+      Procedures that keep waking each other with no delay between them (LRM 9.2.2, 12.7.6) end the
+      run at a bound on one time slot's passes, with a report naming each procedure the last passes
+      ran by where it is written. A procedure that never stops to wait is not ended, since it cannot
+      be told from one taking long: a run stopped from outside says the time and the procedure it
+      was in. Not yet: the statement inside that procedure, which needs a source place below a body.
 - [x] P10 / P13 -- `always_comb` / `always_latch` (LRM 9.2.2.2.1) and `always @*` / `always @(*)`
       (LRM 9.4.2.2). The block's own text is analyzed, and each function an `always_comb` or
       `always_latch` calls reports what it reads and writes once, where the process is created,

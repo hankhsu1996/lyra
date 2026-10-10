@@ -377,6 +377,30 @@ cc_test(
     ],
 )
 
+# Each case is built before its edit and after it on both backends. The
+# execution backend links a program each time, with the host C++ compiler,
+# whichever one the executing machine has, so the cost is two small builds per
+# case and is spread over shards.
+cc_test(
+    name = "incremental_tests",
+    size = "medium",
+    srcs = ["incremental_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"] + glob([
+        "incremental/**/*.sv",
+        "paths/*.incremental.yaml",
+    ]),
+    shard_count = 4,
+    tags = ["cost"],
+    deps = [
+        ":framework",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@googletest//:gtest_main",
+        "@nlohmann_json//:json",
+        "@yaml-cpp//:yaml-cpp",
+    ],
+)
+
 # Designs written elsewhere, for other simulators, and kept outside this
 # repository: today those of Verilator's benchmark suite, each built and run
 # through the case the suite itself marks as its quick check. A design is tens
