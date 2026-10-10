@@ -16,7 +16,7 @@ Caliptra:default:hello:
   says: taking over part of a target is not yet supported
 HammerBlade:16x8:hello:
   stops: run
-  says: Segmentation fault
+  says: out of memory
 NVDLA:default:hello:
   stops: check
   says: "cmp: mem-dump-0.hex"

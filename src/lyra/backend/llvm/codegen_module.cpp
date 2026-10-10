@@ -409,6 +409,13 @@ auto CodeGenModule::MemberStorageDestructor(
   return ValueFunction(RuntimeSymbol(storage, RuntimeOp::kDestroy));
 }
 
+auto CodeGenModule::OperatorNew() -> llvm::FunctionCallee {
+  return CreateRuntimeFunction(
+      llvm::FunctionType::get(
+          types_.Ptr(), {llvm::Type::getInt64Ty(*context_)}, false),
+      kOperatorNew);
+}
+
 auto CodeGenModule::SizedOperatorDelete() -> llvm::FunctionCallee {
   return CreateRuntimeFunction(
       llvm::FunctionType::get(

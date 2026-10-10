@@ -322,12 +322,17 @@ void CodeGenFunction::OpenCoroutine() {
   coro_id_ = builder_.CreateCall(
       llvm::Intrinsic::getOrInsertDeclaration(&mod, llvm::Intrinsic::coro_id),
       {builder_.getInt32(0), null_ptr, null_ptr, null_ptr});
-  llvm::Value* size = builder_.CreateCall(
-      llvm::Intrinsic::getOrInsertDeclaration(
-          &mod, llvm::Intrinsic::coro_size, {size_ty}),
-      {});
-  llvm::Value* memory = builder_.CreateCall(
-      mod.getOrInsertFunction("malloc", ptr_ty, size_ty), {size});
+  // A frame is storage like any other the program asks for, so it comes from
+  // the allocation function the rest comes from, and a request the host
+  // refuses ends the program where every other refused request does.
+  const auto frame_size = [&] {
+    return builder_.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(
+            &mod, llvm::Intrinsic::coro_size, {size_ty}),
+        {});
+  };
+  llvm::Value* memory =
+      builder_.CreateCall(module_->OperatorNew(), {frame_size()});
   coro_handle_ = builder_.CreateCall(
       llvm::Intrinsic::getOrInsertDeclaration(
           &mod, llvm::Intrinsic::coro_begin),
@@ -341,8 +346,7 @@ void CodeGenFunction::OpenCoroutine() {
   llvm::Value* frame = builder_.CreateCall(
       llvm::Intrinsic::getOrInsertDeclaration(&mod, llvm::Intrinsic::coro_free),
       {coro_id_, coro_handle_});
-  builder_.CreateCall(
-      mod.getOrInsertFunction("free", builder_.getVoidTy(), ptr_ty), {frame});
+  builder_.CreateCall(module_->SizedOperatorDelete(), {frame, frame_size()});
   builder_.CreateBr(coro_end_);
 
   builder_.SetInsertPoint(coro_end_);
