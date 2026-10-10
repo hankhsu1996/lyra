@@ -63,6 +63,11 @@ auto SpecCharToKind(char c) -> std::optional<SpecKind> {
       return SpecKind{
           .role = FormatDirective::Role::kModulePath,
           .kind = FormatKind::kString};
+    case 'l':
+    case 'L':
+      return SpecKind{
+          .role = FormatDirective::Role::kLibraryBinding,
+          .kind = FormatKind::kString};
     case 'p':
     case 'P':
       return ValueSpec(FormatKind::kAssignmentPattern);

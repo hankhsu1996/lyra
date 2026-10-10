@@ -42,6 +42,7 @@
 #include "lyra/hir/verify.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/library_cell.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -95,6 +96,7 @@ UnitLowerer::UnitLowerer(
       unit_{std::move(name)} {
   unit_.role = role;
   unit_.source_name = SourceNameOf(home);
+  unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
   signature_.unit_name = unit_.name;
 }
 

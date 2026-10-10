@@ -6426,7 +6426,8 @@ void lyra_rt_assocarray_write_mem_within(
 
 auto lyra_rt_format_runtime(
     const void* format, LyraSpan args, const void* scope_path,
-    const void* time_format, std::int64_t timeunit_power, void* out) -> void* {
+    const void* library_binding, const void* time_format,
+    std::int64_t timeunit_power, void* out) -> void* {
   const std::span<const void* const> handles{
       static_cast<const void* const*>(args.data), args.count};
   std::vector<FormatArg> arguments(handles.size());
@@ -6436,7 +6437,8 @@ auto lyra_rt_format_runtime(
   return Emplace(
       out, lyra::value::FormatRuntime(
                Read<String>(format), arguments, Read<String>(scope_path),
-               Read<TimeFormat>(time_format), timeunit_power));
+               Read<String>(library_binding), Read<TimeFormat>(time_format),
+               timeunit_power));
 }
 
 auto lyra_rt_integral_make_format_arg(

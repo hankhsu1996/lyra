@@ -307,6 +307,17 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
           .type = unit.builtins.string});
 }
 
+// The string LRM 33.7 `%l` names: the library and cell of the text the
+// directive was written in. Every instance of that text has the same one, so
+// it is a constant of the unit and nothing is asked of the run.
+template <ExprLowerer Lowerer>
+auto BuildLibraryBindingExpr(Lowerer& lowerer, const WalkFrame& frame)
+    -> mir::ExprId {
+  return BuildStringValueExpr(
+      lowerer.Owner().Unit(), *frame.current_block,
+      lowerer.Owner().Hir().library_binding);
+}
+
 // What one directive of a format string contributes. A directive that formats
 // a value takes the argument at `next_argument` and moves past it.
 template <ExprLowerer Lowerer>
@@ -325,6 +336,14 @@ auto LowerPrintItemForDirective(
       // ordinary `%s` argument.
       return mir::RuntimePrintValue(
           BuildHierarchicalNameExpr(lowerer, frame),
+          lowerer.Owner().Unit().builtins.string,
+          mir::FormatSpec(
+              value::FormatKind::kString,
+              ToMirFormatModifiers(directive.modifiers)));
+
+    case value::FormatDirective::Role::kLibraryBinding:
+      return mir::RuntimePrintValue(
+          BuildLibraryBindingExpr(lowerer, frame),
           lowerer.Owner().Unit().builtins.string,
           mir::FormatSpec(
               value::FormatKind::kString,
@@ -594,10 +613,11 @@ auto BuildRuntimeFormatCallExpr(
           .data = mir::CompositeExpr{.parts = std::move(operands)},
           .type = operands_type});
 
-  // The hierarchical name a `%m` renders and the scope's time unit a `%t`
-  // scales against are facts of the call site, not of the format text, so they
-  // reach the parse as operands.
+  // The hierarchical name a `%m` renders, the library and cell a `%l` renders
+  // and the scope's time unit a `%t` scales against are facts of the call site,
+  // not of the format text, so they reach the parse as operands.
   const mir::ExprId path_id = BuildHierarchicalNameExpr(lowerer, step_frame);
+  const mir::ExprId binding_id = BuildLibraryBindingExpr(lowerer, step_frame);
 
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
@@ -621,8 +641,8 @@ auto BuildRuntimeFormatCallExpr(
                   .callee =
                       mir::Direct{.target = support::BuiltinFn::kFormatRuntime},
                   .arguments =
-                      {format_id, operands_array, path_id, time_format_id,
-                       time_unit_power}},
+                      {format_id, operands_array, path_id, binding_id,
+                       time_format_id, time_unit_power}},
           .type = unit.builtins.string});
   return steps.Build(formatted);
 }

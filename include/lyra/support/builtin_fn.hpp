@@ -463,8 +463,9 @@ enum class BuiltinFn : std::uint16_t {
   // `lyra::value` free function yielding an SV `string`, but it parses the
   // format string and binds each operand as it goes, so it takes the format
   // text and a bare operand array in place of the pre-bound print items. The
-  // hierarchical name a `%m` renders and the scope's time unit for a `%t` are
-  // call-site facts absent from the format text, so they ride as operands too.
+  // hierarchical name a `%m` renders, the library and cell a `%l` renders and
+  // the scope's time unit for a `%t` are call-site facts absent from the format
+  // text, so they ride as operands too.
   kFormatRuntime,
   // An operand of such a format string whose type decides its whole rendering
   // (LRM 21.2.1.6): it carries the text and nothing else, because the clause
