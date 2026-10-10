@@ -17,9 +17,6 @@ Caliptra:default:hello:
 HammerBlade:16x8:hello:
   stops: run
   says: Segmentation fault
-HammerBlade:2x1:hello:
-  stops: build
-  says: unknown format specifier '%L'
 NVDLA:default:hello:
   stops: check
   says: "cmp: mem-dump-0.hex"
