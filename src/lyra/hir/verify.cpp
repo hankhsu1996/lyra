@@ -1111,7 +1111,9 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
                       },
                       [](const ValueRoute&) {}},
                   data.endpoint);
-              from_port(data.peer, Slot::kOperand);
+              if (data.peer.has_value()) {
+                from_port(*data.peer, Slot::kOperand);
+              }
               ReachSensitivity(data.sensitivity, from_port);
             },
             [](const InterfacePortConnection&) {}},

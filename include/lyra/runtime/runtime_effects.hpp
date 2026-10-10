@@ -24,6 +24,8 @@ class StreamDispatcher;
 class DiagnosticDispatcher;
 class FileTable;
 class PlusArgsSource;
+class BoundMembers;
+class VariableCell;
 class EvaluationAttempts;
 class Observable;
 class RuntimeProcess;
@@ -80,6 +82,19 @@ class RuntimeEffects {
   // object no report could follow is reevaluated whenever a property of any
   // object is written, which LRM 9.4.2 permits.
   [[nodiscard]] auto EveryObject() -> Observable&;
+
+  // The members of scopes that references were bound into, which a force on
+  // one acts through (LRM 10.6.2).
+  [[nodiscard]] auto Bound() -> BoundMembers&;
+
+  // The place reached when the last procedural continuous assignment on
+  // `variable` ends, which is what reestablishes whatever drives the variable
+  // continuously (LRM 10.6.2). Only a variable something drives that way has
+  // one, made when its driver first asks.
+  [[nodiscard]] auto ReestablishedOf(const VariableCell& variable)
+      -> Observable&;
+  // Reaches that place, where `variable` has one.
+  void Reestablish(const VariableCell& variable);
 
   // LRM 4.4: place `effect` in `region` of the time slot at `when`. A deferred
   // effect runs where it is placed and never suspends whoever submitted it.

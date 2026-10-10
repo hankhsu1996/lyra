@@ -164,6 +164,19 @@ read to choose between.
    because the standard makes them differ, and they are already distinct capability types whose
    write capability is what separates them; neither borrows the other's ending.
 
+   **A variable a continuous assignment drives is the one case removal owes more** (revised
+   2026-10-09). 10.6.2 says releasing it "shall reestablish that assignment and schedule a
+   reevaluation", and F4's "nothing to preserve" was derived from 10.6.1, which speaks of procedural
+   writes. The driver's writes are turned away while the takeover holds, and it is parked on what
+   its source reads, so the end of the last takeover wakes it: a variable something drives
+   continuously has a place its driver waits on beside its source, kept by the engine for only those
+   variables. No value is shadowed; the driver evaluates again, which is the standard's own wording.
+
+6. **A target that owns no storage is forced by being bound elsewhere.** A port that stands for what
+   its connection drives it with holds nothing a takeover could be state on, and a takeover on the
+   storage it names would force its source as well. Its force is
+   [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) D3.
+
 ## Consequences
 
 - No MIR node kind is added, and no backend gains a construct: the four spellings are calls on a

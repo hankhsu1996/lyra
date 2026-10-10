@@ -68,14 +68,14 @@ target and why a forced value is not a driver; this file does not restate it.
       its share of one evaluation of the source; the supersede case is carried by the mechanism but
       is not covered by a case.
 
-- [ ] PCA3 -- `force` and `release` on a variable (LRM 10.6.2), at a precedence above PCA2's, with
+- [x] PCA3 -- `force` and `release` on a variable (LRM 10.6.2), at a precedence above PCA2's, with
       both endings the standard gives: the value retained where nothing else drives the variable,
       and the continuous assignment or active `assign` reestablished and rescheduled where one does.
-      Both keywords are in, and a release hands the variable back to an `assign` underneath it with
-      that assignment's current value. **What is not in is a release over a continuous assignment**
-      (LRM 10.3 on a variable): that assignment is not one of the takeover levels, so its writes are
-      discarded while the force is in effect and nothing reestablishes it on release -- it waits for
-      its own sensitivity to fire again, which the standard does not allow.
+      A release hands the variable back to an `assign` underneath it with that assignment's current
+      value, and wakes a continuous assignment driving it so that it evaluates again in the same
+      time step. A variable that stands for what its port connection drives it with is forced
+      without what drives it being touched: it, every port it is handed on to, and every wait on
+      either follow the forced value until the release, and show what drives it again from then.
 
 - [x] PCA4 -- `force` and `release` on a net, overriding the resolution rather than contributing to
       it, and on release resolving the drivers immediately so the net takes their value in the same
@@ -101,10 +101,11 @@ state the target already has to carry.
 
 **A release still owes one thing that is not removal.** Where a lower source is active underneath --
 a continuous assignment, or an `assign` beneath a `force` -- the standard requires that source to be
-reestablished and a reevaluation scheduled (LRM 10.6.2). That source is parked on its own trigger
-set and nothing it watches has moved, so removing the takeover above it cannot wake it. The removal
-has to wake it explicitly, which is why a target tracks the identity of what installed each level
-rather than only that the level is occupied.
+reestablished and a reevaluation scheduled (LRM 10.6.2). An `assign` goes on recording what it
+evaluates to while a force covers it, so the release shows that value with nothing recomputed. A
+continuous assignment's writes are turned away like any other write, and it is parked on what its
+source reads, none of which has moved; so a variable something drives continuously has a place its
+driver also waits on, which the end of the last takeover reaches.
 
 ## Open questions
 

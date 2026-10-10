@@ -496,15 +496,32 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
           "a port naming this part of an internal name is not yet supported");
     }
 
-    // A `ref` port's direction is what makes its declaration a reference (LRM
-    // 23.3.3.2), so the answer is taken here and read back wherever that
-    // declaration is asked what it holds.
-    if (direction == hir::PortDirection::kRef ||
-        direction == hir::PortDirection::kConstRef) {
-      ref_port_internals_.emplace(
-          peeled->base, direction == hir::PortDirection::kConstRef
-                            ? hir::ReferenceBinding::kConstRef
-                            : hir::ReferenceBinding::kRef);
+    // A port's direction is what makes its declaration a reference, so the
+    // answer is taken here and read back wherever that declaration is asked
+    // what it holds. A `ref` port's stands for the connected variable (LRM
+    // 23.3.3.2). An input port's variable is assigned by its connection and by
+    // nothing else (LRM 23.3.3.2), so it stands for what the connection drives
+    // it with; that holds of the whole of one variable, which is what a port
+    // written as a plain name is, and a net is driven rather than assigned
+    // (LRM 6.5).
+    switch (direction) {
+      case hir::PortDirection::kRef:
+        ref_port_internals_.emplace(peeled->base, hir::ReferenceBinding::kRef);
+        break;
+      case hir::PortDirection::kConstRef:
+        ref_port_internals_.emplace(
+            peeled->base, hir::ReferenceBinding::kConstRef);
+        break;
+      case hir::PortDirection::kInput:
+        if (written == nullptr &&
+            peeled->base->kind == slang::ast::SymbolKind::Variable) {
+          ref_port_internals_.emplace(
+              peeled->base, hir::ReferenceBinding::kInput);
+        }
+        break;
+      case hir::PortDirection::kOutput:
+      case hir::PortDirection::kInOut:
+        break;
     }
     auto path = PublishPath(*this, peeled->steps, span);
     if (!path) return std::unexpected(std::move(path.error()));

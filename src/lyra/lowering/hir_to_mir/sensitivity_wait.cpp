@@ -245,14 +245,32 @@ auto WatchedBitPositionsOf(
 
 // One leaf of the wait: the place it watches, what decides whether what happens
 // there is an event, and which bits of that place's packed encoding it reads.
+// A place the lowering states has no part the source could have named, so the
+// whole of it is watched.
 template <typename Lowerer>
 auto BuildTriggerExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::SensitivityEntry& entry,
-    mir::LocalId observation) -> diag::Result<mir::ExprId> {
-  const mir::ExprId observable_ptr =
-      BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
-  auto watched = WatchedBitPositionsOf(block, frame, unit, lowerer, entry.part);
+    Lowerer& lowerer, const ObservedLeaf& leaf) -> diag::Result<mir::ExprId> {
+  struct Watched {
+    mir::ExprId place;
+    WatchedBitPositions bits;
+  };
+  auto watched = std::visit(
+      Overloaded{
+          [&](const hir::SensitivityEntry& entry) -> diag::Result<Watched> {
+            const mir::ExprId place =
+                BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
+            auto bits =
+                WatchedBitPositionsOf(block, frame, unit, lowerer, entry.part);
+            if (!bits) return std::unexpected(std::move(bits.error()));
+            return Watched{.place = place, .bits = *bits};
+          },
+          [&](const StatedPlace& stated) -> diag::Result<Watched> {
+            auto place = stated(frame.WithBlock(&block));
+            if (!place) return std::unexpected(std::move(place.error()));
+            return Watched{.place = *place, .bits = AllBits(unit, block)};
+          }},
+      leaf.watched);
   if (!watched) return std::unexpected(std::move(watched.error()));
   return block.exprs.Add(
       mir::Expr{
@@ -260,11 +278,11 @@ auto BuildTriggerExpr(
               mir::CallExpr{
                   .callee = mir::Construct{},
                   .arguments =
-                      {observable_ptr,
+                      {watched->place,
                        block.exprs.Add(
                            mir::MakeLocalRefExpr(
-                               observation, unit.builtins.observation)),
-                       watched->first, watched->width}},
+                               leaf.observation, unit.builtins.observation)),
+                       watched->bits.first, watched->bits.width}},
           .type = unit.builtins.trigger});
 }
 
@@ -564,8 +582,7 @@ auto BuildTriggerArray(
   std::vector<mir::ExprId> triggers;
   triggers.reserve(leaves.size());
   for (const ObservedLeaf& leaf : leaves) {
-    auto trigger = BuildTriggerExpr(
-        target_block, frame, unit, lowerer, leaf.entry, leaf.observation);
+    auto trigger = BuildTriggerExpr(target_block, frame, unit, lowerer, leaf);
     if (!trigger) return std::unexpected(std::move(trigger.error()));
     triggers.push_back(*trigger);
   }
@@ -575,6 +592,21 @@ auto BuildTriggerArray(
       mir::Expr{
           .data = mir::CompositeExpr{.parts = std::move(triggers)},
           .type = triggers_type});
+}
+
+// The wait on `triggers`, held in a local of the block `storage_frame` is
+// writing, and the stop at it for `stop_block`.
+template <typename Lowerer>
+auto ParkOnTriggers(
+    Lowerer& lowerer, const WalkFrame& storage_frame, mir::Block& stop_block,
+    mir::ExprId triggers) -> mir::Stmt {
+  const mir::LocalId wait = DeclareLocal(
+      storage_frame,
+      storage_frame.current_block->exprs.Add(
+          mir::MakeCallExpr(
+              mir::Direct{.target = support::BuiltinFn::kWaitOn}, {triggers},
+              lowerer.Owner().Unit().builtins.wait)));
+  return BuildParkStmt(lowerer.Owner(), stop_block, wait);
 }
 
 }  // namespace
@@ -588,29 +620,28 @@ auto BuildWaitOnStmt(
   auto triggers =
       BuildTriggerArray(storage_block, storage_frame, lowerer, leaves);
   if (!triggers) return std::unexpected(std::move(triggers.error()));
-  const mir::LocalId wait = DeclareLocal(
-      storage_frame,
-      storage_block.exprs.Add(
-          mir::MakeCallExpr(
-              mir::Direct{.target = support::BuiltinFn::kWaitOn}, {*triggers},
-              lowerer.Owner().Unit().builtins.wait)));
-  return BuildParkStmt(lowerer.Owner(), stop_block, wait);
+  return ParkOnTriggers(lowerer, storage_frame, stop_block, *triggers);
 }
 
 template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
     mir::Block& stop_block, const WalkFrame& frame, Lowerer& lowerer,
-    std::span<const hir::SensitivityEntry> sensitivity_list)
-    -> diag::Result<mir::Stmt> {
+    std::span<const hir::SensitivityEntry> sensitivity_list,
+    std::span<const StatedPlace> also) -> diag::Result<mir::Stmt> {
   mir::Block& storage_block = WaitStorageBlock(
       frame, stop_block, sensitivity_list, lowerer.HirExprs(), {});
   const mir::LocalId observation = DeclareObservation(
       lowerer.Owner().Unit(), frame, storage_block,
       support::BuiltinFn::kObservationOnReaching, {});
   std::vector<ObservedLeaf> leaves;
-  leaves.reserve(sensitivity_list.size());
+  leaves.reserve(sensitivity_list.size() + also.size());
   for (const hir::SensitivityEntry& entry : sensitivity_list) {
-    leaves.push_back(ObservedLeaf{.entry = entry, .observation = observation});
+    leaves.push_back(
+        ObservedLeaf{.watched = entry, .observation = observation});
+  }
+  for (const StatedPlace& place : also) {
+    leaves.push_back(
+        ObservedLeaf{.watched = place, .observation = observation});
   }
   return BuildWaitOnStmt(storage_block, stop_block, frame, lowerer, leaves);
 }
@@ -679,9 +710,11 @@ template auto ReportCells(
     std::span<const hir::SensitivityEntry>) -> diag::Result<void>;
 template auto BuildValueChangeWaitStmt(
     mir::Block&, const WalkFrame&, ProcessLowerer&,
-    std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
+    std::span<const hir::SensitivityEntry>, std::span<const StatedPlace>)
+    -> diag::Result<mir::Stmt>;
 template auto BuildValueChangeWaitStmt(
     mir::Block&, const WalkFrame&, const StructuralScopeLowerer&,
-    std::span<const hir::SensitivityEntry>) -> diag::Result<mir::Stmt>;
+    std::span<const hir::SensitivityEntry>, std::span<const StatedPlace>)
+    -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

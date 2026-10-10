@@ -7,11 +7,13 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/time.hpp"
+#include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/coverage.hpp"
 #include "lyra/runtime/diagnostic.hpp"
@@ -204,6 +206,11 @@ class Runtime final : public RuntimeEffects {
   // Reached by a write to a property of any object, for the waits nothing
   // narrower covers.
   Observable every_object_;
+  BoundMembers bound_members_;
+  // Each held apart, so the waits enrolled on one keep their place while the
+  // table grows.
+  std::unordered_map<const VariableCell*, std::unique_ptr<Observable>>
+      reestablished_;
   std::vector<std::shared_ptr<RuntimeProcess>> processes_;
   RuntimeProcess* current_process_ = nullptr;
   // What is running, which is what a randomization call draws from (LRM 18.13,

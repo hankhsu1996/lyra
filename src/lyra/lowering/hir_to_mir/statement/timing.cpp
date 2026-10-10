@@ -466,7 +466,7 @@ auto BuildChangeDecidedEventWaitStmt(
     if (!observation) return std::unexpected(std::move(observation.error()));
     for (const hir::SensitivityEntry& cell : trigger.cells) {
       leaves.push_back(
-          ObservedLeaf{.entry = cell, .observation = *observation});
+          ObservedLeaf{.watched = cell, .observation = *observation});
     }
   }
   return BuildWaitOnStmt(storage, block, frame, lowerer, leaves);
@@ -487,7 +487,7 @@ auto BuildChangeDecidedNamedEventWaitStmt(
       process, frame.WithBlock(&storage), storage, nec.condition);
   if (!observation) return std::unexpected(std::move(observation.error()));
   const std::array<ObservedLeaf, 1> leaves{
-      ObservedLeaf{.entry = nec.event, .observation = *observation}};
+      ObservedLeaf{.watched = nec.event, .observation = *observation}};
   return BuildWaitOnStmt(storage, block, frame, process, leaves);
 }
 
@@ -505,7 +505,7 @@ auto BuildProcessDecidedNamedEventWaitStmt(
   mir::Block& storage =
       WaitStorageBlock(frame, block, cells, process.HirExprs(), {});
   const std::array<ObservedLeaf, 1> leaves{ObservedLeaf{
-      .entry = nec.event,
+      .watched = nec.event,
       .observation = DeclareObservation(
           unit, frame.WithBlock(&storage), storage,
           support::BuiltinFn::kObservationOnReaching, {})}};
@@ -587,7 +587,7 @@ auto LowerTimedStmt(
                 // the condition.
                 [&](const hir::ImplicitEventControl& ie) {
                   return BuildValueChangeWaitStmt(
-                      block, inner, process, ie.sensitivity_list);
+                      block, inner, process, ie.sensitivity_list, {});
                 }},
             t.timing);
       });

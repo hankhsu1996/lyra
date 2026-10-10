@@ -242,6 +242,28 @@ auto RuntimeEffects::EveryObject() -> Observable& {
   return AsRuntime(*this).every_object_;
 }
 
+auto RuntimeEffects::Bound() -> BoundMembers& {
+  return AsRuntime(*this).bound_members_;
+}
+
+auto RuntimeEffects::ReestablishedOf(const VariableCell& variable)
+    -> Observable& {
+  std::unique_ptr<Observable>& place =
+      AsRuntime(*this).reestablished_[&variable];
+  if (place == nullptr) {
+    place = std::make_unique<Observable>();
+  }
+  return *place;
+}
+
+void RuntimeEffects::Reestablish(const VariableCell& variable) {
+  Runtime& rt = AsRuntime(*this);
+  const auto at = rt.reestablished_.find(&variable);
+  if (at != rt.reestablished_.end()) {
+    WakeParkedOn(at->second->Members(), Change::Whole());
+  }
+}
+
 void RuntimeEffects::EndRun(
     std::string_view task, const value::String& origin, std::int64_t level) {
   Runtime& rt = AsRuntime(*this);

@@ -122,7 +122,15 @@ auto ProceduralScopeKindLabel(ProceduralScopeKind kind) -> std::string_view {
 }
 
 auto ReferenceBindingLabel(ReferenceBinding binding) -> std::string_view {
-  return binding == ReferenceBinding::kConstRef ? " const ref" : " ref";
+  switch (binding) {
+    case ReferenceBinding::kRef:
+      return " ref";
+    case ReferenceBinding::kConstRef:
+      return " const ref";
+    case ReferenceBinding::kInput:
+      return " input";
+  }
+  throw InternalError("ReferenceBindingLabel: unknown hir::ReferenceBinding");
 }
 
 auto FormatArguments(std::span<const ExprId> arguments) -> std::string {
@@ -1967,8 +1975,11 @@ class HirDumper {
                           return std::format("alias_to:{}", FormatRoute(r));
                         }},
                     d.endpoint);
+                if (!d.peer.has_value()) {
+                  return std::format("{} {} unconnected", direction, endpoint);
+                }
                 return std::format(
-                    "{} {} peer=Expr[{}]", direction, endpoint, d.peer.value);
+                    "{} {} peer=Expr[{}]", direction, endpoint, d.peer->value);
               },
               [](const InterfacePortConnection& i) -> std::string {
                 std::string peers;

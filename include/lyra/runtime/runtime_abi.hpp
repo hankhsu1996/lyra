@@ -686,6 +686,21 @@ auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void*;
 // What a wait on the storage a reference names enrols on: the variable or
 // the object's event source, and null for storage nothing is told about.
 auto lyra_rt_reference_reports_to(const void* reference) -> void*;
+
+// A member that owns no storage bound to what drives it, and a force on one
+// (LRM 23.3.3, 10.6.2). Each names the member by a reference to it.
+void lyra_rt_bind_member(void* member, const void* bound);
+auto lyra_rt_begin_force(const void* member) -> std::int64_t;
+void lyra_rt_retarget_member(
+    const void* member, const void* forced, std::int64_t generation);
+auto lyra_rt_still_forcing(const void* member, std::int64_t generation) -> bool;
+auto lyra_rt_force_ended(const void* member) -> void*;
+auto lyra_rt_driver_of_member(const void* member, void* out) -> void*;
+void lyra_rt_release_member(const void* member);
+
+// The place a continuous driver of the storage `reference` names is reached at
+// when the last procedural continuous assignment on it ends (LRM 10.6.2).
+auto lyra_rt_reestablished_of(const void* reference) -> void*;
 auto lyra_rt_string_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_shortreal_cell_refer(void* cell, void* out) -> void*;

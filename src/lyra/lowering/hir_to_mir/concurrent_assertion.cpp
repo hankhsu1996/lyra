@@ -534,7 +534,7 @@ auto LowerDisableWatcher(
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
   // What the condition reads is stated beside it, in the action's own body.
   auto waited = BuildValueChangeWaitStmt(
-      body_block, body_frame, action, disable.sensitivity);
+      body_block, body_frame, action, disable.sensitivity, {});
   if (!waited) return std::unexpected(std::move(waited.error()));
   body_block.AppendStmt(*std::move(waited));
 

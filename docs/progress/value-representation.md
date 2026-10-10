@@ -117,12 +117,17 @@ that true of a packed value. These make it true of what holds one.
 
 ## Phase 3: a port shares its source's storage
 
-- [ ] A child's input port is a reference, naming the instantiator's whole variable where the actual
-      is one of an equivalent type and a cell the instantiator assigns otherwise.
+- [x] A child's input port is a reference, naming the instantiator's whole variable where the actual
+      is one of an equivalent type that the instantiating scope or a scope enclosing it declares,
+      and a cell the instantiator assigns otherwise: an expression, a part of a variable, a variable
+      reached through another instance, a default, and an input left unconnected. Measured on Ibex,
+      whole run under callgrind, `--release`, execution backend: 3.61 G instructions to 3.17 G, both
+      ending at `$finish` at 26548.
 - [ ] An output connected to a whole variable of an equivalent type makes that variable a reference
       to the child's port.
 - [ ] Every other connection moves only the range its source's write reached.
-- [ ] A force on a sink retargets its reference and a release restores it.
+- [x] A force on a sink retargets its reference and a release restores it, together with every port
+      the sink is handed on to and every wait on them.
 
 ## Not this workstream
 

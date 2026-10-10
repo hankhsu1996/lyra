@@ -1768,6 +1768,7 @@ using lyra::runtime::WaitOn;
 using lyra::runtime::WaitOnImplicitList;
 using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
+using lyra::runtime::WatchedPlace;
 using lyra::value::AssociativeIndexOrder;
 using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
@@ -2236,16 +2237,19 @@ auto lyra_rt_delay_real(
                unit_power, precision_power));
 }
 
-// What crosses is the cell's own address -- a variable, a net, a named event --
-// and a `void*` carries no type to adjust by, so it is read here as the address
-// of what waits on that cell. Every such cell names `Observable` as its first
-// base, which is what makes the two addresses one under the platform ABI.
+// What crosses is the place's one word. For a place reached by itself that is
+// the cell's own address -- a variable, a net, a named event -- and a `void*`
+// carries no type to adjust by, so it is read as the address of what waits on
+// that cell: every such cell names `Observable` as its first base, which is
+// what makes the two addresses one under the platform ABI. For a place reached
+// through a reference bound into a member it is the word that reference
+// answered, which says so itself.
 auto lyra_rt_make_trigger(
     void* observable, const void* observation, std::int64_t lsb_bit_offset,
     std::int64_t bit_width, void* out) -> void* {
   return Emplace(
       out, Trigger(
-               static_cast<Observable*>(observable),
+               WatchedPlace::FromWord(observable),
                Read<Observation>(observation), lsb_bit_offset, bit_width));
 }
 
@@ -2317,14 +2321,14 @@ void lyra_rt_read_report_add(
     void* report, void* place, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->Add(
-      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_add_through_handle(
     void* report, void* place, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->AddThroughHandle(
-      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_enter_call_on_handle(void* report) {
@@ -2343,7 +2347,7 @@ void lyra_rt_read_report_add_write(
     void* report, void* place, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->AddWrite(
-      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_settle_as_implicit_list(void* report) {
@@ -2819,7 +2823,51 @@ auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void* {
 }
 
 auto lyra_rt_reference_reports_to(const void* reference) -> void* {
-  return static_cast<const ErasedReference*>(reference)->ReportsTo();
+  return WatchedPlace::Through(ErasedAt(reference)).Word();
+}
+
+void lyra_rt_bind_member(void* member, const void* bound) {
+  lyra::runtime::current_runtime().Bound().Bind(
+      *static_cast<ErasedReference*>(member), ErasedAt(bound));
+}
+
+auto lyra_rt_begin_force(const void* member) -> std::int64_t {
+  return lyra::runtime::current_runtime().Bound().BeginForce(
+      lyra::runtime::BoundMember(ErasedAt(member)));
+}
+
+void lyra_rt_retarget_member(
+    const void* member, const void* forced, std::int64_t generation) {
+  lyra::runtime::current_runtime().Bound().Retarget(
+      lyra::runtime::BoundMember(ErasedAt(member)), ErasedAt(forced),
+      generation);
+}
+
+auto lyra_rt_still_forcing(const void* member, std::int64_t generation)
+    -> bool {
+  return lyra::runtime::current_runtime().Bound().StillForcing(
+      lyra::runtime::BoundMember(ErasedAt(member)), generation);
+}
+
+auto lyra_rt_force_ended(const void* member) -> void* {
+  return WatchedPlace{&lyra::runtime::current_runtime().Bound().ForceEnded(
+                          lyra::runtime::BoundMember(ErasedAt(member)))}
+      .Word();
+}
+
+auto lyra_rt_driver_of_member(const void* member, void* out) -> void* {
+  return BuildReference(
+      out, lyra::runtime::current_runtime().Bound().DriverOf(
+               lyra::runtime::BoundMember(ErasedAt(member))));
+}
+
+void lyra_rt_release_member(const void* member) {
+  lyra::runtime::current_runtime().Bound().Release(
+      lyra::runtime::BoundMember(ErasedAt(member)));
+}
+
+auto lyra_rt_reestablished_of(const void* reference) -> void* {
+  return ErasedAt(reference).Reestablished().Word();
 }
 
 auto lyra_rt_string_cell_refer(void* cell, void* out) -> void* {

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <expected>
 #include <optional>
+#include <span>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -27,6 +28,8 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -56,6 +59,29 @@ auto DriverAccess(
           driver.type));
 }
 
+// Where a continuous driver of place `place` of what `destination` names is
+// reached when a force on that variable ends, so that it evaluates again
+// (LRM 10.6.2). Which storage a write lands in is known only where it lands, so
+// the storage is asked, through a reference to it; storage nothing can force
+// answers with nowhere.
+auto ReestablishedPlace(
+    mir::CompilationUnit& unit, const WalkFrame& frame,
+    const DriveDestination& destination, std::size_t place)
+    -> diag::Result<mir::ExprId> {
+  auto driven = destination(frame);
+  if (!driven) return std::unexpected(std::move(driven.error()));
+  std::vector<PathOwner> owners;
+  ForEachPlace(
+      *driven, [&](const AccessPath& path) { owners.push_back(path.owner); });
+  mir::Block& block = *frame.current_block;
+  return block.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{.target = support::BuiltinFn::kReestablishedOf},
+          {PathReference(
+              unit, block, AccessPath{.owner = owners[place], .descent = {}})},
+          mir::ErasedPointer(unit.types)));
+}
+
 }  // namespace
 
 // LRM 10.3.2 (continuous assignment) and LRM 9.2.2.2.1 (always_comb) share a
@@ -80,11 +106,25 @@ auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
     const hir::ContinuousAssign& src) -> diag::Result<mir::CallableDecl> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
   const hir::Expr& hir_lhs = hir_scope.exprs.Get(src.lhs);
-  const hir::Expr& hir_rhs = hir_scope.exprs.Get(src.rhs);
+  return LowerContinuousDrive(
+      lowerer, ctor_frame, resolve_frame, init_frame,
+      [&](const WalkFrame& frame) {
+        return LowerLvalue(lowerer, hir_lhs, frame);
+      },
+      hir_scope.exprs.Get(src.rhs), src.strength, src.sensitivity_list);
+}
+
+auto LowerContinuousDrive(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
+    const WalkFrame& resolve_frame, const WalkFrame& init_frame,
+    const DriveDestination& destination, const hir::Expr& source,
+    support::StrengthLevel drive_strength,
+    std::span<const hir::SensitivityEntry> sensitivity)
+    -> diag::Result<mir::CallableDecl> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const mir::TypeId self_ptr_type = ctor_frame.current_class->self_pointer_type;
 
   // What each place of the target is driven through: a net accepts no store,
   // only a drive, so each place that is one acquires a driver in Resolve, held
@@ -94,7 +134,7 @@ auto LowerContinuousAssign(
   std::vector<std::optional<AttachedDriver>> drivers;
   {
     mir::Block& resolve_block = *resolve_frame.current_block;
-    auto named = LowerLvalue(lowerer, hir_lhs, resolve_frame);
+    auto named = destination(resolve_frame);
     if (!named) return std::unexpected(std::move(named.error()));
     ForEachPlace(*named, [&](const AccessPath& place_path) {
       // A property of an object is a variable's storage, never a net's, so
@@ -117,7 +157,7 @@ auto LowerContinuousAssign(
           .field = mir_class.fields.Add(mir::FieldDecl{.type = driver_type}),
           .type = driver_type};
       const mir::ExprId strength =
-          BuildStrengthOperand(unit, resolve_block, src.strength);
+          BuildStrengthOperand(unit, resolve_block, drive_strength);
       const mir::ExprId attach = resolve_block.exprs.Add(
           mir::MakeNetAttachDriverCallExpr(cell, strength, driver_type));
       const mir::ExprId handle =
@@ -136,10 +176,10 @@ auto LowerContinuousAssign(
   const auto emit_stores = [&](const WalkFrame& frame,
                                bool only_driven) -> diag::Result<void> {
     mir::Block& block = *frame.current_block;
-    auto value_or = lowerer.LowerExpr(hir_rhs, frame);
+    auto value_or = lowerer.LowerExpr(source, frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value = block.exprs.Add(*std::move(value_or));
-    auto named = LowerLvalue(lowerer, hir_lhs, frame);
+    auto named = destination(frame);
     if (!named) return std::unexpected(std::move(named.error()));
     auto shares = Shares(lowerer.Owner(), frame, *named, value);
     if (!shares) return std::unexpected(std::move(shares.error()));
@@ -185,8 +225,17 @@ auto LowerContinuousAssign(
     return std::unexpected(std::move(stored.error()));
   }
 
+  // A net keeps each driver's contribution while it is forced and resolves
+  // them again at the release, so only a variable's driver has to be told.
+  std::vector<StatedPlace> reestablished;
+  for (std::size_t i = 0; i < drivers.size(); ++i) {
+    if (drivers[i].has_value()) continue;
+    reestablished.emplace_back([&, i](const WalkFrame& in) {
+      return ReestablishedPlace(unit, in, destination, i);
+    });
+  }
   auto waited = BuildValueChangeWaitStmt(
-      body_block, body_frame, lowerer, src.sensitivity_list);
+      body_block, body_frame, lowerer, sensitivity, reestablished);
   if (!waited) return std::unexpected(std::move(waited.error()));
   body_block.AppendStmt(*std::move(waited));
 

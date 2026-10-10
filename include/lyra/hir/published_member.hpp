@@ -36,9 +36,9 @@ struct NetStorage {
   auto operator==(const NetStorage&) const -> bool = default;
 };
 
-// A member holding no cell of its own: a `ref` / `const ref` port aliases
-// whatever the connection binds it to, and the binding decides whether writing
-// through it is permitted (LRM 23.3.3.2).
+// A member holding no cell of its own: a port's internal name standing for
+// whatever the connection binds it to, where the binding decides whether
+// writing through it is permitted (LRM 23.3.3.2).
 struct ReferenceStorage {
   ReferenceBinding binding{};
 

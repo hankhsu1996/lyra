@@ -1,7 +1,14 @@
 #pragma once
 
+#include <functional>
+#include <span>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/continuous_assign.hpp"
+#include "lyra/hir/expr.hpp"
+#include "lyra/hir/timing.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
@@ -23,5 +30,20 @@ auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
     const hir::ContinuousAssign& src) -> diag::Result<mir::CallableDecl>;
+
+// What a continuous drive writes, named in the body it is asked for: the
+// drive is stated once and written into its Resolve step, its Initialize seed
+// and its own body, each a body of its own.
+using DriveDestination = std::function<diag::Result<Lvalue>(const WalkFrame&)>;
+
+// The same lowering over a destination its caller names, for a drive whose
+// target the source did not write as an expression of this scope.
+auto LowerContinuousDrive(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
+    const WalkFrame& resolve_frame, const WalkFrame& init_frame,
+    const DriveDestination& destination, const hir::Expr& source,
+    support::StrengthLevel drive_strength,
+    std::span<const hir::SensitivityEntry> sensitivity)
+    -> diag::Result<mir::CallableDecl>;
 
 }  // namespace lyra::lowering::hir_to_mir

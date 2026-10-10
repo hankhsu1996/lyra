@@ -40,9 +40,13 @@ enum class NetType : std::uint8_t {
   kTrireg,
 };
 
-// Whether writing through a `ref` port's internal name is permitted
-// (LRM 23.3.3.2).
-enum class ReferenceBinding : std::uint8_t { kRef, kConstRef };
+// What a port's internal name stands for where it owns no storage, and so who
+// may write through it. A `ref` port's stands for the connected variable and a
+// `const ref` port's does without being written through (LRM 23.3.3.2). An
+// input port's stands for whatever the connection drives it with: the
+// connection is a continuous assignment into it and nothing else may assign it
+// (LRM 23.3.3.2), so it holds nothing that its driver does not.
+enum class ReferenceBinding : std::uint8_t { kRef, kConstRef, kInput };
 
 // A variable (LRM 6.5): it owns mutable storage written by procedural
 // assignments or a single continuous driver, with an optional LRM 10.5
@@ -66,9 +70,8 @@ struct StructuralNetDecl {
   auto operator==(const StructuralNetDecl&) const -> bool = default;
 };
 
-// A `ref` / `const ref` port's internal name (LRM 23.3.3.2): it owns no cell,
-// standing for the connected variable, which the parent binds during
-// elaboration.
+// A port's internal name that owns no cell (LRM 23.3.3.2): it stands for
+// storage the instantiating scope binds it to during elaboration.
 struct StructuralReferenceDecl {
   ReferenceBinding binding;
 
@@ -109,7 +112,7 @@ struct StructuralParameterDecl {
 };
 
 // A module-scope data object (LRM 6.5: "two main groups of data objects:
-// variables and nets"), plus the name a `ref` port introduces for storage the
+// variables and nets"), plus the name a port introduces for storage the
 // object does not own, the index a loop counts with, a value construction
 // supplies, and a constant the scope settles for itself. Peer kinds sharing
 // only identity and value type; each kind carries its own payload.

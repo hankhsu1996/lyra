@@ -448,6 +448,14 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_refer_storage", &lyra_rt_refer_storage);
   add("lyra_rt_refer_property", &lyra_rt_refer_property);
   add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
+  add("lyra_rt_bind_member", &lyra_rt_bind_member);
+  add("lyra_rt_begin_force", &lyra_rt_begin_force);
+  add("lyra_rt_retarget_member", &lyra_rt_retarget_member);
+  add("lyra_rt_still_forcing", &lyra_rt_still_forcing);
+  add("lyra_rt_force_ended", &lyra_rt_force_ended);
+  add("lyra_rt_driver_of_member", &lyra_rt_driver_of_member);
+  add("lyra_rt_release_member", &lyra_rt_release_member);
+  add("lyra_rt_reestablished_of", &lyra_rt_reestablished_of);
   add("lyra_rt_string_cell_refer", &lyra_rt_string_cell_refer);
   add("lyra_rt_real_cell_refer", &lyra_rt_real_cell_refer);
   add("lyra_rt_shortreal_cell_refer", &lyra_rt_shortreal_cell_refer);

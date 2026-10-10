@@ -574,6 +574,12 @@ struct ErasedReference {
   // reference stands for the variable itself. Only where the reference is
   // formed can say so: a part can lie at the address its whole does.
   bool whole = false;
+  // The member of a scope this reference was bound into, where it was: a port
+  // that stands for what its connection drives (LRM 23.3.3). The member is what
+  // a force acts on (LRM 10.6.2), and a copy of the reference -- one handed on
+  // to a child's port, one a wait was built from -- still says which member it
+  // is a copy of. None for a reference bound into no member.
+  ErasedReference* member = nullptr;
 
   // Written here rather than in the library's own source because every write
   // through a reference asks them, and for storage whose variable nothing
@@ -611,6 +617,11 @@ struct ErasedReference {
   // variable or the object's event source. Storage that belongs to nothing
   // answers with none, since no write to it is ever told.
   [[nodiscard]] auto ReportsTo() const -> Observable*;
+
+  // The place reached when the last procedural continuous assignment on what
+  // holds the storage ends (LRM 10.6.2), which is where a continuous driver of
+  // it is told to evaluate again. Only a variable is ever put under one.
+  [[nodiscard]] auto Reestablished() const -> WatchedPlace;
 
   // The reference to a part of what this one names, at `part`, which forming
   // did `formed` to. The part has the same holder, which is told at once where
@@ -654,6 +665,12 @@ class Ref {
   }
 
   [[nodiscard]] auto Erased() const -> const ErasedReference& {
+    return erased_;
+  }
+
+  // The reference as a member something is bound into (LRM 23.3.3), which is
+  // what binding rewrites.
+  [[nodiscard]] auto AsMember() -> ErasedReference& {
     return erased_;
   }
 
@@ -804,8 +821,17 @@ auto ReferProperty(const value::ObjectRef& handle)
 // What a wait on the storage `reference` names enrols on (LRM 13.5.2): what
 // a write through the reference is told to, never the reference itself.
 template <value::LyraValue T>
-auto ReportsTo(const Ref<T>& reference) -> Observable* {
-  return reference.Erased().ReportsTo();
+auto ReportsTo(const Ref<T>& reference) -> WatchedPlace {
+  return WatchedPlace::Through(reference.Erased());
+}
+
+// What a continuous driver of the storage `reference` names waits on beside
+// what its source reads: the place reached when the last procedural continuous
+// assignment on the variable holding that storage ends (LRM 10.6.2). Storage no
+// variable holds is never put under one, and answers with no place.
+template <value::LyraValue T>
+auto ReestablishedOf(const Ref<T>& reference) -> WatchedPlace {
+  return reference.Erased().Reestablished();
 }
 
 // Defaulted here rather than where they are declared: a constructor or
@@ -891,7 +917,11 @@ void Var<T>::EndTakeover(std::int64_t level) {
   // the value the ended takeover last gave it.
   if (const T* showing = takeovers->Highest(); showing != nullptr) {
     Store(*showing);
+    return;
   }
+  // What drives the variable continuously was turned away while the takeover
+  // held it, so it evaluates again now that none does (LRM 10.6.2).
+  current_runtime().Reestablish(*this);
 }
 
 // One write in progress into what a sink stands for, and what it has learned

@@ -721,6 +721,35 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "reference_reports_to",
           .declaration = RuntimeFunction("ReportsTo")};
+    case BuiltinFn::kBindMember:
+      return {
+          .name = "bind_member", .declaration = RuntimeFunction("BindMember")};
+    case BuiltinFn::kBeginForce:
+      return {
+          .name = "begin_force", .declaration = RuntimeFunction("BeginForce")};
+    case BuiltinFn::kRetargetMember:
+      return {
+          .name = "retarget_member",
+          .declaration = RuntimeFunction("RetargetMember")};
+    case BuiltinFn::kStillForcing:
+      return {
+          .name = "still_forcing",
+          .declaration = RuntimeFunction("StillForcing")};
+    case BuiltinFn::kForceEnded:
+      return {
+          .name = "force_ended", .declaration = RuntimeFunction("ForceEnded")};
+    case BuiltinFn::kDriverOfMember:
+      return {
+          .name = "driver_of_member",
+          .declaration = RuntimeFunction("DriverOfMember")};
+    case BuiltinFn::kReleaseMember:
+      return {
+          .name = "release_member",
+          .declaration = RuntimeFunction("ReleaseMember")};
+    case BuiltinFn::kReestablishedOf:
+      return {
+          .name = "reestablished_of",
+          .declaration = RuntimeFunction("ReestablishedOf")};
     case BuiltinFn::kAttachDriver:
       return {.name = "attach_driver", .declaration = Method{"AttachDriver"}};
     case BuiltinFn::kNetJoin:
