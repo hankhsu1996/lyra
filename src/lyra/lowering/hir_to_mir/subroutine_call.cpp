@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -530,10 +531,10 @@ auto EmitSubroutineCall(
       // An `output` passes no argument, and binds the actual's place for the
       // writeback once the call completes.
       case hir::ParamDirection::kOutput: {
-        auto place_or = lowerer.LowerLhsExpr(hir_arg, frame);
+        auto place_or = LowerLvalue(lowerer, hir_arg, frame);
         if (!place_or) return std::unexpected(std::move(place_or.error()));
         writebacks.push_back(
-            {.place = *std::move(place_or),
+            {.target = *std::move(place_or),
              .component = *formal.component,
              .type = formal.type});
         break;
@@ -542,13 +543,14 @@ auto EmitSubroutineCall(
       // An `inout` passes its incoming value and is written back the same way,
       // and the source writes the actual once (LRM 13.5).
       case hir::ParamDirection::kInOut: {
-        auto place_or = lowerer.LowerLhsExpr(hir_arg, frame);
+        auto place_or = LowerLvalue(lowerer, hir_arg, frame);
         if (!place_or) return std::unexpected(std::move(place_or.error()));
-        ReadThenWritten actual =
+        auto actual =
             ReadThenWrite(lowerer.Owner(), frame, *std::move(place_or));
-        call_args.push_back(actual.incoming);
+        if (!actual) return std::unexpected(std::move(actual.error()));
+        call_args.push_back(actual->incoming);
         writebacks.push_back(
-            {.place = std::move(actual.place),
+            {.target = std::move(actual->lvalue),
              .component = *formal.component,
              .type = formal.type});
         break;
@@ -615,11 +617,12 @@ auto EmitWritingBackSteps(
   if (!emitted) return std::unexpected(std::move(emitted.error()));
 
   const mir::TypeId payload_type = emitted->payload_type;
+  auto completion = BindCompletion(
+      lowerer.Owner(), frame, std::move(emitted->call), payload_type,
+      emitted->writebacks);
+  if (!completion) return std::unexpected(std::move(completion.error()));
   return BoundCompletion{
-      .completion = BindCompletion(
-          lowerer.Owner().Unit(), frame, std::move(emitted->call), payload_type,
-          emitted->writebacks),
-      .payload_type = payload_type};
+      .completion = *completion, .payload_type = payload_type};
 }
 
 template <ExprLowerer Lowerer>

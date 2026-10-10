@@ -5,10 +5,12 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
-#include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -54,24 +56,24 @@ auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
     base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId;
 
-// Where one payload component lands: the place the call named for it, bound
-// where the call is written so the store reaches the place the call named
-// rather than one a re-evaluation of the actual would reach (LRM 13.5).
+// Where one payload component lands: the lvalue the call named for it, bound
+// where the call is written so the store reaches what the call named rather
+// than what a re-evaluation of the actual would reach (LRM 13.5).
 struct CompletionWriteback {
-  AccessPath place;
+  Lvalue target;
   base::ComponentIndex component;
   mir::TypeId type;
 };
 
-// Binds a call's completion into the block `frame` is writing, then stores each
-// component into the place its writeback names. A call whose type says its
+// Binds a call's completion into the block `frame` is writing, then writes each
+// component to the lvalue its writeback names. A call whose type says its
 // callee completes as a coroutine is awaited first, the payload being what the
 // await yields (LRM 13.3). Yields the local the completion is bound to, which a
 // caller reads its own result component from.
 auto BindCompletion(
-    mir::CompilationUnit& unit, const WalkFrame& frame, mir::Expr call,
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Expr call,
     mir::TypeId payload_type, std::span<const CompletionWriteback> writebacks)
-    -> mir::LocalId;
+    -> diag::Result<mir::LocalId>;
 
 // One formal as a completion is derived from it: how the call transfers it and
 // what type it carries. Both HIR spellings of a callee's formals -- a

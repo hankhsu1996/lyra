@@ -64,8 +64,9 @@ target and why a forced value is not a driver; this file does not restate it.
 
 - [ ] PCA2 -- `assign` and `deassign` on a variable (LRM 10.6.1), including a second `assign` to an
       already-assigned variable ending the first, and a concatenation of variables as the target.
-      The plain form of both keywords is in; a concatenation target is refused by name, and the
-      supersede case is carried by the mechanism but is not covered by a case.
+      Both keywords are in for a variable and for a concatenation of variables, each member held to
+      its share of one evaluation of the source; the supersede case is carried by the mechanism but
+      is not covered by a case.
 
 - [ ] PCA3 -- `force` and `release` on a variable (LRM 10.6.2), at a precedence above PCA2's, with
       both endings the standard gives: the value retained where nothing else drives the variable,

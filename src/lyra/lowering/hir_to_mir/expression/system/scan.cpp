@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -379,15 +380,14 @@ auto LowerScanSystemSubroutineCall(
     mir::Block then_body;
     const WalkFrame then_frame = scan_frame.WithBlock(&then_body);
     auto lvalue_or =
-        process.LowerLhsExpr(hir_proc.exprs.Get(operands[k + 2]), then_frame);
+        LowerLvalue(process, hir_proc.exprs.Get(operands[k + 2]), then_frame);
     if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
     const mir::ExprId parsed_id = ProjectCompletionComponent(
         then_body, completion, payload_type, ScanParsedValue(k),
         target_types[k]);
-    const mir::Expr assign_expr =
-        BuildStoreExpr(unit, then_body, *lvalue_or, parsed_id);
-    const mir::ExprId assign_id = then_body.exprs.Add(assign_expr);
-    then_body.AppendStmt(mir::ExprStmt{.expr = assign_id});
+    auto stored =
+        AppendStores(process.Owner(), then_frame, *lvalue_or, parsed_id);
+    if (!stored) return std::unexpected(std::move(stored.error()));
 
     scan_body.AppendIfThen(
         ReduceToCondition(unit, scan_body, cond_id), std::move(then_body));

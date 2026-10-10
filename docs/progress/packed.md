@@ -43,10 +43,8 @@ The numeric IDs are stable references.
       expression list at the slang binding boundary; replication preserves the LRM shape and unrolls
       into the same packed concat path used for `{a,b,c}`. The type-prefixed self-determined form
       `T'{...}` is in, so both the fill and multi-bit pattern forms are complete. Unpacked-array
-      targets are deferred behind the unpacked-array push.
-  - [ ] The assignment pattern as an assignment target (LRM 10.9): the LHS-destructuring form
-        `'{a, b, c} = B` is rejected with a diagnostic. The concatenation spelling `{a, b, c} = B`
-        (LRM 11.4.12) is supported, so only the pattern spelling is missing.
+      targets are deferred behind the unpacked-array push. A pattern as an assignment target (LRM
+      10.9) takes the value apart member by member, over a packed type as over an unpacked one.
 
 ## Cross-references
 

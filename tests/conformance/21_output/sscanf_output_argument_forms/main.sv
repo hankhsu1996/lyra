@@ -1,7 +1,9 @@
 // A conversion places its result in the variable the corresponding argument
 // specifies, and that argument is a variable in whatever form the language
 // writes one -- an element of a fixed or a dynamic array, a part-select of a
-// packed value, or a member of a structure (LRM 21.3.4.3).
+// packed value, a member of a structure, or a concatenation of variables,
+// whose members take the bits of the result, the first member most significant
+// (LRM 21.3.4.3, 11.4.12).
 module Top;
   typedef struct packed {
     int a;
@@ -18,6 +20,9 @@ module Top;
   int into_part_select;
   int into_members;
 
+  logic [3:0] joined_high, joined_low;
+  int into_concatenation;
+
   initial begin
     dynamic_elements = new[2];
     packed_value = 16'h0000;
@@ -27,6 +32,9 @@ module Top;
                            dynamic_elements[1]);
     into_part_select = $sscanf("ab", "%h", packed_value[7:0]);
     into_members = $sscanf("99 77", "%d %d", members.a, members.b);
+    joined_high = 4'h0;
+    joined_low = 4'h0;
+    into_concatenation = $sscanf("c6", "%h", {joined_high, joined_low});
   end
 
   final begin
@@ -56,6 +64,13 @@ module Top;
     if (members.a !== 99 || members.b !== 77)
       $fatal(1, "the members were %0d and %0d, expected 99 and 77",
              members.a, members.b);
+
+    if (into_concatenation !== 1)
+      $fatal(1, "writing a concatenation returned %0d, expected 1",
+             into_concatenation);
+    if (joined_high !== 4'hc || joined_low !== 4'h6)
+      $fatal(1, "the concatenation's members were %h and %h, expected c and 6",
+             joined_high, joined_low);
     $display("All checks passed");
   end
 endmodule

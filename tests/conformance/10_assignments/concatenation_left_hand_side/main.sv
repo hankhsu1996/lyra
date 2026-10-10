@@ -10,7 +10,9 @@
 // integral type (LRM 6.11.1) -- an enumeration, a packed structure and a packed
 // union each take their share of the bits exactly as a vector of their width
 // does, since the concatenation is a packed vector of bits and writing through
-// it is writing bits.
+// it is writing bits. A member may itself be a concatenation (Table 10-1,
+// "nested concatenation"), which takes the bits at its position and splits them
+// among its own members the same way.
 module Top;
   typedef enum bit [7:0] {LOW = 8'h11, HIGH = 8'h22} opcode_t;
   typedef struct packed {
@@ -35,7 +37,13 @@ module Top;
   either_t either;
   bit [7:0] tail;
 
+  logic [3:0] outer_first, inner_first, inner_second, outer_last;
+  logic [7:0] lone;
+
   initial begin
+    {outer_first, {inner_first, {inner_second}}, outer_last} = 16'h9C4E;
+    {{lone}} = 8'hD2;
+
     {high, mid, low} = 24'h123456;
     {narrow, middle, widest} = 24'hABCDEF;
     {unknown_high, unknown_low} = 16'b10xx_1100_zz11_0101;
@@ -84,6 +92,16 @@ module Top;
     if (either.split.upper !== 4'hC)
       $fatal(1, "either.split.upper was %h, expected c", either.split.upper);
     if (tail !== 8'h7E) $fatal(1, "tail was %h, expected 7e", tail);
+
+    if (outer_first !== 4'h9)
+      $fatal(1, "outer_first was %h, expected 9", outer_first);
+    if (inner_first !== 4'hC)
+      $fatal(1, "inner_first was %h, expected c", inner_first);
+    if (inner_second !== 4'h4)
+      $fatal(1, "inner_second was %h, expected 4", inner_second);
+    if (outer_last !== 4'hE)
+      $fatal(1, "outer_last was %h, expected e", outer_last);
+    if (lone !== 8'hD2) $fatal(1, "lone was %h, expected d2", lone);
     $display("All checks passed");
   end
 endmodule

@@ -255,6 +255,26 @@ auto LowerHirReplicationExpr(
       .type = result_type};
 }
 
+auto BuildPositionalAggregate(
+    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_result_type,
+    mir::TypeId result_type, std::vector<mir::ExprId> elements) -> mir::Expr {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const auto& result_ty = unit.types.Get(result_type);
+  if (BuildsFromAnElementList(result_ty)) {
+    return BuildArrayConstructionCall(
+        unit, block, result_type,
+        BuildElementDefault(unit_lowerer, block, hir_result_type),
+        std::move(elements));
+  }
+  if (mir::ProductElements(unit, result_type).has_value()) {
+    return mir::Expr{
+        .data = mir::CompositeExpr{.parts = std::move(elements)},
+        .type = result_type};
+  }
+  return BuildValueConversion(
+      unit, block, BuildPackedConcat(unit, block, elements), result_type);
+}
+
 // A pattern that states every element by position, dispatched on the
 // destination type's runtime shape. A struct's keys reach this form already
 // resolved into a member-ordered element list (LRM 10.9.2), because members
@@ -279,21 +299,9 @@ auto LowerHirAssignmentPatternExpr(
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const auto& result_ty = unit.types.Get(result_type);
-  if (BuildsFromAnElementList(result_ty)) {
-    return BuildArrayConstructionCall(
-        unit, block, result_type,
-        BuildElementDefault(lowerer.Owner(), block, hir_result_type),
-        std::move(element_ids));
-  }
-  if (mir::ProductElements(unit, result_type).has_value()) {
-    return mir::Expr{
-        .data = mir::CompositeExpr{.parts = std::move(element_ids)},
-        .type = result_type};
-  }
-  return BuildValueConversion(
-      unit, block, BuildPackedConcat(unit, block, element_ids), result_type);
+  return BuildPositionalAggregate(
+      lowerer.Owner(), block, hir_result_type, result_type,
+      std::move(element_ids));
 }
 
 // The whole target before any key names an element of it: every element holding

@@ -14,8 +14,10 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
+#include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -89,28 +91,33 @@ auto LowerSFormatSystemSubroutineCallStmt(
   // format and its items follow.
   const std::vector<hir::ExprId> operands = RequiredLeadingOperands(call, 1);
 
-  auto out_or = process.LowerLhsExpr(hir_proc.exprs.Get(operands[0]), frame);
+  // Writing the text may take several steps, where what it is written to is
+  // a join of destinations, so the statement is a block of them.
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  auto out_or =
+      LowerLvalue(process, hir_proc.exprs.Get(operands[0]), steps.Frame());
   if (!out_or) return std::unexpected(std::move(out_or.error()));
   const mir::TypeId out_type =
       process.Owner().TranslateType(hir_proc.exprs.Get(operands[0]).type);
 
-  auto call_expr_or = BuildSFormatCallExpr(process, frame, call, info, 1);
+  auto call_expr_or =
+      BuildSFormatCallExpr(process, steps.Frame(), call, info, 1);
   if (!call_expr_or) return std::unexpected(std::move(call_expr_or.error()));
-  const mir::ExprId call_id = block.exprs.Add(*std::move(call_expr_or));
+  const mir::ExprId call_id = body.exprs.Add(*std::move(call_expr_or));
 
   // LRM 21.3.3: the formatted text reaches output_var under the LRM 5.9
   // string-literal assignment rules, so an integral or unpacked-byte-array
   // destination conforms the string value to its own representation. A
   // string-typed destination already matches and passes through unchanged.
   const mir::ExprId value_id =
-      ConvertToType(process.Owner().Unit(), block, call_id, out_type);
+      ConvertToType(process.Owner().Unit(), body, call_id, out_type);
 
-  const mir::Expr assign_expr =
-      BuildStoreExpr(process.Owner().Unit(), block, *out_or, value_id);
-  const mir::ExprId assign_id = block.exprs.Add(assign_expr);
-
-  return mir::Stmt{
-      .label = std::move(label), .data = mir::ExprStmt{.expr = assign_id}};
+  auto stored = AppendStores(process.Owner(), steps.Frame(), *out_or, value_id);
+  if (!stored) return std::unexpected(std::move(stored.error()));
+  mir::Stmt stmt = steps.BuildStatement();
+  stmt.label = std::move(label);
+  return stmt;
 }
 
 template auto LowerSFormatSystemSubroutineCall(

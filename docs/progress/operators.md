@@ -97,12 +97,19 @@ merged node.
       sibling; the frontend's `void`-typed operand handling drops them naturally. Includes
       replication in concat, nested concat, nested replication, signed operands, wide results, and X
       / Z propagation. String replication lives in `datatypes.md` SC2.
-- [x] W10 -- Destructuring assignment `{a, b, c} = rhs` / `<= rhs` (LRM 11.4.12 LHS form). RHS is
-      evaluated once and bits are distributed MSB-first, so `{a, b} = {b, a}` swaps. Parts may be
-      any writable lvalue (including W6 selector chains, e.g. `{a[7:4], b[7:4]} = rhs`). NBA form
-      requires every part to be a structural target. Replication operands are rejected per LRM
-      11.4.12.1. The LRM 10.9 assignment-pattern LHS is a separate construct and out of scope; the
-      LRM 11.4.14.3 streaming-unpack LHS is W15 below.
+- [x] W10 -- A concatenation as the target of a write (LRM 11.4.12, A.8.5), wherever a write stands:
+      a blocking or nonblocking assignment, an assignment operator and `++` / `--`, a continuous
+      assignment to variables or nets, an `output` port connection, an `output` or `inout` actual of
+      a subroutine, a destination a system task stores into, and `assign` / `deassign` / `force` /
+      `release`. The value written is evaluated once and its bits are distributed most significant
+      first, so `{a, b} = {b, a}` swaps. A member may be any writable lvalue (including W6 selector
+      chains, e.g. `{a[7:4], b[7:4]} = rhs`) or another concatenation, and every member is located
+      before the first is written, in the blocking form as in the nonblocking one. An assignment
+      operator applies to what the members hold together, with each member's index evaluated once.
+      The nonblocking form requires every member to be a structural target. Replication operands are
+      rejected per LRM 11.4.12.1. An assignment pattern as a target (LRM 10.9) takes a value apart
+      by member in the same positions, and a member of it may itself be a pattern or a
+      concatenation. The LRM 11.4.14.3 streaming-unpack target is W15 below.
 - [x] W15 -- Streaming operators `{>> {...}}` / `{<< n {...}}` in both directions (LRM 11.4.14).
       Packing lays each operand's bits end to end with the first operand most significant, an
       unpacked array contributing its elements in `foreach` order and a structure its members in
@@ -111,12 +118,13 @@ merged node.
       ignores any slice size. As an assignment source the stream is left-aligned in a wider
       fixed-size target by zero-filling on the right; as a target it is consumed from its most
       significant end and any surplus at the other end is dropped. Covers both directions in
-      procedural and continuous-assignment position, the nonblocking form, a nested stream, a slice
-      size written as a type or a constant, and a `with` clause naming which elements of a
-      one-dimensional unpacked array take part (LRM 11.4.14.4) on either side of the assignment, in
-      every range form a select admits.
+      procedural and continuous-assignment position, the nonblocking form, a nested stream, a stream
+      as an `output` actual or as the target of a continuous assignment, a slice size written as a
+      type or a constant, and a `with` clause naming which elements of a one-dimensional unpacked
+      array take part (LRM 11.4.14.4) on either side of the assignment, in every range form a select
+      admits.
 
-  The four forms below are rejected, and they are not one gap. Each says what it waits on.
+  The three forms below are rejected, and they are not one gap. Each says what it waits on.
   - [ ] A dynamically sized value wherever it meets a stream -- packed into one (LRM 11.4.14.4),
         filled from one, or standing as the source an unpack consumes. What it waits on is a type
         naming bits whose number the program fixes: the runtime already holds a packed value's width
@@ -128,14 +136,6 @@ merged node.
         object rather than over a value: a class object is reached through a managed reference and
         has no value-layer representation, so the product traversal every other aggregate shares
         does not reach it.
-  - [ ] A streaming target on a continuous assignment, and a concatenation target anywhere but a
-        procedural assignment, written as a statement or inside an expression: a continuous
-        assignment (`assign {a, b} = x;`), an `output` or `inout` actual, a destination a system
-        task stores into, a concatenation nested in another. Each is rejected with a diagnostic
-        naming the target. A join of destinations is not one place, so it needs the distribution
-        into several targets that the procedural form performs. What it waits on is that
-        distribution becoming one component the destructuring assignment, the streaming unpack, and
-        every other write all reach.
   - [ ] An unpacked union anywhere in a stream. LRM 11.4.14.1 streams its first-declared member
         whatever member is live, and the front end already resolves that much. What blocks it is the
         union's own storage: this pipeline keeps only the active member and reports a read of any
@@ -153,8 +153,8 @@ merged node.
 - [x] W12 -- `++` / `--` (prefix and postfix, LRM 11.4.2). Behave as blocking assignments; postfix
       yields the operand's prior value, prefix yields the new value. Integer and real operands;
       selector chains (`array[i]++`, `++a[15:8]`) and observable structural roots are covered. NBA
-      contexts (`b <= a++`, `var[i++] <= rhs`) evaluate the inc / dec exactly once at submit time.
-      Replication / concatenation operands are rejected as targets per LRM 11.4.12.1.
+      contexts (`b <= a++`, `var[i++] <= rhs`) evaluate the inc / dec exactly once at submit time. A
+      replication is rejected as a target per LRM 11.4.12.1; a concatenation is one (W10).
 - [x] W13 -- Compound assignment evaluates the left-hand side exactly once (LRM 11.4.1) for every
       target, including a side-effecting subscript (`a[f()] op= b`) at any nesting. It holds for
       every target shape -- a whole variable, an element of an unpacked array or a queue, a bit or

@@ -1,9 +1,12 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <expected>
 #include <optional>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
@@ -11,6 +14,7 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -64,13 +68,14 @@ auto DriverAccess(
 // wait, matching LRM 9.2.2.2's "evaluate at time 0" requirement for inferred
 // sensitivity.
 //
-// Where the store lands follows the target's own type. A net accepts no store,
-// only a drive (LRM 6.5): its assignment acquires a driver at Resolve and every
-// store re-roots onto that driver's contribution, so several assignments to one
-// net install independent drivers the net resolves. An assignment that names
-// only part of a net drives only that part, because the rest of its driver's
+// The target is an lvalue (LRM Table 10-1), and where each store lands follows
+// the type of the place it reaches. A net accepts no store, only a drive (LRM
+// 6.5): the assignment acquires a driver for it at Resolve and every store
+// re-roots onto that driver's contribution, so several assignments to one net
+// install independent drivers the net resolves. A place that names only part
+// of a net drives only that part, because the rest of its driver's
 // contribution stays at the resolution identity and keeps deferring to whoever
-// drives it. Every other target is written where it is named.
+// drives it. Every other place is written where it is named.
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
@@ -81,41 +86,34 @@ auto LowerContinuousAssign(
   const hir::Expr& hir_lhs = hir_scope.exprs.Get(src.lhs);
   const hir::Expr& hir_rhs = hir_scope.exprs.Get(src.rhs);
 
-  // The store's destination in one frame: the target as the source named it,
-  // re-rooted onto the driver when the target is a net. `driver` is absent
-  // until the Resolve pass below decides the target is one.
-  std::optional<AttachedDriver> driver;
-  const auto lower_destination =
-      [&](const WalkFrame& frame) -> diag::Result<AccessPath> {
-    mir::Block& block = *frame.current_block;
-    auto named_or = lowerer.LowerLhsExpr(hir_lhs, frame);
-    if (!named_or) return std::unexpected(std::move(named_or.error()));
-    if (!driver.has_value()) return named_or;
-    AccessPath rerooted = *std::move(named_or);
-    rerooted.owner = DriverAccess(unit, frame, block, *driver);
-    return rerooted;
-  };
-
-  // A net target acquires its driver in Resolve, installed as a field on the
-  // enclosing class. The target's root decides this: the source may have named
-  // the whole net or a part of it, and a part of a net is still a net.
+  // What each place of the target is driven through: a net accepts no store,
+  // only a drive, so each place that is one acquires a driver in Resolve, held
+  // in a field of the enclosing class, and a variable has none. The place's
+  // root decides it: the source may have named a whole net or a part of one,
+  // and a part of a net is still a net.
+  std::vector<std::optional<AttachedDriver>> drivers;
   {
     mir::Block& resolve_block = *resolve_frame.current_block;
-    auto named_or = lowerer.LowerLhsExpr(hir_lhs, resolve_frame);
-    if (!named_or) return std::unexpected(std::move(named_or.error()));
-    // A property of an object is a variable's storage, never a net's, so only
-    // a place can be a net.
-    const auto* place = std::get_if<mir::ExprId>(&named_or->owner);
-    const auto* net = place == nullptr
-                          ? nullptr
-                          : unit.types.Get(resolve_block.exprs.Get(*place).type)
-                                .As<mir::ResolvedType>();
-    if (net != nullptr) {
+    auto named = LowerLvalue(lowerer, hir_lhs, resolve_frame);
+    if (!named) return std::unexpected(std::move(named.error()));
+    ForEachPlace(*named, [&](const AccessPath& place_path) {
+      // A property of an object is a variable's storage, never a net's, so
+      // only a place can be a net.
+      const auto* place = std::get_if<mir::ExprId>(&place_path.owner);
+      const auto* net =
+          place == nullptr
+              ? nullptr
+              : unit.types.Get(resolve_block.exprs.Get(*place).type)
+                    .As<mir::ResolvedType>();
+      if (net == nullptr) {
+        drivers.emplace_back(std::nullopt);
+        return;
+      }
       const mir::ExprId cell = *place;
       const mir::TypeId driver_type =
           unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}});
       mir::Class& mir_class = *resolve_frame.current_class;
-      driver = AttachedDriver{
+      const AttachedDriver driver{
           .field = mir_class.fields.Add(mir::FieldDecl{.type = driver_type}),
           .type = driver_type};
       const mir::ExprId strength =
@@ -123,27 +121,41 @@ auto LowerContinuousAssign(
       const mir::ExprId attach = resolve_block.exprs.Add(
           mir::MakeNetAttachDriverCallExpr(cell, strength, driver_type));
       const mir::ExprId handle =
-          DriverAccess(unit, resolve_frame, resolve_block, *driver);
+          DriverAccess(unit, resolve_frame, resolve_block, driver);
       resolve_block.AppendStmt(
           mir::ExprStmt{
               .expr = resolve_block.exprs.Add(
                   mir::MakeAssignExpr(unit.builtins, handle, attach))});
-    }
+      drivers.emplace_back(driver);
+    });
   }
 
-  const auto emit_store = [&](const WalkFrame& frame) -> diag::Result<void> {
+  // One evaluation: the right-hand side read once and each place written its
+  // share, a net's re-rooted onto its driver's contribution. The seed below
+  // asks for the driven places alone.
+  const auto emit_stores = [&](const WalkFrame& frame,
+                               bool only_driven) -> diag::Result<void> {
     mir::Block& block = *frame.current_block;
     auto value_or = lowerer.LowerExpr(hir_rhs, frame);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::ExprId value = block.exprs.Add(*std::move(value_or));
-    auto destination_or = lower_destination(frame);
-    if (!destination_or) {
-      return std::unexpected(std::move(destination_or.error()));
+    auto named = LowerLvalue(lowerer, hir_lhs, frame);
+    if (!named) return std::unexpected(std::move(named.error()));
+    auto shares = Shares(lowerer.Owner(), frame, *named, value);
+    if (!shares) return std::unexpected(std::move(shares.error()));
+    for (std::size_t i = 0; i < shares->size(); ++i) {
+      Share& share = (*shares)[i];
+      const std::optional<AttachedDriver>& driver = drivers[i];
+      if (driver.has_value()) {
+        share.place.owner = DriverAccess(unit, frame, block, *driver);
+      } else if (only_driven) {
+        continue;
+      }
+      block.AppendStmt(
+          mir::ExprStmt{
+              .expr = block.exprs.Add(
+                  BuildStoreExpr(unit, block, share.place, share.value))});
     }
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = block.exprs.Add(
-                BuildStoreExpr(unit, block, *destination_or, value))});
     return {};
   };
 
@@ -151,10 +163,11 @@ auto LowerContinuousAssign(
   // identity, so a net would read as undriven to anything that reads it before
   // the body first runs -- including another unit's Initialize, which the
   // parent-first order can place after this one. Seeding the contribution in
-  // Initialize is what closes that window. A variable target needs no seed: it
-  // holds its declared initial value until the body's own first pass.
-  if (driver.has_value()) {
-    if (auto seeded = emit_store(init_frame); !seeded) {
+  // Initialize is what closes that window. A variable needs no seed: it holds
+  // its declared initial value until the body's own first pass.
+  if (std::ranges::any_of(
+          drivers, [](const auto& d) { return d.has_value(); })) {
+    if (auto seeded = emit_stores(init_frame, true); !seeded) {
       return std::unexpected(std::move(seeded.error()));
     }
   }
@@ -168,7 +181,7 @@ auto LowerContinuousAssign(
   const WalkFrame body_frame =
       ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
 
-  if (auto stored = emit_store(body_frame); !stored) {
+  if (auto stored = emit_stores(body_frame, false); !stored) {
     return std::unexpected(std::move(stored.error()));
   }
 

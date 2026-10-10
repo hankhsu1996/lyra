@@ -15,6 +15,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
@@ -86,10 +87,10 @@ auto LowerValuePlusargs(
   // 21.6).
   const hir::Expr& target_hir = hir_exprs.Get(operands[1]);
   const mir::TypeId target_type = unit_lowerer.TranslateType(target_hir.type);
-  auto place_or = lowerer.LowerLhsExpr(target_hir, step_frame);
+  auto place_or = LowerLvalue(lowerer, target_hir, step_frame);
   if (!place_or) return std::unexpected(std::move(place_or.error()));
-  ReadThenWritten target =
-      ReadThenWrite(unit_lowerer, step_frame, *std::move(place_or));
+  auto target = ReadThenWrite(unit_lowerer, step_frame, *std::move(place_or));
+  if (!target) return std::unexpected(std::move(target.error()));
 
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{
@@ -105,20 +106,22 @@ auto LowerValuePlusargs(
           ? support::BuiltinFn::kValuePlusargs
           : support::BuiltinFn::kValuePlusargsString;
   const std::array writebacks{CompletionWriteback{
-      .place = std::move(target.place),
+      .target = std::move(target->lvalue),
       .component = *layout.formals.front().component,
       .type = target_type}};
-  const mir::LocalId completion = BindCompletion(
-      unit, step_frame,
+  const mir::ExprId incoming = target->incoming;
+  auto completion = BindCompletion(
+      unit_lowerer, step_frame,
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = entry},
-                  .arguments = {runtime_id, user_id, target.incoming}},
+                  .arguments = {runtime_id, user_id, incoming}},
           .type = payload},
       payload, writebacks);
+  if (!completion) return std::unexpected(std::move(completion.error()));
   return steps.Build(ProjectCompletionComponent(
-      body, completion, payload, kCompletionResult, unit.builtins.int_type));
+      body, *completion, payload, kCompletionResult, unit.builtins.int_type));
 }
 
 }  // namespace

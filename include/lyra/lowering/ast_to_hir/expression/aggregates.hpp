@@ -58,8 +58,8 @@ auto LowerAssociativeAssignmentPattern(
 
 // The assignment-pattern dispatch by slang kind: the positional `'{a, b}` form
 // and the structured `'{index: value}` form. Each selects its target-specific
-// lowering (LHS-destructuring gate; associative / dynamic-array / positional),
-// so the expression dispatcher delegates to one entry per slang kind.
+// lowering (associative / dynamic-array / positional), so the expression
+// dispatcher delegates to one entry per slang kind.
 template <ExprLowerer Lowerer>
 auto LowerSimpleAssignmentPattern(
     Lowerer& lowerer, WalkFrame frame,

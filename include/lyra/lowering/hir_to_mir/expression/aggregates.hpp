@@ -35,6 +35,14 @@ template <ExprLowerer Lowerer>
 auto LowerHirStreamingConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
+// The value of `result_type` whose members, in declaration order, are
+// `elements`, each already at its member's type (LRM 10.9): a packed type joins
+// them into its one vector, an array takes them as its element list, and a
+// structure is those members and nothing more.
+[[nodiscard]] auto BuildPositionalAggregate(
+    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_result_type,
+    mir::TypeId result_type, std::vector<mir::ExprId> elements) -> mir::Expr;
+
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
