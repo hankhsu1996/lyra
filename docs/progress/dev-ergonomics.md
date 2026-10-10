@@ -309,12 +309,11 @@ layer directly.
 
 - [ ] D28 -- How far the designs of Verilator's benchmark suite get is measured every night and held
       to a record: for each design the case the suite marks as its quick check is built on the
-      execution backend, run, and checked by the suite's own script. Of seventeen cases six get all
-      the way; of the eleven that do not, four stop in their build and seven in their run (two
-      refused memory, four that do not end inside the limit, one whose time slot does not settle),
-      and none at its check. One correction to the suite is applied on top of it and has been
-      reported there: a testbench that took an unknown value on its done signal for the end of the
-      test.
+      execution backend, run, and checked by the suite's own script. Of seventeen cases eight get
+      all the way; of the nine that do not, four stop in their build and five in their run (two
+      refused memory, three that do not end inside the limit), and none at its check. One correction
+      to the suite is applied on top of it and has been reported there: a testbench that took an
+      unknown value on its done signal for the end of the test.
 
 ## Out of Scope
 
