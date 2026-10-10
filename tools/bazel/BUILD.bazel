@@ -1,1 +1,17 @@
-# Empty BUILD file to make tools/bazel/ a Bazel package for .bzl files
+# Whether the address sanitizer is on, read off the option that turns it on, so
+# nothing else has to be kept saying so.
+config_setting(
+    name = "under_address_sanitizer",
+    values = {"copt": "-fsanitize=address"},
+    visibility = ["//visibility:public"],
+)
+
+# The same build where clang is the compiler. Lyra is built by GCC and by clang,
+# and clang's toolchain is the one of the two that names its compiler: the
+# remote image's GCC states no name a setting could match.
+config_setting(
+    name = "clang_under_address_sanitizer",
+    flag_values = {"@bazel_tools//tools/cpp:compiler": "clang"},
+    values = {"copt": "-fsanitize=address"},
+    visibility = ["//visibility:public"],
+)
