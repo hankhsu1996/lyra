@@ -17,11 +17,6 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, bool value)
     -> mir::ExprId;
 
-// The negation of `operand`, a truth already evaluated, appended to `block` at
-// the type the operand has.
-[[nodiscard]] auto BuildLogicalNot(mir::Block& block, mir::ExprId operand)
-    -> mir::ExprId;
-
 // Reduces a lowered expression consumed as a condition to a stated boolean
 // predicate, appending that predicate to `block` and returning its id. Every
 // condition context (if / while / for / do-while / ternary) stores the reduced
@@ -31,6 +26,12 @@ namespace lyra::lowering::hir_to_mir {
 // expression that already is a predicate is its own reduction.
 [[nodiscard]] auto ReduceToCondition(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cond)
+    -> mir::ExprId;
+
+// The condition that holds exactly where `condition`, a reduced predicate, does
+// not.
+[[nodiscard]] auto BuildConditionNot(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId condition)
     -> mir::ExprId;
 
 // Whether `value` holds as a condition, as a one-bit value: 1 where the

@@ -1188,9 +1188,11 @@ class HirDumper {
             },
             [](const AssignExpr& a) -> std::string {
               const std::string op_str =
-                  a.compound_op.has_value()
-                      ? std::format(" op={}", FormatBinaryOp(*a.compound_op))
-                      : std::string{};
+                  a.compound.has_value() ? std::format(
+                                               " op={} at=Type[{}]",
+                                               FormatBinaryOp(a.compound->op),
+                                               a.compound->applied_at.value)
+                                         : std::string{};
               return std::format(
                   "AssignExpr timing={}{} lhs=Expr[{}] rhs=Expr[{}]",
                   FormatEffectTiming(a.timing), op_str, a.lhs.value,

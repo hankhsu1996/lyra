@@ -1,6 +1,9 @@
 #include "lyra/runtime/object_layout.hpp"
 
+#include <bit>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -29,14 +32,16 @@
 #include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/value/any_value.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
@@ -46,6 +51,7 @@
 #include "lyra/value/runtime_union.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
 
@@ -63,7 +69,8 @@ constexpr auto Of() -> ObjectLayout {
       .ends_with_nothing_to_do = std::is_trivially_destructible_v<T>};
 }
 
-[[noreturn]] auto NotRealized() -> ObjectLayout {
+template <typename Answer>
+[[noreturn]] auto NotRealized() -> Answer {
   throw InternalError(
       "object layout: this member storage is not realized over this value "
       "domain -- please report this as a bug");
@@ -74,10 +81,31 @@ constexpr auto Of() -> ObjectLayout {
 // this is the one place a domain names its class, and what a storage admits is
 // asked of the class it is handed.
 template <typename F>
-auto WithValueClass(ValueDomain domain, F f) -> ObjectLayout {
+auto WithValueClass(ValueDomain domain, F f)
+    -> decltype(f.template operator()<value::String>()) {
   switch (domain) {
-    case ValueDomain::kPacked:
-      return f.template operator()<value::PackedArray>();
+    case ValueDomain::kBit8:
+      return f.template operator()<value::BitVector<8>>();
+    case ValueDomain::kBit16:
+      return f.template operator()<value::BitVector<16>>();
+    case ValueDomain::kBit32:
+      return f.template operator()<value::BitVector<32>>();
+    case ValueDomain::kBit64:
+      return f.template operator()<value::BitVector<64>>();
+    case ValueDomain::kLogic8:
+      return f.template operator()<value::LogicVector<8>>();
+    case ValueDomain::kLogic16:
+      return f.template operator()<value::LogicVector<16>>();
+    case ValueDomain::kLogic32:
+      return f.template operator()<value::LogicVector<32>>();
+    case ValueDomain::kLogic64:
+      return f.template operator()<value::LogicVector<64>>();
+    case ValueDomain::kBitWide:
+      return f.template operator()<value::WideBitVector>();
+    case ValueDomain::kLogicWide:
+      return f.template operator()<value::WideLogicVector>();
+    case ValueDomain::kWildcardIndex:
+      return f.template operator()<value::AnyValue>();
     case ValueDomain::kString:
       return f.template operator()<value::String>();
     case ValueDomain::kReal:
@@ -109,9 +137,12 @@ auto WithValueClass(ValueDomain domain, F f) -> ObjectLayout {
 }
 
 // A variable may be of every value class but the empty one, which is only ever
-// a tagged union's payload (LRM 7.3.2).
+// a tagged union's payload (LRM 7.3.2), and an index held with its type, which
+// is no type a declaration can name (LRM 7.8.1).
 template <typename T>
-struct AdmitsVariable : std::bool_constant<!std::is_same_v<T, value::Empty>> {};
+struct AdmitsVariable : std::bool_constant<
+                            !std::is_same_v<T, value::Empty> &&
+                            !std::is_same_v<T, value::AnyValue>> {};
 
 // A history is kept over every variable type but the chandle, whose value is
 // the pointer it carries (LRM 6.14), which no sampled read can answer across.
@@ -120,9 +151,19 @@ struct AdmitsHistory
     : std::bool_constant<
           AdmitsVariable<T>::value && !std::is_same_v<T, value::Chandle>> {};
 
-// A net resolves only what LRM 6.7.1 admits as a net's data type.
+// A net resolves only what LRM 6.7.1 admits as a net's data type, which of the
+// integral types is the four-state ones.
 template <typename T>
-struct AdmitsNet : std::bool_constant<value::NetResolvable<T>> {};
+struct AdmitsNet
+    : std::bool_constant<AdmitsVariable<T>::value && value::NetResolvable<T>> {
+};
+
+template <BitAddressed T>
+struct AdmitsNet<T> : std::bool_constant<T::kFourState> {};
+
+// The library publishes no net over a tagged union, so none is laid out.
+template <>
+struct AdmitsNet<value::RuntimeTaggedUnion> : std::false_type {};
 
 // `Storage` over the value class of `domain`, where `Admits` holds of that
 // class.
@@ -132,7 +173,29 @@ auto StorageOver(ValueDomain domain) -> ObjectLayout {
     if constexpr (Admits<T>::value) {
       return Of<Storage<T>>();
     } else {
-      return NotRealized();
+      return NotRealized<ObjectLayout>();
+    }
+  });
+}
+
+// How far into a `Holder` the value it answers a read with lies.
+template <typename Holder>
+auto ReadAt() -> std::uint64_t {
+  const Holder holder;
+  return std::uint64_t{
+      std::bit_cast<std::uintptr_t>(&holder.Get()) -
+      std::bit_cast<std::uintptr_t>(&holder)};
+}
+
+// The same for `Storage` over the value class of `domain`, where `Admits`
+// holds of that class.
+template <template <typename> class Storage, template <typename> class Admits>
+auto ReadAtOver(ValueDomain domain) -> std::uint64_t {
+  return WithValueClass(domain, []<typename T>() -> std::uint64_t {
+    if constexpr (Admits<T>::value) {
+      return ReadAt<Storage<T>>();
+    } else {
+      return NotRealized<std::uint64_t>();
     }
   });
 }
@@ -224,6 +287,53 @@ auto LayoutOf(support::DeclaredMemberStorage storage) -> ObjectLayout {
       return Of<EvaluationAttempts>();
   }
   throw InternalError("object layout: unknown member storage kind");
+}
+
+auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
+    -> std::optional<std::uint64_t> {
+  if (!support::IsIntegralLayout(storage.domain)) {
+    return std::nullopt;
+  }
+  switch (storage.kind) {
+    case MemberStorageKind::kInlineValue:
+      return 0;
+    case MemberStorageKind::kValueCell:
+      return ReadAtOver<ActivationValueCell, AdmitsVariable>(storage.domain);
+    case MemberStorageKind::kObservableCell:
+      return ReadAtOver<Var, AdmitsVariable>(storage.domain);
+    case MemberStorageKind::kResolvedNet:
+      return ReadAtOver<ResolvedNet, AdmitsNet>(storage.domain);
+    // A history answers a read with one of the values it keeps, which its own
+    // access picks.
+    case MemberStorageKind::kSampledHistory:
+    case MemberStorageKind::kBorrowedHandle:
+    case MemberStorageKind::kReference:
+    case MemberStorageKind::kSharedPointer:
+    case MemberStorageKind::kChannelCancellation:
+    case MemberStorageKind::kNamedEvent:
+    case MemberStorageKind::kCancellationTarget:
+    case MemberStorageKind::kEvaluationAttempts:
+      return std::nullopt;
+  }
+  throw InternalError("object layout: unknown member storage kind");
+}
+
+auto DesignatedPartAt() -> std::uint64_t {
+  return offsetof(ErasedDesignation, part);
+}
+
+// The Itanium ABI names a class's table `_ZTV` followed by the class's mangled
+// name, which is what its `type_info` reports as its name.
+auto LayoutOfIntegralTypeConstant() -> IntegralTypeConstantLayout {
+  const value::IntegralValueType& stated =
+      value::IntegralValueType::Of<value::Bit>();
+  return IntegralTypeConstantLayout{
+      .object = Of<value::IntegralValueType>(),
+      .table_symbol =
+          std::string("_ZTV") + typeid(value::IntegralValueType).name(),
+      .value_size = stated.SizeStatedAt(),
+      .value_align = stated.AlignStatedAt(),
+      .shape_at = stated.ShapeOffset()};
 }
 
 auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {

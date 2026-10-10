@@ -6,7 +6,8 @@
 
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -83,9 +84,11 @@ class RuntimeTuple {
   auto CopyInto(void* out) const -> void*;
   auto MoveInto(void* out) && -> void*;
 
-  [[nodiscard]] auto operator==(const RuntimeTuple& other) const -> PackedArray;
-  [[nodiscard]] auto operator!=(const RuntimeTuple& other) const -> PackedArray;
-  [[nodiscard]] auto CaseEqual(const RuntimeTuple& other) const -> PackedArray;
+  [[nodiscard]] auto operator==(const RuntimeTuple& other) const
+      -> FourStateBit;
+  [[nodiscard]] auto operator!=(const RuntimeTuple& other) const
+      -> FourStateBit;
+  [[nodiscard]] auto CaseEqual(const RuntimeTuple& other) const -> Bit;
   [[nodiscard]] auto ResolveTriState(const RuntimeTuple& other) const
       -> RuntimeTuple;
   [[nodiscard]] auto ResolveWiredAnd(const RuntimeTuple& other) const
@@ -95,16 +98,19 @@ class RuntimeTuple {
   [[nodiscard]] auto Dominating(const RuntimeTuple& weaker) const
       -> RuntimeTuple;
   [[nodiscard]] static auto FilledLike(
-      const RuntimeTuple& prototype, const PackedArray& fill) -> RuntimeTuple;
+      const RuntimeTuple& prototype, const Logic& fill) -> RuntimeTuple;
   [[nodiscard]] auto IsBitIdentical(const RuntimeTuple& other) const -> bool;
   [[nodiscard]] auto HasUnknown() const -> bool;
-  [[nodiscard]] auto IsUnknown() const -> PackedArray;
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray;
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray;
-  [[nodiscard]] auto ToBitstream() const -> PackedArray;
-  [[nodiscard]] static auto FromBitstream(
-      const PackedArray& bits, const RuntimeTuple& prototype) -> RuntimeTuple;
+  [[nodiscard]] auto IsUnknown() const -> Bit;
+  [[nodiscard]] auto BitstreamWidth() const -> Int;
+  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
+      -> Int;
+  auto WriteToStream(
+      Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+      -> std::uint64_t;
+  [[nodiscard]] auto ReadFromStream(
+      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+      -> std::pair<RuntimeTuple, std::uint64_t>;
 
  private:
   explicit RuntimeTuple(AnyValue value);
@@ -115,7 +121,6 @@ class RuntimeTuple {
 static_assert(LyraValue<RuntimeTuple>);
 static_assert(NetResolvable<RuntimeTuple>);
 static_assert(CaseEqualComparable<RuntimeTuple>);
-static_assert(BitstreamSizable<RuntimeTuple>);
-static_assert(BitstreamConvertible<RuntimeTuple>);
+static_assert(BitstreamSizable<RuntimeTuple, ConstIntegralView>);
 
 }  // namespace lyra::value

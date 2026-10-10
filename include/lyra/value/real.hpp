@@ -8,7 +8,7 @@
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
@@ -46,13 +46,6 @@ class RealValue {
     return RealValue{static_cast<Host>(i)};
   }
 
-  // LRM 6.12.1 cross-precision reshape, named so a conversion states which of
-  // the two it is rather than leaving the operand's type to say.
-  template <typename Other>
-  [[nodiscard]] static auto ConvertFrom(const RealValue<Other>& o)
-      -> RealValue {
-    return RealValue{o};
-  }
   [[nodiscard]] auto Round() const -> std::int64_t {
     return std::llround(v_);
   }
@@ -199,26 +192,26 @@ class RealValue {
     return old;
   }
 
-  // LRM 11.4.4 relational: a 1-bit 2-state result (real carries no x/z).
-  [[nodiscard]] auto operator<(const RealValue& o) const -> PackedArray {
-    return PackedArray::Bit(v_ < o.v_);
+  // LRM 11.4.4 relational: a bit (real carries no x/z).
+  [[nodiscard]] auto operator<(const RealValue& o) const -> Bit {
+    return Bit::FromBool(v_ < o.v_);
   }
-  [[nodiscard]] auto operator<=(const RealValue& o) const -> PackedArray {
-    return PackedArray::Bit(v_ <= o.v_);
+  [[nodiscard]] auto operator<=(const RealValue& o) const -> Bit {
+    return Bit::FromBool(v_ <= o.v_);
   }
-  [[nodiscard]] auto operator>(const RealValue& o) const -> PackedArray {
-    return PackedArray::Bit(v_ > o.v_);
+  [[nodiscard]] auto operator>(const RealValue& o) const -> Bit {
+    return Bit::FromBool(v_ > o.v_);
   }
-  [[nodiscard]] auto operator>=(const RealValue& o) const -> PackedArray {
-    return PackedArray::Bit(v_ >= o.v_);
+  [[nodiscard]] auto operator>=(const RealValue& o) const -> Bit {
+    return Bit::FromBool(v_ >= o.v_);
   }
 
   // LRM 11.4.5 `==` / `!=` (Any data type), compared as real values.
-  [[nodiscard]] auto operator==(const RealValue& o) const -> PackedArray {
-    return PackedArray::Bit(v_ == o.v_);
+  [[nodiscard]] auto operator==(const RealValue& o) const -> Bit {
+    return Bit::FromBool(v_ == o.v_);
   }
-  [[nodiscard]] auto operator!=(const RealValue& o) const -> PackedArray {
-    return PackedArray::Bit(v_ != o.v_);
+  [[nodiscard]] auto operator!=(const RealValue& o) const -> Bit {
+    return Bit::FromBool(v_ != o.v_);
   }
 
   // LRM 9.4.2 update event predicate (engine change-detection hook): compares
@@ -236,8 +229,8 @@ class RealValue {
     return false;
   }
 
-  [[nodiscard]] static auto IsUnknown() -> PackedArray {
-    return PackedArray::Bit(false);
+  [[nodiscard]] static auto IsUnknown() -> Bit {
+    return Bit::FromBool(false);
   }
 
   // LRM 11.4.7 / 12.4: a real in a boolean context is true when non-zero.
@@ -254,6 +247,19 @@ class RealValue {
 
 using Real = RealValue<double>;
 using ShortReal = RealValue<float>;
+
+template <typename T>
+inline constexpr bool kIsReal = false;
+template <typename Host>
+inline constexpr bool kIsReal<RealValue<Host>> = true;
+
+// LRM 6.12.1: a `shortreal` read as a `real` or the other way, the host's own
+// float-precision conversion.
+template <typename To, typename Host>
+  requires kIsReal<To>
+[[nodiscard]] auto Convert(const RealValue<Host>& from) -> To {
+  return To{from};
+}
 
 // LRM 21.2.1 real formatting. Delegates to the host-precision formatter
 // (`Formatter<double>` / `Formatter<float>`); the %f / %e / %g precision comes

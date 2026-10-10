@@ -52,10 +52,11 @@ what the construct means.
   Rust's. The family is closed on three axes: scalar, aggregate, and callable. The boolean is the
   scalar a predicate reduction yields and a condition consumes; it is not a one-bit integer, and not
   the source language's own one-bit value. It is plain machine data, distinct from the simulation
-  value types that a source language's `int`, `real`, or `string` lower to, which are library values
-  reached through a wrapper. Every value a runtime entry returns as a plain scalar, every table a
-  runtime record reads as raw storage, and every value that crosses a foreign-call boundary is one
-  of these.
+  value types that a source language's `int`, `real`, or `string` lower to: an integral type is a
+  width, a signedness and a state domain, and carries the language's own operators, where a machine
+  integer is a number a runtime entry takes or returns. Every value a runtime entry returns as a
+  plain scalar, every table a runtime record reads as raw storage, and every value that crosses a
+  foreign-call boundary is one of these.
 - The type system: value types (integral, real, string, event, ...); one object type, naming a class
   by its identity, which is one of two forms -- an intra-unit class (a class of this unit, however
   the name reaching it was written) and an external-unit class (a class another compilation unit
@@ -125,8 +126,11 @@ what the construct means.
 - A source language's coordinate system: a declared range, its direction, which part-select form the
   source wrote. HIR-to-MIR reads it, and a select states where it lands in the selected value's own
   numbering -- a bit from a packed value's least significant end, an element from an unpacked
-  array's left -- and how many parts a fixed-size run takes. That numbering is the value's, not a
-  storage layout, the way an LLVM `extractvalue` index or a shift amount is.
+  array's left -- and how many parts a fixed-size run takes. An index into a value that numbers its
+  own parts -- a queue, a dynamic array, a string -- is stated the same way: the lowering converts
+  it to a position where the source wrote it, so no consumer is handed an index beside the type it
+  was written in. That numbering is the value's, not a storage layout, the way an LLVM
+  `extractvalue` index or a shift amount is.
 - Scheduling, dirty tracking, or wakeup filtering.
 - The frontend's symbol or string identity. MIR carries only MIR's own ids.
 - SystemVerilog source-level syntactic sugar. Sugar collapses to MIR's primitives at HIR-to-MIR.
@@ -329,13 +333,13 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   `ForeachStmt` in MIR. Sugar of this kind is desugared to primitives upstream. (MIR's vocabulary is
   the generic-language vocabulary, not the source language's.)
 - A MIR node kind invented to express a backend-side storage realization or runtime library wrapper
-  (a `ReadCell` / `WriteCell` / `MutateCell` node for the C++ backend's `Var<T>`, an `AcquireLock` /
-  `ReleaseLock` node for some scheduling discipline). Backend storage realizations are library types
-  in the target. An operation on such a wrapper appears in MIR as an ordinary `CallExpr` against the
-  library type's API; reading the storage it represents is a dereference of the wrapper's place
-  (invariant 14). Either way the resulting MIR carries no trace of the wrapper as a node concept.
-  (MIR's primitive set is closed; the existing call and dereference primitives carry every
-  backend-side library operation and access the same way they carry every other call and
+  (a `ReadCell` / `WriteCell` / `MutateCell` node for one backend's observable cell, an
+  `AcquireLock` / `ReleaseLock` node for some scheduling discipline). Backend storage realizations
+  are library types in the target. An operation on such a wrapper appears in MIR as an ordinary
+  `CallExpr` against the library type's API; reading the storage it represents is a dereference of
+  the wrapper's place (invariant 14). Either way the resulting MIR carries no trace of the wrapper
+  as a node concept. (MIR's primitive set is closed; the existing call and dereference primitives
+  carry every backend-side library operation and access the same way they carry every other call and
   dereference.)
 - A read through a storage-representing wrapper encoded as a call (`Call(get, [cell])`), or any call
   whose result a consumer must recognize to recover a destination it stands for -- a handle opened
@@ -481,14 +485,15 @@ takes follows from whether its predicates can be unknown and is settled at HIR-t
 consumer derives it. A write yields nothing, as an assignment does in Rust's MIR: what an assignment
 yields where the source reads it (LRM 11.3.6) is what it stored, which the lowering holds in a local
 and reads, so no backend's own rule for the value of an assignment -- C++'s is the target itself --
-decides it, and an increment is a compound write by one. A value-build primitive spells a value
-rather than operating on values that already exist -- a structured literal is one, and so is every
-peer language's array or aggregate literal. Select expressions are access primitives. Each of these
-stays in MIR for the same reason: removing it would require expanding into a statement-form rewrite
-that does not fit the expression context. Composing values that already exist is not this. A
-concatenation or a replication is an operation over its operands, which every peer reaches through a
-library call and none of them spells as a node, so it is a `CallExpr` against the entry that
-performs it.
+decides it. An assignment operator and an increment (LRM 11.4.1, 11.4.2) are no write of their own:
+each is the operator applied to what the target held and then that write, the target settled once
+for both, so a write names no operator. A value-build primitive spells a value rather than operating
+on values that already exist -- a structured literal is one, and so is every peer language's array
+or aggregate literal. Select expressions are access primitives. Each of these stays in MIR for the
+same reason: removing it would require expanding into a statement-form rewrite that does not fit the
+expression context. Composing values that already exist is not this. A concatenation or a
+replication is an operation over its operands, which every peer reaches through a library call and
+none of them spells as a node, so it is a `CallExpr` against the entry that performs it.
 
 A callable is one concept: callable code (a signature, plus a body where the declaration defines it)
 and a callable value (code plus a bound environment). A closure is a callable value with a captured

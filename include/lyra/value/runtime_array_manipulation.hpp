@@ -6,7 +6,7 @@
 
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/array_manipulation.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
@@ -48,7 +48,7 @@ namespace detail {
 struct ArrayEntries {
   std::vector<const void*> elements;
   std::vector<const void*> indices;
-  std::vector<PackedArray> positions;
+  std::vector<Int> positions;
 };
 
 [[nodiscard]] auto EntriesOf(const RuntimeQueue& queue) -> ArrayEntries;

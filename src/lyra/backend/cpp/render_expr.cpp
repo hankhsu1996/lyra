@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -141,12 +142,47 @@ void RenderBinaryExpr(
       Operand{.expr = b.rhs, .at_least = TighterThan(level)});
 }
 
+// The machine boolean `expr` is written as, where it is one.
+auto WrittenBoolean(const ScopeView& view, mir::ExprId expr)
+    -> std::optional<bool> {
+  const auto* literal =
+      std::get_if<mir::MachineBoolLiteral>(&view.Expr(expr).data);
+  return literal != nullptr ? std::optional{literal->value} : std::nullopt;
+}
+
 // `c ? a : b`. The else arm can be another conditional without parentheses,
 // `c1 ? a : c2 ? b : d`, so a long chain stays flat; only the condition needs a
 // tighter form.
+//
+// A selection that answers `true` where its condition holds, or `false` where
+// it does not, is the short-circuit operator of the same meaning, `c || b` and
+// `c && a`, and is written as one. A search through several hundred conditions
+// is a chain of exactly those, and a compiler that folds each link of a
+// boolean chain into the operator spends memory in the cube of its depth doing
+// it (GCC 13 takes 3 GB for 320 links and nothing measurable for the
+// operators); the operands of one operator are written side by side, so the
+// chain is as shallow as its text.
 void RenderConditionalExpr(
     const ScopeView& view, const mir::ConditionalExpr& c, Precedence at_least,
     TargetText& out) {
+  if (WrittenBoolean(view, c.then_value) == true) {
+    const Enclosure enclosure(out, Precedence::kLogicalOr, at_least);
+    Write(
+        view, out,
+        Operand{.expr = c.condition, .at_least = Precedence::kLogicalOr},
+        " || ",
+        Operand{.expr = c.else_value, .at_least = Precedence::kLogicalOr});
+    return;
+  }
+  if (WrittenBoolean(view, c.else_value) == false) {
+    const Enclosure enclosure(out, Precedence::kLogicalAnd, at_least);
+    Write(
+        view, out,
+        Operand{.expr = c.condition, .at_least = Precedence::kLogicalAnd},
+        " && ",
+        Operand{.expr = c.then_value, .at_least = Precedence::kLogicalAnd});
+    return;
+  }
   const Enclosure enclosure(out, Precedence::kAssignment, at_least);
   Write(
       view, out,
@@ -230,10 +266,12 @@ void RenderReferenceExpr(
             Write(
                 out, CppClassRef(view.Unit(), r.of), "::", CppDefinitionName());
           },
-          [&](const mir::TypeDescriptorRef& r) {
-            Write(out, CppTypeDescriptorName(r.descriptor));
+          [&](const mir::EnumTableRef& r) {
+            view.NameEnumTable(r.table);
+            Write(out, CppEnumTableName(r.table));
           },
           [&](const mir::IntegralConstantRef& r) {
+            view.NameConstant(r.constant);
             Write(out, CppIntegralConstantName(r.constant));
           },
           [&](const mir::StaticPropertyRef& r) {
@@ -275,17 +313,12 @@ void RenderReferenceExpr(
       reference.target);
 }
 
-// `target = value` or `target op= value`. The target always renders as a C++
-// lvalue, and `op=` evaluates it once, as LRM 11.4.1 requires. A write yields
+// `target = value`. The target always renders as a C++ lvalue. A write yields
 // nothing, so it stands only where a statement does and never needs
 // parentheses.
 void RenderAssignExpr(
     const ScopeView& view, const mir::AssignExpr& a, TargetText& out) {
   const Operand target{.expr = a.target, .at_least = Precedence::kPrefix};
-  if (a.compound_op.has_value()) {
-    Write(view, out, target, " ", BinaryOpToken(*a.compound_op), "= ", a.value);
-    return;
-  }
   Write(view, out, target, " = ", a.value);
 }
 

@@ -4,6 +4,7 @@
 #include <exception>
 #include <memory>
 #include <string_view>
+#include <utility>
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/coroutine.hpp"
@@ -13,7 +14,7 @@
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/format.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/string.hpp"
 
@@ -91,13 +92,22 @@ class RuntimeEffects {
   // LRM 9.4.5: a nonblocking effect carrying a delay control schedules its
   // update into the NBA region of the slot that delay names (LRM 4.4.2.4).
   // `duration` is an amount in the scope's time unit, read exactly as a delay
-  // control reads one.
+  // control reads one; an integral amount of any type is read through its
+  // planes.
   void SubmitNbaAfter(
-      const value::PackedArray& duration, const value::PackedArray& unit_power,
-      const value::PackedArray& precision_power, OwnedCall closure);
+      const value::ConstIntegralView& duration, std::int64_t unit_power,
+      std::int64_t precision_power, OwnedCall closure);
+  template <value::IntegralValue T>
+  void SubmitNbaAfter(
+      const T& duration, std::int64_t unit_power, std::int64_t precision_power,
+      OwnedCall closure) {
+    SubmitNbaAfter(
+        duration.Load().View(), unit_power, precision_power,
+        std::move(closure));
+  }
   void SubmitNbaAfterReal(
-      const value::Real& duration, const value::PackedArray& unit_power,
-      const value::PackedArray& precision_power, OwnedCall closure);
+      const value::Real& duration, std::int64_t unit_power,
+      std::int64_t precision_power, OwnedCall closure);
   void SubmitPostponed(OwnedCall closure);
   // LRM 16.5: a concurrent assertion is evaluated in the Observed region of the
   // tick's own time step, once every region in which that step settles the
@@ -132,8 +142,7 @@ class RuntimeEffects {
   // called, which is the whole of what a run nothing can resume has to tell
   // `$stop` and `$finish` apart by.
   void EndRun(
-      std::string_view task, const value::String& origin,
-      const value::PackedArray& level);
+      std::string_view task, const value::String& origin, std::int64_t level);
   // Adopts `coroutine` as a spawned child of the executing process's
   // lineage (LRM 9.5), schedules it, and answers the process it now is.
   auto Spawn(Coroutine<void> coroutine) -> std::shared_ptr<RuntimeProcess>;
@@ -177,9 +186,8 @@ class RuntimeEffects {
   // LRM 20.4.3: the design-wide `$timeformat` state.
   [[nodiscard]] auto TimeFormat() const -> const value::TimeFormat&;
   void SetTimeFormat(
-      const value::PackedArray& units_power,
-      const value::PackedArray& precision, const value::String& suffix,
-      const value::PackedArray& min_width);
+      std::int64_t units_power, std::int64_t precision,
+      const value::String& suffix, std::int64_t min_width);
   void ResetTimeFormat();
 
   RuntimeEffects(const RuntimeEffects&) = delete;

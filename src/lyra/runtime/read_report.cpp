@@ -11,8 +11,7 @@
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
-#include "lyra/value/packed.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
@@ -50,14 +49,12 @@ void ReadReport::Reach(Trigger trigger) {
 // evaluation, so nothing is asked where the change happens, and an implicit
 // list wakes on any change to what it lists.
 void ReadReport::Add(
-    Observable* place, const value::PackedArray& lsb_bit_offset,
-    const value::PackedArray& bit_width) {
+    Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   Reach(Trigger{place, Observation::OnReaching(), lsb_bit_offset, bit_width});
 }
 
 void ReadReport::AddThroughHandle(
-    Observable* place, const value::PackedArray& lsb_bit_offset,
-    const value::PackedArray& bit_width) {
+    Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   through_handles_.emplace_back(
       place, Observation::OnReaching(), lsb_bit_offset, bit_width);
 }
@@ -71,14 +68,13 @@ void ReadReport::LeaveCallOnHandle() {
 }
 
 void ReadReport::AddWrite(
-    Observable* place, const value::PackedArray& lsb_bit_offset,
-    const value::PackedArray& bit_width) {
+    Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   writes_.push_back(
       Written{
           .place = place,
           .bits = {
-              .lsb = static_cast<std::uint64_t>(lsb_bit_offset.ToInt64()),
-              .width = static_cast<std::uint64_t>(bit_width.ToInt64())}});
+              .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
+              .width = static_cast<std::uint64_t>(bit_width)}});
 }
 
 void ReadReport::SettleAsImplicitList() {

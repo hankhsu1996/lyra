@@ -8,7 +8,8 @@
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/real.hpp"
 
 namespace lyra::runtime {
@@ -107,13 +108,14 @@ auto DelayForTicks(
 }  // namespace
 
 auto DelayTicks(
-    const value::PackedArray& duration, std::int8_t unit_power,
+    const value::ConstIntegralView& duration, std::int8_t unit_power,
     std::int8_t precision_power) -> SimDuration {
-  if (duration.HasUnknown()) {
+  if (value::HasUnknown(duration.planes)) {
     return 0;
   }
   return ScaleByPowerOfTen(
-      static_cast<SimDuration>(duration.ToInt64()),
+      static_cast<SimDuration>(
+          value::ToInt64(duration.planes, duration.width, duration.signedness)),
       unit_power - precision_power);
 }
 
@@ -147,21 +149,19 @@ auto DelayDeadline(
 }
 
 auto Delay(
-    RuntimeEffects& runtime, const value::PackedArray& duration,
-    const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> Wait {
-  const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
-  const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
+    RuntimeEffects& runtime, const value::ConstIntegralView& duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> Wait {
+  const auto unit = static_cast<std::int8_t>(unit_power);
+  const auto precision = static_cast<std::int8_t>(precision_power);
   return DelayForTicks(
       runtime, DelayTicks(duration, unit, precision), precision);
 }
 
 auto DelayReal(
     RuntimeEffects& runtime, const value::Real& duration,
-    const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> Wait {
-  const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
-  const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
+    std::int64_t unit_power, std::int64_t precision_power) -> Wait {
+  const auto unit = static_cast<std::int8_t>(unit_power);
+  const auto precision = static_cast<std::int8_t>(precision_power);
   return DelayForTicks(
       runtime, DelayTicksReal(duration, unit, precision), precision);
 }

@@ -1,16 +1,17 @@
 #include "lyra/lowering/hir_to_mir/expression/real_conversion.hpp"
 
 #include <expected>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -36,11 +37,14 @@ auto LowerRealConversionCall(
     auto pattern = lower(RequiredOperands(c, 1).at(0));
     if (!pattern) return std::unexpected(std::move(pattern.error()));
     const mir::ExprId bits =
-        block.exprs.Add(MakeToInt64Call(unit_lowerer.Unit(), *pattern));
+        BuildToInt64Call(unit_lowerer.Unit(), block, *pattern);
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee = mir::Direct{.target = support::BuiltinFn::kFromBits},
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kFromBits,
+                        .type_argument = result_type},
                 .arguments = {bits}},
         .type = result_type};
   }
@@ -59,14 +63,9 @@ auto LowerRealConversionCall(
                       mir::Direct{.target = b.method, .receiver = *subject},
                   .arguments = {}},
           .type = unit_lowerer.Unit().builtins.machine_int64});
-  const mir::ExprId packed_type =
-      mir::BuildTypeDescriptorRef(unit_lowerer.Unit(), block, result_type);
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kFromInt},
-              .arguments = {read_out, packed_type}},
-      .type = result_type};
+  return MakeBuiltinCall(
+      unit_lowerer.Unit(), block, support::BuiltinFn::kIntegralFromInt,
+      std::nullopt, {read_out}, result_type);
 }
 
 template auto LowerRealConversionCall(

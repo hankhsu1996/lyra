@@ -8,7 +8,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/any_value.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
@@ -90,15 +90,15 @@ auto RuntimeTuple::Type() const -> const TupleType& {
   return TypeAt(Bytes());
 }
 
-auto RuntimeTuple::operator==(const RuntimeTuple& other) const -> PackedArray {
+auto RuntimeTuple::operator==(const RuntimeTuple& other) const -> FourStateBit {
   return value_ == other.value_;
 }
 
-auto RuntimeTuple::operator!=(const RuntimeTuple& other) const -> PackedArray {
+auto RuntimeTuple::operator!=(const RuntimeTuple& other) const -> FourStateBit {
   return value_ != other.value_;
 }
 
-auto RuntimeTuple::CaseEqual(const RuntimeTuple& other) const -> PackedArray {
+auto RuntimeTuple::CaseEqual(const RuntimeTuple& other) const -> Bit {
   return value_.CaseEqual(other.value_);
 }
 
@@ -122,8 +122,8 @@ auto RuntimeTuple::Dominating(const RuntimeTuple& weaker) const
   return RuntimeTuple(value_.Dominating(weaker.value_));
 }
 
-auto RuntimeTuple::FilledLike(
-    const RuntimeTuple& prototype, const PackedArray& fill) -> RuntimeTuple {
+auto RuntimeTuple::FilledLike(const RuntimeTuple& prototype, const Logic& fill)
+    -> RuntimeTuple {
   return RuntimeTuple(AnyValue::FilledLike(prototype.value_, fill));
 }
 
@@ -135,26 +135,30 @@ auto RuntimeTuple::HasUnknown() const -> bool {
   return value_.HasUnknown();
 }
 
-auto RuntimeTuple::IsUnknown() const -> PackedArray {
+auto RuntimeTuple::IsUnknown() const -> Bit {
   return value_.IsUnknown();
 }
 
-auto RuntimeTuple::BitstreamWidth() const -> PackedArray {
+auto RuntimeTuple::BitstreamWidth() const -> Int {
   return value_.BitstreamWidth();
 }
 
-auto RuntimeTuple::CountBits(const PackedArray& control_bits) const
-    -> PackedArray {
+auto RuntimeTuple::CountBits(const ConstIntegralView& control_bits) const
+    -> Int {
   return value_.CountBits(control_bits);
 }
 
-auto RuntimeTuple::ToBitstream() const -> PackedArray {
-  return value_.ToBitstream();
+auto RuntimeTuple::WriteToStream(
+    Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+    -> std::uint64_t {
+  return value_.WriteToStream(stream, stream_width, filled);
 }
 
-auto RuntimeTuple::FromBitstream(
-    const PackedArray& bits, const RuntimeTuple& prototype) -> RuntimeTuple {
-  return RuntimeTuple(AnyValue::FromBitstream(bits, prototype.value_));
+auto RuntimeTuple::ReadFromStream(
+    ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+    -> std::pair<RuntimeTuple, std::uint64_t> {
+  auto [read, after] = value_.ReadFromStream(stream, stream_width, taken);
+  return {RuntimeTuple(std::move(read)), after};
 }
 
 }  // namespace lyra::value

@@ -9,7 +9,7 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/format.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
@@ -88,8 +88,8 @@ class TaggedUnion
   }
 };
 
-static_assert(LyraValue<TaggedUnion<PackedArray, PackedArray>>);
-static_assert(LyraValue<TaggedUnion<Empty, PackedArray>>);
-static_assert(CaseEqualComparable<TaggedUnion<PackedArray, PackedArray>>);
+static_assert(LyraValue<TaggedUnion<Int, LogicVector<8>>>);
+static_assert(LyraValue<TaggedUnion<Empty, LogicVector<8>>>);
+static_assert(CaseEqualComparable<TaggedUnion<Int, LogicVector<8>>>);
 
 }  // namespace lyra::value

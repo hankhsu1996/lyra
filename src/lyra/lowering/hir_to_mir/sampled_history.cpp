@@ -9,6 +9,7 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
@@ -22,23 +23,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// The type a bit select of a packed value produces: one bit, unsigned, in the
-// state domain the operand itself carries, so an x or a z in the selected bit
-// survives into the comparison rather than collapsing to zero. Absent for an
-// operand that is not packed, which has no least significant bit to read.
-auto BitSelectType(mir::CompilationUnit& unit, mir::TypeId value_type)
-    -> std::optional<mir::TypeId> {
-  const mir::Type& value = unit.types.Get(value_type);
-  if (!value.IsIntegralPacked()) {
-    return std::nullopt;
-  }
-  return unit.types.Intern(
-      mir::Type{mir::PackedArrayType{
-          .state_kind = value.PackedShape().state_kind,
-          .signedness = mir::Signedness::kUnsigned,
-          .dims = {mir::PackedRange{.left = 0, .right = 0}}}});
-}
 
 // A value change function asks one of two questions (LRM 16.9.3). `$stable` and
 // `$changed` ask whether the whole sampled value is the one the prior tick
@@ -92,26 +76,6 @@ auto BuildPriorTickRead(
             .Get<mir::SampledHistoryType>()
             .value);
   }
-}
-
-// The least significant bit of a packed value, which is the whole of what
-// `$rose` and `$fell` read (LRM 16.9.3): the one bit at the value's own
-// position zero, whatever range it was declared with.
-auto BuildLeastSignificantBit(
-    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
-    mir::TypeId bit_type) -> mir::ExprId {
-  const mir::ExprId lsb = BuildConstantPosition(unit, block, 0);
-  const mir::ExprId width = BuildMachineIntLiteral(unit, block, 1);
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kSlice,
-                          .receiver = value},
-                  .arguments = {lsb, width}},
-          .type = bit_type});
 }
 
 }  // namespace
@@ -229,9 +193,11 @@ auto LowerPastValueCall(
   auto back_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(*call.arguments.front()), frame);
   if (!back_or) return std::unexpected(std::move(back_or.error()));
+  mir::Block& block = *frame.current_block;
   return BuildPriorTickRead(
       lowerer, frame, ref.history,
-      frame.current_block->exprs.Add(*std::move(back_or)));
+      BuildToInt64Call(
+          lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(back_or))));
 }
 
 template <ExprLowerer Lowerer>
@@ -251,7 +217,7 @@ auto LowerValueChangeCall(
   // the most recent strictly prior tick, so the one here is this compiler's own
   // rather than anything the source wrote.
   const mir::ExprId prior = block.exprs.Add(BuildPriorTickRead(
-      lowerer, frame, ref.history, BuildIntLiteral(unit, block, 1)));
+      lowerer, frame, ref.history, BuildMachineIntLiteral(unit, block, 1)));
   const mir::TypeId value_type = block.exprs.Get(prior).type;
 
   // The current side is the sampled value of this time step, which is what
@@ -270,7 +236,7 @@ auto LowerValueChangeCall(
           },
           [&](const BitReachedComparison& bit) -> diag::Result<mir::Expr> {
             const std::optional<mir::TypeId> bit_type =
-                BitSelectType(unit, value_type);
+                LeastSignificantBitType(unit, value_type);
             if (!bit_type.has_value()) {
               return diag::Fail(
                   span, diag::DiagCode::kUnsupportedExpressionForm,

@@ -10,27 +10,27 @@
 
 #include <string_view>
 
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
-// Raises `message` as a simulation error unless `condition` is a definite one.
-// An unknown answer decides nothing, so it cannot be what lets an access
-// through.
-void RequireCondition(const PackedArray& condition, std::string_view message);
+// Raises `message` as a simulation error unless the condition holds, which only
+// a definite one says: an unknown answer decides nothing, so it cannot be what
+// lets an access through.
+void RequireCondition(bool holds, std::string_view message);
 
-template <typename T>
+template <typename T, IntegralValue Condition>
 [[nodiscard]] auto Require(
-    T& value, const PackedArray& condition, std::string_view message) -> T& {
-  RequireCondition(condition, message);
+    T& value, const Condition& condition, std::string_view message) -> T& {
+  RequireCondition(condition.IsTruthy(), message);
   return value;
 }
 
-template <typename T>
+template <typename T, IntegralValue Condition>
 [[nodiscard]] auto Require(
-    const T& value, const PackedArray& condition, std::string_view message)
+    const T& value, const Condition& condition, std::string_view message)
     -> const T& {
-  RequireCondition(condition, message);
+  RequireCondition(condition.IsTruthy(), message);
   return value;
 }
 

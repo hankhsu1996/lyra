@@ -80,7 +80,7 @@ auto LowerTerminationSystemSubroutineCall(
       unit, block,
       FormatRuntimeOriginString(span, process.Owner().SourceManager()));
   const mir::ExprId level_id =
-      BuildIntLiteral(unit, block, static_cast<std::int64_t>(level));
+      BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(level));
   // Ending the run departs from the calling execution rather than returning,
   // so the call answers nothing.
   return mir::Expr{

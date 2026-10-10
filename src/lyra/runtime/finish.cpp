@@ -1,11 +1,11 @@
 #include "lyra/runtime/finish.hpp"
 
+#include <cstdint>
 #include <string_view>
 
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -19,7 +19,7 @@ namespace {
 // not cross (LRM 35.9).
 [[noreturn]] void EndRunFrom(
     RuntimeEffects& runtime, std::string_view task,
-    const lyra::value::String& origin, const lyra::value::PackedArray& level) {
+    const lyra::value::String& origin, std::int64_t level) {
   runtime.EndRun(task, origin, level);
   if (RuntimeProcess* process = runtime.TryCurrentProcess();
       process != nullptr) {
@@ -32,13 +32,13 @@ namespace {
 
 void Finish(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    const lyra::value::PackedArray& level) {
+    std::int64_t level) {
   EndRunFrom(runtime, "$finish", origin, level);
 }
 
 void Stop(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    const lyra::value::PackedArray& level) {
+    std::int64_t level) {
   EndRunFrom(runtime, "$stop", origin, level);
 }
 

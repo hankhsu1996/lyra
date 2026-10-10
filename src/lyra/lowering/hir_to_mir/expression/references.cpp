@@ -1,11 +1,8 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <string_view>
-#include <utility>
 #include <variant>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -32,6 +29,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -45,22 +43,16 @@ auto LowerHirIntegerLiteral(
       unit_lowerer.Unit(), block, type, LowerHirIntegralConstant(i.value)));
 }
 
-// LRM 5.9: pack a string literal's bytes into the integer constant they denote,
-// the first byte most significant. A byte is 8-bit-aligned, so it never
-// straddles a 64-bit word.
+// LRM 5.9: a string literal's bytes as the integer constant they denote, the
+// first byte most significant.
 auto StringBytesToConstant(
-    std::string_view text, const mir::PackedArrayType& pa)
+    std::string_view text, const mir::IntegralType& integral)
     -> mir::IntegralConstant {
-  const auto width = static_cast<std::uint32_t>(pa.BitWidth());
-  std::vector<std::uint64_t> value_words((width + 63U) / 64U, 0U);
-  for (std::size_t i = 0; i < text.size(); ++i) {
-    const std::uint64_t bit_offset = width - (8U * (i + 1U));
-    value_words[bit_offset / 64U] |=
-        static_cast<std::uint64_t>(static_cast<unsigned char>(text[i]))
-        << (bit_offset % 64U);
-  }
-  return mir::IntegralConstant{
-      .value_words = std::move(value_words), .state_words = {}};
+  mir::IntegralConstant held = mir::BlankIntegralConstant(integral);
+  value::FromBytes(
+      value::Planes{.value = held.value_words, .unknown = held.state_words},
+      integral.bit_width, text);
+  return held;
 }
 
 // An SV string literal is a packed bit-vector constant (LRM 5.9), so MIR
@@ -72,14 +64,11 @@ auto LowerHirStringLiteral(
     const hir::StringLiteral& s, mir::TypeId type) -> mir::Expr {
   const auto& ty = unit_lowerer.Unit().types.Get(type);
   auto& block = *frame.current_block;
-  if (ty.IsIntegralPacked()) {
+  if (ty.IsIntegral()) {
     return block.exprs.Get(BuildIntegralLiteral(
         unit_lowerer.Unit(), block, type,
-        StringBytesToConstant(s.value, ty.PackedShape())));
+        StringBytesToConstant(s.value, ty.Integral())));
   }
-  // A string-typed literal (e.g. a string parameter's value) builds a
-  // `value::String` from the software literal via the constructor, on the
-  // block that holds the surrounding expression.
   const mir::ExprId lit = block.exprs.Add(
       mir::Expr{.data = mir::StringLiteral{.value = s.value}, .type = type});
   return mir::Expr{

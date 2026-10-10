@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
+#include <vector>
 
 namespace lyra::value {
 
@@ -51,5 +53,17 @@ struct UnpackedRange {
     return IsAscending() ? right : left;
   }
 };
+
+// The declared ranges generated code states as machine integers: each
+// dimension's left bound then its right, outermost dimension first.
+[[nodiscard]] inline auto UnpackedRangesOf(std::span<const std::int64_t> bounds)
+    -> std::vector<UnpackedRange> {
+  std::vector<UnpackedRange> ranges;
+  ranges.reserve(bounds.size() / 2);
+  for (std::size_t i = 0; i + 1 < bounds.size(); i += 2) {
+    ranges.push_back(UnpackedRange{.left = bounds[i], .right = bounds[i + 1]});
+  }
+  return ranges;
+}
 
 }  // namespace lyra::value

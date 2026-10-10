@@ -248,17 +248,20 @@ auto LowerArrayMethodName(std::string_view name)
 
 // LRM 7.9.3 / 7.10.2.3: an index names the one entry that goes; with none, the
 // whole container empties. Both families that admit the two forms read the
-// spelling the same way.
-auto DeleteForm(std::size_t argument_count) -> support::BuiltinFn {
-  return argument_count == 0 ? support::BuiltinFn::kDelete
-                             : support::BuiltinFn::kDeleteIndex;
+// spelling the same way, and each removes the entry its own kind of index
+// names.
+auto DeleteForm(std::size_t argument_count, support::BuiltinFn at_an_index)
+    -> support::BuiltinFn {
+  return argument_count == 0 ? support::BuiltinFn::kDelete : at_an_index;
 }
 
 auto LowerQueueMethodName(std::string_view name, std::size_t argument_count)
     -> std::optional<support::BuiltinFn> {
   if (name == "size") return support::BuiltinFn::kSize;
   if (name == "insert") return support::BuiltinFn::kInsert;
-  if (name == "delete") return DeleteForm(argument_count);
+  if (name == "delete") {
+    return DeleteForm(argument_count, support::BuiltinFn::kDeleteIndex);
+  }
   if (name == "pop_front") return support::BuiltinFn::kPopFront;
   if (name == "pop_back") return support::BuiltinFn::kPopBack;
   if (name == "push_front") return support::BuiltinFn::kPushFront;
@@ -272,7 +275,9 @@ auto LowerAssociativeMethodName(
   // LRM 7.9 `num` is an alias of LRM 7.4.3 `size`; both flatten onto kSize.
   if (name == "num" || name == "size") return support::BuiltinFn::kSize;
   if (name == "exists") return support::BuiltinFn::kExists;
-  if (name == "delete") return DeleteForm(argument_count);
+  if (name == "delete") {
+    return DeleteForm(argument_count, support::BuiltinFn::kAssocDeleteIndex);
+  }
   if (name == "first") return support::BuiltinFn::kAssocFirst;
   if (name == "last") return support::BuiltinFn::kAssocLast;
   if (name == "next") return support::BuiltinFn::kAssocNext;
@@ -352,8 +357,8 @@ auto LowerRealConversionName(slang::parsing::KnownSystemName name)
   }
 }
 
-auto BareCompoundUserRhs(const slang::ast::Expression& slang_expanded_rhs)
-    -> const slang::ast::Expression& {
+auto CompoundExpansionOf(const slang::ast::Expression& slang_expanded_rhs)
+    -> CompoundExpansion {
   // Slang's `convertAssignment` adds at most one outer Conversion when the
   // BinaryOp result type differs from the lhs type; it never nests, so a
   // single conditional peel is exact (not defensive). An extra Conversion
@@ -364,37 +369,30 @@ auto BareCompoundUserRhs(const slang::ast::Expression& slang_expanded_rhs)
           : slang_expanded_rhs;
   if (binop_layer.kind != slang::ast::ExpressionKind::BinaryOp) {
     throw InternalError(
-        "BareCompoundUserRhs: expected BinaryOp under slang's compound "
+        "CompoundExpansionOf: expected BinaryOp under slang's compound "
         "expansion; slang's invariant (zero or one Conversion above a "
         "BinaryOp via convertAssignment) has changed");
   }
   const auto& bin = binop_layer.as<slang::ast::BinaryExpression>();
 
-  // `BinaryExpression::fromComponents` adds at most one promotion
-  // Conversion per operand. Peel exactly one conditionally; one side is
-  // the synthetic LValueReference, the other is the user's rhs. The peel
-  // trades in pointers because on the no-Conversion path it returns its own
-  // argument: taking a reference would let a caller pass a temporary and hand
-  // back a dangling one, where a pointer makes the caller name a live node.
-  const auto peel_one =
-      [](const slang::ast::Expression* e) -> const slang::ast::Expression* {
-    return e->kind == slang::ast::ExpressionKind::Conversion
-               ? &e->as<slang::ast::ConversionExpression>().operand()
-               : e;
+  // `BinaryExpression::fromComponents` adds at most one promotion Conversion
+  // per operand, so one conditional peel finds the synthetic LValueReference.
+  // `a op= e` is `a = a op e`, so the target is the left operand. The right
+  // one is taken as it stands, promotion included: that is the operand at the
+  // type the operator is applied at.
+  const auto names_the_target = [](const slang::ast::Expression& e) {
+    const slang::ast::Expression& bare =
+        e.kind == slang::ast::ExpressionKind::Conversion
+            ? e.as<slang::ast::ConversionExpression>().operand()
+            : e;
+    return bare.kind == slang::ast::ExpressionKind::LValueReference;
   };
-  const auto& left = *peel_one(&bin.left());
-  const auto& right = *peel_one(&bin.right());
-
-  const bool left_is_ref =
-      left.kind == slang::ast::ExpressionKind::LValueReference;
-  const bool right_is_ref =
-      right.kind == slang::ast::ExpressionKind::LValueReference;
-  if (left_is_ref == right_is_ref) {
+  if (!names_the_target(bin.left()) || names_the_target(bin.right())) {
     throw InternalError(
-        "BareCompoundUserRhs: expected exactly one LValueReference operand "
-        "in slang's compound expansion");
+        "CompoundExpansionOf: expected the LValueReference as the left "
+        "operand, and only there, in slang's compound expansion");
   }
-  return left_is_ref ? right : left;
+  return CompoundExpansion{.applied_at = bin.type, .operand = &bin.right()};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

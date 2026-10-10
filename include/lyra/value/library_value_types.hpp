@@ -2,10 +2,10 @@
 
 #include <type_traits>
 
+#include "lyra/value/any_value.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
@@ -14,11 +14,11 @@
 #include "lyra/value/runtime_union.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
-#include "lyra/value/value_type.hpp"
+#include "lyra/value/value_type_of.hpp"
 
 namespace lyra::value {
 
-extern template class ValueTypeOf<PackedArray>;
+extern template class ValueTypeOf<AnyValue>;
 extern template class ValueTypeOf<String>;
 extern template class ValueTypeOf<Real>;
 extern template class ValueTypeOf<ShortReal>;
@@ -36,10 +36,12 @@ extern template class ValueTypeOf<ObjectRef>;
 
 // The type of each value the library itself defines, one per kind, which
 // generated code names by symbol wherever it hands the library a value of one
-// of these kinds together with its type.
+// of these kinds together with its type. The first is a value held with the
+// type it was written in, which is what an index of a wildcard-indexed array
+// is (LRM 7.8.1).
 extern "C" {
-extern const lyra::value::ValueTypeOf<lyra::value::PackedArray>
-    lyra_rt_packed_value_type;
+extern const lyra::value::ValueTypeOf<lyra::value::AnyValue>
+    lyra_rt_wildcard_index_value_type;
 extern const lyra::value::ValueTypeOf<lyra::value::String>
     lyra_rt_string_value_type;
 extern const lyra::value::ValueTypeOf<lyra::value::Real>
@@ -71,9 +73,7 @@ namespace lyra::value {
 // The library's type of a value of its own kind `T`.
 template <typename T>
 [[nodiscard]] auto LibraryTypeOf() -> const ValueTypeOf<T>& {
-  if constexpr (std::is_same_v<T, PackedArray>) {
-    return lyra_rt_packed_value_type;
-  } else if constexpr (std::is_same_v<T, String>) {
+  if constexpr (std::is_same_v<T, String>) {
     return lyra_rt_string_value_type;
   } else if constexpr (std::is_same_v<T, Real>) {
     return lyra_rt_real_value_type;

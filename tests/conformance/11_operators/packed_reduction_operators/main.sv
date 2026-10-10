@@ -26,6 +26,70 @@ module Top;
   logic xnor_with_high_impedance;
   logic and_reg_with_high_impedance;
 
+  bit and_all_ones_7;
+  bit and_all_ones_33;
+  bit and_top_zero_33;
+  bit or_top_one_33;
+  bit xor_two_ones_33;
+  bit xor_top_one_33;
+  bit and_all_ones_63;
+  bit xor_all_ones_63;
+  bit and_all_ones_64;
+  bit and_top_zero_64;
+  bit xor_all_ones_64;
+  logic and_unknown_top_33;
+  logic and_unknown_top_zero_settles_33;
+  logic or_unknown_top_33;
+
+  // Every bit of the operand is read, the most significant one included,
+  // whatever the operand's width.
+  initial begin
+    bit [6:0] p7;
+    bit [32:0] p33;
+    bit [62:0] p63;
+    bit [63:0] p64;
+    logic [32:0] q33;
+
+    and_top_zero_33 = 1'b1;
+    xor_two_ones_33 = 1'b1;
+    and_top_zero_64 = 1'b1;
+    xor_all_ones_64 = 1'b1;
+    and_unknown_top_33 = 1'b0;
+    or_unknown_top_33 = 1'b0;
+
+    p7 = 7'b1111111;
+    and_all_ones_7 = &p7;
+
+    p33 = 33'h1_ffff_ffff;
+    and_all_ones_33 = &p33;
+    p33 = 33'h0_ffff_ffff;
+    and_top_zero_33 = &p33;
+    p33 = 33'h1_0000_0000;
+    or_top_one_33 = |p33;
+    xor_top_one_33 = ^p33;
+    p33 = 33'h1_0000_0001;
+    xor_two_ones_33 = ^p33;
+
+    p63 = 63'h7fff_ffff_ffff_ffff;
+    and_all_ones_63 = &p63;
+    xor_all_ones_63 = ^p63;
+
+    p64 = 64'hffff_ffff_ffff_ffff;
+    and_all_ones_64 = &p64;
+    xor_all_ones_64 = ^p64;
+    p64 = 64'h7fff_ffff_ffff_ffff;
+    and_top_zero_64 = &p64;
+
+    q33 = 33'h1_ffff_ffff;
+    q33[32] = 1'bx;
+    and_unknown_top_33 = &q33;
+    q33[0] = 1'b0;
+    and_unknown_top_zero_settles_33 = &q33;
+    q33 = 33'h0;
+    q33[32] = 1'bx;
+    or_unknown_top_33 = |q33;
+  end
+
   initial begin
     bit [3:0] p;
     bit [4:0] odd_width;
@@ -131,6 +195,36 @@ module Top;
     if (and_reg_with_high_impedance !== 1'bx)
       $fatal(1, "and_reg_with_high_impedance was %b, expected x",
              and_reg_with_high_impedance);
+
+    if (and_all_ones_7 !== 1'b1)
+      $fatal(1, "and_all_ones_7 was %b, expected 1", and_all_ones_7);
+    if (and_all_ones_33 !== 1'b1)
+      $fatal(1, "and_all_ones_33 was %b, expected 1", and_all_ones_33);
+    if (and_top_zero_33 !== 1'b0)
+      $fatal(1, "and_top_zero_33 was %b, expected 0", and_top_zero_33);
+    if (or_top_one_33 !== 1'b1)
+      $fatal(1, "or_top_one_33 was %b, expected 1", or_top_one_33);
+    if (xor_two_ones_33 !== 1'b0)
+      $fatal(1, "xor_two_ones_33 was %b, expected 0", xor_two_ones_33);
+    if (xor_top_one_33 !== 1'b1)
+      $fatal(1, "xor_top_one_33 was %b, expected 1", xor_top_one_33);
+    if (and_all_ones_63 !== 1'b1)
+      $fatal(1, "and_all_ones_63 was %b, expected 1", and_all_ones_63);
+    if (xor_all_ones_63 !== 1'b1)
+      $fatal(1, "xor_all_ones_63 was %b, expected 1", xor_all_ones_63);
+    if (and_all_ones_64 !== 1'b1)
+      $fatal(1, "and_all_ones_64 was %b, expected 1", and_all_ones_64);
+    if (and_top_zero_64 !== 1'b0)
+      $fatal(1, "and_top_zero_64 was %b, expected 0", and_top_zero_64);
+    if (xor_all_ones_64 !== 1'b0)
+      $fatal(1, "xor_all_ones_64 was %b, expected 0", xor_all_ones_64);
+    if (and_unknown_top_33 !== 1'bx)
+      $fatal(1, "and_unknown_top_33 was %b, expected x", and_unknown_top_33);
+    if (and_unknown_top_zero_settles_33 !== 1'b0)
+      $fatal(1, "and_unknown_top_zero_settles_33 was %b, expected 0",
+             and_unknown_top_zero_settles_33);
+    if (or_unknown_top_33 !== 1'bx)
+      $fatal(1, "or_unknown_top_33 was %b, expected x", or_unknown_top_33);
     $display("All checks passed");
   end
 endmodule

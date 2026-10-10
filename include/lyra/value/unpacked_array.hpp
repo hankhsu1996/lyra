@@ -6,6 +6,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -17,9 +18,7 @@
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/net_resolution.hpp"
-#include "lyra/value/packed_array.hpp"
-#include "lyra/value/position.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/queue.hpp"
 
 namespace lyra::value {
@@ -44,11 +43,10 @@ class String;
 // of elements, compiled with the element's C++ type, whose count the array's
 // type fixes rather than the running program. One C++ container layer per
 // declared unpacked dimension; multi-dim composes as
-// `UnpackedArray<UnpackedArray<...>>`. Mirrors `PackedArray`'s surface for
-// every op that crosses the SV / C++ boundary: `Element` / `Slice` for indexed
-// and range access (no `operator[]`), and `operator==` / `CaseEqual` returning
-// a 1-bit `PackedArray` so equality on aggregates propagates through the same
-// value-type the integral surface uses.
+// `UnpackedArray<UnpackedArray<...>>`. `Element` / `Slice` are the indexed and
+// range access (no `operator[]`), and `operator==` answers in the state class
+// an element's own comparison does, so equality on aggregates propagates
+// through the same one-bit type the integral surface uses.
 //
 // The payload is ordinal-only: it does not carry a declared range. An access
 // names an element by its ordinal, counted from the left (LRM 7.6), because
@@ -97,18 +95,19 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
   // runs toward the right bound, an element past the end of the text keeps the
   // element type's default, and text beyond the array's last element is
   // dropped. The clause admits this form for an array of bytes alone, so the
-  // element shape is a packed type; `count` is the destination's element count.
-  [[nodiscard]] static auto FromString(
-      const String& text, const PackedType& element_type,
-      const PackedArray& count) -> UnpackedArray;
+  // element is integral; `count` is the destination's element count.
+  [[nodiscard]] static auto FromString(const String& text, std::int64_t count)
+      -> UnpackedArray;
 
   // LRM 5.9: a string literal assigned to an unpacked array of bytes, under the
   // same left justification. A literal is a packed bit-vector constant, not a
   // string value, so its bytes arrive whole -- a NUL among them is a byte like
   // any other, where building a string value would have removed it (LRM 6.16).
-  [[nodiscard]] static auto FromPackedArray(
-      const PackedArray& bits, const PackedType& element_type,
-      const PackedArray& count) -> UnpackedArray;
+  template <IntegralValue Bits>
+  [[nodiscard]] static auto FromIntegral(const Bits& bits, std::int64_t count)
+      -> UnpackedArray {
+    return OfBytes(BytesOf(bits.Load().View()), count);
+  }
 
   // LRM 10.10: adopt an unpacked concatenation's parts, accumulated into a
   // growable array by the concatenation chain, into this fixed-size type. The
@@ -157,8 +156,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
   ~UnpackedArray() = default;
 
   // LRM 7.4.2: size() yields an SV int.
-  [[nodiscard]] auto Size() const -> PackedArray {
-    return PackedArray::Int(static_cast<std::int32_t>(RawSize()));
+  [[nodiscard]] auto Size() const -> Int {
+    return Int::FromInt(static_cast<std::int64_t>(RawSize()));
   }
 
   [[nodiscard]] auto RawSize() const -> std::size_t {
@@ -178,10 +177,6 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
     return core_.Element().DefaultValue();
   }
 
-  [[nodiscard]] auto ToOwned() const -> UnpackedArray {
-    return *this;
-  }
-
   // LRM 11.4.11: the two arms of a conditional operator whose condition is
   // ambiguous, combined element by element -- an element the arms agree on
   // survives, and one they disagree on, or cannot know, takes the element
@@ -194,46 +189,46 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
 
   // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no
   // element of the array.
-  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
+  [[nodiscard]] auto ElementRef(const Position& position, Formation& formed)
       -> T& {
-    return *static_cast<T*>(core_.ElementRef(position, formed));
+    return *static_cast<T*>(core_.ElementRef(ReadPosition(position), formed));
   }
-  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
-    return *static_cast<T*>(core_.ExistingAt(position));
+  [[nodiscard]] auto ElementRef(const Position& position) -> T& {
+    return *static_cast<T*>(core_.ExistingAt(ReadPosition(position)));
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
   // 7-1).
-  [[nodiscard]] auto Element(const PackedArray& position) const -> const T& {
-    return *static_cast<const T*>(core_.ElementAt(position));
+  [[nodiscard]] auto Element(const Position& position) const -> const T& {
+    return *static_cast<const T*>(core_.ElementAt(ReadPosition(position)));
   }
 
   // LRM 7.4.5 contiguous-range selector: `count` elements from `start`. An
   // element outside the array reads the element default, and a start that names
   // no position reads a wholly-default sub-array. The result is ordinal-only
   // payload.
-  [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
+  [[nodiscard]] auto Slice(const Position& start, std::int64_t count) const
       -> UnpackedArray {
     return SliceOf(core_, ReadPosition(start), SliceCount(count));
   }
 
-  [[nodiscard]] auto SliceRef(const PackedArray& start, std::int64_t count)
+  [[nodiscard]] auto SliceRef(const Position& start, std::int64_t count)
       -> ArraySliceRef<T> {
     return ArraySliceRef<T>{core_, ReadPosition(start), SliceCount(count)};
   }
 
   // LRM 11.2.2 + 11.4.5 aggregate equality / case-equality. `==` / `!=`
   // propagate X / Z; `CaseEqual` returns a deterministic 0/1.
-  [[nodiscard]] auto operator==(const UnpackedArray& other) const
-      -> PackedArray {
-    return detail::SequenceEqual(core_, other.core_);
+  [[nodiscard]] auto operator==(const UnpackedArray& other) const ->
+      typename StaticElem<T>::Equality {
+    return StaticElem<T>::Equality::Filled(
+        detail::SequenceEqual(core_, other.core_));
   }
-  [[nodiscard]] auto operator!=(const UnpackedArray& other) const
-      -> PackedArray {
+  [[nodiscard]] auto operator!=(const UnpackedArray& other) const ->
+      typename StaticElem<T>::Equality {
     return !(*this == other);
   }
-  [[nodiscard]] auto CaseEqual(const UnpackedArray& other) const
-      -> PackedArray {
+  [[nodiscard]] auto CaseEqual(const UnpackedArray& other) const -> Bit {
     return detail::SequenceCaseEqual(core_, other.core_);
   }
 
@@ -246,8 +241,9 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
     return detail::SequenceBitIdentical(core_, other.core_);
   }
 
-  // Net resolution under each truth table (LRM 6.6), and what a stronger
-  // contribution leaves a weaker one (LRM 28.12.1), element by element.
+  // Net resolution under each of the three truth tables (LRM 6.6), and what a
+  // stronger contribution leaves a weaker one (LRM 28.12.1), element by
+  // element.
   [[nodiscard]] auto ResolveTriState(const UnpackedArray& other) const
       -> UnpackedArray {
     return UnpackedArray(core_.Resolved(NetResolution::kTriState, other.core_));
@@ -265,10 +261,19 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
     return UnpackedArray(core_.Dominating(weaker.core_));
   }
 
+  // The bits the array streams as, held as a value of `R`, which is exactly as
+  // wide (LRM 6.24.3).
+  template <IntegralValue R>
+  [[nodiscard]] auto ToBitstream() const -> R {
+    typename R::Words words;
+    WriteToStream(words.Write(), R::kWidth, 0);
+    return R::FromWords(words);
+  }
+
   // `prototype`'s shape with every bit set to `fill` (LRM 6.7.1).
+  template <IntegralValue Fill>
   [[nodiscard]] static auto FilledLike(
-      const UnpackedArray& prototype, const PackedArray& fill)
-      -> UnpackedArray {
+      const UnpackedArray& prototype, const Fill& fill) -> UnpackedArray {
     return UnpackedArray(prototype.core_.FilledLike(fill));
   }
 
@@ -277,34 +282,48 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
     return detail::SequenceHasUnknown(core_);
   }
 
-  [[nodiscard]] auto IsUnknown() const -> PackedArray {
-    return PackedArray::Bit(HasUnknown());
+  [[nodiscard]] auto IsUnknown() const -> Bit {
+    return Bit::FromBool(HasUnknown());
   }
 
   // LRM 20.6.2 `$bits`: the current bit count is the sum of the elements' own
   // bit counts. A fixed-size unpacked array folds at elaboration; this path
   // serves the case where an element is itself dynamically sized.
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    return detail::SequenceBitstreamWidth(core_);
+  [[nodiscard]] auto BitstreamWidth() const -> Int {
+    return Int::FromInt(detail::SequenceBitstreamWidth(core_));
   }
 
   // LRM 20.9 `$countbits`: the bit stream this value contributes is its
   // elements' streams laid end to end, so the count over it is the sum of the
   // elements' own counts under the same control bits.
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray {
-    return detail::SequenceCountBits(core_, control_bits);
+  template <IntegralValue Control>
+  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+    return Int::FromInt(detail::SequenceCountBits(core_, control_bits));
   }
 
-  // LRM 6.24.3: the elements' own streams laid end to end, and the inverse
-  // under a prototype that states the element count and every element's shape.
-  [[nodiscard]] auto ToBitstream() const -> PackedArray {
-    return core_.ToBitstream();
+  // LRM 6.24.3: the elements' own streams laid end to end into a stream below
+  // its `filled` most significant positions, answering how many are filled
+  // after them; and the inverse, which reads an array of this one's count and
+  // element shapes and answers how many positions it took.
+  auto WriteToStream(
+      Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+      -> std::uint64_t {
+    return core_.WriteToStream(stream, stream_width, filled);
   }
+  [[nodiscard]] auto ReadFromStream(
+      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+      -> std::pair<UnpackedArray, std::uint64_t> {
+    auto [read, after] = core_.ReadFromStream(stream, stream_width, taken);
+    return {UnpackedArray(std::move(read)), after};
+  }
+
+  // The array a stream of exactly its bits holds, `prototype` stating the
+  // element count and every element's shape (LRM 11.4.14.3).
+  template <IntegralValue Bits>
   [[nodiscard]] static auto FromBitstream(
-      const PackedArray& bits, const UnpackedArray& prototype)
-      -> UnpackedArray {
-    return UnpackedArray(prototype.core_.FromBitstream(bits));
+      const Bits& bits, const UnpackedArray& prototype) -> UnpackedArray {
+    const typename Bits::Words words = bits.Load();
+    return prototype.ReadFromStream(words.Read(), Bits::kWidth, 0).first;
   }
 
  private:
@@ -328,6 +347,23 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
             }));
   }
 
+  // Left-justifies a byte sequence into `count` elements: the first byte lands
+  // at the array's left bound and runs toward the right, an element past the
+  // end of the sequence keeps the element type's default, and bytes beyond the
+  // last element are dropped.
+  [[nodiscard]] static auto OfBytes(std::string_view bytes, std::int64_t count)
+      -> UnpackedArray {
+    const auto element_count = static_cast<std::size_t>(count);
+    std::vector<T> elements;
+    elements.reserve(element_count);
+    for (std::size_t i = 0; i < element_count; ++i) {
+      elements.push_back(
+          i < bytes.size() ? T::FromInt(static_cast<unsigned char>(bytes[i]))
+                           : T{});
+    }
+    return UnpackedArray{T{}, std::span<const T>{elements}};
+  }
+
   // The `count` elements of `core` from `start` (LRM 7.4.5 / 7.4.6), as an
   // array of their own.
   [[nodiscard]] static auto SliceOf(
@@ -348,9 +384,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T>, T> {
 // entire slice. The proxy aliases the elements of the array it was taken from,
 // plus the window's start and count, so a fixed-size unpacked array and a
 // dynamic array share one slice-write surface. A start that names no position
-// makes `ToOwned()` a wholly-default sub-array and `operator=` a no-op;
-// partial-OOB behaves per-element. The materialized owned value is ordinal-only
-// payload (no range). Move-only so the proxy cannot outlive what it aliases.
+// makes `operator=` a no-op; partial-OOB behaves per-element. Move-only so the
+// proxy cannot outlive what it aliases.
 template <typename T>
 class ArraySliceRef {
  public:
@@ -364,10 +399,6 @@ class ArraySliceRef {
   ArraySliceRef(ArraySliceRef&&) noexcept = default;
   auto operator=(ArraySliceRef&&) noexcept -> ArraySliceRef& = default;
   ~ArraySliceRef() = default;
-
-  [[nodiscard]] auto ToOwned() const -> UnpackedArray<T> {
-    return UnpackedArray<T>::SliceOf(*elements_, start_, count_);
-  }
 
   auto operator=(const UnpackedArray<T>& value) -> ArraySliceRef& {
     Assign(value);
@@ -387,41 +418,16 @@ class ArraySliceRef {
   std::size_t count_;
 };
 
-// Left-justifies a byte sequence into `count` elements: the first byte lands at
-// the array's left bound and runs toward the right, an element past the end of
-// the sequence keeps the element type's default, and bytes beyond the last
-// element are dropped.
-template <typename T>
-auto UnpackedArray<T>::FromPackedArray(
-    const PackedArray& bits, const PackedType& element_type,
-    const PackedArray& count) -> UnpackedArray<T> {
-  const std::string bytes = bits.ByteString();
-  const auto element_count = static_cast<std::size_t>(count.ToInt64());
-  const T element_default{element_type};
-  std::vector<T> elements;
-  elements.reserve(element_count);
-  for (std::size_t i = 0; i < element_count; ++i) {
-    elements.push_back(
-        i < bytes.size()
-            ? PackedArray::FromInt(
-                  static_cast<unsigned char>(bytes[i]), element_type)
-            : element_default);
-  }
-  return UnpackedArray<T>{element_default, std::span<const T>{elements}};
-}
-
-static_assert(LyraValue<UnpackedArray<PackedArray>>);
-static_assert(Sized<UnpackedArray<PackedArray>>);
-static_assert(BitstreamSizable<UnpackedArray<PackedArray>>);
-static_assert(BitstreamConvertible<UnpackedArray<PackedArray>>);
-static_assert(Indexable<UnpackedArray<PackedArray>>);
-static_assert(Sliceable<UnpackedArray<PackedArray>>);
-static_assert(SliceableRef<UnpackedArray<PackedArray>>);
-static_assert(Ownable<UnpackedArray<PackedArray>>);
-static_assert(ConditionallyMergeable<UnpackedArray<PackedArray>>);
-static_assert(Sortable<UnpackedArray<PackedArray>>);
-static_assert(NetResolvable<UnpackedArray<PackedArray>>);
-static_assert(NetResolvable<UnpackedArray<UnpackedArray<PackedArray>>>);
-static_assert(OrdinalElements<UnpackedArray<PackedArray>>);
+static_assert(LyraValue<UnpackedArray<LogicVector<4>>>);
+static_assert(Sized<UnpackedArray<LogicVector<4>>>);
+static_assert(BitstreamSizable<UnpackedArray<LogicVector<4>>>);
+static_assert(Indexable<UnpackedArray<LogicVector<4>>>);
+static_assert(Sliceable<UnpackedArray<LogicVector<4>>>);
+static_assert(SliceableRef<UnpackedArray<LogicVector<4>>>);
+static_assert(ConditionallyMergeable<UnpackedArray<LogicVector<4>>>);
+static_assert(Sortable<UnpackedArray<LogicVector<4>>>);
+static_assert(NetResolvable<UnpackedArray<LogicVector<4>>>);
+static_assert(NetResolvable<UnpackedArray<UnpackedArray<LogicVector<4>>>>);
+static_assert(OrdinalElements<UnpackedArray<LogicVector<4>>>);
 
 }  // namespace lyra::value

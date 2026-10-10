@@ -909,8 +909,6 @@ A020_STANDING = frozenset({
      "slang::ast::TimingControlKind"),
     ("src/lyra/lowering/ast_to_hir/type.cpp", "slang::ast::SymbolKind"),
     ("src/lyra/lowering/ast_to_hir/unit_identity.cpp", "SymbolKind"),
-    ("src/lyra/lowering/hir_to_mir/expression/system/bit_vector.cpp",
-     "support::BitCountReading"),
     ("src/lyra/lowering/hir_to_mir/expression/system/file_io.cpp",
      "support::BuiltinFn"),
     ("src/lyra/value/format.cpp", "FormatKind"),
@@ -1561,7 +1559,7 @@ def run_self_tests() -> bool:
     # A015
     ok &= expect(
         RUNTIME_TYPE_LITERAL_PATTERN.search(
-            '"lyra::value::PackedArray::FromInt({}, {})"'),
+            '"lyra::value::String::FromBytes({}, {})"'),
         "A015 static factory of a runtime type")
     ok &= expect(
         RUNTIME_TYPE_LITERAL_PATTERN.search(

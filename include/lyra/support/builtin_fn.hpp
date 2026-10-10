@@ -1,10 +1,17 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <variant>
+
+#include "lyra/base/internal_error.hpp"
+#include "lyra/support/integral_operation.hpp"
 
 namespace lyra::support {
 
@@ -25,17 +32,28 @@ enum class BuiltinFn : std::uint16_t {
   // Composition is the receiver -- an access whose receiver is another access
   // is the descent -- so a descent of any depth is these entries applied one
   // per level and nothing states a path.
+  //
+  // Several parts in a row are three operations, each with operands of its
+  // own. Bits of an integral value are named by where they start, and are as
+  // many as the type they are read at is wide (LRM 11.5.1). Elements of a
+  // fixed-size or dynamic array are named by where they start and how many
+  // there are (LRM 7.4.6). A queue's slice is bounded by two positions the
+  // running program can move, and is a queue the slice builds rather than a
+  // part that may be written (LRM 7.10.1).
   kElement,
   kSlice,
+  kElementSlice,
+  kQueueSlice,
   kElementRef,
   kSliceRef,
+  kElementSliceRef,
   // The same two directions over a part named by its declaration-order
   // position rather than by a coordinate. One pair covers a product and an
   // active-member value alike: what differs is whether every part is live at
   // once or one at a time, and whether reaching one for writing settles which
   // that is -- all of which is the value's own semantics, reached through the
-  // domain its type names, exactly as a coordinate step reaches a queue's rules
-  // or an associative array's.
+  // domain its type names, exactly as a step by position reaches a queue's
+  // rules or a dynamic array's.
   kComponent,
   kComponentRef,
   // Which member an active-member value holds, and building one that holds a
@@ -66,11 +84,11 @@ enum class BuiltinFn : std::uint16_t {
   // does -- a part reports its own bits, so no caller inspects the part's
   // shape.
   //
-  // Building takes a prototype because a sequence of bits carries no shape: the
-  // result is the prototype's type, held at the prototype's representation, and
-  // the sequence is consumed left to right. The caller brings the sequence to
-  // exactly the width the prototype reports, so neither widening nor truncation
-  // is this entry's business.
+  // Building takes a value of the type it builds, because a sequence of bits
+  // carries no shape: the answer has that value's shape -- how many elements
+  // each array in it holds -- and the sequence is consumed left to right. The
+  // caller brings the sequence to exactly the width that shape takes, so
+  // neither widening nor truncation is this entry's business.
   kToBitstream,
   kFromBitstream,
   // Reversing the order of the fixed-size blocks a vector divides into, from
@@ -83,7 +101,6 @@ enum class BuiltinFn : std::uint16_t {
   // the one entry an index names are two operations the source spells with one
   // word (LRM 7.9.3 / 7.10.2.3), so each takes its own identity here and the
   // spelling is resolved where the source is read.
-  kToOwned,
   kDelete,
   kDeleteIndex,
   // LRM 7.12 ordering. `Sort` / `Rsort` take a `with`-clause closure as
@@ -129,6 +146,16 @@ enum class BuiltinFn : std::uint16_t {
   // 4-state index, as LRM 20.7 requires.
   kAssocMinIndex,
   kAssocMaxIndex,
+  // The accesses and the removal above as an associative array takes them (LRM
+  // 7.8, 7.9.3): by the key the source wrote, a value of the type it was
+  // written in, where every other container is reached by a position. A key
+  // and a position are different operands, so each access is an entry of its
+  // own, named where the source is read and the array's type is in hand.
+  kAssocElement,
+  kAssocElementRef,
+  kAssocDesignateElement,
+  kAssocReferElement,
+  kAssocDeleteIndex,
   // LRM 6.16 string methods.
   kGetc,
   kPutc,
@@ -205,7 +232,7 @@ enum class BuiltinFn : std::uint16_t {
   // Folding two contributions of equal strength to a net, one entry per truth
   // table for the reason a net's installation is one entry per resolution (LRM
   // 6.6.1, 6.6.3); what a stronger contribution leaves a weaker one (LRM
-  // 28.12.1); and a value of a prototype's shape with every bit set to one fill
+  // 28.12.1); and a value shaped as another is, with every bit set to one fill
   // (LRM 6.7.1).
   kResolveTriState,
   kResolveWiredAnd,
@@ -250,21 +277,30 @@ enum class BuiltinFn : std::uint16_t {
   // the body it sits in owns. Every later store requires its value to already
   // be at the installed representation.
   kInitialize,
-  // Installing what a net's declaration gives it, once at construction: the
-  // representation its data type fixes, and what its declared net type states
-  // -- the contribution the net type itself makes, as the value the net shows
-  // where nothing drives it and the strength it holds that value at (LRM
-  // 6.6.5, 6.7.1). One entry per resolution -- tri-state for `wire` / `tri`,
+  // Installing what a net's declaration gives it, once at construction: what
+  // its data type fixes, and what its declared net type states -- the
+  // contribution the net type itself makes, as the scalar the net shows where
+  // nothing drives it and the strength it holds that scalar at (LRM 6.6.5,
+  // 6.7.1). One entry per resolution -- tri-state for `wire` / `tri`,
   // wired-and for `wand` / `triand`, wired-or for `wor` / `trior` (LRM 6.6.1,
   // 6.6.3), and one that resolves tri-state and leaves its own contribution
   // holding what the drivers last decided, which is how a net stores a value
   // (LRM 6.6.4) -- because a truth table is applied rather than carried, and
   // an operation is named here. What the contribution is stays a value the
   // call carries.
+  //
+  // A net of an integral type is told how many positions that type has, which
+  // is all a connection can name of it (LRM 23.3.3.7). A net of an unpacked
+  // aggregate is handed a value of its data type, whose shape it takes (LRM
+  // 6.7.1), so its install is an entry of its own.
   kNetInitializeTriState,
   kNetInitializeWiredAnd,
   kNetInitializeWiredOr,
   kNetInitializeRetaining,
+  kAggregateNetInitializeTriState,
+  kAggregateNetInitializeWiredAnd,
+  kAggregateNetInitializeWiredOr,
+  kAggregateNetInitializeRetaining,
   // Reading what a cell holds, and replacing it. Both act on the wrapper rather
   // than name its storage: a read answers with a value the cell decides how to
   // produce, and a write publishes the change to whatever the wrapper relates
@@ -300,18 +336,19 @@ enum class BuiltinFn : std::uint16_t {
   // the whole lands.
   kDesignateWhole,
   // A step taken within a write in progress, into a part of what it designates
-  // that is storage of its own: an element, a component, a slice of elements.
-  // It answers with the part designated within the same write -- a value of its
-  // own that borrows the write -- which is not what the step answering with
-  // the part alone answers. The write hears what the step did to the variable
-  // where the part cannot say so itself -- an element made by being written,
-  // an index naming none (LRM 7.8.7, 7.10.1, 7.4.6), a slice some element of
-  // which the write moved; a component is formed by nothing, so its step has
-  // nothing to tell. Dereferencing what the steps designate is where the write
-  // lands.
+  // that the write lands on where it lies: an element, a component, bits of an
+  // integral value, a slice of elements. It answers with the part designated
+  // within the same write -- a value of its own that borrows the write -- which
+  // is not what the step answering with the part alone answers. The write hears
+  // what the step did to the variable where the part cannot say so itself -- an
+  // element made by being written, an index naming none (LRM 7.8.7, 7.10.1,
+  // 7.4.6), bits or elements the write moved; a component is formed by nothing,
+  // so its step has nothing to tell. Dereferencing what the steps designate is
+  // where the write lands.
   kDesignateElement,
   kDesignateComponent,
   kDesignateSlice,
+  kDesignateElementSlice,
   // A step taken on a reference, into a part of what it refers to that may be
   // passed by reference -- an element or a component (LRM 13.5.2). It answers
   // with a reference to that part, which belongs to whatever the reference it
@@ -506,11 +543,14 @@ enum class BuiltinFn : std::uint16_t {
   kFileFlushAll,
   // LRM 21.6 command-line plusargs. Free functions on `lyra::runtime` that
   // take the runtime handle plus SV `string` operands; the value form also
-  // takes the output lvalue by reference (a `PackedArray` or `String`,
-  // selected by C++ overload from the SV lvalue's declared type). Both
-  // return an SV `int` (1 on prefix match, 0 otherwise).
+  // takes the destination's value and completes with it beside the answer. A
+  // destination is an integral or a string, and converting a plusarg into each
+  // is a different request, so each is its own entry and which one a call
+  // means is settled here rather than by reading the destination's type. All
+  // answer an SV `int` (1 on prefix match, 0 otherwise).
   kTestPlusargs,
   kValuePlusargs,
+  kValuePlusargsString,
   // LRM 20.17.1 $system. Running a command and asking after the processor are
   // different requests, so each is its own entry rather than one whose meaning
   // depends on how many arguments it was given. The commanded form takes the
@@ -796,10 +836,10 @@ enum class BuiltinFn : std::uint16_t {
   // The inner step of a value conversion: reading the source out as a machine
   // integer. HIR-to-MIR dispatches on the (src, dst) type pair and emits a
   // `CallExpr` to the matching entry, which the backend renders with no
-  // type-driven branching of its own. `kToInt64` is the `PackedArray` accessor
-  // the integral-to-real path reads through; `kRound` is the `Real` /
-  // `ShortReal` accessor that rounds to int64 per LRM 6.12.1, which the
-  // real-to-integral path reads through.
+  // type-driven branching of its own. `kToInt64` is the integral accessor the
+  // integral-to-real path reads through; `kRound` is the `Real` / `ShortReal`
+  // accessor that rounds to int64 per LRM 6.12.1, which the real-to-integral
+  // path reads through.
   kToInt64,
   kRound,
   // LRM 20.5 real conversions. `kTruncate` is `$rtoi`'s reading of a real as an
@@ -821,21 +861,21 @@ enum class BuiltinFn : std::uint16_t {
   // Canonical DPI-C packed and 1-bit-4-state marshaling (LRM Annex H.10.1).
   // `kToSvLogic` reads a 1-bit 4-state value out as its `svLogic` scalar
   // encoding (`value | unknown << 1`); `kFromSvLogic` builds it back in the
-  // destination's declared representation (`args[0]` the byte, `args[1]` the
-  // type). The `kReadCanonical*` helpers build an SV value from a canonical
-  // buffer in that representation (`args[0]` the buffer pointer, `args[1]` the
-  // type); the `kWriteCanonical*` helpers are their inverse, writing an SV
-  // value out into a canonical buffer (`args[0]` the buffer pointer, `args[1]`
-  // the SV value), as an export's C entry point does through the foreign
-  // caller's pointer. These are free functions in `lyra::value`. An import's
-  // packed copy-in is not a builtin: the boundary buffer is a `DpiBitBuffer` /
-  // `DpiLogicBuffer` value constructed from the SV value, and the
-  // `kDpi*BufferData` pair reads its writable chunk pointer for the foreign
-  // call and the copy-back read, taking that buffer as its receiver. `Bit`
-  // carries a 2-state (aval-only) buffer, `Logic` a 4-state buffer whose `aval`
-  // is the value plane and `bval` the unknown plane. The two are separate
-  // library types the foreign side reaches through separate C pointer types
-  // (Annex H.10.2), so which of them a read is on is named here.
+  // destination's declared representation, which is the type the call answers
+  // with (`args[0]` the byte). The `kReadCanonical*` helpers build an SV value
+  // of the type the call answers with from a canonical buffer (`args[0]` the
+  // buffer pointer); the `kWriteCanonical*` helpers are their inverse, writing
+  // an SV value out into a canonical buffer (`args[0]` the buffer pointer,
+  // `args[1]` the SV value), as an export's C entry point does through the
+  // foreign caller's pointer. An import's packed copy-in is not a builtin: the
+  // boundary buffer is a `DpiBitBuffer` / `DpiLogicBuffer` value constructed
+  // from the SV value, and the `kDpi*BufferData` pair reads its writable chunk
+  // pointer for the foreign call and the copy-back read, taking that buffer as
+  // its receiver. `Bit` carries a 2-state (aval-only) buffer, `Logic` a
+  // 4-state buffer whose `aval` is the value plane and `bval` the unknown
+  // plane. The two are separate library types the foreign side reaches through
+  // separate C pointer types (Annex H.10.2), so which of them a read is on is
+  // named here.
   kToSvLogic,
   kFromSvLogic,
   kReadCanonicalBitVec,
@@ -878,38 +918,43 @@ enum class BuiltinFn : std::uint16_t {
   // Free functions over the run.
   kCurrentExportScope,
   kFindExportEntry,
-  // The outer step of a value conversion: the static factory that lands a
-  // machine-level result in the destination's declared representation, which is
-  // the type the call answers with. `kFromInt` builds a target-shape vector
-  // from a machine integer and `kConvertFrom` reshapes another packed vector;
-  // `kFromPackedArray` and `kFromByteArray` build a string from packed bits
-  // (LRM 6.16) or from a byte unpacked array (LRM 21.3.4.3).
+  // The outer step of a value conversion: what lands a machine-level result in
+  // the destination's declared representation, which is the type the call
+  // answers with. `kFromInt` builds a value of that type from a machine integer
+  // and `kConvertFrom` reshapes another value of the same family into it.
   kFromInt,
-  kFromWords,
   kConvertFrom,
   // The position an index names, as a value position arithmetic can be done in
-  // without wrapping, and unknown where the index names none: a select whose
-  // declared range does not start at the index's own zero reaches it through
-  // this, and one whose range does takes the index as it stands. A static
-  // factory on the integral type, answering with the position type.
+  // without wrapping, and unknown where the index names none: every select,
+  // and every ordinal a method takes, reaches the part it names through this.
+  // It answers with the position type.
   kToPosition,
-  kFromPackedArray,
+  // A string out of an integral value's bytes (LRM 6.16) and out of an unpacked
+  // array of byte (LRM 21.3.4.3).
+  kStringFromBits,
   kFromByteArray,
   // The opposite direction, under the LRM 5.9 string-literal assignment rules:
-  // an integral destination takes the text right-justified, an unpacked byte
-  // array takes it left-justified. One factory named on whichever destination
-  // the call answers with; that destination's declared representation reaches
-  // it as an operand naming its type (plus an element count for the array).
-  kFromString,
-  // LRM 7.6: one unpacked array kind taking another's elements. The three kinds
-  // differ in what the destination declares and the source cannot supply -- a
-  // fixed-size array its element count, a queue its bound -- so the call states
-  // those as operands, while the elements themselves cross unchanged because
-  // the clause admits the assignment only where the element types are
-  // equivalent. Named rather than left to the
-  // type's own construction because building over an element list carries the
-  // same operand count.
-  kFromArray,
+  // an integral destination takes the text right-justified, and is as wide as
+  // the type the call answers with.
+  kIntegralFromString,
+  // An unpacked array of byte out of text and out of an integral value's bytes,
+  // each left-justified from the array's first element (LRM 5.9). A string
+  // literal is an integral constant, so an assignment of one arrives as bits,
+  // whole: a NUL among them is a byte like any other. Each takes how many
+  // elements the array has.
+  kByteArrayFromString,
+  kByteArrayFromBits,
+  // LRM 7.6: one unpacked array kind taking another's elements, one entry per
+  // destination kind. The kinds differ in what the destination declares and the
+  // source cannot supply -- a fixed-size array its element count, a queue its
+  // bound (a negative one meaning none, LRM 7.10.5) -- so each entry takes what
+  // its own destination declares, after the source and the default an element
+  // of the destination starts from. The elements themselves cross unchanged,
+  // because the clause admits the assignment only where the element types are
+  // equivalent.
+  kDynamicArrayFromArray,
+  kUnpackedArrayFromArray,
+  kQueueFromArray,
   // Conforms a queue value to a destination's LRM 7.10.5 bound (a negative
   // argument means unbounded): the store boundary brings a differently-bounded
   // source to the destination's declared bound. An instance method on the
@@ -946,38 +991,30 @@ enum class BuiltinFn : std::uint16_t {
   kMakeDynamicArrayDefault,
   kMakeDynamicArrayNew,
   kMakeDynamicArrayNewCopy,
-  // LRM 11.4.12 concatenation and replication. What the two operators join --
-  // bit planes or characters -- follows the operand's value domain, so one
-  // entry each serves both and the domain names the realization. Each joins
-  // two operands: a longer source-level join folds into a chain, because an
+  // LRM 11.4.12 concatenation: two operands joined, bits or characters as the
+  // operands are. A longer source-level join folds into a chain, because an
   // operand list of arbitrary length has no single entry to call.
   kConcat,
-  kReplicate,
-  // Operator realizations on `PackedArray`. HIR-to-MIR lifts the
+  // LRM 11.4.12.1 replication. Bits are repeated as many times as fill the
+  // integral type the call answers with, which is a constant of the source.
+  // Characters are repeated as many times as an operand says, since a string's
+  // multiplier may be a value the program computes.
+  kReplicateBits,
+  kReplicateString,
+  // Operator realizations on integral values. HIR-to-MIR lifts the
   // method-style SV operators (LRM 11.4) into `CallExpr` against these
   // entries, so the backend renders every operator mechanically: native
   // forms (`+`, `==`, ...) collapse to a single formatter, method forms
   // route through the call path. The shift / power / xnor / wildcard /
   // case / implication / equivalence ids dispatch on their left operand,
   // and the reduction ids likewise dispatch on the operand they fold.
-  // `kFromBool` is a static factory that wraps a host bool
-  // into a 1-bit `PackedArray` (used to shape the result of a real /
-  // string comparison or logical operator into the LRM 11.3 / 11.4 1-bit
-  // integral result type).
+  // `kFromBool` carries a machine predicate into the integral type the call
+  // answers with, which is how the answer of a real or string comparison takes
+  // the one-bit integral type LRM 11.3 and 11.4 give it.
   kPow,
   kShiftLeft,
   kLogicalShiftRight,
   kArithmeticShiftRight,
-  // The same three shifts applied to what a place holds, rather than computed
-  // from two values (LRM 11.4.1 `<<=` / `>>=` / `>>>=`). A compound assignment
-  // reads its destination exactly once, and an entry that answers with a value
-  // leaves the reading to whoever calls it -- so applying is its own operation,
-  // and it is the one a compound assignment names. Every other compound
-  // assignment operator is one a target applies to two values of one type and
-  // names no entry at all.
-  kShiftLeftAssign,
-  kLogicalShiftRightAssign,
-  kArithmeticShiftRightAssign,
   kBitwiseXnor,
   kLogicalEquivalence,
   kWildcardEquals,
@@ -992,6 +1029,26 @@ enum class BuiltinFn : std::uint16_t {
   kReductionNor,
   kReductionXnor,
   kFromBool,
+  // An operation the source states over values of several kinds, as it is over
+  // integral values. The source names the entry above that serves every kind
+  // -- a join of bits and a join of characters are one operator -- and the
+  // lowering to MIR, which knows what the operation is applied to, names one
+  // of these where that is integral, so every entry below MIR is over values
+  // of one kind and has one declaration.
+  kConcatBits,
+  kIntegralPow,
+  kIntegralCaseEqual,
+  kIntegralBitIdentical,
+  kIntegralHasUnknown,
+  kIntegralIsUnknown,
+  kIntegralCountBits,
+  kIntegralResolveTriState,
+  kIntegralResolveWiredAnd,
+  kIntegralResolveWiredOr,
+  kIntegralDominating,
+  kIntegralMergeConditional,
+  kIntegralFromInt,
+  kIntegralConvert,
   // LRM 6.19.5 / 6.24.2: what an enumeration's member list answers about a
   // value -- whether it is a member, its name, and the member a step away from
   // it. The receiver is the member list the unit states once for the
@@ -1020,11 +1077,13 @@ enum class BuiltinFn : std::uint16_t {
   kHierarchicalPath,
 };
 
-// A function the library declares in a scope of its own, named here as a call
-// site writes it. The object the entry acts on, where it has one, is its
-// leading argument, because a free function binds nothing.
+// A function the library declares in a scope of its own: the scope, and the
+// function's name in it. The object the entry acts on, where it has one, is its
+// leading argument, because a free function binds nothing. A value of a class
+// type answers such an entry through its member of the same name.
 struct FreeFunction {
-  std::string_view qualified_name;
+  std::string_view scope;
+  std::string_view identifier;
 };
 
 // A method on the object the entry acts on, reached through that object.
@@ -1077,6 +1136,92 @@ enum class PartSelection : std::uint8_t {
   kSlice,
 };
 
+// How an entry reads one operand it is handed, which is the whole of what a
+// caller composing a call has to know of that operand: what crosses for it
+// follows from this and from nothing about the value in hand. Each names one
+// way of crossing. What one realization of an entry is told beyond it -- how
+// wide the words a holder keeps are, the type a memory's keys are built at --
+// is that realization's to state, where the realizations are named.
+enum class OperandReading : std::uint8_t {
+  // A value that goes into, or comes out of, something that already knows its
+  // layout -- an element of the container the entry acts on, what the holder
+  // it acts on holds, a value the entry hands back unread -- so the value
+  // crosses alone.
+  kHeld,
+  // An integral value the entry reads the planes of, so it is told how wide
+  // the value is and whether it can hold x or z.
+  kBits,
+  // An integral value the entry reads as a number, so it is told whether the
+  // value is signed as well (LRM 11.4.3).
+  kNumber,
+  // An ordinal the layer above brought to the position type where the source
+  // wrote it (LRM 7.4.5, 11.5.1), so its bytes are all that crosses.
+  kPosition,
+  // A value of a type the entry keeps and acts on afterwards, crossing with
+  // that type: the value an answer starts from, a spread part of a
+  // concatenation (LRM 10.10).
+  kTyped,
+  // The key an associative array is reached by, crossing with its type,
+  // since the array holds no index type of its own. Only an entry acting on
+  // an associative array reads an operand so (LRM 7.8).
+  kKey,
+  // A count, a flag, a code address, storage the entry acts on, or a value or
+  // an object of one of the library's own types: what the entry reads as the
+  // thing it is.
+  kMachine,
+};
+
+// How the operands of one entry are read, in the order the entry takes them:
+// the object it acts on where it has one, the engine handle where it takes
+// it, then the rest. An operand past the last one stated is read as the thing
+// it is, so an entry that states none takes no integral value and nothing that
+// crosses with a type. An entry that is an operation over integral values
+// states none: that operation's own declaration says what it takes.
+class OperandReadings {
+ public:
+  constexpr OperandReadings() = default;
+  constexpr OperandReadings(std::initializer_list<OperandReading> readings)
+      : count_(readings.size()) {
+    if (readings.size() > kMost) {
+      throw InternalError(
+          "a runtime entry states more operand readings than an entry holds "
+          "-- please report this as a bug");
+    }
+    std::ranges::copy(readings, readings_.begin());
+  }
+
+  [[nodiscard]] constexpr auto All() const -> std::span<const OperandReading> {
+    return std::span<const OperandReading>(readings_).first(count_);
+  }
+
+  // How operand `index` is read, whether or not it is one of those stated.
+  [[nodiscard]] constexpr auto At(std::size_t index) const -> OperandReading {
+    return index < count_ ? readings_.at(index) : OperandReading::kMachine;
+  }
+
+ private:
+  static constexpr std::size_t kMost = 6;
+  std::array<OperandReading, kMost> readings_{};
+  std::size_t count_ = 0;
+};
+
+// What an entry is told of the type it answers at, beyond the storage its
+// answer is laid out in.
+enum class AnswerTold : std::uint8_t {
+  // Nothing: the operands, or the library's own types, settle the layout.
+  kNothing,
+  // The element type of the array it builds, out of text or bits that state
+  // none (LRM 5.9).
+  kElementType,
+  // How wide the integral value it answers is and whether that value holds x
+  // or z, where its operands fix neither: a stream of bits as wide as what the
+  // value it is asked of holds (LRM 6.24.3).
+  kIntegralExtent,
+  // How wide the integral type it is called at is, and nothing else of it:
+  // how many bits a write placed into a designated value (LRM 11.5.1).
+  kIntegralWidth,
+};
+
 // Every property of one runtime entry: what the library calls it, how a call
 // site reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -1095,6 +1240,15 @@ struct RuntimeEntry {
   // Where the library declares the entry, and what a call site writes to reach
   // it.
   EntryDeclaration declaration;
+  // Whether the entry is generic over a type its operands do not settle: a
+  // conversion's destination, the bits of a part, as many copies as fill the
+  // answer, the union a member goes into. A call to such an entry states that
+  // type on its callee, as a call to a generic function states its type
+  // arguments, and each target tells the entry the way it tells a type -- one
+  // that resolves types where the call is written names it there, and one
+  // calling code compiled once for every type hands over what that code needs
+  // of it.
+  bool takes_a_type_argument = false;
   // Whether the entry acts on an object, its first operand being whatever
   // reaches that object -- a class handle, the running method's own object, or
   // a write in progress into it -- as an access's receiver is. Reaching the
@@ -1149,27 +1303,31 @@ struct RuntimeEntry {
   // expression: binding the answer and writing it back are steps rather than
   // one expression.
   bool writes_the_index_back = false;
-  // Which operand is an index, absent for an entry that names none. It covers
-  // the index a traversal searches from as well as the one a select names,
-  // since both cross the boundary the same way.
-  std::optional<std::size_t> index_operand = std::nullopt;
-  // Which operand is a whole container crossing erased -- a spread
-  // concatenation part (LRM 10.10) whose own kind the entry cannot name, so it
-  // crosses with its type and is read back element by element. Absent for an
-  // entry that has none.
-  std::optional<std::size_t> spread_operand = std::nullopt;
-  // Which operand is the value a union is built holding as its live member (LRM
-  // 7.3). Every member type reaches the one entry, so the value crosses with
-  // the type its member is declared as.
-  std::optional<std::size_t> member_operand = std::nullopt;
-  // Which operand is the prototype the entry's result takes its shape from,
-  // absent for an entry whose result the object it acts on already shapes. A
-  // prototype stands for the result before there is one -- an empty
-  // reduction's zero, a locator's key, a map's chosen element (LRM 7.12), the
-  // index an unallocated dimension reports (LRM 20.7), the element a container
-  // is seeded with (LRM 7.5.1) -- so the call site supplies it and it names a
-  // representation the entry has no other way to know.
-  std::optional<std::size_t> result_prototype_operand = std::nullopt;
+  // How the entry reads each operand it is handed. A value the entry's answer
+  // starts from is one of them, read with its type: it stands for the answer
+  // before there is one -- an empty reduction's zero, a locator's key, a map's
+  // chosen element (LRM 7.12), the index an unallocated dimension reports (LRM
+  // 20.7), the element a container is seeded with (LRM 7.5.1), the value whose
+  // shape a stream of bits is read into (LRM 6.24.3) -- and its contents are
+  // part of what the entry reads.
+  OperandReadings operands = {};
+  // Which operand is the value the entry's answer starts from, for an entry
+  // whose answer starts from one. The source writes no such operand, so
+  // whoever builds the call supplies it, at the default of the type the call
+  // answers with.
+  std::optional<std::size_t> answer_starts_from = std::nullopt;
+  // What the entry is told of the type it answers at.
+  AnswerTold answer_told = AnswerTold::kNothing;
+  // The operation over integral values the entry is, absent for an entry over
+  // any other kind of value. Such an entry is that operation and nothing
+  // else, so its spelling and whether it is generic over the type it answers
+  // at are the operation's.
+  std::optional<IntegralOp> integral = std::nullopt;
+  // The entry that carries this one out over integral values, for an entry
+  // the source states over values of several kinds; absent for an entry over
+  // one kind. A call below the source's own layer names that entry where its
+  // first operand is integral, and this one everywhere else.
+  std::optional<BuiltinFn> over_integral_values = std::nullopt;
 };
 
 // The one declaration of `id`. Total over the entry set, so an entry added

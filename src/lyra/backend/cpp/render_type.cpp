@@ -1,10 +1,12 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <span>
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
@@ -13,10 +15,13 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
+#include "lyra/value/enumeration.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -52,14 +57,8 @@ void WriteTypeList(
 
 auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
   switch (kind) {
-    case mir::RuntimeLibraryKind::kPackedType:
-      return "lyra::value::PackedType";
-    case mir::RuntimeLibraryKind::kPackedRange:
-      return "lyra::value::PackedRange";
-    case mir::RuntimeLibraryKind::kUnpackedRange:
-      return "lyra::value::UnpackedRange";
     case mir::RuntimeLibraryKind::kEnumeration:
-      return "lyra::value::Enumeration";
+      return "lyra::value::EnumerationMembers";
     case mir::RuntimeLibraryKind::kPrintItem:
       return "lyra::value::PrintItem";
     case mir::RuntimeLibraryKind::kPrintLiteralItem:
@@ -125,6 +124,42 @@ auto MachineIntCppType(const mir::MachineIntType& m) -> std::string_view {
   throw InternalError("backend::cpp: unknown MachineIntWidth");
 }
 
+// The library's family of vectors of one signedness and state domain.
+auto IntegralFamilyName(
+    mir::Signedness signedness, mir::IntegralStateKind state)
+    -> std::string_view {
+  switch (state) {
+    case mir::IntegralStateKind::kTwoState:
+      switch (signedness) {
+        case mir::Signedness::kSigned:
+          return "SignedBitVector";
+        case mir::Signedness::kUnsigned:
+          return "BitVector";
+      }
+      break;
+    case mir::IntegralStateKind::kFourState:
+      switch (signedness) {
+        case mir::Signedness::kSigned:
+          return "SignedLogicVector";
+        case mir::Signedness::kUnsigned:
+          return "LogicVector";
+      }
+      break;
+  }
+  throw InternalError("backend::cpp: unknown integral signedness or states");
+}
+
+// An integral type is the library's value of its width, signedness and state
+// domain, spelled as the three facts the type states: the vector of its width
+// in the family of its signedness and domain. A type the language predefines
+// under a name (LRM 6.11) is the same type as the vector it abbreviates, so it
+// has the same spelling.
+void WriteIntegralCppType(TargetText& out, const mir::IntegralType& t) {
+  Write(
+      out, "lyra::value::", IntegralFamilyName(t.signedness, t.state_kind), "<",
+      t.bit_width, ">");
+}
+
 auto MachineFloatCppType(const mir::MachineFloatType& m) -> std::string_view {
   switch (m.width) {
     case mir::MachineFloatWidth::k32:
@@ -143,12 +178,10 @@ void WriteOne(TargetText& out, const CppType& spelling) {
   const auto type = [&unit](mir::TypeId t) { return CppType(unit, t); };
   unit.types.Get(type_id).Visit(
       Overloaded{
-          [&](const mir::PackedArrayType&) {
-            out += "lyra::value::PackedArray";
-          },
-          // An enum holds a packed array; its member names do not change how
-          // the value is stored.
-          [&](const mir::EnumType&) { out += "lyra::value::PackedArray"; },
+          [&](const mir::IntegralType& t) { WriteIntegralCppType(out, t); },
+          // An enum holds a value of its base type; its member names do not
+          // change how the value is stored.
+          [&](const mir::EnumType& e) { WriteIntegralCppType(out, e.base); },
           [&](const mir::StringType&) { out += "lyra::value::String"; },
           [&](const mir::MachineCStringType&) { out += "const char*"; },
           [&](const mir::MachineBoolType&) { out += "bool"; },
@@ -316,6 +349,69 @@ void WriteOne(TargetText& out, const CppType& spelling) {
       });
 }
 
+namespace {
+
+void WritePlane(TargetText& out, std::span<const std::uint64_t> words) {
+  out += "{";
+  WriteSeparated(out, words, ", ", [&](std::uint64_t word) {
+    out += "0x";
+    WriteNumber(out, word, 16);
+    out += "ULL";
+  });
+  out += "}";
+}
+
+}  // namespace
+
+void WriteOne(TargetText& out, const CppIntegralLiteral& literal) {
+  const mir::IntegralConstantDecl& constant =
+      literal.Unit().integral_constants.Get(literal.Constant());
+  Write(out, CppType(literal.Unit(), constant.type), "::FromWords(");
+  WritePlane(out, constant.value.value_words);
+  out += ", ";
+  WritePlane(out, constant.value.state_words);
+  out += ")";
+}
+
+// Every enumeration's table goes by one type name, so each table states how
+// wide its base type is, whether that type has an unknown plane, and how many
+// members it holds, which is what tells the C++ compiler which table type it
+// is.
+void WriteOne(TargetText& out, const CppEnumTableLiteral& literal) {
+  const mir::CompilationUnit& unit = literal.Unit();
+  const mir::EnumType& enumeration = unit.enum_tables.Get(literal.Table());
+  bool four_state = false;
+  switch (enumeration.base.state_kind) {
+    case mir::IntegralStateKind::kTwoState:
+      break;
+    case mir::IntegralStateKind::kFourState:
+      four_state = true;
+      break;
+  }
+  std::vector<value::ConstPlanes> members;
+  members.reserve(enumeration.members.size());
+  for (const mir::EnumMember& member : enumeration.members) {
+    members.push_back(
+        value::ConstPlanes{
+            .value = member.value.value_words,
+            .unknown = member.value.state_words});
+  }
+  Write(out, CppType(unit, unit.builtins.enumeration), "<");
+  WriteNumber(out, enumeration.base.bit_width, 10);
+  out += four_state ? ", true, " : ", false, ";
+  WriteNumber(out, static_cast<std::uint64_t>(enumeration.members.size()), 10);
+  out += ">{";
+  WritePlane(
+      out, value::EnumerationPlanes(
+               enumeration.base.bit_width, four_state, members));
+  out += ", {";
+  WriteSeparated(
+      out, enumeration.members, ", ", [&](const mir::EnumMember& member) {
+        Write(out, CppNameLiteral(member.name));
+      });
+  out += "}}";
+}
+
 auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
     -> DerefSpelling {
   const auto reaches_nothing = []() -> DerefSpelling {
@@ -350,7 +446,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           },
           // Every other type is a value that reaches nothing, so there is
           // nothing to dereference.
-          [&](const mir::PackedArrayType&) { return reaches_nothing(); },
+          [&](const mir::IntegralType&) { return reaches_nothing(); },
           [&](const mir::EnumType&) { return reaches_nothing(); },
           [&](const mir::UnpackedArrayType&) { return reaches_nothing(); },
           [&](const mir::DynamicArrayType&) { return reaches_nothing(); },
@@ -401,7 +497,7 @@ auto IsMachineScalar(const mir::Type& type) -> bool {
 // The values C++ cast notation converts among by itself: both sides one of
 // these, and the same one.
 auto CastNotationRelates(const mir::Type& from, const mir::Type& to) -> bool {
-  return (from.IsIntegralPacked() && to.IsIntegralPacked()) ||
+  return (from.IsIntegral() && to.IsIntegral()) ||
          (IsMachineScalar(from) && IsMachineScalar(to)) ||
          (from.Is<mir::PointerType>() && to.Is<mir::PointerType>()) ||
          (from.Is<mir::MachineFunctionType>() &&
@@ -411,9 +507,8 @@ auto CastNotationRelates(const mir::Type& from, const mir::Type& to) -> bool {
 // A value the runtime answers "is this nothing" for, which is what reducing
 // one to a machine boolean asks (LRM 12.4).
 auto HasTruthValue(const mir::Type& type) -> bool {
-  return type.IsIntegralPacked() || type.IsRealFamily() ||
-         IsMachineScalar(type) || type.Is<mir::ManagedRefType>() ||
-         type.Is<mir::ChandleType>();
+  return type.IsIntegral() || type.IsRealFamily() || IsMachineScalar(type) ||
+         type.Is<mir::ManagedRefType>() || type.Is<mir::ChandleType>();
 }
 
 // A refusal naming what it refuses in the target's own spelling of the types
@@ -518,7 +613,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
                 out, "lyra::runtime::MakeSequence<", CppType(unit, v.element),
                 ">");
           },
-          [&](const mir::PackedArrayType& t) { by_naming_itself(t); },
+          [&](const mir::IntegralType& t) { by_naming_itself(t); },
           [&](const mir::EnumType& t) { by_naming_itself(t); },
           [&](const mir::StringType& t) { by_naming_itself(t); },
           [&](const mir::MachineCStringType& t) { by_naming_itself(t); },

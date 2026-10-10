@@ -14,7 +14,6 @@
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/unary_op.hpp"
-#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -27,7 +26,6 @@
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
@@ -87,81 +85,7 @@ auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp {
       "and is settled before a binary node is built");
 }
 
-auto LowerCompoundOperation(hir::BinaryOp op) -> CompoundOperation {
-  switch (op) {
-    case hir::BinaryOp::kLogicalShiftLeft:
-    case hir::BinaryOp::kArithmeticShiftLeft:
-      return support::BuiltinFn::kShiftLeftAssign;
-    case hir::BinaryOp::kLogicalShiftRight:
-      return support::BuiltinFn::kLogicalShiftRightAssign;
-    case hir::BinaryOp::kArithmeticShiftRight:
-      return support::BuiltinFn::kArithmeticShiftRightAssign;
-    case hir::BinaryOp::kAdd:
-    case hir::BinaryOp::kSub:
-    case hir::BinaryOp::kMul:
-    case hir::BinaryOp::kDiv:
-    case hir::BinaryOp::kMod:
-    case hir::BinaryOp::kBitwiseAnd:
-    case hir::BinaryOp::kBitwiseOr:
-    case hir::BinaryOp::kBitwiseXor:
-      return LowerBinaryOp(op);
-    case hir::BinaryOp::kEquality:
-    case hir::BinaryOp::kInequality:
-    case hir::BinaryOp::kGreaterEqual:
-    case hir::BinaryOp::kGreaterThan:
-    case hir::BinaryOp::kLessEqual:
-    case hir::BinaryOp::kLessThan:
-    case hir::BinaryOp::kLogicalAnd:
-    case hir::BinaryOp::kLogicalOr:
-    case hir::BinaryOp::kPower:
-    case hir::BinaryOp::kBitwiseXnor:
-    case hir::BinaryOp::kCaseEquality:
-    case hir::BinaryOp::kCaseInequality:
-    case hir::BinaryOp::kWildcardEquality:
-    case hir::BinaryOp::kWildcardInequality:
-    case hir::BinaryOp::kLogicalImplication:
-    case hir::BinaryOp::kLogicalEquivalence:
-      break;
-  }
-  throw InternalError(
-      "LowerCompoundOperation: the operator has no `op=` form (LRM 11.4.1) and "
-      "reaches no assignment");
-}
-
 namespace {
-
-auto MakeLibraryCall(
-    support::BuiltinFn entry, mir::ExprId receiver,
-    std::vector<mir::ExprId> arguments, mir::TypeId result_type) -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = entry, .receiver = receiver},
-              .arguments = std::move(arguments)},
-      .type = result_type};
-}
-
-// The operator a target applies, or the constant it folds to where every
-// operand is one.
-auto MakeBinary(
-    const mir::CompilationUnit& unit, const mir::Block& block, mir::BinaryOp op,
-    mir::ExprId lhs, mir::ExprId rhs, mir::TypeId result_type) -> mir::Expr {
-  return FoldedOr(
-      unit, mir::FoldBinary(unit, block, op, lhs, rhs, result_type),
-      mir::Expr{
-          .data = mir::BinaryExpr{.op = op, .lhs = lhs, .rhs = rhs},
-          .type = result_type});
-}
-
-auto MakeUnary(
-    const mir::CompilationUnit& unit, const mir::Block& block, mir::UnaryOp op,
-    mir::ExprId operand, mir::TypeId result_type) -> mir::Expr {
-  return FoldedOr(
-      unit, mir::FoldUnary(unit, block, op, operand, result_type),
-      mir::Expr{
-          .data = mir::UnaryExpr{.op = op, .operand = operand},
-          .type = result_type});
-}
 
 template <ExprLowerer Lowerer>
 auto LowerAndAddOperand(
@@ -178,7 +102,7 @@ auto LowerAndAddOperand(
 auto BuildLogicalOperand(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand)
     -> mir::ExprId {
-  return unit.types.Get(block.exprs.Get(operand).type).IsIntegralPacked()
+  return unit.types.Get(block.exprs.Get(operand).type).IsIntegral()
              ? operand
              : BuildTruth(unit, block, operand);
 }
@@ -214,8 +138,9 @@ auto BuildMirUnaryExpr(
   // LRM 11.4.9: a reduction is an operation over the operand's bits, which a
   // library performs and no target spells as an operator on a value.
   const auto reduce = [&](support::BuiltinFn entry) {
-    return MakeLibraryCall(
-        entry, block.exprs.Add(std::move(operand)), {}, result_type);
+    return MakeBuiltinCall(
+        unit, block, entry, block.exprs.Add(std::move(operand)), {},
+        result_type);
   };
   switch (op) {
     // Unary plus leaves its operand's value unchanged (LRM 11.4.3), so the
@@ -285,7 +210,15 @@ auto BuildMirBinaryExpr(
   // x and z as themselves, LRM 11.4.6); or it composes several operations into
   // one (power, xnor).
   const auto library = [&](support::BuiltinFn entry) {
-    return MakeLibraryCall(entry, lhs_id, {rhs_id}, result_type);
+    return MakeBuiltinCall(unit, block, entry, lhs_id, {rhs_id}, result_type);
+  };
+  // LRM 11.4.6 `==?`: the answer can be unknown exactly where an operand can,
+  // so it is stated at the one-bit type of the operands' own state domain, and
+  // a context wanting another representation takes the conversion.
+  const auto wildcard_equality = [&] {
+    return block.exprs.Add(MakeBuiltinCall(
+        unit, block, support::BuiltinFn::kWildcardEquals, lhs_id, {rhs_id},
+        OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
   };
 
   // LRM 8.4 admits `null` as either operand of a handle comparison, and the
@@ -348,17 +281,13 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kCaseEquality:
       return at_result_type(case_equality());
     case hir::BinaryOp::kCaseInequality:
-      return at_result_type(BuildLogicalNot(block, case_equality()));
+      return at_result_type(BuildLogicalNot(unit, block, case_equality()));
     case hir::BinaryOp::kWildcardEquality:
-      return library(support::BuiltinFn::kWildcardEquals);
+      return at_result_type(wildcard_equality());
     // SV spells `!=?` as an operator of its own, answering with the negation of
-    // the comparison beside it (LRM 11.4.6). Unlike case inequality it takes no
-    // conversion: the clause lets the answer be unknown, so it carries the
-    // state class its operands do, which is the one the context asked for.
+    // the comparison beside it (LRM 11.4.6).
     case hir::BinaryOp::kWildcardInequality:
-      return block.exprs.Get(BuildLogicalNot(
-          block,
-          block.exprs.Add(library(support::BuiltinFn::kWildcardEquals))));
+      return at_result_type(BuildLogicalNot(unit, block, wildcard_equality()));
     case hir::BinaryOp::kPower:
       return library(support::BuiltinFn::kPow);
     case hir::BinaryOp::kLogicalShiftLeft:
@@ -373,8 +302,8 @@ auto BuildMirBinaryExpr(
     // LRM 11.4.7 evaluates both operands of `<->` exactly once and compares
     // their truths, and the answer can be unknown exactly where an operand can.
     case hir::BinaryOp::kLogicalEquivalence:
-      return at_result_type(block.exprs.Add(MakeLibraryCall(
-          support::BuiltinFn::kLogicalEquivalence,
+      return at_result_type(block.exprs.Add(MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kLogicalEquivalence,
           BuildLogicalOperand(unit, block, lhs_id),
           {BuildLogicalOperand(unit, block, rhs_id)},
           OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));

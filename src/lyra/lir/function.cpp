@@ -33,6 +33,18 @@ auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view {
   throw InternalError("lir: unknown open-write operation");
 }
 
+auto DesignatedBitsOpName(DesignatedBitsTarget::Op op) -> std::string_view {
+  switch (op) {
+    case DesignatedBitsTarget::Op::kRead:
+      return "read_bits";
+    case DesignatedBitsTarget::Op::kPlace:
+      return "place_bits";
+    case DesignatedBitsTarget::Op::kReport:
+      return "report_bits";
+  }
+  throw InternalError("lir: unknown designated-bits operation");
+}
+
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
   switch (op) {
     case ControlEffectTarget::Op::kTakeDepartureIfDue:
@@ -88,6 +100,19 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
             }
             throw InternalError("lir: unknown open-write operation");
           },
+          // Placing bits in a value only moves memory; reading them is what any
+          // storage's slice takes, and the report is what a slice write is,
+          // each of which can raise.
+          [](const DesignatedBitsTarget& bits) {
+            switch (bits.op) {
+              case DesignatedBitsTarget::Op::kPlace:
+                return CallEnding::kReturns;
+              case DesignatedBitsTarget::Op::kRead:
+              case DesignatedBitsTarget::Op::kReport:
+                return CallEnding::kReturnsOrDeparts;
+            }
+            throw InternalError("lir: unknown designated-bits operation");
+          },
           [](const EndValueTarget&) { return CallEnding::kReturns; },
           [](const CopyValueTarget&) { return CallEnding::kReturns; },
           [](const ControlEffectTarget& effect) {
@@ -127,7 +152,7 @@ auto OperandType(const Function& fn, const Operand& operand) -> TypeId {
           [](const RealConst& c) { return c.type; },
           [](const NullConst& c) { return c.type; },
           [](const BoolConst& c) { return c.type; },
-          [](const TypeDescriptorRef& c) { return c.type; },
+          [](const EnumTableRef& c) { return c.type; },
           [](const IntegralConstantRef& c) { return c.type; },
           [](const StaticRef& s) { return s.type; },
           [](const DefinitionRef& c) { return c.type; }},

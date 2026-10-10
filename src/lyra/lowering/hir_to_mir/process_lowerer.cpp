@@ -403,10 +403,11 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
   }
 
   // LRM 13.4.1 implicit result variable. A non-void function's same-name var is
-  // a default-initialized body local (named distinctly from the C++ method so a
-  // self-recursive call still resolves to the method): the leading
-  // completion-payload component, the value a fall-through or value-less
-  // `return` carries. void functions and tasks have none.
+  // a default-initialized body local (declared without its source name, which
+  // is the function's own and has to keep resolving to the function for a
+  // self-recursive call): the leading completion-payload component, the value
+  // a fall-through or value-less `return` carries. void functions and tasks
+  // have none.
   if (src.result_var.has_value()) {
     const DeclaredVariable variable = DeclareDefaulted(
         *owner_, body_frame, code.Body(),
@@ -531,17 +532,12 @@ auto ProcessLowerer::BuildReportPrologue(
             .expr = BuildReportCall(
                 unit, entered, report, support::BuiltinFn::kReadReportLeave, {},
                 unit.builtins.void_type)});
-    const mir::ExprId goes_on = asked.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = mir::BinaryOp::kInequality,
-                    .lhs = BuildReportCall(
-                        unit, asked, report,
-                        support::BuiltinFn::kReadReportEnter, {},
-                        unit.builtins.machine_int64),
-                    .rhs = BuildMachineIntLiteral(unit, asked, 0)},
-            .type = unit.builtins.machine_bool});
+    const mir::ExprId entered_at = BuildReportCall(
+        unit, asked, report, support::BuiltinFn::kReadReportEnter, {},
+        unit.builtins.machine_int64);
+    const mir::ExprId goes_on = asked.exprs.Add(MakeBinary(
+        unit, asked, mir::BinaryOp::kInequality, entered_at,
+        BuildMachineIntLiteral(unit, asked, 0), unit.builtins.machine_bool));
     asked.AppendStmt(
         mir::IfStmt{
             .condition = goes_on,
@@ -556,36 +552,26 @@ auto ProcessLowerer::BuildReportPrologue(
   mir::Block stands_in;
   stands_in.AppendStmt(
       mir::ReturnStmt{.value = BuildReturnPayload(stands_in, std::nullopt)});
-  const mir::ExprId within_a_report = asked.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kEquality,
-                  .lhs = BuildReportCall(
-                      unit, asked, report,
-                      support::BuiltinFn::kReadReportRunsTheBody, {},
-                      unit.builtins.machine_int64),
-                  .rhs = BuildMachineIntLiteral(unit, asked, 0)},
-          .type = unit.builtins.machine_bool});
+  const mir::ExprId runs_the_body = BuildReportCall(
+      unit, asked, report, support::BuiltinFn::kReadReportRunsTheBody, {},
+      unit.builtins.machine_int64);
+  const mir::ExprId within_a_report = asked.exprs.Add(MakeBinary(
+      unit, asked, mir::BinaryOp::kEquality, runs_the_body,
+      BuildMachineIntLiteral(unit, asked, 0), unit.builtins.machine_bool));
   asked.AppendStmt(
       mir::IfStmt{
           .condition = within_a_report,
           .then_scope = asked.child_scopes.Add(std::move(stands_in)),
           .else_scope = std::nullopt});
 
-  const mir::ExprId handed = block.exprs.Add(
+  const mir::ExprId report_read = block.exprs.Add(
+      mir::MakeLocalRefExpr(report, unit.builtins.read_report_ptr));
+  const mir::ExprId no_report = block.exprs.Add(
       mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kInequality,
-                  .lhs = block.exprs.Add(
-                      mir::MakeLocalRefExpr(
-                          report, unit.builtins.read_report_ptr)),
-                  .rhs = block.exprs.Add(
-                      mir::Expr{
-                          .data = mir::NullLiteral{},
-                          .type = unit.builtins.read_report_ptr})},
-          .type = unit.builtins.machine_bool});
+          .data = mir::NullLiteral{}, .type = unit.builtins.read_report_ptr});
+  const mir::ExprId handed = block.exprs.Add(MakeBinary(
+      unit, block, mir::BinaryOp::kInequality, report_read, no_report,
+      unit.builtins.machine_bool));
   block.AppendStmt(
       mir::IfStmt{
           .condition = handed,

@@ -6,8 +6,7 @@
 #include <vector>
 
 #include "lyra/runtime/trigger.hpp"
-#include "lyra/value/packed.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
@@ -56,15 +55,13 @@ class ReadReport {
   // a trigger reads them; reached through a handle where a call made on one
   // is reporting.
   void Add(
-      Observable* place, const value::PackedArray& lsb_bit_offset,
-      const value::PackedArray& bit_width);
+      Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // A place reached through a handle: an object a chain of reads passes
   // through, whose event source `place` is, or a variable of the instance a
   // virtual interface holds.
   void AddThroughHandle(
-      Observable* place, const value::PackedArray& lsb_bit_offset,
-      const value::PackedArray& bit_width);
+      Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // Every object at once, for a read that reaches one along no chain a report
   // could follow.
@@ -78,8 +75,7 @@ class ReadReport {
   // A place the evaluation writes, and which bits of it, as a read names them.
   // Only an implicit list reads these, and it leaves them out.
   void AddWrite(
-      Observable* place, const value::PackedArray& lsb_bit_offset,
-      const value::PackedArray& bit_width);
+      Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // Makes what was reported a procedure's implicit list (LRM 9.2.2.2.1), once
   // everything is reported: nothing reached through a handle is in it, what

@@ -29,6 +29,20 @@ the detail lives in the entry itself.
   for the type, and the runtime is handed generated functions rather than a description of a type.
   Each choice is justified by what its cost scales with for any input. Supersedes the runtime-shape
   halves of the four entries below it.
+- [a-packed-value-is-its-words](a-packed-value-is-its-words.md) -- how the entry above is carried
+  out for packed values: one clean layout per type on both backends, an integral type in MIR that is
+  only width, signedness and state domain, every operation stated once as a function over planes and
+  a width and used as the C++ value type, the prebuilt wide entries and constant folding, the
+  four-state formula in the execution backend's code generator as a function of the operand type,
+  and a line at 64 bits. Code compiled before a design exists is told a number of bytes, a number of
+  bits or the address of a function of the design's, never a description of a type: a holder reads a
+  layout, a wide value is held as words at a width told when its holder is installed, how a routine
+  reads each operand is declared with the routine, a comparison answers a scalar, and a net's
+  positions are words and a count. States what is not yet so: a container, a union and a closure's
+  answer still act on what they hold through one constant per type. Runtime bitcode inlined per
+  module, a MIR function per operation and type, a call per operation, sign extension in storage,
+  LLVM's wide-integer legalization and any record of an integral type handed to the library are
+  rejected.
 - [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) -- a variable port
   connected to a whole variable of an equivalent type is a reference to the source's storage, so a
   write to one element costs the element through any hierarchy; every other connection moves only

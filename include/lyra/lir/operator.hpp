@@ -8,7 +8,8 @@ namespace lyra::lir {
 // The operators that survive into the executable IR: those a target realizes as
 // a machine instruction or a single runtime-library call. An operator's
 // semantics are fixed by its operand type, not by the opcode -- an add over a
-// four-state packed value propagates X, an add over a machine integer does not.
+// four-state integral value propagates X, an add over a machine integer does
+// not.
 // Operators with no such realization (reductions, power, the shifts) are lifted
 // to library calls before LIR and never appear here.
 enum class BinaryOp : std::uint8_t {
@@ -29,6 +30,15 @@ enum class BinaryOp : std::uint8_t {
   kLogicalAnd,
   kLogicalOr,
 };
+
+// What an operator answers with: a value of the type its operands are of, or
+// the 0, 1 or x of a comparison or a logical operator (LRM 11.4.4, 11.4.5,
+// 11.4.7), which is a value of a one-bit type whatever its operands are.
+enum class BinaryAnswer : std::uint8_t {
+  kOperandType,
+  kOneBit,
+};
+auto BinaryAnswerOf(BinaryOp op) -> BinaryAnswer;
 
 // Unary plus is an identity and is folded away before LIR.
 enum class UnaryOp : std::uint8_t {

@@ -2,10 +2,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_fwd.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::mir {
 
@@ -13,11 +17,50 @@ auto PackedVectorOf(
     const TypePool& types, std::uint64_t width, IntegralStateKind state_kind)
     -> TypeId {
   return types.Intern(
-      Type{PackedArrayType{
-          .state_kind = state_kind,
+      Type{IntegralType{
+          .bit_width = width,
           .signedness = Signedness::kUnsigned,
-          .dims = {PackedRange{
-              .left = static_cast<std::int64_t>(width) - 1, .right = 0}}}});
+          .state_kind = state_kind}});
+}
+
+namespace {
+
+constexpr auto SignednessOf(value::Signedness signedness) -> Signedness {
+  switch (signedness) {
+    case value::Signedness::kSigned:
+      return Signedness::kSigned;
+    case value::Signedness::kUnsigned:
+      return Signedness::kUnsigned;
+  }
+  std::unreachable();
+}
+
+constexpr auto StateKindOf(value::StateDomain domain) -> IntegralStateKind {
+  switch (domain) {
+    case value::StateDomain::kTwoState:
+      return IntegralStateKind::kTwoState;
+    case value::StateDomain::kFourState:
+      return IntegralStateKind::kFourState;
+  }
+  std::unreachable();
+}
+
+// The type the value library reads a position at, which is where it is
+// stated.
+constexpr IntegralType kPosition{
+    .bit_width = value::Position::kWidth,
+    .signedness = SignednessOf(value::Position::kSignedness),
+    .state_kind = StateKindOf(value::Position::kDomain)};
+
+}  // namespace
+
+auto PositionType(const TypePool& types) -> TypeId {
+  return types.Intern(Type{kPosition});
+}
+
+auto IsPositionType(const TypePool& types, TypeId id) -> bool {
+  const Type& type = types.Get(id);
+  return type.IsIntegral() && type.Integral() == kPosition;
 }
 
 auto MachineArrayOf(const TypePool& types, TypeId element, std::size_t size)
@@ -76,7 +119,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // A SystemVerilog value-storage data object (LRM 6.5): a variable of
           // one of these is an observable signal, so it is wrapped in the cell
           // that fires subscribers on change.
-          [&](const PackedArrayType&) { return wrap(); },
+          [&](const IntegralType&) { return wrap(); },
           [&](const EnumType&) { return wrap(); },
           [&](const UnpackedArrayType&) { return wrap(); },
           [&](const DynamicArrayType&) { return wrap(); },
@@ -104,9 +147,10 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           // own subscribe mechanism), a runtime facade (effects, files,
           // diagnostics, a runtime-library type), a coroutine result, a machine
           // primitive (a plain boolean, integer, float, C string, array, or
-          // code address), a closure, an internal index, `void`, the
-          // observable, net-cell and sampled-history wrappers themselves, which
-          // are already storage, and a write open on one of them.
+          // code address), a closure, the wildcard index type (LRM 7.8.1),
+          // `void`, the observable, net-cell, net-driver, sampled-history and
+          // evaluation-attempt storage itself, and a write open on one of
+          // them.
           [&](const WildcardIndexType&) { return bare(); },
           [&](const MachineCStringType&) { return bare(); },
           [&](const MachineBoolType&) { return bare(); },

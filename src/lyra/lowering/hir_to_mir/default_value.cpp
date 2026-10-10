@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -26,38 +25,24 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
-// LRM Table 6-7: 4-state integral types default to all-`x`; 2-state default
-// to all-zero. The `x` encoding is (value=1, state=1) per bit, so the bit
-// planes are 1s up to `width`, with the unused high bits of the top word
-// zeroed per IntegralConstant's word-layout invariant.
-auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
+// LRM Table 6-7: a 4-state integral type defaults to all `x`, a 2-state one to
+// all zero.
+auto DefaultIntegralConstant(const mir::IntegralType& integral)
     -> mir::IntegralConstant {
-  const auto width = static_cast<std::uint32_t>(pa.BitWidth());
-  const bool four_state = pa.state_kind == mir::IntegralStateKind::kFourState;
-  const std::size_t word_count = (width + 63U) / 64U;
-  mir::IntegralConstant c{
-      .value_words = std::vector<std::uint64_t>(word_count, 0U),
-      .state_words = {}};
-  if (!four_state) {
-    return c;
-  }
-  std::ranges::fill(c.value_words, ~std::uint64_t{0});
-  c.state_words = std::vector<std::uint64_t>(word_count, ~std::uint64_t{0});
-  const std::uint32_t top_bits = width % 64U;
-  if (top_bits != 0U && !c.value_words.empty()) {
-    const std::uint64_t mask = (std::uint64_t{1} << top_bits) - 1U;
-    c.value_words.back() &= mask;
-    c.state_words.back() &= mask;
-  }
-  return c;
+  mir::IntegralConstant held = mir::BlankIntegralConstant(integral);
+  value::FillDefault(
+      value::Planes{.value = held.value_words, .unknown = held.state_words},
+      integral.bit_width);
+  return held;
 }
 
 namespace {
 
-// The LRM 7.10.5 maximum index a bounded queue enforces, appended as the value
+// The LRM 7.10.5 maximum index a bounded queue enforces, appended as the number
 // the construction is handed so the runtime trims an over-long initializer. A
 // container whose type declares no bound -- which is every container but a
 // bounded queue -- appends nothing.
@@ -68,7 +53,7 @@ void AppendBoundedQueueMax(
   if (queue == nullptr || !queue->max_bound.has_value()) {
     return;
   }
-  args.push_back(BuildIntLiteral(
+  args.push_back(BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(*queue->max_bound)));
 }
 
@@ -251,9 +236,9 @@ auto BuildDefaultValueExpr(
   };
   return ty.Visit(
       Overloaded{
-          [&](const mir::PackedArrayType& pa) -> mir::Expr {
+          [&](const mir::IntegralType& integral) -> mir::Expr {
             return block.exprs.Get(BuildIntegralLiteral(
-                unit, block, type, DefaultIntegralConstant(pa)));
+                unit, block, type, DefaultIntegralConstant(integral)));
           },
           // An enumeration defaults as the vector it is: LRM Table 6-7 reads
           // the default off the state domain, which the base carries and the
@@ -263,8 +248,8 @@ auto BuildDefaultValueExpr(
                 unit, block, type, DefaultIntegralConstant(e.base)));
           },
           [&](const mir::StringType&) -> mir::Expr {
-            // Software string literal -> `value::String("")` via the
-            // constructor.
+            // The literal is machine text; the empty string value is what the
+            // string's constructor builds from it.
             const mir::ExprId lit = block.exprs.Add(
                 mir::Expr{
                     .data = mir::StringLiteral{.value = std::string{}},
@@ -285,7 +270,8 @@ auto BuildDefaultValueExpr(
           // the element type's default. That uniform value is the element
           // default replicated across the array's size, so it builds through
           // the repeat call and stays O(1) in the array's element count. The
-          // shield seed and the repeat unit are each the element default.
+          // default the container carries for a position it does not hold and
+          // the repeat unit are each the element default.
           [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
             const auto size = static_cast<std::int64_t>(ua.Size());
             const mir::TypeId element_type = ua.element_type;

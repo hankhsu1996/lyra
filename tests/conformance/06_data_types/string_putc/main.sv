@@ -4,9 +4,12 @@
 // string literal on the right contributes only its last character. The write
 // is ignored when i is below 0 or at or past the length, and ignored when the
 // character is 0, because a string variable never holds "\0"
-// (LRM 6.16, 6.16.2, Table 6-9).
+// (LRM 6.16, 6.16.2, Table 6-9). The index is the `int` argument of putc, so
+// an x or z bit of it reads as 0 (LRM 6.11.2).
 module Top;
   string s = "Hello";
+  string t = "abc";
+  logic [3:0] all_unknown = 4'bxxxx;
 
   int len_after_writes;
   int untouched_by_zero;
@@ -22,6 +25,7 @@ module Top;
     s.putc(5, "Z");
     s.putc(-1, "Z");
     s[99] = "Z";
+    t[all_unknown] = "Z";
 
     len_after_writes = s.len();
     untouched_by_zero = s.getc(2);
@@ -30,6 +34,7 @@ module Top;
 
   final begin
     if (s != "hxllO") $fatal(1, "s was \"%s\", expected \"hxllO\"", s);
+    if (t != "Zbc") $fatal(1, "t was \"%s\", expected \"Zbc\"", t);
     if (len_after_writes !== 5)
       $fatal(1, "len_after_writes was %0d, expected 5", len_after_writes);
     if (untouched_by_zero !== 108)

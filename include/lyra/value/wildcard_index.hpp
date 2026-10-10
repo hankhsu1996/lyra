@@ -1,9 +1,12 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::value {
 
@@ -19,26 +22,32 @@ namespace lyra::value {
 // at construction and only the second per comparison, and one that reaches an
 // index as a bare value does both.
 
-// The unsigned value an index names: the same bits at the same width, so no
-// sign extension happens and `-1` and `32'hFFFFFFFF` name one entry. x / z is
-// preserved, because an index carrying either names no entry whatever its
-// value (LRM 7.8.6) and the check for that runs against the key.
-[[nodiscard]] inline auto WildcardIndexValue(const PackedArray& index)
-    -> PackedArray {
-  return PackedArray::ConvertFrom(
-      index, index.BitWidth(), false, index.IsFourState());
+// The unsigned value an index names, as its words with every x or z read as
+// 0, and with the words above its most significant set one dropped, so no sign
+// extension happens, `-1` and `32'hFFFFFFFF` name one entry, and `8'd5` and
+// `16'd5` hold the same words.
+[[nodiscard]] inline auto WildcardIndexWords(const ConstIntegralView& index)
+    -> std::vector<std::uint64_t> {
+  std::vector<std::uint64_t> words(WordCountForBits(index.width));
+  for (std::size_t i = 0; i < words.size(); ++i) {
+    words[i] = WordAt(index.planes.value, i) & ~WordAt(index.planes.unknown, i);
+  }
+  while (!words.empty() && words.back() == 0U) {
+    words.pop_back();
+  }
+  return words;
 }
 
-// Whether `a` sits before `b`. Both are already the unsigned values above, so
-// widening them to the wider fills with zeros and the comparison is the
-// clause's numerical one across widths -- which is what makes `8'd5` and
-// `16'd5` neither before the other, and so one entry.
+// Whether the value the words `a` hold sits before the one `b` holds: the
+// clause's numerical comparison, across widths.
 [[nodiscard]] inline auto WildcardIndexBefore(
-    const PackedArray& a, const PackedArray& b) -> bool {
-  const std::uint64_t width = std::max(a.BitWidth(), b.BitWidth());
-  return static_cast<bool>(
-      PackedArray::ConvertFrom(a, width, false, false) <
-      PackedArray::ConvertFrom(b, width, false, false));
+    const std::vector<std::uint64_t>& a, const std::vector<std::uint64_t>& b)
+    -> bool {
+  if (a.size() != b.size()) {
+    return a.size() < b.size();
+  }
+  return std::ranges::lexicographical_compare(
+      a.rbegin(), a.rend(), b.rbegin(), b.rend());
 }
 
 }  // namespace lyra::value

@@ -50,9 +50,6 @@ enum class Mutability : std::uint8_t { kMutable, kReadOnly };
 enum class AddressKind : std::uint8_t { kStorage, kCode };
 
 enum class RuntimeLibraryKind : std::uint8_t {
-  kPackedType,
-  kPackedRange,
-  kUnpackedRange,
   kEnumeration,
   kPrintItem,
   kPrintLiteralItem,
@@ -84,19 +81,14 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kScopeCallable,
 };
 
-struct PackedRange {
-  std::int64_t left;
-  std::int64_t right;
-
-  auto operator==(const PackedRange&) const -> bool = default;
-};
-
-struct PackedArrayType {
-  IntegralStateKind state_kind;
+// An integral value's type: how many bits it has, whether they are read as
+// signed, and how many values a bit can take (LRM 6.11).
+struct IntegralType {
+  std::uint64_t bit_width;
   Signedness signedness;
-  std::vector<PackedRange> dims;
+  IntegralStateKind state_kind;
 
-  auto operator==(const PackedArrayType&) const -> bool = default;
+  auto operator==(const IntegralType&) const -> bool = default;
 };
 
 struct UnpackedArrayType {
@@ -141,8 +133,7 @@ struct MachineCStringType {
 };
 
 // A primitive machine boolean (C `_Bool`): the two-valued scalar a predicate
-// yields, distinct from a one-bit integer and from the four-state
-// `PackedArrayType`.
+// yields, distinct from a one-bit integer and from a one-bit `IntegralType`.
 struct MachineBoolType {
   auto operator==(const MachineBoolType&) const -> bool = default;
 };
@@ -160,7 +151,7 @@ enum class MachineFloatWidth : std::uint8_t { k32, k64 };
 [[nodiscard]] auto BitsOf(MachineIntWidth width) -> std::uint32_t;
 
 // A primitive machine integer (C `intN_t`): a fixed-width 2-state scalar,
-// distinct from the four-state `PackedArrayType`.
+// distinct from the simulation value an `IntegralType` is.
 struct MachineIntType {
   MachineIntWidth width;
   Signedness signedness;
@@ -419,6 +410,14 @@ struct DesignationType {
 using TypeDeclaration =
     std::variant<ObjectType, CrossUnitClassType, ClosureType>;
 
+// What a value is held as: an integral value as the bits its type declares,
+// whose layout this layer does not state; any other value of the design as an
+// object of its value domain, which is never a domain of an integral layout
+// here; and what the library builds for its own use as that object.
+struct IntegralBits {};
+using Holding =
+    std::variant<IntegralBits, support::ValueDomain, support::LibraryObject>;
+
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
 // that names each one rather than defaulting is what makes an alternative added
@@ -431,7 +430,7 @@ using TypeDeclaration =
 class Type {
  private:
   using Data = std::variant<
-      PackedArrayType, UnpackedArrayType, DynamicArrayType, QueueType,
+      IntegralType, UnpackedArrayType, DynamicArrayType, QueueType,
       AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
@@ -484,23 +483,22 @@ class Type {
   // write into it, or hand to a callee except where it lives.
   //
   // This is about the storage object, not about how a value is represented,
-  // and not about a capability that reaches one. A packed value is a runtime
-  // object reached through an opaque handle, and a net's driver is a handle
-  // naming one of a resolution node's slots; either handle is an ordinary
-  // first-class value its holder owns, so a place holding one is loaded and
-  // stored like any other. The cell is what is address-only, never the value
-  // or the capability reaching it.
+  // and not about a capability that reaches one. A net's driver is a handle
+  // naming one of a resolution node's slots, an ordinary first-class value its
+  // holder owns, so a place holding one is loaded and stored like any other.
+  // The cell is what is address-only, never the value or the capability
+  // reaching it.
   [[nodiscard]] auto IsAddressOnly() const -> bool;
 
-  // The runtime object a value of this type is held as, and nothing for a type
-  // whose value is held as itself or is reached where it lives. A value of the
-  // design is its domain's object; an object a call builds for one use -- what
-  // a print is assembled from, what a wait registers, the storage a closure
-  // captures into, a counted hold on a value -- is the library's own. Which
-  // object it is, is the logical shape the value has during execution; how
-  // large one is, is a physical fact decided below this layer.
-  [[nodiscard]] auto HeldObject() const
-      -> std::optional<support::RuntimeObject>;
+  // What a value of this type is held as, and nothing for a type whose value
+  // is held as itself or is reached where it lives. An integral value is its
+  // bits at its type, and how those are laid out is decided below this layer.
+  // Any other value of the design is its domain's object; an object a call
+  // builds for one use -- what a print is assembled from, what a wait
+  // registers, the storage a closure captures into, a counted hold on a value
+  // -- is the library's own. Each of those names a logical shape only, whose
+  // size is a physical fact decided below this layer too.
+  [[nodiscard]] auto HeldAs() const -> std::optional<Holding>;
 
   // True for a value its holder owns and has to end, which is a value held as
   // a runtime object. One of these ends where the lowering that made it says,
@@ -531,11 +529,10 @@ class Type {
   [[nodiscard]] auto ContainerElementType() const -> std::optional<TypeId>;
 
   // How this type's sign bit is read as a machine integer, and nothing for a
-  // type that is not one. What makes a type a machine integer is that its
-  // operators are machine instructions rather than library calls over an
-  // opaque handle, and the only thing an instruction still has to be told is
-  // the signedness. A machine boolean is one such integer, one bit wide and
-  // never negative, so it answers rather than standing outside.
+  // type that is not one. A machine integer's operators are the target's own
+  // instructions over one scalar, and the only thing an instruction still has
+  // to be told is the signedness. A machine boolean is one such integer, one
+  // bit wide and never negative, so it answers rather than standing outside.
   [[nodiscard]] auto MachineIntegerSignedness() const
       -> std::optional<Signedness>;
 

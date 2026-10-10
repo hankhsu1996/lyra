@@ -1,13 +1,16 @@
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <iterator>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -30,11 +33,13 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/runtime_print.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/value/format.hpp"
 #include "lyra/value/format_parse.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -55,6 +60,22 @@ auto EmptyArgumentItem() -> mir::RuntimePrintItem {
   return mir::RuntimePrintLiteral{.text = " "};
 }
 
+// A format specification as the machine integers it is built from, in the
+// order its constructor takes them (LRM 21.2.1.2). Every field is stated: a
+// directive that writes no modifiers states each at its default. A constant's
+// text and a run's text are the same text because both specifications are
+// built from this one list.
+auto FormatSpecFields(const mir::FormatSpec& spec, std::int64_t time_unit_power)
+    -> std::array<std::int64_t, 6> {
+  return {
+      static_cast<std::int64_t>(spec.kind),
+      spec.modifiers.width,
+      spec.modifiers.precision,
+      spec.modifiers.zero_pad ? 1 : 0,
+      spec.modifiers.left_align ? 1 : 0,
+      time_unit_power};
+}
+
 // LRM 21.2.1.6 asks for the entries of a container, and an associative array
 // with a wildcard index is one no traversal reaches: LRM 7.9.4 through 7.9.7
 // each refuse it `first`, `last`, `next` and `prev`, and LRM 7.8.1 refuses it a
@@ -68,6 +89,29 @@ auto RefuseAssignmentPatternText(Lowerer& lowerer, hir::ExprId hir_arg)
       "the assignment pattern conversion is not yet supported for an operand "
       "holding an associative array with a wildcard index type, whose entries "
       "the standard gives no way to enumerate (LRM 7.8.1, 21.2.1.6)");
+}
+
+// Whether the text a conversion gives an integral operand follows from the
+// operand alone. A time conversion also reads what `$timeformat` set (LRM
+// 20.4.3), and the assignment pattern reads the operand's declared type (LRM
+// 21.2.1.6).
+auto ReadsOnlyItsOperand(value::FormatKind kind) -> bool {
+  switch (kind) {
+    case value::FormatKind::kDecimal:
+    case value::FormatKind::kHex:
+    case value::FormatKind::kBinary:
+    case value::FormatKind::kOctal:
+    case value::FormatKind::kString:
+    case value::FormatKind::kChar:
+    case value::FormatKind::kRealDecimal:
+    case value::FormatKind::kRealExponential:
+    case value::FormatKind::kRealGeneral:
+      return true;
+    case value::FormatKind::kAssignmentPattern:
+    case value::FormatKind::kTime:
+      return false;
+  }
+  throw InternalError("ReadsOnlyItsOperand: unknown format kind");
 }
 
 // The returned expression is detached for the caller to intern.
@@ -93,7 +137,7 @@ auto BuildPrintValueItem(
   // the type pool, which the lift below may move by interning.
   const mir::Type& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
   const bool is_string = value_type.Is<mir::StringType>();
-  const bool is_integral_packed = value_type.IsIntegralPacked();
+  const bool is_integral = value_type.IsIntegral();
   const bool is_handle =
       value_type.Is<mir::ChandleType>() || value_type.Is<mir::ManagedRefType>();
   const hir::TypeId source_type = lowerer.HirExprs().Get(hir_arg).type;
@@ -115,12 +159,24 @@ auto BuildPrintValueItem(
   // each format directly, without building a string value. Only an unpacked
   // byte array is not directly formattable, so it lifts to a string value
   // here.
-  if (spec.kind == value::FormatKind::kString && !is_string &&
-      !is_integral_packed) {
+  if (spec.kind == value::FormatKind::kString && !is_string && !is_integral) {
     const mir::ExprId inner = block.exprs.Add(std::move(lowered));
     lowered = BuildValueConversion(
         lowerer.Owner().Unit(), block, inner,
         lowerer.Owner().Unit().builtins.string);
+  }
+
+  // A constant has one text under a conversion that reads nothing but its
+  // operand, so it is stated here, by the formatter the run would have asked.
+  // A literal item is text as a string value holds it, which keeps no NUL (LRM
+  // 6.16), so a text with one stays the operand's to print.
+  if (is_integral && ReadsOnlyItsOperand(spec.kind)) {
+    std::optional<std::string> text = mir::FoldFormattedText(
+        lowerer.Owner().Unit(), lowered,
+        std::make_from_tuple<value::FormatSpec>(FormatSpecFields(spec, 0)));
+    if (text.has_value() && !text->contains('\0')) {
+      return mir::RuntimePrintLiteral{.text = *std::move(text)};
+    }
   }
 
   const mir::TypeId type = lowered.type;
@@ -356,23 +412,16 @@ auto TryGetHirStringLiteral(
 
 // LRM 21.2.1.3: a %t directive scales by the enclosing scope's time unit, known
 // only at lowering -- so its power is materialized here as the spec's sixth
-// field rather than read from the directive like the others. Fields pass as
-// `int` literals the runtime FormatSpec constructor converts, every field
-// stated -- a directive that writes no modifiers states each at its default.
+// field rather than read from the directive like the others.
 auto BuildFormatSpecExpr(
     mir::CompilationUnit& unit, mir::Block& block, const mir::FormatSpec& spec,
     std::int64_t time_unit_power) -> mir::Expr {
-  const auto int_lit = [&](std::int64_t v) {
-    return BuildIntLiteral(unit, block, v);
-  };
   const bool is_time = spec.kind == value::FormatKind::kTime;
-  std::vector<mir::ExprId> args = {
-      int_lit(static_cast<std::int64_t>(spec.kind)),
-      int_lit(spec.modifiers.width),
-      int_lit(spec.modifiers.precision),
-      int_lit(spec.modifiers.zero_pad ? 1 : 0),
-      int_lit(spec.modifiers.left_align ? 1 : 0),
-      int_lit(is_time ? time_unit_power : 0)};
+  std::vector<mir::ExprId> args;
+  for (const std::int64_t field :
+       FormatSpecFields(spec, is_time ? time_unit_power : 0)) {
+    args.push_back(BuildMachineIntLiteral(unit, block, field));
+  }
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -562,7 +611,7 @@ auto BuildRuntimeFormatCallExpr(
                           .receiver = runtime_id},
                   .arguments = {}},
           .type = unit.builtins.time_format});
-  const mir::ExprId time_unit_power = BuildIntLiteral(
+  const mir::ExprId time_unit_power = BuildMachineIntLiteral(
       unit, body, static_cast<std::int64_t>(lowerer.Resolution().unit_power));
 
   const mir::ExprId formatted = body.exprs.Add(

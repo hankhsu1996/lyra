@@ -219,6 +219,6 @@ callback -- is still expressed as a closure whose capture list owns the place. W
 field is a snapshot or an alias is the field's _type_: a value-typed field is a snapshot, a
 reference-typed field aliases the live storage (LRM 6.21). The discipline is that a place held
 across a suspension or a region boundary is a reference-typed capture field, not raw pointer
-arithmetic threaded by hand. The C++ backend realizes such a field as an owned reference value (a
-`Ref<T>` by-value capture, never a `&` lambda capture), so a write through it still wakes the cell's
-subscribers and nothing dangles when the closure outlives the frame that built it.
+arithmetic threaded by hand. The C++ backend realizes such a field as an owned reference value (the
+library's reference captured by value, never a `&` lambda capture), so a write through it still
+wakes the cell's subscribers and nothing dangles when the closure outlives the frame that built it.

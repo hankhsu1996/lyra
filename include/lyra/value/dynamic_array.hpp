@@ -14,7 +14,7 @@
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -46,7 +46,7 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
 
   // LRM 7.5.1 `new[N]`: build `n` elements, each a copy of the element default.
   // `n` is a longint per LRM 7.5.1; the negative-N case throws at construction.
-  DynamicArray(const PackedArray& n, T element_default)
+  DynamicArray(std::int64_t n, T element_default)
       : core_(
             StaticElem<T>(std::move(element_default)),
             CountOf(n, "dynamic array new[N]"), nullptr) {
@@ -54,7 +54,7 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
 
   // LRM 7.5.1 `new[N](other)`: the first `N` of `other`'s elements, padded with
   // the element default where `other` has fewer.
-  DynamicArray(const PackedArray& n, T element_default, const DynamicArray& src)
+  DynamicArray(std::int64_t n, T element_default, const DynamicArray& src)
       : core_(
             StaticElem<T>(std::move(element_default)),
             CountOf(n, "dynamic array new[N](src)"), &src.core_) {
@@ -87,13 +87,13 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
     return DynamicArray(std::move(element_default));
   }
 
-  [[nodiscard]] static auto New(const PackedArray& n, T element_default)
+  [[nodiscard]] static auto New(std::int64_t n, T element_default)
       -> DynamicArray {
     return DynamicArray(n, std::move(element_default));
   }
 
   [[nodiscard]] static auto NewCopy(
-      const PackedArray& n, T element_default, const DynamicArray& src)
+      std::int64_t n, T element_default, const DynamicArray& src)
       -> DynamicArray {
     return DynamicArray(n, std::move(element_default), src);
   }
@@ -122,8 +122,8 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   ~DynamicArray() = default;
 
   // LRM 7.5.1: size() yields an SV int.
-  [[nodiscard]] auto Size() const -> PackedArray {
-    return PackedArray::Int(static_cast<std::int32_t>(RawSize()));
+  [[nodiscard]] auto Size() const -> Int {
+    return Int::FromInt(static_cast<std::int64_t>(RawSize()));
   }
 
   [[nodiscard]] auto RawSize() const -> std::size_t {
@@ -140,49 +140,46 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
     return core_.Element().DefaultValue();
   }
 
-  [[nodiscard]] auto ToOwned() const -> DynamicArray {
-    return *this;
-  }
-
   // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no
   // element of the array.
-  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
+  [[nodiscard]] auto ElementRef(const Position& position, Formation& formed)
       -> T& {
-    return *static_cast<T*>(core_.ElementRef(position, formed));
+    return *static_cast<T*>(core_.ElementRef(ReadPosition(position), formed));
   }
-  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
-    return *static_cast<T*>(core_.ExistingAt(position));
+  [[nodiscard]] auto ElementRef(const Position& position) -> T& {
+    return *static_cast<T*>(core_.ExistingAt(ReadPosition(position)));
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table
   // 7-1).
-  [[nodiscard]] auto Element(const PackedArray& position) const -> const T& {
-    return *static_cast<const T*>(core_.ElementAt(position));
+  [[nodiscard]] auto Element(const Position& position) const -> const T& {
+    return *static_cast<const T*>(core_.ElementAt(ReadPosition(position)));
   }
 
   // LRM 7.4.5 / 7.4.6 contiguous-range selector: a fixed-size unpacked array of
   // `count` elements from `start`. An element outside the array, and every
   // element of a start that names no position, reads the canonical default.
-  [[nodiscard]] auto Slice(const PackedArray& start, std::int64_t count) const
+  [[nodiscard]] auto Slice(const Position& start, std::int64_t count) const
       -> UnpackedArray<T> {
     return UnpackedArray<T>::SliceOf(
         core_, ReadPosition(start), SliceCount(count));
   }
 
-  [[nodiscard]] auto SliceRef(const PackedArray& start, std::int64_t count)
+  [[nodiscard]] auto SliceRef(const Position& start, std::int64_t count)
       -> ArraySliceRef<T> {
     return ArraySliceRef<T>{core_, ReadPosition(start), SliceCount(count)};
   }
 
-  [[nodiscard]] auto operator==(const DynamicArray& other) const
-      -> PackedArray {
-    return detail::SequenceEqual(core_, other.core_);
+  [[nodiscard]] auto operator==(const DynamicArray& other) const ->
+      typename StaticElem<T>::Equality {
+    return StaticElem<T>::Equality::Filled(
+        detail::SequenceEqual(core_, other.core_));
   }
-  [[nodiscard]] auto operator!=(const DynamicArray& other) const
-      -> PackedArray {
+  [[nodiscard]] auto operator!=(const DynamicArray& other) const ->
+      typename StaticElem<T>::Equality {
     return !(*this == other);
   }
-  [[nodiscard]] auto CaseEqual(const DynamicArray& other) const -> PackedArray {
+  [[nodiscard]] auto CaseEqual(const DynamicArray& other) const -> Bit {
     return detail::SequenceCaseEqual(core_, other.core_);
   }
   [[nodiscard]] auto IsBitIdentical(const DynamicArray& other) const -> bool {
@@ -191,15 +188,15 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   [[nodiscard]] auto HasUnknown() const -> bool {
     return detail::SequenceHasUnknown(core_);
   }
-  [[nodiscard]] auto IsUnknown() const -> PackedArray {
-    return PackedArray::Bit(HasUnknown());
+  [[nodiscard]] auto IsUnknown() const -> Bit {
+    return Bit::FromBool(HasUnknown());
   }
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    return detail::SequenceBitstreamWidth(core_);
+  [[nodiscard]] auto BitstreamWidth() const -> Int {
+    return Int::FromInt(detail::SequenceBitstreamWidth(core_));
   }
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray {
-    return detail::SequenceCountBits(core_, control_bits);
+  template <IntegralValue Control>
+  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+    return Int::FromInt(detail::SequenceCountBits(core_, control_bits));
   }
 
   // LRM 7.5.3: empties the array, resulting in a zero-sized array.
@@ -229,9 +226,8 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   friend class OrdinalArrayMethods<DynamicArray<T>, T>;
 
   // A run-time element count (LRM 7.5.1), which a negative one has none of.
-  [[nodiscard]] static auto CountOf(const PackedArray& n, const char* what)
+  [[nodiscard]] static auto CountOf(std::int64_t count, const char* what)
       -> std::size_t {
-    const std::int64_t count = n.ToInt64();
     if (count < 0) {
       throw SimulationError(
           std::string(what) + ": size operand is negative (LRM 7.5.1)");
@@ -242,14 +238,13 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   BasicDynamicArray<StaticElem<T>> core_;
 };
 
-static_assert(LyraValue<DynamicArray<PackedArray>>);
-static_assert(Sized<DynamicArray<PackedArray>>);
-static_assert(BitstreamSizable<DynamicArray<PackedArray>>);
-static_assert(Indexable<DynamicArray<PackedArray>>);
-static_assert(Sliceable<DynamicArray<PackedArray>>);
-static_assert(SliceableRef<DynamicArray<PackedArray>>);
-static_assert(Ownable<DynamicArray<PackedArray>>);
-static_assert(Sortable<DynamicArray<PackedArray>>);
-static_assert(OrdinalElements<DynamicArray<PackedArray>>);
+static_assert(LyraValue<DynamicArray<LogicVector<4>>>);
+static_assert(Sized<DynamicArray<LogicVector<4>>>);
+static_assert(BitstreamSizable<DynamicArray<LogicVector<4>>>);
+static_assert(Indexable<DynamicArray<LogicVector<4>>>);
+static_assert(Sliceable<DynamicArray<LogicVector<4>>>);
+static_assert(SliceableRef<DynamicArray<LogicVector<4>>>);
+static_assert(Sortable<DynamicArray<LogicVector<4>>>);
+static_assert(OrdinalElements<DynamicArray<LogicVector<4>>>);
 
 }  // namespace lyra::value

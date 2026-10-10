@@ -87,10 +87,6 @@ ADMITTED: dict[str, str] = {
         "a DPI-C linkage name is an identifier of C, not of SystemVerilog "
         "(LRM 35.4), so it is already spelled the way the target must see it"
     ),
-    "f.qualified_name": (
-        "a runtime library entry is declared in C++ and named by the library, "
-        "so what spells it is the entry declaration rather than this map"
-    ),
 }
 
 LINE_COMMENT = re.compile(r"//[^\n]*")

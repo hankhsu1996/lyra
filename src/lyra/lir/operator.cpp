@@ -44,6 +44,30 @@ auto BinaryOpName(BinaryOp op) -> std::string_view {
   throw InternalError("lir: unknown binary operator");
 }
 
+auto BinaryAnswerOf(BinaryOp op) -> BinaryAnswer {
+  switch (op) {
+    case BinaryOp::kAdd:
+    case BinaryOp::kSub:
+    case BinaryOp::kMul:
+    case BinaryOp::kDiv:
+    case BinaryOp::kMod:
+    case BinaryOp::kBitwiseAnd:
+    case BinaryOp::kBitwiseOr:
+    case BinaryOp::kBitwiseXor:
+      return BinaryAnswer::kOperandType;
+    case BinaryOp::kEquality:
+    case BinaryOp::kInequality:
+    case BinaryOp::kLessThan:
+    case BinaryOp::kLessEqual:
+    case BinaryOp::kGreaterThan:
+    case BinaryOp::kGreaterEqual:
+    case BinaryOp::kLogicalAnd:
+    case BinaryOp::kLogicalOr:
+      return BinaryAnswer::kOneBit;
+  }
+  throw InternalError("lir: unknown binary operator");
+}
+
 auto UnaryOpName(UnaryOp op) -> std::string_view {
   switch (op) {
     case UnaryOp::kMinus:

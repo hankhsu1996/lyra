@@ -6,6 +6,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/struct_methods.hpp"
@@ -57,10 +58,10 @@ auto FixedStreamShapeOfParts(
 auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
     -> std::optional<StreamShape> {
   const mir::Type& resolved = unit.types.Get(type);
-  if (resolved.IsIntegralPacked()) {
-    const mir::PackedArrayType& packed = resolved.PackedShape();
+  if (resolved.IsIntegral()) {
+    const mir::IntegralType& integral = resolved.Integral();
     return StreamShape{
-        .width = packed.BitWidth(), .state_kind = packed.state_kind};
+        .width = integral.bit_width, .state_kind = integral.state_kind};
   }
   if (const std::optional<std::span<const mir::TypeId>> parts =
           mir::ProductElements(unit, type)) {
@@ -88,9 +89,14 @@ auto BuildToBitstream(
   if (!shape.has_value()) {
     return RefuseUnfixedStream(span);
   }
+  const mir::TypeId stream =
+      mir::PackedVectorOf(unit.types, shape->width, shape->state_kind);
+  // A packed value's stream is its own bits, read unsigned (LRM 6.24.3).
+  if (unit.types.Get(block.exprs.Get(value_id).type).IsIntegral()) {
+    return ConvertToType(unit, block, value_id, stream);
+  }
   return BuildValueOperation(
-      unit, block, support::BuiltinFn::kToBitstream, value_id, {},
-      mir::PackedVectorOf(unit.types, shape->width, shape->state_kind));
+      unit, block, support::BuiltinFn::kToBitstream, value_id, {}, stream);
 }
 
 auto BuildReorderedStream(
@@ -102,16 +108,9 @@ auto BuildReorderedStream(
   const mir::TypeId stream_type = block.exprs.Get(stream_id).type;
   const mir::ExprId size_id = BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(block_bits));
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kReverseBlocks,
-                          .receiver = stream_id},
-                  .arguments = {size_id}},
-          .type = stream_type});
+  return block.exprs.Add(MakeBuiltinCall(
+      unit, block, support::BuiltinFn::kReverseBlocks, stream_id, {size_id},
+      stream_type));
 }
 
 auto BuildFromBitstream(
@@ -120,13 +119,13 @@ auto BuildFromBitstream(
   // A stream is a sequence of bits, so its own shape is on its type and asking
   // for it cannot fail; only the destination can be a type with no stream. By
   // value: the pool's view does not survive the interning below.
-  const mir::PackedArrayType stream =
-      unit.types.Get(block.exprs.Get(bits_id).type).PackedShape();
+  const mir::IntegralType stream =
+      unit.types.Get(block.exprs.Get(bits_id).type).Integral();
   const std::optional<StreamShape> target = FixedStreamShapeOf(unit, dst_type);
   if (!target.has_value()) {
     return RefuseUnfixedStream(span);
   }
-  const std::uint64_t stream_width = stream.BitWidth();
+  const std::uint64_t stream_width = stream.bit_width;
   if (stream_width > target->width) {
     throw InternalError(
         "BuildFromBitstream: a stream wider than what it fills reaches here "
@@ -142,18 +141,20 @@ auto BuildFromBitstream(
         mir::IntegralStateKind::kTwoState);
     const mir::ExprId pad_id =
         BuildIntegralLiteral(unit, block, pad_type, mir::IntegralConstant{});
-    filled = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kConcat,
-                            .receiver = bits_id},
-                    .arguments = {pad_id}},
-            .type = mir::PackedVectorOf(
-                unit.types, target->width, stream.state_kind)});
+    filled = block.exprs.Add(MakeBuiltinCall(
+        unit, block, support::BuiltinFn::kConcatBits, bits_id, {pad_id},
+        mir::PackedVectorOf(unit.types, target->width, stream.state_kind)));
   }
+  // A packed destination is those bits, at the signedness and state domain it
+  // declares.
+  if (unit.types.Get(dst_type).IsIntegral()) {
+    return ConvertToType(unit, block, filled, dst_type);
+  }
+  // The destination takes its stream in the state domain its own parts settle,
+  // which a stream cast from a value of the other domain is brought to.
+  const mir::ExprId stream_id = ConvertToType(
+      unit, block, filled,
+      mir::PackedVectorOf(unit.types, target->width, target->state_kind));
   // The prototype is read for its shape alone -- how wide each part of the
   // destination is and what representation it holds -- which a sequence of bits
   // carries none of.
@@ -161,7 +162,7 @@ auto BuildFromBitstream(
       block.exprs.Add(BuildDefaultValueExpr(unit, block, dst_type));
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kFromBitstream, std::nullopt,
-      {filled, prototype_id}, dst_type);
+      {stream_id, prototype_id}, dst_type);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

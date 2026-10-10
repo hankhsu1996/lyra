@@ -4,7 +4,11 @@ Date: 2026-06-03 (revised 2026-06-22, 2026-09-28) Status: accepted; decision 1 (
 runtime property of the value) superseded 2026-10-04 by
 [a-value-is-its-machine-data](a-value-is-its-machine-data.md), which lifts width, signedness and
 state domain to the type -- the question this record's first question asked and answered the other
-way.
+way. Under [a-packed-value-is-its-words](a-packed-value-is-its-words.md) the one runtime class the
+Context and decision 1 describe does not exist: each packed type is a value type of its own, no
+instance carries a shape, and the rejected template over shape is what was built. Decisions 2 to 6
+stand with the element's type where they name that class: a container keeps the default its element
+type reads at a nonexistent entry and a place a discarded write lands on.
 
 The 2026-06-22 revision splits the container's single `mutable` default slot into two fields -- an
 immutable canonical default and a separate write-discard sink -- so the read path is genuinely
@@ -161,6 +165,5 @@ _Rejected alternatives:_
 - LRM 7.4.5 (Indexing and slicing of arrays), 7.4.6 (Operations on arrays), Table 6-7 (Default
   initial values), Table 7-1 (Value read from a nonexistent array entry).
 - `src/lyra/lowering/hir_to_mir/default_value.cpp` -- default-expression synthesis.
-- `include/lyra/value/packed_array.hpp` -- runtime-shape `PackedArray` definition.
 - `include/lyra/value/dynamic_array.hpp`, `include/lyra/value/unpacked_array.hpp` -- first wrappers
   to adopt the default / sink pattern.

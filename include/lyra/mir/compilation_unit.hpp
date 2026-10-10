@@ -20,6 +20,7 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_decl.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/enum_table_pool.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
@@ -29,9 +30,7 @@
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_descriptor_pool.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
 
@@ -182,9 +181,9 @@ struct BuiltinMirTypes {
   // widest one, so a narrower machine integer is reached by reading this as
   // that narrower type rather than by an entry of its own.
   TypeId machine_int64;
-  // The machine word a packed value's storage is laid out in. A literal too
-  // wide for one integer carrier states its bits as a sequence of these, which
-  // is the same word the runtime's own planes are made of.
+  // An unsigned 64-bit machine word, for a quantity read as bits rather than
+  // as a number: a set of positions is stated as a sequence of these, one bit
+  // per position.
   TypeId machine_word;
   // The two machine floats a real-family value wraps: single precision for a
   // `shortreal`, double for a `real` or a `realtime` (LRM 6.12).
@@ -203,18 +202,8 @@ struct BuiltinMirTypes {
   TypeId process_object;
   TypeId files;
   TypeId diagnostic;
-  // The descriptor an integral type reaches a factory as. Every such operand
-  // has this one type, whichever integral it describes: which integral it is
-  // is what the operand names, not part of what type the operand is.
-  TypeId packed_type;
-  // One dimension of that descriptor, named so the stack a descriptor is built
-  // from is spelled through the type dispatch like every other type.
-  TypeId packed_range;
-  // What an unpacked array's description is: its declared range, which an
-  // operation walking the array in its declared coordinates is handed.
-  TypeId unpacked_range;
-  // What an enumeration's description is: its members in declared order, which
-  // the questions LRM 6.19.5 and 6.24.2 ask about a value are answered against.
+  // An enumeration's member table: its members in declared order, which the
+  // questions LRM 6.19.5 and 6.24.2 ask about a value are answered against.
   TypeId enumeration;
   TypeId channel_cancellation;
   TypeId print_item;
@@ -250,14 +239,11 @@ struct CompilationUnit {
   std::string source_name;
   TypePool types;
   // The values this unit settles before the program runs, each held once and
-  // named by every occurrence: the constant integral values the source wrote,
-  // and what an operation on a value asks of its declaration. Both fill as
-  // bodies are lowered, and `builds` says how each one is brought into
-  // existence -- settled once, when the unit is finished, so every consumer
-  // reads one finished set.
+  // named by every occurrence: the constant integral values its bodies were
+  // built with, and the member tables of the enumerations they ask about. Both
+  // fill as bodies are lowered.
   IntegralConstantPool integral_constants;
-  TypeDescriptorPool type_descriptors;
-  UnitValueBuilds builds;
+  EnumTablePool enum_tables;
   BuiltinMirTypes builtins;
   // Every class declaration of this unit, owned here exactly once and reached
   // by its identity, with a declare-then-define lifecycle so a class can be
@@ -345,25 +331,25 @@ struct CompilationUnit {
   CompilationUnit()
       : builtins{
             .int_type = types.Intern(
-                Type{PackedArrayType{
-                    .state_kind = IntegralStateKind::kTwoState,
+                Type{IntegralType{
+                    .bit_width = 32,
                     .signedness = Signedness::kSigned,
-                    .dims = {PackedRange{.left = 31, .right = 0}}}}),
+                    .state_kind = IntegralStateKind::kTwoState}}),
             .int_unsigned = types.Intern(
-                Type{PackedArrayType{
-                    .state_kind = IntegralStateKind::kTwoState,
+                Type{IntegralType{
+                    .bit_width = 32,
                     .signedness = Signedness::kUnsigned,
-                    .dims = {PackedRange{.left = 31, .right = 0}}}}),
+                    .state_kind = IntegralStateKind::kTwoState}}),
             .integer = types.Intern(
-                Type{PackedArrayType{
-                    .state_kind = IntegralStateKind::kFourState,
+                Type{IntegralType{
+                    .bit_width = 32,
                     .signedness = Signedness::kSigned,
-                    .dims = {PackedRange{.left = 31, .right = 0}}}}),
+                    .state_kind = IntegralStateKind::kFourState}}),
             .bit1 = types.Intern(
-                Type{PackedArrayType{
-                    .state_kind = IntegralStateKind::kTwoState,
+                Type{IntegralType{
+                    .bit_width = 1,
                     .signedness = Signedness::kUnsigned,
-                    .dims = {PackedRange{.left = 0, .right = 0}}}}),
+                    .state_kind = IntegralStateKind::kTwoState}}),
             .machine_bool = types.Intern(Type{MachineBoolType{}}),
             .machine_int64 = types.Intern(
                 Type{MachineIntType{
@@ -381,10 +367,10 @@ struct CompilationUnit {
             .void_type = types.Intern(Type{VoidType{}}),
             .real = types.Intern(Type{RealType{}}),
             .time = types.Intern(
-                Type{PackedArrayType{
-                    .state_kind = IntegralStateKind::kFourState,
+                Type{IntegralType{
+                    .bit_width = 64,
                     .signedness = Signedness::kUnsigned,
-                    .dims = {PackedRange{.left = 63, .right = 0}}}}),
+                    .state_kind = IntegralStateKind::kFourState}}),
             .effects = types.Intern(Type{RuntimeEffectsType{}}),
             .scope_ptr = types.Intern(
                 Type{PointerType{
@@ -397,15 +383,6 @@ struct CompilationUnit {
                     .which = support::RuntimeClass::kProcess}}),
             .files = types.Intern(Type{FilesType{}}),
             .diagnostic = types.Intern(Type{DiagnosticType{}}),
-            .packed_type = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPackedType}}),
-            .packed_range = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kPackedRange}}),
-            .unpacked_range = types.Intern(
-                Type{RuntimeLibraryType{
-                    .kind = RuntimeLibraryKind::kUnpackedRange}}),
             .enumeration = types.Intern(
                 Type{RuntimeLibraryType{
                     .kind = RuntimeLibraryKind::kEnumeration}}),

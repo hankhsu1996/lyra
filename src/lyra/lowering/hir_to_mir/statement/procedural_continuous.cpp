@@ -24,12 +24,10 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The level a takeover occupies crosses as an integral literal, the way every
-// compile-time scalar crosses into a runtime entry.
 auto LevelOperand(
     const mir::CompilationUnit& unit, mir::Block& block,
     support::TakeoverLevel level) -> mir::ExprId {
-  return BuildIntLiteral(unit, block, static_cast<std::int64_t>(level));
+  return BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(level));
 }
 
 // The capability a takeover acts on. LRM 10.6.1 admits only a whole variable
@@ -82,7 +80,7 @@ auto LowerProceduralContinuousAssignStmt(
   const mir::ExprId begin = wrapper.exprs.Add(
       mir::MakeBeginTakeoverCallExpr(
           *outer_target, LevelOperand(unit, wrapper, pca.level),
-          builtins.int_unsigned));
+          builtins.machine_int64));
 
   ClosureBuilder closure(unit, outer);
   const mir::ExprId generation =

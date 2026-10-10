@@ -11,6 +11,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enum_table_id.hpp"
+#include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::backend::cpp {
@@ -30,8 +32,8 @@ namespace lyra::backend::cpp {
 [[nodiscard]] auto SuspensionCppType() -> std::string_view;
 
 // A MIR type, written into the output as its C++ type. An enum is written as
-// its base type, a packed array; there is no C++ enum. It holds a view of the
-// unit, which outlives the writing.
+// its base type; there is no C++ enum. It holds a view of the unit, which
+// outlives the writing.
 class CppType {
  public:
   CppType(const mir::CompilationUnit& unit, mir::TypeId type)
@@ -50,6 +52,50 @@ class CppType {
 };
 
 void WriteOne(TargetText& out, const CppType& spelling);
+
+// A constant of an integral type, written as the value its words are: the
+// value plane's words and then the unknown plane's, least significant first.
+class CppIntegralLiteral {
+ public:
+  CppIntegralLiteral(
+      const mir::CompilationUnit& unit, mir::IntegralConstantId constant)
+      : unit_(&unit), constant_(constant) {
+  }
+  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
+    return *unit_;
+  }
+  [[nodiscard]] auto Constant() const -> mir::IntegralConstantId {
+    return constant_;
+  }
+
+ private:
+  const mir::CompilationUnit* unit_;
+  mir::IntegralConstantId constant_;
+};
+
+void WriteOne(TargetText& out, const CppIntegralLiteral& literal);
+
+// An enumeration's member table, written as the constant its members are:
+// every member's planes in declared order, then the members' names in the same
+// order.
+class CppEnumTableLiteral {
+ public:
+  CppEnumTableLiteral(const mir::CompilationUnit& unit, mir::EnumTableId table)
+      : unit_(&unit), table_(table) {
+  }
+  [[nodiscard]] auto Unit() const -> const mir::CompilationUnit& {
+    return *unit_;
+  }
+  [[nodiscard]] auto Table() const -> mir::EnumTableId {
+    return table_;
+  }
+
+ private:
+  const mir::CompilationUnit* unit_;
+  mir::EnumTableId table_;
+};
+
+void WriteOne(TargetText& out, const CppEnumTableLiteral& literal);
 
 // What a construction call names before its argument list. Usually the type
 // itself, `T(args)`; for an owning pointer the function that allocates and

@@ -56,13 +56,27 @@ struct ConditionalExpr {
   auto operator==(const ConditionalExpr&) const -> bool = default;
 };
 
-// `compound_op.has_value()` marks a compound assignment (`+=`, `-=`, etc.):
-// the runtime reads the lvalue, combines with `rhs`, writes back -- the
-// LRM 11.4.1 "evaluate target only once" rule is delegated to the backend's
-// compound-op emit (the C++ proxy's `operator+=` etc.). `rhs` is already
-// typed to match `lhs`; AST -> HIR inserts a `ConversionExpr` if slang's
-// expansion required one. LRM A.6.2 forbids compound on non-blocking, so
-// non-blocking timing carrying a compound operator is an InternalError.
+// The operator an assignment operator applies (LRM 11.4.1), and the type it is
+// applied at. `a op= b` is `a = a op b` with `a` reached once, so the operator
+// is carried out as the binary expression would be: at the type its two
+// operands fix between them (LRM 11.6.1 Table 11-21, 11.8.1), which is the
+// target's only where the other operand is no wider, no less signed and holds
+// no more states than the target. The answer is then assigned, which is what
+// brings it to the target's type.
+struct CompoundAssignOperator {
+  BinaryOp op;
+  TypeId applied_at;
+
+  auto operator==(const CompoundAssignOperator&) const -> bool = default;
+};
+
+// `compound.has_value()` marks a compound assignment (`+=`, `-=`, etc.): what
+// the target holds is read, combined with `rhs` and written back, the target
+// being reached once (LRM 11.4.1). `rhs` is then typed as the operator takes
+// its right operand -- at the type the operator is applied at, or at its own
+// where the operator sizes that operand on its own, as a shift does its
+// amount. LRM A.6.2 forbids compound on non-blocking, so non-blocking timing
+// carrying a compound operator is an InternalError.
 //
 // `lhs` is an ExprId pointing at any expression whose form is addressable.
 // Allowed forms: a PrimaryExpr var reference, ElementSelectExpr /
@@ -73,7 +87,7 @@ struct ConditionalExpr {
 struct AssignExpr {
   EffectTiming timing;
   ExprId lhs;
-  std::optional<BinaryOp> compound_op = std::nullopt;
+  std::optional<CompoundAssignOperator> compound = std::nullopt;
   ExprId rhs;
 
   auto operator==(const AssignExpr&) const -> bool = default;
@@ -253,9 +267,7 @@ struct AssignmentPatternReplicationExpr {
 // type (the dynamic array type) lives on Expr::type; `size` evaluates to a
 // longint per LRM 7.5.1 (slang enforces the operand type), and `initializer`
 // holds the optional `(other)` source array used for copy-with-pad-or-truncate
-// per LRM 7.5.1. HIR-to-MIR lowers this to a generic construct expression
-// whose argument list is `[size, element-default prototype, optional copy
-// source]`; the prototype is synthesized at lowering from the element type.
+// per LRM 7.5.1.
 struct DynamicArrayNewExpr {
   ExprId size;
   std::optional<ExprId> initializer;

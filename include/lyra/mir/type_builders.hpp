@@ -29,6 +29,15 @@ auto PackedVectorOf(
     const TypePool& types, std::uint64_t width, IntegralStateKind state_kind)
     -> TypeId;
 
+// The type a position is stated in (LRM 7.4.5, 11.5.1), which is the type the
+// value library reads a position at: signed and four-state at a width no index
+// wraps in, so an index of any width shifts by a declared range, and one
+// holding x or z stays unknown through every step.
+auto PositionType(const TypePool& types) -> TypeId;
+
+// Whether `id` is that type.
+auto IsPositionType(const TypePool& types, TypeId id) -> bool;
+
 // The plain-data aggregate of `size` elements: the type of an aggregate
 // literal, which is machine data whatever it is later constructed into. The
 // count is narrowed to the width the aggregate carries.

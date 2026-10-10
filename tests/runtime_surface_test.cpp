@@ -19,10 +19,11 @@
 namespace {
 
 // A design stating the constructs an emitted unit reaches the runtime through:
-// variables of the value types a design does not shape and of one it does, a
+// variables of the value types a design does not shape and of ones it does, a
 // class handle, a net and its driver, a named event, sampled history, a
 // function, a task, a fork, the event controls, a delay, a level wait, a
-// nonblocking assignment and a display.
+// nonblocking assignment, a write to some bits of a value, a value wider than
+// a machine word, and a display.
 constexpr std::string_view kDesignSource = R"sv(
 module Test;
   typedef struct { logic [3:0] x; logic [3:0] y; } pair_t;
@@ -45,6 +46,7 @@ module Test;
   pair_t p;
   Counter h;
   logic [3:0] px;
+  logic [99:0] wide = '0;
 
   assign w = a + 8'd1;
 
@@ -76,6 +78,9 @@ module Test;
     wait (a == 8'd3);
     p.x = 4'd1;
     a = inc(a);
+    q[3:0] = 4'd2;
+    wide = wide + 100'd1;
+    wide[70] = 1'b1;
     repeat (4) #1 clk = ~clk;
     r = r * 2.0;
     $display("%0d %0d %0d %s %f %0d %0d", b, q, w, s, r, h.count, px);
@@ -87,10 +92,12 @@ endmodule
 // Whether a definition an emitted unit holds is one the unit's own design
 // decided. That is so where it names something of a unit's -- its scopes, the
 // lambdas its bodies write -- or where a template of the runtime is
-// instantiated over a shape the design chose: a fork's branch count, or a value
-// type composed from the design's declarations. A unit's own names sit in the
-// namespace its file is named for, and are looked for in both spellings,
-// because the names a compiler gives lambdas do not always demangle.
+// instantiated over a shape the design chose: a fork's branch count, a packed
+// value of the width the design declared, or a value type composed from the
+// design's declarations. A unit's own names sit in the namespace its file is
+// named for, and are looked for in both spellings, because the names a
+// compiler gives lambdas, and templates constrained by a concept, do not always
+// demangle.
 auto IsTheDesignsOwn(
     std::string_view mangled, std::string_view demangled,
     std::span<const std::string> unit_namespaces) -> bool {
@@ -102,14 +109,17 @@ auto IsTheDesignsOwn(
   if (names_a_unit) {
     return true;
   }
-  static constexpr std::array<std::string_view, 7> kDesignShaped = {
-      "lyra::value::Tuple<lyra",        "lyra::value::UnpackedArray<",
-      "lyra::value::DynamicArray<",     "lyra::value::Queue<",
-      "lyra::value::AssociativeArray<", "lyra::value::Union<",
-      "lyra::value::TaggedUnion<"};
+  static constexpr std::array<std::string_view, 8> kDesignShaped = {
+      "lyra::value::Integral<",      "lyra::value::Tuple<lyra",
+      "lyra::value::UnpackedArray<", "lyra::value::DynamicArray<",
+      "lyra::value::Queue<",         "lyra::value::AssociativeArray<",
+      "lyra::value::Union<",         "lyra::value::TaggedUnion<"};
   if (std::ranges::any_of(kDesignShaped, [&](std::string_view shape) {
         return demangled.contains(shape);
       })) {
+    return true;
+  }
+  if (mangled.contains("8IntegralILm")) {
     return true;
   }
   static const std::regex kBranchCount{R"(<\d+ul>)"};
@@ -121,12 +131,13 @@ auto IsTheDesignsOwn(
 // type its design shaped therefore carries these; each is a single comparison.
 // The list is what makes that a decision rather than a drift: an entry is added
 // only with the reason it has to be read where it is used.
-constexpr std::array<std::string_view, 6> kFoldedByTheWritePath = {
+constexpr std::array<std::string_view, 7> kFoldedByTheWritePath = {
     "lyra::runtime::Observable::HasMembers() const",
     "lyra::runtime::IntrusiveList<lyra::runtime::WaitMembership>::Empty() "
     "const",
     "lyra::runtime::VariableCell::AdmitsWrite()",
     "lyra::runtime::VariableCell::Watched() const",
+    "lyra::runtime::VariableCell::Rare() const",
     "lyra::runtime::ErasedReference::Admits() const",
     "lyra::runtime::ErasedReference::Watched() const"};
 

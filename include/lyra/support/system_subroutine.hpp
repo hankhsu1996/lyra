@@ -836,7 +836,7 @@ inline constexpr std::array kSystemSubroutines = {
         .id = SystemSubroutineId{45},
         .name = "$stime",
         .kind = SystemSubroutineKind::kFunction,
-        .result_conv = ReturnConvention::kInt32,
+        .result_conv = ReturnConvention::kIntUnsigned,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
         .semantic = TimeSystemSubroutineInfo{.kind = TimeKind::kStime},
     },

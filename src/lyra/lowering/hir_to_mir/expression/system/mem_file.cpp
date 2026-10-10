@@ -20,15 +20,12 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
-#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -37,11 +34,10 @@ namespace {
 
 // The leaf element type, the addressing operands a memory shape hands to the
 // runtime call, and the address a run starts from where the source names none.
-// Each shape describes its addressing differently -- a fixed array of any depth
-// by every dimension's declared range as one array, an associative array by a
-// key prototype that carries the index width, and a dynamic array or queue by
-// nothing (its `[0, size-1]` range comes from the container). `DescribeMemory`
-// is the one place that knows this, so the call assembly stays uniform.
+// Each shape states its addressing differently -- a fixed array of any depth
+// by every dimension's declared range, and an associative array, a dynamic
+// array or a queue by nothing (its keys are of its declared index type, and
+// its `[0, size-1]` range comes from the container).
 struct MemAddressing {
   hir::TypeId element;
   std::vector<mir::ExprId> operands;
@@ -50,7 +46,7 @@ struct MemAddressing {
 
 auto DescribeMemory(
     ProcessLowerer& process, WalkFrame wrapper_frame, hir::TypeId mem_type,
-    bool is_store, std::string_view task) -> diag::Result<MemAddressing> {
+    std::string_view task) -> diag::Result<MemAddressing> {
   UnitLowerer& unit_lowerer = process.Owner();
   auto& wrapper = *wrapper_frame.current_block;
   const auto not_a_memory = [&]() -> diag::Result<MemAddressing> {
@@ -64,39 +60,16 @@ auto DescribeMemory(
   return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
           [&](const hir::UnpackedArrayType&) -> diag::Result<MemAddressing> {
-            // Every dimension's declared range rides as one array, highest
+            // Every dimension's declared range rides in one operand, highest
             // dimension first, so the runtime traverses row-major by ascending
             // address (LRM 21.4.3) and a one-dimensional memory is the
-            // one-element case of the same traversal. Each range is the
-            // description that dimension's type already states, so a task
-            // addresses a memory through the same coordinate system an
-            // ordinary select on it resolves against.
-            const mir::CompilationUnit& unit = unit_lowerer.Unit();
+            // one-dimension case of the same traversal.
             const hir::UnpackedShape shape =
                 hir::UnpackedShapeOf(unit_lowerer.Hir().types, mem_type);
-            std::vector<mir::ExprId> ranges;
-            ranges.reserve(shape.dims.size());
-            mir::TypeId level = unit_lowerer.TranslateType(mem_type);
-            for (;;) {
-              const auto* nested =
-                  unit.types.Get(level).As<mir::UnpackedArrayType>();
-              if (nested == nullptr) break;
-              // Read before the descriptor is named: naming one interns the
-              // type it is a value of, and a reference into the type pool does
-              // not survive its growth.
-              const mir::TypeId element = nested->element_type;
-              ranges.push_back(
-                  mir::BuildTypeDescriptorRef(unit, wrapper, level));
-              level = element;
-            }
-            const mir::TypeId ranges_type = mir::MachineArrayOf(
-                unit.types, unit.builtins.unpacked_range, ranges.size());
             return MemAddressing{
                 .element = shape.element_type,
-                .operands = {wrapper.exprs.Add(
-                    mir::Expr{
-                        .data = mir::CompositeExpr{.parts = std::move(ranges)},
-                        .type = ranges_type})},
+                .operands = {BuildDeclaredRanges(
+                    unit_lowerer.Unit(), wrapper, shape.dims)},
                 .lowest_address = std::min(
                     shape.dims.front().left, shape.dims.front().right)};
           },
@@ -111,11 +84,10 @@ auto DescribeMemory(
           [&](const hir::AssociativeArrayType& a)
               -> diag::Result<MemAddressing> {
             // LRM 21.4.1: an associative memory is addressed by key, so its
-            // index type must be integral. A load builds its keys at that
-            // declared width, carried by a default value of the key type; a
-            // dump reads the stored keys and needs no prototype.
+            // index type must be integral; a load builds its keys at the type
+            // the memory declares for them.
             const mir::TypeId key = unit_lowerer.TranslateType(a.key_type);
-            if (!unit_lowerer.Unit().types.Get(key).IsIntegralPacked()) {
+            if (!unit_lowerer.Unit().types.Get(key).IsIntegral()) {
               return diag::Fail(
                   diag::DiagCode::kUnsupportedSubroutineArgument,
                   std::format(
@@ -123,15 +95,8 @@ auto DescribeMemory(
                       "(LRM 21.4.1)",
                       task));
             }
-            std::vector<mir::ExprId> operands;
-            if (!is_store) {
-              operands.push_back(wrapper.exprs.Add(
-                  BuildDefaultValueExpr(unit_lowerer.Unit(), wrapper, key)));
-            }
             return MemAddressing{
-                .element = a.element_type,
-                .operands = std::move(operands),
-                .lowest_address = 0};
+                .element = a.element_type, .operands = {}, .lowest_address = 0};
           },
           // LRM 21.4 / 21.5 name a memory as an array of integral elements, so
           // every other form a declaration can take is one the task cannot be
@@ -193,15 +158,14 @@ auto LowerMemFileSystemSubroutineCallStmt(
   const WalkFrame& step_frame = steps.Frame();
   mir::Block& body = steps.Body();
 
-  auto addressing =
-      DescribeMemory(process, step_frame, mem_hir.type, is_store, task);
+  auto addressing = DescribeMemory(process, step_frame, mem_hir.type, task);
   if (!addressing) return std::unexpected(std::move(addressing.error()));
 
   // The element must lower to a single packed vector (LRM 21.4.1 / 21.5.1): a
   // bit vector, or a packed struct / union / enum. A non-packed leaf (an
   // unpacked struct, say) is not a memory word.
   const mir::TypeId elem_mir = unit_lowerer.TranslateType(addressing->element);
-  if (!unit.types.Get(elem_mir).IsIntegralPacked()) {
+  if (!unit.types.Get(elem_mir).IsIntegral()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedSubroutineArgument,
         std::format(
@@ -244,7 +208,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
     operands.push_back(operand);
   }
   operands.push_back(
-      BuildIntLiteral(unit, body, static_cast<std::int64_t>(info.base)));
+      BuildMachineIntLiteral(unit, body, static_cast<std::int64_t>(info.base)));
 
   // The addresses start where the source said, or at the memory's lowest
   // address where it said nothing -- which is the same addresses the clause's
@@ -255,7 +219,8 @@ auto LowerMemFileSystemSubroutineCallStmt(
   if (start.has_value()) {
     auto start_or = process.LowerExpr(hir_proc.exprs.Get(*start), step_frame);
     if (!start_or) return std::unexpected(std::move(start_or.error()));
-    operands.push_back(body.exprs.Add(*std::move(start_or)));
+    operands.push_back(
+        BuildToInt64Call(unit, body, body.exprs.Add(*std::move(start_or))));
   } else {
     if (finish.has_value()) {
       return diag::Fail(
@@ -265,12 +230,14 @@ auto LowerMemFileSystemSubroutineCallStmt(
               "(LRM 21.4 / 21.5)",
               task));
     }
-    operands.push_back(BuildIntLiteral(unit, body, addressing->lowest_address));
+    operands.push_back(
+        BuildMachineIntLiteral(unit, body, addressing->lowest_address));
   }
   if (finish.has_value()) {
     auto finish_or = process.LowerExpr(hir_proc.exprs.Get(*finish), step_frame);
     if (!finish_or) return std::unexpected(std::move(finish_or.error()));
-    operands.push_back(body.exprs.Add(*std::move(finish_or)));
+    operands.push_back(
+        BuildToInt64Call(unit, body, body.exprs.Add(*std::move(finish_or))));
   }
 
   const bool windowed = finish.has_value();

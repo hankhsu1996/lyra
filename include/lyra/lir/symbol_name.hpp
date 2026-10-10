@@ -32,8 +32,6 @@ enum class SymbolCategory : std::uint8_t {
   kNamespaceVariable,
   kStaticProperty,
   kClosureInvoke,
-  kTypeDescription,
-  kIntegralConstant,
   kConstructorPrologue,
   kBaseObjectDestructor,
   kCompleteObjectDestructor,
@@ -136,17 +134,6 @@ auto ObjectEntrySymbol(std::string_view unit_name) -> std::string;
 // declared, which is what another unit reaches it by; the cell a subroutine's
 // static-lifetime local keeps answers to none, and takes its position instead.
 auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
-    -> std::string;
-
-// The run-time description of one of a unit's types. The source declares no
-// such thing, so the position the description sits at in its unit's pool is the
-// whole of what identifies it.
-auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
-    -> std::string;
-// The body building one of a unit's constants. The source wrote the value and
-// never a name for it, so the position it sits at in its unit's pool is the
-// whole of what identifies it.
-auto IntegralConstantSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
 // A closure is counted rather than named, having no declaration of the source

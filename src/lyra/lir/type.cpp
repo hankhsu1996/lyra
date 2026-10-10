@@ -13,6 +13,8 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/runtime_object.hpp"
+#include "lyra/support/value_domain.hpp"
 
 namespace lyra::lir {
 
@@ -50,13 +52,10 @@ void Combine(std::size_t& seed, const std::vector<TypeId>& ids) {
   }
 }
 
-void Combine(std::size_t& seed, const PackedArrayType& packed) {
-  Combine(seed, packed.state_kind);
-  Combine(seed, packed.signedness);
-  for (const PackedRange& dim : packed.dims) {
-    Combine(seed, static_cast<std::uint64_t>(dim.left));
-    Combine(seed, static_cast<std::uint64_t>(dim.right));
-  }
+void Combine(std::size_t& seed, const IntegralType& integral) {
+  Combine(seed, integral.bit_width);
+  Combine(seed, integral.signedness);
+  Combine(seed, integral.state_kind);
 }
 
 // Which runtime-library value this is. A reader that could not handle one needs
@@ -64,12 +63,6 @@ void Combine(std::size_t& seed, const PackedArrayType& packed) {
 // them.
 auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
   switch (kind) {
-    case RuntimeLibraryKind::kPackedType:
-      return "packed type descriptor";
-    case RuntimeLibraryKind::kPackedRange:
-      return "packed range";
-    case RuntimeLibraryKind::kUnpackedRange:
-      return "unpacked range";
     case RuntimeLibraryKind::kEnumeration:
       return "enumeration";
     case RuntimeLibraryKind::kPrintItem:
@@ -144,7 +137,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   std::size_t seed = std::hash<std::size_t>{}(type.data_.index());
   type.Visit(
       Overloaded{
-          [&](const PackedArrayType& t) { Combine(seed, t); },
+          [&](const IntegralType& t) { Combine(seed, t); },
           [&](const UnpackedArrayType& t) {
             Combine(seed, t.element_type);
             Combine(seed, t.size);
@@ -233,7 +226,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
 auto Type::KindName() const -> std::string_view {
   return Visit(
       Overloaded{
-          [](const PackedArrayType&) { return "packed array"; },
+          [](const IntegralType&) { return "integral"; },
           [](const UnpackedArrayType&) { return "unpacked array"; },
           [](const DynamicArrayType&) { return "dynamic array"; },
           [](const QueueType&) { return "queue"; },
@@ -298,7 +291,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const StructType&) { return names_none(); },
 
           // A value, however it is shaped and however its elements are held.
-          [&](const PackedArrayType&) { return names_none(); },
+          [&](const IntegralType&) { return names_none(); },
           [&](const UnpackedArrayType&) { return names_none(); },
           [&](const DynamicArrayType&) { return names_none(); },
           [&](const QueueType&) { return names_none(); },
@@ -369,7 +362,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
 
           // One vector of bits: what looks like an element is bits of that
           // vector rather than a value held beside the others.
-          [](const PackedArrayType&) -> Element { return std::nullopt; },
+          [](const IntegralType&) -> Element { return std::nullopt; },
 
           // Held all at once, or one at a time, but never as a sequence of one
           // type.
@@ -469,18 +462,20 @@ auto Type::IsAddressOnly() const -> bool {
          Is<EvaluationAttemptsType>();
 }
 
-auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
-  using Held = std::optional<support::RuntimeObject>;
+auto Type::HeldAs() const -> std::optional<Holding> {
+  using Held = std::optional<Holding>;
   using support::LibraryObject;
   using support::ValueDomain;
   return Visit(
       Overloaded{
-          [](const PackedArrayType&) -> Held { return ValueDomain::kPacked; },
+          [](const IntegralType&) -> Held { return IntegralBits{}; },
           // LRM 7.8.1 gives a wildcard-indexed array no index data type, so
           // this type names where an index goes rather than what one is made
           // of. What goes there is always integral, at whatever width the
-          // expression carried, which is why the value states its width.
-          [](const WildcardIndexType&) -> Held { return ValueDomain::kPacked; },
+          // expression carried, which is why it is held with its type.
+          [](const WildcardIndexType&) -> Held {
+            return ValueDomain::kWildcardIndex;
+          },
           [](const StringType&) -> Held { return ValueDomain::kString; },
           [](const RealType&) -> Held { return ValueDomain::kReal; },
           [](const ShortRealType&) -> Held { return ValueDomain::kShortReal; },
@@ -576,13 +571,10 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
               // is what tells the object it was written.
               case RuntimeLibraryKind::kObjectWrite:
                 return LibraryObject::kObjectWrite;
-              // Kept by the run -- a description, a coordinate, a class's
+              // Kept by the run -- an enumeration's members, a class's
               // record, the time format -- or reached inside something else --
               // a buffer's chunk, an image's handle, the effect a departure
               // carries, the target a disable names.
-              case RuntimeLibraryKind::kPackedType:
-              case RuntimeLibraryKind::kPackedRange:
-              case RuntimeLibraryKind::kUnpackedRange:
               case RuntimeLibraryKind::kEnumeration:
               case RuntimeLibraryKind::kTimeFormat:
               case RuntimeLibraryKind::kDpiBitChunk:
@@ -642,7 +634,7 @@ auto Type::HeldObject() const -> std::optional<support::RuntimeObject> {
 }
 
 auto Type::IsOwnedValue() const -> bool {
-  return HeldObject().has_value();
+  return HeldAs().has_value();
 }
 
 auto Type::IsProduct() const -> bool {

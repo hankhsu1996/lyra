@@ -13,11 +13,11 @@
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/index_order.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/queue.hpp"
+#include "lyra/value/reduction.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
-#include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
@@ -50,9 +50,10 @@ struct StaticKey {
 // element type `V`: the associative array every index and element type
 // shares, with its keys and elements read and written as `K` and `V` and the
 // LRM 7.12 methods run over the closures the C++ backend writes. `K` is
-// `String` for string-indexed arrays, `PackedArray` for integral-indexed ones
-// and `WildcardKey` for the wildcard index. The keys are kept in LRM 7.8 key
-// order, so iteration and `%p` formatting follow it and stay deterministic.
+// `String` for string-indexed arrays, the index type itself for
+// integral-indexed ones and `WildcardKey` for the wildcard index. The keys are
+// kept in LRM 7.8 key order, so iteration and `%p` formatting follow it and
+// stay deterministic.
 template <typename K, typename V>
 class AssociativeArray {
  public:
@@ -88,13 +89,13 @@ class AssociativeArray {
   ~AssociativeArray() = default;
 
   // LRM 7.9.1: num() and size() both return the entry count as an SV int.
-  [[nodiscard]] auto Size() const -> PackedArray {
-    return PackedArray::Int(static_cast<std::int32_t>(core_.Count()));
+  [[nodiscard]] auto Size() const -> Int {
+    return Int::FromInt(static_cast<std::int64_t>(core_.Count()));
   }
 
   // LRM 7.9.3: exists() yields an SV int 1 / 0.
-  [[nodiscard]] auto Exists(const K& key) const -> PackedArray {
-    return PackedArray::Int(core_.Exists(key) ? 1 : 0);
+  [[nodiscard]] auto Exists(const K& key) const -> Int {
+    return Int::FromInt(core_.Exists(key) ? 1 : 0);
   }
 
   // LRM 7.9.2: clearing the whole array and deleting the one element a key
@@ -165,17 +166,17 @@ class AssociativeArray {
   // `Next` / `Prev` read it as the search bound. These are pure value queries
   // -- firing the index variable's LRM 4.3 update event is the caller's
   // separate write-back assignment, not this query's concern.
-  [[nodiscard]] auto First(K probe) const -> Tuple<PackedArray, K> {
+  [[nodiscard]] auto First(K probe) const -> Tuple<Int, K> {
     return Visited(std::move(probe), FirstIndex());
   }
-  [[nodiscard]] auto Last(K probe) const -> Tuple<PackedArray, K> {
+  [[nodiscard]] auto Last(K probe) const -> Tuple<Int, K> {
     return Visited(std::move(probe), LastIndex());
   }
-  [[nodiscard]] auto Next(K probe) const -> Tuple<PackedArray, K> {
+  [[nodiscard]] auto Next(K probe) const -> Tuple<Int, K> {
     auto visited = NextIndex(probe);
     return Visited(std::move(probe), std::move(visited));
   }
-  [[nodiscard]] auto Prev(K probe) const -> Tuple<PackedArray, K> {
+  [[nodiscard]] auto Prev(K probe) const -> Tuple<Int, K> {
     auto visited = PrevIndex(probe);
     return Visited(std::move(probe), std::move(visited));
   }
@@ -298,16 +299,15 @@ class AssociativeArray {
         std::move(proto), std::span<const Tuple<K, U>>{pairs}, miss);
   }
 
-  [[nodiscard]] auto operator==(const AssociativeArray& other) const
-      -> PackedArray {
-    return core_.Equal(other.core_);
+  [[nodiscard]] auto operator==(const AssociativeArray& other) const ->
+      typename StaticElem<V>::Equality {
+    return StaticElem<V>::Equality::Filled(core_.Equal(other.core_));
   }
-  [[nodiscard]] auto operator!=(const AssociativeArray& other) const
-      -> PackedArray {
+  [[nodiscard]] auto operator!=(const AssociativeArray& other) const ->
+      typename StaticElem<V>::Equality {
     return !(*this == other);
   }
-  [[nodiscard]] auto CaseEqual(const AssociativeArray& other) const
-      -> PackedArray {
+  [[nodiscard]] auto CaseEqual(const AssociativeArray& other) const -> Bit {
     return core_.CaseEqual(other.core_);
   }
   [[nodiscard]] auto IsBitIdentical(const AssociativeArray& other) const
@@ -317,15 +317,15 @@ class AssociativeArray {
   [[nodiscard]] auto HasUnknown() const -> bool {
     return core_.HasUnknown();
   }
-  [[nodiscard]] auto IsUnknown() const -> PackedArray {
-    return PackedArray::Bit(HasUnknown());
+  [[nodiscard]] auto IsUnknown() const -> Bit {
+    return Bit::FromBool(HasUnknown());
   }
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    return core_.BitstreamWidth();
+  [[nodiscard]] auto BitstreamWidth() const -> Int {
+    return Int::FromInt(core_.BitstreamWidth());
   }
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray {
-    return core_.CountBits(control_bits);
+  template <IntegralValue Control>
+  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+    return Int::FromInt(core_.CountBits(control_bits));
   }
 
  private:
@@ -336,12 +336,11 @@ class AssociativeArray {
     return *key;
   }
 
-  static auto Visited(K probe, std::optional<K> visited)
-      -> Tuple<PackedArray, K> {
+  static auto Visited(K probe, std::optional<K> visited) -> Tuple<Int, K> {
     if (!visited.has_value()) {
-      return Tuple<PackedArray, K>{PackedArray::Int(0), std::move(probe)};
+      return Tuple<Int, K>{Int::FromInt(0), std::move(probe)};
     }
-    return Tuple<PackedArray, K>{PackedArray::Int(1), *std::move(visited)};
+    return Tuple<Int, K>{Int::FromInt(1), *std::move(visited)};
   }
 
   // The entries an LRM 7.12 method walks, in LRM 7.8 key order, so a method's
@@ -396,13 +395,12 @@ class AssociativeArray {
   BasicAssociativeArray<StaticKey<K>, StaticElem<V>> core_;
 };
 
-static_assert(LyraValue<AssociativeArray<String, PackedArray>>);
-static_assert(LyraValue<AssociativeArray<PackedArray, PackedArray>>);
-static_assert(Sized<AssociativeArray<String, PackedArray>>);
-static_assert(BitstreamSizable<AssociativeArray<String, PackedArray>>);
-static_assert(AssocIndexable<AssociativeArray<String, PackedArray>, String>);
-static_assert(IndexTraversal<AssociativeArray<String, PackedArray>, String>);
-static_assert(
-    IndexTraversal<AssociativeArray<PackedArray, PackedArray>, PackedArray>);
+static_assert(LyraValue<AssociativeArray<String, LogicVector<4>>>);
+static_assert(LyraValue<AssociativeArray<Int, LogicVector<4>>>);
+static_assert(Sized<AssociativeArray<String, LogicVector<4>>>);
+static_assert(BitstreamSizable<AssociativeArray<String, LogicVector<4>>>);
+static_assert(AssocIndexable<AssociativeArray<String, LogicVector<4>>, String>);
+static_assert(IndexTraversal<AssociativeArray<String, LogicVector<4>>, String>);
+static_assert(IndexTraversal<AssociativeArray<Int, LogicVector<4>>, Int>);
 
 }  // namespace lyra::value

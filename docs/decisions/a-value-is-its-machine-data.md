@@ -6,6 +6,10 @@ Date: 2026-10-04 Status: accepted. Supersedes decisions 1 and 4 of
 rule of [packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md), invariant 5 of
 [jit-value-realization](jit-value-realization.md), and the one-runtime-type-per-domain rule of
 [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md).
+[a-packed-value-is-its-words](a-packed-value-is-its-words.md) carries D1 to D5 out for packed
+values, revises D2 above 64 bits -- an operation there is a call taking the words, never a loop
+generated per site -- and narrows D5 for them: code compiled once is told a packed value's size and
+width as numbers and is handed no function for one.
 
 ## Context
 
@@ -82,9 +86,9 @@ never a description to interpret.
 **D6. On the execution backend, a container whose size is a run-time quantity -- a queue, a dynamic
 array, an associative array -- holds its elements as raw storage and acts on them through the
 functions the compiler generated for the element type.** That is the one difference the prebuilt
-runtime causes, and it is the shape `TupleOperations` already has. An element at an index is
-addressed by the compiler (base plus index times element size) without a call. A fixed-size unpacked
-array is no container: its size is a constant, so the compiler lays it out in place.
+runtime causes, and it is how a tuple is already held. An element at an index is addressed by the
+compiler (base plus index times element size) without a call. A fixed-size unpacked array is no
+container: its size is a constant, so the compiler lays it out in place.
 
 **D7. A write reports the range it reached, and a wait decided at the write tests that range against
 the bits it watches in place**, on the words, without materializing either side. A wait's watched
@@ -119,8 +123,9 @@ storage. Which waits are decided at the write is unchanged
 ## Consequences
 
 - `PackedArray` and the erased `RuntimeValue` go, with the runtime entries that perform an operation
-  the compiler now generates; runtime scalars that were packed values (a file descriptor, a delay, a
-  seed) are machine integers.
+  the compiler now generates; runtime scalars that were packed values (a file descriptor, a seed, a
+  count) are machine integers. A delay's amount is not one of them: an unknown amount is a zero
+  delay (LRM 9.4.1), which a machine integer cannot say, so it crosses as its bits with its width.
 - The execution backend lays out values, cells and frames from the type, as the cross-unit record
   layout already does, so a cell's layout is a pure function of its type on both sides of a unit
   boundary.

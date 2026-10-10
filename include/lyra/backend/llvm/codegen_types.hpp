@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -9,12 +10,15 @@
 
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/runtime_object.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::lir {
 struct CompilationUnit;
 }  // namespace lyra::lir
 
 namespace lyra::backend::llvm_backend {
+
+struct FnAbi;
 
 // Where each component of a tuple value -- the runtime's one form for a
 // product, a struct a declaration names among them -- sits in the storage the
@@ -39,10 +43,27 @@ class CodeGenTypes {
 
   auto Map(lir::TypeId id) -> llvm::Type*;
 
-  // The storage a value of an owned type occupies. A tuple's is composed from
-  // its components'; every other owned value is one runtime object, whose
-  // storage the library states.
+  // The machine type a callee a call crosses to as `abi` arranges is declared
+  // at, as clang's `CodeGenTypes::GetFunctionType` answers one from a
+  // `CGFunctionInfo`: each thing the arrangement hands over, in the order it
+  // is handed, and what comes back.
+  auto GetFunctionType(const FnAbi& abi) -> llvm::FunctionType*;
+
+  // The storage a value an owner holds occupies. A tuple's is composed from
+  // its components'; an integral value's is the bytes the value layer lays a
+  // value of its width and states out in; a machine integer's is that
+  // integer's; every other owned value is one runtime object, whose storage
+  // the library states.
   auto StorageOf(lir::TypeId type) -> support::ObjectLayout;
+  // An integral type as the value layer states one, or nothing for a type that
+  // is not integral.
+  [[nodiscard]] auto IntegralShapeOf(lir::TypeId type) const
+      -> std::optional<value::IntegralShape>;
+  // The same of a type that has to be integral, which is what a library entry
+  // is told the width, the signedness or the states of: any other type there
+  // is a compiler defect.
+  [[nodiscard]] auto RequiredIntegralShapeOf(lir::TypeId type) const
+      -> value::IntegralShape;
   // Where each component of a tuple sits. Asked only of a product.
   auto LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout&;
 

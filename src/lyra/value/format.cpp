@@ -15,10 +15,10 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/format_parse.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_format.hpp"
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::value {
@@ -80,9 +80,8 @@ auto FormatRealBody(const FormatSpec& spec, double v) -> std::string {
   }
 }
 
-auto PackedArrayLowWord(const PackedArray& pa) -> std::uint64_t {
-  const auto words = pa.ValueWords();
-  return words.empty() ? 0U : words[0];
+auto LowWord(const ConstIntegralView& value) -> std::uint64_t {
+  return value.planes.value.empty() ? 0U : value.planes.value[0];
 }
 
 }  // namespace
@@ -115,7 +114,7 @@ auto Format(const FormatSpec& spec, FormatArg arg, const FormatContext& ctx)
         "an aggregate is printed only by the assignment pattern conversion "
         "(LRM 21.2.1.6)");
   }
-  return arg.format_fn(spec, arg.ptr, ctx);
+  return arg.format_fn(spec, arg, ctx);
 }
 
 auto Format(std::span<const PrintItem> items, const TimeFormat& time_format)
@@ -140,8 +139,8 @@ auto Format(std::span<const PrintItem> items, const TimeFormat& time_format)
 auto FormatRuntime(
     const String& format, std::span<const FormatArg> args,
     const String& scope_path, const TimeFormat& time_format,
-    const PackedArray& timeunit_power) -> String {
-  const auto power = static_cast<std::int32_t>(timeunit_power.ToInt64());
+    std::int64_t timeunit_power) -> String {
+  const auto power = static_cast<std::int32_t>(timeunit_power);
   const FormatParseResult parsed = ParseFormatString(format.View());
   if (parsed.error != FormatParseError::kNone) {
     throw SimulationError(
@@ -184,17 +183,17 @@ auto FormatRuntime(
   return String(std::move(out));
 }
 
-auto Formatter<PackedArray>::Format(
-    const FormatSpec& spec, const PackedArray& value, const FormatContext& ctx)
-    -> std::string {
+auto FormatIntegralOperand(
+    const FormatSpec& spec, const ConstIntegralView& value,
+    const FormatContext& ctx) -> std::string {
   if (spec.kind == FormatKind::kTime) {
     if (ctx.time_format == nullptr) {
       throw InternalError(
-          "Formatter<PackedArray>::Format: %t requires a TimeFormat in the "
-          "format context");
+          "FormatIntegralOperand: %t requires a TimeFormat in the format "
+          "context");
     }
     return FormatTimeMagnitude(
-        spec, static_cast<double>(PackedArrayLowWord(value)), *ctx.time_format);
+        spec, static_cast<double>(LowWord(value)), *ctx.time_format);
   }
   // LRM 21.2.1.6: an integral element of an assignment pattern prints "as it
   // would unformatted", and the default $display radix is decimal. It occupies
@@ -285,15 +284,14 @@ auto Formatter<float>::Format(
 }
 
 FormatSpec::FormatSpec(
-    const PackedArray& kind, const PackedArray& width,
-    const PackedArray& precision, const PackedArray& zero_pad,
-    const PackedArray& left_align, const PackedArray& timeunit_power)
-    : kind(static_cast<FormatKind>(kind.ToInt64())),
-      width(static_cast<std::int32_t>(width.ToInt64())),
-      precision(static_cast<std::int32_t>(precision.ToInt64())),
-      zero_pad(zero_pad.ToInt64() != 0),
-      left_align(left_align.ToInt64() != 0),
-      timeunit_power(static_cast<std::int32_t>(timeunit_power.ToInt64())) {
+    std::int64_t kind, std::int64_t width, std::int64_t precision,
+    std::int64_t zero_pad, std::int64_t left_align, std::int64_t timeunit_power)
+    : kind(static_cast<FormatKind>(kind)),
+      width(static_cast<std::int32_t>(width)),
+      precision(static_cast<std::int32_t>(precision)),
+      zero_pad(zero_pad != 0),
+      left_align(left_align != 0),
+      timeunit_power(static_cast<std::int32_t>(timeunit_power)) {
 }
 
 PrintLiteralItem::PrintLiteralItem(const String& text)

@@ -1,10 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <vector>
 
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral_words.hpp"
 
 // The whole-value operations of a container whose elements are a sequence by
 // position -- a queue, a dynamic array, a fixed-size array -- written once over
@@ -12,48 +13,38 @@
 // element at a position.
 namespace lyra::value::detail {
 
-// LRM 11.4.5: a sequence of element comparisons answers in the state class an
-// element's own equality does, read off the element default so an empty
-// sequence has no case of its own and a size mismatch answers in the same
-// class.
-template <typename Seq>
-[[nodiscard]] auto ElementsAreFourState(const Seq& seq) -> bool {
-  const auto& elem = seq.Element();
-  return elem.Equal(elem.Default(), elem.Default()).IsFourState();
-}
-
 // LRM 11.2.2 aggregate equality / 11.4.5: element-wise reduction over
-// matching positions. A size mismatch yields 0; matching empties yield 1 (LRM
-// is silent on both, matching industry convention). `==` propagates X / Z.
+// matching positions, answering 0, 1 or x. A size mismatch yields 0; matching
+// empties yield 1 (LRM is silent on both, matching industry convention). `==`
+// propagates X / Z.
 template <typename Seq>
 [[nodiscard]] auto SequenceEqual(const Seq& lhs, const Seq& rhs)
-    -> PackedArray {
-  const bool four_state = ElementsAreFourState(lhs);
+    -> FourStateBit {
+  const auto& elem = lhs.Element();
   if (lhs.Count() != rhs.Count()) {
-    return PackedArray::FromInt(0, 1, false, four_state);
+    return FourStateBit::kZero;
   }
-  PackedArray result = PackedArray::FromInt(1, 1, false, four_state);
+  FourStateBit result = FourStateBit::kOne;
   for (std::size_t i = 0; i < lhs.Count(); ++i) {
-    result = result && lhs.Element().Equal(lhs.At(i), rhs.At(i));
+    result = LogicalAnd(result, elem.Equal(lhs.At(i), rhs.At(i)));
   }
   return result;
 }
 
-// LRM 11.4.5 `===`: matches X / Z as values and is deterministic, answering in
-// the elements' state class whatever the counts.
+// LRM 11.4.5 `===`: matches X / Z as values and is deterministic, so it is
+// never unknown.
 template <typename Seq>
-[[nodiscard]] auto SequenceCaseEqual(const Seq& lhs, const Seq& rhs)
-    -> PackedArray {
-  const bool four_state = ElementsAreFourState(lhs);
+[[nodiscard]] auto SequenceCaseEqual(const Seq& lhs, const Seq& rhs) {
+  const auto& elem = lhs.Element();
   if (lhs.Count() != rhs.Count()) {
-    return PackedArray::FromInt(0, 1, false, four_state);
+    return elem.CaseAnswer(false);
   }
   for (std::size_t i = 0; i < lhs.Count(); ++i) {
-    if (!static_cast<bool>(lhs.Element().CaseEqual(lhs.At(i), rhs.At(i)))) {
-      return PackedArray::FromInt(0, 1, false, four_state);
+    if (!elem.CaseEqual(lhs.At(i), rhs.At(i))) {
+      return elem.CaseAnswer(false);
     }
   }
-  return PackedArray::FromInt(1, 1, false, four_state);
+  return elem.CaseAnswer(true);
 }
 
 // The address of each element of `unit`, `count` times over (LRM 10.9.1), for
@@ -82,14 +73,6 @@ template <typename C>
     addresses.push_back(&source.RawAt(i));
   }
   return addresses;
-}
-
-// LRM 11.4.11: whether the two arms of an ambiguous conditional agree on an
-// element, which only an equality known to hold says.
-template <typename Elem>
-[[nodiscard]] auto ElementsAgree(
-    const Elem& elem, const void* lhs, const void* rhs) -> bool {
-  return elem.Equal(lhs, rhs).Truth() == Truthiness::kKnownNonzero;
 }
 
 // LRM 9.4.2 update event predicate: element-wise bit identity, a size
@@ -122,19 +105,19 @@ template <typename Seq>
 // LRM 20.6.2 `$bits` / LRM 20.9 `$countbits`: a container's bit stream is its
 // elements' laid end to end, so each sums its elements' own.
 template <typename Seq>
-[[nodiscard]] auto SequenceBitstreamWidth(const Seq& seq) -> PackedArray {
-  PackedArray total = PackedArray::Int(0);
+[[nodiscard]] auto SequenceBitstreamWidth(const Seq& seq) -> std::int64_t {
+  std::int64_t total = 0;
   for (std::size_t i = 0; i < seq.Count(); ++i) {
-    total = total + seq.Element().BitstreamWidth(seq.At(i));
+    total += seq.Element().BitstreamWidth(seq.At(i));
   }
   return total;
 }
-template <typename Seq>
+template <typename Seq, typename Control>
 [[nodiscard]] auto SequenceCountBits(
-    const Seq& seq, const PackedArray& control_bits) -> PackedArray {
-  PackedArray total = PackedArray::Int(0);
+    const Seq& seq, const Control& control_bits) -> std::int64_t {
+  std::int64_t total = 0;
   for (std::size_t i = 0; i < seq.Count(); ++i) {
-    total = total + seq.Element().CountBits(seq.At(i), control_bits);
+    total += seq.Element().CountBits(seq.At(i), control_bits);
   }
   return total;
 }

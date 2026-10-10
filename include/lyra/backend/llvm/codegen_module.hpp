@@ -16,21 +16,27 @@
 #include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/emit.hpp"
+#include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
+#include "lyra/lir/enum_table_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
-#include "lyra/lir/type_descriptor_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_class.hpp"
+#include "lyra/support/runtime_object.hpp"
+#include "lyra/support/value_domain.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace llvm {
 class Constant;
 class Function;
+class FunctionCallee;
+class FunctionType;
 class GlobalVariable;
 class IRBuilderBase;
 class Value;
@@ -57,10 +63,11 @@ namespace lyra::backend::llvm_backend {
 // start, where the library's root class, which every class extends and which
 // has a virtual destructor, places it (C++ ABI 2.4, the primary base).
 //
-// A member holding a product inline holds its bytes, laid out by this backend
-// as a tuple holds a component that is one, so that member is built and ended
-// by what is compiled for its type rather than by the library; which type each
-// member holds is kept beside its storage for that.
+// A member holding a product, an integral value or a machine integer inline
+// holds its bytes, laid out by this backend as a tuple holds a component that
+// is one, so that member is built and ended by what is compiled for its type
+// rather than by the library; which type each member holds is kept beside its
+// storage for that.
 struct RecordLayout {
   std::vector<lir::TypeId> types;
   std::vector<support::DeclaredMemberStorage> storage;
@@ -149,9 +156,41 @@ class CodeGenModule {
   auto DefinitionOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
 
   // The type the library asks of a value of `type`: a tuple's own, which this
-  // unit emits with the tuple type, or the library's for a value of one of its
-  // own kinds.
+  // unit emits with the tuple type, an integral type's, which it emits too, or
+  // the library's for a value of one of its own kinds.
   auto ValueTypeOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
+
+  // A function something outside this module defines -- an entry the runtime
+  // publishes, a body of another artifact, a function of the host -- declared
+  // under `name` at `type`, as clang's `CodeGenModule::CreateRuntimeFunction`
+  // declares one. A name has one type, so declaring it again at another is
+  // refused.
+  auto CreateRuntimeFunction(llvm::FunctionType* type, std::string_view name)
+      -> llvm::FunctionCallee;
+  // The library entry `symbol`, declared at the type a call crossing to it as
+  // `abi` arranges has.
+  auto RuntimeFunction(std::string_view symbol, const FnAbi& abi)
+      -> llvm::FunctionCallee;
+  // What a callee a call crosses to as `abi` arranges is handed ahead of the
+  // storage its answer is built in, given the operands the call states. Each
+  // thing an entry is told of a type is a constant, so building the list
+  // emits nothing.
+  auto BuildCallArgs(const FnAbi& abi, std::span<llvm::Value* const> operands)
+      -> diag::Result<std::vector<llvm::Value*>>;
+  // The arguments the operand `value` crosses as, appended to `args`.
+  auto BuildCallArg(
+      const PassMode& mode, llvm::Value* value, std::vector<llvm::Value*>& args)
+      -> diag::Result<void>;
+  // The library entry `symbol`, which carries out lifecycle step `step` on an
+  // object of the library's own. Ending one takes it; assigning takes the one
+  // written into and then the one written; copying and moving take the source
+  // and build in storage handed last, which they answer with.
+  auto LifecycleEntry(std::string_view symbol, TupleLifecycle step)
+      -> llvm::FunctionCallee;
+  // The host's dynamic cast (C++ ABI 2.9.7): handed a part of an object, the
+  // descriptions of that part's class and of the wanted one, and a hint of
+  // where the wanted part sits, it answers the wanted part or null.
+  auto DynamicCast() -> llvm::FunctionCallee;
 
   // The library kind a value of `type` is, which names the entries acting on
   // it; a type the library realizes as no kind of its own is one this backend
@@ -163,17 +202,15 @@ class CodeGenModule {
   // symbol is the storage itself, so its address is what a reference names.
   auto SharedStorage(const std::string& symbol) -> llvm::GlobalVariable*;
 
-  // The module-level home of one type's descriptor. The description is settled
-  // by the type, so the run builds it once and every later use loads what the
-  // first left here. It starts null, which is the one state a built descriptor
-  // is never in: the runtime hands back the address of storage it owns.
-  auto TypeDescriptorCell(lir::TypeDescriptorId descriptor)
-      -> llvm::GlobalVariable*;
+  // One of the unit's enumeration member tables: constant data laid out as
+  // the library's record of one, whose address is what a question about a
+  // value is asked against. The module defines the ones its code names.
+  auto GetAddrOfEnumTable(lir::EnumTableId table) -> llvm::GlobalVariable*;
 
-  // The module-level home of one constant. Same shape and same reason as the
-  // cell above: the value is settled before the run, so the run builds it once
-  // and every later use loads what the first left here.
-  auto IntegralConstantCell(lir::IntegralConstantId constant)
+  // One of the unit's integral constants: constant data holding the bytes a
+  // value of its type is laid out in, whose address is where the value lies.
+  // The module defines the ones its code names.
+  auto GetAddrOfIntegralConstant(lir::IntegralConstantId constant)
       -> llvm::GlobalVariable*;
 
   // How a value of the declaration `type` names is laid out -- a class of this
@@ -222,10 +259,36 @@ class CodeGenModule {
       const RecordLayout& placed);
 
  private:
-  // Whether a member of `type` held as `storage` is a product's bytes rather
-  // than an object of the library.
-  [[nodiscard]] auto HoldsProductInline(
+  // Whether a member of `type` held as `storage` is the bytes this backend lays
+  // a value of the type out in -- a product's, an integral value's, a machine
+  // integer's -- rather than an object of the library.
+  [[nodiscard]] auto HoldsItsBytesInline(
       lir::TypeId type, support::DeclaredMemberStorage storage) const -> bool;
+  // What a member of `type` held as `storage` occupies.
+  [[nodiscard]] auto MemberLayout(
+      lir::TypeId type, support::DeclaredMemberStorage storage)
+      -> support::ObjectLayout;
+  // Builds, at `at`, the storage a member of `type` is held as.
+  void BuildMemberStorage(
+      llvm::IRBuilderBase& builder, lir::TypeId type,
+      support::DeclaredMemberStorage storage, llvm::Value* at);
+  // The arguments that tell an entry how wide an integral type is, and whether
+  // it is four-state.
+  auto WidthArg(const value::IntegralShape& shape) -> llvm::Constant*;
+  auto FourStateArg(const value::IntegralShape& shape) -> llvm::Constant*;
+  // What builds the storage of a member held as `storage`, handed where that
+  // storage is and, where it is built at the width of what it holds, that
+  // width; and what ends it, handed where it is.
+  auto MemberStorageConstructor(support::DeclaredMemberStorage storage)
+      -> llvm::FunctionCallee;
+  auto MemberStorageDestructor(support::DeclaredMemberStorage storage)
+      -> llvm::Function*;
+  // The host's sized deallocation function, handed the storage and its size
+  // (C++ ABI mangling of `operator delete(void*, std::size_t)`).
+  auto SizedOperatorDelete() -> llvm::FunctionCallee;
+  // What registers a function to run on an object when the program exits (C++
+  // ABI 3.3.6.3): handed the function, the object and this module's handle.
+  auto AtExit() -> llvm::FunctionCallee;
 
   auto DeclareCallable(lir::FunctionId id) -> llvm::Function*;
   // Emits the body building the storage this unit shares, and asks the target
@@ -354,16 +417,15 @@ class CodeGenModule {
   // another's, linked under `symbol`: it takes the value and answers nothing.
   auto ValueFunction(const std::string& symbol) -> llvm::Function*;
   auto DeclaredClass(lir::ClassId id) const -> Declared;
-  // One call into the runtime from a body this module emits on its own
-  // account, typed by the values it is handed, answering what the entry
-  // answers.
-  auto StateCall(
-      llvm::IRBuilderBase& builder, std::string_view symbol,
-      std::span<llvm::Value* const> args, llvm::Type* result) -> llvm::Value*;
-  auto DeclareTypeDescriptorCell(lir::TypeDescriptorId descriptor)
+  auto DefineEnumTable(lir::EnumTableId table) -> llvm::GlobalVariable*;
+  auto DefineIntegralConstant(lir::IntegralConstantId constant)
       -> llvm::GlobalVariable*;
-  auto DeclareIntegralConstantCell(lir::IntegralConstantId constant)
-      -> llvm::GlobalVariable*;
+  // What the library is handed as the type of a value of the integral type
+  // `type`, where a value crosses with its type: constant data of the class
+  // the library declares for an integral type, stating the width, signedness
+  // and states that class's operations read. The module defines one per
+  // integral type it hands over that way.
+  auto GetAddrOfIntegralType(lir::TypeId type) -> llvm::Constant*;
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::Module> module_;
@@ -371,10 +433,10 @@ class CodeGenModule {
   CodeGenTypes types_;
   CodeGenTuples tuples_;
   base::Translation<lir::FunctionId, llvm::Function*> functions_;
-  base::Translation<lir::TypeDescriptorId, llvm::GlobalVariable*>
-      type_descriptor_cells_;
-  base::Translation<lir::IntegralConstantId, llvm::GlobalVariable*>
-      integral_constant_cells_;
+  std::unordered_map<lir::EnumTableId, llvm::GlobalVariable*> enum_tables_;
+  std::unordered_map<lir::IntegralConstantId, llvm::GlobalVariable*>
+      integral_constants_;
+  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> integral_types_;
   std::unordered_map<lir::TypeId, RecordLayout> records_;
   std::unordered_map<lir::TypeId, std::vector<std::optional<std::string>>>
       tables_;

@@ -9,70 +9,27 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/value/dpi_canonical.hpp"
-#include "lyra/value/packed_array.hpp"
-#include "lyra/value/value_type.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::value {
 
-void DpiOpenArray::Shape(
-    std::span<const UnpackedRange> bounds, const PackedType& element_type,
-    bool addressable_elements) {
-  addressable_elements_ = addressable_elements;
-  element_width_ = static_cast<std::uint32_t>(element_type.bit_width);
-  dims_.assign(bounds.begin(), bounds.end());
-  const std::size_t words = ElementCount() * GroupsPerElement();
-  if (element_type.is_four_state) {
-    storage_ = std::vector<svLogicVecVal>(words);
-  } else {
-    storage_ = std::vector<svBitVecVal>(words);
-  }
-}
-
 DpiOpenArray::DpiOpenArray(
-    const void* sv, const ValueType& sv_type,
-    std::span<const UnpackedRange> bounds, const PackedType& element_type,
-    bool addressable_elements) {
-  Shape(bounds, element_type, addressable_elements);
-  std::size_t position = 0;
-  FillErased(sv, sv_type, 0, position);
-}
-
-void DpiOpenArray::FillErased(
-    const void* value, const ValueType& type, std::size_t dimension,
-    std::size_t& position) {
-  if (dimension == dims_.size()) {
-    WriteLeaf(*static_cast<const PackedArray*>(value), position);
-    ++position;
-    return;
-  }
-  const ValueType& part = type.PartType(value);
-  for (std::size_t p = 0; p < type.PartCount(value); ++p) {
-    FillErased(
-        type.PartAt(value, OrdinalAt(dimension, p)), part, dimension + 1,
-        position);
-  }
-}
-
-void DpiOpenArray::WriteBack(void* value, const ValueType& type) const {
-  std::size_t position = 0;
-  WriteErased(value, type, 0, position);
-}
-
-void DpiOpenArray::WriteErased(
-    void* value, const ValueType& type, std::size_t dimension,
-    std::size_t& position) const {
-  if (dimension == dims_.size()) {
-    auto& leaf = *static_cast<PackedArray*>(value);
-    leaf = ReadLeaf(leaf, position);
-    ++position;
-    return;
-  }
-  const ValueType& part = type.PartType(value);
-  for (std::size_t p = 0; p < type.PartCount(value); ++p) {
-    WriteErased(
-        type.PartRefAt(value, OrdinalAt(dimension, p)), part, dimension + 1,
-        position);
+    std::span<const std::int64_t> bounds, std::uint64_t element_width,
+    StateDomain element_domain, bool addressable_elements)
+    : dims_(UnpackedRangesOf(bounds)),
+      element_width_(static_cast<std::uint32_t>(element_width)),
+      addressable_elements_(addressable_elements) {
+  const std::size_t groups = ElementCount() * GroupsPerElement();
+  switch (element_domain) {
+    case StateDomain::kTwoState:
+      storage_ = std::vector<svBitVecVal>(groups);
+      break;
+    case StateDomain::kFourState:
+      storage_ = std::vector<svLogicVecVal>(groups);
+      break;
   }
 }
 
@@ -151,30 +108,38 @@ auto DpiOpenArray::ElementAddress(std::span<const int> indices) -> void* {
   return position.has_value() ? AddressAt(*position) : nullptr;
 }
 
-void DpiOpenArray::WriteLeaf(const PackedArray& value, std::size_t position) {
-  const std::span<svBitVecVal> bits = GroupsAt<svBitVecVal>(position);
-  if (!bits.empty()) {
-    WriteCanonicalBitVec(bits.data(), value);
-    return;
-  }
-  WriteCanonicalLogicVec(GroupsAt<svLogicVecVal>(position).data(), value);
+void DpiOpenArray::WriteElement(std::size_t position, ConstPlanes value) {
+  const std::size_t groups = GroupsPerElement();
+  std::visit(
+      Overloaded{
+          [&](std::vector<svBitVecVal>& image) {
+            WriteCanonicalBitVec(
+                std::span{image}.subspan(position * groups, groups).data(),
+                value, element_width_);
+          },
+          [&](std::vector<svLogicVecVal>& image) {
+            WriteCanonicalLogicVec(
+                std::span{image}.subspan(position * groups, groups).data(),
+                value, element_width_);
+          }},
+      storage_);
 }
 
-auto DpiOpenArray::ReadLeaf(
-    const PackedArray& prototype, std::size_t position) const -> PackedArray {
-  // Annex H.7.3 gives a packed element one canonical representation, a flat
-  // vector of the element's own width, so what comes back is those bits
-  // read at the element's width, signedness and state domain.
-  const PackedType shape{
-      std::array{PackedRange{
-          .left = static_cast<std::int64_t>(prototype.BitWidth()) - 1,
-          .right = 0}},
-      prototype.IsSigned(), prototype.IsFourState()};
-  const std::span<const svBitVecVal> bits = GroupsAt<svBitVecVal>(position);
-  if (!bits.empty()) {
-    return ReadCanonicalBitVec(bits.data(), shape);
-  }
-  return ReadCanonicalLogicVec(GroupsAt<svLogicVecVal>(position).data(), shape);
+void DpiOpenArray::ReadElement(std::size_t position, Planes out) const {
+  const std::size_t groups = GroupsPerElement();
+  std::visit(
+      Overloaded{
+          [&](const std::vector<svBitVecVal>& image) {
+            ReadCanonicalBitVec(
+                std::span{image}.subspan(position * groups, groups).data(), out,
+                element_width_);
+          },
+          [&](const std::vector<svLogicVecVal>& image) {
+            ReadCanonicalLogicVec(
+                std::span{image}.subspan(position * groups, groups).data(), out,
+                element_width_);
+          }},
+      storage_);
 }
 
 }  // namespace lyra::value

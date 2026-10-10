@@ -75,17 +75,11 @@ auto TranslateMutability(mir::Mutability m) -> lir::Mutability {
                                          : lir::Mutability::kMutable;
 }
 
-auto TranslatePackedArray(const mir::PackedArrayType& pa)
-    -> lir::PackedArrayType {
-  std::vector<lir::PackedRange> dims;
-  dims.reserve(pa.dims.size());
-  for (const mir::PackedRange& d : pa.dims) {
-    dims.push_back(lir::PackedRange{.left = d.left, .right = d.right});
-  }
-  return lir::PackedArrayType{
-      .state_kind = TranslateStateKind(pa.state_kind),
-      .signedness = TranslateSignedness(pa.signedness),
-      .dims = std::move(dims)};
+auto TranslateIntegral(const mir::IntegralType& integral) -> lir::IntegralType {
+  return lir::IntegralType{
+      .bit_width = integral.bit_width,
+      .signedness = TranslateSignedness(integral.signedness),
+      .state_kind = TranslateStateKind(integral.state_kind)};
 }
 
 }  // namespace
@@ -118,14 +112,14 @@ auto UnitLowerer::TranslateDeclaration(const mir::TypeDeclarationRef& ref)
 auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
   return ty.Visit(
       Overloaded{
-          [&](const mir::PackedArrayType& pa) -> lir::Type {
-            return lir::Type{TranslatePackedArray(pa)};
+          [&](const mir::IntegralType& integral) -> lir::Type {
+            return lir::Type{TranslateIntegral(integral)};
           },
           // What an enumeration answers about a value is asked of the member
           // list the unit states for it, so below MIR nothing distinguishes an
           // enumeration from its base.
           [&](const mir::EnumType& e) -> lir::Type {
-            return lir::Type{TranslatePackedArray(e.base)};
+            return lir::Type{TranslateIntegral(e.base)};
           },
           [&](const mir::UnpackedArrayType& ua) -> lir::Type {
             return lir::Type{lir::UnpackedArrayType{
@@ -333,12 +327,6 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
   switch (kind) {
     case mir::RuntimeLibraryKind::kPrintItem:
       return mirror(lir::RuntimeLibraryKind::kPrintItem);
-    case mir::RuntimeLibraryKind::kPackedType:
-      return mirror(lir::RuntimeLibraryKind::kPackedType);
-    case mir::RuntimeLibraryKind::kPackedRange:
-      return mirror(lir::RuntimeLibraryKind::kPackedRange);
-    case mir::RuntimeLibraryKind::kUnpackedRange:
-      return mirror(lir::RuntimeLibraryKind::kUnpackedRange);
     case mir::RuntimeLibraryKind::kEnumeration:
       return mirror(lir::RuntimeLibraryKind::kEnumeration);
     case mir::RuntimeLibraryKind::kPrintLiteralItem:

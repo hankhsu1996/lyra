@@ -13,7 +13,6 @@
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/queue_bound.hpp"
 
@@ -34,6 +33,9 @@ namespace lyra::value {
 // A bounded queue (LRM 7.10.5) holds no element whose index exceeds its bound.
 // The bound is a property of the variable rather than of the value written, so
 // a write that grows the queue past it drops what is past it.
+//
+// A position arrives as what the program's position value names: a number, or
+// none where it holds x or z.
 template <ElementPolicy Elem>
 class BasicQueue {
  public:
@@ -97,28 +99,28 @@ class BasicQueue {
   }
 
   // The same elements, held to `bound` (a negative one being no bound).
-  [[nodiscard]] auto WithBound(const PackedArray& bound) const -> BasicQueue {
+  [[nodiscard]] auto WithBound(std::int64_t bound) const -> BasicQueue {
     BasicQueue result = *this;
     result.bound_ = BoundOf(bound);
     result.EnforceBound();
     return result;
   }
-  void SetBound(const PackedArray& bound) {
+  void SetBound(std::int64_t bound) {
     bound_ = BoundOf(bound);
     EnforceBound();
   }
 
   // LRM 7.10.1 / 7.4.5 read: an index outside `0..size-1` (or carrying x/z)
   // reads the element default, and a read never grows the queue.
-  [[nodiscard]] auto ElementAt(const PackedArray& position) const -> const
-      void* {
+  [[nodiscard]] auto ElementAt(std::optional<std::int64_t> position) const
+      -> const void* {
     const auto ordinal = ElementOrdinal(position, count_);
     return ordinal ? At(*ordinal) : elem_.Default();
   }
 
   // The element a position names, or, where it names none, storage no read
   // reaches -- the place a write that may not grow the queue lands.
-  [[nodiscard]] auto ExistingAt(const PackedArray& position) -> void* {
+  [[nodiscard]] auto ExistingAt(std::optional<std::int64_t> position) -> void* {
     const auto ordinal = ElementOrdinal(position, count_);
     return ordinal ? At(*ordinal) : DiscardTarget(elem_, discard_);
   }
@@ -127,13 +129,12 @@ class BasicQueue {
   // the default and lands there. An x/z, negative, or beyond-`$+1` index lands
   // where no read reaches, so the write is discarded, and so does an append a
   // bounded queue cannot keep, which leaves the queue as it was.
-  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
-      -> void* {
-    if (const auto ordinal = ElementOrdinal(position, count_)) {
+  [[nodiscard]] auto ElementRef(
+      std::optional<std::int64_t> at, Formation& formed) -> void* {
+    if (const auto ordinal = ElementOrdinal(at, count_)) {
       formed = Formation::kExisting;
       return At(*ordinal);
     }
-    const std::optional<std::int64_t> at = ReadPosition(position);
     if (at && static_cast<std::uint64_t>(*at) == count_) {
       InsertCopy(count_, elem_.Default());
       EnforceBound();
@@ -150,11 +151,10 @@ class BasicQueue {
   // bound that names no position, or `lo > hi` after clamping, yields the empty
   // queue; `lo` clamps up to 0 and `hi` down to the last index. The result
   // carries no bound: a bound belongs to the variable a value is stored into.
-  [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
+  [[nodiscard]] auto Slice(
+      std::optional<std::int64_t> first, std::optional<std::int64_t> last) const
       -> BasicQueue {
     BasicQueue out(elem_);
-    const std::optional<std::int64_t> first = ReadPosition(lo);
-    const std::optional<std::int64_t> last = ReadPosition(hi);
     if (!first || !last) {
       return out;
     }
@@ -212,8 +212,7 @@ class BasicQueue {
   // LRM 7.10.2.2: inserts a copy of `item` before `index`, where
   // `index == size` appends. An x or z, negative, or beyond-size index leaves
   // the queue unchanged.
-  void Insert(const PackedArray& index, const void* item) {
-    const std::optional<std::int64_t> at = ReadPosition(index);
+  void Insert(std::optional<std::int64_t> at, const void* item) {
     if (!at.has_value() || *at < 0 ||
         static_cast<std::uint64_t>(*at) > count_) {
       return;
@@ -227,7 +226,7 @@ class BasicQueue {
   void Delete() {
     Truncate(0);
   }
-  void DeleteIndex(const PackedArray& index) {
+  void DeleteIndex(std::optional<std::int64_t> index) {
     if (const auto ordinal = ElementOrdinal(index, count_)) {
       Erase(*ordinal);
     }
@@ -260,7 +259,7 @@ class BasicQueue {
       return result;
     }
     for (std::size_t i = 0; i < count_; ++i) {
-      if (!detail::ElementsAgree(elem_, At(i), other.At(i))) {
+      if (!elem_.Agree(At(i), other.At(i))) {
         elem_.Assign(result.At(i), elem_.Default());
       }
     }
@@ -278,13 +277,12 @@ class BasicQueue {
   // A bound is the greatest index the queue may hold (LRM 7.10.5). A queue with
   // no bound spells that as a negative one, so a bound and its absence reach
   // every construction and every store as the same operand.
-  [[nodiscard]] static auto BoundOf(const PackedArray& bound)
+  [[nodiscard]] static auto BoundOf(std::int64_t bound)
       -> std::optional<std::uint64_t> {
-    const std::int64_t value = bound.ToInt64();
-    if (value < 0) {
+    if (bound < 0) {
       return std::nullopt;
     }
-    return static_cast<std::uint64_t>(value);
+    return static_cast<std::uint64_t>(bound);
   }
 
   // LRM 7.10.5: what grew past the bound is dropped, which is worth saying.

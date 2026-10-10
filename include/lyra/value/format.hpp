@@ -5,9 +5,10 @@
 #include <string>
 #include <variant>
 
+#include "lyra/value/integral.hpp"
+
 namespace lyra::value {
 
-class PackedArray;
 class String;
 class Chandle;
 class ObjectRef;
@@ -28,14 +29,6 @@ enum class FormatKind : std::uint8_t {
   kTime,
 };
 
-// Two-state vs four-state lives on the integral axis, not as a top-level
-// value kind: it's a representation/semantics dimension of integral, in the
-// same way `string` is a value category. The two enums are orthogonal.
-enum class IntegralStateKind : std::uint8_t {
-  kTwoState,
-  kFourState,
-};
-
 // One conversion's modifiers. LRM 21.2.1.2 gives a conversion a single modifier
 // -- a non-negative field width, or none at all where the conversion has a size
 // its operand's type implies -- and fixes everything else about how the field
@@ -52,13 +45,12 @@ struct FormatSpec {
 
   FormatSpec() = default;
 
-  // Each field arrives as a PackedArray literal -- the value model routes
-  // compile-time scalars as SV values, the same way the file-IO runtime entries
-  // take their int args -- and converts to its native field type here.
+  // Each field arrives as a machine integer, the way every runtime scalar does,
+  // and converts to its native field type here.
   FormatSpec(
-      const PackedArray& kind, const PackedArray& width,
-      const PackedArray& precision, const PackedArray& zero_pad,
-      const PackedArray& left_align, const PackedArray& timeunit_power);
+      std::int64_t kind, std::int64_t width, std::int64_t precision,
+      std::int64_t zero_pad, std::int64_t left_align,
+      std::int64_t timeunit_power);
 };
 
 // LRM 21.2.1.2: a rendering narrower than its field is padded to reach it and
@@ -113,15 +105,19 @@ struct Formatter;
 // caller's value plus a function pointer that knows how to dispatch through
 // `Formatter<T>` for the underlying type. The arg never owns; the caller
 // must hold the underlying value alive for the duration of the print call.
-// Always two pointers wide regardless of the underlying type.
+// The same size regardless of the underlying type.
 struct FormatArg {
-  using FormatFn =
-      std::string (*)(const FormatSpec&, const void*, const FormatContext&);
+  using FormatFn = std::string (*)(
+      const FormatSpec&, const FormatArg&, const FormatContext&);
 
   // How this operand reads under the conversion it meets. Null where its type
   // defines no reading but the assignment pattern -- an aggregate, for which
   // LRM 21.2.1.6 states the one and the language states no other.
   const void* ptr = nullptr;
+  // How wide the integral value `ptr` names is, read as which signedness and
+  // holding which states, where the formatter serves every integral type and
+  // so is told which it was handed. Unread by a formatter of one type.
+  IntegralShape read_as{};
   FormatFn format_fn = nullptr;
   // The text LRM 21.2.1.6 renders this operand as, which only its own type can
   // answer -- the names a structure declares, the name an enumeration declares
@@ -145,7 +141,8 @@ struct FormatArg {
   // formattable types rather than a single greedy template so a non-formattable
   // operand fails to match cleanly instead of instantiating an undefined
   // `Formatter`.
-  explicit FormatArg(const PackedArray& value);
+  template <IntegralValue T>
+  explicit FormatArg(const T& value);
   explicit FormatArg(const String& value);
   explicit FormatArg(const Chandle& value);
   explicit FormatArg(const ObjectRef& value);
@@ -155,8 +152,9 @@ struct FormatArg {
   // The same operand, carrying the text its type renders it as. An enumeration
   // is its base integral under every other conversion, so it keeps its value
   // beside the text.
-  [[nodiscard]] static auto Patterned(
-      const PackedArray& value, const String& pattern) -> FormatArg;
+  template <IntegralValue T>
+  [[nodiscard]] static auto Patterned(const T& value, const String& pattern)
+      -> FormatArg;
 
   // An operand that reads only as the text its type renders it as, every other
   // conversion being one the language leaves undefined for it and this refuses
@@ -175,9 +173,9 @@ template <typename T>
 [[nodiscard]] auto MakeFormatArg(const T& value) -> FormatArg {
   return FormatArg{
       &value,
-      [](const FormatSpec& spec, const void* p,
+      [](const FormatSpec& spec, const FormatArg& arg,
          const FormatContext& ctx) -> std::string {
-        const T& v = *static_cast<const T*>(p);
+        const T& v = *static_cast<const T*>(arg.ptr);
         // Per-formatter signature lookup: those that consult design-wide
         // context (`%t` needing `TimeFormat`) declare `Format(spec, value,
         // ctx)`; a string, which reaches no context-bound kind, declares just
@@ -191,8 +189,8 @@ template <typename T>
       }};
 }
 
-inline FormatArg::FormatArg(const PackedArray& value)
-    : FormatArg(MakeFormatArg(value)) {
+template <IntegralValue T>
+FormatArg::FormatArg(const T& value) : FormatArg(MakeFormatArg(value)) {
 }
 inline FormatArg::FormatArg(const String& value)
     : FormatArg(MakeFormatArg(value)) {
@@ -203,8 +201,8 @@ inline FormatArg::FormatArg(const Chandle& value)
 inline FormatArg::FormatArg(const ObjectRef& value)
     : FormatArg(MakeFormatArg(value)) {
 }
-inline auto FormatArg::Patterned(
-    const PackedArray& value, const String& pattern) -> FormatArg {
+template <IntegralValue T>
+auto FormatArg::Patterned(const T& value, const String& pattern) -> FormatArg {
   FormatArg arg = MakeFormatArg(value);
   arg.pattern = &pattern;
   return arg;
@@ -225,14 +223,23 @@ FormatArg::FormatArg(const RealValue<Host>& value)
     const FormatSpec& spec, FormatArg arg, const FormatContext& ctx = {})
     -> std::string;
 
+// An integral operand's text under `spec`, read through its planes, width and
+// signedness by code compiled once for every integral type.
+[[nodiscard]] auto FormatIntegralOperand(
+    const FormatSpec& spec, const ConstIntegralView& value,
+    const FormatContext& ctx) -> std::string;
+
 // Specializations for the closed leaf set. Each is declared here so a caller
 // building a format_fn for `T` has the declaration at instantiation time,
 // wherever the definition is.
-template <>
-struct Formatter<PackedArray> {
+template <std::uint64_t kWidth, Signedness kSignedness, StateDomain kDomain>
+struct Formatter<Integral<kWidth, kSignedness, kDomain>> {
   static auto Format(
-      const FormatSpec& spec, const PackedArray& value,
-      const FormatContext& ctx) -> std::string;
+      const FormatSpec& spec,
+      const Integral<kWidth, kSignedness, kDomain>& value,
+      const FormatContext& ctx) -> std::string {
+    return FormatIntegralOperand(spec, value.Load().View(), ctx);
+  }
 };
 
 template <>
@@ -301,8 +308,12 @@ struct PrintValueItem {
   // of instantiating an undefined `Formatter`. `const T&` so a caller-side
   // temporary (an arithmetic rvalue) binds via lifetime extension through the
   // full expression that contains the runtime print call.
-  PrintValueItem(const PackedArray& value, FormatSpec spec)
+  template <IntegralValue T>
+  PrintValueItem(const T& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
+  }
+  // An operand already made into the dispatch it is formatted through.
+  PrintValueItem(FormatArg arg, FormatSpec spec) : spec(spec), arg(arg) {
   }
   PrintValueItem(const String& value, FormatSpec spec)
       : spec(spec), arg(MakeFormatArg(value)) {
@@ -343,6 +354,6 @@ using PrintItem = std::variant<PrintLiteralItem, PrintValueItem>;
 [[nodiscard]] auto FormatRuntime(
     const String& format, std::span<const FormatArg> args,
     const String& scope_path, const TimeFormat& time_format,
-    const PackedArray& timeunit_power) -> String;
+    std::int64_t timeunit_power) -> String;
 
 }  // namespace lyra::value

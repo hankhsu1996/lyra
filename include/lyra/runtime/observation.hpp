@@ -10,7 +10,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/support/event_edge.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
@@ -73,9 +73,8 @@ inline auto EdgeMatches(support::EventEdge edge, EdgeTransition transition)
 }
 
 // Which edge an event control names, as it crosses into a runtime entry: a
-// PackedArray literal, the way every compile-time scalar does.
-[[nodiscard]] auto EventEdgeOf(const value::PackedArray& edge)
-    -> support::EventEdge;
+// machine integer, the way every runtime scalar does.
+[[nodiscard]] auto EventEdgeOf(std::int64_t edge) -> support::EventEdge;
 
 // Whether a bit going from `before` to `now` is the edge `edge` names. Every
 // unit stating an edge control reaches it, and no design shapes it, so it is
@@ -153,7 +152,9 @@ class ValueWatchOf final : public ValueWatch {
     if (edge_ == support::EventEdge::kAnyChange) {
       return !before.IsBitIdentical(now);
     }
-    if constexpr (std::same_as<Value, value::PackedArray>) {
+    if constexpr (requires {
+                    { before.Lsb() } -> std::same_as<value::FourStateBit>;
+                  }) {
       return IsEdge(edge_, before.Lsb(), now.Lsb());
     } else {
       throw InternalError(
@@ -193,12 +194,13 @@ class ArmedObservation {
   // Built unarmed: it has nothing to compare against until the expression is
   // first evaluated. A wait whose target decides by being reached -- a named
   // event's trigger is the event -- watches nothing, and `iff` is the whole of
-  // what can still hold it back. The qualifier arrives already reduced to LRM
-  // 12.4 truth as a one-bit value, because that reduction is the language's
-  // and belongs where the expression is compiled rather than here.
+  // what can still hold it back. The qualifier answers whether it holds, its
+  // value already reduced to LRM 12.4 truth where the expression is compiled,
+  // because that reduction is the language's and belongs there rather than
+  // here.
   ArmedObservation(
       std::unique_ptr<ValueWatch> watch,
-      std::move_only_function<value::PackedArray()> condition);
+      std::move_only_function<bool()> condition);
 
   ArmedObservation(const ArmedObservation&) = delete;
   auto operator=(const ArmedObservation&) -> ArmedObservation& = delete;
@@ -237,12 +239,12 @@ class ArmedObservation {
       return false;
     }
     return (watch_ == nullptr || watch_->TakeTransition()) &&
-           (!condition_ || condition_().IsTruthy());
+           (!condition_ || condition_());
   }
 
  private:
   std::unique_ptr<ValueWatch> watch_;
-  std::move_only_function<value::PackedArray()> condition_;
+  std::move_only_function<bool()> condition_;
   bool armed_ = false;
 };
 
@@ -274,24 +276,24 @@ class Observation {
   [[nodiscard]] static auto OnReaching() -> Observation;
 
   template <std::invocable Evaluate>
-  [[nodiscard]] static auto OfValue(
-      Evaluate evaluate, const value::PackedArray& edge) -> Observation {
+  [[nodiscard]] static auto OfValue(Evaluate evaluate, std::int64_t edge)
+      -> Observation {
     return Observation{std::make_shared<ArmedObservation>(
         Watching(std::move(evaluate), edge), nullptr)};
   }
 
   template <std::invocable Evaluate, std::invocable Condition>
   [[nodiscard]] static auto OfValueQualified(
-      Evaluate evaluate, const value::PackedArray& edge, Condition condition)
+      Evaluate evaluate, std::int64_t edge, Condition condition)
       -> Observation {
     return Observation{std::make_shared<ArmedObservation>(
-        Watching(std::move(evaluate), edge), std::move(condition))};
+        Watching(std::move(evaluate), edge), Holding(std::move(condition)))};
   }
 
   template <std::invocable Condition>
   [[nodiscard]] static auto Qualified(Condition condition) -> Observation {
-    return Observation{
-        std::make_shared<ArmedObservation>(nullptr, std::move(condition))};
+    return Observation{std::make_shared<ArmedObservation>(
+        nullptr, Holding(std::move(condition)))};
   }
 
   // Arms what this holds, where the wait begins. Being reached holds nothing to
@@ -312,11 +314,19 @@ class Observation {
   explicit Observation(std::shared_ptr<ArmedObservation> held);
 
   template <std::invocable Evaluate>
-  [[nodiscard]] static auto Watching(
-      Evaluate evaluate, const value::PackedArray& edge)
+  [[nodiscard]] static auto Watching(Evaluate evaluate, std::int64_t edge)
       -> std::unique_ptr<ValueWatch> {
     return std::make_unique<ValueWatchOf<Evaluate>>(
         std::move(evaluate), EventEdgeOf(edge));
+  }
+
+  // Whether the one-bit value `condition` answers holds (LRM 12.4).
+  template <std::invocable Condition>
+  [[nodiscard]] static auto Holding(Condition condition)
+      -> std::move_only_function<bool()> {
+    return [condition = std::move(condition)]() mutable {
+      return condition().IsTruthy();
+    };
   }
 
   std::shared_ptr<ArmedObservation> held_;

@@ -18,10 +18,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
-#include "lyra/mir/type_descriptor.hpp"
-#include "lyra/mir/type_descriptor_id.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
 namespace lyra::backend::cpp {
@@ -32,46 +30,41 @@ void WriteInclude(TargetText& out, std::string_view path) {
   Write(out, "#include \"", path, "\"\n");
 }
 
-// A constant of the unit's namespace, `const T name = value;`. The value is a
-// single expression, written by the ordinary expression render.
-void RenderNamespaceValue(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::TypeId type, const CppName& name, const mir::ValueBuild& build,
+// The enumeration member tables the unit's text names, one `constexpr`
+// definition per table: its members are constant data, which the compiler
+// builds while the program is compiled.
+void RenderEnumTables(
+    const mir::CompilationUnit& unit, const UnitRenderReport& report,
     TargetText& out) {
-  const ScopeView view = ScopeView::ForConstant(unit, build.body, refusals);
-  WriteDeclaration(
-      out,
-      VariableDeclaration{
-          .form = VariableForm::kNamespaceScopeDefinition,
-          .is_const = true,
-          .type = CppType(unit, type),
-          .name = name},
-      [&](TargetText& value) { Write(view, value, build.value); });
-}
-
-// The run-time type descriptions, defined in the code file. C++ initializes the
-// variables of one file in the order they are written, but gives no order
-// across files, so whatever reads one is written after it in the same file.
-void RenderTypeDescriptions(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    TargetText& out) {
-  for (const mir::TypeDescriptorId id : unit.type_descriptors.Ids()) {
-    RenderNamespaceValue(
-        unit, refusals, mir::TypeDescriptorTypeOf(unit, id),
-        CppTypeDescriptorName(id), unit.builds.descriptors.Get(id), out);
+  for (const mir::EnumTableId id : report.enum_tables_named) {
+    WriteDeclaration(
+        out,
+        VariableDeclaration{
+            .form = VariableForm::kNamespaceScopeDefinition,
+            .constness = Constness::kConstexpr,
+            .type = CppType(unit, unit.builtins.enumeration),
+            .name = CppEnumTableName(id)},
+        [&](TargetText& value) {
+          Write(value, CppEnumTableLiteral(unit, id));
+        });
   }
 }
 
-// The constant values the unit uses, one definition per distinct value, so each
-// is built once. They come after the descriptions because each uses the
-// description of its own type.
+// The constant values the unit's text names, one `constexpr` definition per
+// distinct value: each is the literal of its type, which the compiler builds
+// while the program is compiled.
 void RenderIntegralConstants(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, const UnitRenderReport& report,
     TargetText& out) {
-  for (const mir::IntegralConstantId id : unit.integral_constants.Ids()) {
-    RenderNamespaceValue(
-        unit, refusals, unit.integral_constants.Get(id).type,
-        CppIntegralConstantName(id), unit.builds.constants.Get(id), out);
+  for (const mir::IntegralConstantId id : report.constants_named) {
+    WriteDeclaration(
+        out,
+        VariableDeclaration{
+            .form = VariableForm::kNamespaceScopeDefinition,
+            .constness = Constness::kConstexpr,
+            .type = CppType(unit, unit.integral_constants.Get(id).type),
+            .name = CppIntegralConstantName(id)},
+        [&](TargetText& value) { Write(value, CppIntegralLiteral(unit, id)); });
   }
 }
 
@@ -140,12 +133,21 @@ struct ClassFile {
 auto RenderUnitFiles(
     const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
     -> CppUnitArtifacts {
-  UnitStructs structs = RenderUnitStructs(unit, refusals);
-  const UnitText callables = RenderUnitCallables(unit, refusals);
+  // Every body is written before the constants and the member tables are,
+  // since the ones the code file defines are the ones those bodies turn out to
+  // name.
+  UnitRenderReport report{
+      .refusals = &refusals, .constants_named = {}, .enum_tables_named = {}};
+  UnitStructs structs = RenderUnitStructs(unit, report);
+  const UnitText callables = RenderUnitCallables(unit, report);
   const UnitText variables = RenderUnitStaticVariables(unit);
   const UnitText forwards = RenderUnitForwardDeclarations(unit);
-  UnitClasses classes = RenderUnitClasses(unit, refusals);
-  const UnitClosures closures = RenderUnitClosures(unit, refusals);
+  UnitClasses classes = RenderUnitClasses(unit, report);
+  const UnitClosures closures = RenderUnitClosures(unit, report);
+  TargetText foreign_symbols;
+  RenderForeignScopeSymbols(unit, report, foreign_symbols);
+  TargetText enum_tables;
+  RenderEnumTables(unit, report, enum_tables);
   const SourceName unit_namespace = UnitNamespaceOf(unit.name);
 
   std::vector<CppArtifact> declarations;
@@ -222,13 +224,10 @@ auto RenderUnitFiles(
 
   TargetText realized;
   AppendSection(realized, forwards.code);
-  {
-    const TargetText::Section descriptions(realized);
-    RenderTypeDescriptions(unit, refusals, realized);
-  }
+  AppendSection(realized, enum_tables);
   {
     const TargetText::Section constants(realized);
-    RenderIntegralConstants(unit, refusals, realized);
+    RenderIntegralConstants(unit, report, realized);
   }
   AppendSection(realized, structs.code);
   AppendSection(realized, classes.internal);
@@ -237,10 +236,7 @@ auto RenderUnitFiles(
   AppendSection(realized, closures.definitions);
   AppendSection(realized, classes.definitions);
   AppendSection(realized, callables.code);
-  {
-    const TargetText::Section foreign(realized);
-    RenderForeignScopeSymbols(unit, refusals, realized);
-  }
+  AppendSection(realized, foreign_symbols);
   realized += "\n";
 
   // The whole runtime through its one umbrella header, which is also what the

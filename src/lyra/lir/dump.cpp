@@ -34,8 +34,8 @@ class LirDumper {
     Indent();
     // The pool every `t<N>` below indexes. Without it an id is a number the
     // reader cannot resolve at all, so the question it answers -- is this a
-    // machine boolean or a one-bit packed value -- gets guessed instead, and a
-    // guess about a type is indistinguishable from knowing.
+    // machine boolean or a one-bit integral value -- gets guessed instead, and
+    // a guess about a type is indistinguishable from knowing.
     Line("Types:");
     Indent();
     for (const TypeId id : unit_->types.Ids()) {
@@ -322,11 +322,6 @@ class LirDumper {
                   FormatSelector(update.selector),
                   FormatOperand(update.replacement));
             },
-            [&](const TagTestInstr& test) -> std::string {
-              return std::format(
-                  "tag_test {}, {}", FormatOperand(test.aggregate),
-                  test.index.value);
-            },
             [&](const LoadInstr& load) -> std::string {
               return std::format("load {}", FormatPlace(load.place));
             },
@@ -427,6 +422,9 @@ class LirDumper {
             [](const OpenWriteTarget& w) -> std::string {
               return std::string{OpenWriteOpName(w.op)};
             },
+            [](const DesignatedBitsTarget& b) -> std::string {
+              return std::string{DesignatedBitsOpName(b.op)};
+            },
             [](const EndValueTarget&) -> std::string { return "end"; },
             [](const CopyValueTarget&) -> std::string { return "copy"; },
             [](const ControlEffectTarget& c) -> std::string {
@@ -516,8 +514,8 @@ class LirDumper {
             [](const BoolConst& c) -> std::string {
               return std::format("bool:{}", c.value ? "true" : "false");
             },
-            [](const TypeDescriptorRef& c) -> std::string {
-              return std::format("typedesc:{}", c.descriptor.value);
+            [](const EnumTableRef& c) -> std::string {
+              return std::format("enumtable:{}", c.table.value);
             },
             [](const IntegralConstantRef& c) -> std::string {
               return std::format("const:{}", c.constant.value);

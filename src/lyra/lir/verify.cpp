@@ -14,7 +14,6 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::lir {
@@ -50,8 +49,7 @@ void RequireViewedPart(
   if (!type) {
     throw InternalError("lir verify: a projected aggregate has no type");
   }
-  const std::optional<support::RuntimeObject> held =
-      unit.types.Get(*type).HeldObject();
+  const std::optional<Holding> held = unit.types.Get(*type).HeldAs();
   const auto* domain =
       held.has_value() ? std::get_if<support::ValueDomain>(&*held) : nullptr;
   if (domain != nullptr && support::PartsAreStorage(*domain)) {
@@ -118,19 +116,18 @@ void VerifyInstr(
                   "holds");
             }
           },
-          // Between two packed values a cast only renames what the program
-          // holds the bits to be, so the two must structure their bits alike:
-          // where they do not, the reshape meant to precede this is missing
-          // and the value silently changes width.
+          // Between two integral values a cast only renames what the program
+          // holds the bits to be, so the two must be one type: where they are
+          // not, the reshape meant to precede this is missing and the value
+          // silently changes width.
           [&](const CastInstr& cast) {
             const std::optional<TypeId> operand_type =
                 OperandType(fn, cast.operand);
             if (!operand_type) {
               throw InternalError("lir verify: cast operand has no type");
             }
-            const auto* from =
-                unit.types.Get(*operand_type).As<PackedArrayType>();
-            const auto* to = unit.types.Get(result_type).As<PackedArrayType>();
+            const auto* from = unit.types.Get(*operand_type).As<IntegralType>();
+            const auto* to = unit.types.Get(result_type).As<IntegralType>();
             if (from != nullptr && to != nullptr && *from != *to) {
               throw InternalError(
                   "lir verify: cast changes its value's representation");
@@ -154,8 +151,8 @@ void VerifyInstr(
                   "every capture its declaration lists");
             }
           },
-          [](const ArrayInstr&) {}, [](const TagTestInstr&) {},
-          [](const BinaryInstr&) {}, [](const UnaryInstr&) {},
+          [](const ArrayInstr&) {}, [](const BinaryInstr&) {},
+          [](const UnaryInstr&) {},
           // Where it may stand is a property of the block rather than of the
           // instruction, so it is held where the blocks are walked.
           [](const ReceiveDepartureInstr&) {}, [](const OpenVariablesInstr&) {},

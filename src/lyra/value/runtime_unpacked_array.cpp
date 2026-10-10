@@ -12,45 +12,53 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/value/any_value.hpp"
 #include "lyra/value/basic_dynamic_array.hpp"
-#include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/library_value_types.hpp"
-#include "lyra/value/net_resolution.hpp"
-#include "lyra/value/packed_array.hpp"
-#include "lyra/value/packed_type.hpp"
-#include "lyra/value/position.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_value_type.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/value_type.hpp"
+#include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::value {
 
 namespace {
 
-// An array of byte elements of `element_type`, the first of them the bytes
-// `bytes` holds and the rest the element default (LRM 5.9).
+// An array of byte elements of `element`, the first of them the bytes `bytes`
+// holds and the rest the element default (LRM 5.9).
 auto FromBytes(
-    std::string_view bytes, const PackedType& element_type,
-    const PackedArray& count) -> RuntimeUnpackedArray {
-  const auto element_count = static_cast<std::size_t>(count.ToInt64());
-  const PackedArray element_default{element_type};
-  std::vector<PackedArray> elements;
+    std::string_view bytes, const IntegralValueType& element,
+    std::int64_t count) -> RuntimeUnpackedArray {
+  const auto element_count = static_cast<std::size_t>(count);
+  const auto laid_out = [&](const LoadedWords& planes) {
+    return AnyValue::Built(element, [&](void* out) { planes.StoreTo(out); });
+  };
+  LoadedWords unknown(element.Shape());
+  FillScalar(unknown.Write(), element.Shape().width, FourStateBit::kUnknown);
+  const AnyValue element_default = laid_out(unknown);
+  std::vector<AnyValue> elements;
   elements.reserve(element_count);
   for (std::size_t i = 0; i < element_count; ++i) {
-    elements.push_back(
-        i < bytes.size()
-            ? PackedArray::FromInt(
-                  static_cast<unsigned char>(bytes[i]), element_type)
-            : element_default);
+    if (i >= bytes.size()) {
+      elements.push_back(element_default);
+      continue;
+    }
+    LoadedWords byte(element.Shape());
+    FromInt(
+        byte.Write(), element.Shape().width,
+        static_cast<unsigned char>(bytes[i]));
+    elements.push_back(laid_out(byte));
   }
   std::vector<const void*> items;
   items.reserve(elements.size());
-  for (const PackedArray& element : elements) {
-    items.push_back(&element);
+  for (const AnyValue& held : elements) {
+    items.push_back(held.Bytes());
   }
-  return {lyra_rt_packed_value_type, &element_default, items};
+  return {element, element_default.Bytes(), items};
 }
 
 }  // namespace
@@ -114,28 +122,32 @@ auto RuntimeUnpackedArray::FromElements(
 }
 
 auto RuntimeUnpackedArray::FromString(
-    const String& text, const PackedType& element_type,
-    const PackedArray& count) -> RuntimeUnpackedArray {
-  return FromBytes(text.View(), element_type, count);
+    const String& text, const IntegralValueType& element, std::int64_t count)
+    -> RuntimeUnpackedArray {
+  return FromBytes(text.View(), element, count);
 }
 
-auto RuntimeUnpackedArray::FromPackedArray(
-    const PackedArray& bits, const PackedType& element_type,
-    const PackedArray& count) -> RuntimeUnpackedArray {
-  return FromBytes(bits.ByteString(), element_type, count);
+auto RuntimeUnpackedArray::FromIntegral(
+    const ConstIntegralView& bits, const IntegralValueType& element,
+    std::int64_t count) -> RuntimeUnpackedArray {
+  return FromBytes(BytesOf(bits), element, count);
 }
 
 auto RuntimeUnpackedArray::ToByteString() const -> String {
-  if (&ElementType() != &lyra_rt_packed_value_type) {
+  const IntegralValueType* byte_type = ElementType().AsIntegral();
+  if (byte_type == nullptr) {
     throw InternalError(
-        "RuntimeUnpackedArray::ToByteString: a byte array holds packed "
+        "RuntimeUnpackedArray::ToByteString: a byte array holds integral "
         "elements");
   }
   std::string out;
   out.reserve(Count());
+  const IntegralShape shape = byte_type->Shape();
   for (std::size_t i = 0; i < Count(); ++i) {
-    const auto& byte = *static_cast<const PackedArray*>(ElementAt(i));
-    out.push_back(static_cast<char>(byte.ToInt64() & 0xFF));
+    const LoadedWords element = byte_type->Load(ElementAt(i));
+    out.push_back(
+        static_cast<char>(
+            ToInt64(element.Read(), shape.width, shape.signedness) & 0xFF));
   }
   return String{std::move(out)};
 }
@@ -152,8 +164,8 @@ auto RuntimeUnpackedArray::Count() const -> std::size_t {
   return core_.has_value() ? core_->Count() : 0;
 }
 
-auto RuntimeUnpackedArray::Size() const -> PackedArray {
-  return PackedArray::Int(static_cast<std::int32_t>(Count()));
+auto RuntimeUnpackedArray::Size() const -> Int {
+  return Int::FromInt(static_cast<std::int64_t>(Count()));
 }
 
 auto RuntimeUnpackedArray::ElementAt(std::size_t position) const -> const
@@ -173,32 +185,32 @@ auto RuntimeUnpackedArray::ElementAt(std::size_t position) -> void* {
   return Installed().At(position);
 }
 
-auto RuntimeUnpackedArray::Element(const PackedArray& position) const -> const
-    void* {
+auto RuntimeUnpackedArray::Element(std::optional<std::int64_t> position) const
+    -> const void* {
   return Installed().ElementAt(position);
 }
 
 auto RuntimeUnpackedArray::ElementRef(
-    const PackedArray& position, Formation& formed) -> void* {
+    std::optional<std::int64_t> position, Formation& formed) -> void* {
   return Installed().ElementRef(position, formed);
 }
 
 auto RuntimeUnpackedArray::SliceElements(
-    const PackedArray& start, std::int64_t count) const
+    std::optional<std::int64_t> start, std::int64_t count) const
     -> std::vector<const void*> {
-  return Installed().SliceElements(ReadPosition(start), SliceCount(count));
+  return Installed().SliceElements(start, SliceCount(count));
 }
 
-auto RuntimeUnpackedArray::Slice(const PackedArray& start, std::int64_t count)
-    const -> RuntimeUnpackedArray {
+auto RuntimeUnpackedArray::Slice(
+    std::optional<std::int64_t> start, std::int64_t count) const
+    -> RuntimeUnpackedArray {
   return {ElementType(), ElementDefault(), SliceElements(start, count)};
 }
 
 auto RuntimeUnpackedArray::AssignSlice(
-    const PackedArray& start, std::int64_t count,
+    std::optional<std::int64_t> start, std::int64_t count,
     std::span<const void* const> replacement) -> bool {
-  return Installed().AssignSlice(
-      ReadPosition(start), SliceCount(count), replacement);
+  return Installed().AssignSlice(start, SliceCount(count), replacement);
 }
 
 void RuntimeUnpackedArray::Permute(std::span<const std::size_t> order) {
@@ -208,22 +220,22 @@ void RuntimeUnpackedArray::Permute(std::span<const std::size_t> order) {
 // An array with no element type yet holds no elements, which is all a
 // comparison with one can read.
 auto RuntimeUnpackedArray::operator==(const RuntimeUnpackedArray& other) const
-    -> PackedArray {
+    -> FourStateBit {
   if (!core_.has_value() || !other.core_.has_value()) {
-    return PackedArray::Bit(Count() == other.Count());
+    return detail::ScalarOf(Count() == other.Count());
   }
   return detail::SequenceEqual(*core_, *other.core_);
 }
 
 auto RuntimeUnpackedArray::operator!=(const RuntimeUnpackedArray& other) const
-    -> PackedArray {
-  return !(*this == other);
+    -> FourStateBit {
+  return Inverted(*this == other);
 }
 
 auto RuntimeUnpackedArray::CaseEqual(const RuntimeUnpackedArray& other) const
-    -> PackedArray {
+    -> Bit {
   if (!core_.has_value() || !other.core_.has_value()) {
-    return PackedArray::Bit(Count() == other.Count());
+    return Bit::FromBool(Count() == other.Count());
   }
   return detail::SequenceCaseEqual(*core_, *other.core_);
 }
@@ -257,7 +269,7 @@ auto RuntimeUnpackedArray::Dominating(const RuntimeUnpackedArray& weaker) const
 }
 
 auto RuntimeUnpackedArray::FilledLike(
-    const RuntimeUnpackedArray& prototype, const PackedArray& fill)
+    const RuntimeUnpackedArray& prototype, const Logic& fill)
     -> RuntimeUnpackedArray {
   return RuntimeUnpackedArray(prototype.Installed().FilledLike(fill));
 }
@@ -274,29 +286,32 @@ auto RuntimeUnpackedArray::HasUnknown() const -> bool {
   return core_.has_value() && detail::SequenceHasUnknown(*core_);
 }
 
-auto RuntimeUnpackedArray::IsUnknown() const -> PackedArray {
-  return PackedArray::Bit(HasUnknown());
+auto RuntimeUnpackedArray::IsUnknown() const -> Bit {
+  return Bit::FromBool(HasUnknown());
 }
 
-auto RuntimeUnpackedArray::BitstreamWidth() const -> PackedArray {
-  return core_.has_value() ? detail::SequenceBitstreamWidth(*core_)
-                           : PackedArray::Int(0);
+auto RuntimeUnpackedArray::BitstreamWidth() const -> Int {
+  return Int::FromInt(
+      core_.has_value() ? detail::SequenceBitstreamWidth(*core_) : 0);
 }
 
-auto RuntimeUnpackedArray::CountBits(const PackedArray& control_bits) const
-    -> PackedArray {
-  return core_.has_value() ? detail::SequenceCountBits(*core_, control_bits)
-                           : PackedArray::Int(0);
+auto RuntimeUnpackedArray::CountBits(
+    const ConstIntegralView& control_bits) const -> Int {
+  return Int::FromInt(
+      core_.has_value() ? detail::SequenceCountBits(*core_, control_bits) : 0);
 }
 
-auto RuntimeUnpackedArray::ToBitstream() const -> PackedArray {
-  return Installed().ToBitstream();
+auto RuntimeUnpackedArray::WriteToStream(
+    Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+    -> std::uint64_t {
+  return Installed().WriteToStream(stream, stream_width, filled);
 }
 
-auto RuntimeUnpackedArray::FromBitstream(
-    const PackedArray& bits, const RuntimeUnpackedArray& prototype)
-    -> RuntimeUnpackedArray {
-  return RuntimeUnpackedArray(prototype.Installed().FromBitstream(bits));
+auto RuntimeUnpackedArray::ReadFromStream(
+    ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+    -> std::pair<RuntimeUnpackedArray, std::uint64_t> {
+  auto [read, after] = Installed().ReadFromStream(stream, stream_width, taken);
+  return {RuntimeUnpackedArray(std::move(read)), after};
 }
 
 }  // namespace lyra::value

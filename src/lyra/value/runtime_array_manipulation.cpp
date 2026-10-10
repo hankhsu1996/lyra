@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "lyra/value/any_value.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
@@ -27,11 +27,11 @@ auto OrdinalEntries(const Ordered& container) -> ArrayEntries {
   entries.positions.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
     entries.elements.push_back(container.ElementAt(i));
-    entries.positions.push_back(PackedArray::Int(static_cast<std::int32_t>(i)));
+    entries.positions.push_back(Int::FromInt(static_cast<std::int64_t>(i)));
   }
   // Every position is in place before any is pointed at.
   entries.indices.reserve(count);
-  for (const PackedArray& position : entries.positions) {
+  for (const Int& position : entries.positions) {
     entries.indices.push_back(&position);
   }
   return entries;

@@ -285,6 +285,7 @@ cc_library(
         ":diag",
         ":mir",
         ":support",
+        ":value",
     ],
 )
 

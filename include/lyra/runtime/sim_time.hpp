@@ -4,7 +4,7 @@
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/real.hpp"
 
 namespace lyra::runtime {
@@ -19,19 +19,17 @@ auto TimeUnitDivisor(std::int8_t unit_power, std::int8_t global_power) noexcept
 
 // $time (LRM 20.3.1): the current time scaled to `unit_power` and rounded to
 // the nearest integer (only the unit conversion rounds; precision does not).
-// `unit_power` arrives as a Lyra value, the same as any other call argument.
-auto SimTimeInUnit(
-    RuntimeEffects& runtime, const value::PackedArray& unit_power)
-    -> value::PackedArray;
+auto SimTimeInUnit(RuntimeEffects& runtime, std::int64_t unit_power)
+    -> value::Time;
 
-// $stime (LRM 20.3.2): the low 32 bits of the $time value.
-auto STimeInUnit(RuntimeEffects& runtime, const value::PackedArray& unit_power)
-    -> value::PackedArray;
+// $stime (LRM 20.3.2): the low 32 bits of the $time value, as an unsigned
+// integer.
+auto STimeInUnit(RuntimeEffects& runtime, std::int64_t unit_power)
+    -> value::IntUnsigned;
 
 // $realtime (LRM 20.3.3): the current time scaled to `unit_power` as a real,
 // keeping any fractional part.
-auto RealTimeInUnit(
-    RuntimeEffects& runtime, const value::PackedArray& unit_power)
+auto RealTimeInUnit(RuntimeEffects& runtime, std::int64_t unit_power)
     -> value::Real;
 
 }  // namespace lyra::runtime

@@ -7,12 +7,14 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -37,7 +39,7 @@ class ChannelCancellation {
   // holding one starts as, before the view it will carry is copied in.
   ChannelCancellation() = default;
 
-  [[nodiscard]] auto IsCancelled() const noexcept -> lyra::value::PackedArray;
+  [[nodiscard]] auto IsCancelled() const noexcept -> value::Bit;
 
  private:
   friend class FileTable;
@@ -47,19 +49,15 @@ class ChannelCancellation {
 
 // What a read that delivers text completes with: how many bytes it read, and
 // the text those bytes make (LRM 21.3.4.2, 21.3.7).
-using TextRead =
-    lyra::value::Tuple<lyra::value::PackedArray, lyra::value::String>;
+using TextRead = value::Tuple<value::Int, value::String>;
 
 // What a read of binary data completes with: how many bytes it read, and the
 // destination those bytes filled (LRM 21.3.4.4). The destination crosses in
 // as well, because its own shape decides how much is read -- a nine-bit word
 // takes two bytes where an eight-bit one takes one -- and what the file does
 // not reach keeps what it held.
-using PackedRead =
-    lyra::value::Tuple<lyra::value::PackedArray, lyra::value::PackedArray>;
-using MemoryRead = lyra::value::Tuple<
-    lyra::value::PackedArray,
-    lyra::value::UnpackedArray<lyra::value::PackedArray>>;
+template <class Destination>
+using BinaryRead = value::Tuple<value::Int, Destination>;
 
 // Owns file handles opened by `$fopen` (LRM 21.3.1). Two descriptor shapes
 // share the same int32 namespace:
@@ -139,7 +137,7 @@ class FileTable {
   // never closed. Also fires the cancel signal on every affected slot
   // (LRM 21.3.2) and replaces each slot's stop_source so the next open on
   // a reused slot starts with a fresh signal.
-  void Close(std::int32_t descriptor);
+  void Close(std::int64_t descriptor);
 
   // Returns the owned `std::fstream*` for `descriptor`, or nullptr if the
   // descriptor does not address an owned stream. Returns nullptr for
@@ -163,13 +161,13 @@ class FileTable {
   // `AdvanceFd` to commit the byte count the parser actually used.
   // Invalid / closed / non-readable descriptors return empty and stamp
   // EBADF.
-  auto PeekBuffered(const value::PackedArray& fd) -> value::String;
+  auto PeekBuffered(std::int64_t fd) -> value::String;
 
   // LRM 21.3.4.3 commit half of the peek/advance pair: drop `n` bytes
   // from the head of the most recent peek (putback first, then file
   // bytes); any unconsumed tail goes back to the stream so the next read
   // sees it again.
-  void AdvanceFd(const value::PackedArray& fd, const value::PackedArray& n);
+  void AdvanceFd(std::int64_t fd, std::int64_t n);
 
   // LRM 21.3.7 $ferror state. The runtime entry points stamp the most recent
   // error for an FD via `SetError`; `$ferror(fd, str)` returns the saved
@@ -190,98 +188,84 @@ class FileTable {
   // even if the slot is later reused (the new open installs a fresh
   // source -- the old token still observes the old, permanently-stopped
   // state through its own refcount).
-  [[nodiscard]] auto CancellationFor(const lyra::value::PackedArray& descriptor)
+  [[nodiscard]] auto CancellationFor(std::int64_t descriptor)
       -> ChannelCancellation;
 
   // LRM 21.2.1 / 21.3.2 sink write. Dispatches by descriptor: stdout
   // sentinel routes through the stream dispatcher, stderr sentinel through
   // std::cerr, owned FDs / MCDs through this table's fstreams. `Writeln`
   // appends a trailing newline.
-  void Write(
-      const lyra::value::PackedArray& descriptor,
-      const lyra::value::String& text);
-  void Writeln(
-      const lyra::value::PackedArray& descriptor,
-      const lyra::value::String& text);
+  void Write(std::int64_t descriptor, const lyra::value::String& text);
+  void Writeln(std::int64_t descriptor, const lyra::value::String& text);
 
   // LRM 21.3.1 $fopen. Opening without a mode yields a multichannel
   // descriptor (MCD form) and opening with one yields a single file
   // descriptor (FD form), so each has a name of its own. On failure both
   // return 0 (file cannot be opened, all MCD slots in use, or unknown mode
   // string).
-  auto Open(const lyra::value::String& name) -> lyra::value::PackedArray;
-  auto OpenWithMode(
-      const lyra::value::String& name, const lyra::value::String& mode)
-      -> lyra::value::PackedArray;
+  auto Open(const value::String& name) -> value::Int;
+  auto OpenWithMode(const value::String& name, const value::String& mode)
+      -> value::Int;
 
-  // LRM 21.3.1 $fclose. No-op for 0 / pre-bound stdio FDs; for an MCD
-  // closes every set-bit channel and fires the per-channel cancel signal.
-  void Close(const lyra::value::PackedArray& descriptor);
-
-  // LRM 21.3.4.1 $fgetc. Returns the next byte as an int32 PackedArray,
-  // or -1 on EOF / error. A pending $ungetc putback (if any) is the
-  // first byte returned.
-  auto Getc(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
+  // LRM 21.3.4.1 $fgetc. Returns the next byte as an SV `int`, or -1 on EOF /
+  // error. A pending $ungetc putback (if any) is the first byte returned.
+  auto Getc(std::int64_t fd) -> value::Int;
 
   // LRM 21.3.4.1 $ungetc. Pushes the low byte of `c` back onto the FD's
   // input buffer (single-byte slot-side putback; a second $ungetc before
   // any read returns -1). Returns 0 on success or -1 on error.
-  auto Ungetc(
-      const lyra::value::PackedArray& c, const lyra::value::PackedArray& fd)
-      -> lyra::value::PackedArray;
+  auto Ungetc(std::int64_t c, std::int64_t fd) -> value::Int;
 
   // LRM 21.3.4.2 $fgets. Reads bytes up to and including the next newline, or
   // until EOF, and completes with how many it read -- zero on error -- and the
   // line they make.
-  auto Gets(const lyra::value::PackedArray& fd) -> TextRead;
+  auto Gets(std::int64_t fd) -> TextRead;
 
-  // LRM 21.3.4.4 $fread into a packed destination. Reads (BitWidth+7)/8
-  // bytes big-endian (first byte fills MSBs); the destination's shape drives
-  // the result's width / sign / 4-state.
-  auto Read(lyra::value::PackedArray dest, const lyra::value::PackedArray& fd)
-      -> PackedRead;
+  // LRM 21.3.4.4 $fread into a packed destination. Reads (width+7)/8 bytes
+  // big-endian (first byte fills MSBs) into the destination at its own type,
+  // and answers how many it read; a read that reaches no byte leaves the
+  // destination as it was.
+  template <value::IntegralValue T>
+  auto Read(T dest, std::int64_t fd) -> BinaryRead<T>;
+  auto ReadInto(const value::IntegralView& dest, std::int64_t fd) -> value::Int;
 
   // LRM 21.3.4.4 $fread into a memory. Iterates `dest` from SV index
   // `sv_start` toward the highest declared SV index, reading until EOF or
-  // `count` elements. `declared_left` / `declared_right` are the
-  // destination's declared bounds. The caller always supplies `sv_start` and
-  // `count`, materializing the lowest declared index and the whole remaining
-  // range where the SV call leaves them out, so one entry serves every form
-  // the source may write.
+  // `count` elements. `bounds` states the destination's declared range. The
+  // caller always supplies `sv_start` and `count`, materializing the lowest
+  // declared index and the whole remaining range where the SV call leaves them
+  // out, so one entry serves every form the source may write.
+  template <value::IntegralValue T>
   auto ReadMemory(
-      lyra::value::UnpackedArray<lyra::value::PackedArray> dest,
-      const lyra::value::PackedArray& fd,
-      const lyra::value::UnpackedRange& declared,
-      const lyra::value::PackedArray& sv_start,
-      const lyra::value::PackedArray& count) -> MemoryRead;
+      value::UnpackedArray<T> dest, std::int64_t fd,
+      std::span<const std::int64_t> bounds, std::int64_t sv_start,
+      std::int64_t count) -> BinaryRead<value::UnpackedArray<T>>;
 
   // LRM 21.3.5 $fseek. `operation` is 0/1/2 for SEEK_SET / SEEK_CUR /
   // SEEK_END. Returns 0 on success or -1 on error. Per LRM, any pending
   // $ungetc operation is cancelled.
-  auto Seek(
-      const lyra::value::PackedArray& fd,
-      const lyra::value::PackedArray& offset,
-      const lyra::value::PackedArray& operation) -> lyra::value::PackedArray;
+  auto Seek(std::int64_t fd, std::int64_t offset, std::int64_t operation)
+      -> value::Int;
 
   // LRM 21.3.5 $rewind. Equivalent to $fseek(fd, 0, 0).
-  auto Rewind(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
+  auto Rewind(std::int64_t fd) -> value::Int;
 
   // LRM 21.3.5 $ftell. Returns the current position or -1 on error.
-  auto Tell(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
+  auto Tell(std::int64_t fd) -> value::Int;
 
   // LRM 21.3.8 $feof. Returns a nonzero value once an EOF has been
   // observed on `fd`, zero otherwise.
-  auto Eof(const lyra::value::PackedArray& fd) -> lyra::value::PackedArray;
+  auto Eof(std::int64_t fd) -> value::Int;
 
   // LRM 21.3.7 $ferror. Completes with the most recent errno stamped on `fd`
   // and its textual message. The slot's error state is cleared after the read.
-  auto Error(const lyra::value::PackedArray& fd) -> TextRead;
+  auto Error(std::int64_t fd) -> TextRead;
 
   // LRM 21.3.6 $fflush. Flushing every open file and flushing the channels a
   // descriptor addresses -- a single FD, or every set-bit MCD channel -- are
   // two requests, so each has a name of its own.
   void FlushAll();
-  void Flush(const lyra::value::PackedArray& descriptor);
+  void Flush(std::int64_t descriptor);
 
  private:
   // LRM 21.3.1: at most 31 MCD slots (bits 1..30); bit 0 is stdout-sentinel.
@@ -304,20 +288,51 @@ class FileTable {
 // `start_sv` toward the highest declared index, stopping at end of file or
 // after `count` words, and hands each word to `write_word` by its
 // source-declared index -- the coordinate system the declared range states,
-// which the holder resolves. `element_prototype` states the shape a word
-// takes, which is what decides how many bytes one costs. Answers with the byte
-// count, zero where nothing was read.
+// which the holder resolves -- as the bytes it takes, most significant first.
+// `element_width` is how wide a word is, which is what decides how many bytes
+// one costs; a word the file ends inside has zeros for the bytes it lacks.
+// Answers with the byte count, zero where nothing was read.
 //
 // The holder is a parameter because a memory reached through a monomorphized
 // container and one reached through an erased handle are the same load; a
 // second copy of the addressing and the partial-word rule would be two
 // readings of one clause.
 auto ReadMemoryWords(
-    FileTable& files, const lyra::value::PackedArray& fd,
-    const lyra::value::PackedArray& element_prototype,
-    const lyra::value::UnpackedRange& declared, std::int64_t start_sv,
+    FileTable& files, std::int64_t fd, std::uint64_t element_width,
+    const value::UnpackedRange& declared, std::int64_t start_sv,
     std::int64_t count,
-    const std::function<void(std::int64_t, lyra::value::PackedArray)>&
-        write_word) -> std::int32_t;
+    const std::function<void(std::int64_t, std::span<const char>)>& write_word)
+    -> std::int32_t;
+
+// LRM 21.3.4.4: `bytes` as the value `dest` holds, the first byte filling its
+// most significant location and what they span below its width truncated.
+void ReadBigEndian(
+    const value::IntegralView& dest, std::span<const char> bytes);
+
+template <value::IntegralValue T>
+auto FileTable::Read(T dest, std::int64_t fd) -> BinaryRead<T> {
+  typename T::Words held = dest.Load();
+  const value::Int read = ReadInto(held.MutableView(), fd);
+  return BinaryRead<T>{read, T::FromWords(held)};
+}
+
+template <value::IntegralValue T>
+auto FileTable::ReadMemory(
+    value::UnpackedArray<T> dest, std::int64_t fd,
+    std::span<const std::int64_t> bounds, std::int64_t sv_start,
+    std::int64_t count) -> BinaryRead<value::UnpackedArray<T>> {
+  const value::UnpackedRange declared = value::UnpackedRangesOf(bounds).front();
+  const std::int32_t read = ReadMemoryWords(
+      *this, fd, T::kWidth, declared, sv_start, count,
+      [&dest, &declared](std::int64_t sv_index, std::span<const char> bytes) {
+        typename T::Words word;
+        ReadBigEndian(word.MutableView(), bytes);
+        dest.ElementRef(
+            value::Position::FromInt(declared.ToOrdinal(sv_index))) =
+            T::FromWords(word);
+      });
+  return BinaryRead<value::UnpackedArray<T>>{
+      value::Int::FromInt(read), std::move(dest)};
+}
 
 }  // namespace lyra::runtime

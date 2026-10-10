@@ -1,11 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -24,11 +23,10 @@ class HierarchySegment {
  public:
   HierarchySegment();
 
-  // The emit passes indices as a `std::array<PackedArray, N>` so the span
-  // ctor absorbs every fixed-shape literal. The PackedArrays are copied
-  // into the segment's owning vector; the source array can be a temporary.
+  // The indices are copied into the segment's owning vector, so the sequence
+  // they arrive in can be a temporary.
   HierarchySegment(
-      std::string base_name, std::span<const value::PackedArray> indices);
+      std::string base_name, std::span<const std::int64_t> indices);
 
   HierarchySegment(const HierarchySegment&);
   auto operator=(const HierarchySegment&) -> HierarchySegment&;
@@ -46,7 +44,7 @@ class HierarchySegment {
 
  private:
   std::string base_name_;
-  std::vector<value::PackedArray> indices_;
+  std::vector<std::int64_t> indices_;
 };
 
 }  // namespace lyra::runtime

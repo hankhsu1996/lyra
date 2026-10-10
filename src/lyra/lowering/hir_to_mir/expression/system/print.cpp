@@ -12,6 +12,7 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
@@ -34,7 +35,7 @@ namespace {
 // $write / $strobe lowerings that don't carry a user-supplied descriptor.
 auto BuildStdoutFdLiteral(const mir::CompilationUnit& unit, mir::Block& block)
     -> mir::ExprId {
-  return BuildIntLiteral(unit, block, support::kStdoutFd);
+  return BuildMachineIntLiteral(unit, block, support::kStdoutFd);
 }
 
 auto LowerDescriptor(
@@ -106,7 +107,8 @@ auto LowerStrobeCall(
                         mir::Direct{
                             .target = support::BuiltinFn::kCancellationFor,
                             .receiver = outer_files},
-                    .arguments = {*outer_user_descriptor}},
+                    .arguments = {BuildToInt64Call(
+                        unit, block, *outer_user_descriptor)}},
             .type = unit.builtins.channel_cancellation});
   }
 
@@ -154,8 +156,8 @@ auto LowerStrobeCall(
 
   const mir::ExprId body_fd =
       body_user_descriptor.has_value()
-          ? *body_user_descriptor
-          : BuildStdoutFdLiteral(process.Owner().Unit(), body);
+          ? BuildToInt64Call(unit, body, *body_user_descriptor)
+          : BuildStdoutFdLiteral(unit, body);
   const mir::ExprId write_call = EmitFormatThenWrite(
       process, body, items_array, body_fd, print.append_newline);
   body.AppendStmt(mir::ExprStmt{.expr = write_call});
@@ -193,7 +195,8 @@ auto LowerPrintSystemSubroutineCall(
   if (is_file_sink) {
     auto desc_or = LowerDescriptor(process, frame, call);
     if (!desc_or) return std::unexpected(std::move(desc_or.error()));
-    user_descriptor = block.exprs.Add(*std::move(desc_or));
+    user_descriptor =
+        BuildToInt64Call(unit, block, block.exprs.Add(*std::move(desc_or)));
     arg_offset = 1;
   }
 
@@ -206,10 +209,9 @@ auto LowerPrintSystemSubroutineCall(
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
 
-  const mir::ExprId fd =
-      user_descriptor.has_value()
-          ? *user_descriptor
-          : BuildStdoutFdLiteral(process.Owner().Unit(), block);
+  const mir::ExprId fd = user_descriptor.has_value()
+                             ? *user_descriptor
+                             : BuildStdoutFdLiteral(unit, block);
   const mir::ExprId write_call = EmitFormatThenWrite(
       process, block, items_array, fd, print.append_newline);
   return block.exprs.Get(write_call);

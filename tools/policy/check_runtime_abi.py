@@ -55,6 +55,14 @@ Rules:
 
         Scoped like R004.
 
+  R009  The operations over integral values are published as one table, whose
+        entries both sides read off one declaration list, so nothing about an
+        entry in it is written twice. The table's own name is the exception.
+        The generated module loads it by a string and the runtime defines it
+        as a symbol, so the two are one name stated once on each side. A
+        disagreement is a module asking for a symbol nothing defines, which a
+        link reports with no word about which operation was meant.
+
 Usage:
   python3 tools/policy/check_runtime_abi.py
 """
@@ -68,6 +76,10 @@ HEADER = "include/lyra/runtime/runtime_abi.hpp"
 SOURCE = "src/lyra/runtime/runtime_abi.cpp"
 BINDINGS = "src/lyra/program/program_sink.cpp"
 ENTRIES = "src/lyra/support/builtin_fn.cpp"
+# Where the table of operations over integral values is named for the
+# generated module, and where the runtime defines it.
+TABLE_NAME = "include/lyra/runtime/integral_abi.hpp"
+TABLE_DEFINITION = "src/lyra/runtime/integral_abi.cpp"
 
 # An entry opens a line, so a prototype and a definition are the same shape and
 # are read the same way. An indented match is a continuation line or a nested
@@ -84,6 +96,11 @@ RE_NOEXCEPT = re.compile(r"\s*noexcept")
 # properties it states.
 RE_ROW = re.compile(r"case BuiltinFn::\w+:\s*return\s*\{(.*?)\};", re.S)
 RE_ROW_NAME = re.compile(r'\.name = "(\w+)"')
+# The table's name as the string the generated module loads it by, and as the
+# symbol a definition opening a line gives it.
+RE_TABLE_NAME = re.compile(r'kIntegralEntriesSymbol\s*=\s*"(lyra_rt_\w+)"')
+RE_TABLE_DEFINITION = re.compile(
+    r"^constinit const [\w:]+\s+(lyra_rt_\w+)\s*=", re.MULTILINE)
 
 # How many integer argument registers the host's calling convention has
 # (System V AMD64), what a span is spelled as, and the parameter types that go
@@ -131,6 +148,8 @@ class Abi(NamedTuple):
     handle_rows: dict[str, bool] = {}
     return_rows: dict[str, bool] = {}
     spilled_spans: list[Entry] = []
+    table_named: list[str] = []
+    table_defined: list[str] = []
 
 
 def line_of(text: str, offset: int) -> int:
@@ -340,12 +359,33 @@ def check_r008(abi: Abi) -> list[str]:
         "declares")
 
 
+def check_r009(abi: Abi) -> list[str]:
+    if len(abi.table_named) != 1:
+        return [
+            f"  {TABLE_NAME}: R009 the table of integral operations is named "
+            f"for the generated module {len(abi.table_named)} times, and it is "
+            f"one table"]
+    if len(abi.table_defined) != 1:
+        return [
+            f"  {TABLE_DEFINITION}: R009 the table of integral operations is "
+            f"defined {len(abi.table_defined)} times, and it is one table"]
+    if abi.table_named != abi.table_defined:
+        return [
+            f"  {TABLE_DEFINITION}: R009 the generated module loads the table "
+            f"of integral operations as '{abi.table_named[0]}' and the runtime "
+            f"defines it as '{abi.table_defined[0]}'"]
+    return []
+
+
 def load(root: Path) -> Abi:
     header = (root / HEADER).read_text()
     entries = (root / ENTRIES).read_text()
     return Abi(
         declared=entries_of(header),
         defined=entries_of((root / SOURCE).read_text()),
+        table_named=RE_TABLE_NAME.findall((root / TABLE_NAME).read_text()),
+        table_defined=RE_TABLE_DEFINITION.findall(
+            (root / TABLE_DEFINITION).read_text()),
         bound=bindings_of((root / BINDINGS).read_text()),
         handle_takers=handle_takers_of(header),
         non_raisers=non_raisers_of(header),
@@ -491,6 +531,32 @@ def run_self_tests() -> bool:
         == 1,
         "R007 reports each entry it was handed")
 
+    named = 'kIntegralEntriesSymbol =\n    "lyra_rt_t";'
+    defines = (
+        "extern constinit const lyra::runtime::IntegralEntries\n"
+        "    lyra_rt_t;\n"
+        "constinit const lyra::runtime::IntegralEntries lyra_rt_{} =\n"
+        "    Table();")
+
+    def table(name, definition) -> Abi:
+        return Abi(
+            [], [], [], table_named=RE_TABLE_NAME.findall(name),
+            table_defined=RE_TABLE_DEFINITION.findall(definition))
+
+    ok &= expect(
+        not check_r009(table(named, defines.format("t"))),
+        "R009 is silent when the table is defined under the name it is "
+        "loaded by")
+    ok &= expect(
+        len(check_r009(table(named, defines.format("u")))) == 1,
+        "R009 reports a table defined under another name than it is loaded by")
+    ok &= expect(
+        len(check_r009(table("", defines.format("t")))) == 1,
+        "R009 reports a table the generated module is given no name for")
+    ok &= expect(
+        len(check_r009(table(named, ""))) == 1,
+        "R009 reports a table nothing defines")
+
     ok &= expect(
         prototypes_of(
             "auto lyra_rt_a(\n    const void* p, void* (*body)(void* self, "
@@ -511,7 +577,7 @@ def main() -> int:
     abi = load(Path(__file__).resolve().parents[2])
     failures = (
         check_r001(abi) + check_r002(abi) + check_r003(abi) + check_r004(abi)
-        + check_r007(abi) + check_r008(abi))
+        + check_r007(abi) + check_r008(abi) + check_r009(abi))
 
     if failures:
         print("Runtime ABI check failed:")

@@ -10,6 +10,7 @@
 #include <exception>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,6 +29,7 @@
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/distribution.hpp"
 #include "lyra/runtime/dpi_context.hpp"
+#include "lyra/runtime/erased_value_families.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/finish.hpp"
@@ -54,6 +56,7 @@
 #include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/simulation_entry.hpp"
 #include "lyra/runtime/value_change_wait.hpp"
+#include "lyra/runtime/value_families.hpp"
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/event_edge.hpp"
@@ -65,9 +68,11 @@
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_value_type.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/library_value_types.hpp"
 #include "lyra/value/managed_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/require.hpp"
 #include "lyra/value/runtime_array_manipulation.hpp"
@@ -424,6 +429,210 @@ auto OpenTupleRefWrite(void* reference, void* out) -> void* {
       static_cast<OpenWrite*>(out), TupleReference{ErasedAt(reference)});
 }
 
+// The integral type an entry is told where it builds values of one and keeps
+// them with it -- a key of an associative memory, an element of a byte array.
+auto IntegralTypeAt(const void* type) -> const value::IntegralValueType& {
+  return *static_cast<const value::IntegralValueType*>(type);
+}
+
+// What an entry is told of an integral operand it reads as a number: how wide
+// it is, whether it is signed, and whether an unknown plane follows the value
+// plane.
+auto NumberShape(std::int64_t width, bool is_signed, bool is_four_state)
+    -> value::IntegralShape {
+  return value::IntegralShape{
+      .width = static_cast<std::uint64_t>(width),
+      .signedness =
+          is_signed ? value::Signedness::kSigned : value::Signedness::kUnsigned,
+      .domain = is_four_state ? value::StateDomain::kFourState
+                              : value::StateDomain::kTwoState};
+}
+
+// The planes of such an operand, and of one the entry reads the bits of, whose
+// signedness it is told nothing of.
+auto NumberAt(
+    const void* value, std::int64_t width, bool is_signed, bool is_four_state)
+    -> value::LoadedWords {
+  return value::LoadedWords::Load(
+      value, NumberShape(width, is_signed, is_four_state));
+}
+
+auto BitsAt(const void* value, std::int64_t width, bool is_four_state)
+    -> value::LoadedWords {
+  return value::LoadedWords::Load(
+      value, NumberShape(width, false, is_four_state));
+}
+
+// The machine number such planes hold.
+auto IntOf(const value::LoadedWords& number) -> std::int64_t {
+  return value::ToInt64(
+      number.Read(), number.Shape().width, number.Shape().signedness);
+}
+
+// The position a position value names, none where it holds x or z (LRM
+// 7.4.5).
+auto PositionNamedAt(const void* position) -> std::optional<std::int64_t> {
+  return value::ReadPosition(Read<value::Position>(position));
+}
+
+// The same over an integral value wider than a word, which a reference names
+// as its bytes where they lie for the reason it names a tuple so. Nothing in
+// those bytes says how many of them the value is, so an access that has to
+// know is told how wide the value is.
+template <value::HeldAsWords T>
+auto ReferToWideCell(void* cell, void* out) -> void* {
+  auto& variable = *static_cast<Var<T>*>(cell);
+  return BuildReference(
+      out, ErasedReference{
+               .holder = static_cast<VariableCell*>(&variable),
+               .storage = HandleTo(variable.Storage()),
+               .whole = true});
+}
+
+// The value of `T` a reference names, where it lies, `width` bits wide.
+template <value::HeldAsWords T>
+auto WideLentAt(const ErasedReference& lent, std::int64_t width)
+    -> value::WideAt<T::kDomain> {
+  return {.bytes = lent.storage, .width = static_cast<std::uint64_t>(width)};
+}
+
+template <value::HeldAsWords T>
+void WideRefSet(void* reference, std::int64_t width, const void* value) {
+  const ErasedReference& lent = ErasedAt(reference);
+  if (!lent.Admits()) {
+    return;
+  }
+  const value::WideAt<T::kDomain> held = WideLentAt<T>(lent, width);
+  const auto assign = [&] { std::memmove(held.bytes, value, held.ByteSize()); };
+  if (!lent.Watched()) {
+    assign();
+    return;
+  }
+  if (std::memcmp(held.bytes, value, held.ByteSize()) == 0) {
+    return;
+  }
+  lent.Report(ReplaceWhole(held, assign));
+}
+
+template <value::HeldAsWords T>
+void WideRefArmSampling(void* reference) {
+  const ErasedReference& lent = ErasedAt(reference);
+  if (lent.whole) {
+    WholeVariable<T>(lent).ArmSampling();
+  }
+}
+
+template <value::HeldAsWords T>
+auto WideRefSampledLoad(void* reference, std::int64_t width, void* out)
+    -> void* {
+  const ErasedReference& lent = ErasedAt(reference);
+  return std::visit(
+      Overloaded{
+          [&](std::monostate) -> void* {
+            const value::WideAt<T::kDomain> held = WideLentAt<T>(lent, width);
+            std::memcpy(out, held.bytes, held.ByteSize());
+            return out;
+          },
+          [&](VariableCell*) -> void* {
+            if (!lent.whole) {
+              throw SimulationError(
+                  "a sampled value of part of a variable lent by reference "
+                  "is not yet supported");
+            }
+            return Emplace(out, WholeVariable<T>(lent).SampledGet());
+          },
+          [](GcObject*) -> void* {
+            throw SimulationError(
+                "a sampled value of a class property lent by reference is not "
+                "yet supported");
+          }},
+      lent.holder);
+}
+
+// An integral value wider than a word lent by reference as a write through the
+// reference reaches it. A copy is a value of its own, which is what a write
+// the variable turns away lands in (LRM 10.6).
+template <value::HeldAsWords T>
+class LentWide {
+ public:
+  LentWide(void* bytes, std::uint64_t width) : width_(width), bytes_(bytes) {
+  }
+  LentWide(const LentWide& other)
+      : width_(other.width_),
+        kept_(other.width_, other.bytes_),
+        bytes_(kept_.Bytes()) {
+  }
+  auto operator=(const LentWide&) -> LentWide& = delete;
+  LentWide(LentWide&&) = delete;
+  auto operator=(LentWide&&) -> LentWide& = delete;
+  ~LentWide() = default;
+
+  [[nodiscard]] auto Width() const -> std::uint64_t {
+    return width_;
+  }
+  [[nodiscard]] auto Bytes() const -> void* {
+    return bytes_;
+  }
+  [[nodiscard]] auto Read() const -> value::ConstPlanes {
+    return value::WidePlanesAt(
+        static_cast<const void*>(bytes_), width_, T::kDomain);
+  }
+
+ private:
+  std::uint64_t width_;
+  // Holds a value only in a copy.
+  T kept_;
+  void* bytes_;
+};
+
+// The sink a write through a reference to such a value writes into: the value
+// where the reference lends it, and what holds that storage to tell.
+template <value::HeldAsWords T>
+class WideReference {
+ public:
+  using ValueType = LentWide<T>;
+
+  WideReference(const ErasedReference& lent, std::uint64_t width)
+      : lent_(lent), place_(lent.storage, width) {
+  }
+  // A copy is the same reference, so it lends the same place.
+  WideReference(const WideReference& other)
+      : lent_(other.lent_), place_(other.lent_.storage, other.place_.Width()) {
+  }
+  WideReference(WideReference&& other) noexcept
+      : lent_(other.lent_), place_(other.lent_.storage, other.place_.Width()) {
+  }
+  auto operator=(const WideReference&) -> WideReference& = delete;
+  auto operator=(WideReference&&) -> WideReference& = delete;
+  ~WideReference() = default;
+
+  [[nodiscard]] auto AdmitsWrite() const -> bool {
+    return lent_.Admits();
+  }
+  [[nodiscard]] auto MutationStorage() -> LentWide<T>& {
+    return place_;
+  }
+  [[nodiscard]] auto Watched() const -> bool {
+    return lent_.Watched();
+  }
+  void PublishTransition(const Change& change) const {
+    lent_.Report(change);
+  }
+
+ private:
+  ErasedReference lent_;
+  LentWide<T> place_;
+};
+
+static_assert(MutationSink<WideReference<value::WideLogicVector>>);
+
+template <value::HeldAsWords T>
+auto OpenWideRefWrite(void* reference, std::int64_t width, void* out) -> void* {
+  return std::construct_at(
+      static_cast<OpenWrite*>(out),
+      WideReference<T>{ErasedAt(reference), static_cast<std::uint64_t>(width)});
+}
+
 // A net and one of its drivers, behind the addresses the ABI carries them as.
 // The fold a net resolves under travels in the net object itself, so one
 // recovery serves every net type: the address names a net, not a net of a
@@ -438,7 +647,7 @@ auto DriverOf(void* driver) -> Driver<T>& {
   return *static_cast<Driver<T>*>(driver);
 }
 
-template <value::NetResolvable T>
+template <NetValue T>
 auto OpenDriverWrite(void* driver, void* out) -> void* {
   return std::construct_at(static_cast<OpenWrite*>(out), DriverOf<T>(driver));
 }
@@ -508,11 +717,11 @@ auto DesignateElement(const void* designation, const Index& index, void* out)
 
 template <typename Container, typename Replacement>
 void AssignDesignatedSlice(
-    const void* designation, const void* start, std::int64_t count,
-    const Replacement& replacement) {
+    const void* designation, std::optional<std::int64_t> start,
+    std::int64_t count, const Replacement& replacement) {
   const ErasedDesignation& within = DesignationAt(designation);
   if (static_cast<Container*>(within.part)
-          ->AssignSlice(Read<value::PackedArray>(start), count, replacement)) {
+          ->AssignSlice(start, count, replacement)) {
     within.write->Moved();
   }
 }
@@ -528,6 +737,18 @@ auto LandDesignation(const void* designation) noexcept -> void* {
 auto LandTupleDesignation(const void* designation) noexcept -> void* {
   const ErasedDesignation& landed = DesignationAt(designation);
   landed.write->LandTuple(landed.part);
+  return landed.part;
+}
+
+// So is an integral value wider than a word, whose bytes do not say how many
+// of them it is, so the landing is told how wide the value is.
+template <value::HeldAsWords T>
+auto LandWideDesignation(const void* designation, std::int64_t width) noexcept
+    -> void* {
+  const ErasedDesignation& landed = DesignationAt(designation);
+  landed.write->LandWide(
+      value::WideAt<T::kDomain>{
+          .bytes = landed.part, .width = static_cast<std::uint64_t>(width)});
   return landed.part;
 }
 
@@ -580,18 +801,25 @@ void SeedAssociativeEntries(
   for (const void* entry : handles) {
     const value::TupleComponent& index =
         value::RuntimeTuple::TypeAt(entry).Components()[0];
+    const void* const stated = value::RuntimeTuple::ComponentAt(entry, 0);
+    // A wildcard index is held with the type it was written in (LRM 7.8.1),
+    // which is the type it is stored and compared by.
+    if (index.type == &lyra_rt_wildcard_index_value_type) {
+      const auto& held = *static_cast<const value::AnyValue*>(stated);
+      array.Store(
+          value::IndexView{.bytes = held.Bytes(), .type = &held.Type()},
+          value::RuntimeTuple::ComponentAt(entry, 1));
+      continue;
+    }
     array.Store(
-        value::IndexView{
-            .bytes = value::RuntimeTuple::ComponentAt(entry, 0),
-            .type = index.type},
+        value::IndexView{.bytes = stated, .type = index.type},
         value::RuntimeTuple::ComponentAt(entry, 1));
   }
 }
 
 // The element count `new[N]` asks for (LRM 7.5.1), which the design computes,
 // so a negative one is its own failure.
-auto NewCount(const value::PackedArray& size) -> std::size_t {
-  const std::int64_t count = size.ToInt64();
+auto NewCount(std::int64_t count) -> std::size_t {
   if (count < 0) {
     throw SimulationError(
         "dynamic array new[N]: size operand is negative (LRM 7.5.1)");
@@ -618,13 +846,24 @@ auto ReplicateHandles(LyraSpan unit, std::int64_t count)
 // An array's elements in its own order, each where it lies (LRM 7.6), for a
 // container built from or extended by them, which copies each. The array is of
 // `type`, one of the kinds whose parts are ordered by position.
+auto PartsOf(const value::ValueType& type) -> const value::PartsByPosition& {
+  const value::PartsByPosition* parts = type.Parts();
+  if (parts == nullptr) {
+    throw InternalError(
+        "a value is walked by position whose type orders no parts so -- "
+        "please report this as a bug");
+  }
+  return *parts;
+}
+
 auto ElementHandles(const void* array, const value::ValueType& type)
     -> std::vector<const void*> {
-  const std::size_t count = type.PartCount(array);
+  const value::PartsByPosition& parts = PartsOf(type);
+  const std::size_t count = parts.Count(array);
   std::vector<const void*> handles;
   handles.reserve(count);
   for (std::size_t position = 0; position < count; ++position) {
-    handles.push_back(type.PartAt(array, position));
+    handles.push_back(parts.At(array, position));
   }
   return handles;
 }
@@ -639,20 +878,9 @@ auto ElementHandles(const Container& array) -> std::vector<const void*> {
   return ElementHandles(&array, value::LibraryTypeOf<Container>());
 }
 
-// A sequence of values of one kind, each crossing as the opaque handle every
-// value crosses as. What the sequence points at is the whole of what the two
-// sides must agree on, the signature saying only that a sequence crosses, so it
-// is read in one place whatever kind of value it holds.
-template <typename T>
-auto ValuesOf(LyraSpan values) -> std::vector<T> {
-  const std::span<const void* const> raw(
-      static_cast<const void* const*>(values.data), values.count);
-  std::vector<T> resolved;
-  resolved.reserve(raw.size());
-  for (const void* value : raw) {
-    resolved.push_back(Read<T>(value));
-  }
-  return resolved;
+// A sequence of machine integers, which crosses as the integers themselves.
+auto MachineIntsOf(LyraSpan values) -> std::span<const std::int64_t> {
+  return {static_cast<const std::int64_t*>(values.data), values.count};
 }
 
 // What a body holding a closure hands over when something longer-lived takes
@@ -684,23 +912,42 @@ auto StreamWidthOf(const void* value, void* out) -> void* {
 }
 
 template <typename T>
-auto StreamCountBitsOf(const void* value, const void* control_bits, void* out)
+auto StreamCountBitsOf(
+    const void* value, const value::LoadedWords& control, void* out) -> void* {
+  value::LibraryTypeOf<T>().CountBits(
+      value, control.Read(), control.Shape().width, out);
+  return out;
+}
+
+// The stream of bits a value makes (LRM 6.24.3), laid out in `out` as the
+// unsigned integral value of `width` bits the caller states it is.
+template <typename Write>
+auto StreamInto(void* out, std::int64_t width, bool is_four_state, Write write)
     -> void* {
-  value::LibraryTypeOf<T>().CountBits(value, control_bits, out);
+  value::LoadedWords stream(NumberShape(width, false, is_four_state));
+  write(stream.Write(), stream.Shape().width);
+  stream.StoreTo(out);
   return out;
 }
 
 template <typename T>
-auto StreamOf(const void* value, void* out) -> void* {
-  value::LibraryTypeOf<T>().ToBitstream(value, out);
-  return out;
+auto StreamOf(
+    const void* value, std::int64_t width, bool is_four_state, void* out)
+    -> void* {
+  return StreamInto(
+      out, width, is_four_state,
+      [&](value::Planes stream, std::uint64_t stream_width) {
+        value::LibraryTypeOf<T>().WriteToStream(value, stream, stream_width, 0);
+      });
 }
 
-// Two contributions folded under the truth table `fold` answers, which each
-// entry names outright.
-template <value::NetResolvable T, auto fold>
-auto Resolved(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, (Read<T>(lhs).*fold)(Read<T>(rhs)));
+// Two contributions folded under the truth table `fold` names, which each
+// entry states outright.
+template <value::NetResolvable T>
+auto Resolved(
+    value::NetResolution fold, const void* lhs, const void* rhs, void* out)
+    -> void* {
+  return Emplace(out, value::Resolve(fold, Read<T>(lhs), Read<T>(rhs)));
 }
 
 template <value::NetResolvable T>
@@ -708,10 +955,39 @@ auto Dominating(const void* stronger, const void* weaker, void* out) -> void* {
   return Emplace(out, Read<T>(stronger).Dominating(Read<T>(weaker)));
 }
 
+// The scalar every bit of a filled value holds (LRM 6.7.1), which crosses as
+// the integral value a structure's own operation states it as.
+auto FillAt(const void* fill, std::int64_t width, bool is_four_state)
+    -> value::Logic {
+  return value::Logic::Filled(
+      value::LeastSignificantBit(BitsAt(fill, width, is_four_state).Read()));
+}
+
 template <value::NetResolvable T>
-auto FilledLike(const void* prototype, const void* fill, void* out) -> void* {
+auto FilledLike(
+    const void* prototype, const void* fill, std::int64_t fill_width,
+    bool fill_is_four_state, void* out) -> void* {
   return Emplace(
-      out, T::FilledLike(Read<T>(prototype), Read<value::PackedArray>(fill)));
+      out,
+      T::FilledLike(
+          Read<T>(prototype), FillAt(fill, fill_width, fill_is_four_state)));
+}
+
+// A format operand borrowing an integral value, which reads under a conversion
+// through its planes (LRM 21.2.1) as the number its shape makes of them.
+auto IntegralFormatArg(const void* value, value::IntegralShape shape)
+    -> value::FormatArg {
+  value::FormatArg arg;
+  arg.ptr = value;
+  arg.read_as = shape;
+  arg.format_fn = [](const value::FormatSpec& spec,
+                     const value::FormatArg& operand,
+                     const value::FormatContext& ctx) -> std::string {
+    const value::LoadedWords planes =
+        value::LoadedWords::Load(operand.ptr, operand.read_as);
+    return value::FormatIntegralOperand(spec, planes.View(), ctx);
+  };
+  return arg;
 }
 
 // A submitted closure runs after the body that built it has returned, so the
@@ -729,33 +1005,60 @@ auto ShareClosure(void* closure) -> std::function<void()> {
   };
 }
 
+// Whether an `iff` qualifier holds (LRM 12.4), which is the whole of what an
+// event control reads of it.
+struct QualifierTruth {
+  bool holds;
+
+  [[nodiscard]] auto IsTruthy() const -> bool {
+    return holds;
+  }
+};
+
 // A closure an observation keeps and runs each time it is asked -- what the
 // watched expression is worth now, or whether an `iff` qualifier holds. The
 // observation outlives the body that built the closure, so it takes it.
 auto TakeCondition(void* closure) {
   return [held = TakeOwner(closure)] {
-    return held->RunValueOf(lyra_rt_packed_value_type);
+    return QualifierTruth{.holds = held->RunTruth()};
   };
 }
 
-// An observation of the expression `closure` computes, which `observe` builds
-// from what evaluates it. An edge is a transition of the expression's least
-// significant bit, so what it watches is a packed value (LRM 9.4.2); any other
-// event is a change anywhere in a value of whatever type the expression has.
-template <typename Observe>
-auto ObservingClosure(void* closure, const void* edge, Observe observe)
-    -> Observation {
-  const auto& stated = Read<value::PackedArray>(edge);
-  OwnedClosure held = TakeOwner(closure);
-  if (EventEdgeOf(stated) == support::EventEdge::kAnyChange) {
-    return observe(
-        [held = std::move(held)] { return held->RunValue(); }, stated);
+// What an edge event control watches of its expression: the least significant
+// bit, which is the whole of what an edge is a transition of (LRM 9.4.2).
+struct WatchedBit {
+  value::FourStateBit bit;
+
+  [[nodiscard]] auto Lsb() const -> value::FourStateBit {
+    return bit;
   }
-  return observe(
-      [held = std::move(held)] {
-        return held->RunValueOf(lyra_rt_packed_value_type);
-      },
-      stated);
+  [[nodiscard]] auto IsBitIdentical(const WatchedBit& other) const -> bool {
+    return bit == other.bit;
+  }
+};
+
+// An observation of what `closure` answers, which `observe` builds from what
+// evaluates it. An edge is a transition of one bit, which is what a body
+// watched for one answers (LRM 9.4.2); any other event is a change anywhere in
+// a value of whatever type the body answers.
+template <typename Observe>
+auto ObservingClosure(void* closure, std::int64_t edge, Observe observe)
+    -> Observation {
+  OwnedClosure held = TakeOwner(closure);
+  switch (EventEdgeOf(edge)) {
+    case support::EventEdge::kAnyChange:
+      return observe(
+          [held = std::move(held)] { return held->RunValue(); }, edge);
+    case support::EventEdge::kPosedge:
+    case support::EventEdge::kNegedge:
+    case support::EventEdge::kBothEdges:
+      return observe(
+          [held = std::move(held)] {
+            return WatchedBit{.bit = held->RunWatchedBit()};
+          },
+          edge);
+  }
+  throw InternalError("runtime abi: unknown event edge");
 }
 
 // The body an LRM 7.12 method runs, as the value layer takes it. The closure is
@@ -778,9 +1081,13 @@ auto AnswerInto(void* out, value::AnyValue answer) -> void* {
 // A value of one of the library's own kinds, held with its type.
 template <typename T>
 auto Held(T value) -> value::AnyValue {
-  return value::AnyValue::Built(value::LibraryTypeOf<T>(), [&](void* out) {
-    std::construct_at(static_cast<T*>(out), std::move(value));
-  });
+  if constexpr (value::IntegralValue<T>) {
+    return value::AnyValue::CopyOf(value::IntegralValueType::Of<T>(), &value);
+  } else {
+    return value::AnyValue::Built(value::LibraryTypeOf<T>(), [&](void* out) {
+      std::construct_at(static_cast<T*>(out), std::move(value));
+    });
+  }
 }
 
 // The components of a completion holding the one value `value`.
@@ -806,7 +1113,7 @@ auto EmplaceCompletion(void* out, std::vector<value::AnyValue> components)
   }
   for (std::size_t i = 0; i < components.size(); ++i) {
     value::AnyValue& component = components[i];
-    if (stated[i].type != &component.Type()) {
+    if (!value::SameType(*stated[i].type, component.Type())) {
       throw InternalError(
           "a completion's component is a value of a type its tuple type does "
           "not state -- please report this as a bug");
@@ -817,24 +1124,14 @@ auto EmplaceCompletion(void* out, std::vector<value::AnyValue> components)
   return out;
 }
 
-// Where one conversion parses to. A scan destination is an integral or a
-// string (LRM 21.3.4.3) and lowering rejects anything else, so a value of any
-// other type reaching here is a compiler bug.
-auto ScanTargetOf(value::AnyValue& value) -> value::ScanTarget {
-  if (&value.Type() == &lyra_rt_packed_value_type) {
-    return value::ScanTarget{static_cast<value::PackedArray*>(value.Bytes())};
-  }
-  if (&value.Type() == &lyra_rt_string_value_type) {
-    return value::ScanTarget{static_cast<value::String*>(value.Bytes())};
-  }
-  throw InternalError(
-      "a scan parses into an integral or a string (LRM 21.3.4.3)");
-}
-
 // The matched-conversion count, how far the parse advanced, and one value per
 // conversion (LRM 21.3.4.3). Each value starts as the prototype the call
 // supplied and is parsed in place, so a conversion that never ran carries its
-// prototype back and the caller's own destination stays as it was.
+// prototype back and the caller's own destination stays as it was. A scan
+// destination is an integral or a string and lowering rejects anything else,
+// so a value of any other type reaching here is a compiler bug. An integral
+// one is parsed in its planes, which are laid back out in the value once the
+// scan is over.
 auto EmplaceScan(
     void* out, const value::String& input, const value::String& format,
     value::detail::NullByte null_byte, const void* prototypes) -> void* {
@@ -849,18 +1146,57 @@ auto EmplaceScan(
         value::AnyValue::CopyOf(
             *stated[i].type, value::RuntimeTuple::ComponentAt(prototypes, i)));
   }
+  std::deque<value::LoadedWords> parsed;
   std::vector<value::ScanTarget> targets;
   targets.reserve(stated.size());
   for (std::size_t i = 2; i < components.size(); ++i) {
-    targets.push_back(ScanTargetOf(components[i]));
+    value::AnyValue& component = components[i];
+    if (const value::IntegralValueType* integral =
+            component.Type().AsIntegral()) {
+      parsed.push_back(integral->Load(component.Bytes()));
+      targets.emplace_back(parsed.back().MutableView());
+    } else if (&component.Type() == &lyra_rt_string_value_type) {
+      targets.emplace_back(static_cast<value::String*>(component.Bytes()));
+    } else {
+      throw InternalError(
+          "a scan parses into an integral or a string (LRM 21.3.4.3)");
+    }
   }
 
-  value::PackedArray consumed = value::PackedArray::Int(0);
-  const value::PackedArray matched =
-      value::detail::ScanImpl(input, format, null_byte, consumed, targets);
-  components[0] = Held(matched);
-  components[1] = Held(consumed);
+  const value::ScanCount count =
+      value::detail::ScanImpl(input, format, null_byte, targets);
+  auto planes = parsed.cbegin();
+  for (std::size_t i = 2; i < components.size(); ++i) {
+    if (components[i].Type().AsIntegral() != nullptr) {
+      planes->StoreTo(components[i].Bytes());
+      ++planes;
+    }
+  }
+  components[0] = Held(value::Integer::FromInt(count.items));
+  components[1] = Held(value::Int::FromInt(count.consumed));
   return EmplaceCompletion(out, std::move(components));
+}
+
+// A completion of a value the library types and an integral value of a type
+// the caller stated, whose planes are laid out where the product's type puts
+// its second component.
+template <typename First>
+auto EmplaceWithWords(
+    void* out, const First& first, const value::LoadedWords& second) -> void* {
+  constexpr std::size_t kComponents = 2;
+  const std::span<const value::TupleComponent> stated =
+      value::RuntimeTuple::TypeAt(out).Components();
+  value::AnyValue leading = Held(first);
+  if (stated.size() != kComponents ||
+      !value::SameType(*stated[0].type, leading.Type())) {
+    throw InternalError(
+        "a completion is built from components its type does not state -- "
+        "please report this as a bug");
+  }
+  leading.Type().Move(
+      leading.Bytes(), value::RuntimeTuple::ComponentAt(out, 0));
+  second.StoreTo(value::RuntimeTuple::ComponentAt(out, 1));
+  return out;
 }
 
 // The SV int a traversal answers with and the index it visited (LRM 7.9.4 --
@@ -871,7 +1207,7 @@ auto EmplaceVisited(
     const void* probe_type) -> void* {
   const bool found = index != nullptr;
   std::vector<value::AnyValue> components;
-  components.push_back(Held(value::PackedArray::Int(found ? 1 : 0)));
+  components.push_back(Held(value::Int::FromBool(found)));
   components.push_back(found ? *index : OwnedCopy(probe, probe_type));
   return EmplaceCompletion(out, std::move(components));
 }
@@ -888,10 +1224,9 @@ auto IndexInto(
 }
 
 // A completion the runtime already assembled as a pair, laid out component by
-// component. Which two values they are is the
-// entry's own business -- the value drawn and the seed it advanced (LRM
-// 20.14.2), a byte count and the text or memory those bytes filled (LRM
-// 21.3.4.2, 21.3.4.4, 21.3.7).
+// component. Which two values they are is the entry's own business -- the
+// value drawn and the seed it advanced (LRM 20.14.2), a byte count and the text
+// or memory those bytes filled (LRM 21.3.4.2, 21.3.4.4, 21.3.7).
 template <typename First, typename Second>
 auto EmplaceBoth(void* out, const value::Tuple<First, Second>& completion)
     -> void* {
@@ -899,6 +1234,232 @@ auto EmplaceBoth(void* out, const value::Tuple<First, Second>& completion)
   components.push_back(Held(completion.template Component<0>()));
   components.push_back(Held(completion.template Component<1>()));
   return EmplaceCompletion(out, std::move(components));
+}
+
+// The member an enumeration step lands on (LRM 6.19.5.3, 6.19.5.4), laid out
+// in `out` at the type of the value stepped from, or that type's default where
+// the value is no member.
+auto EmplaceEnumerationMember(
+    void* out, value::IntegralShape held,
+    std::optional<value::ConstPlanes> member) -> void* {
+  value::LoadedWords landed(held);
+  const value::Planes planes = landed.Write();
+  if (member.has_value()) {
+    std::ranges::copy(member->value, planes.value.begin());
+    std::ranges::copy(member->unknown, planes.unknown.begin());
+  } else {
+    value::FillDefault(planes, held.width);
+  }
+  landed.StoreTo(out);
+  return out;
+}
+
+// The memory tasks (LRM 21.4, 21.5) over the memories this backend holds,
+// whose words are integral values where they lie: a token is parsed at the
+// type of the word it replaces, and a word is written out through its planes.
+// Each memory is read into a copy, which the load answers with.
+auto StoreMemoryWord(
+    value::MemoryWord word, std::string_view token, unsigned base) -> bool {
+  value::LoadedWords parsed = word.type->Load(word.bytes);
+  if (!value::FromDigits(
+          parsed.Write(), parsed.Shape().width, MemoryRadix(base), token)) {
+    return false;
+  }
+  parsed.StoreTo(word.bytes);
+  return true;
+}
+
+auto RenderedWord(value::ConstMemoryWord word, unsigned base) -> std::string {
+  const value::LoadedWords planes = word.type->Load(word.bytes);
+  return RenderedMemoryWord(planes.View(), base);
+}
+
+auto ReadUnpackedMemory(
+    RuntimeEffects& runtime, const value::RuntimeUnpackedArray& dest,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
+    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish)
+    -> value::RuntimeUnpackedArray {
+  value::RuntimeUnpackedArray loaded = dest;
+  const auto radix = static_cast<unsigned>(base);
+  ReadMemGridCore(
+      runtime, filename, radix, dims[0].Low(), dims[0].High(),
+      detail::InnerLeafCount(dims.subspan(1)), start, finish,
+      [&](std::int64_t top, std::size_t ordinal, std::string_view token) {
+        return StoreMemoryWord(
+            value::MemoryLeaf(loaded, dims, top, ordinal), token, radix);
+      });
+  return loaded;
+}
+
+void WriteUnpackedMemory(
+    RuntimeEffects& runtime, const value::RuntimeUnpackedArray& src,
+    const value::String& filename, std::span<const value::UnpackedRange> dims,
+    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish) {
+  const auto radix = static_cast<unsigned>(base);
+  WriteMemGridCore(
+      runtime, filename, radix, dims[0].Low(), dims[0].High(),
+      detail::InnerLeafCount(dims.subspan(1)), start, finish,
+      [&](std::int64_t top, std::size_t ordinal) {
+        return RenderedWord(value::MemoryLeaf(src, dims, top, ordinal), radix);
+      });
+}
+
+// A dynamic array or a queue, addressed `[0, size-1]` with one word per
+// address (LRM 21.4.1).
+template <typename Container>
+auto ReadFlatMemory(
+    RuntimeEffects& runtime, const Container& dest,
+    const value::String& filename, std::int64_t base, std::int64_t start,
+    std::optional<std::int64_t> finish) -> Container {
+  Container loaded = dest;
+  const auto radix = static_cast<unsigned>(base);
+  ReadMemGridCore(
+      runtime, filename, radix, 0,
+      static_cast<std::int64_t>(loaded.Count()) - 1, 1, start, finish,
+      [&](std::int64_t address, std::size_t, std::string_view token) {
+        return StoreMemoryWord(
+            value::MemoryWordOf(
+                loaded.ElementType(),
+                loaded.ElementAt(static_cast<std::size_t>(address))),
+            token, radix);
+      });
+  return loaded;
+}
+
+template <typename Container>
+void WriteFlatMemory(
+    RuntimeEffects& runtime, const Container& src,
+    const value::String& filename, std::int64_t base, std::int64_t start,
+    std::optional<std::int64_t> finish) {
+  const auto radix = static_cast<unsigned>(base);
+  WriteMemGridCore(
+      runtime, filename, radix, 0, static_cast<std::int64_t>(src.Count()) - 1,
+      1, start, finish, [&](std::int64_t address, std::size_t) {
+        return RenderedWord(
+            value::MemoryWordOf(
+                src.ElementType(),
+                src.ElementAt(static_cast<std::size_t>(address))),
+            radix);
+      });
+}
+
+// An associative memory, addressed by key (LRM 21.4.1). The keys a load builds
+// are of the index type the array was declared with, which arrives beside the
+// call, so each compares equal to the key an ordinary access builds.
+auto ReadKeyedMemory(
+    RuntimeEffects& runtime, const value::RuntimeAssociativeArray& dest,
+    const value::String& filename, std::int64_t base, std::int64_t start,
+    std::optional<std::int64_t> finish, const void* key_type)
+    -> value::RuntimeAssociativeArray {
+  value::RuntimeAssociativeArray loaded = dest;
+  const auto radix = static_cast<unsigned>(base);
+  const value::IntegralValueType& index_type = IntegralTypeAt(key_type);
+  ReadMemKeyedCore(
+      runtime, filename, radix, start, finish,
+      [&](std::int64_t key, std::string_view token) {
+        value::LoadedWords planes(index_type.Shape());
+        value::FromInt(planes.Write(), index_type.Shape().width, key);
+        const value::AnyValue index = value::AnyValue::Built(
+            index_type, [&](void* out) { planes.StoreTo(out); });
+        value::Formation formed{};
+        void* word = loaded.ElementRef(
+            value::IndexView{.bytes = index.Bytes(), .type = &index_type},
+            formed);
+        return StoreMemoryWord(
+            value::MemoryWordOf(loaded.ElementType(), word), token, radix);
+      });
+  return loaded;
+}
+
+void WriteKeyedMemory(
+    RuntimeEffects& runtime, const value::RuntimeAssociativeArray& src,
+    const value::String& filename, std::int64_t base, std::int64_t start,
+    std::optional<std::int64_t> finish) {
+  const auto radix = static_cast<unsigned>(base);
+  std::vector<RenderedMemoryEntry> entries;
+  for (const auto& [index, word] : src.Entries()) {
+    const value::ConstMemoryWord key =
+        value::MemoryWordOf(index->Type(), index->Bytes());
+    entries.push_back(
+        RenderedMemoryEntry{
+            .key = IntOf(key.type->Load(key.bytes)),
+            .key_text = RenderedWord(key, 16U),
+            .word_text = RenderedWord(
+                value::MemoryWordOf(src.ElementType(), word), radix)});
+  }
+  WriteMemKeyedCore(runtime, filename, radix, start, finish, entries);
+}
+
+// A DPI-C open array's image (Annex H.12) of an actual this backend hands over
+// erased, and the write-back into one. Each level is reached through its type's
+// ordered parts in the image's C layout order, one level per unpacked
+// dimension, and the leaves there are integral values where they lie, read and
+// written through their planes.
+auto ImageLeafType(const value::ValueType& type)
+    -> const value::IntegralValueType& {
+  const value::IntegralValueType* leaf = type.AsIntegral();
+  if (leaf == nullptr) {
+    throw InternalError(
+        "an open array's element is an integral value (LRM 35.5.6.1) -- "
+        "please report this as a bug");
+  }
+  return *leaf;
+}
+
+// The type of one element of the actual `level`, a value of `type`, under its
+// `dimensions` unpacked layers. A fixed-size layer holds at least one element
+// (LRM 7.4.2), which is what the layer below is read through.
+auto ImageElementType(
+    const void* level, const value::ValueType& type, std::size_t dimensions)
+    -> const value::IntegralValueType& {
+  if (dimensions == 0) {
+    return ImageLeafType(type);
+  }
+  const value::PartsByPosition& parts = PartsOf(type);
+  if (parts.Count(level) == 0) {
+    throw InternalError(
+        "an open array's actual holds an element under each of its unpacked "
+        "dimensions (LRM 7.4.2) -- please report this as a bug");
+  }
+  return ImageElementType(
+      parts.At(level, 0), parts.Type(level), dimensions - 1);
+}
+
+void FillImage(
+    value::DpiOpenArray& image, const void* level, const value::ValueType& type,
+    std::size_t dimension, std::size_t dimensions, std::size_t& position) {
+  if (dimension == dimensions) {
+    const value::LoadedWords planes = ImageLeafType(type).Load(level);
+    image.WriteElement(position, planes.Read());
+    ++position;
+    return;
+  }
+  const value::PartsByPosition& parts = PartsOf(type);
+  const value::ValueType& part = parts.Type(level);
+  for (std::size_t p = 0; p < parts.Count(level); ++p) {
+    FillImage(
+        image, parts.At(level, image.OrdinalAt(dimension, p)), part,
+        dimension + 1, dimensions, position);
+  }
+}
+
+void ReadImageBack(
+    const value::DpiOpenArray& image, void* level, const value::ValueType& type,
+    std::size_t dimension, std::size_t dimensions, std::size_t& position) {
+  if (dimension == dimensions) {
+    value::LoadedWords planes = ImageLeafType(type).Load(level);
+    image.ReadElement(position, planes.Write());
+    planes.StoreTo(level);
+    ++position;
+    return;
+  }
+  const value::PartsByPosition& parts = PartsOf(type);
+  const value::ValueType& part = parts.Type(level);
+  for (std::size_t p = 0; p < parts.Count(level); ++p) {
+    ReadImageBack(
+        image, parts.RefAt(level, image.OrdinalAt(dimension, p)), part,
+        dimension + 1, dimensions, position);
+  }
 }
 
 // An event control's leaves cross as a span of pointers to values this call
@@ -920,6 +1481,154 @@ auto ObservationHandles(LyraSpan observations)
       observations.count};
 }
 
+// The layouts an integral value no wider than a word has, each named by the
+// widest type laid out that way. A holder over one of these holds a value of
+// every integral type of that layout, as the bytes its type lays it out in.
+using Bit8 = value::BitVector<8>;
+using Bit16 = value::BitVector<16>;
+using Bit32 = value::BitVector<32>;
+using Bit64 = value::BitVector<64>;
+using Logic8 = value::LogicVector<8>;
+using Logic16 = value::LogicVector<16>;
+using Logic32 = value::LogicVector<32>;
+using Logic64 = value::LogicVector<64>;
+
+// What holds an integral value wider than a word, two-state and four-state:
+// its words, as many as the width its install was told asks for.
+using BitWide = value::WideBitVector;
+using LogicWide = value::WideLogicVector;
+
+// A variable's cell and a history of one layout, behind the addresses the ABI
+// carries them as.
+template <BitAddressed T>
+auto CellAt(void* cell) -> Var<T>& {
+  return *static_cast<Var<T>*>(cell);
+}
+
+template <BitAddressed T>
+auto HistoryAt(void* history) -> SampledHistory<T>& {
+  return *static_cast<SampledHistory<T>*>(history);
+}
+
+template <BitAddressed T>
+auto ValueCellAt(void* cell) -> ActivationValueCell<T>& {
+  return *static_cast<ActivationValueCell<T>*>(cell);
+}
+
+// A cell the running activation owns, for a value a body holds across a
+// suspension.
+template <BitAddressed T>
+auto AllocateValueCell() noexcept -> void* {
+  return GeneratedCallScope::Current()
+      .ActivationValues()
+      .New<ActivationValueCell<T>>();
+}
+
+// A value `width` bits wide of the bytes at `value`, which is what installs a
+// holder of one.
+template <value::HeldAsWords T>
+auto WideOf(std::int64_t width, const void* value) -> T {
+  return T(static_cast<std::uint64_t>(width), value);
+}
+
+// A procedural local wider than a word, built in `storage` holding the default
+// of a type `width` bits wide (LRM Table 6-7). A local has no declaration to
+// install it, so it is built at its width, and every store into it is the
+// bytes of a value that wide.
+template <value::HeldAsWords T>
+void BuildWideValueCell(void* storage, std::int64_t width) {
+  std::construct_at(static_cast<ActivationValueCell<T>*>(storage))
+      ->Install(
+          T::Filled(
+              static_cast<std::uint64_t>(width),
+              value::FourStateBit::kUnknown));
+}
+
+// The same for one the activation owns, which lives until the activation ends.
+template <value::HeldAsWords T>
+auto AllocateWideValueCell(std::int64_t width) -> void* {
+  auto* cell = GeneratedCallScope::Current()
+                   .ActivationValues()
+                   .New<ActivationValueCell<T>>();
+  cell->Install(
+      T::Filled(
+          static_cast<std::uint64_t>(width), value::FourStateBit::kUnknown));
+  return cell;
+}
+
+// Some positions of one net and of another stated to be one physical net. The
+// other net is of whatever integral type its own unit gave it, which this side
+// never learns; every such net is reached as a connection reaches one.
+template <BitAddressed T>
+void JoinNets(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t width) {
+  NetOf<T>(net).Join(static_cast<ConnectableNet*>(other), here, there, width);
+}
+
+// Bits of a designated value of one layout written where they lie (LRM 11.5.1):
+// `count` of them at the position `start` names, in a value whose declared
+// type has `width` positions. `written` is that value as it stands once the
+// bits are in it, which the caller builds, placing bits in a value being
+// arithmetic on the value's own type. What is done here is what only the write
+// can do: keep the bits it reaches from before it, where anything reads what
+// it did, and tell the write which of them moved. A start naming no position
+// reaches none, and `written` is then the value as it was.
+template <value::IntegralValue T>
+void AssignDesignatedBits(
+    const void* designation, std::int64_t width, const void* start,
+    std::int64_t count, const void* written) {
+  const ErasedDesignation& within = DesignationAt(designation);
+  T& whole = *static_cast<T*>(within.part);
+  const std::optional<std::int64_t> at = PositionNamedAt(start);
+  const std::optional<value::BitPositions> reached =
+      at.has_value() && within.write->Undecided()
+          ? value::Reached(
+                static_cast<std::uint64_t>(width),
+                static_cast<std::uint64_t>(count), *at)
+          : std::nullopt;
+  if (!reached.has_value()) {
+    whole = Read<T>(written);
+    return;
+  }
+  KeptPart<T> kept(whole, *reached);
+  whole = Read<T>(written);
+  if (const std::optional<Change> change = kept.ChangeTo(whole)) {
+    within.write->Landed(*change);
+  }
+}
+
+// The same over a designated value wider than a word, which is `width` bits of
+// the bytes the designation names.
+template <value::HeldAsWords T>
+void AssignDesignatedWideBits(
+    const void* designation, std::int64_t width, const void* start,
+    std::int64_t count, const void* written) {
+  const ErasedDesignation& within = DesignationAt(designation);
+  const value::WideAt<T::kDomain> whole{
+      .bytes = within.part, .width = static_cast<std::uint64_t>(width)};
+  const std::optional<std::int64_t> at = PositionNamedAt(start);
+  const std::optional<value::BitPositions> reached =
+      at.has_value() && within.write->Undecided()
+          ? value::Reached(whole.width, static_cast<std::uint64_t>(count), *at)
+          : std::nullopt;
+  if (!reached.has_value()) {
+    std::memcpy(whole.bytes, written, whole.ByteSize());
+    return;
+  }
+  KeptPart<value::WideAt<T::kDomain>> kept(whole, *reached);
+  std::memcpy(whole.bytes, written, whole.ByteSize());
+  if (const std::optional<Change> change = kept.ChangeTo(whole)) {
+    within.write->Landed(*change);
+  }
+}
+
+// What a comparison answered, as it crosses: the number its scalar is.
+template <value::ComparisonAnswer R>
+auto Compared(const R& answer) -> std::uint8_t {
+  return std::to_underlying(value::AnswerScalar(answer));
+}
+
 }  // namespace
 
 }  // namespace lyra::runtime
@@ -927,13 +1636,23 @@ auto ObservationHandles(LyraSpan observations)
 using lyra::runtime::Activation;
 using lyra::runtime::ActivationValueCell;
 using lyra::runtime::AdoptObject;
+using lyra::runtime::AllocateValueCell;
+using lyra::runtime::AssignDesignatedBits;
 using lyra::runtime::AssignDesignatedSlice;
+using lyra::runtime::Bit16;
+using lyra::runtime::Bit32;
+using lyra::runtime::Bit64;
+using lyra::runtime::Bit8;
+using lyra::runtime::BitsAt;
+using lyra::runtime::BitWide;
 using lyra::runtime::BuildAt;
 using lyra::runtime::BuildReference;
 using lyra::runtime::CancellationTarget;
+using lyra::runtime::CellAt;
 using lyra::runtime::ChannelCancellation;
 using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
+using lyra::runtime::Compared;
 using lyra::runtime::ControlEffect;
 using lyra::runtime::Coroutine;
 using lyra::runtime::current_runtime;
@@ -963,13 +1682,23 @@ using lyra::runtime::GcObject;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::HandleTo;
 using lyra::runtime::HierarchySegment;
+using lyra::runtime::HistoryAt;
+using lyra::runtime::IntegralTypeAt;
+using lyra::runtime::IntOf;
+using lyra::runtime::JoinNets;
 using lyra::runtime::LandDesignation;
 using lyra::runtime::LandTupleDesignation;
 using lyra::runtime::LeaveCancellationTarget;
+using lyra::runtime::Logic16;
+using lyra::runtime::Logic32;
+using lyra::runtime::Logic64;
+using lyra::runtime::Logic8;
+using lyra::runtime::LogicWide;
 using lyra::runtime::MakeForeignExecution;
 using lyra::runtime::MakeSharedCell;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
+using lyra::runtime::NumberAt;
 using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
 using lyra::runtime::Observation;
@@ -982,6 +1711,7 @@ using lyra::runtime::OpenTupleRefWrite;
 using lyra::runtime::OpenWrite;
 using lyra::runtime::OwnedClosure;
 using lyra::runtime::ParkAt;
+using lyra::runtime::PositionNamedAt;
 using lyra::runtime::ProcessAwait;
 using lyra::runtime::ProcessKill;
 using lyra::runtime::ProcessOf;
@@ -1030,7 +1760,6 @@ using lyra::runtime::TriggerHandles;
 using lyra::runtime::TupleRefArmSampling;
 using lyra::runtime::TupleRefSampledLoad;
 using lyra::runtime::TupleRefSet;
-using lyra::runtime::ValuesOf;
 using lyra::runtime::Var;
 using lyra::runtime::ViewOf;
 using lyra::runtime::Wait;
@@ -1050,10 +1779,8 @@ using lyra::value::Format;
 using lyra::value::FormatArg;
 using lyra::value::FormatSpec;
 using lyra::value::MakeFormatArg;
+using lyra::value::NetResolution;
 using lyra::value::ObjectRef;
-using lyra::value::PackedArray;
-using lyra::value::PackedRange;
-using lyra::value::PackedType;
 using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;
 using lyra::value::PrintValueItem;
@@ -1085,11 +1812,10 @@ auto lyra_rt_time_format(void* runtime) -> const void* {
 }
 
 void lyra_rt_set_time_format(
-    void* runtime, const void* units_power, const void* precision,
-    const void* suffix, const void* min_width) {
+    void* runtime, std::int64_t units_power, std::int64_t precision,
+    const void* suffix, std::int64_t min_width) {
   static_cast<RuntimeEffects*>(runtime)->SetTimeFormat(
-      Read<PackedArray>(units_power), Read<PackedArray>(precision),
-      Read<String>(suffix), Read<PackedArray>(min_width));
+      units_power, precision, Read<String>(suffix), min_width);
 }
 
 void lyra_rt_reset_time_format(void* runtime) {
@@ -1107,107 +1833,102 @@ auto lyra_rt_file_open_mode(
                Read<String>(name), Read<String>(mode)));
 }
 
-void lyra_rt_file_close(void* files, const void* descriptor) {
-  static_cast<FileTable*>(files)->Close(Read<PackedArray>(descriptor));
+void lyra_rt_file_close(void* files, std::int64_t descriptor) {
+  static_cast<FileTable*>(files)->Close(descriptor);
 }
 
-auto lyra_rt_file_getc(void* files, const void* fd, void* out) -> void* {
-  return Emplace(
-      out, static_cast<FileTable*>(files)->Getc(Read<PackedArray>(fd)));
+auto lyra_rt_file_getc(void* files, std::int64_t fd, void* out) -> void* {
+  return Emplace(out, static_cast<FileTable*>(files)->Getc(fd));
 }
 
-auto lyra_rt_file_gets(void* files, const void* fd, void* out) -> void* {
+auto lyra_rt_file_gets(void* files, std::int64_t fd, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, static_cast<FileTable*>(files)->Gets(Read<PackedArray>(fd)));
+      out, static_cast<FileTable*>(files)->Gets(fd));
 }
 
-auto lyra_rt_file_error(void* files, const void* fd, void* out) -> void* {
+auto lyra_rt_file_error(void* files, std::int64_t fd, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, static_cast<FileTable*>(files)->Error(Read<PackedArray>(fd)));
+      out, static_cast<FileTable*>(files)->Error(fd));
 }
 
-auto lyra_rt_file_read(void* files, const void* dest, const void* fd, void* out)
-    -> void* {
-  return lyra::runtime::EmplaceBoth(
-      out, static_cast<FileTable*>(files)->Read(
-               Read<PackedArray>(dest), Read<PackedArray>(fd)));
+auto lyra_rt_file_read(
+    void* files, const void* dest, std::int64_t dest_width, bool dest_is_signed,
+    bool dest_is_four_state, std::int64_t fd, void* out) -> void* {
+  lyra::value::LoadedWords read_into =
+      NumberAt(dest, dest_width, dest_is_signed, dest_is_four_state);
+  const lyra::value::Int read =
+      static_cast<FileTable*>(files)->ReadInto(read_into.MutableView(), fd);
+  return lyra::runtime::EmplaceWithWords(out, read, read_into);
 }
 
 auto lyra_rt_file_read_memory(
-    void* files, const void* dest, const void* fd, const void* declared,
-    const void* start, const void* count, void* out) -> void* {
+    void* files, const void* dest, std::int64_t fd, LyraSpan bounds,
+    std::int64_t start, std::int64_t count, void* out) -> void* {
   lyra::value::RuntimeUnpackedArray memory =
       Read<lyra::value::RuntimeUnpackedArray>(dest);
-  const auto& range = Read<UnpackedRange>(declared);
-  const std::array dims{range};
+  const std::vector<UnpackedRange> dims =
+      lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(bounds));
+  const UnpackedRange range = dims.front();
+  const lyra::value::IntegralValueType& word_type =
+      *lyra::value::MemoryWordOf(memory.ElementType(), memory.ElementDefault())
+           .type;
   const std::int32_t read = lyra::runtime::ReadMemoryWords(
-      *static_cast<FileTable*>(files), Read<PackedArray>(fd),
-      lyra::value::MemoryWordOf(memory.ElementType(), memory.ElementDefault()),
-      range, Read<PackedArray>(start).ToInt64(),
-      Read<PackedArray>(count).ToInt64(),
-      [&memory, &dims](std::int64_t sv, PackedArray word) {
-        lyra::value::MemoryLeaf(memory, dims, sv, 0) = std::move(word);
+      *static_cast<FileTable*>(files), fd, word_type.Shape().width, range,
+      start, count, [&](std::int64_t sv, std::span<const char> bytes) {
+        lyra::value::LoadedWords word(word_type.Shape());
+        lyra::runtime::ReadBigEndian(word.MutableView(), bytes);
+        word.StoreTo(lyra::value::MemoryLeaf(memory, dims, sv, 0).bytes);
       });
   std::vector<lyra::value::AnyValue> components;
-  components.push_back(lyra::runtime::Held(PackedArray::Int(read)));
+  components.push_back(lyra::runtime::Held(lyra::value::Int::FromInt(read)));
   components.push_back(lyra::runtime::Held(std::move(memory)));
   return lyra::runtime::EmplaceCompletion(out, std::move(components));
 }
 
-auto lyra_rt_file_ungetc(void* files, const void* c, const void* fd, void* out)
-    -> void* {
-  return Emplace(
-      out, static_cast<FileTable*>(files)->Ungetc(
-               Read<PackedArray>(c), Read<PackedArray>(fd)));
+auto lyra_rt_file_ungetc(
+    void* files, std::int64_t c, std::int64_t fd, void* out) -> void* {
+  return Emplace(out, static_cast<FileTable*>(files)->Ungetc(c, fd));
 }
 
 auto lyra_rt_file_seek(
-    void* files, const void* fd, const void* offset, const void* operation,
+    void* files, std::int64_t fd, std::int64_t offset, std::int64_t operation,
     void* out) -> void* {
   return Emplace(
-      out, static_cast<FileTable*>(files)->Seek(
-               Read<PackedArray>(fd), Read<PackedArray>(offset),
-               Read<PackedArray>(operation)));
+      out, static_cast<FileTable*>(files)->Seek(fd, offset, operation));
 }
 
-auto lyra_rt_file_rewind(void* files, const void* fd, void* out) -> void* {
-  return Emplace(
-      out, static_cast<FileTable*>(files)->Rewind(Read<PackedArray>(fd)));
+auto lyra_rt_file_rewind(void* files, std::int64_t fd, void* out) -> void* {
+  return Emplace(out, static_cast<FileTable*>(files)->Rewind(fd));
 }
 
-auto lyra_rt_file_tell(void* files, const void* fd, void* out) -> void* {
-  return Emplace(
-      out, static_cast<FileTable*>(files)->Tell(Read<PackedArray>(fd)));
+auto lyra_rt_file_tell(void* files, std::int64_t fd, void* out) -> void* {
+  return Emplace(out, static_cast<FileTable*>(files)->Tell(fd));
 }
 
-auto lyra_rt_file_eof(void* files, const void* fd, void* out) -> void* {
-  return Emplace(
-      out, static_cast<FileTable*>(files)->Eof(Read<PackedArray>(fd)));
+auto lyra_rt_file_eof(void* files, std::int64_t fd, void* out) -> void* {
+  return Emplace(out, static_cast<FileTable*>(files)->Eof(fd));
 }
 
-void lyra_rt_file_flush(void* files, const void* descriptor) {
-  static_cast<FileTable*>(files)->Flush(Read<PackedArray>(descriptor));
+void lyra_rt_file_flush(void* files, std::int64_t descriptor) {
+  static_cast<FileTable*>(files)->Flush(descriptor);
 }
 
 void lyra_rt_file_flush_all(void* files) {
   static_cast<FileTable*>(files)->FlushAll();
 }
 
-auto lyra_rt_peek_buffered(void* files, const void* fd, void* out) -> void* {
-  return Emplace(
-      out, static_cast<FileTable*>(files)->PeekBuffered(Read<PackedArray>(fd)));
+auto lyra_rt_peek_buffered(void* files, std::int64_t fd, void* out) -> void* {
+  return Emplace(out, static_cast<FileTable*>(files)->PeekBuffered(fd));
 }
 
-void lyra_rt_advance_fd(void* files, const void* fd, const void* count) {
-  static_cast<FileTable*>(files)->AdvanceFd(
-      Read<PackedArray>(fd), Read<PackedArray>(count));
+void lyra_rt_advance_fd(void* files, std::int64_t fd, std::int64_t count) {
+  static_cast<FileTable*>(files)->AdvanceFd(fd, count);
 }
 
-auto lyra_rt_cancellation_for(void* files, const void* descriptor, void* out)
+auto lyra_rt_cancellation_for(void* files, std::int64_t descriptor, void* out)
     -> void* {
   return Emplace(
-      out, static_cast<FileTable*>(files)->CancellationFor(
-               Read<PackedArray>(descriptor)));
+      out, static_cast<FileTable*>(files)->CancellationFor(descriptor));
 }
 
 auto lyra_rt_is_cancelled(const void* cancellation, void* out) -> void* {
@@ -1236,60 +1957,14 @@ auto lyra_rt_format(LyraSpan items, const void* time_format, void* out)
       out, Format(collected, *static_cast<const TimeFormat*>(time_format)));
 }
 
-auto lyra_rt_packed_from_words(
-    LyraSpan value_words, LyraSpan unknown_words, const void* type, void* out)
-    -> void* {
-  return Emplace(
-      out, PackedArray::FromWords(
-               std::span<const std::uint64_t>{
-                   static_cast<const std::uint64_t*>(value_words.data),
-                   value_words.count},
-               std::span<const std::uint64_t>{
-                   static_cast<const std::uint64_t*>(unknown_words.data),
-                   unknown_words.count},
-               Read<PackedType>(type)));
-}
-
-auto lyra_rt_make_packed_range(std::int64_t left, std::int64_t right) -> const
-    void* {
-  return ProgramLifetime(PackedRange{.left = left, .right = right});
-}
-
-auto lyra_rt_make_unpacked_range(std::int64_t left, std::int64_t right) -> const
-    void* {
-  return ProgramLifetime(UnpackedRange{.left = left, .right = right});
-}
-
-auto lyra_rt_make_packed_type(LyraSpan dims, bool is_signed, bool is_four_state)
-    -> const void* {
-  const std::span<const void* const> entries{
-      static_cast<const void* const*>(dims.data), dims.count};
-  PackedType::Dims ranges(entries.size());
-  std::ranges::transform(entries, ranges.begin(), [](const void* entry) {
-    return *static_cast<const PackedRange*>(entry);
-  });
-  return ProgramLifetime(PackedType{ranges, is_signed, is_four_state});
-}
-
-auto lyra_rt_make_enumeration(const void* base, LyraSpan planes, LyraSpan names)
-    -> const void* {
-  return ProgramLifetime(
-      Enumeration{
-          Read<PackedType>(base),
-          std::span<const std::uint64_t>{
-              static_cast<const std::uint64_t*>(planes.data), planes.count},
-          std::span<const char* const>{
-              static_cast<const char* const*>(names.data), names.count}});
-}
-
-void lyra_rt_writeln(void* files, void* descriptor, void* text) {
+void lyra_rt_writeln(void* files, std::int64_t descriptor, void* text) {
   static_cast<FileTable*>(files)->Writeln(
-      *static_cast<PackedArray*>(descriptor), *static_cast<String*>(text));
+      descriptor, *static_cast<String*>(text));
 }
 
-void lyra_rt_write(void* files, void* descriptor, void* text) {
+void lyra_rt_write(void* files, std::int64_t descriptor, void* text) {
   static_cast<FileTable*>(files)->Write(
-      *static_cast<PackedArray*>(descriptor), *static_cast<String*>(text));
+      descriptor, *static_cast<String*>(text));
 }
 
 auto lyra_rt_diagnostic(void* runtime) -> void* {
@@ -1439,10 +2114,6 @@ auto lyra_rt_object_adopt(void* object, void* out) -> void* {
   return Emplace(out, AdoptObject(object));
 }
 
-auto lyra_rt_packed_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<PackedArray>(out);
-}
-
 auto lyra_rt_string_shared_cell_make(void* out) -> void* {
   return MakeSharedCell<String>(out);
 }
@@ -1500,19 +2171,20 @@ void lyra_rt_submit_nba(void* runtime, void* closure) {
 }
 
 void lyra_rt_submit_nba_after(
-    void* runtime, const void* duration, const void* unit_power,
-    const void* precision_power, void* closure) {
+    void* runtime, const void* duration, std::int64_t duration_width,
+    bool duration_is_signed, bool duration_is_four_state,
+    std::int64_t unit_power, std::int64_t precision_power, void* closure) {
+  const lyra::value::LoadedWords amount = NumberAt(
+      duration, duration_width, duration_is_signed, duration_is_four_state);
   static_cast<RuntimeEffects*>(runtime)->SubmitNbaAfter(
-      Read<PackedArray>(duration), Read<PackedArray>(unit_power),
-      Read<PackedArray>(precision_power), TakeClosure(closure));
+      amount.View(), unit_power, precision_power, TakeClosure(closure));
 }
 
 void lyra_rt_submit_nba_after_real(
-    void* runtime, const void* duration, const void* unit_power,
-    const void* precision_power, void* closure) {
+    void* runtime, const void* duration, std::int64_t unit_power,
+    std::int64_t precision_power, void* closure) {
   static_cast<RuntimeEffects*>(runtime)->SubmitNbaAfterReal(
-      Read<Real>(duration), Read<PackedArray>(unit_power),
-      Read<PackedArray>(precision_power), TakeClosure(closure));
+      Read<Real>(duration), unit_power, precision_power, TakeClosure(closure));
 }
 
 void lyra_rt_run_detached(void* runtime, void* carrier) {
@@ -1544,23 +2216,24 @@ void lyra_rt_submit_deferred_final(void* runtime, void* closure) {
 }
 
 auto lyra_rt_delay(
-    void* runtime, const void* duration, const void* unit_power,
-    const void* precision_power, void* out) -> void* {
+    void* runtime, const void* duration, std::int64_t duration_width,
+    bool duration_is_signed, bool duration_is_four_state,
+    std::int64_t unit_power, std::int64_t precision_power, void* out) -> void* {
+  const lyra::value::LoadedWords amount = NumberAt(
+      duration, duration_width, duration_is_signed, duration_is_four_state);
   return Emplace(
-      out,
-      Delay(
-          *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(duration),
-          Read<PackedArray>(unit_power), Read<PackedArray>(precision_power)));
+      out, Delay(
+               *static_cast<RuntimeEffects*>(runtime), amount.View(),
+               unit_power, precision_power));
 }
 
 auto lyra_rt_delay_real(
-    void* runtime, const void* duration, const void* unit_power,
-    const void* precision_power, void* out) -> void* {
+    void* runtime, const void* duration, std::int64_t unit_power,
+    std::int64_t precision_power, void* out) -> void* {
   return Emplace(
-      out,
-      DelayReal(
-          *static_cast<RuntimeEffects*>(runtime), Read<Real>(duration),
-          Read<PackedArray>(unit_power), Read<PackedArray>(precision_power)));
+      out, DelayReal(
+               *static_cast<RuntimeEffects*>(runtime), Read<Real>(duration),
+               unit_power, precision_power));
 }
 
 // What crosses is the cell's own address -- a variable, a net, a named event --
@@ -1568,33 +2241,32 @@ auto lyra_rt_delay_real(
 // of what waits on that cell. Every such cell names `Observable` as its first
 // base, which is what makes the two addresses one under the platform ABI.
 auto lyra_rt_make_trigger(
-    void* observable, const void* observation, const void* lsb_bit_offset,
-    const void* bit_width, void* out) -> void* {
+    void* observable, const void* observation, std::int64_t lsb_bit_offset,
+    std::int64_t bit_width, void* out) -> void* {
   return Emplace(
-      out,
-      Trigger(
-          static_cast<Observable*>(observable), Read<Observation>(observation),
-          Read<PackedArray>(lsb_bit_offset), Read<PackedArray>(bit_width)));
+      out, Trigger(
+               static_cast<Observable*>(observable),
+               Read<Observation>(observation), lsb_bit_offset, bit_width));
 }
 
 auto lyra_rt_observation_on_reaching(void* out) -> void* {
   return Emplace(out, Observation::OnReaching());
 }
 
-auto lyra_rt_observation_of_value(void* expression, const void* edge, void* out)
-    -> void* {
+auto lyra_rt_observation_of_value(
+    void* expression, std::int64_t edge, void* out) -> void* {
   return Emplace(
       out, ObservingClosure(
-               expression, edge, [](auto evaluate, const PackedArray& stated) {
+               expression, edge, [](auto evaluate, std::int64_t stated) {
                  return Observation::OfValue(std::move(evaluate), stated);
                }));
 }
 
 auto lyra_rt_observation_of_value_qualified(
-    void* expression, const void* edge, void* condition, void* out) -> void* {
+    void* expression, std::int64_t edge, void* condition, void* out) -> void* {
   return Emplace(
       out, ObservingClosure(
-               expression, edge, [&](auto evaluate, const PackedArray& stated) {
+               expression, edge, [&](auto evaluate, std::int64_t stated) {
                  return Observation::OfValueQualified(
                      std::move(evaluate), stated, TakeCondition(condition));
                }));
@@ -1642,19 +2314,17 @@ auto lyra_rt_read_report_for_implicit_list(void* out) -> void* {
 }
 
 void lyra_rt_read_report_add(
-    void* report, void* place, const void* lsb_bit_offset,
-    const void* bit_width) {
+    void* report, void* place, std::int64_t lsb_bit_offset,
+    std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->Add(
-      static_cast<Observable*>(place), Read<PackedArray>(lsb_bit_offset),
-      Read<PackedArray>(bit_width));
+      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_add_through_handle(
-    void* report, void* place, const void* lsb_bit_offset,
-    const void* bit_width) {
+    void* report, void* place, std::int64_t lsb_bit_offset,
+    std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->AddThroughHandle(
-      static_cast<Observable*>(place), Read<PackedArray>(lsb_bit_offset),
-      Read<PackedArray>(bit_width));
+      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_enter_call_on_handle(void* report) {
@@ -1670,11 +2340,10 @@ void lyra_rt_read_report_add_every_object(void* report) {
 }
 
 void lyra_rt_read_report_add_write(
-    void* report, void* place, const void* lsb_bit_offset,
-    const void* bit_width) {
+    void* report, void* place, std::int64_t lsb_bit_offset,
+    std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->AddWrite(
-      static_cast<Observable*>(place), Read<PackedArray>(lsb_bit_offset),
-      Read<PackedArray>(bit_width));
+      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_settle_as_implicit_list(void* report) {
@@ -1710,12 +2379,6 @@ auto lyra_rt_triggered(const void* event, void* runtime, void* out) -> void* {
   return Emplace(
       out, static_cast<const NamedEvent*>(event)->Triggered(
                *static_cast<RuntimeEffects*>(runtime)));
-}
-
-auto lyra_rt_retain_constant(const void* value) -> const void* {
-  // A copy rather than a move: the body that built it goes on owning what it
-  // built and ends it, and this is the run taking its own.
-  return ProgramLifetime(Read<PackedArray>(value));
 }
 
 auto lyra_rt_receive_departure(void* exception) -> void* {
@@ -1770,7 +2433,7 @@ auto lyra_rt_effect_names_target(void* effect, void* target, void* out) noexcept
     -> void* {
   // A control effect crosses as the target it names, since that is all one
   // carries, so naming a target is comparing the two.
-  return Emplace(out, PackedArray::Bit(effect == target));
+  return Emplace(out, lyra::value::Bit::FromBool(effect == target));
 }
 
 void lyra_rt_take_departure_if_due(void* runtime) {
@@ -1780,39 +2443,29 @@ void lyra_rt_take_departure_if_due(void* runtime) {
   TakeDepartureIfDue(*static_cast<RuntimeEffects*>(runtime));
 }
 
-auto lyra_rt_sim_time(void* runtime, const void* unit_power, void* out)
+auto lyra_rt_sim_time(void* runtime, std::int64_t unit_power, void* out)
     -> void* {
   return Emplace(
-      out, SimTimeInUnit(
-               *static_cast<RuntimeEffects*>(runtime),
-               Read<PackedArray>(unit_power)));
+      out, SimTimeInUnit(*static_cast<RuntimeEffects*>(runtime), unit_power));
 }
 
-auto lyra_rt_stime(void* runtime, const void* unit_power, void* out) -> void* {
+auto lyra_rt_stime(void* runtime, std::int64_t unit_power, void* out) -> void* {
   return Emplace(
-      out, STimeInUnit(
-               *static_cast<RuntimeEffects*>(runtime),
-               Read<PackedArray>(unit_power)));
+      out, STimeInUnit(*static_cast<RuntimeEffects*>(runtime), unit_power));
 }
 
-auto lyra_rt_realtime(void* runtime, const void* unit_power, void* out)
+auto lyra_rt_realtime(void* runtime, std::int64_t unit_power, void* out)
     -> void* {
   return Emplace(
-      out, RealTimeInUnit(
-               *static_cast<RuntimeEffects*>(runtime),
-               Read<PackedArray>(unit_power)));
+      out, RealTimeInUnit(*static_cast<RuntimeEffects*>(runtime), unit_power));
 }
 
-void lyra_rt_finish(void* runtime, const void* origin, const void* level) {
-  Finish(
-      *static_cast<RuntimeEffects*>(runtime), Read<String>(origin),
-      Read<PackedArray>(level));
+void lyra_rt_finish(void* runtime, const void* origin, std::int64_t level) {
+  Finish(*static_cast<RuntimeEffects*>(runtime), Read<String>(origin), level);
 }
 
-void lyra_rt_stop(void* runtime, const void* origin, const void* level) {
-  Stop(
-      *static_cast<RuntimeEffects*>(runtime), Read<String>(origin),
-      Read<PackedArray>(level));
+void lyra_rt_stop(void* runtime, const void* origin, std::int64_t level) {
+  Stop(*static_cast<RuntimeEffects*>(runtime), Read<String>(origin), level);
 }
 
 auto lyra_rt_run_host_command(void* runtime, const void* command, void* out)
@@ -1834,13 +2487,17 @@ auto lyra_rt_test_plusargs(void* runtime, const void* user_string, void* out)
           *static_cast<RuntimeEffects*>(runtime), Read<String>(user_string)));
 }
 
-auto lyra_rt_packed_value_plusargs(
-    void* runtime, const void* user_string, const void* destination, void* out)
-    -> void* {
-  return lyra::runtime::EmplaceBoth(
-      out, ValuePlusargs(
-               *static_cast<RuntimeEffects*>(runtime),
-               Read<String>(user_string), Read<PackedArray>(destination)));
+auto lyra_rt_integral_value_plusargs(
+    void* runtime, const void* user_string, const void* destination,
+    std::int64_t destination_width, bool destination_is_signed,
+    bool destination_is_four_state, void* out) -> void* {
+  lyra::value::LoadedWords written = NumberAt(
+      destination, destination_width, destination_is_signed,
+      destination_is_four_state);
+  const lyra::value::Int matched = lyra::runtime::ValuePlusargsInto(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(user_string),
+      written.MutableView());
+  return lyra::runtime::EmplaceWithWords(out, matched, written);
 }
 
 auto lyra_rt_string_value_plusargs(
@@ -1857,20 +2514,19 @@ auto lyra_rt_urandom(void* runtime, void* out) -> void* {
       out, lyra::runtime::Urandom(*static_cast<RuntimeEffects*>(runtime)));
 }
 
-auto lyra_rt_urandom_seeded(void* runtime, const void* seed, void* out)
+auto lyra_rt_urandom_seeded(void* runtime, std::int64_t seed, void* out)
     -> void* {
   return Emplace(
-      out,
-      lyra::runtime::UrandomSeeded(
-          *static_cast<RuntimeEffects*>(runtime), Read<PackedArray>(seed)));
+      out, lyra::runtime::UrandomSeeded(
+               *static_cast<RuntimeEffects*>(runtime), seed));
 }
 
 auto lyra_rt_urandom_range(
-    void* runtime, const void* maxval, const void* minval, void* out) -> void* {
+    void* runtime, std::int64_t maxval, std::int64_t minval, void* out)
+    -> void* {
   return Emplace(
       out, lyra::runtime::UrandomRange(
-               *static_cast<RuntimeEffects*>(runtime),
-               Read<PackedArray>(maxval), Read<PackedArray>(minval)));
+               *static_cast<RuntimeEffects*>(runtime), maxval, minval));
 }
 
 auto lyra_rt_random(void* runtime, void* out) -> void* {
@@ -1879,57 +2535,48 @@ auto lyra_rt_random(void* runtime, void* out) -> void* {
 }
 
 auto lyra_rt_dist_uniform(
-    const void* seed, const void* start, const void* end, void* out) -> void* {
+    std::int64_t seed, std::int64_t start, std::int64_t end, void* out)
+    -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, lyra::runtime::DistUniform(
-               Read<PackedArray>(seed), Read<PackedArray>(start),
-               Read<PackedArray>(end)));
+      out, lyra::runtime::DistUniform(seed, start, end));
 }
 
 auto lyra_rt_dist_normal(
-    const void* seed, const void* mean, const void* standard_deviation,
+    std::int64_t seed, std::int64_t mean, std::int64_t standard_deviation,
     void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, lyra::runtime::DistNormal(
-               Read<PackedArray>(seed), Read<PackedArray>(mean),
-               Read<PackedArray>(standard_deviation)));
+      out, lyra::runtime::DistNormal(seed, mean, standard_deviation));
 }
 
-auto lyra_rt_dist_exponential(const void* seed, const void* mean, void* out)
+auto lyra_rt_dist_exponential(std::int64_t seed, std::int64_t mean, void* out)
     -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, lyra::runtime::DistExponential(
-               Read<PackedArray>(seed), Read<PackedArray>(mean)));
+      out, lyra::runtime::DistExponential(seed, mean));
 }
 
-auto lyra_rt_dist_poisson(const void* seed, const void* mean, void* out)
+auto lyra_rt_dist_poisson(std::int64_t seed, std::int64_t mean, void* out)
     -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, lyra::runtime::DistPoisson(
-               Read<PackedArray>(seed), Read<PackedArray>(mean)));
+      out, lyra::runtime::DistPoisson(seed, mean));
 }
 
 auto lyra_rt_dist_chi_square(
-    const void* seed, const void* degrees_of_freedom, void* out) -> void* {
+    std::int64_t seed, std::int64_t degrees_of_freedom, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, lyra::runtime::DistChiSquare(
-               Read<PackedArray>(seed), Read<PackedArray>(degrees_of_freedom)));
+      out, lyra::runtime::DistChiSquare(seed, degrees_of_freedom));
 }
 
-auto lyra_rt_dist_t(const void* seed, const void* degrees_of_freedom, void* out)
-    -> void* {
+auto lyra_rt_dist_t(
+    std::int64_t seed, std::int64_t degrees_of_freedom, void* out) -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, lyra::runtime::DistT(
-               Read<PackedArray>(seed), Read<PackedArray>(degrees_of_freedom)));
+      out, lyra::runtime::DistT(seed, degrees_of_freedom));
 }
 
 auto lyra_rt_dist_erlang(
-    const void* seed, const void* stages, const void* mean, void* out)
+    std::int64_t seed, std::int64_t stages, std::int64_t mean, void* out)
     -> void* {
   return lyra::runtime::EmplaceBoth(
-      out, lyra::runtime::DistErlang(
-               Read<PackedArray>(seed), Read<PackedArray>(stages),
-               Read<PackedArray>(mean)));
+      out, lyra::runtime::DistErlang(seed, stages, mean));
 }
 
 void lyra_rt_register_initial(
@@ -2033,7 +2680,7 @@ auto lyra_rt_make_segment(void* label, LyraSpan indices, void* out) -> void* {
   return std::construct_at(
       static_cast<HierarchySegment*>(out),
       std::string(static_cast<const char*>(label)),
-      ValuesOf<PackedArray>(indices));
+      lyra::runtime::MachineIntsOf(indices));
 }
 
 auto lyra_rt_hierarchical_path(void* self, void* out) -> void* {
@@ -2114,31 +2761,42 @@ auto lyra_rt_written_object(const void* write) -> void* {
   return static_cast<const ErasedObjectWrite*>(write)->Object();
 }
 
-auto lyra_rt_enumeration_has(const void* enumeration, const void* value)
-    -> std::int64_t {
-  return Read<Enumeration>(enumeration).Has(Read<PackedArray>(value)) ? 1 : 0;
+auto lyra_rt_enumeration_has(
+    const void* enumeration, const void* value, std::int64_t value_width,
+    bool value_is_four_state) -> std::int64_t {
+  const lyra::value::LoadedWords asked =
+      BitsAt(value, value_width, value_is_four_state);
+  return Read<Enumeration>(enumeration).PositionOf(asked.Read()).has_value()
+             ? 1
+             : 0;
 }
 
 auto lyra_rt_enumeration_name(
-    const void* enumeration, const void* value, void* out) -> void* {
-  return Emplace(
-      out, Read<Enumeration>(enumeration).Name(Read<PackedArray>(value)));
+    const void* enumeration, const void* value, std::int64_t value_width,
+    bool value_is_four_state, void* out) -> void* {
+  const lyra::value::LoadedWords asked =
+      BitsAt(value, value_width, value_is_four_state);
+  return Emplace(out, Read<Enumeration>(enumeration).NameOf(asked.Read()));
 }
 
 auto lyra_rt_enumeration_next(
-    const void* enumeration, const void* value, const void* count, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<Enumeration>(enumeration)
-               .Next(Read<PackedArray>(value), Read<PackedArray>(count)));
+    const void* enumeration, const void* value, std::int64_t value_width,
+    bool value_is_four_state, std::int64_t count, void* out) -> void* {
+  const lyra::value::LoadedWords from =
+      BitsAt(value, value_width, value_is_four_state);
+  return lyra::runtime::EmplaceEnumerationMember(
+      out, from.Shape(),
+      Read<Enumeration>(enumeration).MemberAfter(from.Read(), count));
 }
 
 auto lyra_rt_enumeration_prev(
-    const void* enumeration, const void* value, const void* count, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<Enumeration>(enumeration)
-               .Prev(Read<PackedArray>(value), Read<PackedArray>(count)));
+    const void* enumeration, const void* value, std::int64_t value_width,
+    bool value_is_four_state, std::int64_t count, void* out) -> void* {
+  const lyra::value::LoadedWords from =
+      BitsAt(value, value_width, value_is_four_state);
+  return lyra::runtime::EmplaceEnumerationMember(
+      out, from.Shape(),
+      Read<Enumeration>(enumeration).MemberBefore(from.Read(), count));
 }
 
 auto lyra_rt_run_program(
@@ -2150,28 +2808,6 @@ auto lyra_rt_run_program(
         return std::unique_ptr<Scope>(
             static_cast<Scope*>(make(parent, &segment)));
       });
-}
-
-auto lyra_rt_packed_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<PackedArray>*>(cell)->Get();
-}
-
-void lyra_rt_packed_cell_initialize(
-    void* cell, const void* prototype) noexcept {
-  static_cast<Var<PackedArray>*>(cell)->Initialize(
-      Read<PackedArray>(prototype));
-}
-
-void lyra_rt_packed_cell_set(void* cell, const void* value) {
-  static_cast<Var<PackedArray>*>(cell)->Set(Read<PackedArray>(value));
-}
-
-void lyra_rt_packed_cell_arm_sampling(void* cell) {
-  static_cast<Var<PackedArray>*>(cell)->ArmSampling();
-}
-
-auto lyra_rt_packed_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, static_cast<Var<PackedArray>*>(cell)->SampledGet());
 }
 
 auto lyra_rt_refer_storage(void* storage, void* out) -> void* {
@@ -2186,9 +2822,6 @@ auto lyra_rt_reference_reports_to(const void* reference) -> void* {
   return static_cast<const ErasedReference*>(reference)->ReportsTo();
 }
 
-auto lyra_rt_packed_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<PackedArray>(cell, out);
-}
 auto lyra_rt_string_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<String>(cell, out);
 }
@@ -2227,18 +2860,18 @@ auto lyra_rt_assocarray_cell_refer(void* cell, void* out) -> void* {
 }
 
 auto lyra_rt_dynarray_refer_element(
-    const void* reference, const void* index, void* out) -> void* {
+    const void* reference, const void* position, void* out) -> void* {
   return ReferElement<RuntimeDynamicArray>(
-      reference, Read<PackedArray>(index), out);
+      reference, PositionNamedAt(position), out);
 }
 auto lyra_rt_unpackedarray_refer_element(
     const void* reference, const void* position, void* out) -> void* {
   return ReferElement<RuntimeUnpackedArray>(
-      reference, Read<PackedArray>(position), out);
+      reference, PositionNamedAt(position), out);
 }
 auto lyra_rt_queue_refer_element(
-    const void* reference, const void* index, void* out) -> void* {
-  return ReferElement<RuntimeQueue>(reference, Read<PackedArray>(index), out);
+    const void* reference, const void* position, void* out) -> void* {
+  return ReferElement<RuntimeQueue>(reference, PositionNamedAt(position), out);
 }
 auto lyra_rt_assocarray_refer_element(
     const void* reference, const void* index, const void* index_type, void* out)
@@ -2254,22 +2887,6 @@ auto lyra_rt_tuple_refer_component(
                RuntimeTuple::ComponentAt(
                    from.storage, static_cast<std::size_t>(index)),
                lyra::value::Formation::kExisting));
-}
-
-auto lyra_rt_packed_ref_get(void* reference) -> const void* {
-  return RefGet<PackedArray>(reference);
-}
-
-void lyra_rt_packed_ref_set(void* reference, const void* value) {
-  RefSet<PackedArray>(reference, value);
-}
-
-void lyra_rt_packed_ref_arm_sampling(void* reference) {
-  RefArmSampling<PackedArray>(reference);
-}
-
-auto lyra_rt_packed_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<PackedArray>(reference, out);
 }
 
 auto lyra_rt_string_ref_get(void* reference) -> const void* {
@@ -2466,25 +3083,6 @@ auto lyra_rt_assocarray_ref_sampled_load(void* reference, void* out) -> void* {
   return RefSampledLoad<RuntimeAssociativeArray>(reference, out);
 }
 
-auto lyra_rt_packed_cell_begin_takeover(
-    void* cell, const void* level, void* out) -> void* {
-  return Emplace(
-      out, static_cast<Var<PackedArray>*>(cell)->BeginTakeover(
-               Read<PackedArray>(level)));
-}
-
-auto lyra_rt_packed_cell_drive_takeover(
-    void* cell, const void* level, const void* generation, const void* value)
-    -> bool {
-  return static_cast<Var<PackedArray>*>(cell)->DriveTakeover(
-      Read<PackedArray>(level), Read<PackedArray>(generation),
-      Read<PackedArray>(value));
-}
-
-void lyra_rt_packed_cell_end_takeover(void* cell, const void* level) {
-  static_cast<Var<PackedArray>*>(cell)->EndTakeover(Read<PackedArray>(level));
-}
-
 auto lyra_rt_string_cell_get(void* cell) -> const void* {
   return &static_cast<Var<String>*>(cell)->Get();
 }
@@ -2547,28 +3145,10 @@ auto lyra_rt_shortreal_cell_sampled_load(void* cell, void* out) -> void* {
   return Emplace(out, static_cast<Var<ShortReal>*>(cell)->SampledGet());
 }
 
-void lyra_rt_packed_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
-  static_cast<SampledHistory<PackedArray>*>(history)->Install(
-      Read<PackedArray>(default_value), Read<PackedArray>(depth));
-}
-
-void lyra_rt_packed_sampled_history_push(void* history, const void* value) {
-  static_cast<SampledHistory<PackedArray>*>(history)->Push(
-      Read<PackedArray>(value));
-}
-
-auto lyra_rt_packed_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<PackedArray>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
-}
-
 void lyra_rt_string_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<String>*>(history)->Install(
-      Read<String>(default_value), Read<PackedArray>(depth));
+      Read<String>(default_value), depth);
 }
 
 void lyra_rt_string_sampled_history_push(void* history, const void* value) {
@@ -2576,16 +3156,15 @@ void lyra_rt_string_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_string_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
-      out, static_cast<const SampledHistory<String>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+      out, static_cast<const SampledHistory<String>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_real_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<Real>*>(history)->Install(
-      Read<Real>(default_value), Read<PackedArray>(depth));
+      Read<Real>(default_value), depth);
 }
 
 void lyra_rt_real_sampled_history_push(void* history, const void* value) {
@@ -2593,16 +3172,15 @@ void lyra_rt_real_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_real_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
-      out, static_cast<const SampledHistory<Real>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+      out, static_cast<const SampledHistory<Real>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_shortreal_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<ShortReal>*>(history)->Install(
-      Read<ShortReal>(default_value), Read<PackedArray>(depth));
+      Read<ShortReal>(default_value), depth);
 }
 
 void lyra_rt_shortreal_sampled_history_push(void* history, const void* value) {
@@ -2611,16 +3189,16 @@ void lyra_rt_shortreal_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_shortreal_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
-      out, static_cast<const SampledHistory<ShortReal>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+      out,
+      static_cast<const SampledHistory<ShortReal>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_tuple_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<RuntimeTuple>*>(history)->Install(
-      Read<RuntimeTuple>(default_value), Read<PackedArray>(depth));
+      Read<RuntimeTuple>(default_value), depth);
 }
 
 void lyra_rt_tuple_sampled_history_push(void* history, const void* value) {
@@ -2629,16 +3207,16 @@ void lyra_rt_tuple_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_tuple_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
       out, static_cast<const SampledHistory<RuntimeTuple>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+               ticks_back));
 }
 
 void lyra_rt_union_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<RuntimeUnion>*>(history)->Install(
-      Read<RuntimeUnion>(default_value), Read<PackedArray>(depth));
+      Read<RuntimeUnion>(default_value), depth);
 }
 
 void lyra_rt_union_sampled_history_push(void* history, const void* value) {
@@ -2647,16 +3225,16 @@ void lyra_rt_union_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_union_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
       out, static_cast<const SampledHistory<RuntimeUnion>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+               ticks_back));
 }
 
 void lyra_rt_tagged_union_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<RuntimeTaggedUnion>*>(history)->Install(
-      Read<RuntimeTaggedUnion>(default_value), Read<PackedArray>(depth));
+      Read<RuntimeTaggedUnion>(default_value), depth);
 }
 
 void lyra_rt_tagged_union_sampled_history_push(
@@ -2666,16 +3244,16 @@ void lyra_rt_tagged_union_sampled_history_push(
 }
 
 auto lyra_rt_tagged_union_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
       out, static_cast<const SampledHistory<RuntimeTaggedUnion>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+               ticks_back));
 }
 
 void lyra_rt_dynarray_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<RuntimeDynamicArray>*>(history)->Install(
-      Read<RuntimeDynamicArray>(default_value), Read<PackedArray>(depth));
+      Read<RuntimeDynamicArray>(default_value), depth);
 }
 
 void lyra_rt_dynarray_sampled_history_push(void* history, const void* value) {
@@ -2684,16 +3262,16 @@ void lyra_rt_dynarray_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_dynarray_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
       out, static_cast<const SampledHistory<RuntimeDynamicArray>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+               ticks_back));
 }
 
 void lyra_rt_unpackedarray_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<RuntimeUnpackedArray>*>(history)->Install(
-      Read<RuntimeUnpackedArray>(default_value), Read<PackedArray>(depth));
+      Read<RuntimeUnpackedArray>(default_value), depth);
 }
 
 void lyra_rt_unpackedarray_sampled_history_push(
@@ -2703,17 +3281,17 @@ void lyra_rt_unpackedarray_sampled_history_push(
 }
 
 auto lyra_rt_unpackedarray_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
       out,
       static_cast<const SampledHistory<RuntimeUnpackedArray>*>(history)->At(
-          Read<PackedArray>(ticks_back)));
+          ticks_back));
 }
 
 void lyra_rt_queue_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<RuntimeQueue>*>(history)->Install(
-      Read<RuntimeQueue>(default_value), Read<PackedArray>(depth));
+      Read<RuntimeQueue>(default_value), depth);
 }
 
 void lyra_rt_queue_sampled_history_push(void* history, const void* value) {
@@ -2722,16 +3300,16 @@ void lyra_rt_queue_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_queue_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
       out, static_cast<const SampledHistory<RuntimeQueue>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+               ticks_back));
 }
 
 void lyra_rt_assocarray_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<RuntimeAssociativeArray>*>(history)->Install(
-      Read<RuntimeAssociativeArray>(default_value), Read<PackedArray>(depth));
+      Read<RuntimeAssociativeArray>(default_value), depth);
 }
 
 void lyra_rt_assocarray_sampled_history_push(void* history, const void* value) {
@@ -2740,11 +3318,11 @@ void lyra_rt_assocarray_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_assocarray_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
       out,
       static_cast<const SampledHistory<RuntimeAssociativeArray>*>(history)->At(
-          Read<PackedArray>(ticks_back)));
+          ticks_back));
 }
 
 // Each entry keeps a share of the object its handle names, so an object the
@@ -2752,9 +3330,9 @@ auto lyra_rt_assocarray_sampled_history_at(
 // with -- which LRM 8.4 requires, since it reclaims an object only once nothing
 // references it and a kept sampled value is a reference.
 void lyra_rt_managedref_sampled_history_install(
-    void* history, const void* default_value, const void* depth) {
+    void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<ObjectRef>*>(history)->Install(
-      Read<ObjectRef>(default_value), Read<PackedArray>(depth));
+      Read<ObjectRef>(default_value), depth);
 }
 
 void lyra_rt_managedref_sampled_history_push(void* history, const void* value) {
@@ -2763,10 +3341,10 @@ void lyra_rt_managedref_sampled_history_push(void* history, const void* value) {
 }
 
 auto lyra_rt_managedref_sampled_history_at(
-    const void* history, const void* ticks_back, void* out) -> void* {
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
-      out, static_cast<const SampledHistory<ObjectRef>*>(history)->At(
-               Read<PackedArray>(ticks_back)));
+      out,
+      static_cast<const SampledHistory<ObjectRef>*>(history)->At(ticks_back));
 }
 
 void lyra_rt_evaluation_attempts_install(
@@ -2831,310 +3409,44 @@ void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects) {
 // the running execution's own value store, so the handle the generated frame
 // carries across a suspension points at storage that outlives every stretch of
 // that body. A store overwrites the cell in place -- the first store installs
-// the declared representation -- and a load copies the current value into the
-// storage the reader gives, like any other value the boundary hands back. A
-// procedural local is not observable, so no runtime handle threads through and
-// no subscriber wakes.
-auto lyra_rt_packed_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ActivationValueCell<PackedArray>>();
-}
-
+// the declared representation -- and a load answers with the value where the
+// cell holds it. A procedural local is not observable, so no runtime handle
+// threads through and no subscriber wakes.
 auto lyra_rt_string_value_cell_alloc() noexcept -> void* {
   return GeneratedCallScope::Current()
       .ActivationValues()
       .New<ActivationValueCell<String>>();
 }
 
-void lyra_rt_packed_value_cell_store(void* cell, const void* value) noexcept {
-  static_cast<ActivationValueCell<PackedArray>*>(cell)->Store(
-      Read<PackedArray>(value));
-}
-
 void lyra_rt_string_value_cell_store(void* cell, const void* value) noexcept {
   static_cast<ActivationValueCell<String>*>(cell)->Store(Read<String>(value));
-}
-
-auto lyra_rt_packed_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ActivationValueCell<PackedArray>*>(cell)->Storage();
 }
 
 auto lyra_rt_string_value_cell_load(void* cell) noexcept -> void* {
   return &static_cast<ActivationValueCell<String>*>(cell)->Storage();
 }
 
-auto lyra_rt_packed_add(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) + Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_sub(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) - Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_mul(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) * Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_div(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) / Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_mod(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) % Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_and(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) & Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_or(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) | Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_xor(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) ^ Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_eq(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) == Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_ne(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) != Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_lt(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) < Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_le(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) <= Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_gt(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) > Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_ge(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) >= Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_logical_and(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) && Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_logical_or(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<PackedArray>(lhs) || Read<PackedArray>(rhs));
-}
-
-auto lyra_rt_packed_neg(const void* operand, void* out) -> void* {
-  return Emplace(out, -Read<PackedArray>(operand));
-}
-
-auto lyra_rt_packed_not(const void* operand, void* out) -> void* {
-  return Emplace(out, ~Read<PackedArray>(operand));
-}
-
-auto lyra_rt_packed_logical_not(const void* operand, void* out) -> void* {
-  return Emplace(out, !Read<PackedArray>(operand));
-}
-
-auto lyra_rt_packed_to_bool(const void* operand) -> bool {
-  return static_cast<bool>(Read<PackedArray>(operand));
-}
-
-auto lyra_rt_packed_convert_from_packed(
-    const void* src, const void* type, void* out) -> void* {
-  return Emplace(
-      out,
-      PackedArray::ConvertFrom(Read<PackedArray>(src), Read<PackedType>(type)));
-}
-
-auto lyra_rt_packed_from_int(std::int64_t value, const void* type, void* out)
-    -> void* {
-  return Emplace(out, PackedArray::FromInt(value, Read<PackedType>(type)));
-}
-
-auto lyra_rt_packed_from_bool(bool value, void* out) -> void* {
-  return Emplace(out, PackedArray::FromBool(value));
-}
-
-auto lyra_rt_packed_to_int64(const void* value) -> std::int64_t {
-  return Read<PackedArray>(value).ToInt64();
-}
-
-auto lyra_rt_packed_is_unknown(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).IsUnknown());
-}
-
-auto lyra_rt_packed_count_bits(
-    const void* value, const void* control_bits, void* out) -> void* {
-  return Emplace(
-      out, Read<PackedArray>(value).CountBits(Read<PackedArray>(control_bits)));
-}
-
-auto lyra_rt_packed_clog2(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).Clog2());
-}
-
-auto lyra_rt_packed_pow(const void* base, const void* exponent, void* out)
-    -> void* {
-  return Emplace(out, Read<PackedArray>(base).Pow(Read<PackedArray>(exponent)));
-}
-
 // The guarded value is handed back rather than copied: what crosses here is the
 // handle the caller already holds, and a guard that let the access through has
 // changed nothing about it.
-auto lyra_rt_require(void* value, const void* condition, const char* message)
-    -> void* {
-  lyra::value::RequireCondition(Read<PackedArray>(condition), message);
+auto lyra_rt_require(
+    void* value, const void* condition, std::int64_t condition_width,
+    bool condition_is_four_state, const char* message) -> void* {
+  const lyra::value::LoadedWords asked =
+      BitsAt(condition, condition_width, condition_is_four_state);
+  lyra::value::RequireCondition(
+      lyra::value::Truth(asked.Read()) ==
+          lyra::value::Truthiness::kKnownNonzero,
+      message);
   return value;
 }
 
-auto lyra_rt_packed_concat(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<PackedArray>(lhs).Concat(Read<PackedArray>(rhs)));
-}
-
-auto lyra_rt_packed_replicate(
-    const void* operand, std::int64_t count, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(operand).Replicate(count));
-}
-
-auto lyra_rt_packed_shift_left(const void* value, const void* amount, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<PackedArray>(value).ShiftLeft(Read<PackedArray>(amount)));
-}
-
-auto lyra_rt_packed_logical_shift_right(
-    const void* value, const void* amount, void* out) -> void* {
-  return Emplace(
-      out,
-      Read<PackedArray>(value).LogicalShiftRight(Read<PackedArray>(amount)));
-}
-
-auto lyra_rt_packed_arithmetic_shift_right(
-    const void* value, const void* amount, void* out) -> void* {
-  return Emplace(
-      out,
-      Read<PackedArray>(value).ArithmeticShiftRight(Read<PackedArray>(amount)));
-}
-
-// The applying form of each shift (LRM 11.4.1), which shifts the value where
-// it lies.
-void lyra_rt_packed_shift_left_assign(void* value, const void* amount) {
-  static_cast<PackedArray*>(value)->ShiftLeftAssign(Read<PackedArray>(amount));
-}
-
-void lyra_rt_packed_logical_shift_right_assign(
-    void* value, const void* amount) {
-  static_cast<PackedArray*>(value)->LogicalShiftRightAssign(
-      Read<PackedArray>(amount));
-}
-
-void lyra_rt_packed_arithmetic_shift_right_assign(
-    void* value, const void* amount) {
-  static_cast<PackedArray*>(value)->ArithmeticShiftRightAssign(
-      Read<PackedArray>(amount));
-}
-
-auto lyra_rt_packed_bitwise_xnor(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<PackedArray>(lhs).BitwiseXnor(Read<PackedArray>(rhs)));
-}
-
-auto lyra_rt_packed_logical_equivalence(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(
-      out, Read<PackedArray>(lhs).LogicalEquivalence(Read<PackedArray>(rhs)));
-}
-
-auto lyra_rt_packed_case_equal(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<PackedArray>(lhs).CaseEqual(Read<PackedArray>(rhs)));
-}
-
-auto lyra_rt_packed_wildcard_equals(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<PackedArray>(lhs).WildcardEquals(Read<PackedArray>(rhs)));
-}
-
-auto lyra_rt_packed_casez_equals(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<PackedArray>(lhs).CasezEquals(Read<PackedArray>(rhs)));
-}
-
-auto lyra_rt_packed_casex_equals(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<PackedArray>(lhs).CasexEquals(Read<PackedArray>(rhs)));
-}
-
-auto lyra_rt_packed_merge_conditional(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(
-      out, Read<PackedArray>(lhs).MergeConditional(Read<PackedArray>(rhs)));
-}
-
-auto lyra_rt_packed_reduction_and(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ReductionAnd());
-}
-
-auto lyra_rt_packed_reduction_or(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ReductionOr());
-}
-
-auto lyra_rt_packed_reduction_xor(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ReductionXor());
-}
-
-auto lyra_rt_packed_reduction_nand(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ReductionNand());
-}
-
-auto lyra_rt_packed_reduction_nor(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ReductionNor());
-}
-
-auto lyra_rt_packed_reduction_xnor(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ReductionXnor());
-}
-
-auto lyra_rt_packed_slice(
-    const void* value, const void* position, std::int64_t width, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<PackedArray>(value).Slice(Read<PackedArray>(position), width));
-}
-
-auto lyra_rt_packed_with_slice(
-    const void* value, const void* position, std::int64_t width,
-    const void* replacement, void* out) -> void* {
-  return Emplace(
-      out,
-      Read<PackedArray>(value).WithSlice(
-          Read<PackedArray>(position), width, Read<PackedArray>(replacement)));
-}
-
-auto lyra_rt_packed_to_position(const void* index, void* out) -> void* {
-  return Emplace(out, PackedArray::ToPosition(Read<PackedArray>(index)));
-}
-
-// Materializes a borrowed packed view (a container element or slice read) into
-// an owning value: a copy of the value where it lies.
-auto lyra_rt_packed_to_owned(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ToOwned());
-}
-
-auto lyra_rt_string_from_packed_array(const void* bits, void* out) -> void* {
-  return Emplace(out, String::FromPackedArray(Read<PackedArray>(bits)));
+auto lyra_rt_string_from_bits(
+    const void* bits, std::int64_t bits_width, bool bits_are_four_state,
+    void* out) -> void* {
+  const lyra::value::LoadedWords planes =
+      BitsAt(bits, bits_width, bits_are_four_state);
+  return Emplace(out, String::FromIntegral(planes.View()));
 }
 
 auto lyra_rt_string_from_byte_array(const void* bytes, void* out) -> void* {
@@ -3149,25 +3461,33 @@ auto lyra_rt_string_len(const void* value, void* out) -> void* {
   return Emplace(out, Read<String>(value).Len());
 }
 
-auto lyra_rt_string_getc(const void* value, const void* index, void* out)
-    -> void* {
-  return Emplace(out, Read<String>(value).Getc(Read<PackedArray>(index)));
-}
-
-auto lyra_rt_string_element(const void* value, const void* index, void* out)
-    -> void* {
-  return Emplace(out, Read<String>(value).Element(Read<PackedArray>(index)));
-}
-
-// The character write (LRM 6.16.2): a new string with character `index`
-// replaced. A character is a view of its string rather than storage of its
-// own, so a write to one rebuilds the string, which is then stored whole.
-auto lyra_rt_string_with_element(
-    const void* value, const void* index, const void* replacement, void* out)
+auto lyra_rt_string_getc(const void* value, const void* position, void* out)
     -> void* {
   return Emplace(
-      out, Read<String>(value).WithElement(
-               Read<PackedArray>(index), Read<PackedArray>(replacement)));
+      out, Read<String>(value).Getc(Read<lyra::value::Position>(position)));
+}
+
+auto lyra_rt_string_element(const void* value, const void* position, void* out)
+    -> void* {
+  return Emplace(
+      out, Read<String>(value).Element(Read<lyra::value::Position>(position)));
+}
+
+// The character write (LRM 6.16.2): a new string with the character at
+// `position` replaced. A character is a view of its string rather than storage
+// of its own, so a write to one rebuilds the string, which is then stored
+// whole.
+auto lyra_rt_string_with_element(
+    const void* value, const void* position, const void* replacement,
+    std::int64_t replacement_width, bool replacement_is_signed,
+    bool replacement_is_four_state, void* out) -> void* {
+  String written = Read<String>(value);
+  written.PutCharacter(
+      Read<lyra::value::Position>(position),
+      IntOf(NumberAt(
+          replacement, replacement_width, replacement_is_signed,
+          replacement_is_four_state)));
+  return Emplace(out, std::move(written));
 }
 
 auto lyra_rt_string_toupper(const void* value, void* out) -> void* {
@@ -3193,7 +3513,8 @@ auto lyra_rt_string_substr(
     -> void* {
   return Emplace(
       out, Read<String>(value).Substr(
-               Read<PackedArray>(first), Read<PackedArray>(last)));
+               Read<lyra::value::Position>(first),
+               Read<lyra::value::Position>(last)));
 }
 
 auto lyra_rt_string_concat(const void* lhs, const void* rhs, void* out)
@@ -3201,7 +3522,7 @@ auto lyra_rt_string_concat(const void* lhs, const void* rhs, void* out)
   return Emplace(out, Read<String>(lhs).Concat(Read<String>(rhs)));
 }
 
-auto lyra_rt_string_replicate(
+auto lyra_rt_replicate_string(
     const void* operand, std::int64_t count, void* out) -> void* {
   return Emplace(out, Read<String>(operand).Replicate(count));
 }
@@ -3229,25 +3550,42 @@ auto lyra_rt_string_atoreal(const void* value, void* out) -> void* {
 // The character write and the formatting family change their receiver (LRM
 // 6.16.3, 6.16.14 -- 6.16.18), which each does where the string lies.
 void lyra_rt_string_putc(
-    void* value, const void* index, const void* character) {
-  static_cast<String*>(value)->Putc(
-      Read<PackedArray>(index), Read<PackedArray>(character));
+    void* value, const void* position, const void* character,
+    std::int64_t character_width, bool character_is_signed,
+    bool character_is_four_state) {
+  static_cast<String*>(value)->PutCharacter(
+      Read<lyra::value::Position>(position),
+      IntOf(NumberAt(
+          character, character_width, character_is_signed,
+          character_is_four_state)));
 }
 
-void lyra_rt_string_itoa(void* value, const void* number) {
-  static_cast<String*>(value)->Itoa(Read<PackedArray>(number));
+void lyra_rt_string_itoa(
+    void* value, const void* number, std::int64_t number_width,
+    bool number_is_signed, bool number_is_four_state) {
+  static_cast<String*>(value)->SetDecimal(IntOf(
+      NumberAt(number, number_width, number_is_signed, number_is_four_state)));
 }
 
-void lyra_rt_string_hextoa(void* value, const void* number) {
-  static_cast<String*>(value)->Hextoa(Read<PackedArray>(number));
+void lyra_rt_string_hextoa(
+    void* value, const void* number, std::int64_t number_width,
+    bool number_is_signed, bool number_is_four_state) {
+  static_cast<String*>(value)->SetHex(IntOf(
+      NumberAt(number, number_width, number_is_signed, number_is_four_state)));
 }
 
-void lyra_rt_string_octtoa(void* value, const void* number) {
-  static_cast<String*>(value)->Octtoa(Read<PackedArray>(number));
+void lyra_rt_string_octtoa(
+    void* value, const void* number, std::int64_t number_width,
+    bool number_is_signed, bool number_is_four_state) {
+  static_cast<String*>(value)->SetOctal(IntOf(
+      NumberAt(number, number_width, number_is_signed, number_is_four_state)));
 }
 
-void lyra_rt_string_bintoa(void* value, const void* number) {
-  static_cast<String*>(value)->Bintoa(Read<PackedArray>(number));
+void lyra_rt_string_bintoa(
+    void* value, const void* number, std::int64_t number_width,
+    bool number_is_signed, bool number_is_four_state) {
+  static_cast<String*>(value)->SetBinary(IntOf(
+      NumberAt(number, number_width, number_is_signed, number_is_four_state)));
 }
 
 void lyra_rt_string_realtoa(void* value, const void* number) {
@@ -3274,8 +3612,8 @@ auto lyra_rt_string_add(const void* lhs, const void* rhs, void* out) -> void* {
   return Emplace(out, Read<String>(lhs) + Read<String>(rhs));
 }
 
-auto lyra_rt_string_eq(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<String>(lhs) == Read<String>(rhs));
+auto lyra_rt_string_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<String>(lhs) == Read<String>(rhs));
 }
 
 auto lyra_rt_string_case_equal(const void* lhs, const void* rhs, void* out)
@@ -3283,43 +3621,46 @@ auto lyra_rt_string_case_equal(const void* lhs, const void* rhs, void* out)
   return Emplace(out, Read<String>(lhs) == Read<String>(rhs));
 }
 
-auto lyra_rt_string_ne(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<String>(lhs) != Read<String>(rhs));
+auto lyra_rt_string_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<String>(lhs) != Read<String>(rhs));
 }
 
-auto lyra_rt_string_lt(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<String>(lhs) < Read<String>(rhs));
+auto lyra_rt_string_lt(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<String>(lhs) < Read<String>(rhs));
 }
 
-auto lyra_rt_string_le(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<String>(lhs) <= Read<String>(rhs));
+auto lyra_rt_string_le(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<String>(lhs) <= Read<String>(rhs));
 }
 
-auto lyra_rt_string_gt(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<String>(lhs) > Read<String>(rhs));
+auto lyra_rt_string_gt(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<String>(lhs) > Read<String>(rhs));
 }
 
-auto lyra_rt_string_ge(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<String>(lhs) >= Read<String>(rhs));
+auto lyra_rt_string_ge(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<String>(lhs) >= Read<String>(rhs));
 }
 
 auto lyra_rt_make_format_spec(
-    const void* kind, const void* width, const void* precision,
-    const void* zero_pad, const void* left_align, const void* timeunit_power,
+    std::int64_t kind, std::int64_t field_width, std::int64_t precision,
+    std::int64_t zero_pad, std::int64_t left_align, std::int64_t timeunit_power,
     void* out) -> void* {
   return Emplace(
       out,
       FormatSpec(
-          Read<PackedArray>(kind), Read<PackedArray>(width),
-          Read<PackedArray>(precision), Read<PackedArray>(zero_pad),
-          Read<PackedArray>(left_align), Read<PackedArray>(timeunit_power)));
+          kind, field_width, precision, zero_pad, left_align, timeunit_power));
 }
 
-auto lyra_rt_packed_make_print_value_item(
-    const void* value, const void* spec, void* out) -> void* {
+auto lyra_rt_integral_make_print_value_item(
+    const void* value, std::int64_t value_width, bool value_is_signed,
+    bool value_is_four_state, const void* spec, void* out) -> void* {
   return Emplace(
-      out, PrintItem(PrintValueItem(
-               Read<PackedArray>(value), Read<FormatSpec>(spec))));
+      out,
+      PrintItem(PrintValueItem(
+          lyra::runtime::IntegralFormatArg(
+              value, lyra::runtime::NumberShape(
+                         value_width, value_is_signed, value_is_four_state)),
+          Read<FormatSpec>(spec))));
 }
 
 auto lyra_rt_string_make_print_value_item(
@@ -3363,28 +3704,28 @@ auto lyra_rt_real_neg(const void* operand, void* out) -> void* {
   return Emplace(out, -Read<Real>(operand));
 }
 
-auto lyra_rt_real_eq(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) == Read<Real>(rhs));
+auto lyra_rt_real_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<Real>(lhs) == Read<Real>(rhs));
 }
 
-auto lyra_rt_real_ne(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) != Read<Real>(rhs));
+auto lyra_rt_real_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<Real>(lhs) != Read<Real>(rhs));
 }
 
-auto lyra_rt_real_lt(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) < Read<Real>(rhs));
+auto lyra_rt_real_lt(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<Real>(lhs) < Read<Real>(rhs));
 }
 
-auto lyra_rt_real_le(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) <= Read<Real>(rhs));
+auto lyra_rt_real_le(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<Real>(lhs) <= Read<Real>(rhs));
 }
 
-auto lyra_rt_real_gt(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) > Read<Real>(rhs));
+auto lyra_rt_real_gt(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<Real>(lhs) > Read<Real>(rhs));
 }
 
-auto lyra_rt_real_ge(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Real>(lhs) >= Read<Real>(rhs));
+auto lyra_rt_real_ge(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<Real>(lhs) >= Read<Real>(rhs));
 }
 
 auto lyra_rt_real_to_bool(const void* operand) -> bool {
@@ -3562,34 +3903,28 @@ auto lyra_rt_shortreal_neg(const void* operand, void* out) -> void* {
   return Emplace(out, -Read<ShortReal>(operand));
 }
 
-auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) == Read<ShortReal>(rhs));
+auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<ShortReal>(lhs) == Read<ShortReal>(rhs));
 }
 
-auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) != Read<ShortReal>(rhs));
+auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<ShortReal>(lhs) != Read<ShortReal>(rhs));
 }
 
-auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) < Read<ShortReal>(rhs));
+auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<ShortReal>(lhs) < Read<ShortReal>(rhs));
 }
 
-auto lyra_rt_shortreal_le(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) <= Read<ShortReal>(rhs));
+auto lyra_rt_shortreal_le(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<ShortReal>(lhs) <= Read<ShortReal>(rhs));
 }
 
-auto lyra_rt_shortreal_gt(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) > Read<ShortReal>(rhs));
+auto lyra_rt_shortreal_gt(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<ShortReal>(lhs) > Read<ShortReal>(rhs));
 }
 
-auto lyra_rt_shortreal_ge(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ShortReal>(lhs) >= Read<ShortReal>(rhs));
+auto lyra_rt_shortreal_ge(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<ShortReal>(lhs) >= Read<ShortReal>(rhs));
 }
 
 auto lyra_rt_shortreal_to_bool(const void* operand) -> bool {
@@ -3673,12 +4008,12 @@ auto lyra_rt_chandle_ptr(const void* operand) -> void* {
   return Read<Chandle>(operand).Ptr();
 }
 
-auto lyra_rt_chandle_eq(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Chandle>(lhs) == Read<Chandle>(rhs));
+auto lyra_rt_chandle_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<Chandle>(lhs) == Read<Chandle>(rhs));
 }
 
-auto lyra_rt_chandle_ne(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<Chandle>(lhs) != Read<Chandle>(rhs));
+auto lyra_rt_chandle_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<Chandle>(lhs) != Read<Chandle>(rhs));
 }
 
 auto lyra_rt_chandle_case_equal(const void* lhs, const void* rhs, void* out)
@@ -3736,14 +4071,12 @@ auto lyra_rt_managedref_default(void* out) -> void* {
 // Comparing two handles asks which object each names (LRM 11.4.5). The clause
 // makes the answer always a known 1'b0 or 1'b1, so the entry answers with that
 // value.
-auto lyra_rt_managedref_eq(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ObjectRef>(lhs) == Read<ObjectRef>(rhs));
+auto lyra_rt_managedref_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<ObjectRef>(lhs) == Read<ObjectRef>(rhs));
 }
 
-auto lyra_rt_managedref_ne(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(out, Read<ObjectRef>(lhs) != Read<ObjectRef>(rhs));
+auto lyra_rt_managedref_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<ObjectRef>(lhs) != Read<ObjectRef>(rhs));
 }
 
 // LRM 11.4.5: `===` on a handle carries the same meaning as `==`.
@@ -3867,12 +4200,12 @@ auto lyra_rt_union_with_component(
   return Emplace(out, std::move(result));
 }
 
-auto lyra_rt_union_eq(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<RuntimeUnion>(lhs) == Read<RuntimeUnion>(rhs));
+auto lyra_rt_union_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<RuntimeUnion>(lhs) == Read<RuntimeUnion>(rhs));
 }
 
-auto lyra_rt_union_ne(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<RuntimeUnion>(lhs) != Read<RuntimeUnion>(rhs));
+auto lyra_rt_union_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<RuntimeUnion>(lhs) != Read<RuntimeUnion>(rhs));
 }
 
 auto lyra_rt_union_case_equal(const void* lhs, const void* rhs, void* out)
@@ -3949,25 +4282,22 @@ auto lyra_rt_tagged_union_with_component(
 }
 
 // Whether the active tag is `index`, as the machine boolean the pattern-match
-// guard tests (LRM 12.6) -- the same shape a value's `to_bool` yields, which an
-// enclosing `from_bool` lifts to the packed one-bit surface. The runtime holds
-// the comparison, so no packed tag constant crosses the boundary.
+// guard tests (LRM 12.6). The runtime holds the comparison, so no tag constant
+// crosses the boundary.
 auto lyra_rt_tagged_union_tag_matches(const void* value, std::int64_t index)
     -> bool {
   return Read<RuntimeTaggedUnion>(value).Tag() ==
          static_cast<std::size_t>(index);
 }
 
-auto lyra_rt_tagged_union_eq(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeTaggedUnion>(lhs) == Read<RuntimeTaggedUnion>(rhs));
+auto lyra_rt_tagged_union_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(
+      Read<RuntimeTaggedUnion>(lhs) == Read<RuntimeTaggedUnion>(rhs));
 }
 
-auto lyra_rt_tagged_union_ne(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeTaggedUnion>(lhs) != Read<RuntimeTaggedUnion>(rhs));
+auto lyra_rt_tagged_union_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(
+      Read<RuntimeTaggedUnion>(lhs) != Read<RuntimeTaggedUnion>(rhs));
 }
 
 auto lyra_rt_tagged_union_case_equal(
@@ -4036,22 +4366,21 @@ auto lyra_rt_make_dynamic_array_default(
 }
 
 auto lyra_rt_make_dynamic_array_new(
-    const void* size, const void* prototype, const void* prototype_type,
+    std::int64_t size, const void* prototype, const void* prototype_type,
     void* out) -> void* {
   return Emplace(
       out, RuntimeDynamicArray(
                lyra::runtime::TypeAt(prototype_type), prototype,
-               lyra::runtime::NewCount(Read<PackedArray>(size)), nullptr));
+               lyra::runtime::NewCount(size), nullptr));
 }
 
 auto lyra_rt_make_dynamic_array_new_copy(
-    const void* size, const void* prototype, const void* prototype_type,
+    std::int64_t size, const void* prototype, const void* prototype_type,
     const void* src, void* out) -> void* {
   return Emplace(
       out, RuntimeDynamicArray(
                lyra::runtime::TypeAt(prototype_type), prototype,
-               lyra::runtime::NewCount(Read<PackedArray>(size)),
-               &Read<RuntimeDynamicArray>(src)));
+               lyra::runtime::NewCount(size), &Read<RuntimeDynamicArray>(src)));
 }
 
 auto lyra_rt_dynarray_from_literal(
@@ -4063,7 +4392,7 @@ auto lyra_rt_dynarray_from_literal(
                lyra::runtime::ReplicateHandles(unit, count)));
 }
 
-auto lyra_rt_dynarray_from_array_unpackedarray(
+auto lyra_rt_unpackedarray_dynamic_array_from_array(
     const void* source, const void* prototype, const void* prototype_type,
     void* out) -> void* {
   return Emplace(
@@ -4073,7 +4402,7 @@ auto lyra_rt_dynarray_from_array_unpackedarray(
           lyra::runtime::ElementHandles(Read<RuntimeUnpackedArray>(source))));
 }
 
-auto lyra_rt_dynarray_from_array_queue(
+auto lyra_rt_queue_dynamic_array_from_array(
     const void* source, const void* prototype, const void* prototype_type,
     void* out) -> void* {
   return Emplace(
@@ -4082,17 +4411,17 @@ auto lyra_rt_dynarray_from_array_queue(
                lyra::runtime::ElementHandles(Read<RuntimeQueue>(source))));
 }
 
-// Reads element `index` where it lies. An out-of-range index reads the element
-// default (LRM 7.4.5).
-auto lyra_rt_dynarray_element(const void* array, const void* index) -> const
+// Reads the element at `position` where it lies. A position naming no element
+// reads the element default (LRM 7.4.5).
+auto lyra_rt_dynarray_element(const void* array, const void* position) -> const
     void* {
-  return Read<RuntimeDynamicArray>(array).Element(Read<PackedArray>(index));
+  return Read<RuntimeDynamicArray>(array).Element(PositionNamedAt(position));
 }
 
-auto lyra_rt_dynarray_element_ref(void* array, const void* index) -> void* {
+auto lyra_rt_dynarray_element_ref(void* array, const void* position) -> void* {
   lyra::value::Formation formed{};
   return static_cast<RuntimeDynamicArray*>(array)->ElementRef(
-      Read<PackedArray>(index), formed);
+      PositionNamedAt(position), formed);
 }
 
 auto lyra_rt_dynarray_concat_element(
@@ -4114,21 +4443,21 @@ void lyra_rt_dynarray_delete(void* array) {
   static_cast<RuntimeDynamicArray*>(array)->Delete();
 }
 
-auto lyra_rt_dynarray_slice(
+auto lyra_rt_dynarray_element_slice(
     const void* array, const void* start, std::int64_t count, void* out)
     -> void* {
   const auto& source = Read<RuntimeDynamicArray>(array);
   return Emplace(
       out, RuntimeUnpackedArray(
                source.ElementType(), source.ElementDefault(),
-               source.SliceElements(Read<PackedArray>(start), count)));
+               source.SliceElements(PositionNamedAt(start), count)));
 }
 
-void lyra_rt_dynarray_slice_ref(
+void lyra_rt_dynarray_element_slice_ref(
     void* array, const void* start, std::int64_t count,
     const void* replacement) {
   static_cast<RuntimeDynamicArray*>(array)->AssignSlice(
-      Read<PackedArray>(start), count,
+      PositionNamedAt(start), count,
       lyra::runtime::ElementHandles(Read<RuntimeUnpackedArray>(replacement)));
 }
 
@@ -4136,14 +4465,14 @@ auto lyra_rt_dynarray_size(const void* array, void* out) -> void* {
   return Emplace(out, Read<RuntimeDynamicArray>(array).Size());
 }
 
-auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(lhs) == Read<RuntimeDynamicArray>(rhs));
+auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(
+      Read<RuntimeDynamicArray>(lhs) == Read<RuntimeDynamicArray>(rhs));
 }
 
-auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(lhs) != Read<RuntimeDynamicArray>(rhs));
+auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(
+      Read<RuntimeDynamicArray>(lhs) != Read<RuntimeDynamicArray>(rhs));
 }
 
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs, void* out)
@@ -4223,7 +4552,7 @@ auto lyra_rt_unpackedarray_conform_size(
                lyra::runtime::ElementHandles(source)));
 }
 
-auto lyra_rt_unpackedarray_from_array_dynarray(
+auto lyra_rt_dynarray_unpacked_array_from_array(
     const void* source, const void* prototype, const void* prototype_type,
     std::int64_t declared, void* out) -> void* {
   return Emplace(
@@ -4233,7 +4562,7 @@ auto lyra_rt_unpackedarray_from_array_dynarray(
                declared));
 }
 
-auto lyra_rt_unpackedarray_from_array_queue(
+auto lyra_rt_queue_unpacked_array_from_array(
     const void* source, const void* prototype, const void* prototype_type,
     std::int64_t declared, void* out) -> void* {
   return Emplace(
@@ -4254,7 +4583,7 @@ auto lyra_rt_unpackedarray_merge_conditional(
 // the element default (LRM 7.4.5).
 auto lyra_rt_unpackedarray_element(const void* array, const void* position)
     -> const void* {
-  return Read<RuntimeUnpackedArray>(array).Element(Read<PackedArray>(position));
+  return Read<RuntimeUnpackedArray>(array).Element(PositionNamedAt(position));
 }
 
 // The element a position names, as storage a write lands in (LRM 7.4.5). A
@@ -4263,51 +4592,51 @@ auto lyra_rt_unpackedarray_element_ref(void* array, const void* position)
     -> void* {
   lyra::value::Formation formed{};
   return static_cast<RuntimeUnpackedArray*>(array)->ElementRef(
-      Read<PackedArray>(position), formed);
+      PositionNamedAt(position), formed);
 }
 
-auto lyra_rt_packed_from_string(const void* text, const void* type, void* out)
-    -> void* {
-  return Emplace(
-      out, PackedArray::FromString(Read<String>(text), Read<PackedType>(type)));
-}
-
-auto lyra_rt_unpackedarray_from_string(
-    const void* text, const void* element_type, const void* count, void* out)
+auto lyra_rt_byte_array_from_string(
+    const void* text, std::int64_t count, const void* element_type, void* out)
     -> void* {
   return Emplace(
       out, RuntimeUnpackedArray::FromString(
-               Read<String>(text), Read<PackedType>(element_type),
-               Read<PackedArray>(count)));
+               Read<String>(text), IntegralTypeAt(element_type), count));
 }
 
-auto lyra_rt_unpackedarray_from_packed_array(
-    const void* bits, const void* element_type, const void* count, void* out)
-    -> void* {
+auto lyra_rt_byte_array_from_bits(
+    const void* bits, std::int64_t bits_width, bool bits_are_four_state,
+    std::int64_t count, const void* element_type, void* out) -> void* {
+  const lyra::value::LoadedWords planes =
+      BitsAt(bits, bits_width, bits_are_four_state);
   return Emplace(
-      out, RuntimeUnpackedArray::FromPackedArray(
-               Read<PackedArray>(bits), Read<PackedType>(element_type),
-               Read<PackedArray>(count)));
+      out, RuntimeUnpackedArray::FromIntegral(
+               planes.View(), IntegralTypeAt(element_type), count));
 }
 
 auto lyra_rt_unpackedarray_count_bits(
-    const void* value, const void* control_bits, void* out) -> void* {
+    const void* value, const void* control_bits, std::int64_t control_width,
+    bool control_is_four_state, void* out) -> void* {
+  const lyra::value::LoadedWords control =
+      BitsAt(control_bits, control_width, control_is_four_state);
   return Emplace(
-      out, Read<RuntimeUnpackedArray>(value).CountBits(
-               Read<PackedArray>(control_bits)));
+      out, Read<RuntimeUnpackedArray>(value).CountBits(control.View()));
 }
 
 auto lyra_rt_dynarray_count_bits(
-    const void* value, const void* control_bits, void* out) -> void* {
+    const void* value, const void* control_bits, std::int64_t control_width,
+    bool control_is_four_state, void* out) -> void* {
+  const lyra::value::LoadedWords control =
+      BitsAt(control_bits, control_width, control_is_four_state);
   return Emplace(
-      out, Read<RuntimeDynamicArray>(value).CountBits(
-               Read<PackedArray>(control_bits)));
+      out, Read<RuntimeDynamicArray>(value).CountBits(control.View()));
 }
 
 auto lyra_rt_string_count_bits(
-    const void* value, const void* control_bits, void* out) -> void* {
-  return Emplace(
-      out, Read<String>(value).CountBits(Read<PackedArray>(control_bits)));
+    const void* value, const void* control_bits, std::int64_t control_width,
+    bool control_is_four_state, void* out) -> void* {
+  const lyra::value::LoadedWords control =
+      BitsAt(control_bits, control_width, control_is_four_state);
+  return Emplace(out, Read<String>(value).CountBits(control.View()));
 }
 
 auto lyra_rt_string_bitstream_width(const void* value, void* out) -> void* {
@@ -4323,24 +4652,80 @@ auto lyra_rt_unpackedarray_bitstream_width(const void* value, void* out)
   return Emplace(out, Read<RuntimeUnpackedArray>(value).BitstreamWidth());
 }
 
-auto lyra_rt_packed_to_bitstream(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ToBitstream());
-}
-
-auto lyra_rt_unpackedarray_to_bitstream(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeUnpackedArray>(value).ToBitstream());
+auto lyra_rt_unpackedarray_to_bitstream(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  return lyra::runtime::StreamOf<RuntimeUnpackedArray>(
+      value, out_width, out_is_four_state, out);
 }
 
 auto lyra_rt_from_bitstream(
-    const void* bits, const void* prototype, const void* prototype_type,
-    void* out) -> void* {
-  lyra::runtime::TypeAt(prototype_type).FromBitstream(bits, prototype, out);
+    const void* bits, std::int64_t bits_width, bool bits_are_four_state,
+    const void* prototype, const void* prototype_type, void* out) -> void* {
+  const lyra::value::LoadedWords stream =
+      BitsAt(bits, bits_width, bits_are_four_state);
+  lyra::runtime::TypeAt(prototype_type)
+      .ReadFromStream(stream.Read(), stream.Shape().width, 0, prototype, out);
   return out;
 }
 
-auto lyra_rt_packed_bit_identical(const void* lhs, const void* rhs) -> bool {
-  return lyra::runtime::BitIdentical<PackedArray>(lhs, rhs);
+auto lyra_rt_stream_write(
+    const void* bits, std::int64_t bits_width, bool bits_are_four_state,
+    const void* stream, std::uint64_t stream_width, std::uint64_t filled)
+    -> std::uint64_t {
+  const lyra::value::LoadedWords written =
+      BitsAt(bits, bits_width, bits_are_four_state);
+  const std::uint64_t width = written.Shape().width;
+  lyra::value::Insert(
+      *static_cast<const lyra::value::Planes*>(stream), stream_width,
+      written.Read(), width,
+      static_cast<std::int64_t>(stream_width - filled - width));
+  return filled + width;
 }
+
+auto lyra_rt_stream_read(
+    const void* stream, std::uint64_t stream_width, std::uint64_t taken,
+    std::int64_t out_width, bool out_is_four_state, void* out)
+    -> std::uint64_t {
+  lyra::value::LoadedWords read(
+      lyra::runtime::NumberShape(out_width, false, out_is_four_state));
+  const std::uint64_t width = read.Shape().width;
+  lyra::value::Extract(
+      read.Write(), width,
+      *static_cast<const lyra::value::ConstPlanes*>(stream), stream_width,
+      static_cast<std::int64_t>(stream_width - taken - width));
+  read.StoreTo(out);
+  return taken + width;
+}
+
+auto lyra_rt_wildcard_index_make(
+    const void* value, const void* value_type, void* out) -> void* {
+  return std::construct_at(
+      static_cast<lyra::value::AnyValue*>(out),
+      lyra::runtime::OwnedCopy(value, value_type));
+}
+
+auto lyra_rt_wildcard_index_copy(const void* value, void* out) -> void* {
+  return std::construct_at(
+      static_cast<lyra::value::AnyValue*>(out),
+      *static_cast<const lyra::value::AnyValue*>(value));
+}
+
+auto lyra_rt_wildcard_index_move(void* value, void* out) -> void* {
+  return std::construct_at(
+      static_cast<lyra::value::AnyValue*>(out),
+      std::move(*static_cast<lyra::value::AnyValue*>(value)));
+}
+
+void lyra_rt_wildcard_index_destroy(void* object) {
+  std::destroy_at(static_cast<lyra::value::AnyValue*>(object));
+}
+
+void lyra_rt_wildcard_index_assign(void* storage, const void* value) {
+  *static_cast<lyra::value::AnyValue*>(storage) =
+      *static_cast<const lyra::value::AnyValue*>(value);
+}
+
 auto lyra_rt_string_bit_identical(const void* lhs, const void* rhs) -> bool {
   return lyra::runtime::BitIdentical<String>(lhs, rhs);
 }
@@ -4379,9 +4764,6 @@ auto lyra_rt_managedref_bit_identical(const void* lhs, const void* rhs)
   return lyra::runtime::BitIdentical<ObjectRef>(lhs, rhs);
 }
 
-auto lyra_rt_packed_has_unknown(const void* value) -> bool {
-  return lyra::runtime::HasUnknown<PackedArray>(value);
-}
 auto lyra_rt_string_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<String>(value);
 }
@@ -4416,9 +4798,6 @@ auto lyra_rt_managedref_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<ObjectRef>(value);
 }
 
-auto lyra_rt_packed_bitstream_width(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).BitstreamWidth());
-}
 auto lyra_rt_union_bitstream_width(const void* value, void* out) -> void* {
   return lyra::runtime::StreamWidthOf<RuntimeUnion>(value, out);
 }
@@ -4431,93 +4810,96 @@ auto lyra_rt_managedref_bitstream_width(const void* value, void* out) -> void* {
 }
 
 auto lyra_rt_union_count_bits(
-    const void* value, const void* control_bits, void* out) -> void* {
+    const void* value, const void* control_bits, std::int64_t control_width,
+    bool control_is_four_state, void* out) -> void* {
   return lyra::runtime::StreamCountBitsOf<RuntimeUnion>(
-      value, control_bits, out);
+      value, BitsAt(control_bits, control_width, control_is_four_state), out);
 }
 auto lyra_rt_tagged_union_count_bits(
-    const void* value, const void* control_bits, void* out) -> void* {
+    const void* value, const void* control_bits, std::int64_t control_width,
+    bool control_is_four_state, void* out) -> void* {
   return lyra::runtime::StreamCountBitsOf<RuntimeTaggedUnion>(
-      value, control_bits, out);
+      value, BitsAt(control_bits, control_width, control_is_four_state), out);
 }
 auto lyra_rt_managedref_count_bits(
-    const void* value, const void* control_bits, void* out) -> void* {
-  return lyra::runtime::StreamCountBitsOf<ObjectRef>(value, control_bits, out);
+    const void* value, const void* control_bits, std::int64_t control_width,
+    bool control_is_four_state, void* out) -> void* {
+  return lyra::runtime::StreamCountBitsOf<ObjectRef>(
+      value, BitsAt(control_bits, control_width, control_is_four_state), out);
 }
 
-auto lyra_rt_string_to_bitstream(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamOf<String>(value, out);
+auto lyra_rt_string_to_bitstream(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  return lyra::runtime::StreamOf<String>(
+      value, out_width, out_is_four_state, out);
 }
-auto lyra_rt_union_to_bitstream(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeUnion>(value, out);
+auto lyra_rt_union_to_bitstream(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  return lyra::runtime::StreamOf<RuntimeUnion>(
+      value, out_width, out_is_four_state, out);
 }
-auto lyra_rt_tagged_union_to_bitstream(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeTaggedUnion>(value, out);
+auto lyra_rt_tagged_union_to_bitstream(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  return lyra::runtime::StreamOf<RuntimeTaggedUnion>(
+      value, out_width, out_is_four_state, out);
 }
-auto lyra_rt_dynarray_to_bitstream(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeDynamicArray>(value, out);
+auto lyra_rt_dynarray_to_bitstream(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  return lyra::runtime::StreamOf<RuntimeDynamicArray>(
+      value, out_width, out_is_four_state, out);
 }
-auto lyra_rt_queue_to_bitstream(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeQueue>(value, out);
+auto lyra_rt_queue_to_bitstream(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  return lyra::runtime::StreamOf<RuntimeQueue>(
+      value, out_width, out_is_four_state, out);
 }
-auto lyra_rt_assocarray_to_bitstream(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeAssociativeArray>(value, out);
+auto lyra_rt_assocarray_to_bitstream(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  return lyra::runtime::StreamOf<RuntimeAssociativeArray>(
+      value, out_width, out_is_four_state, out);
 }
-auto lyra_rt_managedref_to_bitstream(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamOf<ObjectRef>(value, out);
+auto lyra_rt_managedref_to_bitstream(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  return lyra::runtime::StreamOf<ObjectRef>(
+      value, out_width, out_is_four_state, out);
 }
 
-auto lyra_rt_packed_resolve_tri_state(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<PackedArray, &PackedArray::ResolveTriState>(
-      lhs, rhs, out);
-}
 auto lyra_rt_union_resolve_tri_state(
     const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<RuntimeUnion, &RuntimeUnion::ResolveTriState>(
-      lhs, rhs, out);
+  return lyra::runtime::Resolved<RuntimeUnion>(
+      NetResolution::kTriState, lhs, rhs, out);
 }
 auto lyra_rt_unpackedarray_resolve_tri_state(
     const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<
-      RuntimeUnpackedArray, &RuntimeUnpackedArray::ResolveTriState>(
-      lhs, rhs, out);
-}
-auto lyra_rt_packed_resolve_wired_and(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<PackedArray, &PackedArray::ResolveWiredAnd>(
-      lhs, rhs, out);
+  return lyra::runtime::Resolved<RuntimeUnpackedArray>(
+      NetResolution::kTriState, lhs, rhs, out);
 }
 auto lyra_rt_union_resolve_wired_and(
     const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<RuntimeUnion, &RuntimeUnion::ResolveWiredAnd>(
-      lhs, rhs, out);
+  return lyra::runtime::Resolved<RuntimeUnion>(
+      NetResolution::kWiredAnd, lhs, rhs, out);
 }
 auto lyra_rt_unpackedarray_resolve_wired_and(
     const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<
-      RuntimeUnpackedArray, &RuntimeUnpackedArray::ResolveWiredAnd>(
-      lhs, rhs, out);
-}
-auto lyra_rt_packed_resolve_wired_or(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<PackedArray, &PackedArray::ResolveWiredOr>(
-      lhs, rhs, out);
+  return lyra::runtime::Resolved<RuntimeUnpackedArray>(
+      NetResolution::kWiredAnd, lhs, rhs, out);
 }
 auto lyra_rt_union_resolve_wired_or(const void* lhs, const void* rhs, void* out)
     -> void* {
-  return lyra::runtime::Resolved<RuntimeUnion, &RuntimeUnion::ResolveWiredOr>(
-      lhs, rhs, out);
+  return lyra::runtime::Resolved<RuntimeUnion>(
+      NetResolution::kWiredOr, lhs, rhs, out);
 }
 auto lyra_rt_unpackedarray_resolve_wired_or(
     const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<
-      RuntimeUnpackedArray, &RuntimeUnpackedArray::ResolveWiredOr>(
-      lhs, rhs, out);
-}
-auto lyra_rt_packed_dominating(
-    const void* stronger, const void* weaker, void* out) -> void* {
-  return lyra::runtime::Dominating<PackedArray>(stronger, weaker, out);
+  return lyra::runtime::Resolved<RuntimeUnpackedArray>(
+      NetResolution::kWiredOr, lhs, rhs, out);
 }
 auto lyra_rt_union_dominating(
     const void* stronger, const void* weaker, void* out) -> void* {
@@ -4527,54 +4909,49 @@ auto lyra_rt_unpackedarray_dominating(
     const void* stronger, const void* weaker, void* out) -> void* {
   return lyra::runtime::Dominating<RuntimeUnpackedArray>(stronger, weaker, out);
 }
-auto lyra_rt_packed_filled_like(
-    const void* prototype, const void* fill, void* out) -> void* {
-  return lyra::runtime::FilledLike<PackedArray>(prototype, fill, out);
-}
 auto lyra_rt_union_filled_like(
-    const void* prototype, const void* fill, void* out) -> void* {
-  return lyra::runtime::FilledLike<RuntimeUnion>(prototype, fill, out);
+    const void* prototype, const void* fill, std::int64_t fill_width,
+    bool fill_is_four_state, void* out) -> void* {
+  return lyra::runtime::FilledLike<RuntimeUnion>(
+      prototype, fill, fill_width, fill_is_four_state, out);
 }
 auto lyra_rt_unpackedarray_filled_like(
-    const void* prototype, const void* fill, void* out) -> void* {
-  return lyra::runtime::FilledLike<RuntimeUnpackedArray>(prototype, fill, out);
-}
-
-auto lyra_rt_packed_reverse_blocks(
-    const void* value, std::int64_t block, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value).ReverseBlocks(block));
+    const void* prototype, const void* fill, std::int64_t fill_width,
+    bool fill_is_four_state, void* out) -> void* {
+  return lyra::runtime::FilledLike<RuntimeUnpackedArray>(
+      prototype, fill, fill_width, fill_is_four_state, out);
 }
 
 auto lyra_rt_unpackedarray_size(const void* array, void* out) -> void* {
   return Emplace(out, Read<RuntimeUnpackedArray>(array).Size());
 }
 
-auto lyra_rt_unpackedarray_slice(
+auto lyra_rt_unpackedarray_element_slice(
     const void* array, const void* start, std::int64_t count, void* out)
     -> void* {
   return Emplace(
       out,
-      Read<RuntimeUnpackedArray>(array).Slice(Read<PackedArray>(start), count));
+      Read<RuntimeUnpackedArray>(array).Slice(PositionNamedAt(start), count));
 }
 
-void lyra_rt_unpackedarray_slice_ref(
+void lyra_rt_unpackedarray_element_slice_ref(
     void* array, const void* start, std::int64_t count,
     const void* replacement) {
   static_cast<RuntimeUnpackedArray*>(array)->AssignSlice(
-      Read<PackedArray>(start), count,
+      PositionNamedAt(start), count,
       lyra::runtime::ElementHandles(Read<RuntimeUnpackedArray>(replacement)));
 }
 
-auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeUnpackedArray>(lhs) == Read<RuntimeUnpackedArray>(rhs));
+auto lyra_rt_unpackedarray_eq(const void* lhs, const void* rhs)
+    -> std::uint8_t {
+  return Compared(
+      Read<RuntimeUnpackedArray>(lhs) == Read<RuntimeUnpackedArray>(rhs));
 }
 
-auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeUnpackedArray>(lhs) != Read<RuntimeUnpackedArray>(rhs));
+auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs)
+    -> std::uint8_t {
+  return Compared(
+      Read<RuntimeUnpackedArray>(lhs) != Read<RuntimeUnpackedArray>(rhs));
 }
 
 auto lyra_rt_unpackedarray_case_equal(
@@ -4612,118 +4989,56 @@ auto lyra_rt_unpackedarray_cell_sampled_load(void* cell, void* out) -> void* {
       out, static_cast<Var<RuntimeUnpackedArray>*>(cell)->SampledGet());
 }
 
-auto lyra_rt_packed_net_get(void* net) -> const void* {
-  return &NetOf<PackedArray>(net).Get();
-}
-
-void lyra_rt_packed_net_initialize_tri_state(
-    void* net, const void* prototype, const void* fill, const void* strength) {
-  NetOf<PackedArray>(net).InitializeTriState(
-      Read<PackedArray>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
-}
-
-void lyra_rt_packed_net_initialize_wired_and(
-    void* net, const void* prototype, const void* fill, const void* strength) {
-  NetOf<PackedArray>(net).InitializeWiredAnd(
-      Read<PackedArray>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
-}
-
-void lyra_rt_packed_net_initialize_wired_or(
-    void* net, const void* prototype, const void* fill, const void* strength) {
-  NetOf<PackedArray>(net).InitializeWiredOr(
-      Read<PackedArray>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
-}
-
-void lyra_rt_packed_net_initialize_retaining(
-    void* net, const void* prototype, const void* fill, const void* strength) {
-  NetOf<PackedArray>(net).InitializeRetaining(
-      Read<PackedArray>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
-}
-
-auto lyra_rt_packed_net_begin_takeover(void* net, const void* level, void* out)
-    -> void* {
-  return Emplace(
-      out, NetOf<PackedArray>(net).BeginTakeover(Read<PackedArray>(level)));
-}
-
-auto lyra_rt_packed_net_drive_takeover(
-    void* net, const void* level, const void* generation, const void* value)
-    -> bool {
-  return NetOf<PackedArray>(net).DriveTakeover(
-      Read<PackedArray>(level), Read<PackedArray>(generation),
-      Read<PackedArray>(value));
-}
-
-void lyra_rt_packed_net_end_takeover(void* net, const void* level) {
-  NetOf<PackedArray>(net).EndTakeover(Read<PackedArray>(level));
-}
-
-auto lyra_rt_packed_attach_driver(void* net, const void* strength) -> void* {
-  return &NetOf<PackedArray>(net).AttachDriver(Read<PackedArray>(strength));
-}
-
-void lyra_rt_packed_net_join(
-    void* net, void* other, const void* here, const void* there,
-    const void* width) {
-  NetOf<PackedArray>(net).Join(
-      &NetOf<PackedArray>(other), Read<PackedArray>(here),
-      Read<PackedArray>(there), Read<PackedArray>(width));
-}
-
-auto lyra_rt_packed_driver_get(void* driver) -> const void* {
-  return &DriverOf<PackedArray>(driver).Get();
-}
-
-void lyra_rt_packed_driver_set(void* driver, const void* value) {
-  DriverOf<PackedArray>(driver).Set(Read<PackedArray>(value));
-}
-
 auto lyra_rt_tuple_net_get(void* net) -> const void* {
   return HandleTo(NetOf<RuntimeTuple>(net).Get());
 }
 
-void lyra_rt_tuple_net_initialize_tri_state(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_tuple_aggregate_net_initialize_tri_state(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeTuple>(net).InitializeTriState(
-      Read<RuntimeTuple>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeTuple>(prototype), fill, strength);
 }
 
-void lyra_rt_tuple_net_initialize_wired_and(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_tuple_aggregate_net_initialize_wired_and(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeTuple>(net).InitializeWiredAnd(
-      Read<RuntimeTuple>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeTuple>(prototype), fill, strength);
 }
 
-void lyra_rt_tuple_net_initialize_wired_or(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_tuple_aggregate_net_initialize_wired_or(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeTuple>(net).InitializeWiredOr(
-      Read<RuntimeTuple>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeTuple>(prototype), fill, strength);
 }
 
-void lyra_rt_tuple_net_initialize_retaining(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_tuple_aggregate_net_initialize_retaining(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeTuple>(net).InitializeRetaining(
-      Read<RuntimeTuple>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeTuple>(prototype), fill, strength);
 }
 
-auto lyra_rt_tuple_attach_driver(void* net, const void* strength) -> void* {
-  return &NetOf<RuntimeTuple>(net).AttachDriver(Read<PackedArray>(strength));
+auto lyra_rt_tuple_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<RuntimeTuple>(net).BeginTakeover(level);
 }
 
-void lyra_rt_tuple_net_join(
-    void* net, void* other, const void* here, const void* there,
-    const void* width) {
-  NetOf<RuntimeTuple>(net).Join(
-      &NetOf<RuntimeTuple>(other), Read<PackedArray>(here),
-      Read<PackedArray>(there), Read<PackedArray>(width));
+auto lyra_rt_tuple_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<RuntimeTuple>(net).DriveTakeover(
+      level, generation, Read<RuntimeTuple>(value));
+}
+
+void lyra_rt_tuple_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<RuntimeTuple>(net).EndTakeover(level);
+}
+
+auto lyra_rt_tuple_attach_driver(void* net, std::int64_t strength) -> void* {
+  return &NetOf<RuntimeTuple>(net).AttachDriver(strength);
 }
 
 auto lyra_rt_tuple_driver_get(void* driver) -> const void* {
@@ -4738,44 +5053,52 @@ auto lyra_rt_union_net_get(void* net) -> const void* {
   return &NetOf<RuntimeUnion>(net).Get();
 }
 
-void lyra_rt_union_net_initialize_tri_state(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_union_aggregate_net_initialize_tri_state(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeUnion>(net).InitializeTriState(
-      Read<RuntimeUnion>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeUnion>(prototype), fill, strength);
 }
 
-void lyra_rt_union_net_initialize_wired_and(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_union_aggregate_net_initialize_wired_and(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeUnion>(net).InitializeWiredAnd(
-      Read<RuntimeUnion>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeUnion>(prototype), fill, strength);
 }
 
-void lyra_rt_union_net_initialize_wired_or(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_union_aggregate_net_initialize_wired_or(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeUnion>(net).InitializeWiredOr(
-      Read<RuntimeUnion>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeUnion>(prototype), fill, strength);
 }
 
-void lyra_rt_union_net_initialize_retaining(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_union_aggregate_net_initialize_retaining(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeUnion>(net).InitializeRetaining(
-      Read<RuntimeUnion>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeUnion>(prototype), fill, strength);
 }
 
-auto lyra_rt_union_attach_driver(void* net, const void* strength) -> void* {
-  return &NetOf<RuntimeUnion>(net).AttachDriver(Read<PackedArray>(strength));
+auto lyra_rt_union_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<RuntimeUnion>(net).BeginTakeover(level);
 }
 
-void lyra_rt_union_net_join(
-    void* net, void* other, const void* here, const void* there,
-    const void* width) {
-  NetOf<RuntimeUnion>(net).Join(
-      &NetOf<RuntimeUnion>(other), Read<PackedArray>(here),
-      Read<PackedArray>(there), Read<PackedArray>(width));
+auto lyra_rt_union_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<RuntimeUnion>(net).DriveTakeover(
+      level, generation, Read<RuntimeUnion>(value));
+}
+
+void lyra_rt_union_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<RuntimeUnion>(net).EndTakeover(level);
+}
+
+auto lyra_rt_union_attach_driver(void* net, std::int64_t strength) -> void* {
+  return &NetOf<RuntimeUnion>(net).AttachDriver(strength);
 }
 
 auto lyra_rt_union_driver_get(void* driver) -> const void* {
@@ -4790,46 +5113,53 @@ auto lyra_rt_unpackedarray_net_get(void* net) -> const void* {
   return &NetOf<RuntimeUnpackedArray>(net).Get();
 }
 
-void lyra_rt_unpackedarray_net_initialize_tri_state(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_unpackedarray_aggregate_net_initialize_tri_state(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeUnpackedArray>(net).InitializeTriState(
-      Read<RuntimeUnpackedArray>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeUnpackedArray>(prototype), fill, strength);
 }
 
-void lyra_rt_unpackedarray_net_initialize_wired_and(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_unpackedarray_aggregate_net_initialize_wired_and(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeUnpackedArray>(net).InitializeWiredAnd(
-      Read<RuntimeUnpackedArray>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeUnpackedArray>(prototype), fill, strength);
 }
 
-void lyra_rt_unpackedarray_net_initialize_wired_or(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_unpackedarray_aggregate_net_initialize_wired_or(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeUnpackedArray>(net).InitializeWiredOr(
-      Read<RuntimeUnpackedArray>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeUnpackedArray>(prototype), fill, strength);
 }
 
-void lyra_rt_unpackedarray_net_initialize_retaining(
-    void* net, const void* prototype, const void* fill, const void* strength) {
+void lyra_rt_unpackedarray_aggregate_net_initialize_retaining(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
   NetOf<RuntimeUnpackedArray>(net).InitializeRetaining(
-      Read<RuntimeUnpackedArray>(prototype), Read<PackedArray>(fill),
-      Read<PackedArray>(strength));
+      Read<RuntimeUnpackedArray>(prototype), fill, strength);
 }
 
-auto lyra_rt_unpackedarray_attach_driver(void* net, const void* strength)
+auto lyra_rt_unpackedarray_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<RuntimeUnpackedArray>(net).BeginTakeover(level);
+}
+
+auto lyra_rt_unpackedarray_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<RuntimeUnpackedArray>(net).DriveTakeover(
+      level, generation, Read<RuntimeUnpackedArray>(value));
+}
+
+void lyra_rt_unpackedarray_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<RuntimeUnpackedArray>(net).EndTakeover(level);
+}
+
+auto lyra_rt_unpackedarray_attach_driver(void* net, std::int64_t strength)
     -> void* {
-  return &NetOf<RuntimeUnpackedArray>(net).AttachDriver(
-      Read<PackedArray>(strength));
-}
-
-void lyra_rt_unpackedarray_net_join(
-    void* net, void* other, const void* here, const void* there,
-    const void* width) {
-  NetOf<RuntimeUnpackedArray>(net).Join(
-      &NetOf<RuntimeUnpackedArray>(other), Read<PackedArray>(here),
-      Read<PackedArray>(there), Read<PackedArray>(width));
+  return &NetOf<RuntimeUnpackedArray>(net).AttachDriver(strength);
 }
 
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> const void* {
@@ -4868,59 +5198,54 @@ auto lyra_rt_queue_from_literal(
 
 auto lyra_rt_queue_from_literal_bounded(
     const void* prototype, const void* prototype_type, LyraSpan unit,
-    std::int64_t count, const void* max_bound, void* out) -> void* {
+    std::int64_t count, std::int64_t max_bound, void* out) -> void* {
   return Emplace(
       out, RuntimeQueue::FromElements(
-               lyra::runtime::TypeAt(prototype_type), prototype,
-               Read<PackedArray>(max_bound),
+               lyra::runtime::TypeAt(prototype_type), prototype, max_bound,
                lyra::runtime::ReplicateHandles(unit, count)));
 }
 
 auto lyra_rt_queue_conform_bound(
-    const void* queue, const void* max_bound, void* out) -> void* {
-  return Emplace(
-      out,
-      Read<RuntimeQueue>(queue).ConformBound(Read<PackedArray>(max_bound)));
+    const void* queue, std::int64_t max_bound, void* out) -> void* {
+  return Emplace(out, Read<RuntimeQueue>(queue).ConformBound(max_bound));
 }
 
-auto lyra_rt_queue_from_array_unpackedarray(
+auto lyra_rt_unpackedarray_queue_from_array(
     const void* source, const void* prototype, const void* prototype_type,
-    const void* max_bound, void* out) -> void* {
+    std::int64_t max_bound, void* out) -> void* {
   return Emplace(
       out,
       RuntimeQueue::FromElements(
-          lyra::runtime::TypeAt(prototype_type), prototype,
-          Read<PackedArray>(max_bound),
+          lyra::runtime::TypeAt(prototype_type), prototype, max_bound,
           lyra::runtime::ElementHandles(Read<RuntimeUnpackedArray>(source))));
 }
 
-auto lyra_rt_queue_from_array_dynarray(
+auto lyra_rt_dynarray_queue_from_array(
     const void* source, const void* prototype, const void* prototype_type,
-    const void* max_bound, void* out) -> void* {
+    std::int64_t max_bound, void* out) -> void* {
   return Emplace(
       out,
       RuntimeQueue::FromElements(
-          lyra::runtime::TypeAt(prototype_type), prototype,
-          Read<PackedArray>(max_bound),
+          lyra::runtime::TypeAt(prototype_type), prototype, max_bound,
           lyra::runtime::ElementHandles(Read<RuntimeDynamicArray>(source))));
 }
 
-auto lyra_rt_queue_element(const void* queue, const void* index) -> const
+auto lyra_rt_queue_element(const void* queue, const void* position) -> const
     void* {
-  return Read<RuntimeQueue>(queue).Element(Read<PackedArray>(index));
+  return Read<RuntimeQueue>(queue).Element(PositionNamedAt(position));
 }
 
-auto lyra_rt_queue_element_ref(void* queue, const void* index) -> void* {
+auto lyra_rt_queue_element_ref(void* queue, const void* position) -> void* {
   lyra::value::Formation formed{};
   return static_cast<RuntimeQueue*>(queue)->ElementRef(
-      Read<PackedArray>(index), formed);
+      PositionNamedAt(position), formed);
 }
 
 auto lyra_rt_queue_slice(
     const void* queue, const void* lo, const void* hi, void* out) -> void* {
   return Emplace(
       out, Read<RuntimeQueue>(queue).Slice(
-               Read<PackedArray>(lo), Read<PackedArray>(hi)));
+               PositionNamedAt(lo), PositionNamedAt(hi)));
 }
 
 auto lyra_rt_queue_size(const void* queue, void* out) -> void* {
@@ -4949,8 +5274,8 @@ auto lyra_rt_queue_concat_spread(
                lyra::runtime::ElementHandles(part, part_type)));
 }
 
-void lyra_rt_queue_insert(void* queue, const void* index, const void* item) {
-  static_cast<RuntimeQueue*>(queue)->Insert(Read<PackedArray>(index), item);
+void lyra_rt_queue_insert(void* queue, const void* position, const void* item) {
+  static_cast<RuntimeQueue*>(queue)->Insert(PositionNamedAt(position), item);
 }
 
 auto lyra_rt_queue_pop_front(void* queue, void* out) -> void* {
@@ -4967,16 +5292,16 @@ void lyra_rt_queue_delete(void* queue) {
   static_cast<RuntimeQueue*>(queue)->Delete();
 }
 
-void lyra_rt_queue_delete_index(void* queue, const void* index) {
-  static_cast<RuntimeQueue*>(queue)->DeleteIndex(Read<PackedArray>(index));
+void lyra_rt_queue_delete_index(void* queue, const void* position) {
+  static_cast<RuntimeQueue*>(queue)->DeleteIndex(PositionNamedAt(position));
 }
 
-auto lyra_rt_queue_eq(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<RuntimeQueue>(lhs) == Read<RuntimeQueue>(rhs));
+auto lyra_rt_queue_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<RuntimeQueue>(lhs) == Read<RuntimeQueue>(rhs));
 }
 
-auto lyra_rt_queue_ne(const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(out, Read<RuntimeQueue>(lhs) != Read<RuntimeQueue>(rhs));
+auto lyra_rt_queue_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(Read<RuntimeQueue>(lhs) != Read<RuntimeQueue>(rhs));
 }
 
 auto lyra_rt_queue_case_equal(const void* lhs, const void* rhs, void* out)
@@ -4990,10 +5315,11 @@ auto lyra_rt_queue_bitstream_width(const void* queue, void* out) -> void* {
 }
 
 auto lyra_rt_queue_count_bits(
-    const void* queue, const void* control_bits, void* out) -> void* {
-  return Emplace(
-      out,
-      Read<RuntimeQueue>(queue).CountBits(Read<PackedArray>(control_bits)));
+    const void* queue, const void* control_bits, std::int64_t control_width,
+    bool control_is_four_state, void* out) -> void* {
+  const lyra::value::LoadedWords control =
+      BitsAt(control_bits, control_width, control_is_four_state);
+  return Emplace(out, Read<RuntimeQueue>(queue).CountBits(control.View()));
 }
 
 auto lyra_rt_queue_cell_get(void* cell) -> const void* {
@@ -5092,17 +5418,13 @@ void lyra_rt_assocarray_delete_index(
       lyra::runtime::IndexAt(index, index_type));
 }
 
-auto lyra_rt_assocarray_eq(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out,
+auto lyra_rt_assocarray_eq(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(
       Read<RuntimeAssociativeArray>(lhs) == Read<RuntimeAssociativeArray>(rhs));
 }
 
-auto lyra_rt_assocarray_ne(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out,
+auto lyra_rt_assocarray_ne(const void* lhs, const void* rhs) -> std::uint8_t {
+  return Compared(
       Read<RuntimeAssociativeArray>(lhs) != Read<RuntimeAssociativeArray>(rhs));
 }
 
@@ -5169,10 +5491,12 @@ auto lyra_rt_assocarray_assoc_prev(
 }
 
 auto lyra_rt_assocarray_count_bits(
-    const void* array, const void* control_bits, void* out) -> void* {
+    const void* array, const void* control_bits, std::int64_t control_width,
+    bool control_is_four_state, void* out) -> void* {
+  const lyra::value::LoadedWords control =
+      BitsAt(control_bits, control_width, control_is_four_state);
   return Emplace(
-      out, Read<RuntimeAssociativeArray>(array).CountBits(
-               Read<PackedArray>(control_bits)));
+      out, Read<RuntimeAssociativeArray>(array).CountBits(control.View()));
 }
 
 auto lyra_rt_assocarray_cell_get(void* cell) -> const void* {
@@ -5888,183 +6212,171 @@ void lyra_rt_queue_reverse(void* receiver) {
 
 auto lyra_rt_unpackedarray_read_mem(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
-    const void* base, const void* start, void* out) -> void* {
+    std::int64_t base, std::int64_t start, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::Single(
-               lyra::runtime::ReadMem(
-                   *static_cast<RuntimeEffects*>(runtime),
-                   Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-                   ValuesOf<UnpackedRange>(dims), Read<PackedArray>(base),
-                   Read<PackedArray>(start), std::nullopt)));
+      out,
+      lyra::runtime::Single(
+          lyra::runtime::ReadUnpackedMemory(
+              *static_cast<RuntimeEffects*>(runtime),
+              Read<RuntimeUnpackedArray>(memory), Read<String>(name),
+              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
+              base, start, std::nullopt)));
 }
 
 auto lyra_rt_unpackedarray_read_mem_within(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
-    const void* base, const void* start, const void* finish, void* out)
+    std::int64_t base, std::int64_t start, std::int64_t finish, void* out)
     -> void* {
   return lyra::runtime::EmplaceCompletion(
       out,
       lyra::runtime::Single(
-          lyra::runtime::ReadMem(
+          lyra::runtime::ReadUnpackedMemory(
               *static_cast<RuntimeEffects*>(runtime),
               Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-              ValuesOf<UnpackedRange>(dims), Read<PackedArray>(base),
-              Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64())));
+              lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
+              base, start, finish)));
 }
 
 void lyra_rt_unpackedarray_write_mem(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
-    const void* base, const void* start) {
-  lyra::runtime::WriteMem(
+    std::int64_t base, std::int64_t start) {
+  lyra::runtime::WriteUnpackedMemory(
       *static_cast<RuntimeEffects*>(runtime),
       Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-      ValuesOf<UnpackedRange>(dims), Read<PackedArray>(base),
-      Read<PackedArray>(start), std::nullopt);
+      lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)), base,
+      start, std::nullopt);
 }
 
 void lyra_rt_unpackedarray_write_mem_within(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
-    const void* base, const void* start, const void* finish) {
-  lyra::runtime::WriteMem(
+    std::int64_t base, std::int64_t start, std::int64_t finish) {
+  lyra::runtime::WriteUnpackedMemory(
       *static_cast<RuntimeEffects*>(runtime),
       Read<RuntimeUnpackedArray>(memory), Read<String>(name),
-      ValuesOf<UnpackedRange>(dims), Read<PackedArray>(base),
-      Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64());
+      lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)), base,
+      start, finish);
 }
 
 auto lyra_rt_dynarray_read_mem(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start, void* out) -> void* {
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::Single(
-               lyra::runtime::ReadMem(
+               lyra::runtime::ReadFlatMemory(
                    *static_cast<RuntimeEffects*>(runtime),
-                   Read<RuntimeDynamicArray>(memory), Read<String>(name),
-                   Read<PackedArray>(base), Read<PackedArray>(start),
-                   std::nullopt)));
+                   Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
+                   start, std::nullopt)));
 }
 
 auto lyra_rt_dynarray_read_mem_within(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start, const void* finish, void* out) -> void* {
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start, std::int64_t finish, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::Single(
-               lyra::runtime::ReadMem(
+               lyra::runtime::ReadFlatMemory(
                    *static_cast<RuntimeEffects*>(runtime),
-                   Read<RuntimeDynamicArray>(memory), Read<String>(name),
-                   Read<PackedArray>(base), Read<PackedArray>(start),
-                   Read<PackedArray>(finish).ToInt64())));
+                   Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
+                   start, finish)));
 }
 
 void lyra_rt_dynarray_write_mem(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start) {
-  lyra::runtime::WriteMem(
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start) {
+  lyra::runtime::WriteFlatMemory(
       *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(memory),
-      Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
-      std::nullopt);
+      Read<String>(name), base, start, std::nullopt);
 }
 
 void lyra_rt_dynarray_write_mem_within(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start, const void* finish) {
-  lyra::runtime::WriteMem(
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start, std::int64_t finish) {
+  lyra::runtime::WriteFlatMemory(
       *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(memory),
-      Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
-      Read<PackedArray>(finish).ToInt64());
+      Read<String>(name), base, start, finish);
 }
 
 auto lyra_rt_queue_read_mem(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start, void* out) -> void* {
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::Single(
-               lyra::runtime::ReadMem(
+               lyra::runtime::ReadFlatMemory(
                    *static_cast<RuntimeEffects*>(runtime),
-                   Read<RuntimeQueue>(memory), Read<String>(name),
-                   Read<PackedArray>(base), Read<PackedArray>(start),
+                   Read<RuntimeQueue>(memory), Read<String>(name), base, start,
                    std::nullopt)));
 }
 
 auto lyra_rt_queue_read_mem_within(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start, const void* finish, void* out) -> void* {
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start, std::int64_t finish, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::Single(
-               lyra::runtime::ReadMem(
+               lyra::runtime::ReadFlatMemory(
                    *static_cast<RuntimeEffects*>(runtime),
-                   Read<RuntimeQueue>(memory), Read<String>(name),
-                   Read<PackedArray>(base), Read<PackedArray>(start),
-                   Read<PackedArray>(finish).ToInt64())));
+                   Read<RuntimeQueue>(memory), Read<String>(name), base, start,
+                   finish)));
 }
 
 void lyra_rt_queue_write_mem(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start) {
-  lyra::runtime::WriteMem(
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start) {
+  lyra::runtime::WriteFlatMemory(
       *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
-      Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
-      std::nullopt);
+      Read<String>(name), base, start, std::nullopt);
 }
 
 void lyra_rt_queue_write_mem_within(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start, const void* finish) {
-  lyra::runtime::WriteMem(
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start, std::int64_t finish) {
+  lyra::runtime::WriteFlatMemory(
       *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
-      Read<String>(name), Read<PackedArray>(base), Read<PackedArray>(start),
-      Read<PackedArray>(finish).ToInt64());
+      Read<String>(name), base, start, finish);
 }
 
 auto lyra_rt_assocarray_read_mem(
-    void* runtime, const void* memory, const void* name,
-    const void* key_prototype, const void* base, const void* start, void* out)
-    -> void* {
+    void* runtime, const void* memory, const void* key_type, const void* name,
+    std::int64_t base, std::int64_t start, void* out) -> void* {
   return lyra::runtime::EmplaceCompletion(
       out, lyra::runtime::Single(
-               lyra::runtime::ReadMem(
+               lyra::runtime::ReadKeyedMemory(
                    *static_cast<RuntimeEffects*>(runtime),
                    Read<RuntimeAssociativeArray>(memory), Read<String>(name),
-                   Read<PackedArray>(key_prototype), Read<PackedArray>(base),
-                   Read<PackedArray>(start), std::nullopt)));
+                   base, start, std::nullopt, key_type)));
 }
 
 auto lyra_rt_assocarray_read_mem_within(
-    void* runtime, const void* memory, const void* name,
-    const void* key_prototype, const void* base, const void* start,
-    const void* finish, void* out) -> void* {
+    void* runtime, const void* memory, const void* key_type, const void* name,
+    std::int64_t base, std::int64_t start, std::int64_t finish, void* out)
+    -> void* {
   return lyra::runtime::EmplaceCompletion(
-      out,
-      lyra::runtime::Single(
-          lyra::runtime::ReadMem(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeAssociativeArray>(memory), Read<String>(name),
-              Read<PackedArray>(key_prototype), Read<PackedArray>(base),
-              Read<PackedArray>(start), Read<PackedArray>(finish).ToInt64())));
+      out, lyra::runtime::Single(
+               lyra::runtime::ReadKeyedMemory(
+                   *static_cast<RuntimeEffects*>(runtime),
+                   Read<RuntimeAssociativeArray>(memory), Read<String>(name),
+                   base, start, finish, key_type)));
 }
 
 void lyra_rt_assocarray_write_mem(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start) {
-  lyra::runtime::WriteMem(
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start) {
+  lyra::runtime::WriteKeyedMemory(
       *static_cast<RuntimeEffects*>(runtime),
-      Read<RuntimeAssociativeArray>(memory), Read<String>(name),
-      Read<PackedArray>(base), Read<PackedArray>(start), std::nullopt);
+      Read<RuntimeAssociativeArray>(memory), Read<String>(name), base, start,
+      std::nullopt);
 }
 
 void lyra_rt_assocarray_write_mem_within(
-    void* runtime, const void* memory, const void* name, const void* base,
-    const void* start, const void* finish) {
-  lyra::runtime::WriteMem(
+    void* runtime, const void* memory, const void* name, std::int64_t base,
+    std::int64_t start, std::int64_t finish) {
+  lyra::runtime::WriteKeyedMemory(
       *static_cast<RuntimeEffects*>(runtime),
-      Read<RuntimeAssociativeArray>(memory), Read<String>(name),
-      Read<PackedArray>(base), Read<PackedArray>(start),
-      Read<PackedArray>(finish).ToInt64());
+      Read<RuntimeAssociativeArray>(memory), Read<String>(name), base, start,
+      finish);
 }
 
 auto lyra_rt_format_runtime(
     const void* format, LyraSpan args, const void* scope_path,
-    const void* time_format, const void* timeunit_power, void* out) -> void* {
+    const void* time_format, std::int64_t timeunit_power, void* out) -> void* {
   const std::span<const void* const> handles{
       static_cast<const void* const*>(args.data), args.count};
   std::vector<FormatArg> arguments(handles.size());
@@ -6072,14 +6384,18 @@ auto lyra_rt_format_runtime(
     return *static_cast<const FormatArg*>(handle);
   });
   return Emplace(
-      out,
-      lyra::value::FormatRuntime(
-          Read<String>(format), arguments, Read<String>(scope_path),
-          Read<TimeFormat>(time_format), Read<PackedArray>(timeunit_power)));
+      out, lyra::value::FormatRuntime(
+               Read<String>(format), arguments, Read<String>(scope_path),
+               Read<TimeFormat>(time_format), timeunit_power));
 }
 
-auto lyra_rt_packed_make_format_arg(const void* value, void* out) -> void* {
-  return Emplace(out, MakeFormatArg(Read<PackedArray>(value)));
+auto lyra_rt_integral_make_format_arg(
+    const void* value, std::int64_t value_width, bool value_is_signed,
+    bool value_is_four_state, void* out) -> void* {
+  return Emplace(
+      out, lyra::runtime::IntegralFormatArg(
+               value, lyra::runtime::NumberShape(
+                          value_width, value_is_signed, value_is_four_state)));
 }
 
 auto lyra_rt_string_make_format_arg(const void* value, void* out) -> void* {
@@ -6087,10 +6403,13 @@ auto lyra_rt_string_make_format_arg(const void* value, void* out) -> void* {
 }
 
 auto lyra_rt_make_patterned_format_arg(
-    const void* value, const void* pattern, void* out) -> void* {
-  return Emplace(
-      out,
-      FormatArg::Patterned(Read<PackedArray>(value), Read<String>(pattern)));
+    const void* value, std::int64_t value_width, bool value_is_signed,
+    bool value_is_four_state, const void* pattern, void* out) -> void* {
+  FormatArg arg = lyra::runtime::IntegralFormatArg(
+      value, lyra::runtime::NumberShape(
+                 value_width, value_is_signed, value_is_four_state));
+  arg.pattern = &Read<String>(pattern);
+  return Emplace(out, arg);
 }
 
 auto lyra_rt_make_rendered_format_arg(const void* pattern, void* out) -> void* {
@@ -6105,12 +6424,20 @@ auto lyra_rt_managedref_make_format_arg(const void* value, void* out) -> void* {
   return Emplace(out, MakeFormatArg(Read<ObjectRef>(value)));
 }
 
-auto lyra_rt_make_dpi_bit_buffer(const void* sv, void* out) -> void* {
-  return Emplace(out, DpiBitBuffer(Read<PackedArray>(sv)));
+auto lyra_rt_make_dpi_bit_buffer(
+    const void* sv, std::int64_t sv_width, bool sv_is_four_state, void* out)
+    -> void* {
+  const lyra::value::LoadedWords planes =
+      BitsAt(sv, sv_width, sv_is_four_state);
+  return Emplace(out, DpiBitBuffer(planes.Read(), planes.Shape().width));
 }
 
-auto lyra_rt_make_dpi_logic_buffer(const void* sv, void* out) -> void* {
-  return Emplace(out, DpiLogicBuffer(Read<PackedArray>(sv)));
+auto lyra_rt_make_dpi_logic_buffer(
+    const void* sv, std::int64_t sv_width, bool sv_is_four_state, void* out)
+    -> void* {
+  const lyra::value::LoadedWords planes =
+      BitsAt(sv, sv_width, sv_is_four_state);
+  return Emplace(out, DpiLogicBuffer(planes.Read(), planes.Shape().width));
 }
 
 auto lyra_rt_dpi_bit_buffer_data(void* buffer) -> void* {
@@ -6121,53 +6448,50 @@ auto lyra_rt_dpi_logic_buffer_data(void* buffer) -> void* {
   return static_cast<DpiLogicBuffer*>(buffer)->Data();
 }
 
-auto lyra_rt_read_canonical_bit_vec(
-    const void* src, const void* type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::ReadCanonicalBitVec(
-               static_cast<const svBitVecVal*>(src), Read<PackedType>(type)));
-}
-
-auto lyra_rt_read_canonical_logic_vec(
-    const void* src, const void* type, void* out) -> void* {
-  return Emplace(
-      out, lyra::value::ReadCanonicalLogicVec(
-               static_cast<const svLogicVecVal*>(src), Read<PackedType>(type)));
-}
-
-void lyra_rt_write_canonical_bit_vec(void* dst, const void* sv) {
+void lyra_rt_write_canonical_bit_vec(
+    void* dst, const void* sv, std::int64_t sv_width, bool sv_is_four_state) {
+  const lyra::value::LoadedWords planes =
+      BitsAt(sv, sv_width, sv_is_four_state);
   lyra::value::WriteCanonicalBitVec(
-      static_cast<svBitVecVal*>(dst), Read<PackedArray>(sv));
+      static_cast<svBitVecVal*>(dst), planes.Read(), planes.Shape().width);
 }
 
-void lyra_rt_write_canonical_logic_vec(void* dst, const void* sv) {
+void lyra_rt_write_canonical_logic_vec(
+    void* dst, const void* sv, std::int64_t sv_width, bool sv_is_four_state) {
+  const lyra::value::LoadedWords planes =
+      BitsAt(sv, sv_width, sv_is_four_state);
   lyra::value::WriteCanonicalLogicVec(
-      static_cast<svLogicVecVal*>(dst), Read<PackedArray>(sv));
+      static_cast<svLogicVecVal*>(dst), planes.Read(), planes.Shape().width);
 }
 
-auto lyra_rt_to_sv_logic(const void* sv) -> std::uint8_t {
-  return lyra::value::ToSvLogic(Read<PackedArray>(sv));
-}
-
-auto lyra_rt_from_sv_logic(std::uint8_t encoded, const void* type, void* out)
-    -> void* {
-  return Emplace(
-      out, lyra::value::FromSvLogic(encoded, Read<PackedType>(type)));
+auto lyra_rt_to_sv_logic(
+    const void* sv, std::int64_t sv_width, bool sv_is_four_state)
+    -> std::uint8_t {
+  const lyra::value::LoadedWords planes =
+      BitsAt(sv, sv_width, sv_is_four_state);
+  return lyra::value::ToSvLogic(planes.Read());
 }
 
 // The image takes the actual erased, because it is element-type-independent
 // (Annex H.7.3) and nothing here could read that representation off anything
-// else. What the image does need of the actual's declaration is the shape of
-// one element, which arrives as its own operand rather than being read back
-// off an element the actual may not hold.
+// else. What the image needs of the actual's type is the type of one element,
+// which the actual's own type reaches under its unpacked layers.
 auto lyra_rt_make_dpi_open_array(
     const void* sv, const void* sv_type, LyraSpan bounds,
-    const void* element_type, bool addressable_elements, void* out) -> void* {
-  return Emplace(
-      out,
-      DpiOpenArray(
-          sv, lyra::runtime::TypeAt(sv_type), ValuesOf<UnpackedRange>(bounds),
-          Read<PackedType>(element_type), addressable_elements));
+    bool addressable_elements, void* out) -> void* {
+  const std::span<const std::int64_t> declared =
+      lyra::runtime::MachineIntsOf(bounds);
+  const std::vector<UnpackedRange> dims =
+      lyra::value::UnpackedRangesOf(declared);
+  const lyra::value::ValueType& type = lyra::runtime::TypeAt(sv_type);
+  const lyra::value::IntegralShape element =
+      lyra::runtime::ImageElementType(sv, type, dims.size()).Shape();
+  auto* image = std::construct_at(
+      static_cast<DpiOpenArray*>(out), declared, element.width, element.domain,
+      addressable_elements);
+  std::size_t position = 0;
+  lyra::runtime::FillImage(*image, sv, type, 0, dims.size(), position);
+  return image;
 }
 
 auto lyra_rt_dpi_open_array_handle(void* image) -> void* {
@@ -6179,7 +6503,11 @@ auto lyra_rt_dpi_open_array_value(
     void* out) -> void* {
   const lyra::value::ValueType& type = lyra::runtime::TypeAt(prototype_type);
   lyra::runtime::ElementInto(out, type, prototype);
-  static_cast<const DpiOpenArray*>(image)->WriteBack(out, type);
+  const auto& read = *static_cast<const DpiOpenArray*>(image);
+  std::size_t position = 0;
+  lyra::runtime::ReadImageBack(
+      read, out, type, 0, static_cast<std::size_t>(read.Dimensions()),
+      position);
   return out;
 }
 
@@ -6188,9 +6516,6 @@ auto lyra_rt_dpi_open_array_value(
 // through what this builds, writes the parts it writes where they lie, and
 // ends it once the write is over, which is when the wrapper learns what the
 // write did.
-auto lyra_rt_packed_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<PackedArray>(cell, out);
-}
 auto lyra_rt_string_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<String>(cell, out);
 }
@@ -6226,9 +6551,6 @@ auto lyra_rt_queue_cell_open_for_write(void* cell, void* out) -> void* {
 }
 auto lyra_rt_assocarray_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<RuntimeAssociativeArray>(cell, out);
-}
-auto lyra_rt_packed_ref_open_for_write(void* reference, void* out) -> void* {
-  return OpenRefWrite<PackedArray>(reference, out);
 }
 auto lyra_rt_string_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<String>(reference, out);
@@ -6270,9 +6592,6 @@ auto lyra_rt_assocarray_ref_open_for_write(void* reference, void* out)
     -> void* {
   return OpenRefWrite<RuntimeAssociativeArray>(reference, out);
 }
-auto lyra_rt_packed_driver_open_for_write(void* driver, void* out) -> void* {
-  return OpenDriverWrite<PackedArray>(driver, out);
-}
 auto lyra_rt_tuple_driver_open_for_write(void* driver, void* out) -> void* {
   return OpenDriverWrite<RuntimeTuple>(driver, out);
 }
@@ -6291,21 +6610,21 @@ auto lyra_rt_designate_whole(void* write, void* out) -> void* {
 }
 
 auto lyra_rt_dynarray_designate_element(
-    const void* designation, const void* index, void* out) -> void* {
+    const void* designation, const void* position, void* out) -> void* {
   return DesignateElement<RuntimeDynamicArray>(
-      designation, Read<PackedArray>(index), out);
+      designation, PositionNamedAt(position), out);
 }
 
 auto lyra_rt_unpackedarray_designate_element(
     const void* designation, const void* position, void* out) -> void* {
   return DesignateElement<RuntimeUnpackedArray>(
-      designation, Read<PackedArray>(position), out);
+      designation, PositionNamedAt(position), out);
 }
 
 auto lyra_rt_queue_designate_element(
-    const void* designation, const void* index, void* out) -> void* {
+    const void* designation, const void* position, void* out) -> void* {
   return DesignateElement<RuntimeQueue>(
-      designation, Read<PackedArray>(index), out);
+      designation, PositionNamedAt(position), out);
 }
 
 auto lyra_rt_assocarray_designate_element(
@@ -6330,7 +6649,7 @@ void lyra_rt_dynarray_assign_slice(
     const void* designation, const void* start, std::int64_t count,
     const void* replacement) {
   AssignDesignatedSlice<RuntimeDynamicArray>(
-      designation, start, count,
+      designation, PositionNamedAt(start), count,
       lyra::runtime::ElementHandles(Read<RuntimeUnpackedArray>(replacement)));
 }
 
@@ -6338,36 +6657,10 @@ void lyra_rt_unpackedarray_assign_slice(
     const void* designation, const void* start, std::int64_t count,
     const void* replacement) {
   AssignDesignatedSlice<RuntimeUnpackedArray>(
-      designation, start, count,
+      designation, PositionNamedAt(start), count,
       lyra::runtime::ElementHandles(Read<RuntimeUnpackedArray>(replacement)));
 }
 
-void lyra_rt_packed_assign_slice(
-    const void* designation, const void* start, std::int64_t count,
-    const void* replacement) {
-  const ErasedDesignation& within = DesignationAt(designation);
-  lyra::value::PackedArrayRef bits =
-      static_cast<PackedArray*>(within.part)
-          ->SliceRef(Read<PackedArray>(start), count);
-  if (const std::optional<lyra::runtime::Change> change =
-          lyra::runtime::WriteBits(
-              bits, Read<PackedArray>(replacement),
-              within.write->Undecided())) {
-    within.write->Landed(*change);
-  }
-}
-
-auto lyra_rt_packed_read_slice(
-    const void* designation, const void* start, std::int64_t count, void* out)
-    -> void* {
-  return Emplace(
-      out, static_cast<const PackedArray*>(DesignationAt(designation).part)
-               ->Slice(Read<PackedArray>(start), count));
-}
-
-auto lyra_rt_packed_land(const void* designation) noexcept -> void* {
-  return LandDesignation<PackedArray>(designation);
-}
 auto lyra_rt_string_land(const void* designation) noexcept -> void* {
   return LandDesignation<String>(designation);
 }
@@ -6412,9 +6705,6 @@ auto lyra_rt_managedref_land(const void* designation) noexcept -> void* {
 // element, a member, the contents a write opened -- which takes it where it
 // lies rather than being replaced by a new object, so whatever names that
 // storage goes on naming it (LRM 7.6).
-void lyra_rt_packed_assign(void* storage, const void* value) {
-  *static_cast<PackedArray*>(storage) = Read<PackedArray>(value);
-}
 void lyra_rt_string_assign(void* storage, const void* value) {
   *static_cast<String*>(storage) = Read<String>(value);
 }
@@ -6463,9 +6753,6 @@ void lyra_rt_reference_assign(void* storage, const void* value) {
 // Ending an object the generated body held in its own storage, where ending one
 // has something to do. An object whose type has a trivial destructor is ended
 // by its storage going away, so it has no entry here.
-void lyra_rt_packed_destroy(void* object) {
-  std::destroy_at(static_cast<PackedArray*>(object));
-}
 void lyra_rt_string_destroy(void* object) {
   std::destroy_at(static_cast<String*>(object));
 }
@@ -6532,9 +6819,6 @@ void lyra_rt_object_write_destroy(void* object) {
 
 // A second value equal to one the body already holds, built in further storage
 // the body gave -- where a value it only reads has to become one it owns.
-auto lyra_rt_packed_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<PackedArray>(value));
-}
 auto lyra_rt_string_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<String>(value));
 }
@@ -6610,9 +6894,6 @@ auto lyra_rt_reference_copy(const void* value, void* out) -> void* {
 
 // A value moved into storage that takes it over. What is left behind is still
 // an object, which the body then ends.
-auto lyra_rt_packed_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<PackedArray*>(value)));
-}
 auto lyra_rt_string_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<String*>(value)));
 }
@@ -6701,9 +6982,6 @@ void lyra_rt_borrowed_handle_construct(void* storage) {
 void lyra_rt_reference_construct(void* storage) {
   BuildAt<ErasedReference>(storage);
 }
-void lyra_rt_packed_cell_construct(void* storage) {
-  BuildAt<Var<PackedArray>>(storage);
-}
 void lyra_rt_string_cell_construct(void* storage) {
   BuildAt<Var<String>>(storage);
 }
@@ -6739,9 +7017,6 @@ void lyra_rt_assocarray_cell_construct(void* storage) {
 }
 void lyra_rt_managedref_cell_construct(void* storage) {
   BuildAt<Var<ObjectRef>>(storage);
-}
-void lyra_rt_packed_value_cell_construct(void* storage) {
-  BuildAt<ActivationValueCell<PackedArray>>(storage);
 }
 void lyra_rt_string_value_cell_construct(void* storage) {
   BuildAt<ActivationValueCell<String>>(storage);
@@ -6779,9 +7054,6 @@ void lyra_rt_assocarray_value_cell_construct(void* storage) {
 void lyra_rt_managedref_value_cell_construct(void* storage) {
   BuildAt<ActivationValueCell<ObjectRef>>(storage);
 }
-void lyra_rt_packed_net_construct(void* storage) {
-  BuildAt<ResolvedNet<PackedArray>>(storage);
-}
 void lyra_rt_tuple_net_construct(void* storage) {
   BuildAt<ResolvedNet<RuntimeTuple>>(storage);
 }
@@ -6790,9 +7062,6 @@ void lyra_rt_union_net_construct(void* storage) {
 }
 void lyra_rt_unpackedarray_net_construct(void* storage) {
   BuildAt<ResolvedNet<RuntimeUnpackedArray>>(storage);
-}
-void lyra_rt_packed_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<PackedArray>>(storage);
 }
 void lyra_rt_string_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<String>>(storage);
@@ -6843,9 +7112,6 @@ void lyra_rt_shared_pointer_construct(void* storage) {
   BuildAt<SharedPointer>(storage);
 }
 
-void lyra_rt_packed_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<PackedArray>*>(storage));
-}
 void lyra_rt_string_cell_destroy(void* storage) {
   std::destroy_at(static_cast<Var<String>*>(storage));
 }
@@ -6882,9 +7148,6 @@ void lyra_rt_assocarray_cell_destroy(void* storage) {
 void lyra_rt_managedref_cell_destroy(void* storage) {
   std::destroy_at(static_cast<Var<ObjectRef>*>(storage));
 }
-void lyra_rt_packed_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<ActivationValueCell<PackedArray>*>(storage));
-}
 void lyra_rt_string_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<ActivationValueCell<String>*>(storage));
 }
@@ -6916,9 +7179,6 @@ void lyra_rt_assocarray_value_cell_destroy(void* storage) {
 void lyra_rt_managedref_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<ActivationValueCell<ObjectRef>*>(storage));
 }
-void lyra_rt_packed_net_destroy(void* storage) {
-  std::destroy_at(static_cast<ResolvedNet<PackedArray>*>(storage));
-}
 void lyra_rt_tuple_net_destroy(void* storage) {
   std::destroy_at(static_cast<ResolvedNet<RuntimeTuple>*>(storage));
 }
@@ -6927,9 +7187,6 @@ void lyra_rt_union_net_destroy(void* storage) {
 }
 void lyra_rt_unpackedarray_net_destroy(void* storage) {
   std::destroy_at(static_cast<ResolvedNet<RuntimeUnpackedArray>*>(storage));
-}
-void lyra_rt_packed_sampled_history_destroy(void* storage) {
-  std::destroy_at(static_cast<SampledHistory<PackedArray>*>(storage));
 }
 void lyra_rt_string_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<String>*>(storage));
@@ -6973,5 +7230,1204 @@ void lyra_rt_cancellation_target_destroy(void* storage) {
 }
 void lyra_rt_evaluation_attempts_destroy(void* storage) {
   std::destroy_at(static_cast<EvaluationAttempts*>(storage));
+}
+
+// The holders over each layout an integral value no wider than a word has. A
+// value crosses as its own bytes, which a holder keeps as they are. What an
+// entry is told of the value's type is a count where the bytes cannot say it:
+// the positions a net resolves, the declared width a write into some bits is
+// bounded by.
+void lyra_rt_bit8_cell_construct(void* storage) {
+  BuildAt<Var<Bit8>>(storage);
+}
+void lyra_rt_bit8_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<Bit8>(storage));
+}
+void lyra_rt_bit8_cell_initialize(void* cell, const void* prototype) noexcept {
+  CellAt<Bit8>(cell).Initialize(Read<Bit8>(prototype));
+}
+void lyra_rt_bit8_cell_set(void* cell, const void* value) {
+  CellAt<Bit8>(cell).Set(Read<Bit8>(value));
+}
+void lyra_rt_bit8_cell_arm_sampling(void* cell) {
+  CellAt<Bit8>(cell).ArmSampling();
+}
+auto lyra_rt_bit8_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<Bit8>(cell).SampledGet());
+}
+auto lyra_rt_bit8_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<Bit8>(cell).BeginTakeover(level);
+}
+auto lyra_rt_bit8_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<Bit8>(cell).DriveTakeover(level, generation, Read<Bit8>(value));
+}
+void lyra_rt_bit8_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<Bit8>(cell).EndTakeover(level);
+}
+auto lyra_rt_bit8_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Bit8>(cell, out);
+}
+auto lyra_rt_bit8_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Bit8>(cell, out);
+}
+auto lyra_rt_bit8_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<Bit8>(out);
+}
+auto lyra_rt_bit8_ref_get(void* reference) -> const void* {
+  return RefGet<Bit8>(reference);
+}
+void lyra_rt_bit8_ref_set(void* reference, const void* value) {
+  RefSet<Bit8>(reference, value);
+}
+void lyra_rt_bit8_ref_arm_sampling(void* reference) {
+  RefArmSampling<Bit8>(reference);
+}
+auto lyra_rt_bit8_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Bit8>(reference, out);
+}
+auto lyra_rt_bit8_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Bit8>(reference, out);
+}
+auto lyra_rt_bit8_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<Bit8>();
+}
+void lyra_rt_bit8_value_cell_construct(void* storage) {
+  BuildAt<ActivationValueCell<Bit8>>(storage);
+}
+void lyra_rt_bit8_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<Bit8>>(storage);
+}
+void lyra_rt_bit8_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<Bit8>(storage));
+}
+void lyra_rt_bit8_sampled_history_install(
+    void* history, const void* default_value, std::int64_t depth) {
+  HistoryAt<Bit8>(history).Install(Read<Bit8>(default_value), depth);
+}
+void lyra_rt_bit8_sampled_history_push(void* history, const void* value) {
+  HistoryAt<Bit8>(history).Push(Read<Bit8>(value));
+}
+auto lyra_rt_bit8_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out, static_cast<const SampledHistory<Bit8>*>(history)->At(ticks_back));
+}
+auto lyra_rt_bit8_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Bit8>(designation);
+}
+void lyra_rt_bit8_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  AssignDesignatedBits<Bit8>(designation, width, start, bits_width, written);
+}
+
+void lyra_rt_bit16_cell_construct(void* storage) {
+  BuildAt<Var<Bit16>>(storage);
+}
+void lyra_rt_bit16_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<Bit16>(storage));
+}
+void lyra_rt_bit16_cell_initialize(void* cell, const void* prototype) noexcept {
+  CellAt<Bit16>(cell).Initialize(Read<Bit16>(prototype));
+}
+void lyra_rt_bit16_cell_set(void* cell, const void* value) {
+  CellAt<Bit16>(cell).Set(Read<Bit16>(value));
+}
+void lyra_rt_bit16_cell_arm_sampling(void* cell) {
+  CellAt<Bit16>(cell).ArmSampling();
+}
+auto lyra_rt_bit16_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<Bit16>(cell).SampledGet());
+}
+auto lyra_rt_bit16_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<Bit16>(cell).BeginTakeover(level);
+}
+auto lyra_rt_bit16_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<Bit16>(cell).DriveTakeover(
+      level, generation, Read<Bit16>(value));
+}
+void lyra_rt_bit16_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<Bit16>(cell).EndTakeover(level);
+}
+auto lyra_rt_bit16_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Bit16>(cell, out);
+}
+auto lyra_rt_bit16_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Bit16>(cell, out);
+}
+auto lyra_rt_bit16_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<Bit16>(out);
+}
+auto lyra_rt_bit16_ref_get(void* reference) -> const void* {
+  return RefGet<Bit16>(reference);
+}
+void lyra_rt_bit16_ref_set(void* reference, const void* value) {
+  RefSet<Bit16>(reference, value);
+}
+void lyra_rt_bit16_ref_arm_sampling(void* reference) {
+  RefArmSampling<Bit16>(reference);
+}
+auto lyra_rt_bit16_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Bit16>(reference, out);
+}
+auto lyra_rt_bit16_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Bit16>(reference, out);
+}
+auto lyra_rt_bit16_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<Bit16>();
+}
+void lyra_rt_bit16_value_cell_construct(void* storage) {
+  BuildAt<ActivationValueCell<Bit16>>(storage);
+}
+void lyra_rt_bit16_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<Bit16>>(storage);
+}
+void lyra_rt_bit16_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<Bit16>(storage));
+}
+void lyra_rt_bit16_sampled_history_install(
+    void* history, const void* default_value, std::int64_t depth) {
+  HistoryAt<Bit16>(history).Install(Read<Bit16>(default_value), depth);
+}
+void lyra_rt_bit16_sampled_history_push(void* history, const void* value) {
+  HistoryAt<Bit16>(history).Push(Read<Bit16>(value));
+}
+auto lyra_rt_bit16_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out, static_cast<const SampledHistory<Bit16>*>(history)->At(ticks_back));
+}
+auto lyra_rt_bit16_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Bit16>(designation);
+}
+void lyra_rt_bit16_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  AssignDesignatedBits<Bit16>(designation, width, start, bits_width, written);
+}
+
+void lyra_rt_bit32_cell_construct(void* storage) {
+  BuildAt<Var<Bit32>>(storage);
+}
+void lyra_rt_bit32_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<Bit32>(storage));
+}
+void lyra_rt_bit32_cell_initialize(void* cell, const void* prototype) noexcept {
+  CellAt<Bit32>(cell).Initialize(Read<Bit32>(prototype));
+}
+void lyra_rt_bit32_cell_set(void* cell, const void* value) {
+  CellAt<Bit32>(cell).Set(Read<Bit32>(value));
+}
+void lyra_rt_bit32_cell_arm_sampling(void* cell) {
+  CellAt<Bit32>(cell).ArmSampling();
+}
+auto lyra_rt_bit32_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<Bit32>(cell).SampledGet());
+}
+auto lyra_rt_bit32_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<Bit32>(cell).BeginTakeover(level);
+}
+auto lyra_rt_bit32_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<Bit32>(cell).DriveTakeover(
+      level, generation, Read<Bit32>(value));
+}
+void lyra_rt_bit32_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<Bit32>(cell).EndTakeover(level);
+}
+auto lyra_rt_bit32_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Bit32>(cell, out);
+}
+auto lyra_rt_bit32_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Bit32>(cell, out);
+}
+auto lyra_rt_bit32_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<Bit32>(out);
+}
+auto lyra_rt_bit32_ref_get(void* reference) -> const void* {
+  return RefGet<Bit32>(reference);
+}
+void lyra_rt_bit32_ref_set(void* reference, const void* value) {
+  RefSet<Bit32>(reference, value);
+}
+void lyra_rt_bit32_ref_arm_sampling(void* reference) {
+  RefArmSampling<Bit32>(reference);
+}
+auto lyra_rt_bit32_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Bit32>(reference, out);
+}
+auto lyra_rt_bit32_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Bit32>(reference, out);
+}
+auto lyra_rt_bit32_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<Bit32>();
+}
+void lyra_rt_bit32_value_cell_construct(void* storage) {
+  BuildAt<ActivationValueCell<Bit32>>(storage);
+}
+void lyra_rt_bit32_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<Bit32>>(storage);
+}
+void lyra_rt_bit32_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<Bit32>(storage));
+}
+void lyra_rt_bit32_sampled_history_install(
+    void* history, const void* default_value, std::int64_t depth) {
+  HistoryAt<Bit32>(history).Install(Read<Bit32>(default_value), depth);
+}
+void lyra_rt_bit32_sampled_history_push(void* history, const void* value) {
+  HistoryAt<Bit32>(history).Push(Read<Bit32>(value));
+}
+auto lyra_rt_bit32_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out, static_cast<const SampledHistory<Bit32>*>(history)->At(ticks_back));
+}
+auto lyra_rt_bit32_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Bit32>(designation);
+}
+void lyra_rt_bit32_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  AssignDesignatedBits<Bit32>(designation, width, start, bits_width, written);
+}
+
+void lyra_rt_bit64_cell_construct(void* storage) {
+  BuildAt<Var<Bit64>>(storage);
+}
+void lyra_rt_bit64_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<Bit64>(storage));
+}
+void lyra_rt_bit64_cell_initialize(void* cell, const void* prototype) noexcept {
+  CellAt<Bit64>(cell).Initialize(Read<Bit64>(prototype));
+}
+void lyra_rt_bit64_cell_set(void* cell, const void* value) {
+  CellAt<Bit64>(cell).Set(Read<Bit64>(value));
+}
+void lyra_rt_bit64_cell_arm_sampling(void* cell) {
+  CellAt<Bit64>(cell).ArmSampling();
+}
+auto lyra_rt_bit64_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<Bit64>(cell).SampledGet());
+}
+auto lyra_rt_bit64_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<Bit64>(cell).BeginTakeover(level);
+}
+auto lyra_rt_bit64_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<Bit64>(cell).DriveTakeover(
+      level, generation, Read<Bit64>(value));
+}
+void lyra_rt_bit64_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<Bit64>(cell).EndTakeover(level);
+}
+auto lyra_rt_bit64_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Bit64>(cell, out);
+}
+auto lyra_rt_bit64_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Bit64>(cell, out);
+}
+auto lyra_rt_bit64_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<Bit64>(out);
+}
+auto lyra_rt_bit64_ref_get(void* reference) -> const void* {
+  return RefGet<Bit64>(reference);
+}
+void lyra_rt_bit64_ref_set(void* reference, const void* value) {
+  RefSet<Bit64>(reference, value);
+}
+void lyra_rt_bit64_ref_arm_sampling(void* reference) {
+  RefArmSampling<Bit64>(reference);
+}
+auto lyra_rt_bit64_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Bit64>(reference, out);
+}
+auto lyra_rt_bit64_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Bit64>(reference, out);
+}
+auto lyra_rt_bit64_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<Bit64>();
+}
+void lyra_rt_bit64_value_cell_construct(void* storage) {
+  BuildAt<ActivationValueCell<Bit64>>(storage);
+}
+void lyra_rt_bit64_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<Bit64>>(storage);
+}
+void lyra_rt_bit64_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<Bit64>(storage));
+}
+void lyra_rt_bit64_sampled_history_install(
+    void* history, const void* default_value, std::int64_t depth) {
+  HistoryAt<Bit64>(history).Install(Read<Bit64>(default_value), depth);
+}
+void lyra_rt_bit64_sampled_history_push(void* history, const void* value) {
+  HistoryAt<Bit64>(history).Push(Read<Bit64>(value));
+}
+auto lyra_rt_bit64_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out, static_cast<const SampledHistory<Bit64>*>(history)->At(ticks_back));
+}
+auto lyra_rt_bit64_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Bit64>(designation);
+}
+void lyra_rt_bit64_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  AssignDesignatedBits<Bit64>(designation, width, start, bits_width, written);
+}
+
+void lyra_rt_logic8_cell_construct(void* storage) {
+  BuildAt<Var<Logic8>>(storage);
+}
+void lyra_rt_logic8_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<Logic8>(storage));
+}
+void lyra_rt_logic8_cell_initialize(
+    void* cell, const void* prototype) noexcept {
+  CellAt<Logic8>(cell).Initialize(Read<Logic8>(prototype));
+}
+void lyra_rt_logic8_cell_set(void* cell, const void* value) {
+  CellAt<Logic8>(cell).Set(Read<Logic8>(value));
+}
+void lyra_rt_logic8_cell_arm_sampling(void* cell) {
+  CellAt<Logic8>(cell).ArmSampling();
+}
+auto lyra_rt_logic8_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<Logic8>(cell).SampledGet());
+}
+auto lyra_rt_logic8_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<Logic8>(cell).BeginTakeover(level);
+}
+auto lyra_rt_logic8_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<Logic8>(cell).DriveTakeover(
+      level, generation, Read<Logic8>(value));
+}
+void lyra_rt_logic8_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<Logic8>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic8_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Logic8>(cell, out);
+}
+auto lyra_rt_logic8_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Logic8>(cell, out);
+}
+auto lyra_rt_logic8_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<Logic8>(out);
+}
+auto lyra_rt_logic8_ref_get(void* reference) -> const void* {
+  return RefGet<Logic8>(reference);
+}
+void lyra_rt_logic8_ref_set(void* reference, const void* value) {
+  RefSet<Logic8>(reference, value);
+}
+void lyra_rt_logic8_ref_arm_sampling(void* reference) {
+  RefArmSampling<Logic8>(reference);
+}
+auto lyra_rt_logic8_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Logic8>(reference, out);
+}
+auto lyra_rt_logic8_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Logic8>(reference, out);
+}
+auto lyra_rt_logic8_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<Logic8>();
+}
+void lyra_rt_logic8_value_cell_construct(void* storage) {
+  BuildAt<ActivationValueCell<Logic8>>(storage);
+}
+void lyra_rt_logic8_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<Logic8>>(storage);
+}
+void lyra_rt_logic8_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<Logic8>(storage));
+}
+void lyra_rt_logic8_sampled_history_install(
+    void* history, const void* default_value, std::int64_t depth) {
+  HistoryAt<Logic8>(history).Install(Read<Logic8>(default_value), depth);
+}
+void lyra_rt_logic8_sampled_history_push(void* history, const void* value) {
+  HistoryAt<Logic8>(history).Push(Read<Logic8>(value));
+}
+auto lyra_rt_logic8_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out, static_cast<const SampledHistory<Logic8>*>(history)->At(ticks_back));
+}
+auto lyra_rt_logic8_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Logic8>(designation);
+}
+void lyra_rt_logic8_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  AssignDesignatedBits<Logic8>(designation, width, start, bits_width, written);
+}
+void lyra_rt_logic8_net_construct(void* storage) {
+  BuildAt<ResolvedNet<Logic8>>(storage);
+}
+void lyra_rt_logic8_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Logic8>(storage));
+}
+void lyra_rt_logic8_net_initialize_tri_state(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic8>(net).InitializeTriState(count, fill, strength);
+}
+void lyra_rt_logic8_net_initialize_wired_and(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic8>(net).InitializeWiredAnd(count, fill, strength);
+}
+void lyra_rt_logic8_net_initialize_wired_or(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic8>(net).InitializeWiredOr(count, fill, strength);
+}
+void lyra_rt_logic8_net_initialize_retaining(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic8>(net).InitializeRetaining(count, fill, strength);
+}
+auto lyra_rt_logic8_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<Logic8>(net).BeginTakeover(level);
+}
+auto lyra_rt_logic8_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<Logic8>(net).DriveTakeover(
+      level, generation, Read<Logic8>(value));
+}
+void lyra_rt_logic8_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<Logic8>(net).EndTakeover(level);
+}
+auto lyra_rt_logic8_attach_driver(void* net, std::int64_t strength) -> void* {
+  return &NetOf<Logic8>(net).AttachDriver(strength);
+}
+void lyra_rt_logic8_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count) {
+  JoinNets<Logic8>(net, other, here, there, count);
+}
+auto lyra_rt_logic8_driver_get(void* driver) -> const void* {
+  return &DriverOf<Logic8>(driver).Get();
+}
+void lyra_rt_logic8_driver_set(void* driver, const void* value) {
+  DriverOf<Logic8>(driver).Set(Read<Logic8>(value));
+}
+auto lyra_rt_logic8_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Logic8>(driver, out);
+}
+
+void lyra_rt_logic16_cell_construct(void* storage) {
+  BuildAt<Var<Logic16>>(storage);
+}
+void lyra_rt_logic16_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<Logic16>(storage));
+}
+void lyra_rt_logic16_cell_initialize(
+    void* cell, const void* prototype) noexcept {
+  CellAt<Logic16>(cell).Initialize(Read<Logic16>(prototype));
+}
+void lyra_rt_logic16_cell_set(void* cell, const void* value) {
+  CellAt<Logic16>(cell).Set(Read<Logic16>(value));
+}
+void lyra_rt_logic16_cell_arm_sampling(void* cell) {
+  CellAt<Logic16>(cell).ArmSampling();
+}
+auto lyra_rt_logic16_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<Logic16>(cell).SampledGet());
+}
+auto lyra_rt_logic16_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<Logic16>(cell).BeginTakeover(level);
+}
+auto lyra_rt_logic16_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<Logic16>(cell).DriveTakeover(
+      level, generation, Read<Logic16>(value));
+}
+void lyra_rt_logic16_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<Logic16>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic16_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Logic16>(cell, out);
+}
+auto lyra_rt_logic16_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Logic16>(cell, out);
+}
+auto lyra_rt_logic16_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<Logic16>(out);
+}
+auto lyra_rt_logic16_ref_get(void* reference) -> const void* {
+  return RefGet<Logic16>(reference);
+}
+void lyra_rt_logic16_ref_set(void* reference, const void* value) {
+  RefSet<Logic16>(reference, value);
+}
+void lyra_rt_logic16_ref_arm_sampling(void* reference) {
+  RefArmSampling<Logic16>(reference);
+}
+auto lyra_rt_logic16_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Logic16>(reference, out);
+}
+auto lyra_rt_logic16_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Logic16>(reference, out);
+}
+auto lyra_rt_logic16_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<Logic16>();
+}
+void lyra_rt_logic16_value_cell_construct(void* storage) {
+  BuildAt<ActivationValueCell<Logic16>>(storage);
+}
+void lyra_rt_logic16_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<Logic16>>(storage);
+}
+void lyra_rt_logic16_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<Logic16>(storage));
+}
+void lyra_rt_logic16_sampled_history_install(
+    void* history, const void* default_value, std::int64_t depth) {
+  HistoryAt<Logic16>(history).Install(Read<Logic16>(default_value), depth);
+}
+void lyra_rt_logic16_sampled_history_push(void* history, const void* value) {
+  HistoryAt<Logic16>(history).Push(Read<Logic16>(value));
+}
+auto lyra_rt_logic16_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out,
+      static_cast<const SampledHistory<Logic16>*>(history)->At(ticks_back));
+}
+auto lyra_rt_logic16_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Logic16>(designation);
+}
+void lyra_rt_logic16_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  AssignDesignatedBits<Logic16>(designation, width, start, bits_width, written);
+}
+void lyra_rt_logic16_net_construct(void* storage) {
+  BuildAt<ResolvedNet<Logic16>>(storage);
+}
+void lyra_rt_logic16_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Logic16>(storage));
+}
+void lyra_rt_logic16_net_initialize_tri_state(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic16>(net).InitializeTriState(count, fill, strength);
+}
+void lyra_rt_logic16_net_initialize_wired_and(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic16>(net).InitializeWiredAnd(count, fill, strength);
+}
+void lyra_rt_logic16_net_initialize_wired_or(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic16>(net).InitializeWiredOr(count, fill, strength);
+}
+void lyra_rt_logic16_net_initialize_retaining(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic16>(net).InitializeRetaining(count, fill, strength);
+}
+auto lyra_rt_logic16_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<Logic16>(net).BeginTakeover(level);
+}
+auto lyra_rt_logic16_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<Logic16>(net).DriveTakeover(
+      level, generation, Read<Logic16>(value));
+}
+void lyra_rt_logic16_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<Logic16>(net).EndTakeover(level);
+}
+auto lyra_rt_logic16_attach_driver(void* net, std::int64_t strength) -> void* {
+  return &NetOf<Logic16>(net).AttachDriver(strength);
+}
+void lyra_rt_logic16_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count) {
+  JoinNets<Logic16>(net, other, here, there, count);
+}
+auto lyra_rt_logic16_driver_get(void* driver) -> const void* {
+  return &DriverOf<Logic16>(driver).Get();
+}
+void lyra_rt_logic16_driver_set(void* driver, const void* value) {
+  DriverOf<Logic16>(driver).Set(Read<Logic16>(value));
+}
+auto lyra_rt_logic16_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Logic16>(driver, out);
+}
+
+void lyra_rt_logic32_cell_construct(void* storage) {
+  BuildAt<Var<Logic32>>(storage);
+}
+void lyra_rt_logic32_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<Logic32>(storage));
+}
+void lyra_rt_logic32_cell_initialize(
+    void* cell, const void* prototype) noexcept {
+  CellAt<Logic32>(cell).Initialize(Read<Logic32>(prototype));
+}
+void lyra_rt_logic32_cell_set(void* cell, const void* value) {
+  CellAt<Logic32>(cell).Set(Read<Logic32>(value));
+}
+void lyra_rt_logic32_cell_arm_sampling(void* cell) {
+  CellAt<Logic32>(cell).ArmSampling();
+}
+auto lyra_rt_logic32_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<Logic32>(cell).SampledGet());
+}
+auto lyra_rt_logic32_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<Logic32>(cell).BeginTakeover(level);
+}
+auto lyra_rt_logic32_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<Logic32>(cell).DriveTakeover(
+      level, generation, Read<Logic32>(value));
+}
+void lyra_rt_logic32_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<Logic32>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic32_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Logic32>(cell, out);
+}
+auto lyra_rt_logic32_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Logic32>(cell, out);
+}
+auto lyra_rt_logic32_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<Logic32>(out);
+}
+auto lyra_rt_logic32_ref_get(void* reference) -> const void* {
+  return RefGet<Logic32>(reference);
+}
+void lyra_rt_logic32_ref_set(void* reference, const void* value) {
+  RefSet<Logic32>(reference, value);
+}
+void lyra_rt_logic32_ref_arm_sampling(void* reference) {
+  RefArmSampling<Logic32>(reference);
+}
+auto lyra_rt_logic32_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Logic32>(reference, out);
+}
+auto lyra_rt_logic32_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Logic32>(reference, out);
+}
+auto lyra_rt_logic32_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<Logic32>();
+}
+void lyra_rt_logic32_value_cell_construct(void* storage) {
+  BuildAt<ActivationValueCell<Logic32>>(storage);
+}
+void lyra_rt_logic32_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<Logic32>>(storage);
+}
+void lyra_rt_logic32_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<Logic32>(storage));
+}
+void lyra_rt_logic32_sampled_history_install(
+    void* history, const void* default_value, std::int64_t depth) {
+  HistoryAt<Logic32>(history).Install(Read<Logic32>(default_value), depth);
+}
+void lyra_rt_logic32_sampled_history_push(void* history, const void* value) {
+  HistoryAt<Logic32>(history).Push(Read<Logic32>(value));
+}
+auto lyra_rt_logic32_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out,
+      static_cast<const SampledHistory<Logic32>*>(history)->At(ticks_back));
+}
+auto lyra_rt_logic32_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Logic32>(designation);
+}
+void lyra_rt_logic32_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  AssignDesignatedBits<Logic32>(designation, width, start, bits_width, written);
+}
+void lyra_rt_logic32_net_construct(void* storage) {
+  BuildAt<ResolvedNet<Logic32>>(storage);
+}
+void lyra_rt_logic32_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Logic32>(storage));
+}
+void lyra_rt_logic32_net_initialize_tri_state(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic32>(net).InitializeTriState(count, fill, strength);
+}
+void lyra_rt_logic32_net_initialize_wired_and(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic32>(net).InitializeWiredAnd(count, fill, strength);
+}
+void lyra_rt_logic32_net_initialize_wired_or(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic32>(net).InitializeWiredOr(count, fill, strength);
+}
+void lyra_rt_logic32_net_initialize_retaining(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic32>(net).InitializeRetaining(count, fill, strength);
+}
+auto lyra_rt_logic32_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<Logic32>(net).BeginTakeover(level);
+}
+auto lyra_rt_logic32_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<Logic32>(net).DriveTakeover(
+      level, generation, Read<Logic32>(value));
+}
+void lyra_rt_logic32_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<Logic32>(net).EndTakeover(level);
+}
+auto lyra_rt_logic32_attach_driver(void* net, std::int64_t strength) -> void* {
+  return &NetOf<Logic32>(net).AttachDriver(strength);
+}
+void lyra_rt_logic32_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count) {
+  JoinNets<Logic32>(net, other, here, there, count);
+}
+auto lyra_rt_logic32_driver_get(void* driver) -> const void* {
+  return &DriverOf<Logic32>(driver).Get();
+}
+void lyra_rt_logic32_driver_set(void* driver, const void* value) {
+  DriverOf<Logic32>(driver).Set(Read<Logic32>(value));
+}
+auto lyra_rt_logic32_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Logic32>(driver, out);
+}
+
+void lyra_rt_logic64_cell_construct(void* storage) {
+  BuildAt<Var<Logic64>>(storage);
+}
+void lyra_rt_logic64_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<Logic64>(storage));
+}
+void lyra_rt_logic64_cell_initialize(
+    void* cell, const void* prototype) noexcept {
+  CellAt<Logic64>(cell).Initialize(Read<Logic64>(prototype));
+}
+void lyra_rt_logic64_cell_set(void* cell, const void* value) {
+  CellAt<Logic64>(cell).Set(Read<Logic64>(value));
+}
+void lyra_rt_logic64_cell_arm_sampling(void* cell) {
+  CellAt<Logic64>(cell).ArmSampling();
+}
+auto lyra_rt_logic64_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<Logic64>(cell).SampledGet());
+}
+auto lyra_rt_logic64_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<Logic64>(cell).BeginTakeover(level);
+}
+auto lyra_rt_logic64_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<Logic64>(cell).DriveTakeover(
+      level, generation, Read<Logic64>(value));
+}
+void lyra_rt_logic64_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<Logic64>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic64_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<Logic64>(cell, out);
+}
+auto lyra_rt_logic64_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<Logic64>(cell, out);
+}
+auto lyra_rt_logic64_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<Logic64>(out);
+}
+auto lyra_rt_logic64_ref_get(void* reference) -> const void* {
+  return RefGet<Logic64>(reference);
+}
+void lyra_rt_logic64_ref_set(void* reference, const void* value) {
+  RefSet<Logic64>(reference, value);
+}
+void lyra_rt_logic64_ref_arm_sampling(void* reference) {
+  RefArmSampling<Logic64>(reference);
+}
+auto lyra_rt_logic64_ref_sampled_load(void* reference, void* out) -> void* {
+  return RefSampledLoad<Logic64>(reference, out);
+}
+auto lyra_rt_logic64_ref_open_for_write(void* reference, void* out) -> void* {
+  return OpenRefWrite<Logic64>(reference, out);
+}
+auto lyra_rt_logic64_value_cell_alloc() noexcept -> void* {
+  return AllocateValueCell<Logic64>();
+}
+void lyra_rt_logic64_value_cell_construct(void* storage) {
+  BuildAt<ActivationValueCell<Logic64>>(storage);
+}
+void lyra_rt_logic64_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<Logic64>>(storage);
+}
+void lyra_rt_logic64_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<Logic64>(storage));
+}
+void lyra_rt_logic64_sampled_history_install(
+    void* history, const void* default_value, std::int64_t depth) {
+  HistoryAt<Logic64>(history).Install(Read<Logic64>(default_value), depth);
+}
+void lyra_rt_logic64_sampled_history_push(void* history, const void* value) {
+  HistoryAt<Logic64>(history).Push(Read<Logic64>(value));
+}
+auto lyra_rt_logic64_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out,
+      static_cast<const SampledHistory<Logic64>*>(history)->At(ticks_back));
+}
+auto lyra_rt_logic64_land(const void* designation) noexcept -> void* {
+  return LandDesignation<Logic64>(designation);
+}
+void lyra_rt_logic64_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  AssignDesignatedBits<Logic64>(designation, width, start, bits_width, written);
+}
+void lyra_rt_logic64_net_construct(void* storage) {
+  BuildAt<ResolvedNet<Logic64>>(storage);
+}
+void lyra_rt_logic64_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<Logic64>(storage));
+}
+void lyra_rt_logic64_net_initialize_tri_state(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic64>(net).InitializeTriState(count, fill, strength);
+}
+void lyra_rt_logic64_net_initialize_wired_and(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic64>(net).InitializeWiredAnd(count, fill, strength);
+}
+void lyra_rt_logic64_net_initialize_wired_or(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic64>(net).InitializeWiredOr(count, fill, strength);
+}
+void lyra_rt_logic64_net_initialize_retaining(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<Logic64>(net).InitializeRetaining(count, fill, strength);
+}
+auto lyra_rt_logic64_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<Logic64>(net).BeginTakeover(level);
+}
+auto lyra_rt_logic64_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<Logic64>(net).DriveTakeover(
+      level, generation, Read<Logic64>(value));
+}
+void lyra_rt_logic64_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<Logic64>(net).EndTakeover(level);
+}
+auto lyra_rt_logic64_attach_driver(void* net, std::int64_t strength) -> void* {
+  return &NetOf<Logic64>(net).AttachDriver(strength);
+}
+void lyra_rt_logic64_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count) {
+  JoinNets<Logic64>(net, other, here, there, count);
+}
+auto lyra_rt_logic64_driver_get(void* driver) -> const void* {
+  return &DriverOf<Logic64>(driver).Get();
+}
+void lyra_rt_logic64_driver_set(void* driver, const void* value) {
+  DriverOf<Logic64>(driver).Set(Read<Logic64>(value));
+}
+auto lyra_rt_logic64_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenDriverWrite<Logic64>(driver, out);
+}
+
+void lyra_rt_bit_wide_cell_construct(void* storage) {
+  BuildAt<Var<BitWide>>(storage);
+}
+void lyra_rt_bit_wide_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<BitWide>(storage));
+}
+auto lyra_rt_bit_wide_cell_get(void* cell) -> const void* {
+  return CellAt<BitWide>(cell).Get().Bytes();
+}
+void lyra_rt_bit_wide_cell_initialize(
+    void* cell, const void* prototype, std::int64_t width) noexcept {
+  CellAt<BitWide>(cell).Initialize(
+      lyra::runtime::WideOf<BitWide>(width, prototype));
+}
+void lyra_rt_bit_wide_cell_set(void* cell, const void* value) {
+  CellAt<BitWide>(cell).SetBytes(value);
+}
+void lyra_rt_bit_wide_cell_arm_sampling(void* cell) {
+  CellAt<BitWide>(cell).ArmSampling();
+}
+auto lyra_rt_bit_wide_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<BitWide>(cell).SampledGet());
+}
+auto lyra_rt_bit_wide_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<BitWide>(cell).BeginTakeover(level);
+}
+auto lyra_rt_bit_wide_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<BitWide>(cell).DriveTakeoverBytes(level, generation, value);
+}
+void lyra_rt_bit_wide_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<BitWide>(cell).EndTakeover(level);
+}
+auto lyra_rt_bit_wide_cell_refer(void* cell, void* out) -> void* {
+  return lyra::runtime::ReferToWideCell<BitWide>(cell, out);
+}
+auto lyra_rt_bit_wide_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<BitWide>(cell, out);
+}
+auto lyra_rt_bit_wide_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<BitWide>(out);
+}
+auto lyra_rt_bit_wide_ref_get(void* reference) -> const void* {
+  return ErasedAt(reference).storage;
+}
+void lyra_rt_bit_wide_ref_set(
+    void* reference, std::int64_t width, const void* value) {
+  lyra::runtime::WideRefSet<BitWide>(reference, width, value);
+}
+void lyra_rt_bit_wide_ref_arm_sampling(void* reference) {
+  lyra::runtime::WideRefArmSampling<BitWide>(reference);
+}
+auto lyra_rt_bit_wide_ref_sampled_load(
+    void* reference, std::int64_t width, void* out) -> void* {
+  return lyra::runtime::WideRefSampledLoad<BitWide>(reference, width, out);
+}
+auto lyra_rt_bit_wide_ref_open_for_write(
+    void* reference, std::int64_t width, void* out) -> void* {
+  return lyra::runtime::OpenWideRefWrite<BitWide>(reference, width, out);
+}
+auto lyra_rt_bit_wide_value_cell_alloc(std::int64_t width) noexcept -> void* {
+  return lyra::runtime::AllocateWideValueCell<BitWide>(width);
+}
+void lyra_rt_bit_wide_value_cell_construct(void* storage, std::int64_t width) {
+  lyra::runtime::BuildWideValueCell<BitWide>(storage, width);
+}
+void lyra_rt_bit_wide_value_cell_destroy(void* storage) {
+  std::destroy_at(&lyra::runtime::ValueCellAt<BitWide>(storage));
+}
+void lyra_rt_bit_wide_value_cell_store(void* cell, const void* value) noexcept {
+  lyra::runtime::ValueCellAt<BitWide>(cell).Storage().TakeBytes(value);
+}
+auto lyra_rt_bit_wide_value_cell_load(void* cell) noexcept -> void* {
+  return lyra::runtime::ValueCellAt<BitWide>(cell).Storage().Bytes();
+}
+void lyra_rt_bit_wide_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<BitWide>>(storage);
+}
+void lyra_rt_bit_wide_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<BitWide>(storage));
+}
+void lyra_rt_bit_wide_sampled_history_install(
+    void* history, const void* default_value, std::int64_t width,
+    std::int64_t depth) {
+  HistoryAt<BitWide>(history).Install(
+      lyra::runtime::WideOf<BitWide>(width, default_value), depth);
+}
+void lyra_rt_bit_wide_sampled_history_push(void* history, const void* value) {
+  HistoryAt<BitWide>(history).PushBytes(value);
+}
+auto lyra_rt_bit_wide_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out,
+      static_cast<const SampledHistory<BitWide>*>(history)->At(ticks_back));
+}
+auto lyra_rt_bit_wide_land(const void* designation, std::int64_t width) noexcept
+    -> void* {
+  return lyra::runtime::LandWideDesignation<BitWide>(designation, width);
+}
+void lyra_rt_bit_wide_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  lyra::runtime::AssignDesignatedWideBits<BitWide>(
+      designation, width, start, bits_width, written);
+}
+
+void lyra_rt_logic_wide_cell_construct(void* storage) {
+  BuildAt<Var<LogicWide>>(storage);
+}
+void lyra_rt_logic_wide_cell_destroy(void* storage) {
+  std::destroy_at(&CellAt<LogicWide>(storage));
+}
+auto lyra_rt_logic_wide_cell_get(void* cell) -> const void* {
+  return CellAt<LogicWide>(cell).Get().Bytes();
+}
+void lyra_rt_logic_wide_cell_initialize(
+    void* cell, const void* prototype, std::int64_t width) noexcept {
+  CellAt<LogicWide>(cell).Initialize(
+      lyra::runtime::WideOf<LogicWide>(width, prototype));
+}
+void lyra_rt_logic_wide_cell_set(void* cell, const void* value) {
+  CellAt<LogicWide>(cell).SetBytes(value);
+}
+void lyra_rt_logic_wide_cell_arm_sampling(void* cell) {
+  CellAt<LogicWide>(cell).ArmSampling();
+}
+auto lyra_rt_logic_wide_cell_sampled_load(void* cell, void* out) -> void* {
+  return Emplace(out, CellAt<LogicWide>(cell).SampledGet());
+}
+auto lyra_rt_logic_wide_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellAt<LogicWide>(cell).BeginTakeover(level);
+}
+auto lyra_rt_logic_wide_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellAt<LogicWide>(cell).DriveTakeoverBytes(level, generation, value);
+}
+void lyra_rt_logic_wide_cell_end_takeover(void* cell, std::int64_t level) {
+  CellAt<LogicWide>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic_wide_cell_refer(void* cell, void* out) -> void* {
+  return lyra::runtime::ReferToWideCell<LogicWide>(cell, out);
+}
+auto lyra_rt_logic_wide_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenCellWrite<LogicWide>(cell, out);
+}
+auto lyra_rt_logic_wide_shared_cell_make(void* out) -> void* {
+  return MakeSharedCell<LogicWide>(out);
+}
+auto lyra_rt_logic_wide_ref_get(void* reference) -> const void* {
+  return ErasedAt(reference).storage;
+}
+void lyra_rt_logic_wide_ref_set(
+    void* reference, std::int64_t width, const void* value) {
+  lyra::runtime::WideRefSet<LogicWide>(reference, width, value);
+}
+void lyra_rt_logic_wide_ref_arm_sampling(void* reference) {
+  lyra::runtime::WideRefArmSampling<LogicWide>(reference);
+}
+auto lyra_rt_logic_wide_ref_sampled_load(
+    void* reference, std::int64_t width, void* out) -> void* {
+  return lyra::runtime::WideRefSampledLoad<LogicWide>(reference, width, out);
+}
+auto lyra_rt_logic_wide_ref_open_for_write(
+    void* reference, std::int64_t width, void* out) -> void* {
+  return lyra::runtime::OpenWideRefWrite<LogicWide>(reference, width, out);
+}
+auto lyra_rt_logic_wide_value_cell_alloc(std::int64_t width) noexcept -> void* {
+  return lyra::runtime::AllocateWideValueCell<LogicWide>(width);
+}
+void lyra_rt_logic_wide_value_cell_construct(
+    void* storage, std::int64_t width) {
+  lyra::runtime::BuildWideValueCell<LogicWide>(storage, width);
+}
+void lyra_rt_logic_wide_value_cell_destroy(void* storage) {
+  std::destroy_at(&lyra::runtime::ValueCellAt<LogicWide>(storage));
+}
+void lyra_rt_logic_wide_value_cell_store(
+    void* cell, const void* value) noexcept {
+  lyra::runtime::ValueCellAt<LogicWide>(cell).Storage().TakeBytes(value);
+}
+auto lyra_rt_logic_wide_value_cell_load(void* cell) noexcept -> void* {
+  return lyra::runtime::ValueCellAt<LogicWide>(cell).Storage().Bytes();
+}
+void lyra_rt_logic_wide_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<LogicWide>>(storage);
+}
+void lyra_rt_logic_wide_sampled_history_destroy(void* storage) {
+  std::destroy_at(&HistoryAt<LogicWide>(storage));
+}
+void lyra_rt_logic_wide_sampled_history_install(
+    void* history, const void* default_value, std::int64_t width,
+    std::int64_t depth) {
+  HistoryAt<LogicWide>(history).Install(
+      lyra::runtime::WideOf<LogicWide>(width, default_value), depth);
+}
+void lyra_rt_logic_wide_sampled_history_push(void* history, const void* value) {
+  HistoryAt<LogicWide>(history).PushBytes(value);
+}
+auto lyra_rt_logic_wide_sampled_history_at(
+    const void* history, std::int64_t ticks_back, void* out) -> void* {
+  return Emplace(
+      out,
+      static_cast<const SampledHistory<LogicWide>*>(history)->At(ticks_back));
+}
+auto lyra_rt_logic_wide_land(
+    const void* designation, std::int64_t width) noexcept -> void* {
+  return lyra::runtime::LandWideDesignation<LogicWide>(designation, width);
+}
+void lyra_rt_logic_wide_report_bits(
+    const void* designation, std::int64_t width, const void* start,
+    const void* written, std::int64_t bits_width) {
+  lyra::runtime::AssignDesignatedWideBits<LogicWide>(
+      designation, width, start, bits_width, written);
+}
+void lyra_rt_logic_wide_net_construct(void* storage) {
+  BuildAt<ResolvedNet<LogicWide>>(storage);
+}
+void lyra_rt_logic_wide_net_destroy(void* storage) {
+  std::destroy_at(&NetOf<LogicWide>(storage));
+}
+auto lyra_rt_logic_wide_net_get(void* net) -> const void* {
+  return NetOf<LogicWide>(net).Get().Bytes();
+}
+void lyra_rt_logic_wide_net_initialize_tri_state(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<LogicWide>(net).InitializeTriState(count, fill, strength);
+}
+void lyra_rt_logic_wide_net_initialize_wired_and(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<LogicWide>(net).InitializeWiredAnd(count, fill, strength);
+}
+void lyra_rt_logic_wide_net_initialize_wired_or(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<LogicWide>(net).InitializeWiredOr(count, fill, strength);
+}
+void lyra_rt_logic_wide_net_initialize_retaining(
+    void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  NetOf<LogicWide>(net).InitializeRetaining(count, fill, strength);
+}
+auto lyra_rt_logic_wide_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<LogicWide>(net).BeginTakeover(level);
+}
+auto lyra_rt_logic_wide_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<LogicWide>(net).DriveTakeoverBytes(level, generation, value);
+}
+void lyra_rt_logic_wide_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<LogicWide>(net).EndTakeover(level);
+}
+auto lyra_rt_logic_wide_attach_driver(void* net, std::int64_t strength)
+    -> void* {
+  return &NetOf<LogicWide>(net).AttachDriver(strength);
+}
+void lyra_rt_logic_wide_net_join(
+    void* net, void* other, std::int64_t here, std::int64_t there,
+    std::int64_t count) {
+  JoinNets<LogicWide>(net, other, here, there, count);
+}
+auto lyra_rt_logic_wide_driver_get(void* driver) -> const void* {
+  return DriverOf<LogicWide>(driver).Get().Bytes();
+}
+void lyra_rt_logic_wide_driver_set(void* driver, const void* value) {
+  DriverOf<LogicWide>(driver).SetBytes(value);
+}
+auto lyra_rt_logic_wide_driver_open_for_write(void* driver, void* out)
+    -> void* {
+  return OpenDriverWrite<LogicWide>(driver, out);
 }
 }

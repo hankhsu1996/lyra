@@ -87,8 +87,8 @@ auto LowerDiagnosticSystemSubroutineCall(
   const mir::ExprId finish_origin_id = BuildStringValueExpr(
       unit, block,
       FormatRuntimeOriginString(span, process.Owner().SourceManager()));
-  const mir::ExprId level_id =
-      BuildIntLiteral(unit, block, static_cast<std::int64_t>(finish_level));
+  const mir::ExprId level_id = BuildMachineIntLiteral(
+      unit, block, static_cast<std::int64_t>(finish_level));
   return mir::Expr{
       .data =
           mir::CallExpr{

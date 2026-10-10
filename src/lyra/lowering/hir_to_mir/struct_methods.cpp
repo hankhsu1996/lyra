@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/bit_vector.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -97,8 +98,8 @@ auto IsFourState(mir::IntegralStateKind state) -> bool {
 // unpacked array, structure or union of such.
 auto IsValidForNet(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
   const mir::Type& t = unit.types.Get(type);
-  if (t.IsIntegralPacked()) {
-    return IsFourState(t.PackedShape().state_kind);
+  if (t.IsIntegral()) {
+    return IsFourState(t.Integral().state_kind);
   }
   if (t.Is<mir::StructType>() || t.Is<mir::UnionType>() ||
       t.Is<mir::UnpackedArrayType>()) {
@@ -148,15 +149,6 @@ auto StructMethodCall(
                   .declaration = std::move(declaration), .answers = answers},
           .receiver = receiver},
       std::move(operands), result);
-}
-
-auto Combined(
-    mir::Block& block, mir::BinaryOp op, mir::ExprId lhs, mir::ExprId rhs,
-    mir::TypeId type) -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::BinaryExpr{.op = op, .lhs = lhs, .rhs = rhs},
-          .type = type});
 }
 
 // Whether two values are the same bits, as a machine boolean.
@@ -216,6 +208,9 @@ class Synthesizer {
   auto FilledLike() -> mir::StructMethod;
 
  private:
+  auto FilledMember(
+      mir::Block& block, const std::vector<mir::LocalId>& p, std::size_t i,
+      mir::TypeId fill) -> mir::ExprId;
   auto Unit() -> mir::CompilationUnit& {
     return lowerer_->Unit();
   }
@@ -324,7 +319,7 @@ auto Synthesizer::Inequality() -> mir::StructMethod {
             block, support::ValueOperator::kEquality,
             Read(block, p[0], structure_), {Read(block, p[1], structure_)},
             answer_type);
-        return BuildLogicalNot(block, equal);
+        return BuildLogicalNot(Unit(), block, equal);
       });
 }
 
@@ -379,13 +374,12 @@ auto Synthesizer::IsUnknown() -> mir::StructMethod {
   return Method(
       support::BuiltinFn::kIsUnknown, {structure_}, bit,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
-        return CallOf(
-            block, mir::Direct{.target = support::BuiltinFn::kFromBool},
-            {OwnMethod(
-                block, support::BuiltinFn::kHasUnknown,
-                Read(block, p[0], structure_), {},
-                Unit().builtins.machine_bool)},
-            bit);
+        const mir::ExprId holds_unknown = OwnMethod(
+            block, support::BuiltinFn::kHasUnknown,
+            Read(block, p[0], structure_), {}, Unit().builtins.machine_bool);
+        return block.exprs.Add(MakeBuiltinCall(
+            Unit(), block, support::BuiltinFn::kFromBool, std::nullopt,
+            {holds_unknown}, bit));
       });
 }
 
@@ -397,9 +391,9 @@ auto Synthesizer::BitWidth() -> mir::StructMethod {
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
         mir::ExprId answer = BuildIntLiteral(Unit(), block, 0);
         for (std::size_t i = 0; i < members_.size(); ++i) {
-          answer = Combined(
-              block, mir::BinaryOp::kAdd, answer,
-              BuildBitWidth(Unit(), block, Member(block, p[0], i)), count);
+          answer = block.exprs.Add(MakeBinary(
+              Unit(), block, mir::BinaryOp::kAdd, answer,
+              BuildBitWidth(Unit(), block, Member(block, p[0], i)), count));
         }
         return answer;
       });
@@ -415,12 +409,12 @@ auto Synthesizer::CountBits() -> mir::StructMethod {
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
         mir::ExprId answer = BuildIntLiteral(Unit(), block, 0);
         for (std::size_t i = 0; i < members_.size(); ++i) {
-          answer = Combined(
-              block, mir::BinaryOp::kAdd, answer,
+          answer = block.exprs.Add(MakeBinary(
+              Unit(), block, mir::BinaryOp::kAdd, answer,
               BuildBitCount(
                   Unit(), block, Member(block, p[0], i),
                   Read(block, p[1], control)),
-              count);
+              count));
         }
         return answer;
       });
@@ -453,12 +447,11 @@ auto Synthesizer::ToBitstream() -> mir::StructMethod {
         for (std::size_t i = 1; i < streams.size(); ++i) {
           const StreamShape built = *FixedStreamShapeOfParts(
               Unit(), std::span<const mir::TypeId>{members_}.first(i + 1));
-          answer = CallOf(
-              block,
-              mir::Direct{
-                  .target = support::BuiltinFn::kConcat, .receiver = answer},
+          answer = block.exprs.Add(MakeBuiltinCall(
+              Unit(), block, support::BuiltinFn::kConcatBits, answer,
               {streams[i]},
-              mir::PackedVectorOf(Unit().types, built.width, built.state_kind));
+              mir::PackedVectorOf(
+                  Unit().types, built.width, built.state_kind)));
         }
         return answer;
       });
@@ -482,7 +475,6 @@ auto Synthesizer::FromBitstream() -> mir::StructMethod {
           taken += width;
           const mir::ExprId bits = block.exprs.Add(BuildPackedBitsRead(
               *lowerer_, block, Read(block, p[0], stream), shape.width - taken,
-              width,
               mir::PackedVectorOf(Unit().types, width, shape.state_kind)));
           auto read = BuildFromBitstream(
               Unit(), block, bits, member, diag::SourceSpan{});
@@ -520,12 +512,31 @@ auto Synthesizer::FilledLike() -> mir::StructMethod {
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> members;
         for (std::size_t i = 0; i < members_.size(); ++i) {
-          members.push_back(BuildValueOperation(
-              Unit(), block, support::BuiltinFn::kFilledLike, std::nullopt,
-              {Member(block, p[0], i), Read(block, p[1], fill)}, members_[i]));
+          members.push_back(FilledMember(block, p, i, fill));
         }
         return Built(block, std::move(members));
       });
+}
+
+// Member `i` with every bit the fill: a packed member is the fill repeated
+// across its width (LRM 11.4.12.1), at the signedness it declares, and any
+// other member answers for itself.
+auto Synthesizer::FilledMember(
+    mir::Block& block, const std::vector<mir::LocalId>& p, std::size_t i,
+    mir::TypeId fill) -> mir::ExprId {
+  const mir::Type& member = Unit().types.Get(members_[i]);
+  if (!member.IsIntegral()) {
+    return BuildValueOperation(
+        Unit(), block, support::BuiltinFn::kFilledLike, std::nullopt,
+        {Member(block, p[0], i), Read(block, p[1], fill)}, members_[i]);
+  }
+  const mir::TypeId copies = mir::PackedVectorOf(
+      Unit().types, member.Integral().bit_width,
+      Unit().types.Get(fill).Integral().state_kind);
+  const mir::ExprId run = Read(block, p[1], fill);
+  const mir::ExprId filled = block.exprs.Add(MakeBuiltinCall(
+      Unit(), block, support::BuiltinFn::kReplicateBits, run, {}, copies));
+  return ConvertToType(Unit(), block, filled, members_[i]);
 }
 
 }  // namespace
@@ -568,8 +579,8 @@ auto StructMethodsOf(
 auto CarriesUnknowns(const mir::CompilationUnit& unit, mir::TypeId type)
     -> bool {
   const mir::Type& t = unit.types.Get(type);
-  if (t.IsIntegralPacked()) {
-    return IsFourState(t.PackedShape().state_kind);
+  if (t.IsIntegral()) {
+    return IsFourState(t.Integral().state_kind);
   }
   return std::ranges::any_of(PartTypes(unit, type), [&](mir::TypeId part) {
     return CarriesUnknowns(unit, part);
@@ -600,9 +611,8 @@ auto BuildValueOperation(
         block, *std::move(structure), entry, receiver, std::move(operands),
         result);
   }
-  return CallOf(
-      block, mir::Direct{.target = entry, .receiver = receiver},
-      std::move(operands), result);
+  return block.exprs.Add(MakeBuiltinCall(
+      unit, block, entry, receiver, std::move(operands), result));
 }
 
 auto BuildStructComparison(
@@ -648,6 +658,12 @@ auto BuildBitCount(
 auto BuildBitWidth(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
     -> mir::ExprId {
+  // An integral value is as many bits as its type is wide.
+  const mir::Type& type = unit.types.Get(block.exprs.Get(value).type);
+  if (type.IsIntegral()) {
+    return BuildIntLiteral(
+        unit, block, static_cast<std::int64_t>(type.Integral().bit_width));
+  }
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kBitstreamWidth, value, {},
       unit.builtins.int_type);

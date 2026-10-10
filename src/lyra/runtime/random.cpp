@@ -5,26 +5,26 @@
 
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::runtime {
 
-auto Urandom(RuntimeEffects& runtime) -> value::PackedArray {
-  return value::PackedArray::IntUnsigned(runtime.Running().rng.NextValue());
+auto Urandom(RuntimeEffects& runtime) -> value::IntUnsigned {
+  return value::IntUnsigned::FromInt(runtime.Running().rng.NextValue());
 }
 
-auto UrandomSeeded(RuntimeEffects& runtime, const value::PackedArray& seed)
-    -> value::PackedArray {
+auto UrandomSeeded(RuntimeEffects& runtime, std::int64_t seed)
+    -> value::IntUnsigned {
   DrawRng& rng = runtime.Running().rng;
-  rng.Reseed(RandomSeed{static_cast<std::uint32_t>(seed.ToInt64())});
-  return value::PackedArray::IntUnsigned(rng.NextValue());
+  rng.Reseed(RandomSeed{static_cast<std::uint32_t>(seed)});
+  return value::IntUnsigned::FromInt(rng.NextValue());
 }
 
 auto UrandomRange(
-    RuntimeEffects& runtime, const value::PackedArray& maxval,
-    const value::PackedArray& minval) -> value::PackedArray {
-  const auto high = static_cast<std::uint32_t>(maxval.ToInt64());
-  const auto low = static_cast<std::uint32_t>(minval.ToInt64());
+    RuntimeEffects& runtime, std::int64_t maxval, std::int64_t minval)
+    -> value::IntUnsigned {
+  const auto high = static_cast<std::uint32_t>(maxval);
+  const auto low = static_cast<std::uint32_t>(minval);
   const std::uint32_t lower = std::min(high, low);
   const std::uint32_t upper = std::max(high, low);
   const std::uint64_t span = std::uint64_t{upper} - lower + 1;
@@ -38,12 +38,12 @@ auto UrandomRange(
   while (draw >= limit) {
     draw = rng.NextValue();
   }
-  return value::PackedArray::IntUnsigned(
+  return value::IntUnsigned::FromInt(
       static_cast<std::uint32_t>(lower + (draw % span)));
 }
 
-auto Random(RuntimeEffects& runtime) -> value::PackedArray {
-  return value::PackedArray::Int(
+auto Random(RuntimeEffects& runtime) -> value::Int {
+  return value::Int::FromInt(
       static_cast<std::int32_t>(runtime.Running().rng.NextValue()));
 }
 

@@ -12,8 +12,8 @@ namespace lyra::mir {
 
 // The bits of an integral constant, and nothing else. How wide the value is,
 // whether it is signed, and whether it has an unknown plane at all are the
-// type's to state, and every expression carries one -- so a consumer reads them
-// there and the two can never disagree.
+// type's to state, and every expression carries one, which is where a consumer
+// reads them.
 //
 // Word layout is LSB-first and 4-state encoding is (v=0,s=0)=0, (v=1,s=0)=1,
 // (v=0,s=1)=Z, (v=1,s=1)=X. Nothing else is promised here: this is what a

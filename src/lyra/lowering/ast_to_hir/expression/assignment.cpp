@@ -12,6 +12,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
@@ -94,7 +95,7 @@ auto LowerAssignmentExpr(
             hir::AssignExpr{
                 .timing = timing,
                 .lhs = lhs_id,
-                .compound_op = std::nullopt,
+                .compound = std::nullopt,
                 .rhs = rhs_id},
         .span = span,
     };
@@ -106,28 +107,21 @@ auto LowerAssignmentExpr(
         "operator is not a legal SV form (LRM A.6.2 grammar)");
   }
 
-  const auto& bare_user_rhs = BareCompoundUserRhs(as.right());
-  auto rhs_or = lowerer.LowerExpr(bare_user_rhs, frame);
+  const CompoundExpansion applied = CompoundExpansionOf(as.right());
+  auto rhs_or = lowerer.LowerExpr(*applied.operand, frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  hir::Expr rhs_expr = *std::move(rhs_or);
-  if (rhs_expr.type.value != type_id->value) {
-    const hir::ExprId inner_id = frame.Exprs().Add(std::move(rhs_expr));
-    rhs_expr = hir::Expr{
-        .type = *type_id,
-        .data =
-            hir::ConversionExpr{
-                .kind = hir::ConversionKind::kImplicit, .operand = inner_id},
-        .span = span,
-    };
-  }
-  const hir::ExprId rhs_id = frame.Exprs().Add(std::move(rhs_expr));
+  const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
+  auto applied_at = unit_lowerer.InternType(*applied.applied_at, span);
+  if (!applied_at) return std::unexpected(std::move(applied_at.error()));
   return hir::Expr{
       .type = *type_id,
       .data =
           hir::AssignExpr{
               .timing = timing,
               .lhs = lhs_id,
-              .compound_op = LowerBinaryOp(*as.op),
+              .compound =
+                  hir::CompoundAssignOperator{
+                      .op = LowerBinaryOp(*as.op), .applied_at = *applied_at},
               .rhs = rhs_id},
       .span = span,
   };

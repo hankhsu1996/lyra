@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -97,6 +98,12 @@ auto LowerValuePlusargs(
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
+  // A plusarg is converted into an integral destination by its size and into
+  // a string as text, so each has an entry.
+  const support::BuiltinFn entry =
+      unit.types.Get(target_type).IsIntegral()
+          ? support::BuiltinFn::kValuePlusargs
+          : support::BuiltinFn::kValuePlusargsString;
   const std::array writebacks{CompletionWriteback{
       .place = std::move(target.place),
       .component = *layout.formals.front().component,
@@ -106,8 +113,7 @@ auto LowerValuePlusargs(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kValuePlusargs},
+                  .callee = mir::Direct{.target = entry},
                   .arguments = {runtime_id, user_id, target.incoming}},
           .type = payload},
       payload, writebacks);

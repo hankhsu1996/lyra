@@ -16,10 +16,8 @@
 namespace lyra::lowering::hir_to_mir {
 
 // LRM Table 6-7 default constant for an integral type: all-`x` for 4-state,
-// all-zero for 2-state. A conversion / from-int factory call passes this (as a
-// literal of its destination type) so the destination representation reaches
-// the runtime as an ordinary MIR value, never composed by the backend.
-[[nodiscard]] auto DefaultIntegralConstant(const mir::PackedArrayType& pa)
+// all-zero for 2-state.
+[[nodiscard]] auto DefaultIntegralConstant(const mir::IntegralType& integral)
     -> mir::IntegralConstant;
 
 // Builds a primitive MIR expression evaluating to the LRM Table 6-7 default

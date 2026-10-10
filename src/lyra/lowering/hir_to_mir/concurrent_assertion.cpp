@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -52,12 +53,9 @@ auto Word(mir::Block& block, mir::TypeId type, std::uint64_t value)
 }
 
 auto Op(
-    mir::Block& block, mir::TypeId type, mir::BinaryOp op, mir::ExprId lhs,
-    mir::ExprId rhs) -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data = mir::BinaryExpr{.op = op, .lhs = lhs, .rhs = rhs},
-          .type = type});
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
+    mir::BinaryOp op, mir::ExprId lhs, mir::ExprId rhs) -> mir::ExprId {
+  return block.exprs.Add(MakeBinary(unit, block, op, lhs, rhs, type));
 }
 
 auto Read(mir::Block& block, mir::LocalId local, mir::TypeId type)
@@ -102,13 +100,13 @@ auto AnyOf(
   mir::ExprId combined = Word(block, type, 0);
   for (std::size_t word = 0; word < words.size(); ++word) {
     combined =
-        Op(block, type, mir::BinaryOp::kBitwiseOr, combined,
-           Op(block, type, mir::BinaryOp::kBitwiseAnd,
+        Op(unit, block, type, mir::BinaryOp::kBitwiseOr, combined,
+           Op(unit, block, type, mir::BinaryOp::kBitwiseAnd,
               Read(block, words[word], type), Word(block, type, mask[word])));
   }
   return Op(
-      block, unit.builtins.machine_bool, mir::BinaryOp::kInequality, combined,
-      Word(block, type, 0));
+      unit, block, unit.builtins.machine_bool, mir::BinaryOp::kInequality,
+      combined, Word(block, type, 0));
 }
 
 // `words |= mask`, one word at a time.
@@ -118,7 +116,7 @@ void OrInto(
   for (std::size_t word = 0; word < words.size(); ++word) {
     Assign(
         unit, block, words[word], type,
-        Op(block, type, mir::BinaryOp::kBitwiseOr,
+        Op(unit, block, type, mir::BinaryOp::kBitwiseOr,
            Read(block, words[word], type), Word(block, type, mask[word])));
   }
 }
@@ -255,12 +253,12 @@ auto BuildOutcome(
     return Word(block, type, static_cast<std::uint64_t>(outcome));
   };
   const mir::ExprId exhausted = Op(
-      block, unit.builtins.machine_bool, mir::BinaryOp::kEquality,
+      unit, block, unit.builtins.machine_bool, mir::BinaryOp::kEquality,
       [&] {
         mir::ExprId combined = Word(block, type, 0);
         for (const mir::LocalId word : next) {
           combined =
-              Op(block, type, mir::BinaryOp::kBitwiseOr, combined,
+              Op(unit, block, type, mir::BinaryOp::kBitwiseOr, combined,
                  Read(block, word, type));
         }
         return combined;
@@ -454,7 +452,7 @@ auto LowerAdvance(
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     Assign(
         unit, sweep, matched[word], word_type,
-        Op(sweep, word_type, mir::BinaryOp::kBitwiseAnd,
+        Op(unit, sweep, word_type, mir::BinaryOp::kBitwiseAnd,
            Read(sweep, bits[word], word_type),
            Read(sweep, hold[word], word_type)));
   }
@@ -502,8 +500,9 @@ auto LowerAdvance(
   body.AppendStmt(
       mir::WhileStmt{
           .condition =
-              Op(body, unit.builtins.machine_bool, mir::BinaryOp::kGreaterEqual,
-                 Read(body, cursor, index_type), Word(body, index_type, 0)),
+              Op(unit, body, unit.builtins.machine_bool,
+                 mir::BinaryOp::kGreaterEqual, Read(body, cursor, index_type),
+                 Word(body, index_type, 0)),
           .scope = body.child_scopes.Add(std::move(sweep))});
 
   call_stmt(

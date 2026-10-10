@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
 
@@ -41,10 +41,10 @@ class PlusArgsSource {
   std::vector<std::string> tokens_;
 };
 
-// LRM 21.6 $test$plusargs. Returns 1 on prefix match, 0 otherwise, as a
-// PackedArray shaped for SV `int` (2-state 32-bit signed).
+// LRM 21.6 $test$plusargs. Returns 1 on prefix match, 0 otherwise, as an SV
+// `int`.
 auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
-    -> value::PackedArray;
+    -> value::Int;
 
 // LRM 21.6 $value$plusargs. `user_string` is `"plusarg_prefix format_spec"`;
 // on a prefix match the remainder is converted per the format specifier and
@@ -57,10 +57,22 @@ auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
 // decides whether a converted value is zero-padded or truncated.
 auto ValuePlusargs(
     RuntimeEffects& runtime, const value::String& user_string,
-    value::PackedArray out)
-    -> value::Tuple<value::PackedArray, value::PackedArray>;
-auto ValuePlusargs(
+    value::String out) -> value::Tuple<value::Int, value::String>;
+
+// The integral form, writing an integral destination of any type through its
+// planes, which a miss leaves as they were.
+auto ValuePlusargsInto(
     RuntimeEffects& runtime, const value::String& user_string,
-    value::String out) -> value::Tuple<value::PackedArray, value::String>;
+    const value::IntegralView& out) -> value::Int;
+
+template <value::IntegralValue T>
+auto ValuePlusargs(
+    RuntimeEffects& runtime, const value::String& user_string, T out)
+    -> value::Tuple<value::Int, T> {
+  typename T::Words held = out.Load();
+  const value::Int matched =
+      ValuePlusargsInto(runtime, user_string, held.MutableView());
+  return value::Tuple<value::Int, T>{matched, T::FromWords(held)};
+}
 
 }  // namespace lyra::runtime

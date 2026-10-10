@@ -40,9 +40,6 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Trivial literal makers used only by the dispatcher. Kept here because the
-// dispatcher is their only caller and each is small.
-
 auto MakeIntegerLiteralExpr(
     const slang::ast::IntegerLiteral& lit, hir::TypeId type,
     diag::SourceSpan span) -> hir::Expr {
@@ -108,12 +105,11 @@ auto MakeNullLiteralExpr(hir::TypeId type, diag::SourceSpan span) -> hir::Expr {
 // encloses it, so every context-free kind routes to one template handler listed
 // exactly once -- a kind cannot be wired in one context and forgotten in the
 // other. The only two real differences are parameterized inline: name
-// resolution (a bare name maps to different storage per scope) and the kinds
-// LRM allows only in procedural code (increment / decrement, the assignment
-// expression, the dynamic-array constructor, the queue `$`), which a structural
-// expression rejects. Constructor-time constness is enforced upstream by slang,
-// so a structural expression never carries a simulation-time call /
-// `$isunknown` even though this dispatcher would lower one.
+// resolution (a bare name maps to different storage per scope) and the queue
+// `$` (LRM 7.10), which only a procedural walk carries. Constructor-time
+// constness is enforced upstream by slang, so a structural expression never
+// carries a simulation-time call / `$isunknown` even though this dispatcher
+// would lower one.
 template <ExprLowerer Lowerer>
 auto LowerExprImpl(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Expression& expr)
@@ -187,8 +183,8 @@ auto LowerExprImpl(
     case slang::ast::ExpressionKind::LValueReference:
       throw InternalError(
           "LowerExpr: slang LValueReference must not reach HIR; compound "
-          "assignment is lowered as a single AssignExpr with compound_op, and "
-          "the LValueReference-bearing BinaryOp tree slang constructed is "
+          "assignment is lowered as a single AssignExpr naming its operator, "
+          "and the LValueReference-bearing BinaryOp tree slang constructed is "
           "discarded at AST -> HIR");
 
     case slang::ast::ExpressionKind::Conversion:

@@ -314,13 +314,13 @@ HIR-to-MIR emits the call, then render translates uniformly. The asymmetry betwe
 default-initialized, some need construction" is expressed in MIR's expression set, not in render's
 branch tables.
 
-A literal of a runtime library type is not an exception to invariants 2 and 3, and reads like one
-only until it is lowered. Such a value has no literal form in a target language at all -- it is a
-runtime object -- so what stands for one in MIR is the factory that builds it, and HIR-to-MIR states
-that factory the same way it states every other call. Which factory a constant needs follows from
-its own bits, and reading them is a lowering decision made once, in one place, over data the
-lowering already holds; a render that made it instead would be reading the same bits in every
-backend to reach the same answer. What survives to render is an ordinary call.
+A constant of an integral type is its bits at its type. The unit holds each distinct one once and a
+use names which, and nothing in MIR builds one. How a target writes a value of a type from its bits
+is a question about the type, so type mapping answers it (invariant 3): a target with literals
+spells one, and a target that lays values out as data states the bytes. A backend defines the
+constants its own output names. The unit's set is where a value gets one identity, and it is not a
+list of what an artifact must contain, because an operation folded where it was built leaves its
+operands in the set with no use.
 
 A value-emission entry may not read _past_ its node to synthesize operands or pick a form: not an
 enclosing declaration, not a sibling, not an expected destination, not a node reached by matching on
@@ -328,15 +328,24 @@ what an operand happens to be. Its own operands are a different matter and are n
 as structural context -- an access asking whether the value it reaches is held through a pointer is
 reading the input it was handed, not looking around.
 
-The shape a conversion or factory call must hand the runtime therefore travels as an ordinary MIR
-operand: a node naming what a declaration says, whose own type is the runtime descriptor that saying
-is a value of. It carries no contents, because the width, signedness, state domain, and dimension
-stack are the declaration's and the unit states them once. It reaches render as its own leaf node,
-never composed by the consuming call's render from the call's type. A render branch that reads the
-type a call is built at to append shape arguments is the forbidden shape; naming the description as
-an operand is the mechanical alternative.
+A type a callee is generic over is part of the callee, stated where the call is built, and what the
+call answers with follows from it rather than the reverse. An entry whose operands do not settle
+such a type -- a conversion's destination, the type some bits of a value are read or written at, as
+many copies as fill a replication -- says so once, in its own declaration, and a call to it states
+the type on its callee, beside the part a callee names. Each backend then tells the entry the way
+that backend tells a type: one that resolves types where the call is written names the type there,
+and one calling code compiled once for every type hands that code the facts of the type it needs.
+Neither works the type out from the call's own: a write into some bits answers with the place it
+designates, and the entry is called at the type of the bits. The unit's verification refuses a call
+to such an entry that states no type, and a type stated to a callee generic over none. A count or a
+width the type fixes is therefore never an operand, on a read, a write or a reference alike.
 
-A value of that type would say the same thing, and is the wrong way to say it: nothing downstream
-can tell such an operand from one whose contents matter, so every backend builds contents it then
-discards, and every runtime entry taking one advertises a parameter whose value it must document as
-unused.
+An operand that stands for a type survives only where its contents are an input: a value whose
+element count, bounds or element defaults no type states is handed over as the value it is. A value
+passed for its type alone is the wrong way to say it. Nothing downstream can tell such an operand
+from one whose contents matter, so every backend builds contents it then discards, and every runtime
+entry taking one advertises a parameter whose value it must document as unused. What a declaration
+fixes and an entry needs as numbers -- an array's declared range -- is machine operands of the call
+that needs it. An enumeration's member table is constant data of the enumeration: the unit holds it
+once, a use names it, and it reaches render as that name, never composed by the consuming call's
+render.

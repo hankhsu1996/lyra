@@ -7,7 +7,8 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/any_value.hpp"
-#include "lyra/value/value_type.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
@@ -82,12 +83,16 @@ auto ClosureValue::RunValue() -> value::AnyValue {
       *definition_->result_type, [&](void* out) { RunValueInto(out); });
 }
 
-void ClosureValue::RequireAnswers(const value::ValueType& type) const {
-  if (definition_->result_type != &type) {
-    throw InternalError(
-        "ClosureValue: a body is run for a value of a type it does not answer "
-        "-- please report this as a bug");
-  }
+auto ClosureValue::RunWatchedBit() -> value::FourStateBit {
+  value::Logic bit;
+  RunValueInto(&bit);
+  return bit.Lsb();
+}
+
+auto ClosureValue::RunTruth() -> bool {
+  value::Bit holds;
+  RunValueInto(&holds);
+  return holds.IsTruthy();
 }
 
 void ClosureValue::RunValueInto(void* out) {

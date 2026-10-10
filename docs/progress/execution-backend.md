@@ -279,13 +279,14 @@ The value layer is realized two ways, and the breadth work above runs against th
 - The C++ backend realizes each value type as a monomorphized target type -- the host C++ compiler
   expands one concrete type per element type, and an aggregate interior is written in place because
   that type owns real storage.
-- The execution backend realizes each value as a runtime object in its own frame
-  (`../decisions/a-value-lives-in-its-makers-frame.md`), one type per domain, since it emits
-  generated code with no host compiler to expand a template. A product -- an unpacked struct, a
-  function's answer -- is laid out by the code generator the way the host compiler lays out the C++
-  backend's, with its copy, move and end compiled per product type; the runtime holds it in that
-  same layout and reaches those, and the methods a structure's declaration states in MIR for its
-  whole-value operations, through the table the value carries
+- The execution backend lays an integral value out from its type, as the bits the type declares
+  (`../decisions/a-packed-value-is-its-words.md`), and realizes every other value as a runtime
+  object in its own frame (`../decisions/a-value-lives-in-its-makers-frame.md`), one type per
+  domain, since it emits generated code with no host compiler to expand a template. A product -- an
+  unpacked struct, a function's answer -- is laid out by the code generator the way the host
+  compiler lays out the C++ backend's, with its copy, move and end compiled per product type; the
+  runtime holds it in that same layout and reaches those, and the methods a structure's declaration
+  states in MIR for its whole-value operations, through the table the value carries
   (`../decisions/a-tuple-is-laid-out-by-its-type.md`,
   `../decisions/a-structures-operations-are-stated-in-mir.md`). Containers and unions stay one
   erased object, and a component that is storage of its own is reached where it lies.

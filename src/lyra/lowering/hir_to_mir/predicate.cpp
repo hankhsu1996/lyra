@@ -49,19 +49,12 @@ auto BuildCombinedArms(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId then_value,
     mir::ExprId else_value, mir::TypeId result_type) -> mir::ExprId {
   const mir::Type& type = unit.types.Get(result_type);
-  if (!type.IsIntegralPacked() && !type.Is<mir::UnpackedArrayType>()) {
+  if (!type.IsIntegral() && !type.Is<mir::UnpackedArrayType>()) {
     return block.exprs.Add(BuildDefaultValueExpr(unit, block, result_type));
   }
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kMergeConditional,
-                          .receiver = then_value},
-                  .arguments = {else_value}},
-          .type = result_type});
+  return block.exprs.Add(MakeBuiltinCall(
+      unit, block, support::BuiltinFn::kMergeConditional, then_value,
+      {else_value}, result_type));
 }
 
 // Whether the truth `value` is known to be true, and whether it is known to be
@@ -76,7 +69,7 @@ auto BuildIsKnownTrue(
 auto BuildIsKnownFalse(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
     -> mir::ExprId {
-  return ReduceToCondition(unit, block, BuildLogicalNot(block, value));
+  return ReduceToCondition(unit, block, BuildLogicalNot(unit, block, value));
 }
 
 void AppendAssign(
@@ -176,7 +169,7 @@ auto BuildMergingSelection(
   };
   const auto append_unless_ended = [&](mir::Block step) {
     body.AppendIfThen(
-        BuildLogicalNot(body, ReadLocal(body, ended, boolean)),
+        BuildConditionNot(unit, body, ReadLocal(body, ended, boolean)),
         std::move(step));
   };
 
@@ -196,8 +189,8 @@ auto BuildMergingSelection(
         BuildIsKnownTrue(
             unit, taken, ReadLocal(taken, predicate, predicate_type)));
     reached.AppendIfThen(
-        BuildLogicalNot(
-            reached,
+        BuildConditionNot(
+            unit, reached,
             BuildIsKnownFalse(
                 unit, reached, ReadLocal(reached, predicate, predicate_type))),
         std::move(taken));
@@ -267,8 +260,8 @@ auto BuildDecidedSearch(
           auto value_or = term.evaluate(at);
           if (!value_or) return value_or;
           mir::Block& block = *at.current_block;
-          return BuildLogicalNot(
-              block, ReduceToCondition(unit, block, *value_or));
+          return BuildConditionNot(
+              unit, block, ReduceToCondition(unit, block, *value_or));
         }};
   };
   const auto arm_for = [&](const Predicate& term) {
@@ -320,9 +313,11 @@ auto BuildOpenSearch(
   const auto is_open = [&](mir::ExprId answer) {
     switch (rule) {
       case SettledBy::kTrueTerm:
-        return BuildLogicalNot(body, BuildIsKnownTrue(unit, body, answer));
+        return BuildConditionNot(
+            unit, body, BuildIsKnownTrue(unit, body, answer));
       case SettledBy::kFalseTerm:
-        return BuildLogicalNot(body, BuildIsKnownFalse(unit, body, answer));
+        return BuildConditionNot(
+            unit, body, BuildIsKnownFalse(unit, body, answer));
       case SettledBy::kTermNotTrue:
         return BuildIsKnownTrue(unit, body, answer);
     }
@@ -382,28 +377,32 @@ auto ConditionallyEvaluated(const WalkFrame& frame, const Evaluation& operand)
   return frame.current_block->exprs.Add(point.Build(*value_or));
 }
 
+auto BuildLogicalNot(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    -> mir::ExprId {
+  const mir::TypeId type = block.exprs.Get(value).type;
+  return block.exprs.Add(MakeUnary(
+      unit, block, mir::UnaryOp::kLogicalNot, value,
+      OneBitAnswerType(unit, {&type, 1})));
+}
+
 auto BuildTruth(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
     -> mir::ExprId {
   const mir::TypeId type_id = block.exprs.Get(value).type;
   const mir::Type& type = unit.types.Get(type_id);
-  if (!type.IsIntegralPacked()) {
+  if (!type.IsIntegral()) {
     return ConditionAsBit(unit, block, value);
   }
-  // A one-bit value already is the answer reducing it by OR gives.
-  if (type.PackedShape().BitWidth() == 1) {
+  // A one-bit value that can hold no x or z already is its own truth. One that
+  // can is not: a truth is 1, 0 or x and never z (LRM 11.4.7), which is what
+  // reducing it by OR answers.
+  if (type.Integral().bit_width == 1 && !CarriesUnknowns(unit, type_id)) {
     return value;
   }
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kReductionOr,
-                          .receiver = value},
-                  .arguments = {}},
-          .type = OneBitAnswerType(unit, {&type_id, 1})});
+  return block.exprs.Add(MakeBuiltinCall(
+      unit, block, support::BuiltinFn::kReductionOr, value, {},
+      OneBitAnswerType(unit, {&type_id, 1})));
 }
 
 template <ExprLowerer Lowerer>
@@ -428,7 +427,7 @@ auto Negated(const mir::CompilationUnit& unit, Predicate predicate)
         auto value_or = operand.evaluate(at);
         if (!value_or) return value_or;
         mir::Block& block = *at.current_block;
-        return BuildLogicalNot(block, BuildTruth(unit, block, *value_or));
+        return BuildLogicalNot(unit, block, BuildTruth(unit, block, *value_or));
       }};
 }
 

@@ -21,6 +21,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant.hpp"
@@ -31,7 +32,6 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
@@ -134,8 +134,8 @@ class MirDumper {
       Line(std::format("[{}] {}", id.value, FormatType(unit.types.Get(id))));
     }
     Dedent();
-    // The values the unit was written with. A reference to one names its
-    // position, so the bits are printed here once rather than at every use.
+    // The constant integral values the unit holds. A reference to one names
+    // its position, so the bits are printed here once rather than at every use.
     Line("Constants:");
     Indent();
     for (const IntegralConstantId id : unit.integral_constants.Ids()) {
@@ -182,16 +182,14 @@ class MirDumper {
       }
       Dedent();
     }
-    // A description is an expression tree with no statements, so what is
-    // dumped under each entry is its expressions and which of them is the
-    // description.
-    Line("TypeDescriptions:");
+    Line("EnumTables:");
     Indent();
-    for (const TypeDescriptorId id : unit.type_descriptors.Ids()) {
-      const ValueBuild& described = unit.builds.descriptors.Get(id);
-      Line(std::format("[{}] = Expr[{}]", id.value, described.value.value));
+    for (const EnumTableId id : unit.enum_tables.Ids()) {
+      Line(std::format("[{}]", id.value));
       Indent();
-      DumpBlock(described.body);
+      for (const EnumMember& member : unit.enum_tables.Get(id).members) {
+        Line(member.name);
+      }
       Dedent();
     }
     Dedent();
@@ -254,16 +252,11 @@ class MirDumper {
     return s == Signedness::kSigned ? "signed" : "unsigned";
   }
 
-  static auto FormatPackedDims(const std::vector<PackedRange>& dims)
-      -> std::string {
-    if (dims.empty()) {
-      return "[]";
-    }
-    std::string out;
-    for (const auto& d : dims) {
-      out += std::format("[{}:{}]", d.left, d.right);
-    }
-    return out;
+  static auto FormatIntegral(const IntegralType& integral) -> std::string {
+    return std::format(
+        "Integral(width={}, {}, state={})", integral.bit_width,
+        FormatSignedness(integral.signedness),
+        FormatStateKind(integral.state_kind));
   }
 
   static auto FormatTypeList(const std::vector<TypeId>& types) -> std::string {
@@ -323,11 +316,8 @@ class MirDumper {
   static auto FormatType(const Type& t) -> std::string {
     return t.Visit(
         Overloaded{
-            [](const PackedArrayType& p) -> std::string {
-              return std::format(
-                  "PackedArray(state={}, signed={}, dims={})",
-                  FormatStateKind(p.state_kind), FormatSignedness(p.signedness),
-                  FormatPackedDims(p.dims));
+            [](const IntegralType& integral) -> std::string {
+              return FormatIntegral(integral);
             },
             [](const EnumType& e) -> std::string {
               std::string members;
@@ -337,11 +327,8 @@ class MirDumper {
                     "{}={}", e.members[i].name, FormatBits(e.members[i].value));
               }
               return std::format(
-                  "Enum(base=PackedArray(state={}, signed={}, dims={}), "
-                  "members=[{}])",
-                  FormatStateKind(e.base.state_kind),
-                  FormatSignedness(e.base.signedness),
-                  FormatPackedDims(e.base.dims), members);
+                  "Enum(base={}, members=[{}])", FormatIntegral(e.base),
+                  members);
             },
             [](const UnpackedArrayType& u) -> std::string {
               return std::format(
@@ -416,12 +403,6 @@ class MirDumper {
             [](const DiagnosticType&) -> std::string { return "Diagnostic"; },
             [](const RuntimeLibraryType& r) -> std::string {
               switch (r.kind) {
-                case RuntimeLibraryKind::kPackedType:
-                  return "RuntimeLibrary(PackedType)";
-                case RuntimeLibraryKind::kPackedRange:
-                  return "RuntimeLibrary(PackedRange)";
-                case RuntimeLibraryKind::kUnpackedRange:
-                  return "RuntimeLibrary(UnpackedRange)";
                 case RuntimeLibraryKind::kEnumeration:
                   return "RuntimeLibrary(Enumeration)";
                 case RuntimeLibraryKind::kPrintItem:
@@ -717,9 +698,13 @@ class MirDumper {
                   d.part.has_value()
                       ? std::format(" at={}", FormatCallPart(*d.part))
                       : std::string{};
+              const std::string type_argument =
+                  d.type_argument.has_value()
+                      ? std::format(" of=type[{}]", d.type_argument->value)
+                      : std::string{};
               return std::format(
-                  "Direct[{}{}{}]", FormatDirectTarget(d.target), receiver,
-                  part);
+                  "Direct[{}{}{}{}]", FormatDirectTarget(d.target), receiver,
+                  part, type_argument);
             },
             [](const Indirect& i) -> std::string {
               return std::format("Indirect[code=Expr[{}]]", i.code.value);
@@ -746,9 +731,8 @@ class MirDumper {
             [this](const DefinitionRef& r) -> std::string {
               return std::format("DefinitionRef of={}", FormatClassRef(r.of));
             },
-            [](const TypeDescriptorRef& r) -> std::string {
-              return std::format(
-                  "TypeDescriptorRef Descriptor[{}]", r.descriptor.value);
+            [](const EnumTableRef& r) -> std::string {
+              return std::format("EnumTableRef EnumTable[{}]", r.table.value);
             },
             [](const IntegralConstantRef& r) -> std::string {
               return std::format(
@@ -853,13 +837,9 @@ class MirDumper {
                   b.value.value);
             },
             [](const AssignExpr& a) -> std::string {
-              const std::string op_str =
-                  a.compound_op.has_value()
-                      ? std::format(" op={}", FormatBinaryOp(*a.compound_op))
-                      : std::string{};
               return std::format(
-                  "AssignExpr target=Expr[{}]{} value=Expr[{}]", a.target.value,
-                  op_str, a.value.value);
+                  "AssignExpr target=Expr[{}] value=Expr[{}]", a.target.value,
+                  a.value.value);
             },
             [this](const CallExpr& c) -> std::string {
               return std::format(

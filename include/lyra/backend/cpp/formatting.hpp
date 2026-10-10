@@ -35,14 +35,23 @@ enum class VariableForm : std::uint8_t {
   kNamespaceScopeDefinition,
 };
 
+// Whether a variable may change after it is defined: it may; it may not; or
+// it may not and its value is known while the program is compiled, so the
+// compiler builds it rather than the program at start-up.
+enum class Constness : std::uint8_t {
+  kMutable,
+  kConst,
+  kConstexpr,
+};
+
 // A variable declaration, described by what the caller knows: which form it
-// takes, whether it is const, its type and name, and for a definition written
+// takes, whether it may change, its type and name, and for a definition written
 // outside its class the class that qualifies the name. The specifiers and
 // punctuation those imply are chosen in one place, below, so no two sites
 // write the same declaration differently.
 struct VariableDeclaration {
   VariableForm form = VariableForm::kNonStaticDataMember;
-  bool is_const = false;
+  Constness constness = Constness::kMutable;
   CppType type;
   CppName name;
   std::optional<OwnClassPath> qualifier = std::nullopt;
@@ -71,8 +80,15 @@ inline void WriteDeclarationUpToTheValue(
     TargetText& out, const VariableDeclaration& variable) {
   out.OpenLine();
   out += StorageSpecifiers(variable.form);
-  if (variable.is_const) {
-    out += "const ";
+  switch (variable.constness) {
+    case Constness::kMutable:
+      break;
+    case Constness::kConst:
+      out += "const ";
+      break;
+    case Constness::kConstexpr:
+      out += "constexpr ";
+      break;
   }
   Write(out, variable.type, " ");
   if (variable.qualifier.has_value()) {

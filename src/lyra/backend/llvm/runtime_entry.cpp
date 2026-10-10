@@ -1,9 +1,12 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 
+#include <array>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -14,6 +17,8 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/value/integral_fwd.hpp"
+#include "lyra/value/integral_value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -63,8 +68,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "to_bool";
     case RuntimeOp::kMake:
       return "make";
-    case RuntimeOp::kTagMatches:
-      return "tag_matches";
+    case RuntimeOp::kMakeWildcardIndex:
+      return "wildcard_index_make";
     case RuntimeOp::kWithComponent:
       return "with_component";
     case RuntimeOp::kWithElement:
@@ -85,32 +90,30 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "make_segment";
     case RuntimeOp::kMakeTrigger:
       return "make_trigger";
-    case RuntimeOp::kMakePackedRange:
-      return "make_packed_range";
-    case RuntimeOp::kMakeUnpackedRange:
-      return "make_unpacked_range";
-    case RuntimeOp::kMakePackedType:
-      return "make_packed_type";
-    case RuntimeOp::kMakeEnumeration:
-      return "make_enumeration";
     case RuntimeOp::kMakePrintLiteralItem:
       return "make_print_literal_item";
     case RuntimeOp::kMakePrintValueItem:
       return "make_print_value_item";
+    case RuntimeOp::kMakeIntegralPrintValueItem:
+      return "integral_make_print_value_item";
     case RuntimeOp::kMakeFormatSpec:
       return "make_format_spec";
     case RuntimeOp::kMakeFormatArg:
       return "make_format_arg";
+    case RuntimeOp::kMakeIntegralFormatArg:
+      return "integral_make_format_arg";
     case RuntimeOp::kMakeDpiBitBuffer:
       return "make_dpi_bit_buffer";
     case RuntimeOp::kMakeDpiLogicBuffer:
       return "make_dpi_logic_buffer";
     case RuntimeOp::kMakeDpiOpenArray:
       return "make_dpi_open_array";
-    case RuntimeOp::kRetainConstant:
-      return "retain_constant";
     case RuntimeOp::kSettleDeparture:
       return "settle_departure";
+    case RuntimeOp::kStreamWrite:
+      return "stream_write";
+    case RuntimeOp::kStreamRead:
+      return "stream_read";
     case RuntimeOp::kConstruct:
       return "construct";
     case RuntimeOp::kDestroy:
@@ -121,23 +124,469 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "move";
     case RuntimeOp::kAssign:
       return "assign";
-    case RuntimeOp::kValueType:
-      return "value_type";
   }
   throw InternalError("llvm codegen: unknown runtime operation");
 }
 
+// The family of entries a capability wrapper defines its accesses in, which is
+// part of each one's symbol.
+auto WrapperName(WrapperKind wrapper) -> std::string_view {
+  switch (wrapper) {
+    case WrapperKind::kCell:
+      return "cell";
+    case WrapperKind::kNet:
+      return "net";
+    case WrapperKind::kDriver:
+      return "driver";
+    case WrapperKind::kRef:
+      return "ref";
+  }
+  throw InternalError("llvm codegen: unknown capability wrapper");
+}
+
+using Domain = support::ValueDomain;
+
+constexpr DomainSet kOneWordIntegral{
+    Domain::kBit8,   Domain::kBit16,   Domain::kBit32,   Domain::kBit64,
+    Domain::kLogic8, Domain::kLogic16, Domain::kLogic32, Domain::kLogic64};
+constexpr DomainSet kWideIntegral{Domain::kBitWide, Domain::kLogicWide};
+constexpr DomainSet kIntegral = kOneWordIntegral | kWideIntegral;
+constexpr DomainSet kOneWordFourState{
+    Domain::kLogic8, Domain::kLogic16, Domain::kLogic32, Domain::kLogic64};
+constexpr DomainSet kFourStateIntegral =
+    kOneWordFourState | DomainSet{Domain::kLogicWide};
+constexpr DomainSet kSequences{
+    Domain::kDynArray, Domain::kUnpackedArray, Domain::kQueue};
+constexpr DomainSet kContainers = kSequences | DomainSet{Domain::kAssocArray};
+constexpr DomainSet kUnions{Domain::kUnion, Domain::kTaggedUnion};
+constexpr DomainSet kReals{Domain::kReal, Domain::kShortReal};
+// What a stream of bits is read out of (LRM 6.24.3) besides an integral value.
+constexpr DomainSet kBitstreams = kContainers | kUnions |
+                                  DomainSet{Domain::kString} |
+                                  DomainSet{Domain::kManagedRef};
+// The values the library holds as an object of its own, apart from a tuple,
+// whose type is compiled with the design.
+constexpr DomainSet kLibraryObjects =
+    kContainers | kUnions | kReals |
+    DomainSet{
+        Domain::kWildcardIndex, Domain::kString, Domain::kChandle,
+        Domain::kEmpty, Domain::kManagedRef};
+// What an aggregate net resolves in (LRM 6.7.1), and what any net does.
+constexpr DomainSet kAggregateNets{
+    Domain::kTuple, Domain::kUnion, Domain::kUnpackedArray};
+constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
+// What a variable holds besides an integral value.
+constexpr DomainSet kVariableObjects =
+    kContainers | kUnions | kReals |
+    DomainSet{
+        Domain::kString, Domain::kChandle, Domain::kTuple, Domain::kManagedRef};
+constexpr DomainSet kVariableValues = kIntegral | kVariableObjects;
+
+constexpr std::array kForAssociativeArrays{
+    RealizedFor{.domains = {Domain::kAssocArray}}};
+constexpr std::array kForDynamicArraysAndQueues{
+    RealizedFor{.domains = {Domain::kDynArray, Domain::kQueue}}};
+constexpr std::array kForWhatDeletesWhole{RealizedFor{
+    .domains = {Domain::kDynArray, Domain::kQueue, Domain::kAssocArray}}};
+constexpr std::array kForArraysOfFixedExtent{
+    RealizedFor{.domains = {Domain::kDynArray, Domain::kUnpackedArray}}};
+constexpr std::array kForSequences{RealizedFor{.domains = kSequences}};
+constexpr std::array kForContainers{RealizedFor{.domains = kContainers}};
+constexpr std::array kForQueues{RealizedFor{.domains = {Domain::kQueue}}};
+constexpr std::array kForReal{RealizedFor{.domains = {Domain::kReal}}};
+constexpr std::array kForReals{RealizedFor{.domains = kReals}};
+constexpr std::array kForStrings{RealizedFor{.domains = {Domain::kString}}};
+constexpr std::array kForWhatCaseEqualityCompares{RealizedFor{
+    .domains =
+        kContainers | kUnions |
+        DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
+constexpr std::array kForWhatNumbersItsElements{
+    RealizedFor{.domains = kSequences | DomainSet{Domain::kString}}};
+constexpr std::array kForWhatIsComparedBitForBit{RealizedFor{
+    .domains =
+        kContainers | kUnions | kReals |
+        DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
+constexpr std::array kForBitstreams{RealizedFor{.domains = kBitstreams}};
+constexpr std::array kForTaggedUnions{
+    RealizedFor{.domains = {Domain::kTaggedUnion}}};
+constexpr std::array kForUnions{RealizedFor{.domains = kUnions}};
+constexpr std::array kForWhatMayHoldUnknowns{
+    RealizedFor{.domains = kUnions | DomainSet{Domain::kUnpackedArray}}};
+constexpr std::array kForWhatAnAggregateNetResolves{
+    RealizedFor{.domains = {Domain::kUnion, Domain::kUnpackedArray}}};
+constexpr std::array kForUnpackedArrays{
+    RealizedFor{.domains = {Domain::kUnpackedArray}}};
+constexpr std::array kForUnpackedArraysAndQueues{
+    RealizedFor{.domains = {Domain::kUnpackedArray, Domain::kQueue}}};
+constexpr std::array kForTuples{RealizedFor{.domains = {Domain::kTuple}}};
+constexpr std::array kForJoinedNets{RealizedFor{.domains = kFourStateIntegral}};
+constexpr std::array kForNets{RealizedFor{.domains = kNetValues}};
+constexpr std::array kForVariables{RealizedFor{.domains = kVariableValues}};
+constexpr std::array kForLibraryObjects{
+    RealizedFor{.domains = kLibraryObjects}};
+
+// A memory a file fills (LRM 21.4): one reached by a key is told the type its
+// keys are built at, after the memory.
+constexpr std::array kForLoadedMemories{
+    RealizedFor{.domains = kSequences},
+    RealizedFor{
+        .domains = {Domain::kAssocArray}, .told = ToldKeyType{.after = 1}}};
+// A union is built holding the member its callee names (LRM 7.3).
+constexpr std::array kForUnionsBuilt{
+    RealizedFor{.domains = kUnions, .told = ToldMemberType{.after = 0}}};
+// A history is filled with a default, which fixes how wide its values are.
+constexpr std::array kForHistoriesInstalled{
+    RealizedFor{
+        .domains =
+            kOneWordIntegral | kContainers | kUnions | kReals |
+            DomainSet{Domain::kString, Domain::kTuple, Domain::kManagedRef}},
+    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidth{.after = 1}}};
+constexpr std::array kForHistories{RealizedFor{
+    .domains =
+        kIntegral | kContainers | kUnions | kReals |
+        DomainSet{Domain::kString, Domain::kTuple, Domain::kManagedRef}}};
+constexpr std::array kForIntegralNets{
+    RealizedFor{.domains = kFourStateIntegral}};
+constexpr std::array kForAggregateNets{RealizedFor{.domains = kAggregateNets}};
+
+constexpr std::array kTakeovers{
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kIntegral},
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues}};
+// A variable's cell is installed with its declaration's value, which fixes how
+// wide a cell of words is.
+constexpr std::array kInstalls{
+    ThroughWrapper{
+        .wrapper = WrapperKind::kCell,
+        .domains = kOneWordIntegral | kVariableObjects},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kCell,
+        .domains = kWideIntegral,
+        .told = ToldHeldWidth{.after = 1}}};
+// A cell and a net hold the bytes of a value no wider than a word where
+// generated code reads them, so neither has an entry reading one.
+constexpr std::array kLoads{
+    ThroughWrapper{
+        .wrapper = WrapperKind::kCell,
+        .domains = kWideIntegral | kVariableObjects},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kNet,
+        .domains = kAggregateNets | DomainSet{Domain::kLogicWide}},
+    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
+    ThroughWrapper{.wrapper = WrapperKind::kRef, .domains = kVariableValues}};
+constexpr std::array kArmings{
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    ThroughWrapper{.wrapper = WrapperKind::kRef, .domains = kVariableValues}};
+// A reference to a value wider than a word names words lying in something
+// else, so an access through one that takes or replaces them is told how wide
+// they are.
+constexpr ThroughWrapper kThroughAReferenceToBytesOrAnObject{
+    .wrapper = WrapperKind::kRef,
+    .domains = kOneWordIntegral | kVariableObjects};
+constexpr ThroughWrapper kThroughAReferenceToWords{
+    .wrapper = WrapperKind::kRef,
+    .domains = kWideIntegral,
+    .told = ToldHeldWidth{.after = 0}};
+constexpr std::array kSampledLoads{
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords};
+constexpr std::array kWholeWrites{
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
+    kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords};
+
+constexpr std::array kRealConversions{
+    Conversion{.destination = Domain::kReal, .source = Domain::kReal},
+    Conversion{.destination = Domain::kReal, .source = Domain::kShortReal},
+    Conversion{.destination = Domain::kShortReal, .source = Domain::kReal}};
+
+// A value cell holding a value's bytes is read and written where they lie, so
+// only allocating one is an entry for every value a variable holds; a cell of
+// words is allocated at the width of the values it is to hold.
+constexpr std::array kForCellsAllocated{
+    RealizedFor{.domains = kOneWordIntegral | kVariableObjects},
+    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidthAhead{}}};
+constexpr std::array kForCellsReached{
+    RealizedFor{.domains = kWideIntegral | kVariableObjects}};
+
+// A designation of words is told how wide they are where the write lands, and
+// one of any integral value where a write of some of its bits is reported
+// (LRM 11.5.1), which holds the bits written to the value's width.
+constexpr std::array kForLandings{
+    RealizedFor{
+        .domains =
+            kOneWordIntegral | kVariableObjects | DomainSet{Domain::kEmpty}},
+    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidth{.after = 0}}};
+constexpr std::array kForBitsReported{
+    RealizedFor{.domains = kIntegral, .told = ToldHeldWidth{.after = 0}}};
+
+constexpr std::array kForWhatIsNull{RealizedFor{
+    .domains = {Domain::kChandle, Domain::kEmpty, Domain::kManagedRef}}};
+constexpr std::array kForWhatIsTrueOrFalse{RealizedFor{
+    .domains = kReals | DomainSet{Domain::kChandle, Domain::kManagedRef}}};
+constexpr std::array kForWhatFormatsItself{RealizedFor{
+    .domains =
+        kReals |
+        DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
+constexpr std::array kForWhatAHostValueBuilds{
+    RealizedFor{.domains = {Domain::kString, Domain::kChandle}}};
+constexpr std::array kForWhatEndsWithWork{RealizedFor{
+    .domains =
+        kContainers | kUnions |
+        DomainSet{
+            Domain::kWildcardIndex, Domain::kString, Domain::kManagedRef}}};
+// A union with one member replaced is told the type of that member, after the
+// value that takes its place (LRM 7.3).
+constexpr std::array kForUnionsUpdated{
+    RealizedFor{.domains = kUnions, .told = ToldMemberType{.after = 2}}};
+
+// What refusing a realization the library does not hold says.
+auto Refusal(std::string_view entry, std::string_view realization)
+    -> std::string {
+  return std::format(
+      "llvm codegen: the library realizes no {} for {} -- please report this "
+      "as a bug",
+      entry, realization);
+}
+
+// The realizations of an entry named by one value domain, none for an entry
+// named any other way.
+auto PerDomain(const EntryNaming& naming) -> std::span<const RealizedFor> {
+  using Realized = std::span<const RealizedFor>;
+  return std::visit(
+      Overloaded{
+          [](const NamedByValue& named) -> Realized { return named.realized; },
+          [](const NamedByResult& named) -> Realized { return named.realized; },
+          [](const NamedByStorageDomain& named) -> Realized {
+            return named.realized;
+          },
+          [](const NamedAlone&) -> Realized { return {}; },
+          [](const NamedByWrapper&) -> Realized { return {}; },
+          [](const NamedByConversion&) -> Realized { return {}; },
+          [](const OverIntegralValues&) -> Realized { return {}; },
+          [](const NotRealized&) -> Realized { return {}; }},
+      naming);
+}
+
+// The same for an entry named by a capability wrapper, and for a conversion.
+auto ThroughWrappers(const EntryNaming& naming)
+    -> std::span<const ThroughWrapper> {
+  using Realized = std::span<const ThroughWrapper>;
+  return std::visit(
+      Overloaded{
+          [](const NamedByWrapper& named) -> Realized {
+            return named.realized;
+          },
+          [](const NamedAlone&) -> Realized { return {}; },
+          [](const NamedByValue&) -> Realized { return {}; },
+          [](const NamedByResult&) -> Realized { return {}; },
+          [](const NamedByStorageDomain&) -> Realized { return {}; },
+          [](const NamedByConversion&) -> Realized { return {}; },
+          [](const OverIntegralValues&) -> Realized { return {}; },
+          [](const NotRealized&) -> Realized { return {}; }},
+      naming);
+}
+
+auto Conversions(const EntryNaming& naming) -> std::span<const Conversion> {
+  using Realized = std::span<const Conversion>;
+  return std::visit(
+      Overloaded{
+          [](const NamedByConversion& named) -> Realized {
+            return named.realized;
+          },
+          [](const NamedAlone&) -> Realized { return {}; },
+          [](const NamedByValue&) -> Realized { return {}; },
+          [](const NamedByResult&) -> Realized { return {}; },
+          [](const NamedByWrapper&) -> Realized { return {}; },
+          [](const NamedByStorageDomain&) -> Realized { return {}; },
+          [](const OverIntegralValues&) -> Realized { return {}; },
+          [](const NotRealized&) -> Realized { return {}; }},
+      naming);
+}
+
+auto ToldIn(
+    std::span<const RealizedFor> realized, support::ValueDomain domain,
+    std::string_view entry) -> Told {
+  for (const RealizedFor& one : realized) {
+    if (one.domains.Holds(domain)) {
+      return one.told;
+    }
+  }
+  throw InternalError(Refusal(entry, support::ValueDomainName(domain)));
+}
+
 }  // namespace
 
-auto SelectsByStatedIndex(
-    const lir::CompilationUnit& unit, lir::TypeId container) -> bool {
-  return unit.types.Get(container).Is<lir::AssociativeArrayType>();
+auto ToldOf(support::ValueDomain domain, RuntimeOp op) -> Told {
+  return ToldIn(RealizationsOf(op), domain, RuntimeOpName(op));
+}
+
+auto ToldOf(support::ValueDomain domain, lir::ValueCellTarget::Op op) -> Told {
+  return ToldIn(RealizationsOf(op), domain, lir::ValueCellOpName(op));
+}
+
+auto ToldOf(support::ValueDomain domain, lir::OpenWriteTarget::Op op) -> Told {
+  return ToldIn(RealizationsOf(op), domain, lir::OpenWriteOpName(op));
+}
+
+auto ToldOf(support::ValueDomain domain, lir::DesignatedBitsTarget::Op op)
+    -> Told {
+  return ToldIn(RealizationsOf(op), domain, lir::DesignatedBitsOpName(op));
+}
+
+auto ToldOf(support::ValueDomain domain, support::BuiltinFn fn) -> Told {
+  return ToldIn(
+      PerDomain(EntryNamingOf(fn)), domain, support::RuntimeEntryOf(fn).name);
+}
+
+auto ToldOf(
+    support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
+    -> Told {
+  const EntryNaming naming = EntryNamingOf(fn);
+  for (const ThroughWrapper& one : ThroughWrappers(naming)) {
+    if (one.wrapper == wrapper && one.domains.Holds(domain)) {
+      return one.told;
+    }
+  }
+  throw InternalError(Refusal(
+      support::RuntimeEntryOf(fn).name,
+      std::format(
+          "{} through a {}", support::ValueDomainName(domain),
+          WrapperName(wrapper))));
+}
+
+auto IntegralOpOf(lir::BinaryOp op) -> support::IntegralOp {
+  switch (op) {
+    case lir::BinaryOp::kAdd:
+      return support::IntegralOp::kAdd;
+    case lir::BinaryOp::kSub:
+      return support::IntegralOp::kSubtract;
+    case lir::BinaryOp::kMul:
+      return support::IntegralOp::kMultiply;
+    case lir::BinaryOp::kDiv:
+      return support::IntegralOp::kDivide;
+    case lir::BinaryOp::kMod:
+      return support::IntegralOp::kModulo;
+    case lir::BinaryOp::kBitwiseAnd:
+      return support::IntegralOp::kBitwiseAnd;
+    case lir::BinaryOp::kBitwiseOr:
+      return support::IntegralOp::kBitwiseOr;
+    case lir::BinaryOp::kBitwiseXor:
+      return support::IntegralOp::kBitwiseXor;
+    case lir::BinaryOp::kEquality:
+      return support::IntegralOp::kEqual;
+    case lir::BinaryOp::kInequality:
+      return support::IntegralOp::kNotEqual;
+    case lir::BinaryOp::kLessThan:
+      return support::IntegralOp::kLess;
+    case lir::BinaryOp::kLessEqual:
+      return support::IntegralOp::kLessEqual;
+    case lir::BinaryOp::kGreaterThan:
+      return support::IntegralOp::kGreater;
+    case lir::BinaryOp::kGreaterEqual:
+      return support::IntegralOp::kGreaterEqual;
+    case lir::BinaryOp::kLogicalAnd:
+      return support::IntegralOp::kLogicalAnd;
+    case lir::BinaryOp::kLogicalOr:
+      return support::IntegralOp::kLogicalOr;
+  }
+  throw InternalError("llvm codegen: unknown binary operator");
+}
+
+auto IntegralOpOf(lir::UnaryOp op) -> support::IntegralOp {
+  switch (op) {
+    case lir::UnaryOp::kMinus:
+      return support::IntegralOp::kNegate;
+    case lir::UnaryOp::kBitwiseNot:
+      return support::IntegralOp::kBitwiseNot;
+    case lir::UnaryOp::kLogicalNot:
+      return support::IntegralOp::kLogicalNot;
+  }
+  throw InternalError("llvm codegen: unknown unary operator");
+}
+
+auto ReachedByKey(support::ValueDomain domain) -> bool {
+  switch (domain) {
+    case support::ValueDomain::kAssocArray:
+      return true;
+    case support::ValueDomain::kBit8:
+    case support::ValueDomain::kBit16:
+    case support::ValueDomain::kBit32:
+    case support::ValueDomain::kBit64:
+    case support::ValueDomain::kLogic8:
+    case support::ValueDomain::kLogic16:
+    case support::ValueDomain::kLogic32:
+    case support::ValueDomain::kLogic64:
+    case support::ValueDomain::kBitWide:
+    case support::ValueDomain::kLogicWide:
+    case support::ValueDomain::kWildcardIndex:
+    case support::ValueDomain::kString:
+    case support::ValueDomain::kReal:
+    case support::ValueDomain::kShortReal:
+    case support::ValueDomain::kChandle:
+    case support::ValueDomain::kEmpty:
+    case support::ValueDomain::kTuple:
+    case support::ValueDomain::kUnion:
+    case support::ValueDomain::kTaggedUnion:
+    case support::ValueDomain::kDynArray:
+    case support::ValueDomain::kUnpackedArray:
+    case support::ValueDomain::kQueue:
+    case support::ValueDomain::kManagedRef:
+      return false;
+  }
+  throw InternalError("llvm codegen: unknown value domain");
+}
+
+auto ElementEntriesOf(support::ValueDomain domain) -> ElementEntries {
+  if (ReachedByKey(domain)) {
+    return {
+        .read =
+            {.entry = support::BuiltinFn::kAssocElement,
+             .symbol = RuntimeSymbol(support::BuiltinFn::kAssocElement)},
+        .write = {
+            .entry = support::BuiltinFn::kAssocElementRef,
+            .symbol = RuntimeSymbol(support::BuiltinFn::kAssocElementRef)}};
+  }
+  return {
+      .read =
+          {.entry = support::BuiltinFn::kElement,
+           .symbol = RuntimeSymbol(domain, support::BuiltinFn::kElement)},
+      .write = {
+          .entry = support::BuiltinFn::kElementRef,
+          .symbol = RuntimeSymbol(domain, support::BuiltinFn::kElementRef)}};
+}
+
+auto HeldObjectOf(const lir::Type& type)
+    -> std::optional<support::RuntimeObject> {
+  using Object = std::optional<support::RuntimeObject>;
+  const std::optional<lir::Holding> held = type.HeldAs();
+  if (!held.has_value()) {
+    return std::nullopt;
+  }
+  return std::visit(
+      Overloaded{
+          // The layout an integral value's bits are held in follows from how
+          // many there are and whether an unknown plane goes with them.
+          [&](const lir::IntegralBits&) -> Object {
+            const auto& integral = type.Get<lir::IntegralType>();
+            switch (integral.state_kind) {
+              case lir::IntegralStateKind::kTwoState:
+                return value::IntegralDomainFor(
+                    integral.bit_width, value::StateDomain::kTwoState);
+              case lir::IntegralStateKind::kFourState:
+                return value::IntegralDomainFor(
+                    integral.bit_width, value::StateDomain::kFourState);
+            }
+            throw InternalError("llvm codegen: unknown integral state kind");
+          },
+          [](support::ValueDomain domain) -> Object { return domain; },
+          [](support::LibraryObject object) -> Object { return object; }},
+      *held);
 }
 
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain> {
   const std::optional<support::RuntimeObject> held =
-      unit.types.Get(type).HeldObject();
+      HeldObjectOf(unit.types.Get(type));
   if (!held.has_value()) {
     return std::nullopt;
   }
@@ -156,7 +605,14 @@ auto RuntimeSymbol(RuntimeOp op) -> std::string {
 }
 
 auto RuntimeSymbol(support::ValueDomain domain, RuntimeOp op) -> std::string {
+  ToldOf(domain, op);
   return Symbol(domain, RuntimeOpName(op));
+}
+
+auto ValueTypeSymbol(support::ValueDomain domain) -> std::string {
+  constexpr std::string_view kValueType = "value_type";
+  ToldIn(kForLibraryObjects, domain, kValueType);
+  return Symbol(domain, kValueType);
 }
 
 auto RuntimeSymbol(support::RuntimeObject object, RuntimeOp op) -> std::string {
@@ -187,6 +643,28 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
       return Symbol(std::format("{}_{}", kind, RuntimeOpName(op)));
+  }
+  throw InternalError("llvm codegen: unknown member storage kind");
+}
+
+auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool {
+  switch (storage.kind) {
+    case support::MemberStorageKind::kValueCell:
+      return kWideIntegral.Holds(storage.domain);
+    // A variable's cell, a net and a history are each installed by an entry of
+    // their own, and every other storage holds no integral value's words.
+    case support::MemberStorageKind::kObservableCell:
+    case support::MemberStorageKind::kResolvedNet:
+    case support::MemberStorageKind::kSampledHistory:
+    case support::MemberStorageKind::kInlineValue:
+    case support::MemberStorageKind::kBorrowedHandle:
+    case support::MemberStorageKind::kReference:
+    case support::MemberStorageKind::kSharedPointer:
+    case support::MemberStorageKind::kNamedEvent:
+    case support::MemberStorageKind::kCancellationTarget:
+    case support::MemberStorageKind::kChannelCancellation:
+    case support::MemberStorageKind::kEvaluationAttempts:
+      return false;
   }
   throw InternalError("llvm codegen: unknown member storage kind");
 }
@@ -307,26 +785,20 @@ auto MemberStorageKindOf(
                 return support::MemberStorageKind::kCancellationTarget;
               case lir::RuntimeLibraryKind::kChannelCancellation:
                 return support::MemberStorageKind::kChannelCancellation;
-              // A type's description, held once per description for the whole
-              // run, so a member that names one points at storage outliving
-              // every closure that reads it rather than owning a copy. A
-              // description is reached whole, never a dimension of one, so
-              // nothing here names a part of it.
-              case lir::RuntimeLibraryKind::kPackedType:
-              case lir::RuntimeLibraryKind::kUnpackedRange:
+              // An enumeration's member table, held once for the whole run, so
+              // a member that names one points at storage outliving every
+              // closure that reads it rather than owning a copy.
               case lir::RuntimeLibraryKind::kEnumeration:
               // A class's definition is one per class for the whole run and
               // every object of it shares it, so a member naming one points at
               // storage outliving it for the same reason.
               case lir::RuntimeLibraryKind::kObjectDefinition:
                 return support::MemberStorageKind::kBorrowedHandle;
-              // The rest are transients of one call -- one dimension a
-              // description is assembled from, what a print or a format is
-              // assembled from, what a boundary object images an argument in,
-              // what a wait registers, a write in progress, and what another
-              // entry answers with. An owner holds none of them past the call
-              // that made one.
-              case lir::RuntimeLibraryKind::kPackedRange:
+              // The rest are transients of one call -- what a print or a
+              // format is assembled from, what a boundary object images an
+              // argument in, what a wait registers, a write in progress, and
+              // what another entry answers with. An owner holds none of them
+              // past the call that made one.
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kPrintLiteralItem:
               case lir::RuntimeLibraryKind::kPrintValueItem:
@@ -369,7 +841,7 @@ auto MemberStorageKindOf(
           // bare pointer it carries and which owns nothing (LRM 6.14).
           [&](const lir::ManagedRefType& t) { return value_of(t); },
           [&](const lir::ChandleType& t) { return value_of(t); },
-          [&](const lir::PackedArrayType& t) { return value_of(t); },
+          [&](const lir::IntegralType& t) { return value_of(t); },
           [&](const lir::UnpackedArrayType& t) { return value_of(t); },
           [&](const lir::DynamicArrayType& t) { return value_of(t); },
           [&](const lir::QueueType& t) { return value_of(t); },
@@ -382,16 +854,29 @@ auto MemberStorageKindOf(
           [&](const lir::UnionType& t) { return value_of(t); },
           [&](const lir::TaggedUnionType& t) { return value_of(t); },
           [&](const lir::EmptyType& t) { return value_of(t); },
-          // The rest name no storage a member can be. A machine primitive is a
-          // computed value rather than a declaration's storage; an object-tree
+          // A machine integer is a computed value rather than a declaration's
+          // storage, so no variable is one; a closure built with one holds it
+          // as that integer, which is what a read of the capture hands back.
+          [&](const lir::MachineIntType&)
+              -> std::optional<support::MemberStorageKind> {
+            switch (role) {
+              case MemberSlotRole::kVariable:
+                return std::nullopt;
+              case MemberSlotRole::kSnapshot:
+                return support::MemberStorageKind::kInlineValue;
+            }
+            throw InternalError("llvm codegen: unknown member slot role");
+          },
+          // The rest name no storage a member can be. Any other machine
+          // primitive is a computed value no owner holds; an object-tree
           // node, a closure, a coroutine and a runtime facade are reached
           // through a handle, so a member holding one holds that handle and
-          // arrives here as its own type; and a wildcard index and `void` have
-          // no runtime realization at all.
+          // arrives here as its own type; a wildcard index names where an index
+          // goes (LRM 7.8.1) rather than a type a declaration is of; and `void`
+          // has no runtime realization at all.
           [&](const lir::WildcardIndexType& t) { return none(t); },
           [&](const lir::MachineCStringType& t) { return none(t); },
           [&](const lir::MachineBoolType& t) { return none(t); },
-          [&](const lir::MachineIntType& t) { return none(t); },
           [&](const lir::MachineFloatType& t) { return none(t); },
           [&](const lir::MachineArrayType& t) { return none(t); },
           [&](const lir::VoidType& t) { return none(t); },
@@ -442,8 +927,12 @@ auto DeclaredStorageOf(
     case support::MemberStorageKind::kSampledHistory:
       return declared(domain_of(data.Get<lir::SampledHistoryType>().value));
     case support::MemberStorageKind::kValueCell:
-    case support::MemberStorageKind::kInlineValue:
       return declared(domain_of(type));
+    // A machine integer held inline is no value of the library's, so the slot
+    // holding one has no domain to state and states the empty one.
+    case support::MemberStorageKind::kInlineValue:
+      return declared(
+          ValueDomainOf(unit, type).value_or(support::ValueDomain::kEmpty));
     case support::MemberStorageKind::kBorrowedHandle:
     case support::MemberStorageKind::kReference:
     case support::MemberStorageKind::kSharedPointer:
@@ -458,12 +947,21 @@ auto DeclaredStorageOf(
 
 auto RuntimeSymbol(support::ValueDomain domain, lir::ValueCellTarget::Op op)
     -> std::string {
+  ToldOf(domain, op);
   return Symbol(domain, lir::ValueCellOpName(op));
 }
 
 auto RuntimeSymbol(support::ValueDomain domain, lir::OpenWriteTarget::Op op)
     -> std::string {
+  ToldOf(domain, op);
   return Symbol(domain, lir::OpenWriteOpName(op));
+}
+
+auto RuntimeSymbol(
+    support::ValueDomain domain, lir::DesignatedBitsTarget::Op op)
+    -> std::string {
+  ToldOf(domain, op);
+  return Symbol(domain, lir::DesignatedBitsOpName(op));
 }
 
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string {
@@ -472,72 +970,325 @@ auto RuntimeSymbol(support::BuiltinFn fn) -> std::string {
 
 auto RuntimeSymbol(support::ValueDomain domain, support::BuiltinFn fn)
     -> std::string {
+  ToldOf(domain, fn);
   return Symbol(domain, support::RuntimeEntryOf(fn).name);
 }
 
 auto RuntimeSymbol(
     support::ValueDomain destination, support::BuiltinFn fn,
     support::ValueDomain source) -> std::string {
-  return Symbol(
-      destination, std::format(
-                       "{}_{}", support::RuntimeEntryOf(fn).name,
-                       support::ValueDomainName(source)));
+  const std::string_view name = support::RuntimeEntryOf(fn).name;
+  const EntryNaming naming = EntryNamingOf(fn);
+  for (const Conversion& one : Conversions(naming)) {
+    if (one.destination == destination && one.source == source) {
+      return Symbol(
+          destination,
+          std::format("{}_{}", name, support::ValueDomainName(source)));
+    }
+  }
+  throw InternalError(Refusal(
+      name, std::format(
+                "{} out of {}", support::ValueDomainName(destination),
+                support::ValueDomainName(source))));
 }
 
 auto RuntimeSymbol(
     support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
     -> std::string {
-  const auto spelled = [&](std::string_view family) -> std::string {
-    return Symbol(
-        domain, std::format("{}_{}", family, support::RuntimeEntryOf(fn).name));
-  };
-  const auto retains_nothing = [](support::BuiltinFn f) {
-    if (f != support::BuiltinFn::kSampledLoad &&
-        f != support::BuiltinFn::kArmSampling) {
-      return;
-    }
-    throw InternalError(
-        "llvm codegen: only a variable retains what a time slot moved away "
-        "from; a net's value and a driver's contribution are recomputed rather "
-        "than found there");
-  };
-  switch (wrapper) {
-    case WrapperKind::kCell:
-      return spelled("cell");
-    case WrapperKind::kNet:
-      if (fn == support::BuiltinFn::kStore ||
-          fn == support::BuiltinFn::kOpenForWrite) {
-        throw InternalError(
-            "llvm codegen: a net's resolved value takes no store; a value "
-            "reaches a net through one of its drivers");
-      }
-      if (fn == support::BuiltinFn::kInitialize) {
-        throw InternalError(
-            "llvm codegen: a net installs its declaration through the entry "
-            "naming its fold, because which truth table it resolves under is "
-            "part of what that declaration fixes");
-      }
-      retains_nothing(fn);
-      return spelled("net");
-    case WrapperKind::kDriver:
-      if (fn == support::BuiltinFn::kInitialize) {
-        throw InternalError(
-            "llvm codegen: a driver installs no representation of its own; "
-            "what it contributes before it drives is the identity the net "
-            "gave it when it attached");
-      }
-      retains_nothing(fn);
-      return spelled("driver");
-    case WrapperKind::kRef:
-      if (fn == support::BuiltinFn::kInitialize) {
-        throw InternalError(
-            "llvm codegen: a reference installs no representation; the storage "
-            "it names was given one where it was declared, which is what makes "
-            "a reference an alias to it rather than a second variable");
-      }
-      return spelled("ref");
+  ToldOf(domain, wrapper, fn);
+  return Symbol(
+      domain,
+      std::format(
+          "{}_{}", WrapperName(wrapper), support::RuntimeEntryOf(fn).name));
+}
+
+auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
+  using enum support::OperandReading;
+  switch (op) {
+    // The aggregate, which member, and the value that member is to hold (LRM
+    // 7.3).
+    case RuntimeOp::kWithComponent:
+      return {kMachine, kMachine, kHeld};
+    // A character is the one element that is a view of its whole (LRM 6.16.2):
+    // the string, where the character goes, and the number it is to hold.
+    case RuntimeOp::kWithElement:
+      return {kMachine, kPosition, kNumber};
+    // The array, where the elements start, how many there are, and the
+    // elements that take their place (LRM 7.4.6).
+    case RuntimeOp::kWithSlice:
+      return {kMachine, kPosition, kMachine, kHeld};
+    // A container is built over an element list laid down a stated number of
+    // times, and holds elements of a type nothing else states, so it takes a
+    // value of that type first (LRM 7.5.1, 7.10).
+    case RuntimeOp::kFromLiteral:
+    case RuntimeOp::kFromLiteralBounded:
+    case RuntimeOp::kMakeDpiOpenArray:
+    case RuntimeOp::kMakeWildcardIndex:
+      return {kTyped};
+    // That value, the entries, and what a read of an index holding no entry
+    // yields (LRM 7.8.6).
+    case RuntimeOp::kFromEntriesDefault:
+    case RuntimeOp::kFromEntriesDefaultWildcard:
+      return {kTyped, kMachine, kHeld};
+    case RuntimeOp::kMakeIntegralPrintValueItem:
+    case RuntimeOp::kMakeIntegralFormatArg:
+      return {kNumber};
+    // The image of a vector in the form a foreign function reads (LRM
+    // 35.5.6.1).
+    case RuntimeOp::kMakeDpiBitBuffer:
+    case RuntimeOp::kMakeDpiLogicBuffer:
+    // The integral value whose bits go into a stream, ahead of the stream.
+    case RuntimeOp::kStreamWrite:
+      return {kBits};
+    case RuntimeOp::kCellRefer:
+    case RuntimeOp::kReferStorage:
+    case RuntimeOp::kRunProgram:
+    case RuntimeOp::kSequenceMake:
+    case RuntimeOp::kSequenceElement:
+    case RuntimeOp::kClosureMake:
+    case RuntimeOp::kObjectAdopt:
+    case RuntimeOp::kSharedCellMake:
+    case RuntimeOp::kSharedPointerDeref:
+    case RuntimeOp::kHandleView:
+    case RuntimeOp::kHandleWithView:
+    case RuntimeOp::kConst:
+    case RuntimeOp::kToBool:
+    case RuntimeOp::kMake:
+    case RuntimeOp::kDefault:
+    case RuntimeOp::kMakeSegment:
+    case RuntimeOp::kMakeTrigger:
+    case RuntimeOp::kMakePrintLiteralItem:
+    case RuntimeOp::kMakePrintValueItem:
+    case RuntimeOp::kMakeFormatSpec:
+    case RuntimeOp::kMakeFormatArg:
+    case RuntimeOp::kSettleDeparture:
+    case RuntimeOp::kStreamRead:
+    case RuntimeOp::kConstruct:
+    case RuntimeOp::kDestroy:
+    case RuntimeOp::kCopy:
+    case RuntimeOp::kMove:
+    case RuntimeOp::kAssign:
+      return {};
   }
-  throw InternalError("llvm codegen: unknown capability wrapper");
+  throw InternalError("llvm codegen: unknown runtime operation");
+}
+
+auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
+  switch (op) {
+    // The integral value planes hold is laid out at a width and with the
+    // states no operand fixes (LRM 6.24.3).
+    case RuntimeOp::kStreamRead:
+      return support::AnswerTold::kIntegralExtent;
+    case RuntimeOp::kCellRefer:
+    case RuntimeOp::kReferStorage:
+    case RuntimeOp::kRunProgram:
+    case RuntimeOp::kSequenceMake:
+    case RuntimeOp::kSequenceElement:
+    case RuntimeOp::kClosureMake:
+    case RuntimeOp::kObjectAdopt:
+    case RuntimeOp::kSharedCellMake:
+    case RuntimeOp::kSharedPointerDeref:
+    case RuntimeOp::kHandleView:
+    case RuntimeOp::kHandleWithView:
+    case RuntimeOp::kConst:
+    case RuntimeOp::kToBool:
+    case RuntimeOp::kMake:
+    case RuntimeOp::kMakeWildcardIndex:
+    case RuntimeOp::kWithComponent:
+    case RuntimeOp::kWithElement:
+    case RuntimeOp::kWithSlice:
+    case RuntimeOp::kDefault:
+    case RuntimeOp::kFromLiteral:
+    case RuntimeOp::kFromLiteralBounded:
+    case RuntimeOp::kFromEntriesDefault:
+    case RuntimeOp::kFromEntriesDefaultWildcard:
+    case RuntimeOp::kMakeSegment:
+    case RuntimeOp::kMakeTrigger:
+    case RuntimeOp::kMakePrintLiteralItem:
+    case RuntimeOp::kMakePrintValueItem:
+    case RuntimeOp::kMakeIntegralPrintValueItem:
+    case RuntimeOp::kMakeFormatSpec:
+    case RuntimeOp::kMakeFormatArg:
+    case RuntimeOp::kMakeIntegralFormatArg:
+    case RuntimeOp::kMakeDpiBitBuffer:
+    case RuntimeOp::kMakeDpiLogicBuffer:
+    case RuntimeOp::kMakeDpiOpenArray:
+    case RuntimeOp::kSettleDeparture:
+    case RuntimeOp::kStreamWrite:
+    case RuntimeOp::kConstruct:
+    case RuntimeOp::kDestroy:
+    case RuntimeOp::kCopy:
+    case RuntimeOp::kMove:
+    case RuntimeOp::kAssign:
+      return support::AnswerTold::kNothing;
+  }
+  throw InternalError("llvm codegen: unknown runtime operation");
+}
+
+auto OperandReadingsOf(lir::ValueCellTarget::Op op)
+    -> support::OperandReadings {
+  using enum support::OperandReading;
+  switch (op) {
+    case lir::ValueCellTarget::Op::kAllocate:
+    case lir::ValueCellTarget::Op::kLoad:
+      return {};
+    // The cell, then the value it is to hold.
+    case lir::ValueCellTarget::Op::kStore:
+      return {kMachine, kHeld};
+  }
+  throw InternalError("llvm codegen: unknown value cell operation");
+}
+
+auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
+    -> support::OperandReadings {
+  using enum support::OperandReading;
+  // Each acts on what a designation names. A write of a run of elements takes
+  // where they start, how many there are, and the elements, which the
+  // container holds the type of.
+  switch (op) {
+    case lir::OpenWriteTarget::Op::kLand:
+      return {};
+    case lir::OpenWriteTarget::Op::kAssignSlice:
+      return {kMachine, kPosition, kMachine, kHeld};
+    case lir::OpenWriteTarget::Op::kReadSlice:
+      return {kMachine, kPosition};
+  }
+  throw InternalError("llvm codegen: unknown open-write operation");
+}
+
+auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
+  switch (op) {
+    case RuntimeOp::kCellRefer:
+    case RuntimeOp::kSharedCellMake:
+      return kForVariables;
+    case RuntimeOp::kFromEntriesDefault:
+    case RuntimeOp::kFromEntriesDefaultWildcard:
+      return kForAssociativeArrays;
+    case RuntimeOp::kDefault:
+      return kForWhatIsNull;
+    case RuntimeOp::kFromLiteral:
+      return kForSequences;
+    case RuntimeOp::kFromLiteralBounded:
+      return kForQueues;
+    case RuntimeOp::kConst:
+      return kForReals;
+    case RuntimeOp::kToBool:
+      return kForWhatIsTrueOrFalse;
+    case RuntimeOp::kWithElement:
+      return kForStrings;
+    case RuntimeOp::kMakePrintValueItem:
+    case RuntimeOp::kMakeFormatArg:
+      return kForWhatFormatsItself;
+    case RuntimeOp::kWithComponent:
+      return kForUnionsUpdated;
+    case RuntimeOp::kMake:
+      return kForWhatAHostValueBuilds;
+    case RuntimeOp::kCopy:
+    case RuntimeOp::kMove:
+    case RuntimeOp::kAssign:
+      return kForLibraryObjects;
+    case RuntimeOp::kDestroy:
+      return kForWhatEndsWithWork;
+    // Realized once, or per object or member storage and never per value
+    // domain alone. No value library realizes a run of elements replaced in a
+    // value: a write of one goes through the write's own slice write.
+    case RuntimeOp::kReferStorage:
+    case RuntimeOp::kRunProgram:
+    case RuntimeOp::kSequenceMake:
+    case RuntimeOp::kSequenceElement:
+    case RuntimeOp::kClosureMake:
+    case RuntimeOp::kObjectAdopt:
+    case RuntimeOp::kSharedPointerDeref:
+    case RuntimeOp::kHandleView:
+    case RuntimeOp::kHandleWithView:
+    case RuntimeOp::kMakeWildcardIndex:
+    case RuntimeOp::kWithSlice:
+    case RuntimeOp::kMakeSegment:
+    case RuntimeOp::kMakeTrigger:
+    case RuntimeOp::kMakePrintLiteralItem:
+    case RuntimeOp::kMakeIntegralPrintValueItem:
+    case RuntimeOp::kMakeFormatSpec:
+    case RuntimeOp::kMakeIntegralFormatArg:
+    case RuntimeOp::kMakeDpiBitBuffer:
+    case RuntimeOp::kMakeDpiLogicBuffer:
+    case RuntimeOp::kMakeDpiOpenArray:
+    case RuntimeOp::kSettleDeparture:
+    case RuntimeOp::kStreamWrite:
+    case RuntimeOp::kStreamRead:
+    case RuntimeOp::kConstruct:
+      return {};
+  }
+  throw InternalError("llvm codegen: unknown runtime operation");
+}
+
+auto RealizationsOf(lir::ValueCellTarget::Op op)
+    -> std::span<const RealizedFor> {
+  switch (op) {
+    case lir::ValueCellTarget::Op::kAllocate:
+      return kForCellsAllocated;
+    case lir::ValueCellTarget::Op::kLoad:
+    case lir::ValueCellTarget::Op::kStore:
+      return kForCellsReached;
+  }
+  throw InternalError("llvm codegen: unknown value cell operation");
+}
+
+auto RealizationsOf(lir::OpenWriteTarget::Op op)
+    -> std::span<const RealizedFor> {
+  switch (op) {
+    case lir::OpenWriteTarget::Op::kLand:
+      return kForLandings;
+    case lir::OpenWriteTarget::Op::kAssignSlice:
+      return kForArraysOfFixedExtent;
+    // No container lends a run of its elements within a write.
+    case lir::OpenWriteTarget::Op::kReadSlice:
+      return {};
+  }
+  throw InternalError("llvm codegen: unknown open-write operation");
+}
+
+auto OperandReadingsOf(lir::DesignatedBitsTarget::Op op)
+    -> support::OperandReadings {
+  using enum support::OperandReading;
+  // Each takes the designation and where the bits start. Placing takes the
+  // bits, which the operation over integral values reads, and reporting the
+  // whole value as it stands with them in it.
+  switch (op) {
+    case lir::DesignatedBitsTarget::Op::kRead:
+      return {kMachine, kPosition};
+    case lir::DesignatedBitsTarget::Op::kPlace:
+      return {kMachine, kPosition, kBits};
+    case lir::DesignatedBitsTarget::Op::kReport:
+      return {kMachine, kPosition, kHeld};
+  }
+  throw InternalError("llvm codegen: unknown designated-bits operation");
+}
+
+auto AnswerToldOf(lir::DesignatedBitsTarget::Op op) -> support::AnswerTold {
+  switch (op) {
+    case lir::DesignatedBitsTarget::Op::kRead:
+    case lir::DesignatedBitsTarget::Op::kPlace:
+      return support::AnswerTold::kNothing;
+    // How many bits were written, which is how wide the type they were
+    // written at is.
+    case lir::DesignatedBitsTarget::Op::kReport:
+      return support::AnswerTold::kIntegralWidth;
+  }
+  throw InternalError("llvm codegen: unknown designated-bits operation");
+}
+
+auto RealizationsOf(lir::DesignatedBitsTarget::Op op)
+    -> std::span<const RealizedFor> {
+  switch (op) {
+    // Bits are read and placed by the operation over integral values, which
+    // is no entry named here.
+    case lir::DesignatedBitsTarget::Op::kRead:
+    case lir::DesignatedBitsTarget::Op::kPlace:
+      return {};
+    case lir::DesignatedBitsTarget::Op::kReport:
+      return kForBitsReported;
+  }
+  throw InternalError("llvm codegen: unknown designated-bits operation");
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
@@ -548,62 +1299,114 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       "designates a slice within a write, which this target writes by the "
       "write's own slice write";
   switch (fn) {
-    case support::BuiltinFn::kElement:
-    case support::BuiltinFn::kSlice:
-    case support::BuiltinFn::kElementRef:
-    case support::BuiltinFn::kSliceRef:
-    case support::BuiltinFn::kComponent:
-    case support::BuiltinFn::kComponentRef:
-    case support::BuiltinFn::kTagMatches:
-    case support::BuiltinFn::kSize:
-    case support::BuiltinFn::kLen:
-    case support::BuiltinFn::kBitstreamWidth:
-    case support::BuiltinFn::kToBitstream:
+    // The operations over integral values alone (LRM 11.4, 11.5.1, 20.9).
     case support::BuiltinFn::kReverseBlocks:
-    case support::BuiltinFn::kToOwned:
-    case support::BuiltinFn::kDelete:
-    case support::BuiltinFn::kDeleteIndex:
+    case support::BuiltinFn::kClog2:
+    case support::BuiltinFn::kBitwiseXnor:
+    case support::BuiltinFn::kWildcardEquals:
+    case support::BuiltinFn::kCasezEquals:
+    case support::BuiltinFn::kCasexEquals:
+    case support::BuiltinFn::kReductionAnd:
+    case support::BuiltinFn::kReductionOr:
+    case support::BuiltinFn::kReductionXor:
+    case support::BuiltinFn::kReductionNand:
+    case support::BuiltinFn::kReductionNor:
+    case support::BuiltinFn::kReductionXnor:
+    case support::BuiltinFn::kToInt64:
+    case support::BuiltinFn::kLogicalEquivalence:
+    case support::BuiltinFn::kShiftLeft:
+    case support::BuiltinFn::kLogicalShiftRight:
+    case support::BuiltinFn::kArithmeticShiftRight:
+    case support::BuiltinFn::kReplicateBits:
+    case support::BuiltinFn::kSlice:
+    case support::BuiltinFn::kFromBool:
+    case support::BuiltinFn::kToPosition:
+    case support::BuiltinFn::kIntegralFromString:
+    case support::BuiltinFn::kFromSvLogic:
+    case support::BuiltinFn::kReadCanonicalBitVec:
+    case support::BuiltinFn::kReadCanonicalLogicVec:
+    case support::BuiltinFn::kConcatBits:
+    case support::BuiltinFn::kIntegralPow:
+    case support::BuiltinFn::kIntegralCaseEqual:
+    case support::BuiltinFn::kIntegralBitIdentical:
+    case support::BuiltinFn::kIntegralHasUnknown:
+    case support::BuiltinFn::kIntegralIsUnknown:
+    case support::BuiltinFn::kIntegralCountBits:
+    case support::BuiltinFn::kIntegralResolveTriState:
+    case support::BuiltinFn::kIntegralResolveWiredAnd:
+    case support::BuiltinFn::kIntegralResolveWiredOr:
+    case support::BuiltinFn::kIntegralDominating:
+    case support::BuiltinFn::kIntegralMergeConditional:
+    case support::BuiltinFn::kIntegralFromInt:
+    case support::BuiltinFn::kIntegralConvert:
+      return OverIntegralValues{};
+
+    // A part of a value that is storage of its own is reached where it lies by
+    // a place, so no library realizes the access that answers with one.
+    case support::BuiltinFn::kSliceRef:
+    case support::BuiltinFn::kComponentRef:
+      return NamedByValue{};
+
+    case support::BuiltinFn::kExists:
     case support::BuiltinFn::kAssocFirst:
     case support::BuiltinFn::kAssocLast:
     case support::BuiltinFn::kAssocNext:
     case support::BuiltinFn::kAssocPrev:
-    case support::BuiltinFn::kScanString:
-    case support::BuiltinFn::kScanFile:
+    case support::BuiltinFn::kAssocMinIndex:
+    case support::BuiltinFn::kAssocMaxIndex:
+      return NamedByValue{.realized = kForAssociativeArrays};
+
+    // LRM 7.6 assignment between unpacked array kinds, one entry per
+    // destination kind, reads its source through the representation the source
+    // has.
+    case support::BuiltinFn::kUnpackedArrayFromArray:
+    case support::BuiltinFn::kArrayConcatElement:
+    case support::BuiltinFn::kArrayConcatSpread:
+      return NamedByValue{.realized = kForDynamicArraysAndQueues};
+    case support::BuiltinFn::kQueueFromArray:
+    case support::BuiltinFn::kElementSlice:
+    case support::BuiltinFn::kElementSliceRef:
+      return NamedByValue{.realized = kForArraysOfFixedExtent};
+    case support::BuiltinFn::kDynamicArrayFromArray:
+      return NamedByValue{.realized = kForUnpackedArraysAndQueues};
+
+    case support::BuiltinFn::kDelete:
+      return NamedByValue{.realized = kForWhatDeletesWhole};
+
+    case support::BuiltinFn::kReverse:
+    case support::BuiltinFn::kSort:
+    case support::BuiltinFn::kRsort:
+    case support::BuiltinFn::kElementRef:
+      return NamedByValue{.realized = kForSequences};
+
+    case support::BuiltinFn::kSize:
+    case support::BuiltinFn::kSum:
+    case support::BuiltinFn::kProduct:
+    case support::BuiltinFn::kAnd:
+    case support::BuiltinFn::kOr:
+    case support::BuiltinFn::kXor:
+    case support::BuiltinFn::kFind:
+    case support::BuiltinFn::kFindIndex:
+    case support::BuiltinFn::kFindFirst:
+    case support::BuiltinFn::kFindFirstIndex:
+    case support::BuiltinFn::kFindLast:
+    case support::BuiltinFn::kFindLastIndex:
+    case support::BuiltinFn::kMin:
+    case support::BuiltinFn::kMax:
+    case support::BuiltinFn::kUnique:
+    case support::BuiltinFn::kUniqueIndex:
+    case support::BuiltinFn::kMap:
+      return NamedByValue{.realized = kForContainers};
+
     case support::BuiltinFn::kInsert:
     case support::BuiltinFn::kPopFront:
     case support::BuiltinFn::kPopBack:
     case support::BuiltinFn::kPushFront:
     case support::BuiltinFn::kPushBack:
-    case support::BuiltinFn::kExists:
-    case support::BuiltinFn::kAssocMinIndex:
-    case support::BuiltinFn::kAssocMaxIndex:
-    case support::BuiltinFn::kGetc:
-    case support::BuiltinFn::kPutc:
-    case support::BuiltinFn::kToupper:
-    case support::BuiltinFn::kTolower:
-    case support::BuiltinFn::kCompare:
-    case support::BuiltinFn::kIcompare:
-    case support::BuiltinFn::kSubstr:
-    case support::BuiltinFn::kAtoi:
-    case support::BuiltinFn::kAtohex:
-    case support::BuiltinFn::kAtooct:
-    case support::BuiltinFn::kAtobin:
-    case support::BuiltinFn::kAtoreal:
-    case support::BuiltinFn::kItoa:
-    case support::BuiltinFn::kHextoa:
-    case support::BuiltinFn::kOcttoa:
-    case support::BuiltinFn::kBintoa:
-    case support::BuiltinFn::kRealtoa:
-    case support::BuiltinFn::kIsUnknown:
-    case support::BuiltinFn::kCountBits:
-    case support::BuiltinFn::kBitIdentical:
-    case support::BuiltinFn::kHasUnknown:
-    case support::BuiltinFn::kResolveTriState:
-    case support::BuiltinFn::kResolveWiredAnd:
-    case support::BuiltinFn::kResolveWiredOr:
-    case support::BuiltinFn::kDominating:
-    case support::BuiltinFn::kFilledLike:
-    case support::BuiltinFn::kClog2:
+    case support::BuiltinFn::kConformBound:
+    case support::BuiltinFn::kDeleteIndex:
+      return NamedByValue{.realized = kForQueues};
+
     case support::BuiltinFn::kLn:
     case support::BuiltinFn::kLog10:
     case support::BuiltinFn::kExp:
@@ -624,79 +1427,81 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAsinh:
     case support::BuiltinFn::kAcosh:
     case support::BuiltinFn::kAtanh:
-    case support::BuiltinFn::kToInt64:
-    case support::BuiltinFn::kRound:
     case support::BuiltinFn::kTruncate:
+      return NamedByValue{.realized = kForReal};
+    case support::BuiltinFn::kRound:
     case support::BuiltinFn::kToBits:
     case support::BuiltinFn::kRealValue:
-    case support::BuiltinFn::kConformBound:
-    case support::BuiltinFn::kArrayConcatElement:
-    case support::BuiltinFn::kArrayConcatSpread:
-    case support::BuiltinFn::kConcat:
-    case support::BuiltinFn::kReplicate:
     case support::BuiltinFn::kPow:
-    case support::BuiltinFn::kShiftLeft:
-    case support::BuiltinFn::kLogicalShiftRight:
-    case support::BuiltinFn::kArithmeticShiftRight:
-    case support::BuiltinFn::kShiftLeftAssign:
-    case support::BuiltinFn::kLogicalShiftRightAssign:
-    case support::BuiltinFn::kArithmeticShiftRightAssign:
-    case support::BuiltinFn::kBitwiseXnor:
-    case support::BuiltinFn::kLogicalEquivalence:
-    case support::BuiltinFn::kWildcardEquals:
+      return NamedByValue{.realized = kForReals};
+
+    case support::BuiltinFn::kLen:
+    case support::BuiltinFn::kGetc:
+    case support::BuiltinFn::kPutc:
+    case support::BuiltinFn::kToupper:
+    case support::BuiltinFn::kTolower:
+    case support::BuiltinFn::kCompare:
+    case support::BuiltinFn::kIcompare:
+    case support::BuiltinFn::kSubstr:
+    case support::BuiltinFn::kAtoi:
+    case support::BuiltinFn::kAtohex:
+    case support::BuiltinFn::kAtooct:
+    case support::BuiltinFn::kAtobin:
+    case support::BuiltinFn::kAtoreal:
+    case support::BuiltinFn::kItoa:
+    case support::BuiltinFn::kHextoa:
+    case support::BuiltinFn::kOcttoa:
+    case support::BuiltinFn::kBintoa:
+    case support::BuiltinFn::kRealtoa:
+    case support::BuiltinFn::kScanString:
+    case support::BuiltinFn::kScanFile:
+    case support::BuiltinFn::kConcat:
+      return NamedByValue{.realized = kForStrings};
+
+    case support::BuiltinFn::kElement:
+      return NamedByValue{.realized = kForWhatNumbersItsElements};
     case support::BuiltinFn::kCaseEqual:
-    case support::BuiltinFn::kCasezEquals:
-    case support::BuiltinFn::kCasexEquals:
+      return NamedByValue{.realized = kForWhatCaseEqualityCompares};
+    case support::BuiltinFn::kBitIdentical:
+    case support::BuiltinFn::kHasUnknown:
+      return NamedByValue{.realized = kForWhatIsComparedBitForBit};
+    case support::BuiltinFn::kBitstreamWidth:
+    case support::BuiltinFn::kToBitstream:
+    case support::BuiltinFn::kCountBits:
+      return NamedByValue{.realized = kForBitstreams};
+    case support::BuiltinFn::kTagMatches:
+      return NamedByValue{.realized = kForTaggedUnions};
+    case support::BuiltinFn::kComponent:
+      return NamedByValue{.realized = kForUnions};
+    case support::BuiltinFn::kIsUnknown:
+      return NamedByValue{.realized = kForWhatMayHoldUnknowns};
+    case support::BuiltinFn::kResolveTriState:
+    case support::BuiltinFn::kResolveWiredAnd:
+    case support::BuiltinFn::kResolveWiredOr:
+    case support::BuiltinFn::kDominating:
+    case support::BuiltinFn::kFilledLike:
+      return NamedByValue{.realized = kForWhatAnAggregateNetResolves};
     case support::BuiltinFn::kMergeConditional:
-    case support::BuiltinFn::kReductionAnd:
-    case support::BuiltinFn::kReductionOr:
-    case support::BuiltinFn::kReductionXor:
-    case support::BuiltinFn::kReductionNand:
-    case support::BuiltinFn::kReductionNor:
-    case support::BuiltinFn::kReductionXnor:
-    case support::BuiltinFn::kReverse:
-    case support::BuiltinFn::kSort:
-    case support::BuiltinFn::kRsort:
-    case support::BuiltinFn::kSum:
-    case support::BuiltinFn::kProduct:
-    case support::BuiltinFn::kAnd:
-    case support::BuiltinFn::kOr:
-    case support::BuiltinFn::kXor:
-    case support::BuiltinFn::kFind:
-    case support::BuiltinFn::kFindIndex:
-    case support::BuiltinFn::kFindFirst:
-    case support::BuiltinFn::kFindFirstIndex:
-    case support::BuiltinFn::kFindLast:
-    case support::BuiltinFn::kFindLastIndex:
-    case support::BuiltinFn::kMin:
-    case support::BuiltinFn::kMax:
-    case support::BuiltinFn::kUnique:
-    case support::BuiltinFn::kUniqueIndex:
-    case support::BuiltinFn::kMap:
-      return NamedByValue{};
+      return NamedByValue{.realized = kForUnpackedArrays};
 
     // The factories. Each builds a value out of operands that are the material
-    // of one -- a machine integer, a byte array, the text of a string, the
-    // member a union is to hold -- so none of them carries the representation
-    // the entry is realized for, and only what the call answers with does.
+    // of one -- a machine integer, a byte array, the member a union is to hold
+    // -- so none of them carries the representation the entry is realized for,
+    // and only what the call answers with does.
     case support::BuiltinFn::kMakeActiveMember:
+      return NamedByResult{.realized = kForUnionsBuilt};
+    case support::BuiltinFn::kFromByteArray:
+      return NamedByResult{.realized = kForStrings};
+    case support::BuiltinFn::kArrayConformSize:
+      return NamedByResult{.realized = kForUnpackedArrays};
     case support::BuiltinFn::kFromBits:
     case support::BuiltinFn::kFromInt:
-    case support::BuiltinFn::kFromWords:
-    case support::BuiltinFn::kToPosition:
-    case support::BuiltinFn::kFromPackedArray:
-    case support::BuiltinFn::kFromByteArray:
-    case support::BuiltinFn::kFromString:
-    case support::BuiltinFn::kFromBool:
-    case support::BuiltinFn::kArrayConformSize:
-      return NamedByResult{};
+      return NamedByResult{.realized = kForReals};
 
-    // LRM 7.6 assignment between unpacked array kinds crosses two container
-    // representations and reads the source through the one it actually has, so
-    // neither side alone names the entry.
+    // LRM 6.12.1: a real of one precision as a real of the other, whose
+    // realization depends on both.
     case support::BuiltinFn::kConvertFrom:
-    case support::BuiltinFn::kFromArray:
-      return NamedByConversion{};
+      return NamedByConversion{.realized = kRealConversions};
 
     // The accesses a capability wrapper defines. Which wrapper the call acts
     // on decides both which family answers and which representation it answers
@@ -706,19 +1511,24 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // answer with, which is the same operation on the same storage as an
     // ordinary read.
     case support::BuiltinFn::kInitialize:
+      return NamedByWrapper{.realized = kInstalls};
     case support::BuiltinFn::kLoad:
-    case support::BuiltinFn::kStore:
+      return NamedByWrapper{.realized = kLoads};
     case support::BuiltinFn::kSampledLoad:
+      return NamedByWrapper{.realized = kSampledLoads};
     case support::BuiltinFn::kArmSampling:
+      return NamedByWrapper{.realized = kArmings};
     // A takeover acts on the cell it covers and carries that cell's value, so
     // the wrapper it is reached through is what names the entry (LRM 10.6).
     case support::BuiltinFn::kBeginTakeover:
     case support::BuiltinFn::kDriveTakeover:
     case support::BuiltinFn::kEndTakeover:
+      return NamedByWrapper{.realized = kTakeovers};
     // Opening a write reaches the contents of the wrapper it is opened on, and
     // what the write reports when it ends is that wrapper's own business.
+    case support::BuiltinFn::kStore:
     case support::BuiltinFn::kOpenForWrite:
-      return NamedByWrapper{};
+      return NamedByWrapper{.realized = kWholeWrites};
 
     // A driver is attached by the net that issues it, a fold is installed on
     // the net that applies it, and a join takes two nets that resolve in the
@@ -727,22 +1537,33 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // likewise take the storage they act on and are named by the one domain
     // every value in it is realized in (LRM 16.9.3).
     case support::BuiltinFn::kAttachDriver:
+      return NamedByStorageDomain{.realized = kForNets};
     case support::BuiltinFn::kNetJoin:
+      return NamedByStorageDomain{.realized = kForJoinedNets};
     case support::BuiltinFn::kNetInitializeTriState:
     case support::BuiltinFn::kNetInitializeWiredAnd:
     case support::BuiltinFn::kNetInitializeWiredOr:
     case support::BuiltinFn::kNetInitializeRetaining:
+      return NamedByStorageDomain{.realized = kForIntegralNets};
+    case support::BuiltinFn::kAggregateNetInitializeTriState:
+    case support::BuiltinFn::kAggregateNetInitializeWiredAnd:
+    case support::BuiltinFn::kAggregateNetInitializeWiredOr:
+    case support::BuiltinFn::kAggregateNetInitializeRetaining:
+      return NamedByStorageDomain{.realized = kForAggregateNets};
     case support::BuiltinFn::kSampledHistoryInstall:
+      return NamedByStorageDomain{.realized = kForHistoriesInstalled};
     case support::BuiltinFn::kSampledHistoryPush:
     case support::BuiltinFn::kSampledHistoryAt:
+      return NamedByStorageDomain{.realized = kForHistories};
     // A step within a write is taken on a designation, and one lending a part
     // on a reference; each is named by the representation of the value
     // designated or referred to there.
     case support::BuiltinFn::kDesignateElement:
-    case support::BuiltinFn::kDesignateComponent:
     case support::BuiltinFn::kReferElement:
+      return NamedByStorageDomain{.realized = kForSequences};
+    case support::BuiltinFn::kDesignateComponent:
     case support::BuiltinFn::kReferComponent:
-      return NamedByStorageDomain{};
+      return NamedByStorageDomain{.realized = kForTuples};
 
     // A body that leaves by branching reaches the gate as the pair of questions
     // the lowering already asks wherever this execution regains control -- and
@@ -751,24 +1572,21 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kTakeDepartureIfDue:
       return NotRealized{.shape = kLeavesByUnwinding};
 
-    // A slice is several elements rather than one place, so a slice designated
-    // within a write is written by the write's own slice write, which the
-    // lowering reaches in place of this call.
+    // Several bits or elements are no one place, so a slice designated within a
+    // write is written by the write's own slice write, which the lowering
+    // reaches in place of this call.
     case support::BuiltinFn::kDesignateSlice:
+    case support::BuiltinFn::kDesignateElementSlice:
       return NotRealized{.shape = kWrittenByTheSliceWrite};
-
-    // The runtime, then the user string, then the destination whose
-    // representation names the entry.
-    case support::BuiltinFn::kValuePlusargs:
-      return NamedByValue{.operand = 2};
 
     // The runtime leads, and the memory whose addressing names the entry
     // follows.
     case support::BuiltinFn::kReadMem:
     case support::BuiltinFn::kReadMemWithin:
+      return NamedByValue{.operand = 1, .realized = kForLoadedMemories};
     case support::BuiltinFn::kWriteMem:
     case support::BuiltinFn::kWriteMemWithin:
-      return NamedByValue{.operand = 1};
+      return NamedByValue{.operand = 1, .realized = kForContainers};
 
     // Designating the whole of what a write was opened on reads nothing of the
     // value there, so the library realizes it once.
@@ -822,6 +1640,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFileFlush:
     case support::BuiltinFn::kFileFlushAll:
     case support::BuiltinFn::kTestPlusargs:
+    case support::BuiltinFn::kValuePlusargs:
+    case support::BuiltinFn::kValuePlusargsString:
     case support::BuiltinFn::kRunHostCommand:
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kDelay:
@@ -886,7 +1706,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kReferenceReportsTo:
     // What an enumeration's member list answers about a value. One routine
     // serves every enumeration, because the list is the receiver and every
-    // member is a packed value.
+    // member is an integral value.
     case support::BuiltinFn::kEnumerationHas:
     case support::BuiltinFn::kEnumerationName:
     case support::BuiltinFn::kEnumerationNext:
@@ -960,18 +1780,30 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // The DPI-C boundary marshaling (LRM 35.5.6, Annex H.7.7, H.10). Each of
     // these is one library function and not a family: what a canonical buffer,
     // an `svLogic` scalar and an open-array image hold is fixed by the C ABI,
-    // so the SV value on the far side of one is always a packed value and the
-    // buffer itself belongs to no value domain at all.
+    // so the SV value on the far side of one is always an integral value and
+    // the buffer itself belongs to no value domain at all.
     case support::BuiltinFn::kToSvLogic:
-    case support::BuiltinFn::kFromSvLogic:
-    case support::BuiltinFn::kReadCanonicalBitVec:
-    case support::BuiltinFn::kReadCanonicalLogicVec:
     case support::BuiltinFn::kWriteCanonicalBitVec:
     case support::BuiltinFn::kWriteCanonicalLogicVec:
     case support::BuiltinFn::kDpiBitBufferData:
     case support::BuiltinFn::kDpiLogicBufferData:
     case support::BuiltinFn::kDpiOpenArrayHandle:
     case support::BuiltinFn::kDpiOpenArrayValue:
+    // An operation whose own name says the one kind of value it is over or
+    // builds: a queue's slice (LRM 7.10.1), a string repeated or built out of
+    // bits (LRM 11.4.12.1, 6.16), an unpacked array of byte built out of text
+    // or of bits (LRM 5.9); an access into an associative array by its key
+    // (LRM 7.8).
+    case support::BuiltinFn::kAssocElement:
+    case support::BuiltinFn::kAssocElementRef:
+    case support::BuiltinFn::kAssocDesignateElement:
+    case support::BuiltinFn::kAssocReferElement:
+    case support::BuiltinFn::kAssocDeleteIndex:
+    case support::BuiltinFn::kQueueSlice:
+    case support::BuiltinFn::kReplicateString:
+    case support::BuiltinFn::kStringFromBits:
+    case support::BuiltinFn::kByteArrayFromString:
+    case support::BuiltinFn::kByteArrayFromBits:
       return NamedAlone{};
   }
   throw InternalError("llvm codegen: unknown builtin");

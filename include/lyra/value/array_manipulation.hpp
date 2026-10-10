@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/value/value_type.hpp"
+#include "lyra/value/reduction.hpp"
 
 // LRM 7.12 array manipulation algorithms, written once over positions. Every
 // method of the clause asks, per entry of a container in its natural order,

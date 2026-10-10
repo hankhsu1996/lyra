@@ -37,7 +37,8 @@ CodeGenFunction::CodeGenFunction(CodeGenModule& module, lir::FunctionId id)
       id_(id),
       fn_(&module.Unit().functions.Get(id)),
       value_(module.UnitFunction(id)),
-      builder_(module.Context()) {
+      builder_(module.Context()),
+      arranger_(module, *fn_) {
 }
 
 auto CodeGenFunction::IsCoroutine() const -> bool {
@@ -144,35 +145,54 @@ auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
   return LaidOutStorage(module_->Types().StorageOf(type));
 }
 
-auto CodeGenFunction::BuildInto(
-    std::string_view symbol, std::vector<llvm::Value*> args, llvm::Value* out)
-    -> llvm::Value* {
-  args.push_back(out);
-  builder_.CreateCall(Entry(symbol, module_->Types().Ptr(), args), args);
-  return out;
+auto CodeGenFunction::Addresses(std::size_t count) const
+    -> std::vector<ArgAbi> {
+  return std::vector<ArgAbi>(
+      count, CallArranger::Direct(module_->Types().Ptr()));
 }
 
-void CodeGenFunction::EndObject(
-    support::RuntimeObject object, llvm::Value* value) {
-  if (runtime::LayoutOf(object).ends_with_nothing_to_do) {
-    return;
-  }
-  const std::array<llvm::Value*, 1> args{value};
-  builder_.CreateCall(
-      Entry(
-          RuntimeSymbol(object, RuntimeOp::kDestroy), module_->Types().Void(),
-          args),
+auto CodeGenFunction::CallEntry(
+    std::string_view symbol, llvm::Type* result, std::vector<ArgAbi> arranged,
+    std::span<llvm::Value* const> args) -> llvm::Value* {
+  return builder_.CreateCall(
+      module_->RuntimeFunction(
+          symbol, CallArranger::Arrange(
+                      std::move(arranged), ReturnDirect{.type = result})),
       args);
 }
 
-auto CodeGenFunction::OwnedCallee(
-    lir::TypeId type, TupleLifecycle tuple_step, RuntimeOp object_op,
-    llvm::Type* result, std::span<llvm::Value* const> args)
+auto CodeGenFunction::BuildInto(
+    std::string_view symbol, std::vector<ArgAbi> arranged,
+    std::vector<llvm::Value*> args, llvm::Value* out) -> llvm::Value* {
+  args.push_back(out);
+  builder_.CreateCall(
+      module_->RuntimeFunction(
+          symbol, CallArranger::Arrange(
+                      std::move(arranged),
+                      ReturnIndirect{.returned = module_->Types().Ptr()})),
+      args);
+  return out;
+}
+
+auto CodeGenFunction::OwnedCallee(lir::TypeId type, TupleLifecycle step)
     -> llvm::FunctionCallee {
   if (module_->Unit().types.Get(type).IsProduct()) {
-    return module_->Tuples().Function(type, tuple_step);
+    return module_->Tuples().Function(type, step);
   }
-  return Entry(RuntimeSymbol(ObjectOf(type), object_op), result, args);
+  if (module_->Types().IntegralShapeOf(type).has_value()) {
+    throw InternalError(
+        "llvm codegen: an integral value's lifecycle is a copy of its bytes, "
+        "which no entry carries out -- please report this as a bug");
+  }
+  return module_->LifecycleEntry(
+      RuntimeSymbol(ObjectOf(type), LifecycleOp(step)), step);
+}
+
+void CodeGenFunction::CopyIntegralBytes(
+    lir::TypeId type, llvm::Value* value, llvm::Value* out) {
+  const support::ObjectLayout layout = module_->Types().StorageOf(type);
+  const llvm::Align align(layout.align);
+  builder_.CreateMemCpy(out, align, value, align, layout.size);
 }
 
 void CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value) {
@@ -180,42 +200,38 @@ void CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value) {
     return;
   }
   const std::array<llvm::Value*, 1> args{value};
-  builder_.CreateCall(
-      OwnedCallee(
-          type, TupleLifecycle::kDestroy, RuntimeOp::kDestroy,
-          module_->Types().Void(), args),
-      args);
+  builder_.CreateCall(OwnedCallee(type, TupleLifecycle::kDestroy), args);
 }
 
 auto CodeGenFunction::CopyValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out) -> llvm::Value* {
+  if (module_->Types().IntegralShapeOf(type).has_value()) {
+    CopyIntegralBytes(type, value, out);
+    return out;
+  }
   const std::array<llvm::Value*, 2> args{value, out};
-  builder_.CreateCall(
-      OwnedCallee(
-          type, TupleLifecycle::kCopy, RuntimeOp::kCopy, module_->Types().Ptr(),
-          args),
-      args);
+  builder_.CreateCall(OwnedCallee(type, TupleLifecycle::kCopy), args);
   return out;
 }
 
 void CodeGenFunction::AssignValue(
-    lir::TypeId type, llvm::Value* storage, llvm::Value* value) {
-  const std::array<llvm::Value*, 2> args{storage, value};
-  builder_.CreateCall(
-      OwnedCallee(
-          type, TupleLifecycle::kAssign, RuntimeOp::kAssign,
-          module_->Types().Void(), args),
-      args);
+    lir::TypeId type, llvm::Value* value, llvm::Value* out) {
+  if (module_->Types().IntegralShapeOf(type).has_value()) {
+    CopyIntegralBytes(type, value, out);
+    return;
+  }
+  const std::array<llvm::Value*, 2> args{out, value};
+  builder_.CreateCall(OwnedCallee(type, TupleLifecycle::kAssign), args);
 }
 
 void CodeGenFunction::RelocateValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out) {
+  if (module_->Types().IntegralShapeOf(type).has_value()) {
+    CopyIntegralBytes(type, value, out);
+    return;
+  }
   const std::array<llvm::Value*, 2> args{value, out};
-  builder_.CreateCall(
-      OwnedCallee(
-          type, TupleLifecycle::kMove, RuntimeOp::kMove, module_->Types().Ptr(),
-          args),
-      args);
+  builder_.CreateCall(OwnedCallee(type, TupleLifecycle::kMove), args);
   EndValue(type, value);
 }
 
@@ -229,7 +245,7 @@ auto CodeGenFunction::ComponentAddress(
 auto CodeGenFunction::ObjectOf(lir::TypeId type) const
     -> support::RuntimeObject {
   const std::optional<support::RuntimeObject> object =
-      module_->Unit().types.Get(type).HeldObject();
+      HeldObjectOf(module_->Unit().types.Get(type));
   if (!object.has_value()) {
     throw InternalError(
         "llvm codegen: an owned value's operation names a type that is no "
@@ -435,20 +451,15 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
               // That suspension is where releasing the frame finds it stopped;
               // a frame unwound out of is found stopped wherever it last
               // waited, and releasing it runs that wait's abandonment again.
-              builder_.CreateCall(
-                  Entry(
-                      RuntimeSymbol(RuntimeOp::kSettleDeparture),
-                      builder_.getVoidTy(), args),
-                  args);
+              CallEntry(
+                  RuntimeSymbol(RuntimeOp::kSettleDeparture),
+                  builder_.getVoidTy(), Addresses(1), args);
               builder_.CreateBr(coro_final_);
               return {};
             }
-            builder_.CreateCall(
-                Entry(
-                    RuntimeSymbol(
-                        lir::ControlEffectTarget::Op::kDeclineDeparture),
-                    builder_.getVoidTy(), args),
-                args);
+            CallEntry(
+                RuntimeSymbol(lir::ControlEffectTarget::Op::kDeclineDeparture),
+                builder_.getVoidTy(), Addresses(1), args);
             builder_.CreateUnreachable();
             return {};
           },
@@ -461,16 +472,22 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             llvm::Value* const out = lir::CallMakesValue(call.target)
                                          ? StorageFor(result_type)
                                          : nullptr;
-            auto resolved = ResolveCall(
-                lir::CallInstr{.target = call.target, .args = call.args},
-                result_type, out);
-            if (!resolved) {
-              return std::unexpected(std::move(resolved.error()));
+            const lir::CallInstr stated{
+                .target = call.target, .args = call.args};
+            invoke_dest_ = InvokeDest{
+                .normal = blocks_[call.returned.value],
+                .unwind = blocks_[call.landing.value]};
+            auto answered = LowerCall(stated, result_type, out);
+            invoke_dest_.reset();
+            if (!answered) {
+              return std::unexpected(std::move(answered.error()));
             }
-            llvm::Value* invoked = builder_.CreateInvoke(
-                resolved->callee, blocks_[call.returned.value],
-                blocks_[call.landing.value], resolved->args);
-            values_[call.result] = out != nullptr ? out : invoked;
+            values_[call.result] = *answered;
+            // A call emitted as instructions of this body departs from
+            // nowhere, so control goes on to where the call returns.
+            if (!builder_.GetInsertBlock()->hasTerminator()) {
+              builder_.CreateBr(blocks_[call.returned.value]);
+            }
             return {};
           }},
       terminator.data);

@@ -30,13 +30,13 @@ auto MemberFactsOf(const UnitLowerer& unit_lowerer, hir::TypeId member)
   const mir::Type& translated =
       unit_lowerer.Unit().types.Get(unit_lowerer.TranslateType(member));
   if (translated.Is<mir::VoidType>()) return MemberFacts{};
-  if (!translated.IsIntegralPacked()) {
+  if (!translated.IsIntegral()) {
     throw InternalError(
         "ProjectPackedAggregate: a packed aggregate member is not integral");
   }
-  const mir::PackedArrayType& packed = translated.PackedShape();
+  const mir::IntegralType& integral = translated.Integral();
   return MemberFacts{
-      .bit_width = packed.BitWidth(), .state_kind = packed.state_kind};
+      .bit_width = integral.bit_width, .state_kind = integral.state_kind};
 }
 
 // LRM 7.3.2: the tag names one of the members, so it is as wide as it takes to
