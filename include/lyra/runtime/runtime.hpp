@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -47,6 +48,29 @@ struct RuntimeOptions {
 };
 
 [[nodiscard]] auto DefaultRuntimeOptions() -> RuntimeOptions;
+
+// The kinds of process that start at time zero. They start in turn, in the
+// order written here, each turn once the one before it has run to its first
+// waits. The standard leaves the order of one slot's processes open (LRM 4.7),
+// and this is the one a design can lean on either way:
+//
+// - An `always` procedure is waiting before a continuous driver first
+//   evaluates, so the first value a driver gives a name is a change the
+//   procedure sees (LRM 4.9.1). A register whose only reset is tied to a
+//   constant is reset by that change.
+// - An `initial` procedure starts once the drivers have evaluated, so it reads
+//   what a constant drives and not the value the name held before.
+// - An `always_comb` or `always_latch` is triggered after all initial and
+//   always procedures have been started (LRM 9.2.2.2).
+enum class StartKind : std::uint8_t {
+  kAlwaysProcedure,
+  kContinuousDriver,
+  kInitialProcedure,
+  kTriggeredProcedure,
+};
+
+inline constexpr std::size_t kStartTurnCount =
+    static_cast<std::size_t>(StartKind::kTriggeredProcedure) + 1;
 
 // The concrete simulation runtime. Owns every mutable piece of simulator
 // state -- time, region queues, execution ambient, I/O sinks, the attached
@@ -103,7 +127,7 @@ class Runtime final : public RuntimeEffects {
   // lockstep. The by-scope index is a set of raw back-pointers keyed by the
   // owning scope; every hierarchical query (LRM 9.7 `disable`, LRM 9.6.1
   // `wait fork` descendant walk, scope teardown, `%m` attribution) reaches
-  // it here. Called by process registration (RegisterInitial / Final free
+  // it here. Called by process registration (the `Register...` free
   // functions) and by the fork spawn path. Public because the free
   // registration functions live outside this class.
   void RegisterProcessInRegistry(std::shared_ptr<RuntimeProcess> process);
@@ -111,6 +135,9 @@ class Runtime final : public RuntimeEffects {
   // LRM 9.2.3: a `final` procedure waits for the end of simulation, after the
   // last slot, rather than in any slot.
   void QueueFinal(Activation* top);
+
+  // A process that starts at time zero waits for the turn its kind has.
+  void QueueStart(StartKind kind, Activation* top);
 
   // Takes a static initialization on as what is running, and gives it back.
   // Its generator starts from `seed`, which the container's initialization RNG
@@ -174,6 +201,9 @@ class Runtime final : public RuntimeEffects {
   void WalkResolve(Scope& scope);
   void WalkInitialize(Scope& scope);
   void WalkActivate(Scope& scope);
+  // Releases the processes of `turn` into the first slot, and each later turn
+  // once the one before it has run to its first waits.
+  void StartFrom(std::size_t turn);
 
   void RunProcess(Activation* activation);
 
@@ -219,6 +249,8 @@ class Runtime final : public RuntimeEffects {
   // Final processes wait here rather than in any slot: LRM 9.2.3 runs them
   // after the last one, when no slot is left to hold them.
   IntrusiveList<QueuePlace> finals_;
+  // The processes that start at time zero, by turn, until each turn comes.
+  std::array<IntrusiveList<QueuePlace>, kStartTurnCount> starting_;
   // Every concurrent assertion the design activated, so an attempt no tick
   // settled can be answered before the finals run.
   std::vector<EvaluationAttempts*> concurrent_assertions_;
@@ -268,19 +300,28 @@ class Runtime final : public RuntimeEffects {
 [[nodiscard]] auto AsRuntime(RuntimeEffects& effects) -> Runtime&;
 [[nodiscard]] auto AsRuntime(const RuntimeEffects& effects) -> const Runtime&;
 
-// Reached by generated `RegisterInitial` / `RegisterFinal` builtins: creates a
-// process bound to `owning_scope` and registers it in the ambient runtime.
-// LRM 9.2 lifecycle: an `initial` starts on the Active queue at time 0; a
-// `final` waits on the finals list until shutdown. The scope handle arrives
-// as a pointer because the generated call site is holding the `self` pointer
-// from its enclosing body.
+// Reached by the generated registration builtins: creates a process bound to
+// `owning_scope` and registers it in the ambient runtime. LRM 9.2 lifecycle:
+// every kind but a `final` starts at time zero, in the turn its kind has; a
+// `final` waits on the finals list until shutdown. The scope
+// handle arrives as a pointer because the generated call site is holding the
+// `self` pointer from its enclosing body.
 // `unit_instance` is the module, interface, or program instance the process is
 // declared within, which holds the seeds LRM 18.14.1 starts a static process
 // from. It is the scope itself unless the process is declared inside a generate
 // scope, which has no seeds of its own.
 // `written_at` is where the source writes the procedure, as text that stands
 // for the whole run.
+void RegisterAlwaysProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at);
+void RegisterContinuousDriver(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at);
 void RegisterInitialProcess(
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at);
+void RegisterTriggeredProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at);
 void RegisterFinalProcess(

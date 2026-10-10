@@ -139,10 +139,9 @@ class Scope : public GcObject {
   // compiler-invariant violation and surfaces here, not deferred to a
   // hot-path read.
   //
-  // `Initialize` runs variable initializers and seeds driver
-  // contributions; every reference across the design is sealed before
-  // it starts, so an initializer observes only connected and bound
-  // values.
+  // `Initialize` runs variable initializers; every reference across the
+  // design is sealed before it starts, so an initializer observes only
+  // connected and bound values.
   //
   // `CreateProcesses` creates this scope's processes.
   void Resolve();

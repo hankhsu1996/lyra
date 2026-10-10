@@ -108,12 +108,18 @@ the design has attached, which is exactly what a global Seal barrier provides.
    is still a driver), reporting each driver's provenance. Seal is the future home of forwarding
    collapse and net-collapse canonicalization.
 
-5. **Drivers begin at high-impedance, are seeded in Initialize, and arm in Activate.** Each
-   contribution starts at what a driver contributes where it is not driving, which is the fold's
-   identity, so attaching is not itself an act of driving; each continuous-assignment driver
-   evaluates once in Initialize and updates its contribution, so the net's first resolved value is
-   correct before any observer arms; the update processes arm in Activate. This makes N=0, N=1, and
-   N>1 one mechanism.
+5. **Drivers begin at high-impedance and give their first value at time zero.** Each contribution
+   starts at what a driver contributes where it is not driving, which is the fold's identity, so
+   attaching is not itself an act of driving. Each continuous-assignment driver first evaluates as a
+   process of the time-zero slot, in its turn after every `always` procedure is waiting, so the
+   net's first resolved value is a change a waiting procedure sees (LRM 4.9.1). This makes N=0, N=1,
+   and N>1 one mechanism.
+
+   This point first had each driver evaluate once in Initialize, "so the net's first resolved value
+   is correct before any observer arms". That is the property that had to go: a register whose only
+   reset is an asynchronous one tied to a constant is reset by nothing but the net's change from its
+   undriven value at time zero, which a value already in place never makes.
+   [processes-start-in-turn-at-time-zero](processes-start-in-turn-at-time-zero.md) holds the order.
 
 6. **Resolution is inline and atomic; publication and scheduling are unchanged.** A contribution
    update mutates that contribution, re-resolves the node, and publishes only if the resolved value

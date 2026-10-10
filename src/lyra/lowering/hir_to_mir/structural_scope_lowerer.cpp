@@ -1409,7 +1409,7 @@ auto BindInputPort(
   if (!drive) return std::unexpected(std::move(drive.error()));
   AppendProcessRegistration(
       unit_lowerer, activate_frame, mir_class.callables.Add(*std::move(drive)),
-      support::BuiltinFn::kRegisterInitial, source.span);
+      support::BuiltinFn::kRegisterContinuousDriver, source.span);
   return {};
 }
 
@@ -1523,7 +1523,7 @@ auto InstallPortConnections(
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body,
-        support::BuiltinFn::kRegisterInitial, pc.span);
+        support::BuiltinFn::kRegisterContinuousDriver, pc.span);
   }
   return {};
 }
@@ -3061,18 +3061,28 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .foreign = std::nullopt,
             .virtual_dispatch = std::nullopt});
     // A final procedure runs when the simulation ends, and every other kind
-    // starts with the scope (LRM 9.2).
-    constexpr support::BuiltinFn kStarts = support::BuiltinFn::kRegisterInitial;
-    const support::BuiltinFn registration = std::visit(
+    // starts with the scope (LRM 9.2), registered as the kind it is. What an
+    // `always_comb` is at time zero holds of an `always_latch` too (LRM
+    // 9.2.2.3).
+    using support::BuiltinFn;
+    const BuiltinFn registration = std::visit(
         Overloaded{
-            [](const hir::InitialProcess&) { return kStarts; },
-            [](const hir::FinalProcess&) {
-              return support::BuiltinFn::kRegisterFinal;
+            [](const hir::InitialProcess&) {
+              return BuiltinFn::kRegisterInitial;
             },
-            [](const hir::AlwaysProcess&) { return kStarts; },
-            [](const hir::AlwaysFfProcess&) { return kStarts; },
-            [](const hir::AlwaysCombProcess&) { return kStarts; },
-            [](const hir::AlwaysLatchProcess&) { return kStarts; }},
+            [](const hir::FinalProcess&) { return BuiltinFn::kRegisterFinal; },
+            [](const hir::AlwaysProcess&) {
+              return BuiltinFn::kRegisterAlways;
+            },
+            [](const hir::AlwaysFfProcess&) {
+              return BuiltinFn::kRegisterAlways;
+            },
+            [](const hir::AlwaysCombProcess&) {
+              return BuiltinFn::kRegisterTriggered;
+            },
+            [](const hir::AlwaysLatchProcess&) {
+              return BuiltinFn::kRegisterTriggered;
+            }},
         p.kind);
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body, registration, p.span);
@@ -3099,7 +3109,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
     AppendProcessRegistration(
         unit_lowerer, activate_frame, body,
-        support::BuiltinFn::kRegisterInitial, assign.span);
+        support::BuiltinFn::kRegisterContinuousDriver, assign.span);
   }
 
   // One sampler per history, not one per clocking event. Two histories under
@@ -3116,8 +3126,8 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // A sampler is the tool's own, kept for the sampled value functions that
     // read its history, and no one place in the source writes it.
     AppendProcessRegistration(
-        unit_lowerer, activate_frame, body,
-        support::BuiltinFn::kRegisterInitial, diag::SourceSpan{});
+        unit_lowerer, activate_frame, body, support::BuiltinFn::kRegisterAlways,
+        diag::SourceSpan{});
   }
 
   // The classes this scope replicates, lowered against it: their bodies reach
@@ -3148,7 +3158,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     for (const mir::CallableId process : installed->processes) {
       AppendProcessRegistration(
           unit_lowerer, activate_frame, process,
-          support::BuiltinFn::kRegisterInitial, assertion.span);
+          support::BuiltinFn::kRegisterAlways, assertion.span);
     }
     installed_assertions.emplace_back(id, *installed);
   }

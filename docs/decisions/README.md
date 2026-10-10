@@ -593,6 +593,9 @@ the detail lives in the entry itself.
   where a static of a named block is published with the blocks it sits in.
 - [elaboration-lifecycle-phases](elaboration-lifecycle-phases.md) -- a generated constructor only
   allocates; elaboration is a staged build / resolve / initialize / activate protocol.
+- [processes-start-in-turn-at-time-zero](processes-start-in-turn-at-time-zero.md) -- what starts at
+  time zero starts in turn: `always`, then continuous drivers, then `initial`, then `always_comb`,
+  so a driver's first value is a change a waiting procedure sees.
 - [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
   driver contributions and capability-handle drivers, with the topology frozen at a Seal barrier;
   single-driver is N=1.

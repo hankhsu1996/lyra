@@ -62,6 +62,13 @@ under each item, and the conformance gaps at the end.
       ran by where it is written. A procedure that never stops to wait is not ended, since it cannot
       be told from one taking long: a run stopped from outside says the time and the procedure it
       was in. Not yet: the statement inside that procedure, which needs a source place below a body.
+- [x] P18 -- What starts at time zero starts in turn (LRM 4.7 leaves the order open, 9.2 says
+      `initial` need not come before `always`): every `always` procedure, then every continuous
+      assignment and port connection, then every `initial` procedure, then every `always_comb` and
+      `always_latch` (LRM 9.2.2.2). So an `always` waiting on a name sees the first value a
+      continuous driver gives it, as an edge where it is one, and a register whose only reset is
+      tied to a constant is reset; and an `initial` reads what a constant drives. An `initial` that
+      itself waits for a driver's first value does not see it.
 - [x] P10 / P13 -- `always_comb` / `always_latch` (LRM 9.2.2.2.1) and `always @*` / `always @(*)`
       (LRM 9.4.2.2). The block's own text is analyzed, and each function an `always_comb` or
       `always_latch` calls reports what it reads and writes once, where the process is created,

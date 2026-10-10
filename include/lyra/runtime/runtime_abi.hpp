@@ -182,7 +182,13 @@ auto lyra_rt_enter_coroutine_owned_environment(
 auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool;
 void lyra_rt_release_coroutine(void* runtime);
 
+void lyra_rt_register_always(
+    void* self, void* unit_instance, void* coroutine, const char* written_at);
+void lyra_rt_register_continuous_driver(
+    void* self, void* unit_instance, void* coroutine, const char* written_at);
 void lyra_rt_register_initial(
+    void* self, void* unit_instance, void* coroutine, const char* written_at);
+void lyra_rt_register_triggered(
     void* self, void* unit_instance, void* coroutine, const char* written_at);
 void lyra_rt_register_final(
     void* self, void* unit_instance, void* coroutine, const char* written_at);

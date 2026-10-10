@@ -219,7 +219,11 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_enter_coroutine_owned_environment);
   add("lyra_rt_await_coroutine", &lyra_rt_await_coroutine);
   add("lyra_rt_release_coroutine", &lyra_rt_release_coroutine);
+  add("lyra_rt_register_always", &lyra_rt_register_always);
+  add("lyra_rt_register_continuous_driver",
+      &lyra_rt_register_continuous_driver);
   add("lyra_rt_register_initial", &lyra_rt_register_initial);
+  add("lyra_rt_register_triggered", &lyra_rt_register_triggered);
   add("lyra_rt_register_final", &lyra_rt_register_final);
   add("lyra_rt_enter_scope_static_init", &lyra_rt_enter_scope_static_init);
   add("lyra_rt_enter_namespace_static_init",

@@ -131,6 +131,20 @@ Register reactive behavior and begin simulation: install continuous-assignment /
 seed `initial`, arm event controls, and enter the scheduler. All storage topology is sealed before
 this phase.
 
+A continuous driver has produced nothing before this phase: a net holds what an undriven one does
+and a variable its declared initial value. At time zero the processes start in turn, each turn once
+the one before it has run to its first waits:
+
+1. every `always` procedure, so it is waiting;
+2. every continuous assignment and port connection, so the first value a driver produces is a change
+   a waiting procedure sees (LRM 4.9.1);
+3. every `initial` procedure, so it reads what a constant drives;
+4. every `always_comb` and `always_latch`, triggered after all initial and always procedures have
+   been started (LRM 9.2.2.2).
+
+The standard leaves the order open (LRM 4.7). A register whose only reset is tied to a constant
+depends on the first two, and an `initial` reading an input port tied to a constant on the third.
+
 ## Core Invariants
 
 1. **Elaboration is staged; the constructor only allocates.** The five phases run in order. A

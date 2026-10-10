@@ -2627,6 +2627,27 @@ void lyra_rt_register_initial(
       std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
 }
 
+void lyra_rt_register_always(
+    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+  RegisterAlwaysProcess(
+      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
+      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+}
+
+void lyra_rt_register_continuous_driver(
+    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+  RegisterContinuousDriver(
+      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
+      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+}
+
+void lyra_rt_register_triggered(
+    void* self, void* unit_instance, void* coroutine, const char* written_at) {
+  RegisterTriggeredProcess(
+      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
+      std::move(*static_cast<Coroutine<void>*>(coroutine)), written_at);
+}
+
 void lyra_rt_register_final(
     void* self, void* unit_instance, void* coroutine, const char* written_at) {
   RegisterFinalProcess(

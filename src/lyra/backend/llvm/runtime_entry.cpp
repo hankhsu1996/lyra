@@ -1721,7 +1721,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kWaitFork:
     case support::BuiltinFn::kDisableFork:
     case support::BuiltinFn::kDisable:
+    case support::BuiltinFn::kRegisterAlways:
+    case support::BuiltinFn::kRegisterContinuousDriver:
     case support::BuiltinFn::kRegisterInitial:
+    case support::BuiltinFn::kRegisterTriggered:
     case support::BuiltinFn::kRegisterFinal:
     case support::BuiltinFn::kEnterScopeStaticInit:
     case support::BuiltinFn::kEnterNamespaceStaticInit:

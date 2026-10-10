@@ -53,12 +53,6 @@ namespace {
 // The tag the suite gives the case that says whether a design works at all.
 constexpr std::string_view kQuickCheckTag = "sanity";
 
-// How long a step may take. It is set well past the slowest build measured, so
-// that which side of it a design falls on does not turn on the machine: what
-// it catches is a step that will not end, and a design past it stops at that
-// step, which is the finding. How long each case took is said beside it.
-constexpr std::chrono::seconds kStepTimeout = 1800s;
-
 // What a step may address, in kibibytes. A build's memory is the compiler's
 // own and the host compiler's it starts, and nothing else bounds either: one
 // design that asks for more than the machine has takes the machine with it,
@@ -85,6 +79,27 @@ auto NameOf(Step step) -> std::string_view {
       return "run";
     case Step::kCheck:
       return "check";
+  }
+  std::unreachable();
+}
+
+// How long a step may take; a design past it stops at that step, which is the
+// finding, and how long each case took is said beside it.
+//
+// A build is bounded well past the slowest one measured, so that which side of
+// the limit a design falls on does not turn on the machine: what it catches is
+// a build that will not end. A run is bounded by what it should cost. Each
+// case is the suite's quick check, which Verilator's own published figures put
+// under a second for most designs and at about thirty for the largest, so ten
+// times the largest is the limit. A run past it is either stuck or slower than
+// that, and waiting longer does not say which.
+auto TimeLimitOf(Step step) -> std::chrono::seconds {
+  switch (step) {
+    case Step::kBuild:
+      return 1800s;
+    case Step::kRun:
+    case Step::kCheck:
+      return 300s;
   }
   std::unreachable();
 }
@@ -372,7 +387,8 @@ auto ShellQuoted(std::string_view word) -> std::string {
 
 // Runs a shell command from `dir`, since where a step runs is part of what it
 // is: a declaration is found from there, and a test reads and writes there.
-auto RunFrom(const std::filesystem::path& dir, const std::string& command)
+auto RunFrom(
+    Step step, const std::filesystem::path& dir, const std::string& command)
     -> ProcessOutcome {
   const auto sh = lyra::driver::FindOnPath("sh");
   if (!sh.has_value()) {
@@ -382,13 +398,13 @@ auto RunFrom(const std::filesystem::path& dir, const std::string& command)
       "-c", std::format(
                 "ulimit -v {} && cd {} && {}", kStepAddressLimitKib,
                 ShellQuoted(dir.string()), command)};
-  return RunChildProcess(*sh, argv, kStepTimeout);
+  return RunChildProcess(*sh, argv, TimeLimitOf(step));
 }
 
-auto Said(const ProcessOutcome& outcome) -> std::string {
+auto Said(Step step, const ProcessOutcome& outcome) -> std::string {
   if (outcome.termination == TerminationKind::kTimedOut) {
     return std::format(
-        "did not end within {} s\n{}{}", kStepTimeout.count(),
+        "did not end within {} s\n{}{}", TimeLimitOf(step).count(),
         outcome.stdout_text, outcome.stderr_text);
   }
   return outcome.stdout_text + outcome.stderr_text;
@@ -411,12 +427,13 @@ auto Carry(
   // A design of this size draws warnings by the thousand, and what stops it is
   // an error, so only errors are asked for.
   const auto built = RunFrom(
-      work, std::format(
-                "{} build --backend llvm --progress=none -Wnone --cache-dir "
-                "cache -o sim",
-                ShellQuoted(lyra.string())));
+      Step::kBuild, work,
+      std::format(
+          "{} build --backend llvm --progress=none -Wnone --cache-dir "
+          "cache -o sim",
+          ShellQuoted(lyra.string())));
   if (built.termination != TerminationKind::kExitedNormally) {
-    return Stop{.at = Step::kBuild, .said = Said(built)};
+    return Stop{.at = Step::kBuild, .said = Said(Step::kBuild, built)};
   }
 
   const std::filesystem::path run = work / "run";
@@ -429,19 +446,22 @@ auto Carry(
     command += ' ';
     command += ShellQuoted(argument);
   }
-  const auto ran = RunFrom(run, command + " > _execute/stdout.log 2>&1");
+  const auto ran =
+      RunFrom(Step::kRun, run, command + " > _execute/stdout.log 2>&1");
   if (ran.termination != TerminationKind::kExitedNormally) {
     return Stop{
         .at = Step::kRun,
-        .said = Said(ran) + ReadWhole(run / "_execute" / "stdout.log")};
+        .said =
+            Said(Step::kRun, ran) + ReadWhole(run / "_execute" / "stdout.log")};
   }
 
   if (design.check) {
     // The suite runs a check as a program of its own, so each is written in
     // whatever its first line names.
-    const auto checked = RunFrom(run, ShellQuoted(design.check->string()));
+    const auto checked =
+        RunFrom(Step::kCheck, run, ShellQuoted(design.check->string()));
     if (checked.termination != TerminationKind::kExitedNormally) {
-      return Stop{.at = Step::kCheck, .said = Said(checked)};
+      return Stop{.at = Step::kCheck, .said = Said(Step::kCheck, checked)};
     }
   }
   return std::nullopt;
