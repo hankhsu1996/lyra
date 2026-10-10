@@ -25,6 +25,7 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
+#include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -314,7 +315,7 @@ auto LowerSubroutineDeclImpl(
   // var, and every body-tree declaration below all land in it.
   OpenProceduralScope root{
       unit_lowerer.LookupProceduralScope(sym),
-      hir::ProceduralScopeKind::kSubroutineRoot, std::string{sym.name}};
+      hir::ProceduralScopeKind::kSubroutineRoot, NameInAPath(sym)};
   const WalkFrame body_frame =
       frame.WithProceduralBody(&body).WithOpenScope(&root);
 
@@ -452,7 +453,7 @@ auto LowerMethodPrototypeDecl(
   // than ahead of the bodies.
   OpenProceduralScope root{
       class_frame.ProceduralScopes().Declare(),
-      hir::ProceduralScopeKind::kSubroutineRoot, std::string{proto.name}};
+      hir::ProceduralScopeKind::kSubroutineRoot, NameInAPath(proto)};
   const WalkFrame body_frame =
       class_frame.WithProceduralBody(&body).WithOpenScope(&root);
 

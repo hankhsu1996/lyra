@@ -41,7 +41,7 @@ class HierarchySegment {
   }
 
   // The LRM 27.6 display form: `base[i0][i1]...`. Empty indices yield the
-  // bare base label; scalar instances render as their source identifier.
+  // bare base label, which is all a scalar instance renders as.
   [[nodiscard]] auto Display() const -> std::string;
 
  private:

@@ -17,6 +17,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
+#include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/one_body.hpp"
 #include "lyra/lowering/ast_to_hir/selection_tree.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -38,7 +39,7 @@ auto LowerGenerateScope(
   StructuralScopeLowerer child(unit_lowerer, block);
   auto scope_or = child.Run(frame);
   if (!scope_or) return std::unexpected(std::move(scope_or.error()));
-  scope_or->source_name = std::string{source_name};
+  scope_or->source_name = NameInAPath(source_name, block.getCompilation());
   return scope_or;
 }
 

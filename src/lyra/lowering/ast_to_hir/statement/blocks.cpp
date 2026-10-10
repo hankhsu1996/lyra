@@ -12,6 +12,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_scope.hpp"
+#include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -27,7 +28,7 @@ auto SourceBlockName(const slang::ast::StatementBlockSymbol* symbol)
   if (symbol == nullptr || symbol->name.empty()) {
     return std::nullopt;
   }
-  return std::string{symbol->name};
+  return NameInAPath(*symbol);
 }
 
 // The lexical declaration scope a `begin` / `fork` opens (LRM 9.3.4 / 9.3.2).

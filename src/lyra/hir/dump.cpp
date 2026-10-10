@@ -1839,8 +1839,8 @@ class HirDumper {
     for (const InterfacePortId id : s.interface_ports.Ids()) {
       const auto& port = s.interface_ports.Get(id);
       std::string array_suffix;
-      for (const auto dim : port.array_dims) {
-        array_suffix += std::format("[{}]", dim);
+      for (const UnpackedRange& dim : port.array_dims) {
+        array_suffix += std::format("[{}:{}]", dim.left, dim.right);
       }
       Line(
           std::format(
@@ -1904,8 +1904,8 @@ class HirDumper {
     for (const InstanceMemberId id : s.instance_members.Ids()) {
       const auto& im = s.instance_members.Get(id);
       std::string array_suffix;
-      for (const auto dim : im.array_dims) {
-        array_suffix += std::format("[{}]", dim);
+      for (const UnpackedRange& dim : im.array_dims) {
+        array_suffix += std::format("[{}:{}]", dim.left, dim.right);
       }
       std::string built_as;
       for (const InstanceAlternative& alternative : im.alternatives) {

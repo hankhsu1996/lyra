@@ -7,7 +7,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -37,11 +36,13 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
+#include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/net_type.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -140,21 +141,22 @@ auto LowerConstructorArguments(
 }  // namespace
 
 // The declaration of the child objects `elements` are, in row-major order of
-// their positions; `dims` carries the element counts of an array, a scalar
-// instance being the empty case rather than a shape of its own. What each is
-// comes off this unit's record of the class its unit's instances are, never
-// from the unit's own name.
+// their positions, under the name `declared` was given; `dims` carries the
+// range each dimension of an array declares, a scalar instance being the empty
+// case rather than a shape of its own. What each is comes off this unit's
+// record of the class its unit's instances are, never from the unit's own
+// name.
 //
 // Every element is described by how it is built, and elements built alike are
 // one alternative. Each alternative's arguments are lowered once and stored
 // among this scope's expressions, which is where the construction reads them.
 auto StructuralScopeLowerer::BuildInstanceMember(
-    std::string_view instance_name,
+    const slang::ast::Symbol& declared,
     std::span<const slang::ast::InstanceSymbol* const> elements,
-    std::vector<std::uint32_t> dims, WalkFrame frame)
+    std::vector<hir::UnpackedRange> dims, WalkFrame frame)
     -> diag::Result<hir::InstanceMemberDecl> {
   hir::InstanceMemberDecl member{
-      .instance_name = std::string{instance_name},
+      .instance_name = NameInAPath(declared),
       .array_dims = std::move(dims),
       .alternatives = {},
       .taken = {}};
@@ -600,10 +602,11 @@ auto StructuralScopeLowerer::PopulateInterfacePortMember(
         "PopulateInterfacePortMember: the port's range evaluated where the "
         "signature was published, so it evaluates here too");
   }
-  std::vector<std::uint32_t> array_dims;
+  std::vector<hir::UnpackedRange> array_dims;
   array_dims.reserve(declared->size());
   for (const slang::ConstantRange& dim : *declared) {
-    array_dims.push_back(dim.width());
+    array_dims.push_back(
+        hir::UnpackedRange{.left = dim.left, .right = dim.right});
   }
   const hir::InterfacePortId local =
       frame.current_structural_scope->interface_ports.Add(
@@ -899,7 +902,7 @@ auto StructuralScopeLowerer::PopulateInstanceMember(
     const slang::ast::InstanceSymbol& inst, WalkFrame frame)
     -> diag::Result<void> {
   const std::array<const slang::ast::InstanceSymbol*, 1> one{&inst};
-  auto member = BuildInstanceMember(inst.name, one, {}, frame);
+  auto member = BuildInstanceMember(inst, one, {}, frame);
   if (!member) return std::unexpected(std::move(member.error()));
   frame.current_structural_scope->instance_members.Define(
       owner_->InstanceMemberIdOf(inst), *std::move(member));
@@ -913,15 +916,13 @@ auto StructuralScopeLowerer::PopulateInstanceArrayMember(
   if (!shape) {
     return {};
   }
-  // The member holds one object per element, so what it is built from is how
-  // many each dimension has; which element a name reaches is a position.
-  std::vector<std::uint32_t> counts;
-  counts.reserve(shape->ranges.size());
+  std::vector<hir::UnpackedRange> dims;
+  dims.reserve(shape->ranges.size());
   for (const slang::ConstantRange& dim : shape->ranges) {
-    counts.push_back(dim.width());
+    dims.push_back(hir::UnpackedRange{.left = dim.left, .right = dim.right});
   }
-  auto member = BuildInstanceMember(
-      array.name, shape->elements, std::move(counts), frame);
+  auto member =
+      BuildInstanceMember(array, shape->elements, std::move(dims), frame);
   if (!member) return std::unexpected(std::move(member.error()));
   frame.current_structural_scope->instance_members.Define(
       owner_->InstanceMemberIdOf(array), *std::move(member));

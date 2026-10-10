@@ -192,10 +192,10 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       process, and upward references alongside downward ones. The process subscribes to every
       referenced signal regardless of direction or depth, and each source re-triggers independently.
 - [x] D5 -- The hierarchical path of an instance (for `%m`, display, and scope queries) derives from
-      object-tree ownership. Each runtime scope receives its complete `HierarchySegment` (base label
-      plus per-dimension elaborated indices) from its parent at construction; `%m` walks the parent
-      chain and joins each scope's own segment, never reverse-searching a parent registry for a
-      child's bracketed name. A generate-loop iteration's identity therefore lives entirely on
+      object-tree ownership. Each runtime scope receives the whole of what it adds to a name (its
+      label plus one elaborated index per dimension) from its parent at construction; `%m` walks the
+      parent chain and joins each scope's own segment, never reverse-searching a parent registry for
+      a child's bracketed name. A generate-loop iteration's identity therefore lives entirely on
       itself: `loop[0]` is what the iteration scope holds, not metadata the parent decorates onto an
       un-indexed `"loop"`. The walk stops at the implicit `$root` so multi-top output reads `Top.x`
       rather than `$root.Top.x`. Closure-deferred prints (`$strobe`) capture `self` via the closure
@@ -205,6 +205,16 @@ consume. Coverage is demonstrated through Stage D and Stage E.
       design shows, so a parameterized top prints and is climbed to under its plain identifier like
       any other. VPI-style scope queries (`$scope`, `$function`) stay out of scope -- they belong to
       the assertion/debug workstream.
+- [x] D5a -- The name a scope reports is text that refers to that scope and to no other (LRM 23.6).
+      An identifier a hierarchical name has to escape is reported escaped, with its backslash and
+      the white space that ends it, for an instance, a top, a generate block, a named block, a task
+      and a function alike: one holding a character a simple identifier cannot, and a keyword. An
+      escaped identifier that spells a simple one is reported as the simple one (LRM 5.6.1). An
+      element of an instance array reports the index its range declares for it, whichever way the
+      range runs and in every dimension. So two scopes whose identifiers spell alike once joined by
+      periods have different names, and a foreign caller finds each by its own (LRM Annex H.9.3).
+      Which identifiers are keywords is read off the language version the build compiles under, not
+      off a `begin_keywords` region around the declaration.
 - [x] D6 -- A hierarchical path that indexes an instance array (`c[i].x`) resolves to the selected
       element, including multi-dimensional arrays (`c[i][j].x`).
 - [x] D7 -- A hierarchical reference crosses a generate-block scope boundary. A reference reaches a

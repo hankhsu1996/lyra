@@ -49,14 +49,18 @@ class LowerCompilationFacts {
   support::AssertionPolicy assertion_policy_;
 };
 
-// A top-level block is an auto-promoted, uninstantiated module, named twice
-// because the two names answer different questions and coincide only when no
-// parameter decides which unit it is.
+// A top-level block is an auto-promoted, uninstantiated module, named three
+// times because the names answer different questions: the first two coincide
+// only when the identifier needs no escaping, the first and the last only when
+// no parameter decides which unit it is.
 struct TopLevelUnit {
   // What the design's hierarchy shows for this top. Nothing instantiates a
   // top, so it stands under its own module identifier (LRM 23.3), and that is
-  // the name `%m` prints and an upward hierarchical name matches.
+  // the identifier an upward hierarchical name matches.
   std::string instance_name;
+  // That identifier as a hierarchical name writes it (LRM 23.6), which is what
+  // the top reports as its own name.
+  std::string name_in_a_path;
   // The compiled unit it is an instance of. One module compiles to one unit
   // per specialization, so this is the artifact's name.
   std::string unit_name;

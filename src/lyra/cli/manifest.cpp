@@ -18,6 +18,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/support/assertion_policy.hpp"
+#include "lyra/support/simple_identifier.hpp"
 
 namespace lyra::cli {
 
@@ -215,18 +216,6 @@ auto ReadSourceSet(
   return {};
 }
 
-// LRM 5.6: a simple identifier.
-auto IsSimpleIdentifier(std::string_view text) -> bool {
-  const auto is_letter = [](char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
-  };
-  const auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
-  return !text.empty() && is_letter(text.front()) &&
-         std::ranges::all_of(text, [&](char c) {
-           return is_letter(c) || is_digit(c) || c == '$';
-         });
-}
-
 auto ReadLibrary(
     const fs::path& file, const toml::table& table, DeclaredLibrary& out)
     -> diag::Result<void> {
@@ -283,7 +272,7 @@ auto ReadDependencies(
   std::vector<Written> written;
   for (const auto& entry : table) {
     const std::string name{entry.first.str()};
-    if (!IsSimpleIdentifier(name)) {
+    if (!support::IsSimpleIdentifier(name)) {
       return Fail(
           file, std::format(
                     "[dependencies] {}: '{}' is not an identifier, which a "
@@ -551,7 +540,7 @@ auto LoadManifest(const fs::path& path) -> diag::Result<Manifest> {
   if (manifest.library.name.empty()) {
     return Fail(path, "[library] name: a library has to say what it is called");
   }
-  if (!IsSimpleIdentifier(manifest.library.name)) {
+  if (!support::IsSimpleIdentifier(manifest.library.name)) {
     return Fail(
         path, std::format(
                   "[library] name: '{}' is not an identifier, which a "
