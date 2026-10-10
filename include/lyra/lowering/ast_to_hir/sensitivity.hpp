@@ -104,7 +104,18 @@ class SensitivityAnalyzer {
       const slang::ast::Symbol& containing_symbol)
       -> const std::vector<AccessedPart>&;
 
-  [[nodiscard]] auto AnalyzeReads(
+  // What resumes the statement an `@*` governs: what it reads (LRM 9.4.2.2),
+  // less the variables it uses only to control its `for` loops.
+  //
+  // The clause lists every identifier the statement reads, and such a variable
+  // is read by its loop's condition. Two procedures under `@*` that each run a
+  // loop over one variable declared outside both then resume each other on
+  // every write of it and never stop, which RTL written before a loop could
+  // declare its own variable commonly holds. Its value on entry reaches nothing
+  // the statement computes, because the loop assigns it first, so leaving it
+  // out changes no value a design that settles computes; it changes how often
+  // the statement runs, and whether such a pair settles at all.
+  [[nodiscard]] auto AnalyzeImplicitEventList(
       const slang::ast::Statement& stmt,
       const slang::ast::Symbol& containing_symbol)
       -> const std::vector<AccessedPart>&;

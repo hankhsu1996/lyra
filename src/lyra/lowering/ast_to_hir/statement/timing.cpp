@@ -235,7 +235,7 @@ auto LowerTimingControl(
       return AsWiderControl<hir::TimingControl>(*std::move(event_or));
     }
     case slang::ast::TimingControlKind::ImplicitEvent: {
-      const auto& reads = proc.Owner().Sensitivity().AnalyzeReads(
+      const auto& reads = proc.Owner().Sensitivity().AnalyzeImplicitEventList(
           controlled, proc.ContainingSymbol());
       auto sensitivity = proc.Owner().SensitivityEntriesOf(proc, reads, frame);
       if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
