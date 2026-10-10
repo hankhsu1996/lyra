@@ -18,6 +18,10 @@ the feature file its domain belongs to.
       P14; this item is the two entry points and their termination behaviour.
 - [ ] `$isunbounded` (LRM 20.6). Answers whether a parameter's value is the unbounded `$`; a data
       query beside `$bits` and `$typename`, which run.
+- [ ] `$typename` (LRM 20.6.1) of a structure or union holding an enumeration written in place
+      (`struct packed { enum logic {A, B} e; }`) ends the compiler with no message. The string is
+      the front end's rendering of the type, and its printer does not get past such a member. An
+      enumeration declared by a `typedef` and used as the member runs.
 
 ## Tracked with their domain
 

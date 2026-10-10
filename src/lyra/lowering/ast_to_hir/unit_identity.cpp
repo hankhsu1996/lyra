@@ -114,19 +114,34 @@ auto DefPathIdentity(const support::DefPath& path) -> std::string {
   return out;
 }
 
-// One type's identity, as this compiler tells types apart. SystemVerilog
-// identifies most types by their shape, and the frontend renders a shape
-// faithfully, so those answer with that rendering. A class and an unpacked
-// structure are the exceptions: each is identified by its declaration (LRM 8.3,
-// 6.22.1), so two with identical members are still two types, and its identity
-// is the unit that declares it together with which declaration of that unit it
-// is -- the same pair every cross-unit reference to one carries.
+// Whether `type` is one the source declares -- a class, an enumeration, a
+// structure or a union, packed or not, named or written in place -- which is
+// one type per declaration however alike two are written (LRM 6.22.1 c, d, h;
+// 8.3).
+auto IsIdentifiedByDeclaration(const slang::ast::Type& type) -> bool {
+  using slang::ast::SymbolKind;
+  switch (type.kind) {
+    case SymbolKind::ClassType:
+    case SymbolKind::EnumType:
+    case SymbolKind::PackedStructType:
+    case SymbolKind::UnpackedStructType:
+    case SymbolKind::PackedUnionType:
+    case SymbolKind::UnpackedUnionType:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// One type's identity. A declared type answers with the unit declaring it and
+// which declaration of that unit it is. A type built out of others answers with
+// its own form over the identities of what it holds (LRM 6.22.1 f), and a
+// built-in type with its keyword (LRM 6.22.1 a).
 //
-// A type built out of others answers with its own form over the identities of
-// what it holds, so a class inside one is named the way it would be alone. Only
-// an unpacked type can hold a class handle -- a packed type is a bit vector
-// (LRM 7.4.1) and a handle is not packable -- so those are the forms spelled
-// here, and every other kind's rendering is already its identity.
+// Which instance of its design element a declaration was elaborated for is left
+// out, though the language makes each instance's a type of its own (LRM 6.22):
+// a unit is compiled once for every instance of it, so what it hands a child
+// has to be one answer for all of them.
 //
 // Every arm answers with an identity rather than adding to one under
 // construction, so a form this does not spell cannot contribute nothing and
@@ -136,24 +151,27 @@ auto TypeIdentity(
     -> std::string {
   using slang::ast::SymbolKind;
   const slang::ast::Type& canonical = type.getCanonicalType();
-  const auto field_identities = [&](const slang::ast::Scope& scope) {
-    std::string out{'{'};
-    for (const auto& field : scope.members()) {
-      if (const auto* value = field.as_if<slang::ast::ValueSymbol>()) {
-        out += std::format(
-            "{}:{};", value->name, TypeIdentity(value->getType(), policy));
-      }
-    }
-    return out + '}';
-  };
+  if (IsIdentifiedByDeclaration(canonical)) {
+    const std::string unit = CompilationUnitName(UnitHomeOf(canonical), policy);
+    return std::format(
+        "declared {}:{} {}", unit.size(), unit,
+        DefPathIdentity(DefPathOf(canonical, policy)));
+  }
 
   switch (canonical.kind) {
-    case SymbolKind::ClassType: {
-      const auto& cls = canonical.as<slang::ast::ClassType>();
-      const std::string unit = CompilationUnitName(UnitHomeOf(cls), policy);
+    case SymbolKind::ScalarType:
+    case SymbolKind::PredefinedIntegerType:
+    case SymbolKind::FloatingType:
+    case SymbolKind::StringType:
+    case SymbolKind::CHandleType:
+    case SymbolKind::EventType:
+    case SymbolKind::VoidType:
+      return canonical.toString();
+    case SymbolKind::PackedArrayType: {
+      const auto& array = canonical.as<slang::ast::PackedArrayType>();
       return std::format(
-          "class {}:{} {}", unit.size(), unit,
-          DefPathIdentity(DefPathOf(cls, policy)));
+          "packed[{}:{}]{}", array.range.left, array.range.right,
+          TypeIdentity(array.elementType, policy));
     }
     case SymbolKind::FixedSizeUnpackedArrayType: {
       const auto& array =
@@ -180,19 +198,21 @@ auto TypeIdentity(
       return std::format(
           "[{}]{}", index, TypeIdentity(assoc.elementType, policy));
     }
-    case SymbolKind::UnpackedStructType: {
-      const std::string unit =
-          CompilationUnitName(UnitHomeOf(canonical), policy);
+    // LRM 25.9: the type names the interface together with the parameters it
+    // was given, and the view it is taken through.
+    case SymbolKind::VirtualInterfaceType: {
+      const auto& handle = canonical.as<slang::ast::VirtualInterfaceType>();
+      const std::string unit = policy.NameOf(handle.iface);
       return std::format(
-          "struct {}:{} {}", unit.size(), unit,
-          DefPathIdentity(DefPathOf(canonical, policy)));
-    }
-    case SymbolKind::UnpackedUnionType: {
-      const auto& u = canonical.as<slang::ast::UnpackedUnionType>();
-      return (u.isTagged ? "tagged union" : "union") + field_identities(u);
+          "virtual {}:{} {}", unit.size(), unit,
+          handle.modport == nullptr ? std::string_view{}
+                                    : handle.modport->name);
     }
     default:
-      return canonical.toString();
+      throw InternalError(
+          std::format(
+              "TypeIdentity: a {} is no type a parameter is fixed to",
+              slang::ast::toString(canonical.kind)));
   }
 }
 
@@ -831,25 +851,15 @@ auto ReplicatingScopeOfType(const slang::ast::Type& type)
     -> const slang::ast::Scope* {
   using slang::ast::SymbolKind;
   const slang::ast::Type& canonical = type.getCanonicalType();
-  switch (canonical.kind) {
-    case SymbolKind::ClassType:
-    case SymbolKind::UnpackedStructType:
-    case SymbolKind::UnpackedUnionType:
-    case SymbolKind::PackedStructType:
-    case SymbolKind::PackedUnionType:
-    case SymbolKind::EnumType:
-      return &ReplicatingScope(canonical);
-    case SymbolKind::AssociativeArrayType: {
-      const auto& assoc = canonical.as<slang::ast::AssociativeArrayType>();
-      const slang::ast::Scope* element =
-          ReplicatingScopeOfType(assoc.elementType);
-      if (assoc.indexType == nullptr) return element;
-      const slang::ast::Scope* index = ReplicatingScopeOfType(*assoc.indexType);
-      if (element == nullptr) return index;
-      return Innermost(element, index);
-    }
-    default:
-      break;
+  if (IsIdentifiedByDeclaration(canonical)) return &ReplicatingScope(canonical);
+  if (canonical.kind == SymbolKind::AssociativeArrayType) {
+    const auto& assoc = canonical.as<slang::ast::AssociativeArrayType>();
+    const slang::ast::Scope* element =
+        ReplicatingScopeOfType(assoc.elementType);
+    if (assoc.indexType == nullptr) return element;
+    const slang::ast::Scope* index = ReplicatingScopeOfType(*assoc.indexType);
+    if (element == nullptr) return index;
+    return Innermost(element, index);
   }
   if (const slang::ast::Type* element = canonical.getArrayElementType()) {
     return ReplicatingScopeOfType(*element);
@@ -1033,7 +1043,10 @@ auto StepOf(const slang::ast::Symbol& scope, const SpecializationPolicy& policy)
       scope.kind == SymbolKind::StatementBlock) {
     return ProceduralStepOf(scope);
   }
-  if (scope.kind == SymbolKind::UnpackedStructType ||
+  if (scope.kind == SymbolKind::EnumType ||
+      scope.kind == SymbolKind::PackedStructType ||
+      scope.kind == SymbolKind::PackedUnionType ||
+      scope.kind == SymbolKind::UnpackedStructType ||
       scope.kind == SymbolKind::UnpackedUnionType) {
     return TypeStepOf(scope.as<slang::ast::Type>());
   }

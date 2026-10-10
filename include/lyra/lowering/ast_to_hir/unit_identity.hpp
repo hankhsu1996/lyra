@@ -397,15 +397,16 @@ auto ProceduralStepOf(const slang::ast::Symbol& scope) -> support::DefPathData;
 // for the declaration itself, which is a scope too -- a generate block as the
 // application of its definition it is (LRM 27.3), a class under its name and
 // what its parameters were bound to (LRM 8.3, 8.25), a subroutine or a labelled
-// block under its name (LRM 13, 9.3.4), a structure or union under the name it
-// answers to (LRM 6.22.1), and a block or type with no name by where it sits.
+// block under its name (LRM 13, 9.3.4), an enumeration, a structure or a union
+// under the name it answers to (LRM 6.22.1), and a block or type with no name
+// by where it sits.
 // The unit's own scope is the path of no steps, so the block instances of one
 // application are one declaration, as the instances of one specialization are.
 //
 // The source alone decides the answer, so the unit declaring something and
-// every unit naming it compute the same path here, and a class or a structure
-// SystemVerilog identifies by its declaration (LRM 8.3, 6.22.1) is identified
-// from anywhere by the name of the unit holding it and this path.
+// every unit naming it compute the same path here, and a type SystemVerilog
+// identifies by its declaration (LRM 8.3, 6.22.1) is identified from anywhere
+// by the name of the unit holding it and this path.
 auto DefPathOf(
     const slang::ast::Symbol& declaration, const SpecializationPolicy& policy)
     -> support::DefPath;
