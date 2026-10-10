@@ -295,10 +295,12 @@ configuration, and not only for one a rule selected.
    F2 rules out: nobody agrees through it, and deleting it leaves every name what it was. What makes
    that true is one rule. A name asked while another is being worked out can differ from the one the
    instance has alone, where a hierarchical name it writes lands in an instance still being named,
-   or the design element declaring it is one, and is stated by how far out that instance is. An
-   instance is among those being named for the whole of its key, since any part may ask for a name
-   that leads back to it: an interface it carries may carry one standing inside it. So a name is
-   kept only when it met nothing outside itself, together with the instances it looked for among
+   or the design element declaring it is one, or a type one of its parameters is fixed to is
+   declared by one -- the instance's own body included, as for
+   `localparam type T = <a type this module declares>` -- and is stated by how far out that instance
+   is. An instance is among those being named for the whole of its key, since any part may ask for a
+   name that leads back to it: an interface it carries may carry one standing inside it. So a name
+   is kept only when it met nothing outside itself, together with the instances it looked for among
    those being named and did not find, and it answers a later asking only while none of those is
    being named. clang keeps a declaration's mangled name the same way and declines where the name
    "depends on whether the variable is referenced by a host or device host function"

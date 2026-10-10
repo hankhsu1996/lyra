@@ -133,6 +133,23 @@ auto IsIdentifiedByDeclaration(const slang::ast::Type& type) -> bool {
   }
 }
 
+// The compilation unit `unit`, as part of a name being worked out. An instance
+// whose own name is in progress has none to give, and what is being named may
+// be asked about something it holds itself: a type it declares and fixes a
+// local parameter to (LRM 6.20.4), or a design element nested in it (LRM
+// 23.4). Such an instance is told by how far out on the chain of names in
+// progress it stands, which is all two instances could differ in there.
+auto UnitWhileNaming(
+    const slang::ast::Symbol& unit, const SpecializationPolicy& policy)
+    -> std::string {
+  if (const auto* body = unit.as_if<slang::ast::InstanceBodySymbol>()) {
+    if (const auto levels = policy.LevelsOutTo(*body)) {
+      return std::format("^{}", *levels);
+    }
+  }
+  return CompilationUnitName(unit, policy);
+}
+
 // One type's identity. A declared type answers with the unit declaring it and
 // which declaration of that unit it is. A type built out of others answers with
 // its own form over the identities of what it holds (LRM 6.22.1 f), and a
@@ -152,7 +169,7 @@ auto TypeIdentity(
   using slang::ast::SymbolKind;
   const slang::ast::Type& canonical = type.getCanonicalType();
   if (IsIdentifiedByDeclaration(canonical)) {
-    const std::string unit = CompilationUnitName(UnitHomeOf(canonical), policy);
+    const std::string unit = UnitWhileNaming(UnitHomeOf(canonical), policy);
     return std::format(
         "declared {}:{} {}", unit.size(), unit,
         DefPathIdentity(DefPathOf(canonical, policy)));
@@ -523,12 +540,8 @@ auto DefinitionName(
         "DefinitionName: a design element is declared outside every other or "
         "in the body of one");
   }
-  // The holder may be an instance whose own name is still being worked out.
-  if (const auto levels = policy.LevelsOutTo(*holder)) {
-    return std::format("^{}::{}", *levels, definition.name);
-  }
   return std::format(
-      "{}::{}", policy.NameOf(InstantiationOf(*holder)), definition.name);
+      "{}::{}", UnitWhileNaming(*holder, policy), definition.name);
 }
 
 auto SpecializationKeyOf(
