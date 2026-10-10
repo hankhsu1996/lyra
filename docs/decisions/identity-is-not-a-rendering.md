@@ -59,12 +59,17 @@ compile them differently, and is free to merge them otherwise. That is a checkab
 is the one to check: not "does this encoding look canonical" but "does it split exactly where the IR
 splits".
 
-The IR's own type identity is the reference. Lyra's types are structural -- two identical packed
-structs from two packages are one type and correctly share one artifact -- with one exception: a
-class is identified by its declaration (LRM 8.3), so its identity is the pair from D1. A
-specialization key therefore reproduces the frontend's structural rendering, which is faithful about
-shape, and supplies the declaring unit of every class the argument reaches, which is the one thing
-that rendering drops.
+What the layers below read off a type is the reference, and it is more than the type the IR holds.
+The IR states a packed structure by its members, so two declared alike are one IR type; the name a
+body prints for a type (LRM 20.6.1) and the answer of a comparison of two types (LRM 6.23) still
+follow which declaration it is, and both are settled where a body is lowered. So an enumeration, a
+structure, a union and a class are each identified by their declaration (LRM 6.22.1, 8.3), which is
+the pair from D1, and only a built-in type or one built out of others is identified by its form. An
+earlier reading here held that identical packed structures from two packages are one type and share
+one artifact, and took the front end's rendering of every type but a class as faithful about shape.
+Neither held: that rendering names the declaring scope, so the two never shared, and for a type with
+no name of its own it carries a number that follows how many types the front end had made, which
+differs between two instances of the module declaring one.
 
 The rule generalizes without re-deriving: when the IR gains a second nominal type, the key gains its
 identity too, and the question to ask is always "where does the layer below split".

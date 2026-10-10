@@ -280,7 +280,9 @@ constructor loops N times, producing N child objects. The compilation unit's com
 depend on N. N is a constructor input; the unit compiles once for any N.
 
 `parameter type T = int` substituting a type parameter: T changes emitted types and operations. T is
-code-shape-affecting. Distinct types produce distinct specializations. "Distinct" is the IR's own
-type identity, which is structural except where SystemVerilog identifies a type by its declaration:
-two structurally identical packed structs are one type and share one specialization, while two
-classes of the same name declared in different units are two.
+code-shape-affecting. Distinct types produce distinct specializations. "Distinct" follows the
+language: a built-in type, or one built out of others, is told apart by its form, and a type the
+source declares -- a class, an enumeration, a structure or a union, packed or not -- by its
+declaration (LRM 6.22.1, 8.3), so two declared alike are two. Which instance of a design element a
+declaration was elaborated for is no part of it: every instance of a module handing a child a type
+the module declares shares that child's specialization.

@@ -55,8 +55,9 @@ including unpacked aggregates (LRM 6.20.2) -- or a type -- a data type, recursiv
 parameterized class with its own bindings (LRM 6.20.3). The identity encodes the structural content
 of these, and excludes arena ids, source names, and source spans, because identity follows structure
 not position (`identity_and_ownership.md`) and a fingerprint captures semantic meaning not spelling
-(`incremental_build.md` inv 3). Two structurally identical bindings encode identically; an arena id,
-which is a unit-local insertion position, is never part of the encoding.
+(`incremental_build.md` inv 3). Two bindings alike in structure encode alike, a declared type
+counting as the declaration it is (decision 2); an arena id, which is a unit-local insertion
+position, is never part of the encoding.
 
 ### F4. A correctness-bearing equivalence may not be borrowed from a component that computes one for another purpose
 
@@ -214,13 +215,15 @@ configuration, and not only for one a rule selected.
    component compressed early takes its collisions up with it, invisibly.
 
 2. **The key's parts hold identities, not renderings.** A value's identity is its constant; a type's
-   is its structure, except a class and an unpacked structure, which SystemVerilog identifies by
-   their declarations (LRM 8.3, 6.22.1) and which therefore carry the unit that declares them; an
-   interface's is the name of the unit it instantiates, which is already how a unit is identified
-   across the boundary, and a port carrying a range holds the units its instances are and which of
-   them each position takes, never a list of them joined into one name. All of it excludes arena
-   ids, source spans, and any name that does not participate in identity. Ordering is normalized so
-   the result does not depend on traversal or enumeration order (`specialization_model.md` inv 6).
+   is its structure where it is built in or built of other types, and its declaration where it is
+   declared -- a class, an enumeration, a structure or a union, packed or not, named or written in
+   place (LRM 8.3, 6.22.1 c, d, h) -- stated as the unit that declares it and which declaration of
+   that unit it is; an interface's is the name of the unit it instantiates, which is already how a
+   unit is identified across the boundary, and a port carrying a range holds the units its instances
+   are and which of them each position takes, never a list of them joined into one name. All of it
+   excludes arena ids, source spans, and any name that does not participate in identity. Ordering is
+   normalized so the result does not depend on traversal or enumeration order
+   (`specialization_model.md` inv 6).
 
    **A value is held as one spelling that is both its identity and what the name is folded from.**
    The name is a hash of the key's bytes, so those bytes have to tell every two values apart
@@ -322,24 +325,40 @@ configuration, and not only for one a rule selected.
 - Type-parameter identity reuses the recursive data-type structure already produced by type
   lowering; no parallel structure is introduced.
 
-## Open hardening: an incremental-grade fingerprint
+## A type is spelled by this compiler, never by the front end
 
-The hash must be self-owned, not the frontend's. slang exposes a value/type hash, but it folds raw
+The hash is self-owned, not the frontend's. slang exposes a value/type hash, but it folds raw
 pointers for some type kinds (a virtual-interface type hashes the interface address) and ties the
 result to a frontend-internal algorithm; identity is owned past AST-to-HIR (`hir.md`), so the
 specialization hash is computed here, over content, with a fixed algorithm that is stable across
 sessions (`incremental_build.md` forbids a pointer-derived or process-seeded key).
 
-A value is spelled as item 2 of the decision says. A type is spelled from its parts only where it is
-a class or an unpacked form that can hold one; every other kind is still fed as the front end's
-rendering of it (its `toString`). That is deterministic and session-stable, but it is not yet an
-incremental-grade fingerprint: a type rendering can carry source spelling (a typedef name), so a
-rename would shift the key even though the meaning is unchanged, which `incremental_build.md`
-invariant 3 rules out. When aggressive incremental build lands, the type's encoding is hardened to a
-structural fingerprint that mirrors slang's `isMatching` equivalence and excludes source spelling,
-so the key changes only when the compiled meaning does. The hash being self-owned and the identity
-being `f(def, bindings)` do not change; only what is fed to the hash does. Deferred until
-incremental build exists, because the encoding's exact obligations are fixed by that machinery.
+The same holds for the front end's rendering of a type, which every kind but a class and the
+unpacked forms once answered with. It is not an identity. A declared type with no name of its own is
+printed with a number counting the types the front end had made before it, so the rendering differed
+between two instances of the module declaring the type, and moved when an unrelated type was
+declared earlier in the design: the first ended a build of two such instances as two units of one
+child, and the second moves a kept artifact's name under an edit that changed nothing about it.
+
+**Which instance elaborated a declaration is left out of a type's identity.** The language makes a
+type declared in a design element a different type in each instance of it (LRM 6.22), and the front
+end's own match relation follows that. A unit is compiled once for every instance of it, so what it
+hands a child has to be one answer for all of them; mirroring the per-instance relation would make
+an artifact per instance. The front end enforces the rule where it makes a program illegal, and the
+one place its answer reaches a compiled body is a comparison of two types (LRM 6.23). That answer is
+fixed per instance like any other selection, so it is a part of the key in its own right once the
+comparison is supported, and not a property of a type.
+
+clang and rustc spell a type argument the same way: a record or an enumeration as the path of its
+declaration, an unnamed one by a number among the unnamed types of its own context
+(`ItaniumMangle.cpp`, `mangleUnqualifiedName`, `Ut <n> _`), and "all nominal types as paths"
+(`rustc_symbol_mangling/src/v0.rs`, `print_type`), with tuples, arrays and references spelled from
+their parts. Neither has an instance that makes a type, which is the one condition that differs and
+is answered above.
+
+Two declarations written alike are two types, so whatever is handed each is two units where the code
+is the same. That follows the language, which lets a body read which declaration it was given (LRM
+20.6.1, 6.23).
 
 ## Alternatives considered
 

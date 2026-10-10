@@ -63,7 +63,12 @@ C  Non-local access substrate
       read as a value is handed to each instance when it is built, and those instances share one
       artifact. Covers scalar value parameters (LRM 6.20.2) and type parameters (LRM 6.20.3); an
       aggregate value parameter gets a distinct identity too, but its end-to-end emit waits on
-      aggregate type support.
+      aggregate type support. A type parameter bound to a type the instantiating module itself
+      declares -- an enumeration, a structure or a union, packed or not, named or written in place
+      -- is one type for every instance of that module, so they share the child's artifact. A child
+      that compares two types handed to it (LRM 6.23) is refused, since the `type` operator is not
+      supported; which types match is decided per instance (LRM 6.22), so that answer has to be told
+      apart per instance when it is.
 
 Unlocks the runtime side of `instantiation/param_slots`.
 

@@ -81,9 +81,9 @@ struct UnnamedBlockStep {
       -> std::strong_ordering = default;
 };
 
-// An unpacked structure or union (LRM 7.2, 7.3), under the name it answers to
-// in the scope declaring it: the typedef naming it, or the first data object
-// its declaration statement declares (LRM 6.22.1 c).
+// An enumeration, a structure or a union (LRM 6.19, 7.2, 7.3), under the name
+// it answers to in the scope declaring it: the typedef naming it, or the first
+// data object its declaration statement declares (LRM 6.22.1 c).
 struct TypeStep {
   std::string name;
 
@@ -91,8 +91,8 @@ struct TypeStep {
   auto operator<=>(const TypeStep&) const -> std::strong_ordering = default;
 };
 
-// An unpacked structure or union nothing in its scope declares by name, told
-// from the others of that scope by where it stands among its declarations.
+// An enumeration, a structure or a union nothing in its scope declares by name,
+// told from the others of that scope by where it stands among its declarations.
 struct UnnamedTypeStep {
   std::uint32_t position = 0;
 
