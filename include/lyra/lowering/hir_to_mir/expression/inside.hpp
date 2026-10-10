@@ -1,8 +1,8 @@
 #pragma once
 
-// Lowering of the `inside` operator (LRM 11.4.13). The operand list reduces
-// to the disjunction of each item's membership test, so an item's own form --
-// a value or a range -- is decided once per item and never by this level.
+// Lowering of the `inside` operator (LRM 11.4.13). The set reduces to the
+// disjunction of each member's own test, so what a member stands for is decided
+// once per member and never by this level.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"

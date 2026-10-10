@@ -27,14 +27,17 @@ namespace lyra::lowering::ast_to_hir {
 // LRM 7.10.1: `$` in a queue index or slice bound denotes the last element of
 // the queue the select is taken from. Which queue that is follows from where
 // the `$` stands, so it is stated as a leaf and names none; outside a queue
-// select `$` has no value.
+// select `$` has no value. One standing as a bound of a value range (LRM
+// 11.4.13) is no value either and is settled with the range, so it never
+// reaches here.
 auto LowerUnboundedLiteralProc(
     ProcessLowerer& proc, WalkFrame frame, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   if (!frame.within_queue_select) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
-        "`$` is only supported as a queue index or slice bound (LRM 7.10)");
+        "`$` is supported only as a queue index or slice bound (LRM 7.10) and "
+        "as a bound of a value range (LRM 11.4.13)");
   }
   return hir::Expr{
       .type = proc.Owner().Unit().builtins.int_type,

@@ -42,8 +42,8 @@ auto LowerHirInsideExpr(
   std::vector<mir::ExprId> tests;
   tests.reserve(in.items.size());
   for (const auto& item : in.items) {
-    auto pred_or = BuildHirInsideItemPredicate(
-        lowerer, steps.Frame(), lhs_id, item, result_type);
+    auto pred_or =
+        BuildSetMemberTest(lowerer, steps.Frame(), lhs_id, item, result_type);
     if (!pred_or) return std::unexpected(std::move(pred_or.error()));
     tests.push_back(*pred_or);
   }

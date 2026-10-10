@@ -1,7 +1,7 @@
 #pragma once
 
-// Lowering of the `inside` operator (LRM 11.4.13) and the per-item lowering
-// shared with `case ... inside` (LRM 12.5.4) for both range and value items.
+// Lowering of the `inside` operator (LRM 11.4.13): its left operand and the
+// members of its set, each as the source wrote it.
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"

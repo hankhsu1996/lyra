@@ -312,7 +312,7 @@ auto LowerCaseStmt(
     const mir::ExprId selector =
         block.exprs.Add(mir::MakeLocalRefExpr(subject.local, subject.type));
     if (c.condition_kind == hir::CaseCondition::kInside) {
-      return BuildHirInsideItemPredicate(
+      return BuildSetMemberTest(
           process, at, selector, label_expr, unit.builtins.bit1);
     }
     auto written =

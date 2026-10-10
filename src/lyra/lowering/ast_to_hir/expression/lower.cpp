@@ -229,19 +229,26 @@ auto LowerExprImpl(
       }
       // LRM 11.4.13: `$` as a bound of a value range is the lowest or highest
       // value of the type, never a queue's last index, whatever select the
-      // range stands under.
+      // range stands under. Such a bound is stated as absent.
       const WalkFrame bound_frame = frame.OutsideQueueSelect();
-      auto lo_or = lowerer.LowerExpr(vr.left(), bound_frame);
-      if (!lo_or) return std::unexpected(std::move(lo_or.error()));
-      const hir::ExprId lo_id = frame.Exprs().Add(*std::move(lo_or));
-      auto hi_or = lowerer.LowerExpr(vr.right(), bound_frame);
-      if (!hi_or) return std::unexpected(std::move(hi_or.error()));
-      const hir::ExprId hi_id = frame.Exprs().Add(*std::move(hi_or));
+      const auto bound = [&](const slang::ast::Expression& written)
+          -> diag::Result<std::optional<hir::ExprId>> {
+        if (written.unwrapImplicitConversions().type->isUnbounded()) {
+          return std::nullopt;
+        }
+        auto lowered = lowerer.LowerExpr(written, bound_frame);
+        if (!lowered) return std::unexpected(std::move(lowered.error()));
+        return frame.Exprs().Add(*std::move(lowered));
+      };
+      auto lo = bound(vr.left());
+      if (!lo) return std::unexpected(std::move(lo.error()));
+      auto hi = bound(vr.right());
+      if (!hi) return std::unexpected(std::move(hi.error()));
       auto type_id = unit_lowerer.InternType(*expr.type, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
-          .data = hir::ValueRangeExpr{.lo = lo_id, .hi = hi_id},
+          .data = hir::ValueRangeExpr{.lo = *lo, .hi = *hi},
           .span = span};
     }
 

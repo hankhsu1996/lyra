@@ -22,16 +22,19 @@ The numeric IDs (W1..W18) imply execution order; where a cut is independent the 
 
 ### Membership and equality
 
-- [x] W1 -- `inside` set-membership (LRM 11.4.13). Singular and range items; ranges use
-      `(>= lo) && (<= hi)`. The LRM 11.4.13 four-state corner ("no match but some compare yields
-      `1'bx`") is preserved through the existing logical-OR truth table. The left operand is
-      evaluated once however many members the set has.
-  - [ ] The tolerance-range item form (`inside {[a:b]}` with a `+/-` tolerance, LRM 11.4.13) is
-        rejected; only singular and plain `[lo:hi]` range items are accepted.
+- [x] W1 -- `inside` set-membership (LRM 11.4.13). A member is a value, a range, or an unpacked
+      array of any kind and depth, which stands for each single value it holds; an array is
+      evaluated once and an empty one holds nothing. Integral operands compare by wildcard equality
+      and every other kind (real, string, class handle) by equality, an array's element being
+      brought to the type the set is compared at first. A range bound written `$` leaves its side
+      open. The four-state corner ("no match but some compare yields `1'bx`") holds across an
+      array's elements as across members. The left operand is evaluated once however many members
+      the set has. A `case ... inside` item (LRM 12.5.4) takes the same members.
+  - [ ] The tolerance ranges (`[A +/- B]`, `[A +%- B]`, LRM 11.4.13) are refused by name.
 - [x] W2 -- Wildcard equality `==?` / `!=?` (LRM 11.4.6). Asymmetric: X / Z in the right operand are
       wildcards; X / Z in the left operand are not. Result is `1'bx` when the left operand carries X
-      / Z that meets a known right-operand bit and no other bit definitely mismatches. W1's value
-      items use `==?` so wildcard items in `inside` work.
+      / Z that meets a known right-operand bit and no other bit definitely mismatches. W1's integral
+      members use `==?` so wildcard members in `inside` work.
 - [x] W3 -- Case equality `===` / `!==` (LRM 11.4.5). Bit-exact 4-state compare (X matches X, Z
       matches Z, X does not match Z); deterministic bool. Over a variable naming an object the
       clause gives it the meaning `==` / `!=` have there, so it answers which object is named, with

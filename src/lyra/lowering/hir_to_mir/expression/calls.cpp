@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -128,13 +129,8 @@ auto BuildArrayMethodClosure(
         "BuildArrayMethodClosure: receiver is not an unpacked-array type");
   }
   const mir::TypeId item_type = unit_lowerer.TranslateType(*element_type);
-  // LRM 7.12.4 `item.index`: the ordinal position for a sequence container, the
-  // key for an associative receiver.
-  mir::TypeId index_type = unit_lowerer.Unit().builtins.int_type;
-  if (const auto* assoc = hir_recv_ty.As<hir::AssociativeArrayType>();
-      assoc != nullptr) {
-    index_type = unit_lowerer.TranslateType(assoc->key_type);
-  }
+  const mir::TypeId index_type = ArrayMethodIndexType(
+      unit_lowerer.Unit(), unit_lowerer.TranslateType(hir_receiver_type));
   ClosureBuilder closure(lowerer.Owner().Unit(), frame);
   mir::Block& body = closure.Body();
 
@@ -389,18 +385,8 @@ auto LowerBuiltinMethodCall(
     return block.exprs.Get(ConvertToType(
         unit, block, BuildBitWidth(unit, block, *receiver), result_type));
   }
-  const mir::Direct mir_callee{.target = b.method, .receiver = receiver};
-
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
-
-  // An entry reaching the engine takes it as its leading argument, the way
-  // every runtime effect does.
-  if (entry.takes_the_runtime_handle) {
-    args.push_back(
-        block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner())));
-  }
-
   for (const hir::ExprId operand : RequiredOperands(c)) {
     auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
@@ -424,15 +410,45 @@ auto LowerBuiltinMethodCall(
         "accept a with-clause (LRM 7.12.1 family only)");
   }
 
-  // A prototype the entry takes is never written at the source, so the producer
-  // is what supplies it, at the result type's own canonical default. It trails
-  // the operands the entry itself takes, which is where appending places it.
-  if (entry.result_prototype_operand.has_value()) {
-    const mir::TypeId proto_type =
-        ResultPrototypeType(unit_lowerer, result_type);
-    args.push_back(block.exprs.Add(
-        BuildDefaultValueExpr(unit_lowerer.Unit(), block, proto_type)));
+  return BuildBuiltinMethodCall(
+      unit_lowerer, block, b.method, receiver, std::move(args), result_type);
+}
+
+}  // namespace
+
+auto BuildBuiltinMethodCall(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    support::BuiltinFn method, std::optional<mir::ExprId> receiver,
+    std::vector<mir::ExprId> operands, mir::TypeId result_type) -> mir::Expr {
+  const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
+
+  // The entry's operands after the object it acts on, in the order it takes
+  // them. The engine rides immediately after that object, and first where
+  // there is none.
+  std::vector<mir::ExprId> arguments;
+  arguments.reserve(operands.size() + 2);
+  if (entry.takes_the_runtime_handle) {
+    arguments.push_back(
+        block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
   }
+
+  // A prototype is never written at the source, so it is supplied, at the
+  // result type's own canonical default, at the position the entry reads it
+  // from; the entry counts positions from the object it acts on. Every other
+  // position takes the next operand the source wrote.
+  const std::size_t ahead = receiver.has_value() ? 1 : 0;
+  const auto supply_a_prototype_read_here = [&] {
+    if (entry.result_prototype_operand == ahead + arguments.size()) {
+      arguments.push_back(block.exprs.Add(BuildDefaultValueExpr(
+          unit_lowerer.Unit(), block,
+          ResultPrototypeType(unit_lowerer, result_type))));
+    }
+  };
+  for (const mir::ExprId written : operands) {
+    supply_a_prototype_read_here();
+    arguments.push_back(written);
+  }
+  supply_a_prototype_read_here();
 
   // An entry answering a wait answers the wait its caller then stops at, so
   // that is what the call is, whatever the source-level call it came from
@@ -441,11 +457,18 @@ auto LowerBuiltinMethodCall(
   const mir::TypeId answered =
       entry.answers_a_wait ? unit_lowerer.Unit().builtins.wait : result_type;
   return mir::Expr{
-      .data = mir::CallExpr{.callee = mir_callee, .arguments = std::move(args)},
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = method, .receiver = receiver},
+              .arguments = std::move(arguments)},
       .type = answered};
 }
 
-}  // namespace
+auto ArrayMethodIndexType(const mir::CompilationUnit& unit, mir::TypeId array)
+    -> mir::TypeId {
+  const auto* keyed = unit.types.Get(array).As<mir::AssociativeArrayType>();
+  return keyed != nullptr ? keyed->key_type : unit.builtins.int_type;
+}
 
 auto BuildAssociativeTraversal(
     UnitLowerer& unit_lowerer, BlockBuilder& steps, support::BuiltinFn method,
