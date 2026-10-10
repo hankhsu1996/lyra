@@ -174,8 +174,7 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
       // The first instance its unit is met through, or the first handed
       // these values: either is read through its own body after all, and
       // named by what that body says. Which values are the same is this
-      // compiler's answer and not the front end's, whose own comparison calls
-      // 0.0 and -0.0 one value.
+      // compiler's answer and not the front end's.
       policy->ReadBodyOf(inst);
       name = policy->NameOf(inst);
     }
