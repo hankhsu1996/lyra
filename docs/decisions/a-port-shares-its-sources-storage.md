@@ -33,8 +33,8 @@ once. Each direction is decided by the unit that owns the sink, where that unit 
 
 - **An input port is a reference in every instance of the child.** The child cannot know its
   actuals, so it reads every input through a reference -- one indirection per read -- and its
-  compiled body is the same for every instance. Where the actual is the instantiator's whole
-  variable of an equivalent type, the reference names that variable.
+  compiled body is the same for every instance. Where the actual is a whole variable of an
+  equivalent type, wherever it is declared, or another such port, the reference names that storage.
 - **An output's actual is a reference where it is a whole variable of an equivalent type.** The
   instantiator states its own variables and its own connections, so it realizes such a variable as a
   reference to the child's port storage; the child's output is ordinary storage of its own.
@@ -44,13 +44,35 @@ range the source's write reached** ([a-value-is-its-machine-data](a-value-is-its
 D7). That covers an input whose actual is an expression, a select with a run-time index or a value
 of a type that is not equivalent -- the instantiator evaluates it into a cell of its own, which the
 child's input reference names -- and an output whose actual is a part of a variable, a concatenation
-or a conversion.
+or a conversion. An input left unconnected, and an input of a top-level unit, name such a cell too,
+holding the data type's default initial value (23.3.3.2).
+
+**D2a. A reference is bound while the design's references are resolved, and a variable's storage
+exists from construction.** A reference names where a value lies, so the storage of every variable
+-- one whose value is laid out at run time included -- is installed as its scope is built, holding
+the data type's default, and only its declared initial value waits for initialization. Binding is
+then free of order: scopes resolve parent first, a connection may name a port of an instance
+resolved later, and a port bound from one not yet bound takes what that one names when it is bound.
 
 **D3. A `force` on the sink's name retargets its reference to a cell holding the forced value, and
 `release` points it back at the source.** A force on the source reaches the sink, as the continuous
 assignment the standard defines would carry it; a force on the sink must not reach the source, and
 retargeting keeps it local. Both are acts of the run, so no unit needs to know whether another unit
 forces anything.
+
+What a sink drives follows it. A port handed on to a child's port, at any depth, is retargeted with
+it, and so is every wait enrolled through any of them, so that a change of the source while the
+force holds is no event for a wait on the sink and the force itself is one. A port below that a
+force of its own covers keeps that force, and takes the new binding as what it will show once
+released. For this a reference says which member of a scope it was bound into, a binding records
+which members were bound from which, and a wait records the member it was reached through.
+
+The forced storage belongs to the sink, from the force to the release, whatever becomes of the
+process that made the force. It first holds what the sink showed and is then written with the forced
+value as any variable is, and a release writes what drives the sink into it before the bindings go
+back; so whoever waits on the sink is told of the force and of the release exactly when the value it
+shows changed. These are the three operations a procedural continuous assignment has on any target
+([procedural-continuous-assignment](procedural-continuous-assignment.md) decision 6).
 
 `inout` ports are already one resolved net, and `ref` ports already share storage; neither changes.
 

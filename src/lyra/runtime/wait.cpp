@@ -22,18 +22,21 @@ void Awaiter::EnrolOnLeaf(const Trigger& trigger) {
   if (trigger.observable == nullptr) {
     return;
   }
-  Enrol(trigger.observable->Members(), trigger.reads, trigger.observation);
+  Enrol(
+      trigger.observable->Members(), trigger.through, trigger.reads,
+      trigger.observation);
 }
 
 void Awaiter::EnrolOn(IntrusiveList<WaitMembership>& target) {
-  Enrol(target, value::BitPositions{}, Observation{});
+  Enrol(target, nullptr, value::BitPositions{}, Observation{});
 }
 
 void Awaiter::Enrol(
-    IntrusiveList<WaitMembership>& target, value::BitPositions reads,
-    Observation observation) {
+    IntrusiveList<WaitMembership>& target, const ErasedReference* through,
+    value::BitPositions reads, Observation observation) {
   WaitMembership& membership = memberships_.emplace_back();
   membership.awaiter = this;
+  membership.through = through;
   membership.reads = reads;
   membership.observation = std::move(observation);
   target.PushBack(membership);

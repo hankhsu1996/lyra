@@ -354,13 +354,14 @@ struct InterfacePortDecl {
   auto operator==(const InterfacePortDecl&) const -> bool = default;
 };
 
-// How the child port is reached, by endpoint capability. An input or output
-// port has its own cell, realized as a reactive edge over it (a variable cell
+// How the child port is reached, by endpoint capability. A port whose member
+// has a cell of its own is realized as a reactive edge over it (a variable cell
 // written / read, a net cell driven / read), so it holds a value reference
 // (`cell`) whose target capability (net versus variable) the reference itself
-// carries. A `ref` port owns no cell: it is bound once to the peer's cell, so
-// it holds only the route to the child's reference member -- no reference of
-// its own, since a `ref` needs no simulation-time reach (LRM 23.3.3.2).
+// carries. A port whose member owns no cell is bound to storage this scope
+// names, so it holds only the route to the child's reference member -- no
+// reference of its own, since binding needs no simulation-time reach (LRM
+// 23.3.3.2).
 struct PortCellEndpoint {
   ExprId cell;
 
@@ -377,12 +378,11 @@ struct PortConnectionId {
 
 // A connection carrying data across the boundary (LRM 23.3.3). `endpoint`
 // reaches the child's port member; `peer` is the parent-side connected
-// expression; `sensitivity` is the read set the implied continuous assignment
-// waits on (the peer's reads for an input port, the child port for an output
-// port; empty for a `ref` port). HIR holds it verbatim and HIR-to-MIR realizes
-// it: an input or output port as the implied continuous assignment between the
-// two cells, a `ref` port as an alias bind of the child's reference member to
-// the peer's cell, bound once (LRM 23.3.3.2).
+// expression, absent only for an input left unconnected, which holds its data
+// type's default initial value (LRM 23.3.3.2); `sensitivity` is the read set
+// the implied continuous assignment waits on (the peer's reads for an input
+// port, the child port for an output port; empty for a `ref` port). HIR holds
+// it verbatim and HIR-to-MIR realizes it.
 //
 // A bidirectional port is not one of these. Nothing crosses it in either
 // direction, so it has no source, no sink and nothing to wait on; what it
@@ -390,7 +390,7 @@ struct PortConnectionId {
 struct DataPortConnection {
   PortDirection direction;
   PortEndpoint endpoint;
-  ExprId peer;
+  std::optional<ExprId> peer;
   std::vector<SensitivityEntry> sensitivity;
 
   auto operator==(const DataPortConnection&) const -> bool = default;

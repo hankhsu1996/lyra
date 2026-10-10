@@ -433,18 +433,35 @@ auto ConnectDataPort(
     return PortConnectionUnsupported(
         span, "port connection of a handle / event type is not yet supported");
   }
-  const auto* expr = conn.getExpression();
-  if (expr == nullptr) {
-    // Unconnected: an explicit empty connection (`.port()`) or an omitted input
-    // port with no default. The child's storage holds the data type's default
-    // initial value (LRM 23.3.3.2); no parent driver is installed.
-    return {};
-  }
-
   // Which cell that member is, is the child's own statement of it, so the
   // parent never reads the child's declaration to find out. The route ends at
   // the member, whatever part of it the port stands for.
   const hir::ValueRoute port_route = PublishedMemberRoute(child, member);
+  // An input whose member owns no cell holds whatever this scope binds it to,
+  // connected or not.
+  const auto* reference = std::get_if<hir::ReferenceStorage>(&member.storage);
+  const bool bound_input = data.direction == hir::PortDirection::kInput &&
+                           reference != nullptr &&
+                           reference->binding == hir::ReferenceBinding::kInput;
+  const auto* expr = conn.getExpression();
+  if (expr == nullptr) {
+    // Unconnected: an explicit empty connection (`.port()`) or an omitted input
+    // port with no default, which holds the data type's default initial value
+    // (LRM 23.3.3.2). A member with a cell of its own already does; one without
+    // is given storage that does.
+    if (bound_input) {
+      frame.current_structural_scope->port_connections.Add(
+          hir::PortConnection{
+              .span = span,
+              .kind = hir::DataPortConnection{
+                  .direction = data.direction,
+                  .endpoint = port_route,
+                  .peer = std::nullopt,
+                  .sensitivity = {}}});
+    }
+    return {};
+  }
+
   // An input/output port reads the child cell during simulation, so it holds a
   // value reference; a `ref` port is bound once, so it keeps only the reach.
   const std::vector<hir::PublishedSelector> port_path =
@@ -465,7 +482,11 @@ auto ConnectDataPort(
 
   switch (direction) {
     case hir::PortDirection::kInput: {
-      endpoint = cell_endpoint();
+      if (bound_input) {
+        endpoint = port_route;
+      } else {
+        endpoint = cell_endpoint();
+      }
       // An omitted input port takes its declared default, which slang surfaces
       // through the connection's expression as the port's own initializer; it
       // is driven once, with no sensitivity.

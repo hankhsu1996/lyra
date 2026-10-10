@@ -125,9 +125,9 @@ reference to its whole.**
   1,314.2 M, compute-block 2,124.4 M to 2,136.8 M. The difference is a fixed cost per write --
   opening one asks the variable whether it admits the write and whether anything waits, and a whole
   store reaches the rare state through the variable's base -- and does not grow with the value.
-- Still refused: a `ref` port connected to a part, because the port is bound before the variable's
-  declaration installs what it holds, which moves the part. Waiting on a reference to a part is
-  answered by
+- Still refused: a `ref` port connected to a part, because the port is bound before the variable
+  takes its declared initial value, and storing a whole value may move the parts of the one it
+  replaces. Waiting on a reference to a part is answered by
   [a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md),
   and a `ref` formal's sampled value is its current one; what stays refused is the sampled value of
   a `ref static` formal.

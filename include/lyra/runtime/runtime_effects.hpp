@@ -24,6 +24,8 @@ class StreamDispatcher;
 class DiagnosticDispatcher;
 class FileTable;
 class PlusArgsSource;
+class BoundMembers;
+class VariableCell;
 class EvaluationAttempts;
 class Observable;
 class RuntimeProcess;
@@ -80,6 +82,18 @@ class RuntimeEffects {
   // object no report could follow is reevaluated whenever a property of any
   // object is written, which LRM 9.4.2 permits.
   [[nodiscard]] auto EveryObject() -> Observable&;
+
+  // The members of scopes that references were bound into, which a force on
+  // one acts through (LRM 10.6.2).
+  [[nodiscard]] auto Bound() -> BoundMembers&;
+
+  // States that a continuous assignment drives `variable` (LRM 10.3). A
+  // variable does not say so itself: the fact is asked only as a procedural
+  // continuous assignment comes to cover one (LRM 10.6.2), so it is kept here
+  // and a write to a variable costs nothing for it.
+  void DriveContinuously(const VariableCell& variable);
+  [[nodiscard]] auto DrivenContinuously(const VariableCell& variable) const
+      -> bool;
 
   // LRM 4.4: place `effect` in `region` of the time slot at `when`. A deferred
   // effect runs where it is placed and never suspends whoever submitted it.

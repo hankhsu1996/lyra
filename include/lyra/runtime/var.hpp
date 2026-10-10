@@ -98,10 +98,14 @@ void KeepAfter(Change& change, const T& storage) {
 // that takes, named for the role rather than for either owner's vocabulary.
 //
 // `AdmitsWrite` is whether the write goes into the owner at all: one does not
-// while a procedural continuous assignment holds a variable (LRM 10.6), and it
-// then lands in a copy the write keeps and nobody reads. Asking is the first
-// write of the time slot at the latest, so a sampled variable keeps its value
-// from before it here (LRM 16.5.1).
+// while a procedural continuous assignment holds a variable (LRM 10.6). Asking
+// is the first write of the time slot at the latest, so a sampled variable
+// keeps its value from before it here (LRM 16.5.1).
+//
+// `DisplacedStorage` is where a write turned away lands so that it is kept:
+// what a variable driven continuously holds beneath the assignment covering it
+// (LRM 10.6.2). Where there is none the write lands in a copy it keeps itself
+// and nobody reads.
 //
 // `MutationStorage` is the storage itself, so a write reaches the part it
 // names and disturbs nothing else. Two things follow: a write cannot lose one
@@ -125,6 +129,7 @@ template <class S>
 concept MutationSink = requires(S sink, const Change& change) {
   typename S::ValueType;
   { sink.AdmitsWrite() } -> std::same_as<bool>;
+  { sink.DisplacedStorage() } -> std::same_as<typename S::ValueType*>;
   { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
   { sink.Watched() } -> std::same_as<bool>;
   sink.PublishTransition(change);
@@ -335,6 +340,9 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     requires value::TakesBytesInPlace<T>
   {
     if (TakenOver()) {
+      if (T* beneath = DisplacedStorage()) {
+        beneath->TakeBytes(bytes);
+      }
       return;
     }
     StoreBy(
@@ -363,10 +371,22 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     requires value::TakesBytesInPlace<T>;
 
   // Ends the procedural continuous assignment at `level`, handing the cell to
-  // the highest level still in effect. Where none is left the cell is left
-  // exactly as it stands, which is what a released variable keeps (LRM
+  // the highest level still in effect. Where none is left a cell something
+  // drives continuously takes what its driver last produced, and any other is
+  // left exactly as it stands, which is what a released variable keeps (LRM
   // 10.6.2).
   void EndTakeover(std::int64_t level);
+
+  // Where a write a procedural continuous assignment turned away lands so that
+  // it is kept: what the cell's continuous driver last produced, held beneath
+  // the assignment. None where nothing drives the cell continuously, or
+  // nothing covers it.
+  [[nodiscard]] auto DisplacedStorage() const -> T* {
+    const CellRareState<T>* rare = ExistingRareState();
+    Takeovers<T>* takeovers =
+        rare == nullptr ? nullptr : rare->ExistingTakeovers();
+    return takeovers == nullptr ? nullptr : takeovers->Beneath();
+  }
 
   // Arms the cell to answer for its sampled value (LRM 16.5.1) and installs the
   // one every read answers with until the first change of some later slot.
@@ -574,6 +594,12 @@ struct ErasedReference {
   // reference stands for the variable itself. Only where the reference is
   // formed can say so: a part can lie at the address its whole does.
   bool whole = false;
+  // The member of a scope this reference was bound into, where it was: a port
+  // that stands for what its connection drives (LRM 23.3.3). The member is what
+  // a force acts on (LRM 10.6.2), and a copy of the reference -- one handed on
+  // to a child's port, one a wait was built from -- still says which member it
+  // is a copy of. None for a reference bound into no member.
+  ErasedReference* member = nullptr;
 
   // Written here rather than in the library's own source because every write
   // through a reference asks them, and for storage whose variable nothing
@@ -611,6 +637,12 @@ struct ErasedReference {
   // variable or the object's event source. Storage that belongs to nothing
   // answers with none, since no write to it is ever told.
   [[nodiscard]] auto ReportsTo() const -> Observable*;
+
+  // States that something drives the storage continuously (LRM 10.3), which
+  // is what decides what a variable shows once nothing overrides it (LRM
+  // 10.6.2). Only a variable is ever overridden, so storage nothing holds, and
+  // an object's, have nothing to be told.
+  void DriveContinuously() const;
 
   // The reference to a part of what this one names, at `part`, which forming
   // did `formed` to. The part has the same holder, which is told at once where
@@ -657,6 +689,12 @@ class Ref {
     return erased_;
   }
 
+  // The reference as a member something is bound into (LRM 23.3.3), which is
+  // what binding rewrites.
+  [[nodiscard]] auto AsMember() -> ErasedReference& {
+    return erased_;
+  }
+
   [[nodiscard]] auto Get() const -> const T& {
     return Storage();
   }
@@ -665,6 +703,9 @@ class Ref {
   // handle's own pointers -- as `*p = v` is allowed through a `T* const p`.
   void Set(const T& new_val) const {
     if (!erased_.Admits()) {
+      if (T* beneath = DisplacedStorage()) {
+        *beneath = new_val;
+      }
       return;
     }
     if (!erased_.Watched()) {
@@ -682,6 +723,16 @@ class Ref {
   // does; only storage that belongs to a variable has anyone to tell what the
   // write did.
   [[nodiscard]] auto Mutate() const -> ScopedMutation<Ref<T>>;
+
+  // A procedural continuous assignment on a name that owns no storage (LRM
+  // 10.6.2), by the operations a variable itself answers: the reference is a
+  // member of a scope standing for what its connection drives, and the
+  // assignment gives it storage of its own to name until it ends.
+  auto BeginTakeover(std::int64_t level) const -> std::int64_t;
+  auto DriveTakeover(
+      std::int64_t level, std::int64_t generation, const T& new_val) const
+      -> bool;
+  void EndTakeover(std::int64_t level) const;
 
   // A reference to an element or a component of what this one names (LRM
   // 13.5.2), which belongs to the same variable.
@@ -707,6 +758,11 @@ class Ref {
   // shorter route.
   [[nodiscard]] auto AdmitsWrite() const -> bool {
     return erased_.Admits();
+  }
+  // Only a reference to the whole of a variable knows the variable's type,
+  // which is what a value kept beneath an assignment is of.
+  [[nodiscard]] auto DisplacedStorage() const -> T* {
+    return Whole() ? Cell().DisplacedStorage() : nullptr;
   }
   [[nodiscard]] auto MutationStorage() const -> T& {
     return Storage();
@@ -804,8 +860,15 @@ auto ReferProperty(const value::ObjectRef& handle)
 // What a wait on the storage `reference` names enrols on (LRM 13.5.2): what
 // a write through the reference is told to, never the reference itself.
 template <value::LyraValue T>
-auto ReportsTo(const Ref<T>& reference) -> Observable* {
-  return reference.Erased().ReportsTo();
+auto ReportsTo(const Ref<T>& reference) -> WatchedPlace {
+  return WatchedPlace::Through(reference.Erased());
+}
+
+// States that a continuous assignment drives the storage `reference` names
+// (LRM 10.3), once, as the design is built.
+template <value::LyraValue T>
+void DrivesContinuously(const Ref<T>& reference) {
+  reference.Erased().DriveContinuously();
 }
 
 // Defaulted here rather than where they are declared: a constructor or
@@ -824,6 +887,9 @@ void Var<T>::Set(const T& new_val) {
   // this cell (LRM 10.6). A cell nobody has ever taken over holds no record at
   // all, so the ordinary write pays one null test.
   if (TakenOver()) {
+    if (T* beneath = DisplacedStorage()) {
+      *beneath = new_val;
+    }
     return;
   }
   Store(new_val);
@@ -862,10 +928,19 @@ auto Var<T>::RecordTakeover(
   const CellRareState<T>* rare = ExistingRareState();
   Takeovers<T>* takeovers =
       rare == nullptr ? nullptr : rare->ExistingTakeovers();
-  if (takeovers == nullptr ||
-      !takeovers->Drive(
+  if (takeovers == nullptr) {
+    return false;
+  }
+  const bool was_covered = takeovers->Highest() != nullptr;
+  if (!takeovers->Drive(
           TakeoverLevelOf(level), TakeoverGenerationOf(generation), record)) {
     return false;
+  }
+  // The first level to cover a cell something drives continuously finds in it
+  // what that driver last produced, which is what the cell shows again once
+  // nothing covers it (LRM 10.6.2).
+  if (!was_covered && current_runtime().DrivenContinuously(*this)) {
+    takeovers->KeepBeneath(this->Get());
   }
   // A level that just recorded always leaves something showing, and it is this
   // value only where no higher level covers it. Storing whatever shows needs
@@ -891,6 +966,10 @@ void Var<T>::EndTakeover(std::int64_t level) {
   // the value the ended takeover last gave it.
   if (const T* showing = takeovers->Highest(); showing != nullptr) {
     Store(*showing);
+    return;
+  }
+  if (const std::optional<T> beneath = takeovers->TakeBeneath()) {
+    Store(*beneath);
   }
 }
 
@@ -918,12 +997,14 @@ class WriteBracket {
   using ValueType = typename Sink::ValueType;
 
   // A write the sink turns away (LRM 10.6) still has to reach a part to land
-  // on, so it lands in a copy of the sink's storage that this write keeps and
-  // nobody reads, and it has no one to tell.
+  // on, and it has no one to tell. It lands where the sink keeps such a write,
+  // or in a copy of the sink's storage that this write keeps and nobody reads.
   explicit WriteBracket(Sink sink) : sink_(sink) {
     if (sink_.AdmitsWrite()) {
       storage_ = &sink_.MutationStorage();
       watched_ = sink_.Watched();
+    } else if (ValueType* kept = sink_.DisplacedStorage()) {
+      storage_ = kept;
     } else {
       storage_ = &discarded_.emplace(sink_.MutationStorage());
     }

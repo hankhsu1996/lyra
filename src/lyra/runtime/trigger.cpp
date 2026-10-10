@@ -30,6 +30,17 @@ Trigger::Trigger(
           .width = static_cast<std::uint64_t>(bit_width)} {
 }
 
+Trigger::Trigger(
+    WatchedPlace place, Observation observation, std::int64_t lsb_bit_offset,
+    std::int64_t bit_width)
+    : observable(place.ReportedTo()),
+      through(place.Member()),
+      observation(std::move(observation)),
+      reads{
+          .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
+          .width = static_cast<std::uint64_t>(bit_width)} {
+}
+
 Change::Change() = default;
 Change::Change(const Change&) = default;
 Change::Change(Change&&) noexcept = default;

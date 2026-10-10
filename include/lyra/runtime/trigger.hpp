@@ -11,6 +11,33 @@
 namespace lyra::runtime {
 
 class Observable;
+struct ErasedReference;
+
+// A place a wait watches, as the one word it crosses to the library in: where
+// occurrences are reported, or the member of a scope a reference was bound into
+// (LRM 23.3.3) where the place was reached through one. A member is named
+// rather than what it is bound to now, because a force binds it to other
+// storage (LRM 10.6.2) and a wait built on it has to follow.
+class WatchedPlace {
+ public:
+  WatchedPlace() = default;
+  explicit WatchedPlace(Observable* reported_to);
+
+  [[nodiscard]] static auto Through(const ErasedReference& reference)
+      -> WatchedPlace;
+  [[nodiscard]] static auto FromWord(void* word) -> WatchedPlace;
+  [[nodiscard]] auto Word() const -> void*;
+
+  // Where occurrences at the place are reported now, none for storage nothing
+  // is told about.
+  [[nodiscard]] auto ReportedTo() const -> Observable*;
+  // The member the place was reached through, none where it was reached by
+  // itself.
+  [[nodiscard]] auto Member() const -> const ErasedReference*;
+
+ private:
+  std::uintptr_t word_ = 0;
+};
 
 // One leaf of a wait: a place it watches, which bits of that place's flat-bit
 // encoding it reads, and what decides whether what happens there is an event.
@@ -29,6 +56,8 @@ class Observable;
 // each such unit.
 struct Trigger {
   Observable* observable = nullptr;
+  // The member the place was reached through, which is only ever compared.
+  const ErasedReference* through = nullptr;
   Observation observation;
   value::BitPositions reads;
 
@@ -42,6 +71,9 @@ struct Trigger {
   Trigger(
       Observable* observable, Observation observation,
       std::int64_t lsb_bit_offset, std::int64_t bit_width);
+  Trigger(
+      WatchedPlace place, Observation observation, std::int64_t lsb_bit_offset,
+      std::int64_t bit_width);
 };
 
 // What a write that changed an observable did to it, as far as a wait on some

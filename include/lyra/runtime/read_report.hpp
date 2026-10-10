@@ -56,12 +56,16 @@ class ReadReport {
   // is reporting.
   void Add(
       Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+  void Add(
+      WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // A place reached through a handle: an object a chain of reads passes
   // through, whose event source `place` is, or a variable of the instance a
   // virtual interface holds.
   void AddThroughHandle(
       Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+  void AddThroughHandle(
+      WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // Every object at once, for a read that reaches one along no chain a report
   // could follow.
@@ -76,6 +80,8 @@ class ReadReport {
   // Only an implicit list reads these, and it leaves them out.
   void AddWrite(
       Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+  void AddWrite(
+      WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // Makes what was reported a procedure's implicit list (LRM 9.2.2.2.1), once
   // everything is reported: nothing reached through a handle is in it, what

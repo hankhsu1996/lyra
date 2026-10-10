@@ -50,11 +50,21 @@ void ReadReport::Reach(Trigger trigger) {
 // list wakes on any change to what it lists.
 void ReadReport::Add(
     Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+  Add(WatchedPlace{place}, lsb_bit_offset, bit_width);
+}
+
+void ReadReport::Add(
+    WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   Reach(Trigger{place, Observation::OnReaching(), lsb_bit_offset, bit_width});
 }
 
 void ReadReport::AddThroughHandle(
     Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+  AddThroughHandle(WatchedPlace{place}, lsb_bit_offset, bit_width);
+}
+
+void ReadReport::AddThroughHandle(
+    WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   through_handles_.emplace_back(
       place, Observation::OnReaching(), lsb_bit_offset, bit_width);
 }
@@ -69,9 +79,14 @@ void ReadReport::LeaveCallOnHandle() {
 
 void ReadReport::AddWrite(
     Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+  AddWrite(WatchedPlace{place}, lsb_bit_offset, bit_width);
+}
+
+void ReadReport::AddWrite(
+    WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   writes_.push_back(
       Written{
-          .place = place,
+          .place = place.ReportedTo(),
           .bits = {
               .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
               .width = static_cast<std::uint64_t>(bit_width)}});
@@ -85,6 +100,7 @@ void ReadReport::SettleAsImplicitList() {
   // there is tested once per leaf.
   struct Watched {
     Observable* place = nullptr;
+    const ErasedReference* through = nullptr;
     bool whole = false;
     std::vector<Interval> intervals;
   };
@@ -114,11 +130,16 @@ void ReadReport::SettleAsImplicitList() {
       intervals = std::move(kept);
     }
     if (taken_whole) continue;
-    auto at = std::ranges::find(watched, read.observable, &Watched::place);
+    auto at = std::ranges::find_if(watched, [&](const Watched& listed) {
+      return listed.place == read.observable && listed.through == read.through;
+    });
     if (at == watched.end()) {
       at = watched.insert(
-          watched.end(),
-          Watched{.place = read.observable, .whole = false, .intervals = {}});
+          watched.end(), Watched{
+                             .place = read.observable,
+                             .through = read.through,
+                             .whole = false,
+                             .intervals = {}});
     }
     if (read.reads.width == 0) {
       at->whole = true;
@@ -129,16 +150,17 @@ void ReadReport::SettleAsImplicitList() {
   }
 
   std::vector<Trigger> left;
-  const auto leaf = [&](Observable* place, value::BitPositions reads) {
+  const auto leaf = [&](const Watched& place, value::BitPositions reads) {
     Trigger trigger;
-    trigger.observable = place;
+    trigger.observable = place.place;
+    trigger.through = place.through;
     trigger.observation = Observation::OnReaching();
     trigger.reads = reads;
     left.push_back(std::move(trigger));
   };
   for (Watched& place : watched) {
     if (place.whole) {
-      leaf(place.place, {});
+      leaf(place, {});
       continue;
     }
     std::ranges::sort(place.intervals);
@@ -151,7 +173,7 @@ void ReadReport::SettleAsImplicitList() {
       }
     }
     for (const auto& [lo, hi] : merged) {
-      leaf(place.place, {.lsb = lo, .width = hi - lo});
+      leaf(place, {.lsb = lo, .width = hi - lo});
     }
   }
   read_directly_ = std::move(left);

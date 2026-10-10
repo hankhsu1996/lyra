@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
 
 #include "lyra/support/takeover_level.hpp"
 
@@ -32,9 +33,11 @@ namespace lyra::runtime {
 // overrides a procedural write and a `force` overrides an `assign`.
 //
 // Ending a level hands the cell to the highest one still in effect. Where none
-// is left the cell is told nothing, because it already holds the right value:
-// the writes a takeover displaced were discarded rather than saved, so a
-// released variable keeps what it was last given (LRM 10.6.1, 10.6.2).
+// is left the two kinds of variable part ways, as the standard has them (LRM
+// 10.6.2). One that something drives continuously shows what its driver last
+// produced, so that value is kept beneath the levels for as long as one covers
+// the cell and the driver's writes go there. Any other keeps what it was last
+// given, and a write a takeover displaced is dropped.
 //
 // A level carries a generation beside its value. Whatever evaluates a takeover
 // carries the generation it started under, and stops as soon as the two
@@ -84,6 +87,24 @@ class Takeovers {
     ++GenerationOf(level);
   }
 
+  // Starts keeping what drives the cell continuously beneath the levels, from
+  // `shown`, the value the driver gave it last. Asked as the first level comes
+  // to cover the cell.
+  void KeepBeneath(const T& shown) {
+    beneath_ = shown;
+  }
+
+  // What a write the levels turned away lands in, where the cell is driven
+  // continuously, and nothing where it is not.
+  [[nodiscard]] auto Beneath() -> T* {
+    return beneath_.has_value() ? &*beneath_ : nullptr;
+  }
+
+  // Gives up what was kept beneath, once no level covers the cell.
+  [[nodiscard]] auto TakeBeneath() -> std::optional<T> {
+    return std::exchange(beneath_, std::nullopt);
+  }
+
   // The value the cell should be showing, or nothing where no level is in
   // effect and the cell's own storage is what shows. The levels are an ordered
   // scale, so what shows is the first one found descending them.
@@ -113,6 +134,7 @@ class Takeovers {
 
   std::array<std::optional<T>, support::kTakeoverLevelCount> slots_;
   std::array<std::uint32_t, support::kTakeoverLevelCount> generations_{};
+  std::optional<T> beneath_;
 };
 
 }  // namespace lyra::runtime

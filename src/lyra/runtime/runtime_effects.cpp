@@ -242,6 +242,19 @@ auto RuntimeEffects::EveryObject() -> Observable& {
   return AsRuntime(*this).every_object_;
 }
 
+auto RuntimeEffects::Bound() -> BoundMembers& {
+  return AsRuntime(*this).bound_members_;
+}
+
+void RuntimeEffects::DriveContinuously(const VariableCell& variable) {
+  AsRuntime(*this).driven_continuously_.insert(&variable);
+}
+
+auto RuntimeEffects::DrivenContinuously(const VariableCell& variable) const
+    -> bool {
+  return AsRuntime(*this).driven_continuously_.contains(&variable);
+}
+
 void RuntimeEffects::EndRun(
     std::string_view task, const value::String& origin, std::int64_t level) {
   Runtime& rt = AsRuntime(*this);

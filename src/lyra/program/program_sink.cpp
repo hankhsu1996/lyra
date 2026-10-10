@@ -448,6 +448,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_refer_storage", &lyra_rt_refer_storage);
   add("lyra_rt_refer_property", &lyra_rt_refer_property);
   add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
+  add("lyra_rt_bind_member", &lyra_rt_bind_member);
+  add("lyra_rt_drives_continuously", &lyra_rt_drives_continuously);
   add("lyra_rt_string_cell_refer", &lyra_rt_string_cell_refer);
   add("lyra_rt_real_cell_refer", &lyra_rt_real_cell_refer);
   add("lyra_rt_shortreal_cell_refer", &lyra_rt_shortreal_cell_refer);
@@ -1450,6 +1452,9 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit8_cell_begin_takeover", &lyra_rt_bit8_cell_begin_takeover);
   add("lyra_rt_bit8_cell_drive_takeover", &lyra_rt_bit8_cell_drive_takeover);
   add("lyra_rt_bit8_cell_end_takeover", &lyra_rt_bit8_cell_end_takeover);
+  add("lyra_rt_bit8_ref_begin_takeover", &lyra_rt_bit8_ref_begin_takeover);
+  add("lyra_rt_bit8_ref_drive_takeover", &lyra_rt_bit8_ref_drive_takeover);
+  add("lyra_rt_bit8_ref_end_takeover", &lyra_rt_bit8_ref_end_takeover);
   add("lyra_rt_bit8_cell_refer", &lyra_rt_bit8_cell_refer);
   add("lyra_rt_bit8_cell_open_for_write", &lyra_rt_bit8_cell_open_for_write);
   add("lyra_rt_bit8_shared_cell_make", &lyra_rt_bit8_shared_cell_make);
@@ -1479,6 +1484,9 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit16_cell_begin_takeover", &lyra_rt_bit16_cell_begin_takeover);
   add("lyra_rt_bit16_cell_drive_takeover", &lyra_rt_bit16_cell_drive_takeover);
   add("lyra_rt_bit16_cell_end_takeover", &lyra_rt_bit16_cell_end_takeover);
+  add("lyra_rt_bit16_ref_begin_takeover", &lyra_rt_bit16_ref_begin_takeover);
+  add("lyra_rt_bit16_ref_drive_takeover", &lyra_rt_bit16_ref_drive_takeover);
+  add("lyra_rt_bit16_ref_end_takeover", &lyra_rt_bit16_ref_end_takeover);
   add("lyra_rt_bit16_cell_refer", &lyra_rt_bit16_cell_refer);
   add("lyra_rt_bit16_cell_open_for_write", &lyra_rt_bit16_cell_open_for_write);
   add("lyra_rt_bit16_shared_cell_make", &lyra_rt_bit16_shared_cell_make);
@@ -1510,6 +1518,9 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit32_cell_begin_takeover", &lyra_rt_bit32_cell_begin_takeover);
   add("lyra_rt_bit32_cell_drive_takeover", &lyra_rt_bit32_cell_drive_takeover);
   add("lyra_rt_bit32_cell_end_takeover", &lyra_rt_bit32_cell_end_takeover);
+  add("lyra_rt_bit32_ref_begin_takeover", &lyra_rt_bit32_ref_begin_takeover);
+  add("lyra_rt_bit32_ref_drive_takeover", &lyra_rt_bit32_ref_drive_takeover);
+  add("lyra_rt_bit32_ref_end_takeover", &lyra_rt_bit32_ref_end_takeover);
   add("lyra_rt_bit32_cell_refer", &lyra_rt_bit32_cell_refer);
   add("lyra_rt_bit32_cell_open_for_write", &lyra_rt_bit32_cell_open_for_write);
   add("lyra_rt_bit32_shared_cell_make", &lyra_rt_bit32_shared_cell_make);
@@ -1541,6 +1552,9 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit64_cell_begin_takeover", &lyra_rt_bit64_cell_begin_takeover);
   add("lyra_rt_bit64_cell_drive_takeover", &lyra_rt_bit64_cell_drive_takeover);
   add("lyra_rt_bit64_cell_end_takeover", &lyra_rt_bit64_cell_end_takeover);
+  add("lyra_rt_bit64_ref_begin_takeover", &lyra_rt_bit64_ref_begin_takeover);
+  add("lyra_rt_bit64_ref_drive_takeover", &lyra_rt_bit64_ref_drive_takeover);
+  add("lyra_rt_bit64_ref_end_takeover", &lyra_rt_bit64_ref_end_takeover);
   add("lyra_rt_bit64_cell_refer", &lyra_rt_bit64_cell_refer);
   add("lyra_rt_bit64_cell_open_for_write", &lyra_rt_bit64_cell_open_for_write);
   add("lyra_rt_bit64_shared_cell_make", &lyra_rt_bit64_shared_cell_make);
@@ -1574,6 +1588,9 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic8_cell_drive_takeover",
       &lyra_rt_logic8_cell_drive_takeover);
   add("lyra_rt_logic8_cell_end_takeover", &lyra_rt_logic8_cell_end_takeover);
+  add("lyra_rt_logic8_ref_begin_takeover", &lyra_rt_logic8_ref_begin_takeover);
+  add("lyra_rt_logic8_ref_drive_takeover", &lyra_rt_logic8_ref_drive_takeover);
+  add("lyra_rt_logic8_ref_end_takeover", &lyra_rt_logic8_ref_end_takeover);
   add("lyra_rt_logic8_cell_refer", &lyra_rt_logic8_cell_refer);
   add("lyra_rt_logic8_cell_open_for_write",
       &lyra_rt_logic8_cell_open_for_write);
@@ -1627,6 +1644,11 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic16_cell_drive_takeover",
       &lyra_rt_logic16_cell_drive_takeover);
   add("lyra_rt_logic16_cell_end_takeover", &lyra_rt_logic16_cell_end_takeover);
+  add("lyra_rt_logic16_ref_begin_takeover",
+      &lyra_rt_logic16_ref_begin_takeover);
+  add("lyra_rt_logic16_ref_drive_takeover",
+      &lyra_rt_logic16_ref_drive_takeover);
+  add("lyra_rt_logic16_ref_end_takeover", &lyra_rt_logic16_ref_end_takeover);
   add("lyra_rt_logic16_cell_refer", &lyra_rt_logic16_cell_refer);
   add("lyra_rt_logic16_cell_open_for_write",
       &lyra_rt_logic16_cell_open_for_write);
@@ -1684,6 +1706,11 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic32_cell_drive_takeover",
       &lyra_rt_logic32_cell_drive_takeover);
   add("lyra_rt_logic32_cell_end_takeover", &lyra_rt_logic32_cell_end_takeover);
+  add("lyra_rt_logic32_ref_begin_takeover",
+      &lyra_rt_logic32_ref_begin_takeover);
+  add("lyra_rt_logic32_ref_drive_takeover",
+      &lyra_rt_logic32_ref_drive_takeover);
+  add("lyra_rt_logic32_ref_end_takeover", &lyra_rt_logic32_ref_end_takeover);
   add("lyra_rt_logic32_cell_refer", &lyra_rt_logic32_cell_refer);
   add("lyra_rt_logic32_cell_open_for_write",
       &lyra_rt_logic32_cell_open_for_write);
@@ -1741,6 +1768,11 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic64_cell_drive_takeover",
       &lyra_rt_logic64_cell_drive_takeover);
   add("lyra_rt_logic64_cell_end_takeover", &lyra_rt_logic64_cell_end_takeover);
+  add("lyra_rt_logic64_ref_begin_takeover",
+      &lyra_rt_logic64_ref_begin_takeover);
+  add("lyra_rt_logic64_ref_drive_takeover",
+      &lyra_rt_logic64_ref_drive_takeover);
+  add("lyra_rt_logic64_ref_end_takeover", &lyra_rt_logic64_ref_end_takeover);
   add("lyra_rt_logic64_cell_refer", &lyra_rt_logic64_cell_refer);
   add("lyra_rt_logic64_cell_open_for_write",
       &lyra_rt_logic64_cell_open_for_write);
@@ -1803,6 +1835,11 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_bit_wide_cell_drive_takeover);
   add("lyra_rt_bit_wide_cell_end_takeover",
       &lyra_rt_bit_wide_cell_end_takeover);
+  add("lyra_rt_bit_wide_ref_begin_takeover",
+      &lyra_rt_bit_wide_ref_begin_takeover);
+  add("lyra_rt_bit_wide_ref_drive_takeover",
+      &lyra_rt_bit_wide_ref_drive_takeover);
+  add("lyra_rt_bit_wide_ref_end_takeover", &lyra_rt_bit_wide_ref_end_takeover);
   add("lyra_rt_bit_wide_cell_refer", &lyra_rt_bit_wide_cell_refer);
   add("lyra_rt_bit_wide_cell_open_for_write",
       &lyra_rt_bit_wide_cell_open_for_write);
@@ -1849,6 +1886,12 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_logic_wide_cell_drive_takeover);
   add("lyra_rt_logic_wide_cell_end_takeover",
       &lyra_rt_logic_wide_cell_end_takeover);
+  add("lyra_rt_logic_wide_ref_begin_takeover",
+      &lyra_rt_logic_wide_ref_begin_takeover);
+  add("lyra_rt_logic_wide_ref_drive_takeover",
+      &lyra_rt_logic_wide_ref_drive_takeover);
+  add("lyra_rt_logic_wide_ref_end_takeover",
+      &lyra_rt_logic_wide_ref_end_takeover);
   add("lyra_rt_logic_wide_cell_refer", &lyra_rt_logic_wide_cell_refer);
   add("lyra_rt_logic_wide_cell_open_for_write",
       &lyra_rt_logic_wide_cell_open_for_write);

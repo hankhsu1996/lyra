@@ -16,6 +16,7 @@ namespace lyra::runtime {
 
 struct Activation;
 class Awaiter;
+struct ErasedReference;
 class RuntimeEffects;
 
 // What an execution stopping at a wait carries on at, as the awaiter answers it
@@ -53,6 +54,12 @@ using Resumption =
 struct WaitMembership : IntrusiveListNode<WaitMembership> {
   // Null on the sentinel a list embeds to close its ring.
   Awaiter* awaiter = nullptr;
+
+  // The member of a scope the place was reached through, where it was reached
+  // through a reference bound into one (LRM 23.3.3). A force on that member
+  // makes it name other storage (LRM 10.6.2), and what was enrolled through it
+  // is then enrolled there.
+  const ErasedReference* through = nullptr;
 
   // Which bits of the place the wait reads. It bounds what a change there could
   // do to the wait, so a change confined outside it needs no further question
@@ -145,8 +152,8 @@ class Awaiter {
   // place it reads, a width of zero being all of it, and what decides whether
   // reaching it is an event, which holds nothing where being reached is.
   void Enrol(
-      IntrusiveList<WaitMembership>& target, value::BitPositions reads,
-      Observation observation);
+      IntrusiveList<WaitMembership>& target, const ErasedReference* through,
+      value::BitPositions reads, Observation observation);
 
   // Whether what this waits for holds now, asked once an occurrence that is an
   // event for it reached it while an activation is parked. A wait for a state

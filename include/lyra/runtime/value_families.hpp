@@ -1,6 +1,7 @@
 #pragma once
 
 #include "lyra/runtime/activation_value_cell.hpp"
+#include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/sampled_history.hpp"

@@ -367,6 +367,14 @@ enum class BuiltinFn : std::uint16_t {
   // property belongs to (LRM 13.5.2, 9.4.2) -- as an erased pointer, the form
   // an object's event source takes too.
   kReferenceReportsTo,
+  // Binding a member that owns no storage to what its connection drives it
+  // with (LRM 23.3.3): the member names that storage from then on, and is
+  // recorded as bound from whatever member the bound reference came from.
+  kBindMember,
+  // Stating, as the design is built, that a continuous assignment drives the
+  // storage a reference names (LRM 10.3), which decides what a variable shows
+  // once nothing overrides it (LRM 10.6.2).
+  kDrivesContinuously,
   // Attaching a driver to a net (LRM 6.5), at the strength its source drives at
   // (LRM 28.11): a `ResolvedNet` method returning the driver handle the drive
   // capability is reached through. The strength is fixed when the driver

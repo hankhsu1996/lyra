@@ -429,13 +429,23 @@ auto UnitLowerer::MemberCellType(
                 mir::Type{mir::ResolvedType{.value = value_type}});
           },
           [&](const hir::ReferenceStorage& reference) {
+            // An input port's member is bound after it is built and bound again
+            // by a force on it (LRM 10.6.2), so it is a reference that can be
+            // made to name other storage. Nothing writes through it because
+            // the language admits no assignment to it (LRM 23.3.3.2).
+            const auto mutability = [&] {
+              switch (reference.binding) {
+                case hir::ReferenceBinding::kRef:
+                case hir::ReferenceBinding::kInput:
+                  return mir::Mutability::kMutable;
+                case hir::ReferenceBinding::kConstRef:
+                  return mir::Mutability::kReadOnly;
+              }
+              throw InternalError("MemberCellType: unknown reference binding");
+            }();
             return unit_.types.Intern(
                 mir::Type{mir::RefType{
-                    .pointee = value_type,
-                    .mutability =
-                        reference.binding == hir::ReferenceBinding::kConstRef
-                            ? mir::Mutability::kReadOnly
-                            : mir::Mutability::kMutable}});
+                    .pointee = value_type, .mutability = mutability}});
           },
           [&](const hir::BorrowedObjectStorage&) {
             return BorrowedObjectHandles(unit_.types, value_type);

@@ -1277,14 +1277,138 @@ auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
   return {};
 }
 
+// Whether what an input is connected to is storage the input can stand for:
+// the whole of one variable of the input's own type, written as its name. The
+// connection is a continuous assignment into the input (LRM 23.3.3), and when
+// the sink sees a change of the source is not fixed (LRM 4.8), so a sink that
+// is the source's own storage is one of the schedules the standard admits. A
+// net shows a resolution rather than holding what it is given (LRM 6.5), and
+// any other expression has no storage to stand for.
+auto NamesSharedStorage(
+    const hir::StructuralScope& scope, const hir::Expr& peer,
+    hir::TypeId port_type) -> bool {
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&peer.data);
+  const auto* named = primary == nullptr
+                          ? nullptr
+                          : std::get_if<hir::RoutedValueRef>(&primary->data);
+  if (named == nullptr || peer.type != port_type) return false;
+  const hir::DataCell source =
+      hir::CellOf(scope.routes.values.Get(named->id).leaf);
+  return std::visit(
+      Overloaded{
+          [](const hir::VariableStorage&) { return true; },
+          [](const hir::ReferenceStorage&) { return true; },
+          [](const hir::NetStorage&) { return false; },
+          [](const hir::BorrowedObjectStorage&) { return false; }},
+      source.storage);
+}
+
+// Binds an input whose member owns no cell (LRM 23.3.3.2), while the design's
+// references are resolved. Where the connection names storage the input can
+// stand for, the member is bound to it and nothing runs afterwards. Every
+// other input is bound to a cell this scope keeps, which the implied
+// continuous assignment drives where there is a connection, and which
+// otherwise holds the data type's default initial value.
+auto BindInputPort(
+    StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const WalkFrame& resolve_frame, const WalkFrame& init_frame,
+    const WalkFrame& activate_frame, const hir::ValueRoute& route,
+    const hir::DataPortConnection& data) -> diag::Result<void> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const hir::StructuralScope& hir_scope = lowerer.HirScope();
+  mir::Class& mir_class = *frame.current_class;
+  mir::Block& resolve_block = *resolve_frame.current_block;
+
+  const hir::DataCell member = hir::CellOf(route.leaf);
+  const mir::TypeId value_type = unit_lowerer.TranslateType(member.type);
+  const mir::TypeId ref_type =
+      unit_lowerer.MemberCellType(value_type, member.storage);
+  const auto bind_to = [&](const AccessPath& storage) {
+    const mir::ExprId target = resolve_block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::DerefExpr{
+                    .pointer = BuildRouteValue(lowerer, resolve_frame, route)},
+            .type = ref_type});
+    resolve_block.AppendStmt(
+        mir::ExprStmt{
+            .expr = resolve_block.exprs.Add(
+                mir::MakeCallExpr(
+                    mir::Direct{.target = support::BuiltinFn::kBindMember},
+                    {target, PathReference(unit, resolve_block, storage)},
+                    unit.builtins.void_type))});
+  };
+
+  if (data.peer.has_value()) {
+    const hir::Expr& peer = hir_scope.exprs.Get(*data.peer);
+    if (NamesSharedStorage(hir_scope, peer, member.type)) {
+      auto named = lowerer.LowerLhsExpr(peer, resolve_frame);
+      if (!named) return std::unexpected(std::move(named.error()));
+      bind_to(*named);
+      return {};
+    }
+  }
+
+  const mir::TypeId cell_type = mir::ObservableCellOf(unit.types, value_type);
+  const mir::FieldId kept =
+      mir_class.fields.Add(mir::FieldDecl{.type = cell_type});
+  const auto kept_cell = [&](const WalkFrame& in) -> diag::Result<AccessPath> {
+    mir::Block& block = *in.current_block;
+    const mir::ExprId self = block.exprs.Add(
+        MakeSelfRefExpr(in, in.current_class->self_pointer_type));
+    return AccessPath{
+        .owner = block.exprs.Add(
+            mir::MakeFieldAccessExpr(
+                BuildObjectDeref(unit, block, self),
+                mir::ClassFieldTarget{
+                    .owner = mir::IntraUnitClassRef{in.current_class_id},
+                    .slot = kept},
+                cell_type)),
+        .descent = {}};
+  };
+
+  mir::Block& ctor_block = *frame.current_block;
+  const mir::ExprId prototype = ctor_block.exprs.Add(
+      BuildDefaultValueFromHir(unit_lowerer, ctor_block, member.type));
+  ctor_block.AppendStmt(
+      mir::ExprStmt{
+          .expr = ctor_block.exprs.Add(
+              mir::MakeCapabilityInstallCallExpr(
+                  OwnerPlace(*kept_cell(frame)), prototype,
+                  support::BuiltinFn::kInitialize, unit.builtins.void_type))});
+  bind_to(*kept_cell(resolve_frame));
+  if (!data.peer.has_value()) return {};
+
+  const hir::Expr& source = hir_scope.exprs.Get(*data.peer);
+  auto drive = LowerContinuousDrive(
+      lowerer, frame, resolve_frame, init_frame,
+      [&](const WalkFrame& in) -> diag::Result<Lvalue> {
+        auto cell = kept_cell(in);
+        if (!cell) return std::unexpected(std::move(cell.error()));
+        return Lvalue{
+            .form = *std::move(cell),
+            .type = value_type,
+            .source_type = member.type,
+            .span = source.span};
+      },
+      source, support::StrengthLevel::kStrong, data.sensitivity);
+  if (!drive) return std::unexpected(std::move(drive.error()));
+  AppendProcessRegistration(
+      unit_lowerer, activate_frame, mir_class.callables.Add(*std::move(drive)),
+      support::BuiltinFn::kRegisterInitial);
+  return {};
+}
+
 // Realizes each connection that carries data across the boundary (LRM 23.3.3).
-// An input or output port is the implied continuous assignment between the two
-// cells, materialized as the same synthesized process a scope-level `assign`
-// produces, registered as a process; when the driven side is a net the edge
-// attaches a driver rather than writing the cell. A `ref` port carries no edge
-// and is emitted into the resolve block instead, binding the child's reference
-// member -- reached by the route to it -- to the connected variable's cell:
-// one statement, with no second cell and no continuous assignment.
+// A port whose member has a cell of its own is the implied continuous
+// assignment between the two cells, materialized as the same synthesized
+// process a scope-level `assign` produces, registered as a process; when the
+// driven side is a net the edge attaches a driver rather than writing the cell.
+// A `ref` port carries no edge and is emitted into the resolve block instead,
+// binding the child's reference member -- reached by the route to it -- to the
+// connected variable's cell: one statement, with no second cell and no
+// continuous assignment.
 //
 // A bidirectional port carries no data in either direction and states no
 // direction at all, so it is not one of these; what it states is which
@@ -1309,6 +1433,14 @@ auto InstallPortConnections(
     // only in which end of it drives (LRM 23.3.3).
     switch (data.direction) {
       case hir::PortDirection::kInput:
+        if (const auto* route = std::get_if<hir::ValueRoute>(&data.endpoint)) {
+          auto bound = BindInputPort(
+              lowerer, frame, resolve_frame, init_frame, activate_frame, *route,
+              data);
+          if (!bound) return std::unexpected(std::move(bound.error()));
+          continue;
+        }
+        break;
       case hir::PortDirection::kOutput:
         break;
       case hir::PortDirection::kInOut:
@@ -1332,10 +1464,11 @@ auto InstallPortConnections(
                 .data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
 
         // The peer is lent as a `ref` actual is. A part of a variable is not
-        // yet: the member is bound before the variable's declaration installs
-        // what it holds, which moves the part the reference would name.
-        auto peer_or =
-            lowerer.LowerLhsExpr(hir_scope.exprs.Get(data.peer), resolve_frame);
+        // yet: the member is bound before the variable takes its declared
+        // initial value, and storing a whole value may move the parts of the
+        // one it replaces, which the reference would go on naming.
+        auto peer_or = lowerer.LowerLhsExpr(
+            hir_scope.exprs.Get(*data.peer), resolve_frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
         if (!peer_or->descent.empty()) {
           return diag::Fail(
@@ -1367,8 +1500,8 @@ auto InstallPortConnections(
     // cell or observable cell -- picks the write protocol.
     const hir::ContinuousAssign assign{
         .span = pc.span,
-        .lhs = is_input ? cell.cell : data.peer,
-        .rhs = is_input ? data.peer : cell.cell,
+        .lhs = is_input ? cell.cell : *data.peer,
+        .rhs = is_input ? *data.peer : cell.cell,
         .strength = support::StrengthLevel::kStrong,
         .sensitivity_list = data.sensitivity};
     auto method_or = LowerContinuousAssign(
@@ -2547,11 +2680,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         initialize_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type)));
   };
 
-  // What elaboration settles is read while the object is still being built -- a
-  // block's own declarations and connections are written in terms of the index
-  // it stands at, and the loop advances that index as it builds (LRM 27.4) --
-  // so these cells exist from the constructor rather than from the initialize
-  // phase every other declared value waits for.
+  // A cell takes its declared representation and default as the object is
+  // built. What elaboration settles is read that early -- a block's own
+  // declarations and connections are written in terms of the index it stands
+  // at, and the loop advances that index as it builds (LRM 27.4) -- and
+  // whatever names a variable from elsewhere is bound before any value is
+  // assigned.
   const auto install_in_constructor =
       [&](hir::StructuralDataObjectId id) -> mir::ExprId {
     const auto& d = hir_scope.structural_data_objects.Get(id);
@@ -2654,29 +2788,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             AccessPath{.owner = init_target, .descent = {}}, value_id));
       };
 
-      // Every observable value cell installs its declared representation and
-      // default ahead of every initializer (LRM 10.5), so a later store --
-      // including a user initializer -- is held to that representation rather
-      // than fixing it by running first. A non-observable value member carries
-      // no cell wrapper, so an ordinary store of its initializer, or of the
-      // default where it has none, is what gives it its value.
+      // Every observable value cell takes its declared representation and
+      // default with the object, so a reference bound to it while the design is
+      // resolved names storage that exists, and a later store -- a user
+      // initializer included (LRM 10.5) -- is held to that representation
+      // rather than fixing it by running first. A non-observable value member
+      // carries no cell wrapper, so an ordinary store of its initializer, or of
+      // the default where it has none, is what gives it its value.
       if (unit_lowerer.Unit().types.Get(mir_field_type).IsCapabilityWrapper()) {
-        const mir::ExprId install_target = install_block.exprs.Add(
-            mir::MakeFieldAccessExpr(
-                BuildObjectDeref(
-                    unit_lowerer.Unit(), install_block,
-                    install_block.exprs.Add(
-                        MakeSelfRefExpr(install_frame, self_ptr_type))),
-                cell, mir_field_type));
-        const mir::ExprId prototype = install_block.exprs.Add(
-            BuildDefaultValueFromHir(unit_lowerer, install_block, d.type));
-        install_block.AppendStmt(
-            mir::ExprStmt{
-                .expr = install_block.exprs.Add(
-                    mir::MakeCapabilityInstallCallExpr(
-                        install_target, prototype,
-                        support::BuiltinFn::kInitialize,
-                        unit_lowerer.Unit().builtins.void_type))});
+        install_in_constructor(hir_id);
         if (var->initializer.has_value()) {
           auto value_or =
               LowerExpr(hir_scope.exprs.Get(*var->initializer), init_frame);

@@ -407,6 +407,11 @@ class TupleReference {
   [[nodiscard]] auto AdmitsWrite() const -> bool {
     return lent_.Admits();
   }
+  // A part lent by reference does not know the variable it is part of, so a
+  // write turned away has nowhere to be kept.
+  [[nodiscard]] static auto DisplacedStorage() -> LentTuple* {
+    return nullptr;
+  }
   [[nodiscard]] auto MutationStorage() -> LentTuple& {
     return place_;
   }
@@ -489,6 +494,28 @@ auto ReferToWideCell(void* cell, void* out) -> void* {
                .whole = true});
 }
 
+// A procedural continuous assignment on a member that names a wide value (LRM
+// 10.6.2), which a reference here names as its words: the storage the
+// assignment gives the member is named the same way.
+template <value::HeldAsWords T>
+auto WideRefBeginTakeover(void* reference, std::int64_t level) -> std::int64_t {
+  return BeginMemberTakeover<T>(ErasedAt(reference), level, [](Var<T>& forced) {
+    return ErasedReference{
+        .holder = static_cast<VariableCell*>(&forced),
+        .storage = HandleTo(forced.Storage()),
+        .whole = true};
+  });
+}
+
+template <value::HeldAsWords T>
+auto WideRefDriveTakeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return DriveMemberTakeover<T>(
+      ErasedAt(reference), level, generation,
+      [&](Var<T>& forced) { forced.SetBytes(value); });
+}
+
 // The value of `T` a reference names, where it lies, `width` bits wide.
 template <value::HeldAsWords T>
 auto WideLentAt(const ErasedReference& lent, std::int64_t width)
@@ -500,6 +527,11 @@ template <value::HeldAsWords T>
 void WideRefSet(void* reference, std::int64_t width, const void* value) {
   const ErasedReference& lent = ErasedAt(reference);
   if (!lent.Admits()) {
+    if (lent.whole) {
+      if (T* beneath = WholeVariable<T>(lent).DisplacedStorage()) {
+        beneath->TakeBytes(value);
+      }
+    }
     return;
   }
   const value::WideAt<T::kDomain> held = WideLentAt<T>(lent, width);
@@ -608,6 +640,11 @@ class WideReference {
 
   [[nodiscard]] auto AdmitsWrite() const -> bool {
     return lent_.Admits();
+  }
+  // A part lent by reference does not know the variable it is part of, so a
+  // write turned away has nowhere to be kept.
+  [[nodiscard]] static auto DisplacedStorage() -> LentWide<T>* {
+    return nullptr;
   }
   [[nodiscard]] auto MutationStorage() -> LentWide<T>& {
     return place_;
@@ -1768,6 +1805,7 @@ using lyra::runtime::WaitOn;
 using lyra::runtime::WaitOnImplicitList;
 using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
+using lyra::runtime::WatchedPlace;
 using lyra::value::AssociativeIndexOrder;
 using lyra::value::Chandle;
 using lyra::value::DpiBitBuffer;
@@ -2236,16 +2274,19 @@ auto lyra_rt_delay_real(
                unit_power, precision_power));
 }
 
-// What crosses is the cell's own address -- a variable, a net, a named event --
-// and a `void*` carries no type to adjust by, so it is read here as the address
-// of what waits on that cell. Every such cell names `Observable` as its first
-// base, which is what makes the two addresses one under the platform ABI.
+// What crosses is the place's one word. For a place reached by itself that is
+// the cell's own address -- a variable, a net, a named event -- and a `void*`
+// carries no type to adjust by, so it is read as the address of what waits on
+// that cell: every such cell names `Observable` as its first base, which is
+// what makes the two addresses one under the platform ABI. For a place reached
+// through a reference bound into a member it is the word that reference
+// answered, which says so itself.
 auto lyra_rt_make_trigger(
     void* observable, const void* observation, std::int64_t lsb_bit_offset,
     std::int64_t bit_width, void* out) -> void* {
   return Emplace(
       out, Trigger(
-               static_cast<Observable*>(observable),
+               WatchedPlace::FromWord(observable),
                Read<Observation>(observation), lsb_bit_offset, bit_width));
 }
 
@@ -2317,14 +2358,14 @@ void lyra_rt_read_report_add(
     void* report, void* place, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->Add(
-      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_add_through_handle(
     void* report, void* place, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->AddThroughHandle(
-      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_enter_call_on_handle(void* report) {
@@ -2343,7 +2384,7 @@ void lyra_rt_read_report_add_write(
     void* report, void* place, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->AddWrite(
-      static_cast<Observable*>(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_settle_as_implicit_list(void* report) {
@@ -2819,7 +2860,16 @@ auto lyra_rt_refer_property(void* object, void* storage, void* out) -> void* {
 }
 
 auto lyra_rt_reference_reports_to(const void* reference) -> void* {
-  return static_cast<const ErasedReference*>(reference)->ReportsTo();
+  return WatchedPlace::Through(ErasedAt(reference)).Word();
+}
+
+void lyra_rt_bind_member(void* member, const void* bound) {
+  lyra::runtime::current_runtime().Bound().Bind(
+      *static_cast<ErasedReference*>(member), ErasedAt(bound));
+}
+
+void lyra_rt_drives_continuously(const void* reference) {
+  ErasedAt(reference).DriveContinuously();
 }
 
 auto lyra_rt_string_cell_refer(void* cell, void* out) -> void* {
@@ -7267,6 +7317,19 @@ auto lyra_rt_bit8_cell_drive_takeover(
 void lyra_rt_bit8_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<Bit8>(cell).EndTakeover(level);
 }
+auto lyra_rt_bit8_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::LentAt<Bit8>(reference).BeginTakeover(level);
+}
+auto lyra_rt_bit8_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::LentAt<Bit8>(reference).DriveTakeover(
+      level, generation, Read<Bit8>(value));
+}
+void lyra_rt_bit8_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::LentAt<Bit8>(reference).EndTakeover(level);
+}
 auto lyra_rt_bit8_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit8>(cell, out);
 }
@@ -7354,6 +7417,19 @@ auto lyra_rt_bit16_cell_drive_takeover(
 }
 void lyra_rt_bit16_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<Bit16>(cell).EndTakeover(level);
+}
+auto lyra_rt_bit16_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::LentAt<Bit16>(reference).BeginTakeover(level);
+}
+auto lyra_rt_bit16_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::LentAt<Bit16>(reference).DriveTakeover(
+      level, generation, Read<Bit16>(value));
+}
+void lyra_rt_bit16_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::LentAt<Bit16>(reference).EndTakeover(level);
 }
 auto lyra_rt_bit16_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit16>(cell, out);
@@ -7443,6 +7519,19 @@ auto lyra_rt_bit32_cell_drive_takeover(
 void lyra_rt_bit32_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<Bit32>(cell).EndTakeover(level);
 }
+auto lyra_rt_bit32_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::LentAt<Bit32>(reference).BeginTakeover(level);
+}
+auto lyra_rt_bit32_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::LentAt<Bit32>(reference).DriveTakeover(
+      level, generation, Read<Bit32>(value));
+}
+void lyra_rt_bit32_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::LentAt<Bit32>(reference).EndTakeover(level);
+}
 auto lyra_rt_bit32_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit32>(cell, out);
 }
@@ -7530,6 +7619,19 @@ auto lyra_rt_bit64_cell_drive_takeover(
 }
 void lyra_rt_bit64_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<Bit64>(cell).EndTakeover(level);
+}
+auto lyra_rt_bit64_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::LentAt<Bit64>(reference).BeginTakeover(level);
+}
+auto lyra_rt_bit64_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::LentAt<Bit64>(reference).DriveTakeover(
+      level, generation, Read<Bit64>(value));
+}
+void lyra_rt_bit64_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::LentAt<Bit64>(reference).EndTakeover(level);
 }
 auto lyra_rt_bit64_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit64>(cell, out);
@@ -7619,6 +7721,19 @@ auto lyra_rt_logic8_cell_drive_takeover(
 }
 void lyra_rt_logic8_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<Logic8>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic8_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::LentAt<Logic8>(reference).BeginTakeover(level);
+}
+auto lyra_rt_logic8_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::LentAt<Logic8>(reference).DriveTakeover(
+      level, generation, Read<Logic8>(value));
+}
+void lyra_rt_logic8_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::LentAt<Logic8>(reference).EndTakeover(level);
 }
 auto lyra_rt_logic8_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic8>(cell, out);
@@ -7760,6 +7875,19 @@ auto lyra_rt_logic16_cell_drive_takeover(
 }
 void lyra_rt_logic16_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<Logic16>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic16_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::LentAt<Logic16>(reference).BeginTakeover(level);
+}
+auto lyra_rt_logic16_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::LentAt<Logic16>(reference).DriveTakeover(
+      level, generation, Read<Logic16>(value));
+}
+void lyra_rt_logic16_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::LentAt<Logic16>(reference).EndTakeover(level);
 }
 auto lyra_rt_logic16_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic16>(cell, out);
@@ -7903,6 +8031,19 @@ auto lyra_rt_logic32_cell_drive_takeover(
 void lyra_rt_logic32_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<Logic32>(cell).EndTakeover(level);
 }
+auto lyra_rt_logic32_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::LentAt<Logic32>(reference).BeginTakeover(level);
+}
+auto lyra_rt_logic32_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::LentAt<Logic32>(reference).DriveTakeover(
+      level, generation, Read<Logic32>(value));
+}
+void lyra_rt_logic32_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::LentAt<Logic32>(reference).EndTakeover(level);
+}
 auto lyra_rt_logic32_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic32>(cell, out);
 }
@@ -8044,6 +8185,19 @@ auto lyra_rt_logic64_cell_drive_takeover(
 }
 void lyra_rt_logic64_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<Logic64>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic64_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::LentAt<Logic64>(reference).BeginTakeover(level);
+}
+auto lyra_rt_logic64_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::LentAt<Logic64>(reference).DriveTakeover(
+      level, generation, Read<Logic64>(value));
+}
+void lyra_rt_logic64_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::LentAt<Logic64>(reference).EndTakeover(level);
 }
 auto lyra_rt_logic64_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic64>(cell, out);
@@ -8190,6 +8344,20 @@ auto lyra_rt_bit_wide_cell_drive_takeover(
 void lyra_rt_bit_wide_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<BitWide>(cell).EndTakeover(level);
 }
+auto lyra_rt_bit_wide_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::WideRefBeginTakeover<BitWide>(reference, level);
+}
+auto lyra_rt_bit_wide_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::WideRefDriveTakeover<BitWide>(
+      reference, level, generation, value);
+}
+void lyra_rt_bit_wide_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::EndMemberTakeover<BitWide>(
+      lyra::runtime::ErasedAt(reference), level);
+}
 auto lyra_rt_bit_wide_cell_refer(void* cell, void* out) -> void* {
   return lyra::runtime::ReferToWideCell<BitWide>(cell, out);
 }
@@ -8298,6 +8466,20 @@ auto lyra_rt_logic_wide_cell_drive_takeover(
 }
 void lyra_rt_logic_wide_cell_end_takeover(void* cell, std::int64_t level) {
   CellAt<LogicWide>(cell).EndTakeover(level);
+}
+auto lyra_rt_logic_wide_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return lyra::runtime::WideRefBeginTakeover<LogicWide>(reference, level);
+}
+auto lyra_rt_logic_wide_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return lyra::runtime::WideRefDriveTakeover<LogicWide>(
+      reference, level, generation, value);
+}
+void lyra_rt_logic_wide_ref_end_takeover(void* reference, std::int64_t level) {
+  lyra::runtime::EndMemberTakeover<LogicWide>(
+      lyra::runtime::ErasedAt(reference), level);
 }
 auto lyra_rt_logic_wide_cell_refer(void* cell, void* out) -> void* {
   return lyra::runtime::ReferToWideCell<LogicWide>(cell, out);
