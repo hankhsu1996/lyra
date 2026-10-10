@@ -330,6 +330,16 @@ class LirDumper {
                   "store {} = {}", FormatPlace(store.place),
                   FormatOperand(store.value));
             },
+            [&](const BitsStoreInstr& store) -> std::string {
+              return std::format(
+                  "store_bits {}{} = {}", FormatPlace(store.place),
+                  FormatBitsParts(store.parts), FormatOperand(store.bits));
+            },
+            [&](const StorageInstr& storage) -> std::string {
+              return std::format(
+                  "{} {}", StorageOpName(storage.op),
+                  FormatOperand(Use{.value = storage.of}));
+            },
             [&](const AddrOfInstr& addr) -> std::string {
               return std::format("addrof {}", FormatPlace(addr.place));
             },
@@ -422,8 +432,9 @@ class LirDumper {
             [](const OpenWriteTarget& w) -> std::string {
               return std::string{OpenWriteOpName(w.op)};
             },
-            [](const DesignatedBitsTarget& b) -> std::string {
-              return std::string{DesignatedBitsOpName(b.op)};
+            [&](const DesignatedBitsTarget& b) -> std::string {
+              return std::format(
+                  "insert_designated_bits{}", FormatBitsParts(b.parts));
             },
             [](const EndValueTarget&) -> std::string { return "end"; },
             [](const CopyValueTarget&) -> std::string { return "copy"; },
@@ -446,6 +457,18 @@ class LirDumper {
       out += FormatOperand(ops[i]);
     }
     return out;
+  }
+
+  // The parts some bits are reached through, each as where it starts and the
+  // type it is written at.
+  [[nodiscard]] static auto FormatBitsParts(std::span<const BitsPart> parts)
+      -> std::string {
+    std::string text;
+    for (const BitsPart& part : parts) {
+      text += std::format(
+          "[{} : {}]", FormatOperand(part.start), FormatType(part.type));
+    }
+    return text;
   }
 
   [[nodiscard]] static auto FormatPlace(const Place& place) -> std::string {

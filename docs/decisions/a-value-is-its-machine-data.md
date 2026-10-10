@@ -129,7 +129,9 @@ storage. Which waits are decided at the write is unchanged
 - The execution backend lays out values, cells and frames from the type, as the cross-unit record
   layout already does, so a cell's layout is a pure function of its type on both sides of a unit
   boundary.
-- Constants are compile-time constants on both backends.
+- Constants are compile-time constants on both backends wherever a value lies in what holds it.
+  [a-packed-value-is-its-words](a-packed-value-is-its-words.md) D2 says what a larger one is stated
+  as.
 - The C++ backend compiles one instantiation per distinct type a unit uses. Under D3 that number is
   bounded per unit; its compile cost is measured on the way, and edits pay it only for the units
   whose emitted text changed.

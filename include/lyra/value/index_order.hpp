@@ -50,11 +50,11 @@ class WildcardKey {
  public:
   template <IntegralValue I>
   WildcardKey(const I& index)  // NOLINT(google-explicit-constructor)
-      : WildcardKey(index.Load().View()) {
+      : WildcardKey(index.AsWords().View()) {
   }
   explicit WildcardKey(const ConstIntegralView& index)
-      : value_(index.planes.value.begin(), index.planes.value.end()),
-        unknown_(index.planes.unknown.begin(), index.planes.unknown.end()),
+      : value_(index.value.begin(), index.value.end()),
+        unknown_(index.unknown.begin(), index.unknown.end()),
         width_(index.width),
         order_(WildcardIndexWords(index)) {
   }
@@ -62,7 +62,8 @@ class WildcardKey {
   // The index as the program wrote it, read as unsigned.
   [[nodiscard]] auto View() const -> ConstIntegralView {
     return ConstIntegralView{
-        .planes = ConstPlanes{.value = value_, .unknown = unknown_},
+        .value = value_,
+        .unknown = unknown_,
         .width = width_,
         .signedness = Signedness::kUnsigned};
   }
@@ -70,7 +71,7 @@ class WildcardKey {
     return order_;
   }
   [[nodiscard]] auto HasUnknown() const -> bool {
-    return lyra::value::HasUnknown(View().planes);
+    return lyra::value::HasUnknown(View());
   }
 
  private:

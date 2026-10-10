@@ -5,7 +5,8 @@
 // uses: the first member or element occupies the most significant bits, and the
 // conversion is lossless in both directions, so casting a value out and back
 // yields what it started as. A packed value converts the same way, its bits
-// already being that sequence (LRM 6.24.1, 6.24.3).
+// already being that sequence, and the sequence is as long as the type makes
+// it, thousands of bits included (LRM 6.24.1, 6.24.3).
 module Top;
   typedef struct {
     byte first;
@@ -27,6 +28,35 @@ module Top;
   Triple from_bus;
   Bytes from_triple;
   Bus from_array;
+
+  typedef struct {
+    logic [8191:0] upper;
+    bit [8191:0] lower;
+  } wide_pair_t;
+  typedef logic [16383:0] wide_flat_t;
+
+  typedef wide_pair_t wide_pairs_t[2];
+  typedef logic [32767:0] wide_pairs_flat_t;
+
+  wide_pairs_t wide_pairs;
+  wide_pairs_t wide_pairs_back;
+  wide_pairs_flat_t wide_pairs_flat;
+  wide_pair_t wide_pair;
+  wide_pair_t wide_pair_back;
+  wide_flat_t wide_flat;
+
+  initial begin
+    wide_pair.upper = {1024{8'hA5}};
+    wide_pair.lower = {1024{8'h3C}};
+    wide_flat = wide_flat_t'(wide_pair);
+    wide_pair_back = wide_pair_t'(wide_flat);
+
+    wide_pairs[0] = wide_pair;
+    wide_pairs[1].upper = {1024{8'h5A}};
+    wide_pairs[1].lower = {1024{8'hC3}};
+    wide_pairs_flat = wide_pairs_flat_t'(wide_pairs);
+    wide_pairs_back = wide_pairs_t'(wide_pairs_flat);
+  end
 
   initial begin
     Triple source;
@@ -71,6 +101,23 @@ module Top;
              from_triple[2], from_triple[1], from_triple[0]);
     if (from_array !== 24'hABCDEF)
       $fatal(1, "from_array was %h, expected abcdef", from_array);
+    if (wide_flat[16383:8192] !== {1024{8'hA5}})
+      $fatal(1, "the first member of a wide structure was not its upper bits");
+    if (wide_flat[8191:0] !== {1024{8'h3C}})
+      $fatal(1, "the second member of a wide structure was not its lower bits");
+    if (wide_pair_back.upper !== wide_pair.upper
+        || wide_pair_back.lower !== wide_pair.lower)
+      $fatal(1, "a wide structure cast out and back was not what it started as");
+    if (wide_pairs_flat[32767:16384] !== wide_flat)
+      $fatal(1, "the first of an array of wide structures was not its upper bits");
+    if (wide_pairs_flat[16383:8192] !== {1024{8'h5A}}
+        || wide_pairs_flat[8191:0] !== {1024{8'hC3}})
+      $fatal(1, "the second of an array of wide structures was not its lower bits");
+    if (wide_pairs_back[0].upper !== wide_pairs[0].upper
+        || wide_pairs_back[0].lower !== wide_pairs[0].lower
+        || wide_pairs_back[1].upper !== wide_pairs[1].upper
+        || wide_pairs_back[1].lower !== wide_pairs[1].lower)
+      $fatal(1, "an array of wide structures cast out and back was changed");
     $display("All checks passed");
   end
 endmodule

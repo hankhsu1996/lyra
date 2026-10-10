@@ -22,9 +22,12 @@ The numeric IDs are stable references.
 
 - [x] P3 -- Packed struct field access (LRM 7.2.1). Reads and writes through `s.f`, composing with
       element / range selectors on either side (`s[0]`, `s[3:0]`, `s.f[3:0]`). Whole-struct copy,
-      equality, and arithmetic ride on the "treated as a single vector" projection. Mixed 2-state /
-      4-state member conversion (LRM 7.2.1 fourth paragraph) tracks the struct-level atom; per-field
-      state-promotion at the boundary is a follow-up.
+      equality, and arithmetic ride on the "treated as a single vector" projection. A structure with
+      2-state and 4-state members is one 4-state vector, and a 2-state member converts where it is
+      read and where it is written (LRM 7.2.1). Read out of a structure whose bits are x it is 0,
+      and written with x or z it holds 0 there. A write to part of such a member writes only the
+      bits it names (LRM 11.5.1), so the member's other bits keep what the vector holds, x included,
+      on both backends.
 
 - [x] P4 -- Packed union (LRM 7.3.1 / 7.3.2), tagged and untagged. Untagged hard and soft unions
       overlay their members at the LSBs, and reads / writes reinterpret per the accessed member's

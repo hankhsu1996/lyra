@@ -223,8 +223,8 @@ FormatArg::FormatArg(const RealValue<Host>& value)
     const FormatSpec& spec, FormatArg arg, const FormatContext& ctx = {})
     -> std::string;
 
-// An integral operand's text under `spec`, read through its planes, width and
-// signedness by code compiled once for every integral type.
+// An integral operand's text under `spec`, by code compiled once for every
+// integral type.
 [[nodiscard]] auto FormatIntegralOperand(
     const FormatSpec& spec, const ConstIntegralView& value,
     const FormatContext& ctx) -> std::string;
@@ -238,7 +238,7 @@ struct Formatter<Integral<kWidth, kSignedness, kDomain>> {
       const FormatSpec& spec,
       const Integral<kWidth, kSignedness, kDomain>& value,
       const FormatContext& ctx) -> std::string {
-    return FormatIntegralOperand(spec, value.Load().View(), ctx);
+    return FormatIntegralOperand(spec, value.AsWords().View(), ctx);
   }
 };
 

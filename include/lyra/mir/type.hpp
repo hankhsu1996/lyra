@@ -16,6 +16,7 @@
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/runtime_class.hpp"
+#include "lyra/value/integral_fwd.hpp"
 
 namespace lyra::mir {
 
@@ -43,6 +44,16 @@ struct IntegralType {
 
   auto operator==(const IntegralType&) const -> bool = default;
 };
+
+// The states a bit of a type holds, as the value library names them.
+[[nodiscard]] auto StateDomainOf(IntegralStateKind state) -> value::StateDomain;
+
+// Whether a value of `integral` owns its words apart from where it is held,
+// which the value library decides from how many bytes the type lays one out in.
+// A value held in place is small enough to be carried as data wherever it is a
+// constant; one that owns its words is as large as its type says, so a unit
+// states one as data only where the source wrote that much data.
+[[nodiscard]] auto UsesHeapWords(const IntegralType& integral) -> bool;
 
 // The planes a value of `integral` is held in, every position clear: one word
 // per 64 bits of its width, and an unknown plane only where a bit of the type

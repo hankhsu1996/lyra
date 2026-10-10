@@ -2,7 +2,9 @@
 // positions that do not exist and the stored bits at those that do, and when
 // it is written it changes only the positions that do exist. One that lies
 // entirely outside the vector reads as x throughout and writes nothing. A
-// 4-state result carries those x bits; a 2-state one reads them as 0
+// 4-state result carries those x bits; a 2-state one reads them as 0. A
+// part-select may be wider than the vector it is taken in, and then stores
+// the bits of what is assigned that fall on positions that exist
 // (LRM 11.5.1, 11.3.4).
 module Top;
   bit [7:0] two_state_source;
@@ -20,6 +22,18 @@ module Top;
   logic [7:0] high_4state_write;
   logic [7:0] low_4state_write;
   logic [7:0] outside_4state_write;
+  logic [7:0] covering_write;
+  logic [7:0] wider_from_below_write;
+  logic [7:0] local_covering_write;
+  logic [7:0] local_wider_from_below_write;
+
+  function automatic logic [7:0] write_wider_to_a_local(
+      logic [7:0] start, int at, logic [69:0] bits);
+    logic [7:0] f;
+    f = start;
+    f[at +: 70] = bits;
+    return f;
+  endfunction
 
   initial begin
     outside_2state = 4'hF;
@@ -57,6 +71,18 @@ module Top;
     idx = 100;
     outside_2state_write[idx +: 4] = 4'b1001;
     outside_4state_write[idx +: 4] = 4'b1001;
+
+    covering_write = 8'h00;
+    idx = -3;
+    covering_write[idx +: 70] = {70{1'b1}};
+
+    wider_from_below_write = 8'hF0;
+    idx = -66;
+    wider_from_below_write[idx +: 70] = {4'b0101, 66'd0};
+
+    local_covering_write = write_wider_to_a_local(8'h00, -3, {70{1'b1}});
+    local_wider_from_below_write =
+        write_wider_to_a_local(8'hF0, -66, {4'b0101, 66'd0});
   end
 
   final begin
@@ -90,6 +116,18 @@ module Top;
     if (outside_4state_write !== 8'hA5)
       $fatal(1, "4-state write at 100 gave %h, expected a5",
              outside_4state_write);
+    if (covering_write !== 8'hFF)
+      $fatal(1, "a 70-bit write covering the vector gave %h, expected ff",
+             covering_write);
+    if (wider_from_below_write !== 8'hF5)
+      $fatal(1, "a 70-bit write ending at bit 3 gave %h, expected f5",
+             wider_from_below_write);
+    if (local_covering_write !== 8'hFF)
+      $fatal(1, "a 70-bit write covering a local gave %h, expected ff",
+             local_covering_write);
+    if (local_wider_from_below_write !== 8'hF5)
+      $fatal(1, "a 70-bit write ending at a local's bit 3 gave %h, expected f5",
+             local_wider_from_below_write);
     $display("All checks passed");
   end
 endmodule

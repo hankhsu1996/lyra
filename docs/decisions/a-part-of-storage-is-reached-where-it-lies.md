@@ -31,7 +31,10 @@ there.**
   unpacked array, a dynamic array, a queue or an associative array, and a member of an unpacked
   structure, are storage (LRM 7.2, 7.4, 7.8, 7.10). A bit or slice of a packed value, a character of
   a string and a member of a union are views of their whole. MIR-to-LIR reads that fact to choose
-  between a place step and a value projection. Nothing else asks it.
+  between a place step and a value projection. Nothing else asks it. A view is not thereby written
+  by rebuilding its whole. Bits of a packed value that lies at a place are written where they lie
+  ([a-packed-value-is-its-words](a-packed-value-is-its-words.md) D3), on the statement that writes
+  them and not as a step of the place.
 - **LIR states an element and a component as place steps, beside member and dereference.** An
   element is named by the coordinate the program computed, a component by its position. The backend
   realizes an element step through the library, which holds the container, and a component step as
@@ -58,7 +61,7 @@ there.**
   (LRM 7.6).
 - **A method that changes its receiver changes it where it lies.** Push, pop, insert, delete, sort,
   `putc` and a shift-assign each act on the storage the receiver names. A receiver that is a view is
-  read out, changed and written back, as any write to a view is.
+  read out, changed and written back.
 - **A value no place holds is given one.** A part of a call's result, or of a value a view reached,
   is reached in a frame slot the value is bound to for the rest of the full-expression, which is how
   a C++ temporary gets an address. A write to a member of a structure held in a union member lands

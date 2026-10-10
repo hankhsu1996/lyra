@@ -118,24 +118,22 @@ auto AnyValue::BitstreamWidth() const -> Int {
 }
 
 auto AnyValue::CountBits(const ConstIntegralView& control_bits) const -> Int {
-  return TakeBuilt<Int>([&](void* out) {
-    Type().CountBits(Bytes(), control_bits.planes, control_bits.width, out);
-  });
+  return TakeBuilt<Int>(
+      [&](void* out) { Type().CountBits(Bytes(), control_bits, out); });
 }
 
 auto AnyValue::WriteToStream(
-    Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
-    -> std::uint64_t {
-  return Type().WriteToStream(Bytes(), stream, stream_width, filled);
+    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+  return Type().WriteToStream(Bytes(), stream, filled);
 }
 
 auto AnyValue::ReadFromStream(
-    ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+    const ConstIntegralView& stream, std::uint64_t taken) const
     -> std::pair<AnyValue, std::uint64_t> {
   const ValueType& type = Type();
   std::uint64_t after = taken;
   AnyValue read = Built(type, [&](void* out) {
-    after = type.ReadFromStream(stream, stream_width, taken, Bytes(), out);
+    after = type.ReadFromStream(stream, taken, Bytes(), out);
   });
   return {std::move(read), after};
 }

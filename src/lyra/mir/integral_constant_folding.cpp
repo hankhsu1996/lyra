@@ -47,21 +47,11 @@ auto SignednessOf(Signedness signedness) -> value::Signedness {
   throw InternalError("FoldIntegral: unknown signedness");
 }
 
-auto DomainOf(IntegralStateKind state) -> value::StateDomain {
-  switch (state) {
-    case IntegralStateKind::kTwoState:
-      return value::StateDomain::kTwoState;
-    case IntegralStateKind::kFourState:
-      return value::StateDomain::kFourState;
-  }
-  throw InternalError("FoldIntegral: unknown integral state kind");
-}
-
 auto ShapeOf(const IntegralType& type) -> value::IntegralShape {
   return value::IntegralShape{
       .width = type.bit_width,
       .signedness = SignednessOf(type.signedness),
-      .domain = DomainOf(type.state_kind)};
+      .domain = StateDomainOf(type.state_kind)};
 }
 
 auto ShapeOf(const CompilationUnit& unit, TypeId type)
@@ -89,40 +79,20 @@ auto AppliedOperand(
     const CompilationUnit& unit, const Expr& operand, IntegralOperandKind kind,
     const std::optional<value::IntegralShape>& shape)
     -> std::optional<value::IntegralOperand> {
-  const auto planes = [&]() -> std::optional<value::ConstPlanes> {
-    const IntegralConstant* constant = ConstantOf(unit, operand);
-    if (constant == nullptr) {
-      return std::nullopt;
-    }
-    return value::ConstPlanes{
-        .value = constant->value_words, .unknown = constant->state_words};
-  };
-  const auto bits = [&]() -> std::optional<value::IntegralOperand> {
-    const std::optional<value::ConstPlanes> held = planes();
-    if (!held) {
-      return std::nullopt;
-    }
-    return value::BitsOperand{.planes = *held, .width = shape->width};
-  };
-  const auto number = [&]() -> std::optional<value::IntegralOperand> {
-    const std::optional<value::ConstPlanes> held = planes();
-    if (!held) {
-      return std::nullopt;
-    }
-    return value::NumberOperand{
-        .planes = *held,
-        .width = shape->width,
-        .signedness = shape->signedness};
-  };
   switch (kind) {
     case IntegralOperandKind::kBits:
-      return bits();
-    // An operand of the first one's type is read as the first one is, which the
-    // operation's own arm does, so it is handed over with all it could be read
-    // by.
     case IntegralOperandKind::kNumber:
-    case IntegralOperandKind::kSameType:
-      return number();
+    case IntegralOperandKind::kSameType: {
+      const IntegralConstant* constant = ConstantOf(unit, operand);
+      if (constant == nullptr) {
+        return std::nullopt;
+      }
+      return value::ConstIntegralView{
+          .value = constant->value_words,
+          .unknown = constant->state_words,
+          .width = shape->width,
+          .signedness = shape->signedness};
+    }
     case IntegralOperandKind::kMachineInt: {
       const auto* literal = std::get_if<MachineIntLiteral>(&operand.data);
       return literal == nullptr
@@ -220,10 +190,8 @@ auto FoldStringFromBits(const CompilationUnit& unit, const Expr& operand)
   return std::string(
       value::String::FromIntegral(
           value::ConstIntegralView{
-              .planes =
-                  value::ConstPlanes{
-                      .value = constant->value_words,
-                      .unknown = constant->state_words},
+              .value = constant->value_words,
+              .unknown = constant->state_words,
               .width = shape.width,
               .signedness = shape.signedness})
           .View());
@@ -241,10 +209,8 @@ auto FoldFormattedText(
   return value::FormatIntegralOperand(
       spec,
       value::ConstIntegralView{
-          .planes =
-              value::ConstPlanes{
-                  .value = constant->value_words,
-                  .unknown = constant->state_words},
+          .value = constant->value_words,
+          .unknown = constant->state_words,
           .width = shape.width,
           .signedness = shape.signedness},
       value::FormatContext{});
@@ -289,14 +255,30 @@ auto FoldIntegral(
   if (applied.size() != kinds.size()) {
     return std::nullopt;
   }
-  // An operation answering a machine value writes no planes.
+  // Folding states as data what the operands already state as data. Where the
+  // answer owns its words and is wider than everything it was computed from --
+  // a fill, an extension, a replication -- the data would be made here, as
+  // large as the type, so the operation stays what the unit states.
+  if (answer_shape.has_value() &&
+      UsesHeapWords(unit.types.Get(result).Integral())) {
+    std::uint64_t stated = 0;
+    for (const value::IntegralShape& operand : integral) {
+      stated += operand.width;
+    }
+    if (answer_shape->width > stated) {
+      return std::nullopt;
+    }
+  }
+  // An operation answering a machine value writes no integral one.
   IntegralConstant answer =
       answer_shape ? BlankIntegralConstant(unit.types.Get(result).Integral())
                    : IntegralConstant{};
   const value::MachineAnswer machine = value::ApplyIntegralOperation(
       op, applied,
-      value::Planes{.value = answer.value_words, .unknown = answer.state_words},
-      answer_shape.value_or(value::IntegralShape{}).width);
+      value::IntegralView{
+          .value = answer.value_words,
+          .unknown = answer.state_words,
+          .width = answer_shape.value_or(value::IntegralShape{}).width});
   return std::visit(
       Overloaded{
           [&](std::monostate) -> FoldedIntegral { return std::move(answer); },

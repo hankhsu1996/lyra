@@ -42,7 +42,8 @@ and ends the program with a failing status on both.
 A value the generated side makes is an object in its own frame, built there by the entry that
 answers with it and ended where the source says it stops being readable
 (`../decisions/a-value-lives-in-its-makers-frame.md`). A value whose lifetime crosses a suspension
-needs storage the execution owns.
+needs storage the execution owns, and a value too large to lie in a frame has its bytes kept apart
+from it.
 
 - [x] **Memory is bounded by what the program can still read, not by how much it computed.** Every
       value an entry or a generated body answers with is built in the caller's frame and ended at
@@ -50,6 +51,16 @@ needs storage the execution owns.
       variable's frame slot holds its object and ends it with its block. A loop of a million
       function calls holds 4.5 MB, as it does at a hundred thousand; before, the values accumulated
       until the next wait, 1.85 GB at a million calls.
+
+- [x] **What a call takes from the stack does not follow a width the design declares.** A frame
+      keeps a value's bytes up to a fixed size and the address of them past it, obtained where the
+      value is made and given back where its storage goes out of use, on every way out. A design
+      declaring a vector of the widest type the front end takes, 16,777,215 bits, adding to it,
+      shifting it and passing it through a function runs started directly under an 8 MiB stack;
+      before, a program holding such a value ended on a fault with no message. A program whose
+      subroutines recurse past the stack it was started with says so in words before it ends. A
+      write to part of such a value costs the part, where a subroutine holds it as its own local as
+      anywhere else.
 
 - [x] **A value that crosses a suspension survives, for the value domains realized today.** A
       value-typed non-managed procedural local in a suspending body -- a loop counter, a read-only
@@ -135,12 +146,11 @@ ownership, or native in-frame layout) for every value.
       equality and case-equality families, reports its size, reads and writes an element (an
       out-of-range read yields the element default and an out-of-range write is discarded, LRM 7.4.5
       / 7.4.6), empties under `delete`, reads a contiguous range select as a fixed-size unpacked
-      array and writes one functionally (LRM 7.4.6), lives in a member slot as a whole-cell
-      observable signal whose element write fires subscribers, and crosses a suspension as an
-      activation-frame value. An element write, a range write, and `delete` are functional
-      whole-value updates stored back through the owner -- never an in-place mutation of a value
-      reached through a possibly-shared handle -- so value semantics hold across a copy; this is the
-      mutating-container protocol the queue and associative array reuse.
+      array and writes one (LRM 7.4.6), lives in a member slot as a whole-cell observable signal
+      whose element write fires subscribers, and crosses a suspension as an activation-frame value.
+      An element write reaches the element it names and a range write the elements it names, within
+      one write of the variable, and neither rebuilds the array; this is the mutating-container
+      protocol the queue and associative array reuse.
 - [x] **The fixed-size unpacked array** (LRM 7.4.2) -- realized on the execution backend as a
       fixed-arity container value domain. It default-constructs member-wise, builds from an
       enumerated element list and from a replicated pattern through one repeat-unit-and-count path,
@@ -152,8 +162,8 @@ ownership, or native in-frame layout) for every value.
       static type's and arrives at a select as its own operand, so a whole-value store copies
       positions and relabels nothing -- and a store between two arrays whose declared ranges differ
       lowers, because the range is gone by this layer, both sides are one type, and a type pool
-      keyed by content says so. A range write rebuilds the whole value with that window replaced
-      (LRM 7.4.6) and stores it back through the owner.
+      keyed by content says so. A range write reaches the elements it names and does not rebuild the
+      value (LRM 7.4.6).
 - [x] **The queue** (LRM 7.10) -- realized on the execution backend as a run-time-sized ordered
       container value domain. It defaults to empty, builds from an assignment pattern, copies with
       value semantics, takes the equality and case-equality families, reports its size and its
@@ -552,10 +562,11 @@ each meets the same lifetime question above.
       the units make is still collected in the order the design lists them, so the program is the
       same however many ran at once. Measured on the RISC-V core at `-j 4`: 7.2 s to build by
       default and 27.0 s under `--release`, where the C++ path takes 51.8 s and 679 s.
-- [ ] **What optimizing the design's module buys at run time.** Nothing measurable yet: a loop of
-      two million iterations runs in the same time at either level, because every operation on a
-      value is a call into the runtime library, which is compiled apart from the module and cannot
-      be inlined into it. Optimizing across that boundary is what the next saving waits on.
+- [ ] **What optimizing the design's module buys at run time.** Not measured since an operation on a
+      value of up to 64 bits became instructions in the module. When every operation was a call into
+      the runtime library, a loop of two million iterations ran in the same time at either level.
+      What still crosses into the library, which is compiled apart from the module and cannot be
+      inlined into it, is what optimizing across that boundary would reach.
 - [x] **An array of owned children.** A child scope -- a module instance, a generate block, a
       procedural block scope -- is constructed, reached through the member holding it and per-axis
       index, and reports its hierarchical name, whether it stands alone or is one of an array. Each

@@ -14,9 +14,8 @@
 
 namespace lyra::value {
 
-// LRM 21.3.4.3 output destination for a single parsed value: the planes of an
-// integral one, written in place at the width and signedness the view states,
-// or a string.
+// LRM 21.3.4.3 output destination for a single parsed value: an integral one
+// written in place at the width its view states, or a string.
 using ScanTarget = std::variant<IntegralView, String*>;
 
 // What a scan answers beside the values it parsed: how many conversions it
@@ -46,17 +45,20 @@ class ScanSlot;
 template <IntegralValue T>
 class ScanSlot<T> {
  public:
-  explicit ScanSlot(const T& prototype) : held_(prototype.Load()) {
+  explicit ScanSlot(const T& prototype) : held_(kShapeOf<T>) {
+    Convert(held_.MutableView(), prototype.View());
   }
   [[nodiscard]] auto Target() -> ScanTarget {
     return held_.MutableView();
   }
   [[nodiscard]] auto Value() const -> T {
-    return T::FromWords(held_);
+    T out = T::Zero();
+    Convert(out.MutableView(), held_.View());
+    return out;
   }
 
  private:
-  typename T::Words held_;
+  WrittenWords held_;
 };
 
 template <>

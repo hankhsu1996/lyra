@@ -11,17 +11,15 @@ namespace lyra::compiler {
 // The front end and every lowering walk an expression by recursing into its
 // operands, and a run of one binary operator is as deep as it is long, so the
 // stack a thread compiles on bounds how long a run a design may write. Every
-// thread that compiles is given the same amount, enough for a run of ten
-// thousand operands, and one that runs out says so before the process ends.
+// thread that compiles is one of these, given the same amount, enough for a run
+// of ten thousand operands, or as much of it as whoever started the process
+// allows a stack at all, and one that runs out says so before the process
+// ends. The thread a process starts on is not compiled on: its stack is as
+// large as whoever started the process allowed, which is theirs to say and what
+// a program this process starts is given too.
 
-// Gives the thread the process starts on that much stack, as far as whoever
-// started the process allows. That thread's stack is supplied as it is used,
-// up to the process's limit, so raising the limit costs nothing a compilation
-// does not use.
-void GiveStartingThreadCompileStack();
-
-// A thread with that much stack. It runs `work` once and is joined before it
-// goes away.
+// A thread with that much stack to compile on. It runs `work` once and is
+// joined before it goes away.
 class StackThread {
  public:
   explicit StackThread(std::function<void()> work);
@@ -39,8 +37,8 @@ class StackThread {
 
   std::packaged_task<void()> work_;
   std::future<void> done_;
-  // Where the thread is told its stack ran out, which cannot be the stack.
-  std::vector<std::byte> signal_stack_;
+  // What the thread handles a stack overflow on, which cannot be the stack.
+  std::vector<std::byte> alt_stack_;
   pthread_t thread_{};
   bool joined_ = false;
 };

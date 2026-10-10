@@ -272,13 +272,13 @@ struct DecimalResult {
 void WriteDecimal(const DecimalResult& parsed, const IntegralView& dest) {
   switch (parsed.form) {
     case DecimalResult::Form::kInt:
-      FromInt(dest.planes, dest.width, parsed.int_value);
+      FromInt(dest, parsed.int_value);
       return;
     case DecimalResult::Form::kFillX:
-      FillScalar(dest.planes, dest.width, FourStateBit::kUnknown);
+      FillScalar(dest, FourStateBit::kUnknown);
       return;
     case DecimalResult::Form::kFillZ:
-      FillScalar(dest.planes, dest.width, FourStateBit::kHighImpedance);
+      FillScalar(dest, FourStateBit::kHighImpedance);
       return;
   }
   std::unreachable();
@@ -289,7 +289,7 @@ void WriteDecimal(const DecimalResult& parsed, const IntegralView& dest) {
 // target holds an x or z digit as 0.
 void WriteDigits(
     std::string_view run, DigitRadix radix, const IntegralView& dest) {
-  if (!FromDigits(dest.planes, dest.width, radix, run)) {
+  if (!FromDigits(dest, radix, run)) {
     throw InternalError(
         "$sscanf/$fscanf: a scanned run of digits holds a character that is no "
         "digit of its radix -- please report this as a bug");
@@ -297,7 +297,7 @@ void WriteDigits(
 }
 
 void WriteChar(unsigned char ch, const IntegralView& dest) {
-  FromInt(dest.planes, dest.width, static_cast<std::int64_t>(ch));
+  FromInt(dest, static_cast<std::int64_t>(ch));
 }
 
 [[nodiscard]] auto ScanFromSource(

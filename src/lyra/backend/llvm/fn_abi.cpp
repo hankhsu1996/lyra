@@ -262,8 +262,6 @@ auto TypeArgsOf(
     }
     case support::AnswerTold::kIntegralExtent:
       return {TypeExtentArg{.type = type()}};
-    case support::AnswerTold::kIntegralWidth:
-      return {TypeWidthArg{.type = type()}};
   }
   throw InternalError("llvm codegen: unknown answer told");
 }
@@ -893,8 +891,33 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
             return on_storage_of(
                 t.value, t.op, support::AnswerTold::kNothing, std::nullopt);
           },
+          // The entry takes the designation, the parts the bits lie in as
+          // one span, where the bits start, and the bits, whatever number of
+          // parts the write reaches them through; it is told how wide the
+          // value designated is.
           [&](const lir::DesignatedBitsTarget& t) -> Arranged {
-            return on_storage_of(t.value, t.op, AnswerToldOf(t.op), t.bits);
+            auto domain = module_->DomainOf(t.value);
+            if (!domain) {
+              return std::unexpected(std::move(domain.error()));
+            }
+            const support::OperandReadings readings =
+                OperandReadingsOf(RuntimeOp::kInsertDesignatedBits);
+            const Told told = ToldOf(*domain, RuntimeOp::kInsertDesignatedBits);
+            const ToldTypes held{.held = t.value, .member = std::nullopt};
+            return FnAbi{
+                .implicit_arg = NoImplicitArg{},
+                .named_part = std::nullopt,
+                .args =
+                    {ArgOf(
+                         readings, 0, OperandType(call.args.front()), told,
+                         held),
+                     Direct(module_->Types().Span()),
+                     ArgOf(
+                         readings, 2, OperandType(t.parts.back().start), told,
+                         held),
+                     ArgOf(readings, 3, t.parts.back().type, told, held)},
+                .type_args = {},
+                .ret = ret};
           },
           [&](const lir::EndValueTarget&) { return as_stated(); },
           [&](const lir::CopyValueTarget&) { return as_stated(); },

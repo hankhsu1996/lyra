@@ -7,19 +7,24 @@
 ## Status
 
 Accepted; D1's representation is superseded by
-[value-descent-as-named-calls](value-descent-as-named-calls.md) (2026-09-09), and D4 is not built.
-D2 is superseded for a part that is storage of its own -- an array element, a structure member -- by
-[a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md)
-(2026-09-24): such a part is written where it lies on both backends, and D2 governs the views that
-remain.
+[value-descent-as-named-calls](value-descent-as-named-calls.md) (2026-09-09), and D4 is not built. A
+part that is storage of its own -- an array element, a structure member -- is no value projection
+and is written where it lies on both backends
+([a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md),
+2026-09-24). Bits of a packed value are written where they lie as well
+([a-packed-value-is-its-words](a-packed-value-is-its-words.md) D3, 2026-10-10), and D2 states both
+forms.
 
-D2 is the load-bearing half and stands: an interior write is a functional whole-value update stored
-back through the owner, with owner and coordinates evaluated once. What the superseding entry
-replaces is how that update is stated -- not a designator whose owner and selector path a consumer
-reads, but one call per level whose entry HIR-to-MIR names, with the descent held in the lowering.
-D3 stands and is where a target's in-place realization lives; D5 stands. D4's projection reference
-has no form without the designator, so a `ref` bound to a value interior is refused rather than
-mis-aliased. The migration shape below describes a staged plan that was overtaken.
+D2 is the load-bearing half. It fixes what every interior write means, which is that the owner
+afterwards holds its old value with the selected part replaced, and that owner and coordinates were
+evaluated once. How the replacement is carried out follows from what the part is, and the functional
+whole-value update stored back through the owner is the form for a view whose representation the
+library owns. What the superseding entry replaces is how the write is stated -- not a designator
+whose owner and selector path a consumer reads, but one call per level whose entry HIR-to-MIR names,
+with the descent held in the lowering. D3 stands and is where a target's in-place realization of
+such a view lives; D5 stands. D4's projection reference has no form without the designator, so a
+`ref` bound to a value interior is refused rather than mis-aliased. The migration shape below
+describes a staged plan that was overtaken.
 
 ## Why this decision matters
 
@@ -41,19 +46,22 @@ that statement.
 
 ## Findings that shaped the decision
 
-- **The asymmetry is forced by value realization, not an implementation gap.**
-  `jit-value-realization.md` invariant 6: a runtime value handle is immutable from the generated
-  side, so every apparent mutation is functional -- a new whole value stored back through the owner.
-  The execution backend, holding only handles, cannot write an interior in place. The C++ backend,
-  which owns real storage, can. Both realize the same value semantics.
+- **The asymmetry is forced by value realization wherever a value is held as a handle, and nowhere
+  else.** `jit-value-realization.md` invariant 6: a runtime value handle is immutable from the
+  generated side, so every apparent mutation is functional -- a new whole value stored back through
+  the owner. Where the execution backend holds only a handle it cannot write an interior in place.
+  The C++ backend, which owns real storage, can. Both realize the same value semantics. The premise
+  is a condition of a handle and not of a value. A packed value is its words where they lie
+  ([a-packed-value-is-its-words](a-packed-value-is-its-words.md) D1), so nothing stands between
+  generated code and its bits, and the functional form is not forced there.
 - **The place-vs-projection fact is currently re-derived, and differently, by each backend.** The
   execution backend inspects the target expression's kind and walks it back to an owner to classify
   the write; the C++ backend treats it as an lvalue it may mutate. `mir.md`'s Forbidden Shapes: a
   fact two backends could infer differently is not yet in MIR and belongs there.
 - **The layer below MIR already states the distinction.** `lir.md` separates a value-functional
   aggregate selector (extract / update, no addressable interior) from an addressable place
-  projection (whose vocabulary is dereference and member -- it has no index or slice arm). MIR is
-  the one layer still carrying the interior write as a reference.
+  projection (whose vocabulary is dereference, member, element and component -- it has no step for
+  bits). MIR is the one layer still carrying the interior write as a reference.
 - **The C++ in-place path is already proxy-driven and carries the LRM corner cases.** A dynamic
   array's element reference routes an out-of-range write to a discard target (LRM 7.4.5); a slice
   reference resolves its window; a string character reference writes through `putc` with its
@@ -70,25 +78,50 @@ that statement.
 independently addressable storage -- a whole variable, an object member, a dereferenced referent --
 and its write is a store. A value projection is a selected part of a value aggregate -- a struct
 component, a container element, a packed slice, a union member, a string character -- and its write
-is a functional whole-value update. The boundary between the two -- the longest place prefix of the
+is the replacement D2 states. The boundary between the two -- the longest place prefix of the
 target, with the value-aggregate descent as its suffix -- is stated as structure: the owner is a
 place expression, and the value-projection suffix is a selector chain of ordinary sub-expressions. A
 backend reads the boundary from the structure; it does not walk a nested lvalue expression to
 recover it.
 
-**D2. A value-projection write is a functional whole-value update stored back through the owner.**
-Read the owner's whole value; produce a new whole value equal to the old one with the selected part
-replaced along the selector chain; store that whole value back through the owner -- its place, its
-activation cell, or its observable cell. The owner and each selector evaluate exactly once; this is
-a stated MIR semantic. The materialization of that single evaluation into temporaries, and the read
-/ update / store instruction sequence, belong to MIR-to-LIR (`lowering_boundaries.md`: HIR-to-MIR
-introduces no storage placement; MIR-to-LIR introduces CFG and storage). MIR states the semantic; it
-does not create cells.
+**D2. A value-projection write replaces the selected part of the owner's value and nothing else,
+with the owner and each selector evaluated exactly once.** After it the owner holds its old value
+with the selected part replaced along the selector chain, and an observable owner has reported once.
+This is a stated MIR semantic and it is the same for every kind of part. How the replacement is
+carried out follows from what the part is.
 
-**D3. The C++ in-place write is a behavior-preserving optimization, not a guarantee of an
-addressable interior.** A backend may realize a value-projection write as an in-place mutation only
-when its value library provides a write proxy semantically equivalent to the functional update --
-carrying the out-of-range and x / z index behavior, slice window normalization, the per-container
+- **Bits of a packed value that lies where a write can land -- at a place, or within a write in
+  progress -- are written where they lie.** The write names where the value lies, each part the bits
+  are reached through, outermost first, and the bits, and it touches the words those bits lie in and
+  no others. Two requirements select this form. An operation on a packed value costs the bits it
+  touches ([a-packed-value-is-its-words](a-packed-value-is-its-words.md)), and a whole rebuilt to
+  change part of it costs the width of the value. And a write changes no bit the source did not
+  name. A packed structure is one vector, a two-state member of a four-state one is converted when
+  that member is read and when it is written (LRM 7.2.1), and a part-select that is written affects
+  only the bits it addresses that are in range (LRM 11.5.1). A write to one bit of such a member
+  reads nothing, so the member's other bits stay what the vector holds, x included. Reading the
+  member out at its own type to write part of it back turns those x bits into 0, which fails this
+  requirement whatever it costs.
+- **A view whose representation the library owns -- a string's character, an unpacked union's member
+  -- is written as a functional whole-value update stored back through the owner.** Read the owner's
+  whole value; produce a new whole value equal to the old one with the selected part replaced; store
+  that whole value back through the owner -- its place, its activation cell, or its observable cell.
+  The requirement is value semantics where generated code cannot see the representation. Only the
+  library knows where a character lies or which member a union holds, so only a new whole it
+  produces is certain to equal the old one everywhere but the part.
+- **A part of a value that such a view yields is written into that value, and the view is then
+  written by the form above.** Bits of a union's member and a component of a structure a union's
+  member holds are parts of a copy the view handed out. The requirement is that the write reaches
+  the owner, and a write into the copy alone does not.
+
+The materialization of the single evaluation into temporaries, and the instruction sequence of each
+form, belong to MIR-to-LIR (`lowering_boundaries.md`: HIR-to-MIR introduces no storage placement;
+MIR-to-LIR introduces CFG and storage). MIR states the semantic; it does not create cells.
+
+**D3. An in-place write of a view the library owns is a behavior-preserving optimization, not a
+guarantee of an addressable interior.** A backend may realize such a write as an in-place mutation
+only when its value library provides a write proxy semantically equivalent to the functional update
+-- carrying the out-of-range and x / z index behavior, slice window normalization, the per-container
 and string special rules, the single evaluation of owner and selectors, and a single final writeback
 into an observable owner. Absent such a proxy, the realization is the functional form. This is North
 Star invariant 3: correctness is independent of optimization, and an in-place recovery is admitted
@@ -97,9 +130,8 @@ only when behavior-preserving. MIR never asserts that a value interior is addres
 **D4. A `ref` bound to an unpacked interior is an owner-relative projection reference.** It is an
 owner reference or capability plus selector state, realized functionally: a read is read-owner then
 select; a write is read-owner, update the selected part, write-owner. It is never an in-place
-pointer into a value's interior, and never a LIR indexed place projection -- a value interior is not
-machine-addressable, which is why LIR's place vocabulary has no index or slice arm. SystemVerilog
-bounds this to unpacked interiors; a packed slice or bit-select is not a legal `ref` actual.
+pointer into the interior of a value whose representation the library owns. SystemVerilog bounds
+this to unpacked interiors; a packed slice or bit-select is not a legal `ref` actual.
 
 **D5. This splits two write domains; it does not reverse the read-side or evaluate-once conclusions
 of the prior decisions.** Genuine places keep the store model. What is retired is the requirement
@@ -133,16 +165,17 @@ interior moves from "a location realized by a reference" to "a projection throug
 
 ## Consequences
 
-- Every value-aggregate interior write -- struct component, dynamic array, queue, associative array,
-  packed slice, union member, string character -- routes through one functional path on the
-  execution backend; the single-container-type gate and the per-family target switch are removed.
+- Every write to a view the library owns -- a union member, a string character, and a part reached
+  through either -- routes through one functional path on the execution backend; the
+  single-container-type gate and the per-family target switch are removed. Bits of a packed value
+  that lies where a write can land do not take that path on either backend.
 - A `ref`, `output`, or `inout` bound to an unpacked interior becomes expressible on the execution
   backend.
 - The queue and associative-array value domains may land their representation and read operations
   independently, but their interior writes connect to the common designator path, never a new
   per-type gate.
-- The whole-value store back through the owner is a semantic store (`value-store-discipline.md`),
-  and for an observable owner it is the observable cell's write
+- Where the functional form is taken, the whole-value store back through the owner is a semantic
+  store (`value-store-discipline.md`), and for an observable owner it is the observable cell's write
   (`storage-access-as-place-formation.md`): one final writeback that fires subscribers once,
   whatever the selector chain's depth.
 
@@ -186,8 +219,13 @@ the reference model this decision removes.
   the single evaluation of owner and selectors; the mechanism that required every target to be an
   op=-able location is retired for value interiors. Genuine places keep the store model.
 - `jit-value-realization.md` -- invariant 6, that a handle is immutable and every apparent mutation
-  is functional, is the driver for D2 and D3.
-- `value-store-discipline.md` -- the whole-value writeback in D2 is a semantic store that preserves
-  the owner's declared type.
+  is functional, is the driver for D2's functional form and for D3. It binds a value the generated
+  side holds as a handle and no other.
+- `a-packed-value-is-its-words.md` -- a packed value is its words where they lie, and its D3 is why
+  bits of one are written where they lie.
+- `a-part-of-storage-is-reached-where-it-lies.md` -- an array element and a structure member are
+  places, so a write to one is a store and not a projection write.
+- `value-store-discipline.md` -- the whole-value writeback in D2's functional form is a semantic
+  store that preserves the owner's declared type.
 - `storage-access-as-place-formation.md` -- a projection write into an observable owner reaches the
   cell through the cell's own write, so it fires subscribers through the same single writeback.

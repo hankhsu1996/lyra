@@ -365,6 +365,9 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_sequence_extend", &lyra_rt_sequence_extend);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
   add("lyra_rt_enclosing_scope", &lyra_rt_enclosing_scope);
+  add("lyra_rt_alloc_bytes", &lyra_rt_alloc_bytes);
+  add("lyra_rt_dealloc_bytes", &lyra_rt_dealloc_bytes);
+  add("lyra_rt_insert_bits", &lyra_rt_insert_bits);
   add("lyra_rt_is_of_class", &lyra_rt_is_of_class);
   add("lyra_rt_run_program", &lyra_rt_run_program);
 }
@@ -1250,6 +1253,7 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_wildcard_index_make", &lyra_rt_wildcard_index_make);
   add("lyra_rt_stream_write", &lyra_rt_stream_write);
   add("lyra_rt_stream_read", &lyra_rt_stream_read);
+  add("lyra_rt_stream_build", &lyra_rt_stream_build);
   add("lyra_rt_wildcard_index_copy", &lyra_rt_wildcard_index_copy);
   add("lyra_rt_wildcard_index_move", &lyra_rt_wildcard_index_move);
   add("lyra_rt_wildcard_index_destroy", &lyra_rt_wildcard_index_destroy);
@@ -1478,7 +1482,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit8_sampled_history_push", &lyra_rt_bit8_sampled_history_push);
   add("lyra_rt_bit8_sampled_history_at", &lyra_rt_bit8_sampled_history_at);
   add("lyra_rt_bit8_land", &lyra_rt_bit8_land);
-  add("lyra_rt_bit8_report_bits", &lyra_rt_bit8_report_bits);
+  add("lyra_rt_bit8_insert_designated_bits",
+      &lyra_rt_bit8_insert_designated_bits);
   add("lyra_rt_bit16_cell_construct", &lyra_rt_bit16_cell_construct);
   add("lyra_rt_bit16_cell_destroy", &lyra_rt_bit16_cell_destroy);
   add("lyra_rt_bit16_cell_initialize", &lyra_rt_bit16_cell_initialize);
@@ -1512,7 +1517,8 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_bit16_sampled_history_push);
   add("lyra_rt_bit16_sampled_history_at", &lyra_rt_bit16_sampled_history_at);
   add("lyra_rt_bit16_land", &lyra_rt_bit16_land);
-  add("lyra_rt_bit16_report_bits", &lyra_rt_bit16_report_bits);
+  add("lyra_rt_bit16_insert_designated_bits",
+      &lyra_rt_bit16_insert_designated_bits);
   add("lyra_rt_bit32_cell_construct", &lyra_rt_bit32_cell_construct);
   add("lyra_rt_bit32_cell_destroy", &lyra_rt_bit32_cell_destroy);
   add("lyra_rt_bit32_cell_initialize", &lyra_rt_bit32_cell_initialize);
@@ -1546,7 +1552,8 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_bit32_sampled_history_push);
   add("lyra_rt_bit32_sampled_history_at", &lyra_rt_bit32_sampled_history_at);
   add("lyra_rt_bit32_land", &lyra_rt_bit32_land);
-  add("lyra_rt_bit32_report_bits", &lyra_rt_bit32_report_bits);
+  add("lyra_rt_bit32_insert_designated_bits",
+      &lyra_rt_bit32_insert_designated_bits);
   add("lyra_rt_bit64_cell_construct", &lyra_rt_bit64_cell_construct);
   add("lyra_rt_bit64_cell_destroy", &lyra_rt_bit64_cell_destroy);
   add("lyra_rt_bit64_cell_initialize", &lyra_rt_bit64_cell_initialize);
@@ -1580,7 +1587,8 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_bit64_sampled_history_push);
   add("lyra_rt_bit64_sampled_history_at", &lyra_rt_bit64_sampled_history_at);
   add("lyra_rt_bit64_land", &lyra_rt_bit64_land);
-  add("lyra_rt_bit64_report_bits", &lyra_rt_bit64_report_bits);
+  add("lyra_rt_bit64_insert_designated_bits",
+      &lyra_rt_bit64_insert_designated_bits);
   add("lyra_rt_logic8_cell_construct", &lyra_rt_logic8_cell_construct);
   add("lyra_rt_logic8_cell_destroy", &lyra_rt_logic8_cell_destroy);
   add("lyra_rt_logic8_cell_initialize", &lyra_rt_logic8_cell_initialize);
@@ -1617,7 +1625,8 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_logic8_sampled_history_push);
   add("lyra_rt_logic8_sampled_history_at", &lyra_rt_logic8_sampled_history_at);
   add("lyra_rt_logic8_land", &lyra_rt_logic8_land);
-  add("lyra_rt_logic8_report_bits", &lyra_rt_logic8_report_bits);
+  add("lyra_rt_logic8_insert_designated_bits",
+      &lyra_rt_logic8_insert_designated_bits);
   add("lyra_rt_logic8_net_construct", &lyra_rt_logic8_net_construct);
   add("lyra_rt_logic8_net_destroy", &lyra_rt_logic8_net_destroy);
   add("lyra_rt_logic8_net_initialize_tri_state",
@@ -1677,7 +1686,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic16_sampled_history_at",
       &lyra_rt_logic16_sampled_history_at);
   add("lyra_rt_logic16_land", &lyra_rt_logic16_land);
-  add("lyra_rt_logic16_report_bits", &lyra_rt_logic16_report_bits);
+  add("lyra_rt_logic16_insert_designated_bits",
+      &lyra_rt_logic16_insert_designated_bits);
   add("lyra_rt_logic16_net_construct", &lyra_rt_logic16_net_construct);
   add("lyra_rt_logic16_net_destroy", &lyra_rt_logic16_net_destroy);
   add("lyra_rt_logic16_net_initialize_tri_state",
@@ -1739,7 +1749,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic32_sampled_history_at",
       &lyra_rt_logic32_sampled_history_at);
   add("lyra_rt_logic32_land", &lyra_rt_logic32_land);
-  add("lyra_rt_logic32_report_bits", &lyra_rt_logic32_report_bits);
+  add("lyra_rt_logic32_insert_designated_bits",
+      &lyra_rt_logic32_insert_designated_bits);
   add("lyra_rt_logic32_net_construct", &lyra_rt_logic32_net_construct);
   add("lyra_rt_logic32_net_destroy", &lyra_rt_logic32_net_destroy);
   add("lyra_rt_logic32_net_initialize_tri_state",
@@ -1801,7 +1812,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic64_sampled_history_at",
       &lyra_rt_logic64_sampled_history_at);
   add("lyra_rt_logic64_land", &lyra_rt_logic64_land);
-  add("lyra_rt_logic64_report_bits", &lyra_rt_logic64_report_bits);
+  add("lyra_rt_logic64_insert_designated_bits",
+      &lyra_rt_logic64_insert_designated_bits);
   add("lyra_rt_logic64_net_construct", &lyra_rt_logic64_net_construct);
   add("lyra_rt_logic64_net_destroy", &lyra_rt_logic64_net_destroy);
   add("lyra_rt_logic64_net_initialize_tri_state",
@@ -1872,7 +1884,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit_wide_sampled_history_at",
       &lyra_rt_bit_wide_sampled_history_at);
   add("lyra_rt_bit_wide_land", &lyra_rt_bit_wide_land);
-  add("lyra_rt_bit_wide_report_bits", &lyra_rt_bit_wide_report_bits);
+  add("lyra_rt_bit_wide_insert_designated_bits",
+      &lyra_rt_bit_wide_insert_designated_bits);
 
   add("lyra_rt_logic_wide_cell_construct", &lyra_rt_logic_wide_cell_construct);
   add("lyra_rt_logic_wide_cell_destroy", &lyra_rt_logic_wide_cell_destroy);
@@ -1930,7 +1943,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic_wide_sampled_history_at",
       &lyra_rt_logic_wide_sampled_history_at);
   add("lyra_rt_logic_wide_land", &lyra_rt_logic_wide_land);
-  add("lyra_rt_logic_wide_report_bits", &lyra_rt_logic_wide_report_bits);
+  add("lyra_rt_logic_wide_insert_designated_bits",
+      &lyra_rt_logic_wide_insert_designated_bits);
   add("lyra_rt_logic_wide_net_construct", &lyra_rt_logic_wide_net_construct);
   add("lyra_rt_logic_wide_net_destroy", &lyra_rt_logic_wide_net_destroy);
   add("lyra_rt_logic_wide_net_get", &lyra_rt_logic_wide_net_get);

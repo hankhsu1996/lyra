@@ -50,9 +50,9 @@ void RenderEnumTables(
   }
 }
 
-// The constant values the unit's text names, one `constexpr` definition per
-// distinct value: each is the literal of its type, which the compiler builds
-// while the program is compiled.
+// The constant values the unit's text names, one definition per distinct
+// value: each is the literal of its type. The C++ compiler builds one while
+// the program is compiled wherever the type lets it.
 void RenderIntegralConstants(
     const mir::CompilationUnit& unit, const UnitRenderReport& report,
     TargetText& out) {
@@ -61,7 +61,7 @@ void RenderIntegralConstants(
         out,
         VariableDeclaration{
             .form = VariableForm::kNamespaceScopeDefinition,
-            .constness = Constness::kConstexpr,
+            .constness = Constness::kConst,
             .type = CppType(unit, unit.integral_constants.Get(id).type),
             .name = CppIntegralConstantName(id)},
         [&](TargetText& value) { Write(value, CppIntegralLiteral(unit, id)); });

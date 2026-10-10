@@ -6,18 +6,18 @@
 
 namespace lyra::value {
 
-DpiBitBuffer::DpiBitBuffer(ConstPlanes sv, std::uint64_t width)
-    : groups_(CanonicalGroups(width)) {
-  WriteCanonicalBitVec(groups_.data(), sv, width);
+DpiBitBuffer::DpiBitBuffer(const ConstIntegralView& sv)
+    : groups_(CanonicalGroups(sv.width)) {
+  WriteCanonicalBitVec(groups_.data(), sv);
 }
 
 auto DpiBitBuffer::Data() -> svBitVecVal* {
   return groups_.data();
 }
 
-DpiLogicBuffer::DpiLogicBuffer(ConstPlanes sv, std::uint64_t width)
-    : groups_(CanonicalGroups(width)) {
-  WriteCanonicalLogicVec(groups_.data(), sv, width);
+DpiLogicBuffer::DpiLogicBuffer(const ConstIntegralView& sv)
+    : groups_(CanonicalGroups(sv.width)) {
+  WriteCanonicalLogicVec(groups_.data(), sv);
 }
 
 auto DpiLogicBuffer::Data() -> svLogicVecVal* {

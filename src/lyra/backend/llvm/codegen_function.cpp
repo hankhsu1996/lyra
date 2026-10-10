@@ -29,6 +29,7 @@
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -80,9 +81,10 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   builder_.SetInsertPoint(entry);
   frame_storage_point_ =
       builder_.CreateAlloca(builder_.getInt8Ty(), nullptr, "frame.storage");
+  DeclareHeapPointers();
   for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
-    if (!local.NamesStorage()) {
+    if (!local.NamesStorage() || NeedsHeapStorage(local.type)) {
       continue;
     }
     llvm::Value* owned = StorageFor(local.type);
@@ -143,6 +145,89 @@ auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
     return nullptr;
   }
   return LaidOutStorage(module_->Types().StorageOf(type));
+}
+
+auto CodeGenFunction::NeedsHeapStorage(lir::TypeId type) const -> bool {
+  return module_->Unit().types.Get(type).IsOwnedValue() &&
+         module_->Types().StorageOf(type).size > value::kMaxInlineBytes;
+}
+
+void CodeGenFunction::DeclareHeapPointers() {
+  const auto declare = [&](lir::ValueId id) {
+    llvm::IRBuilder<> at(frame_storage_point_);
+    llvm::AllocaInst* const pointer = at.CreateAlloca(module_->Types().Ptr());
+    at.CreateStore(
+        llvm::ConstantPointerNull::get(module_->Types().Ptr()), pointer);
+    heap_pointers_.emplace(id, pointer);
+  };
+  for (const lir::ValueId id : fn_->values.Ids()) {
+    const lir::Local& local = fn_->values.Get(id);
+    if (local.NamesStorage() && NeedsHeapStorage(local.type)) {
+      declare(id);
+    }
+  }
+  for (const lir::BasicBlock& block : fn_->blocks) {
+    for (const lir::Instr& instr : block.instrs) {
+      if (lir::MakesValue(instr.data) &&
+          NeedsHeapStorage(fn_->values.Get(instr.result).type)) {
+        declare(instr.result);
+      }
+    }
+    if (const auto* call =
+            std::get_if<lir::DepartingCallInstr>(&block.terminator.data);
+        call != nullptr && lir::CallMakesValue(call->target) &&
+        NeedsHeapStorage(fn_->values.Get(call->result).type)) {
+      declare(call->result);
+    }
+  }
+}
+
+auto CodeGenFunction::StorageForResult(lir::ValueId made, lir::TypeId type)
+    -> llvm::Value* {
+  return NeedsHeapStorage(type) ? AllocateBytes(made) : StorageFor(type);
+}
+
+auto CodeGenFunction::AllocateBytes(lir::ValueId of) -> llvm::Value* {
+  const auto kept = heap_pointers_.find(of);
+  if (kept == heap_pointers_.end()) {
+    throw InternalError(
+        "llvm codegen: bytes are obtained for a value that was given no "
+        "pointer "
+        "to keep their address in -- please report this as a bug");
+  }
+  const std::array<llvm::Value*, 1> args{builder_.getInt64(
+      module_->Types().StorageOf(fn_->values.Get(of).type).size)};
+  llvm::Value* const bytes = CallEntry(
+      RuntimeSymbol(RuntimeOp::kAllocBytes), module_->Types().Ptr(),
+      {CallArranger::Direct(builder_.getInt64Ty())}, args);
+  builder_.CreateStore(bytes, kept->second);
+  return bytes;
+}
+
+void CodeGenFunction::DeallocateBytes(lir::ValueId of) {
+  const auto kept = heap_pointers_.find(of);
+  if (kept == heap_pointers_.end()) {
+    return;
+  }
+  const std::array<llvm::Value*, 2> args{
+      builder_.CreateLoad(module_->Types().Ptr(), kept->second),
+      builder_.getInt64(
+          module_->Types().StorageOf(fn_->values.Get(of).type).size)};
+  CallEntry(
+      RuntimeSymbol(RuntimeOp::kDeallocBytes), builder_.getVoidTy(),
+      {CallArranger::Direct(module_->Types().Ptr()),
+       CallArranger::Direct(builder_.getInt64Ty())},
+      args);
+  builder_.CreateStore(
+      llvm::ConstantPointerNull::get(module_->Types().Ptr()), kept->second);
+}
+
+auto CodeGenFunction::AddressOf(lir::ValueId id) -> llvm::Value* {
+  const auto kept = heap_pointers_.find(id);
+  if (kept != heap_pointers_.end()) {
+    return builder_.CreateLoad(module_->Types().Ptr(), kept->second);
+  }
+  return values_.at(id);
 }
 
 auto CodeGenFunction::Addresses(std::size_t count) const
@@ -411,6 +496,11 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             if (module_->Unit().types.Get(fn_->result_type).IsOwnedValue()) {
               llvm::Value* out = value_->getArg(value_->arg_size() - 1);
               RelocateValue(fn_->result_type, *value, out);
+              // The bytes the answer was made in go out of use with the
+              // return, once the answer lies where the caller reads it.
+              if (const auto* made = std::get_if<lir::Use>(&*ret.value)) {
+                DeallocateBytes(made->value);
+              }
               builder_.CreateRet(out);
               return {};
             }
@@ -473,9 +563,10 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
           },
           [&](const lir::DepartingCallInstr& call) -> diag::Result<void> {
             const lir::TypeId result_type = fn_->values.Get(call.result).type;
-            llvm::Value* const out = lir::CallMakesValue(call.target)
-                                         ? StorageFor(result_type)
-                                         : nullptr;
+            llvm::Value* const out =
+                lir::CallMakesValue(call.target)
+                    ? StorageForResult(call.result, result_type)
+                    : nullptr;
             const lir::CallInstr stated{
                 .target = call.target, .args = call.args};
             invoke_dest_ = InvokeDest{

@@ -36,10 +36,6 @@ auto LayoutOf(support::DeclaredMemberStorage storage) -> support::ObjectLayout;
 auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
     -> std::optional<std::uint64_t>;
 
-// Where a place designated within a write in progress states the address of
-// the part it designates.
-auto DesignatedPartAt() -> std::uint64_t;
-
 // The constant that tells the library an integral type's numbers, as a target
 // stating one lays it out: what the whole occupies, the symbol of the table
 // the library defines for it, which the constant opens with the address of

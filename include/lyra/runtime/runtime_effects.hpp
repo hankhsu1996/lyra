@@ -116,7 +116,7 @@ class RuntimeEffects {
       const T& duration, std::int64_t unit_power, std::int64_t precision_power,
       OwnedCall closure) {
     SubmitNbaAfter(
-        duration.Load().View(), unit_power, precision_power,
+        duration.AsWords().View(), unit_power, precision_power,
         std::move(closure));
   }
   void SubmitNbaAfterReal(

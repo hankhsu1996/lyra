@@ -70,10 +70,9 @@ struct StatedAt {
 // that type -- a width's and a count's `int`. An equality answers its 0, 1 or
 // x as a scalar, and a case equality, which is never unknown (LRM 11.4.5),
 // whether it holds; whoever knows the type the comparison has holds either as
-// a value of it. A stream of bits is planes whose
-// width the caller states, which a value writes its own bits into and is read
-// back out of (LRM 6.24.3), and the control bits a count is told of are
-// handed the same way. A fill is the bytes of a `logic`.
+// a value of it. A stream of bits is an integral value, which a value writes
+// its own bits into and is read back out of (LRM 6.24.3), and the control bits
+// a count is told of are one too. A fill is the bytes of a `logic`.
 class ValueType {
  public:
   ValueType(const ValueType&) = delete;
@@ -109,19 +108,18 @@ class ValueType {
 
   virtual void BitstreamWidth(const void* value, void* out) const = 0;
   virtual void CountBits(
-      const void* value, const ConstPlanes& control_bits,
-      std::uint64_t control_width, void* out) const = 0;
-  // The value's bits written into a stream of `stream_width` bits below its
-  // `filled` most significant positions, and the value of `prototype`'s shape
+      const void* value, const ConstIntegralView& control_bits,
+      void* out) const = 0;
+  // The value's bits written into a stream below its `filled` most
+  // significant positions, and the value of `prototype`'s shape
   // the stream holds below its `taken` most significant ones, built in `out`.
   // Each answers how many positions are filled, or taken, after it.
   virtual auto WriteToStream(
-      const void* value, const Planes& stream, std::uint64_t stream_width,
-      std::uint64_t filled) const -> std::uint64_t = 0;
-  virtual auto ReadFromStream(
-      const ConstPlanes& stream, std::uint64_t stream_width,
-      std::uint64_t taken, const void* prototype, void* out) const
+      const void* value, const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t = 0;
+  virtual auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken,
+      const void* prototype, void* out) const -> std::uint64_t = 0;
 
   virtual void ResolveTriState(
       const void* lhs, const void* rhs, void* out) const = 0;

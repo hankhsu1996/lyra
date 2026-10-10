@@ -44,32 +44,12 @@ class Applied {
     }
   }
 
-  [[nodiscard]] auto PlanesAt(std::size_t at) const -> ConstPlanes {
-    if (const auto* bits = std::get_if<BitsOperand>(&operands_[at])) {
-      return bits->planes;
+  [[nodiscard]] auto At(std::size_t at) const -> const ConstIntegralView& {
+    const auto* value = std::get_if<ConstIntegralView>(&operands_[at]);
+    if (value == nullptr) {
+      Misapplied(op_, "is handed no integral value where it takes one");
     }
-    if (const auto* number = std::get_if<NumberOperand>(&operands_[at])) {
-      return number->planes;
-    }
-    Misapplied(op_, "is handed no integral value where it takes one");
-  }
-
-  [[nodiscard]] auto WidthAt(std::size_t at) const -> std::uint64_t {
-    if (const auto* bits = std::get_if<BitsOperand>(&operands_[at])) {
-      return bits->width;
-    }
-    if (const auto* number = std::get_if<NumberOperand>(&operands_[at])) {
-      return number->width;
-    }
-    Misapplied(op_, "is handed no integral value where it takes one");
-  }
-
-  [[nodiscard]] auto SignednessAt(std::size_t at) const -> Signedness {
-    const auto* number = std::get_if<NumberOperand>(&operands_[at]);
-    if (number == nullptr) {
-      Misapplied(op_, "is told no signedness of an operand it reads as one");
-    }
-    return number->signedness;
+    return *value;
   }
 
   template <typename T>
@@ -203,101 +183,91 @@ void RequireOperandTypes(
 }
 
 auto ApplyIntegralOperation(
-    IntegralOp op, std::span<const IntegralOperand> operands, Planes answer,
-    std::uint64_t answer_width) -> MachineAnswer {
+    IntegralOp op, std::span<const IntegralOperand> operands,
+    const IntegralView& answer) -> MachineAnswer {
   const Applied to(op, operands);
   const auto one_bit = [&](FourStateBit bit) -> MachineAnswer {
-    FillScalar(answer, 1, bit);
+    FillScalar(answer, bit);
     return {};
   };
   const auto number = [&](std::int64_t value) -> MachineAnswer {
-    FromInt(answer, answer_width, value);
+    FromInt(answer, value);
     return {};
   };
   const auto reduced = [&](ReductionOp reduction) {
-    return one_bit(Reduce(to.PlanesAt(0), to.WidthAt(0), reduction));
+    return one_bit(Reduce(to.At(0), reduction));
   };
   const auto resolved = [&](NetResolution fold) -> MachineAnswer {
-    Resolve(answer, to.PlanesAt(0), to.PlanesAt(1), fold);
+    Resolve(answer, to.At(0), to.At(1), fold);
     return {};
   };
   switch (op) {
     case IntegralOp::kAdd:
-      Add(answer, to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0));
+      Add(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kSubtract:
-      Subtract(answer, to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0));
+      Subtract(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kMultiply:
-      Multiply(answer, to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0));
+      Multiply(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kDivide:
-      Divide(
-          answer, to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0),
-          to.SignednessAt(0));
+      Divide(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kModulo:
-      Modulo(
-          answer, to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0),
-          to.SignednessAt(0));
+      Modulo(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kNegate:
-      Negate(answer, to.PlanesAt(0), to.WidthAt(0));
+      Negate(answer, to.At(0));
       return {};
     case IntegralOp::kPower:
-      Power(
-          answer, to.PlanesAt(0), to.WidthAt(0), to.SignednessAt(0),
-          to.PlanesAt(1), to.WidthAt(1), to.SignednessAt(1));
+      Power(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kBitwiseAnd:
-      BitwiseAnd(answer, to.PlanesAt(0), to.PlanesAt(1));
+      BitwiseAnd(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kBitwiseOr:
-      BitwiseOr(answer, to.PlanesAt(0), to.PlanesAt(1));
+      BitwiseOr(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kBitwiseXor:
-      BitwiseXor(answer, to.PlanesAt(0), to.PlanesAt(1));
+      BitwiseXor(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kBitwiseXnor:
-      BitwiseXnor(answer, to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0));
+      BitwiseXnor(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kBitwiseNot:
-      BitwiseNot(answer, to.PlanesAt(0), to.WidthAt(0));
+      BitwiseNot(answer, to.At(0));
       return {};
     case IntegralOp::kEqual:
-      return one_bit(Equal(to.PlanesAt(0), to.PlanesAt(1)));
+      return one_bit(Equal(to.At(0), to.At(1)));
     case IntegralOp::kNotEqual:
-      return one_bit(NotEqual(to.PlanesAt(0), to.PlanesAt(1)));
+      return one_bit(NotEqual(to.At(0), to.At(1)));
     case IntegralOp::kLess:
-      return one_bit(Less(
-          to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0), to.SignednessAt(0)));
+      return one_bit(Less(to.At(0), to.At(1)));
     case IntegralOp::kLessEqual:
-      return one_bit(LessEqual(
-          to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0), to.SignednessAt(0)));
+      return one_bit(LessEqual(to.At(0), to.At(1)));
     case IntegralOp::kGreater:
-      return one_bit(Greater(
-          to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0), to.SignednessAt(0)));
+      return one_bit(Greater(to.At(0), to.At(1)));
     case IntegralOp::kGreaterEqual:
-      return one_bit(GreaterEqual(
-          to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0), to.SignednessAt(0)));
+      return one_bit(GreaterEqual(to.At(0), to.At(1)));
     case IntegralOp::kCaseEqual:
-      return one_bit(ScalarOf(CaseEqual(to.PlanesAt(0), to.PlanesAt(1))));
+      return one_bit(ScalarOf(CaseEqual(to.At(0), to.At(1))));
     case IntegralOp::kWildcardEqual:
-      return one_bit(WildcardEqual(to.PlanesAt(0), to.PlanesAt(1)));
+      return one_bit(WildcardEqual(to.At(0), to.At(1)));
     case IntegralOp::kCasezMatch:
-      return one_bit(ScalarOf(CasezMatch(to.PlanesAt(0), to.PlanesAt(1))));
+      return one_bit(ScalarOf(CasezMatch(to.At(0), to.At(1))));
     case IntegralOp::kCasexMatch:
-      return one_bit(ScalarOf(CasexMatch(to.PlanesAt(0), to.PlanesAt(1))));
+      return one_bit(ScalarOf(CasexMatch(to.At(0), to.At(1))));
     case IntegralOp::kLogicalAnd:
-      return one_bit(LogicalAnd(to.PlanesAt(0), to.PlanesAt(1)));
+      return one_bit(LogicalAnd(to.At(0), to.At(1)));
     case IntegralOp::kLogicalOr:
-      return one_bit(LogicalOr(to.PlanesAt(0), to.PlanesAt(1)));
+      return one_bit(LogicalOr(to.At(0), to.At(1)));
     case IntegralOp::kLogicalNot:
-      return one_bit(LogicalNot(to.PlanesAt(0)));
+      return one_bit(LogicalNot(to.At(0)));
     case IntegralOp::kLogicalEquivalence:
-      return one_bit(LogicalEquivalence(to.PlanesAt(0), to.PlanesAt(1)));
+      return one_bit(LogicalEquivalence(to.At(0), to.At(1)));
     case IntegralOp::kIsTrue:
-      return Truth(to.PlanesAt(0)) == Truthiness::kKnownNonzero;
+      return Truth(to.At(0)) == Truthiness::kKnownNonzero;
     case IntegralOp::kReductionAnd:
       return reduced(ReductionOp::kAnd);
     case IntegralOp::kReductionOr:
@@ -311,62 +281,52 @@ auto ApplyIntegralOperation(
     case IntegralOp::kReductionXnor:
       return reduced(ReductionOp::kXnor);
     case IntegralOp::kShiftLeft:
-      ShiftLeft(answer, to.PlanesAt(0), to.WidthAt(0), to.PlanesAt(1));
+      ShiftLeft(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kLogicalShiftRight:
-      LogicalShiftRight(answer, to.PlanesAt(0), to.WidthAt(0), to.PlanesAt(1));
+      LogicalShiftRight(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kArithmeticShiftRight:
-      ArithmeticShiftRight(
-          answer, to.PlanesAt(0), to.WidthAt(0), to.SignednessAt(0),
-          to.PlanesAt(1));
+      ArithmeticShiftRight(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kConcat:
-      Concat(
-          answer, to.PlanesAt(0), to.WidthAt(0), to.PlanesAt(1), to.WidthAt(1));
+      Concat(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kReplicate:
-      Replicate(answer, answer_width, to.PlanesAt(0), to.WidthAt(0));
+      Replicate(answer, to.At(0));
       return {};
     case IntegralOp::kSlice:
-      Slice(
-          answer, answer_width, to.PlanesAt(0), to.WidthAt(0), to.PlanesAt(1),
-          to.WidthAt(1), to.SignednessAt(1));
+      Slice(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kWithSlice:
-      detail::Copy(to.PlanesAt(0).value, answer.value);
-      detail::Copy(to.PlanesAt(0).unknown, answer.unknown);
-      WithSlice(
-          answer, to.WidthAt(0), to.PlanesAt(1), to.WidthAt(1),
-          to.SignednessAt(1), to.PlanesAt(2), to.WidthAt(2));
+      detail::Copy(to.At(0).value, answer.value);
+      detail::Copy(to.At(0).unknown, answer.unknown);
+      WithSlice(answer, to.At(1), to.At(2));
       return {};
     case IntegralOp::kConvert:
-      Convert(
-          answer, answer_width, to.PlanesAt(0), to.WidthAt(0),
-          to.SignednessAt(0));
+      Convert(answer, to.At(0));
       return {};
     case IntegralOp::kFromInt:
       return number(to.MachineAt<std::int64_t>(0));
     case IntegralOp::kFromBool:
       return number(to.MachineAt<bool>(0) ? 1 : 0);
     case IntegralOp::kToInt64:
-      return ToInt64(to.PlanesAt(0), to.WidthAt(0), to.SignednessAt(0));
+      return ToInt64(to.At(0));
     case IntegralOp::kToPosition:
-      ToPosition(answer, to.PlanesAt(0), to.WidthAt(0), to.SignednessAt(0));
+      ToPosition(answer, to.At(0));
       return {};
     case IntegralOp::kIsUnknown:
-      return one_bit(ScalarOf(HasUnknown(to.PlanesAt(0))));
+      return one_bit(ScalarOf(HasUnknown(to.At(0))));
     case IntegralOp::kHasUnknown:
-      return HasUnknown(to.PlanesAt(0));
+      return HasUnknown(to.At(0));
     case IntegralOp::kBitIdentical:
-      return CaseEqual(to.PlanesAt(0), to.PlanesAt(1));
+      return CaseEqual(to.At(0), to.At(1));
     case IntegralOp::kCountBits:
-      return number(CountBits(
-          to.PlanesAt(0), to.WidthAt(0), to.PlanesAt(1), to.WidthAt(1)));
+      return number(CountBits(to.At(0), to.At(1)));
     case IntegralOp::kCeilLog2:
-      return number(CeilLog2(to.PlanesAt(0), to.WidthAt(0)));
+      return number(CeilLog2(to.At(0)));
     case IntegralOp::kMergeConditional:
-      MergeConditional(answer, to.PlanesAt(0), to.PlanesAt(1), to.WidthAt(0));
+      MergeConditional(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kResolveTriState:
       return resolved(NetResolution::kTriState);
@@ -375,7 +335,7 @@ auto ApplyIntegralOperation(
     case IntegralOp::kResolveWiredOr:
       return resolved(NetResolution::kWiredOr);
     case IntegralOp::kDominate:
-      Dominate(answer, to.PlanesAt(0), to.PlanesAt(1));
+      Dominate(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kReverseBlocks: {
       const auto block = to.MachineAt<std::int64_t>(1);
@@ -385,25 +345,19 @@ auto ApplyIntegralOperation(
             "is handed a block size that is not positive, which the front "
             "end has already refused");
       }
-      ReverseBlocks(
-          answer, to.PlanesAt(0), to.WidthAt(0),
-          static_cast<std::uint64_t>(block));
+      ReverseBlocks(answer, to.At(0), static_cast<std::uint64_t>(block));
       return {};
     }
     case IntegralOp::kFromText: {
       const auto text = to.MachineAt<std::string_view>(0);
-      FromBytes(
-          answer, answer_width,
-          std::span<const char>{text.data(), text.size()});
+      FromBytes(answer, std::span<const char>{text.data(), text.size()});
       return {};
     }
     case IntegralOp::kReadCanonicalBits:
-      ReadCanonicalBitVec(
-          to.MachineAt<const svBitVecVal*>(0), answer, answer_width);
+      ReadCanonicalBitVec(to.MachineAt<const svBitVecVal*>(0), answer);
       return {};
     case IntegralOp::kReadCanonicalLogic:
-      ReadCanonicalLogicVec(
-          to.MachineAt<const svLogicVecVal*>(0), answer, answer_width);
+      ReadCanonicalLogicVec(to.MachineAt<const svLogicVecVal*>(0), answer);
       return {};
     case IntegralOp::kFromSvLogic:
       FromSvLogic(to.MachineAt<std::uint8_t>(0), answer);

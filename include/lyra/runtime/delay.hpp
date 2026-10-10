@@ -64,7 +64,7 @@ template <value::IntegralValue T>
 auto Delay(
     RuntimeEffects& runtime, const T& duration, std::int64_t unit_power,
     std::int64_t precision_power) -> Wait {
-  return Delay(runtime, duration.Load().View(), unit_power, precision_power);
+  return Delay(runtime, duration.AsWords().View(), unit_power, precision_power);
 }
 
 auto DelayReal(

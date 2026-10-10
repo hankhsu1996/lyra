@@ -75,6 +75,28 @@ class CodeGenFunction {
   // as clang builds a class-type result through `sret`, and is ended by the end
   // LIR states for it.
   auto StorageFor(lir::TypeId type) -> llvm::Value*;
+  // The storage the instruction's result `made` is built in: in the frame
+  // while its bytes are few enough to lie there, and otherwise bytes allocated
+  // here, where the value is made, which the frame keeps only the address of.
+  auto StorageForResult(lir::ValueId made, lir::TypeId type) -> llvm::Value*;
+  // Whether a value of `type` this body makes or declares has its bytes kept
+  // apart from the frame: a frame is taken from a stack whose size no design
+  // chose, so it keeps a value's bytes only up to the size the value library
+  // keeps one in place.
+  [[nodiscard]] auto NeedsHeapStorage(lir::TypeId type) const -> bool;
+  // Gives every value this body makes or declares whose bytes are kept apart
+  // the frame slot that holds their address, holding none until they are
+  // obtained. All of them exist before any code is generated, because a way
+  // out that gives one's bytes back may be generated ahead of the instruction
+  // that obtains them.
+  void DeclareHeapPointers();
+  // Obtains the bytes of `of` and keeps their address, and gives them back
+  // where any are held.
+  auto AllocateBytes(lir::ValueId of) -> llvm::Value*;
+  void DeallocateBytes(lir::ValueId of);
+  // Where the value `id` names is: what generating it answered, or the bytes
+  // kept apart for it.
+  auto AddressOf(lir::ValueId id) -> llvm::Value*;
   // `count` arguments that are each an address this target computed.
   [[nodiscard]] auto Addresses(std::size_t count) const -> std::vector<ArgAbi>;
   // Calls the library entry `symbol` on this target's own account, handing it
@@ -147,6 +169,19 @@ class CodeGenFunction {
   auto LowerIntegral(
       support::IntegralOp op, std::span<const OperandRef> operands,
       lir::TypeId answer_type, llvm::Value* out) -> llvm::Value*;
+  // One part of an integral value: where it starts within what it is a part
+  // of, and the type that fixes how many bits it has.
+  struct BitsPartRef {
+    OperandRef start;
+    lir::TypeId type;
+  };
+  // `bits` written over the bits `parts` name, outermost first, in the value
+  // of type `whole` lying at `at`, as instructions on one word per plane.
+  // Emits nothing and answers false where the value, a part or the bits is
+  // wider than a word.
+  auto StoreBitsOnOneWord(
+      llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
+      OperandRef bits) -> bool;
   // Each operand a call states, with the type it is a value of.
   auto LowerOperandRefs(std::span<const lir::Operand> operands)
       -> diag::Result<std::vector<OperandRef>>;
@@ -194,8 +229,8 @@ class CodeGenFunction {
       const lir::AggregateExtractInstr& extract, lir::TypeId result_type,
       llvm::Value* out) -> diag::Result<llvm::Value*>;
   auto LowerAggregateUpdate(
-      const lir::AggregateUpdateInstr& update, lir::TypeId result_type,
-      llvm::Value* out) -> diag::Result<llvm::Value*>;
+      const lir::AggregateUpdateInstr& update, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
   // The position a selector names bits of an integral value by (LRM 11.5.1).
   // It names them by that one operand: how many bits is the width of the type
   // they are read at, or of the value written over them.
@@ -204,6 +239,22 @@ class CodeGenFunction {
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
+  // Bits written into the integral value at a place, where it lies: the
+  // insertion as instructions where the value, every part and the bits each
+  // fit one word per plane, and a call on the library's insertion otherwise.
+  auto LowerBitsStore(const lir::BitsStoreInstr& store)
+      -> diag::Result<llvm::Value*>;
+  // Bits written into the integral value a write in progress designates, by
+  // that value's own entry, which hears which of them moved.
+  auto LowerDesignatedBitsWrite(
+      const lir::DesignatedBitsTarget& bits, const lir::CallInstr& call,
+      lir::TypeId result_type) -> diag::Result<llvm::Value*>;
+  // The parts a statement of bits names, each with where it starts lowered.
+  auto LowerBitsParts(std::span<const lir::BitsPart> parts)
+      -> diag::Result<std::vector<BitsPartRef>>;
+  // The parts some bits lie in, outermost first, as an entry writing the bits
+  // takes them: a span over where each starts and how many bits it has.
+  auto OuterBitsParts(std::span<const BitsPartRef> parts) -> llvm::Value*;
   auto LowerAddrOf(
       const lir::AddrOfInstr& addr, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
@@ -308,9 +359,6 @@ class CodeGenFunction {
   // states is storage that hands its contents out through its own access.
   auto HeldAt(llvm::Value* storage, support::DeclaredMemberStorage held)
       -> std::optional<llvm::Value*>;
-  // Where the part a designation names lies.
-  auto DesignatedPart(llvm::Value* designation) -> llvm::Value*;
-
   // Appends to `args` the arguments `operands` cross as, and to `arranged`
   // how each crosses. They are what selects a part of a value, so they follow
   // the value an entry acts on, and each is read the way `readings` says the
@@ -389,6 +437,9 @@ class CodeGenFunction {
   // depart; nothing while what is lowered continues in place.
   std::optional<InvokeDest> invoke_dest_;
   std::unordered_map<lir::ValueId, llvm::Value*> values_;
+  // For each value whose bytes are allocated rather than taken from the
+  // frame, the frame's pointer to them.
+  std::unordered_map<lir::ValueId, llvm::AllocaInst*> heap_pointers_;
   std::vector<llvm::BasicBlock*> blocks_;
   // Where frame storage is allocated: the end of the code the body opens with,
   // ahead of its first statement.

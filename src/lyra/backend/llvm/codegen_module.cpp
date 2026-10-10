@@ -303,10 +303,6 @@ auto CodeGenModule::BuildCallArgs(
               args.push_back(WidthArg(shape));
               args.push_back(FourStateArg(shape));
               return {};
-            },
-            [&](const TypeWidthArg& of) -> diag::Result<void> {
-              args.push_back(WidthArg(types_.RequiredIntegralShapeOf(of.type)));
-              return {};
             }},
         told);
     if (!crossed) {
@@ -1700,8 +1696,8 @@ auto CodeGenModule::DefineIntegralConstant(lir::IntegralConstantId constant)
         "llvm codegen: an integral constant is of a type that is not integral "
         "-- please report this as a bug");
   }
-  value::LoadedWords words(*shape);
-  const value::Planes planes = words.Write();
+  value::WrittenWords words(*shape);
+  const value::IntegralView planes = words.MutableView();
   if (decl.value.value_words.size() != planes.value.size() ||
       decl.value.state_words.size() > planes.unknown.size()) {
     throw InternalError(

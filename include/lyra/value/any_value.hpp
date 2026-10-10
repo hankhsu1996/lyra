@@ -72,11 +72,10 @@ class AnyValue {
   // positions, and a value of this one's shape the stream holds below its
   // `taken` most significant ones (LRM 6.24.3), each with how many positions
   // are filled, or taken, after it.
-  auto WriteToStream(
-      Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+  auto WriteToStream(const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t;
   [[nodiscard]] auto ReadFromStream(
-      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+      const ConstIntegralView& stream, std::uint64_t taken) const
       -> std::pair<AnyValue, std::uint64_t>;
 
  private:

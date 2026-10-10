@@ -105,11 +105,10 @@ class RuntimeTuple {
   [[nodiscard]] auto BitstreamWidth() const -> Int;
   [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
       -> Int;
-  auto WriteToStream(
-      Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+  auto WriteToStream(const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t;
   [[nodiscard]] auto ReadFromStream(
-      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+      const ConstIntegralView& stream, std::uint64_t taken) const
       -> std::pair<RuntimeTuple, std::uint64_t>;
 
  private:

@@ -14,6 +14,7 @@
 
 namespace lyra::lir {
 struct CompilationUnit;
+struct IntegralType;
 }  // namespace lyra::lir
 
 namespace lyra::backend::llvm_backend {
@@ -32,6 +33,10 @@ struct TupleLayout {
   std::vector<std::uint32_t> offsets;
   support::ObjectLayout storage;
 };
+
+// An integral type as the value layer states one.
+[[nodiscard]] auto ShapeOf(const lir::IntegralType& integral)
+    -> value::IntegralShape;
 
 // Maps a LIR type to the LLVM type a value of it is held in. A machine type
 // names itself, because a target's own type system already spells what the
@@ -75,6 +80,11 @@ class CodeGenTypes {
   auto Span() const -> llvm::StructType* {
     return span_ty_;
   }
+  // One part of an integral value that bits a write is handed lie in, as it
+  // crosses the runtime boundary: where it starts, and how many bits it has.
+  auto BitsPartType() const -> llvm::StructType* {
+    return bits_part_ty_;
+  }
   auto Void() const -> llvm::Type*;
 
  private:
@@ -82,6 +92,7 @@ class CodeGenTypes {
   const lir::CompilationUnit* unit_;
   llvm::PointerType* ptr_ty_;
   llvm::StructType* span_ty_;
+  llvm::StructType* bits_part_ty_;
   std::unordered_map<lir::TypeId, llvm::Type*> cache_;
   std::unordered_map<lir::TypeId, TupleLayout> tuples_;
 };

@@ -773,7 +773,7 @@ auto LowerOnOneWord(
     const OneWordOperands& operands) -> std::optional<OneWordAnswer> {
   const auto fits_one_word =
       [](const std::optional<value::IntegralShape>& shape) {
-        return !shape.has_value() || shape->width <= 64;
+        return !shape.has_value() || IsSingleWord(*shape);
       };
   if (!std::ranges::all_of(shapes.operands, fits_one_word) ||
       !fits_one_word(shapes.answer)) {

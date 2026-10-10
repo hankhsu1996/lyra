@@ -5,6 +5,9 @@ as an operand no longer holds: [a-select-names-a-position](a-select-names-a-posi
 system where the select is lowered, and the operand pattern D4 states stands for the conversions and
 factories that still take one. That record's P3 is this entry carried one step further: an integral
 operation over constants is itself a constant of the unit.
+[a-packed-value-is-its-words](a-packed-value-is-its-words.md) D2 narrows both for a value too large
+to lie in what holds it. A fill, a default or a small number widened to such a type is stated as the
+extension of the bits that differ, and is carried out where it is evaluated.
 
 ## Context
 

@@ -72,7 +72,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .operands = {kMachine, kKey}};
     case BuiltinFn::kSlice:
       return IntegralEntry(
-          IntegralOp::kSlice, ValueFunction("Slice"), PartSelection::kSlice);
+          IntegralOp::kSlice, ValueFunction("Slice"), PartSelection::kBits);
     case BuiltinFn::kElementSlice:
       return {
           .name = "element_slice",
@@ -105,7 +105,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"SliceRef"},
           .takes_a_type_argument = true,
           .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kSlice,
+          .selects = PartSelection::kBits,
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kElementSliceRef:
       return {
@@ -687,7 +687,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "designate_slice",
           .declaration = Method{"SliceRef"},
           .takes_a_type_argument = true,
-          .selects = PartSelection::kSlice,
+          .selects = PartSelection::kBits,
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kDesignateElementSlice:
       return {

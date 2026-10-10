@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include <llvm/ADT/ArrayRef.h>
+
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/lir/function_id.hpp"
@@ -153,20 +155,17 @@ class CodeGenTuples {
   auto NullBody(
       lir::TypeId tuple, std::string_view slot,
       const VirtualSignature& stands_in_for) -> llvm::Constant*;
-  // The integral value of type `read` that `planes`, `planes_width` bits
-  // wide, hold below their `taken` most significant positions, laid out at
-  // `laid_out`; and the bits of the value of type `written` at `value`,
-  // written into the stream `stream`, `stream_width` bits wide, below its
-  // `filled` most significant positions. Each answers how many positions are
-  // taken, or filled, after it.
-  auto ReadOutOfPlanes(
-      llvm::IRBuilderBase& b, llvm::Value* planes, llvm::Value* planes_width,
-      llvm::Value* taken, llvm::Value* laid_out, lir::TypeId read)
-      -> llvm::Value*;
-  auto WriteIntoStream(
-      llvm::IRBuilderBase& b, llvm::Value* value, lir::TypeId written,
-      llvm::Value* stream, llvm::Value* stream_width, llvm::Value* filled)
-      -> llvm::Value*;
+  // The integral value of type `read` that the stream `stream` holds below
+  // its `taken` most significant positions, laid out at `laid_out`, answering
+  // how many positions are taken after it.
+  auto ReadOutOfStream(
+      llvm::IRBuilderBase& b, llvm::Value* stream, llvm::Value* taken,
+      llvm::Value* laid_out, lir::TypeId read) -> llvm::Value*;
+  // A call of the library entry `op` with `args` as they stand, answering a
+  // value of `answers`.
+  auto ForwardToEntry(
+      llvm::IRBuilderBase& b, RuntimeOp op, llvm::Type* answers,
+      llvm::ArrayRef<llvm::Value*> args) -> llvm::Value*;
 
   CodeGenModule* owner_;
   CodeGenTypes* types_;

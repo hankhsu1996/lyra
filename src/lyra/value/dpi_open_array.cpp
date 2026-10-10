@@ -108,36 +108,38 @@ auto DpiOpenArray::ElementAddress(std::span<const int> indices) -> void* {
   return position.has_value() ? AddressAt(*position) : nullptr;
 }
 
-void DpiOpenArray::WriteElement(std::size_t position, ConstPlanes value) {
+void DpiOpenArray::WriteElement(
+    std::size_t position, const ConstIntegralView& value) {
   const std::size_t groups = GroupsPerElement();
   std::visit(
       Overloaded{
           [&](std::vector<svBitVecVal>& image) {
             WriteCanonicalBitVec(
                 std::span{image}.subspan(position * groups, groups).data(),
-                value, element_width_);
+                value);
           },
           [&](std::vector<svLogicVecVal>& image) {
             WriteCanonicalLogicVec(
                 std::span{image}.subspan(position * groups, groups).data(),
-                value, element_width_);
+                value);
           }},
       storage_);
 }
 
-void DpiOpenArray::ReadElement(std::size_t position, Planes out) const {
+void DpiOpenArray::ReadElement(
+    std::size_t position, const IntegralView& out) const {
   const std::size_t groups = GroupsPerElement();
   std::visit(
       Overloaded{
           [&](const std::vector<svBitVecVal>& image) {
             ReadCanonicalBitVec(
-                std::span{image}.subspan(position * groups, groups).data(), out,
-                element_width_);
+                std::span{image}.subspan(position * groups, groups).data(),
+                out);
           },
           [&](const std::vector<svLogicVecVal>& image) {
             ReadCanonicalLogicVec(
-                std::span{image}.subspan(position * groups, groups).data(), out,
-                element_width_);
+                std::span{image}.subspan(position * groups, groups).data(),
+                out);
           }},
       storage_);
 }

@@ -12,13 +12,13 @@ measurement independent of whether any diagnostic happens to be available.
 
 ## Top-level object
 
-| Field            | Type   | Description                                        |
-| ---------------- | ------ | -------------------------------------------------- |
-| `schema_version` | int    | Always `6`.                                        |
-| `git`            | string | Short git SHA of the tested commit.                |
-| `target_seconds` | float  | The duration each measurement was scaled to reach. |
-| `timestamp`      | string | ISO 8601 UTC timestamp of the run.                 |
-| `results`        | array  | One object per case and tool.                      |
+| Field            | Type   | Description                                       |
+| ---------------- | ------ | ------------------------------------------------- |
+| `schema_version` | int    | Always `6`.                                       |
+| `git`            | string | Short git SHA of the tested commit.               |
+| `target_seconds` | float  | The duration each simulation was scaled to reach. |
+| `timestamp`      | string | ISO 8601 UTC timestamp of the run.                |
+| `results`        | array  | One object per case and tool.                     |
 
 ## Result object
 
@@ -31,7 +31,7 @@ All fields are always present. A field that does not apply carries its zero valu
 | `measure`   | string | `run` or `build` -- which of the two the timing covers.        |
 | `work_unit` | string | What one unit of this case's work is called.                   |
 | `tool`      | string | `lyra` or `verilator`.                                         |
-| `status`    | string | `ok`, `unsupported`, or `error`.                               |
+| `status`    | string | `ok` or `error`.                                               |
 | `work`      | int    | How many units the final measurement covered.                  |
 | `seconds`   | float  | What that measurement took.                                    |
 | `rate`      | float  | Units per second, with the fixed part removed. **The number.** |
@@ -39,7 +39,8 @@ All fields are always present. A field that does not apply carries its zero valu
 | `binary_kb` | int    | Size of the produced binary in KB.                             |
 | `readings`  | array  | Every measurement taken, in order, each `[work, seconds]`.     |
 | `growth`    | float  | The power of `work` the cost grew as; zero where unseen.       |
-| `detail`    | string | The diagnostic behind a non-`ok` status; empty when `ok`.      |
+| `detail`    | string | Which step failed and how it ended; empty when `ok`.           |
+| `output`    | string | The last lines that step printed; empty when `ok`.             |
 
 ## Reading `rate`
 
@@ -69,18 +70,34 @@ work did not show in both.
 
 ## Statuses
 
-`unsupported` is a tool that cannot measure this case: Verilator absent from `PATH`, or a construct
-Lyra does not yet carry out. It is reported and does not fail the run.
+`error` is a case one tool could not measure: a build or a run that exited non-zero, was killed by a
+signal, outlived the time limit, could not be started, or produced no binary. `detail` names the
+step and how it ended -- `build exited with status 1`,
+`run at +work=4 was killed by SIGSEGV (status 139)` -- and `output` holds the end of what that step
+printed. The fields a measurement fills stay at zero, so `status` and never a zero `rate` is what
+says a case has no number.
 
-`error` is a build or run that failed, timed out, or produced no binary. Any `error` makes the run
-exit non-zero. A duration never does: failing a run on a duration would be reporting on the machine
-that produced it.
+**An `error` costs only its own case.** The run goes on to every other one, and the file is
+rewritten as each result arrives, so a run that is itself stopped leaves the results it had. A case
+it never reached has no object at all, and neither has any case under a tool that was not on `PATH`.
+
+## Exit status and the printed report
+
+The run exits 0 when every case was measured by every tool it had, and 1 when any result is an
+`error` -- after the report is printed and the file written, so a failed run still publishes every
+number it obtained. A duration never fails a run: that would be reporting on the machine that
+produced it. Verilator being absent does not either.
+
+The report has a row for every case whatever happened to it. Where a tool has no number the rate
+cell says `failed` or `not run` rather than a dash, a line under the heading counts both, and a "Not
+measured" section names each one with its `detail` and `output`.
 
 ## Compatibility rules
 
 - Consumers must check `schema_version` before parsing.
 - Fields may be added; consumers should ignore unknown ones.
 - Removing a field or changing its type requires a version bump.
+- `output` was added within v6, and `detail` changed what it says without changing its type.
 - The v5 field `probes` does not appear; it was the length of `readings`.
 - The v4 fields `intent`, `primary`, `secondary`, `focus`, `optimized`, `params`, `rss_max_mb`,
   `wall_s`, `sim_s` and `subcategory` do not appear, and neither do the scale profiles and tiers

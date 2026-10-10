@@ -1,5 +1,6 @@
 #include "lyra/runtime/simulation_entry.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/stack_watch.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
@@ -66,12 +68,22 @@ auto RunSimulation(Runtime& runtime) -> int {
   }
 }
 
+constexpr std::string_view kOutOfStack =
+    "error: the simulation ran out of stack. A subroutine of the design calls "
+    "itself, or others, more deeply than the stack this program was started "
+    "with allows.\n";
+
 }  // namespace
 
 auto RunDesignRoot(
     int argc, char** argv, std::string_view root_name, const RootFactory& make)
     -> int {
   std::set_new_handler(EndForLackOfMemory);
+  // The simulation runs on the stack of the thread the program starts on. A
+  // foreign task runs on a stack of its own, which is not registered.
+  static std::array<std::byte, base::kAltStackSize> alt_stack;
+  base::InstallStackOverflowHandler(kOutOfStack);
+  base::RegisterThreadStack(alt_stack);
 
   // A built program's own argv leads with its name, which is not one of the
   // simulation's arguments.

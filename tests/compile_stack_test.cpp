@@ -3,7 +3,8 @@
 // (LRM Table 11-2), so it is as deep as it is long. What is held here is that a
 // run of three thousand operands compiles and evaluates like its short form,
 // that the command takes the stack for it where it was started with less, and
-// that running out is said in words.
+// that running out is said in words. The program a design becomes runs on the
+// stack it was started with, and says the same of its own.
 //
 // A frame's size belongs to the build of the compiler, so this is a statement
 // about the compiler as it is shipped.
@@ -75,6 +76,17 @@ auto WriteLongSum(const std::filesystem::path& path, int operands) -> void {
   out << ";\nendmodule\n";
 }
 
+// A design whose one function calls itself without end.
+constexpr std::string_view kRecursesWithoutEnd = R"(
+module Test;
+  function automatic int deeper(int n);
+    return deeper(n + 1) + 1;
+  endfunction
+  int reached;
+  initial reached = deeper(0);
+endmodule
+)";
+
 // Runs `lyra check` on `src` in a shell that has first set its own stack limit
 // with `limit`, a `ulimit` invocation.
 auto CheckUnderStackLimit(
@@ -141,9 +153,37 @@ TEST(CompileStack, RunningOutIsSaidInWords) {
   const auto checked = CheckUnderStackLimit(lyra, src, "ulimit -s 256");
   EXPECT_NE(checked.termination, TerminationKind::kExitedNormally);
   EXPECT_NE(
-      checked.stderr_text.find("the compiler ran out of stack"),
+      checked.stderr_text.find("error: the compiler ran out of stack"),
       std::string::npos)
       << checked.stderr_text;
+}
+
+// A design whose subroutines call one another past the stack the program was
+// started with ends, and says why before it does.
+TEST(CompileStack, ASimulationRunningOutIsSaidInWords) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << kRecursesWithoutEnd;
+  const std::vector<std::string> args = {
+      "run",
+      "--backend",
+      "llvm",
+      "--top",
+      "Test",
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      src.string()};
+  const auto ran = RunChildProcess(lyra, args, 300s);
+  EXPECT_FALSE(
+      ran.termination == TerminationKind::kExitedNormally && ran.exit_code == 0)
+      << ran.stdout_text;
+  EXPECT_NE(
+      ran.stderr_text.find("error: the simulation ran out of stack"),
+      std::string::npos)
+      << ran.stderr_text;
 }
 
 }  // namespace

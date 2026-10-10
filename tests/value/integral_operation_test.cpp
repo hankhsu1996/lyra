@@ -24,18 +24,16 @@ struct Word {
   bool four_state = false;
   Signedness signedness = Signedness::kUnsigned;
 
-  [[nodiscard]] auto Read() const -> ConstPlanes {
-    return ConstPlanes{
+  [[nodiscard]] auto Read() const -> ConstIntegralView {
+    return ConstIntegralView{
         .value = {&value, 1},
         .unknown = four_state ? std::span<const std::uint64_t>{&unknown, 1}
-                              : std::span<const std::uint64_t>{}};
+                              : std::span<const std::uint64_t>{},
+        .width = width,
+        .signedness = signedness};
   }
-  [[nodiscard]] auto Bits() const -> IntegralOperand {
-    return BitsOperand{.planes = Read(), .width = width};
-  }
-  [[nodiscard]] auto Number() const -> IntegralOperand {
-    return NumberOperand{
-        .planes = Read(), .width = width, .signedness = signedness};
+  [[nodiscard]] auto Operand() const -> IntegralOperand {
+    return Read();
   }
 };
 
@@ -66,11 +64,11 @@ auto Apply(
   Answer answer;
   const MachineAnswer machine = ApplyIntegralOperation(
       op, operands,
-      Planes{
+      IntegralView{
           .value = {&answer.value, 1},
           .unknown = four_state ? std::span<std::uint64_t>{&answer.unknown, 1}
-                                : std::span<std::uint64_t>{}},
-      width);
+                                : std::span<std::uint64_t>{},
+          .width = width});
   EXPECT_TRUE(std::holds_alternative<std::monostate>(machine));
   return answer;
 }
@@ -83,26 +81,28 @@ TEST(IntegralOperationTest, ATwoStateAnswerHoldsEveryUnknownAsZero) {
   const Word at_two = Signed(Two(2, 32));
   EXPECT_EQ(
       Apply(
-          IntegralOp::kSlice, std::array{source.Bits(), at_two.Number()}, 4,
+          IntegralOp::kSlice, std::array{source.Operand(), at_two.Operand()}, 4,
           false)
           .value,
       0xCU);
   const Answer kept = Apply(
-      IntegralOp::kSlice, std::array{source.Bits(), at_two.Number()}, 4, true);
+      IntegralOp::kSlice, std::array{source.Operand(), at_two.Operand()}, 4,
+      true);
   EXPECT_EQ(kept.value, 0xFU);
   EXPECT_EQ(kept.unknown, 0x3U);
   // A part outside the value reads x, which is 0 here.
   EXPECT_EQ(
       Apply(
           IntegralOp::kSlice,
-          std::array{source.Bits(), Signed(Two(6, 32)).Number()}, 4, false)
+          std::array{source.Operand(), Signed(Two(6, 32)).Operand()}, 4, false)
           .value,
       0x3U);
   // A position holding x names none.
   EXPECT_EQ(
       Apply(
           IntegralOp::kSlice,
-          std::array{source.Bits(), Signed(Four(0, 1, 32)).Number()}, 4, false)
+          std::array{source.Operand(), Signed(Four(0, 1, 32)).Operand()}, 4,
+          false)
           .value,
       0U);
 
@@ -111,14 +111,16 @@ TEST(IntegralOperationTest, ATwoStateAnswerHoldsEveryUnknownAsZero) {
       Apply(
           IntegralOp::kWithSlice,
           std::array{
-              Two(0xFF, 8).Bits(), at_two.Number(), Four(0xC, 0x5, 4).Bits()},
+              Two(0xFF, 8).Operand(), at_two.Operand(),
+              Four(0xC, 0x5, 4).Operand()},
           8, false)
           .value,
       0xE3U);
   const Answer landed = Apply(
       IntegralOp::kWithSlice,
       std::array{
-          Four(0xFF, 0, 8).Bits(), at_two.Number(), Four(0xC, 0x5, 4).Bits()},
+          Four(0xFF, 0, 8).Operand(), at_two.Operand(),
+          Four(0xC, 0x5, 4).Operand()},
       8, true);
   EXPECT_EQ(landed.value, 0xF3U);
   EXPECT_EQ(landed.unknown, 0x14U);
@@ -126,35 +128,35 @@ TEST(IntegralOperationTest, ATwoStateAnswerHoldsEveryUnknownAsZero) {
   // {3{2'b1x}} is 6'b1x1x1x, and 6'b101010 with no x.
   EXPECT_EQ(
       Apply(
-          IntegralOp::kReplicate, std::array{Four(0x3, 0x1, 2).Bits()}, 6,
+          IntegralOp::kReplicate, std::array{Four(0x3, 0x1, 2).Operand()}, 6,
           false)
           .value,
       0x2AU);
   const Answer copies = Apply(
-      IntegralOp::kReplicate, std::array{Four(0x3, 0x1, 2).Bits()}, 6, true);
+      IntegralOp::kReplicate, std::array{Four(0x3, 0x1, 2).Operand()}, 6, true);
   EXPECT_EQ(copies.value, 0x3FU);
   EXPECT_EQ(copies.unknown, 0x15U);
 
   EXPECT_EQ(
-      Apply(IntegralOp::kConvert, std::array{source.Number()}, 8, false).value,
+      Apply(IntegralOp::kConvert, std::array{source.Operand()}, 8, false).value,
       0xF0U);
   // An x in a shift amount, and a zero divisor, make the whole answer x.
   EXPECT_EQ(
       Apply(
           IntegralOp::kShiftLeft,
-          std::array{Two(0xFF, 8).Bits(), Four(1, 1, 4).Bits()}, 8, false)
+          std::array{Two(0xFF, 8).Operand(), Four(1, 1, 4).Operand()}, 8, false)
           .value,
       0U);
   EXPECT_EQ(
       Apply(
           IntegralOp::kDivide,
-          std::array{Two(9, 8).Number(), Two(0, 8).Number()}, 8, false)
+          std::array{Two(9, 8).Operand(), Two(0, 8).Operand()}, 8, false)
           .value,
       0U);
   EXPECT_EQ(
       Apply(
           IntegralOp::kMergeConditional,
-          std::array{Two(0x0F, 8).Bits(), Two(0x3C, 8).Bits()}, 8, false)
+          std::array{Two(0x0F, 8).Operand(), Two(0x3C, 8).Operand()}, 8, false)
           .value,
       0x0CU);
 }
@@ -164,32 +166,33 @@ TEST(IntegralOperationTest, ATwoStateAnswerHoldsEveryUnknownAsZero) {
 TEST(IntegralOperationTest, NothingAboveTheWidthIsSet) {
   const Word five = Two(0x05, 5);
   EXPECT_EQ(
-      Apply(IntegralOp::kBitwiseNot, std::array{five.Bits()}, 5, false).value,
+      Apply(IntegralOp::kBitwiseNot, std::array{five.Operand()}, 5, false)
+          .value,
       0x1AU);
   EXPECT_EQ(
       Apply(
-          IntegralOp::kBitwiseXnor, std::array{five.Bits(), five.Number()}, 5,
-          false)
+          IntegralOp::kBitwiseXnor, std::array{five.Operand(), five.Operand()},
+          5, false)
           .value,
       0x1FU);
   EXPECT_EQ(
-      Apply(IntegralOp::kNegate, std::array{five.Bits()}, 5, false).value,
+      Apply(IntegralOp::kNegate, std::array{five.Operand()}, 5, false).value,
       0x1BU);
   EXPECT_EQ(
       Apply(
-          IntegralOp::kShiftLeft, std::array{five.Bits(), Two(3, 4).Bits()}, 5,
-          false)
+          IntegralOp::kShiftLeft,
+          std::array{five.Operand(), Two(3, 4).Operand()}, 5, false)
           .value,
       0x08U);
   EXPECT_EQ(
       Apply(
           IntegralOp::kSubtract,
-          std::array{Two(0, 5).Bits(), Two(1, 5).Number()}, 5, false)
+          std::array{Two(0, 5).Operand(), Two(1, 5).Operand()}, 5, false)
           .value,
       0x1FU);
   const Answer unknown = Apply(
       IntegralOp::kAdd,
-      std::array{Four(1, 1, 5).Bits(), Four(1, 0, 5).Number()}, 5, true);
+      std::array{Four(1, 1, 5).Operand(), Four(1, 0, 5).Operand()}, 5, true);
   EXPECT_EQ(unknown.value, 0x1FU);
   EXPECT_EQ(unknown.unknown, 0x1FU);
   EXPECT_EQ(
@@ -200,7 +203,7 @@ TEST(IntegralOperationTest, NothingAboveTheWidthIsSet) {
       0x1FU);
   EXPECT_EQ(
       Apply(
-          IntegralOp::kConvert, std::array{Signed(Two(0x5, 3)).Number()}, 5,
+          IntegralOp::kConvert, std::array{Signed(Two(0x5, 3)).Operand()}, 5,
           false)
           .value,
       0x1DU);
@@ -212,7 +215,7 @@ TEST(IntegralOperationTest, ANumberIsReadAtItsSignedness) {
   const Word minus_two = Two(0xFE, 8);
   const Word three = Two(0x03, 8);
   const auto one_bit = [](IntegralOp op, const Word& a, const Word& b) {
-    return Apply(op, std::array{a.Number(), b.Number()}, 1, false).value;
+    return Apply(op, std::array{a.Operand(), b.Operand()}, 1, false).value;
   };
   EXPECT_EQ(one_bit(IntegralOp::kLess, minus_two, three), 0U);
   EXPECT_EQ(one_bit(IntegralOp::kLess, Signed(minus_two), Signed(three)), 1U);
@@ -221,7 +224,7 @@ TEST(IntegralOperationTest, ANumberIsReadAtItsSignedness) {
       one_bit(IntegralOp::kGreaterEqual, Signed(minus_two), Signed(three)), 0U);
 
   const auto eight = [](IntegralOp op, const Word& a, const Word& b) {
-    return Apply(op, std::array{a.Number(), b.Number()}, 8, false).value;
+    return Apply(op, std::array{a.Operand(), b.Operand()}, 8, false).value;
   };
   // -2 / 3 truncates to 0 and leaves -2; 254 / 3 is 84 and leaves 2.
   EXPECT_EQ(eight(IntegralOp::kDivide, Signed(minus_two), Signed(three)), 0U);
@@ -237,7 +240,7 @@ TEST(IntegralOperationTest, ANumberIsReadAtItsSignedness) {
   const auto shifted = [](const Word& a) {
     return Apply(
                IntegralOp::kArithmeticShiftRight,
-               std::array{a.Number(), Two(1, 4).Bits()}, 8, false)
+               std::array{a.Operand(), Two(1, 4).Operand()}, 8, false)
         .value;
   };
   EXPECT_EQ(shifted(Signed(minus_two)), 0xFFU);
@@ -245,19 +248,19 @@ TEST(IntegralOperationTest, ANumberIsReadAtItsSignedness) {
 
   EXPECT_EQ(
       Apply(
-          IntegralOp::kConvert, std::array{Signed(minus_two).Number()}, 16,
+          IntegralOp::kConvert, std::array{Signed(minus_two).Operand()}, 16,
           false)
           .value,
       0xFFFEU);
   EXPECT_EQ(
-      Apply(IntegralOp::kConvert, std::array{minus_two.Number()}, 16, false)
+      Apply(IntegralOp::kConvert, std::array{minus_two.Operand()}, 16, false)
           .value,
       0x00FEU);
   const auto to_int = [](const Word& a) {
     Answer unused;
     return std::get<std::int64_t>(ApplyIntegralOperation(
-        IntegralOp::kToInt64, std::array{a.Number()},
-        Planes{.value = {&unused.value, 1}, .unknown = {}}, 0));
+        IntegralOp::kToInt64, std::array{a.Operand()},
+        IntegralView{.value = {&unused.value, 1}, .unknown = {}, .width = 0}));
   };
   EXPECT_EQ(to_int(Signed(minus_two)), -2);
   EXPECT_EQ(to_int(minus_two), 254);

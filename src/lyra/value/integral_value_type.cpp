@@ -19,8 +19,8 @@ void IntegralValueType::Folded(
     const void* lhs, const void* rhs, void* out, Fold fold) const {
   const LoadedWords a = Load(lhs);
   const LoadedWords b = Load(rhs);
-  LoadedWords result(shape_);
-  fold(result.Write(), a.Read(), b.Read());
+  WrittenWords result(shape_);
+  fold(result.MutableView(), a.View(), b.View());
   result.StoreTo(out);
 }
 
@@ -50,7 +50,7 @@ void IntegralValueType::Assign(void* storage, const void* value) const {
 
 auto IntegralValueType::Equal(const void* lhs, const void* rhs) const
     -> FourStateBit {
-  return lyra::value::Equal(Load(lhs).Read(), Load(rhs).Read());
+  return lyra::value::Equal(Load(lhs).View(), Load(rhs).View());
 }
 
 auto IntegralValueType::CaseEqual(const void* lhs, const void* rhs) const
@@ -66,7 +66,7 @@ auto IntegralValueType::BitIdentical(const void* lhs, const void* rhs) const
 }
 
 auto IntegralValueType::HasUnknown(const void* value) const -> bool {
-  return lyra::value::HasUnknown(Load(value).Read());
+  return lyra::value::HasUnknown(Load(value).View());
 }
 
 // LRM 20.6.2, 20.9, 6.24.3: an integral value's stream of bits is its own bits,
@@ -78,69 +78,75 @@ void IntegralValueType::BitstreamWidth(const void*, void* out) const {
 }
 
 void IntegralValueType::CountBits(
-    const void* value, const ConstPlanes& control_bits,
-    std::uint64_t control_width, void* out) const {
+    const void* value, const ConstIntegralView& control_bits, void* out) const {
   std::construct_at(
       static_cast<Int*>(out),
-      Int::FromInt(
-          lyra::value::CountBits(
-              Load(value).Read(), shape_.width, control_bits, control_width)));
+      Int::FromInt(lyra::value::CountBits(Load(value).View(), control_bits)));
 }
 
 auto IntegralValueType::WriteToStream(
-    const void* value, const Planes& stream, std::uint64_t stream_width,
-    std::uint64_t filled) const -> std::uint64_t {
+    const void* value, const IntegralView& stream, std::uint64_t filled) const
+    -> std::uint64_t {
   Insert(
-      stream, stream_width, Load(value).Read(), shape_.width,
-      static_cast<std::int64_t>(stream_width - filled - shape_.width));
+      stream, Load(value).View(),
+      static_cast<std::int64_t>(stream.width - filled - shape_.width));
   return filled + shape_.width;
 }
 
 // A two-state type reads each x or z of the stream as 0 (LRM 11.4.14.3).
 auto IntegralValueType::ReadFromStream(
-    const ConstPlanes& stream, std::uint64_t stream_width, std::uint64_t taken,
-    const void*, void* out) const -> std::uint64_t {
-  LoadedWords bits(shape_);
+    const ConstIntegralView& stream, std::uint64_t taken, const void*,
+    void* out) const -> std::uint64_t {
+  WrittenWords bits(shape_);
   Extract(
-      bits.Write(), shape_.width, stream, stream_width,
-      static_cast<std::int64_t>(stream_width - taken - shape_.width));
+      bits.MutableView(), stream,
+      static_cast<std::int64_t>(stream.width - taken - shape_.width));
   bits.StoreTo(out);
   return taken + shape_.width;
 }
 
 void IntegralValueType::ResolveTriState(
     const void* lhs, const void* rhs, void* out) const {
-  Folded(lhs, rhs, out, [](Planes o, ConstPlanes a, ConstPlanes b) {
-    Resolve(o, a, b, NetResolution::kTriState);
-  });
+  Folded(
+      lhs, rhs, out,
+      [](const IntegralView& o, const ConstIntegralView& a,
+         const ConstIntegralView& b) {
+        Resolve(o, a, b, NetResolution::kTriState);
+      });
 }
 
 void IntegralValueType::ResolveWiredAnd(
     const void* lhs, const void* rhs, void* out) const {
-  Folded(lhs, rhs, out, [](Planes o, ConstPlanes a, ConstPlanes b) {
-    Resolve(o, a, b, NetResolution::kWiredAnd);
-  });
+  Folded(
+      lhs, rhs, out,
+      [](const IntegralView& o, const ConstIntegralView& a,
+         const ConstIntegralView& b) {
+        Resolve(o, a, b, NetResolution::kWiredAnd);
+      });
 }
 
 void IntegralValueType::ResolveWiredOr(
     const void* lhs, const void* rhs, void* out) const {
-  Folded(lhs, rhs, out, [](Planes o, ConstPlanes a, ConstPlanes b) {
-    Resolve(o, a, b, NetResolution::kWiredOr);
-  });
+  Folded(
+      lhs, rhs, out,
+      [](const IntegralView& o, const ConstIntegralView& a,
+         const ConstIntegralView& b) {
+        Resolve(o, a, b, NetResolution::kWiredOr);
+      });
 }
 
 void IntegralValueType::Dominating(
     const void* stronger, const void* weaker, void* out) const {
-  Folded(stronger, weaker, out, [](Planes o, ConstPlanes a, ConstPlanes b) {
-    Dominate(o, a, b);
-  });
+  Folded(
+      stronger, weaker, out,
+      [](const IntegralView& o, const ConstIntegralView& a,
+         const ConstIntegralView& b) { Dominate(o, a, b); });
 }
 
 void IntegralValueType::FilledLike(
     const void*, const void* fill, void* out) const {
-  LoadedWords filled(shape_);
-  FillScalar(
-      filled.Write(), shape_.width, static_cast<const Logic*>(fill)->Lsb());
+  WrittenWords filled(shape_);
+  FillScalar(filled.MutableView(), static_cast<const Logic*>(fill)->Lsb());
   filled.StoreTo(out);
 }
 
@@ -148,43 +154,45 @@ void IntegralValueType::FilledLike(
 // signedness.
 auto IntegralValueType::OrderBefore(const void* lhs, const void* rhs) const
     -> bool {
-  return Less(
-             Load(lhs).Read(), Load(rhs).Read(), shape_.width,
-             shape_.signedness) == FourStateBit::kOne;
+  return Less(Load(lhs).View(), Load(rhs).View()) == FourStateBit::kOne;
 }
 
 auto IntegralValueType::IsTrue(const void* value) const -> bool {
-  return Truth(Load(value).Read()) == Truthiness::kKnownNonzero;
+  return Truth(Load(value).View()) == Truthiness::kKnownNonzero;
 }
 
 void IntegralValueType::Reduce(
     Reduction reduction, const void* lhs, const void* rhs, void* out) const {
-  const std::uint64_t width = shape_.width;
   switch (reduction) {
     case Reduction::kSum:
-      Folded(lhs, rhs, out, [width](Planes o, ConstPlanes a, ConstPlanes b) {
-        Add(o, a, b, width);
-      });
+      Folded(
+          lhs, rhs, out,
+          [](const IntegralView& o, const ConstIntegralView& a,
+             const ConstIntegralView& b) { Add(o, a, b); });
       return;
     case Reduction::kProduct:
-      Folded(lhs, rhs, out, [width](Planes o, ConstPlanes a, ConstPlanes b) {
-        Multiply(o, a, b, width);
-      });
+      Folded(
+          lhs, rhs, out,
+          [](const IntegralView& o, const ConstIntegralView& a,
+             const ConstIntegralView& b) { Multiply(o, a, b); });
       return;
     case Reduction::kAnd:
-      Folded(lhs, rhs, out, [](Planes o, ConstPlanes a, ConstPlanes b) {
-        BitwiseAnd(o, a, b);
-      });
+      Folded(
+          lhs, rhs, out,
+          [](const IntegralView& o, const ConstIntegralView& a,
+             const ConstIntegralView& b) { BitwiseAnd(o, a, b); });
       return;
     case Reduction::kOr:
-      Folded(lhs, rhs, out, [](Planes o, ConstPlanes a, ConstPlanes b) {
-        BitwiseOr(o, a, b);
-      });
+      Folded(
+          lhs, rhs, out,
+          [](const IntegralView& o, const ConstIntegralView& a,
+             const ConstIntegralView& b) { BitwiseOr(o, a, b); });
       return;
     case Reduction::kXor:
-      Folded(lhs, rhs, out, [](Planes o, ConstPlanes a, ConstPlanes b) {
-        BitwiseXor(o, a, b);
-      });
+      Folded(
+          lhs, rhs, out,
+          [](const IntegralView& o, const ConstIntegralView& a,
+             const ConstIntegralView& b) { BitwiseXor(o, a, b); });
       return;
   }
   std::unreachable();

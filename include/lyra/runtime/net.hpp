@@ -30,9 +30,9 @@ template <BitAddressed T>
 [[nodiscard]] auto FilledOver(std::uint64_t count, value::FourStateBit fill)
     -> T {
   if constexpr (value::IntegralValue<T>) {
-    typename T::Words words;
-    value::FillScalar(words.Write(), count, fill);
-    return T::FromWords(words);
+    T out = T::Zero();
+    value::FillScalar(out.MutableView().Truncated(count), fill);
+    return out;
   } else {
     return T::Filled(count, fill);
   }
@@ -86,8 +86,8 @@ class NetPositions {
   ~NetPositions();
 
   [[nodiscard]] auto Count() const -> std::uint32_t;
-  [[nodiscard]] auto Read() const -> value::ConstPlanes;
-  [[nodiscard]] auto Write() -> value::Planes;
+  [[nodiscard]] auto View() const -> value::ConstIntegralView;
+  [[nodiscard]] auto MutableView() -> value::IntegralView;
 
   // `count` of these positions from `from`.
   [[nodiscard]] auto Part(std::uint32_t from, std::uint32_t count) const
@@ -99,27 +99,12 @@ class NetPositions {
   base::FixedArray<std::uint64_t, 2> words_;
 };
 
-// Rewrites a bit-addressed value through `write`, which is handed the value's
-// planes and how many positions they hold.
-template <BitAddressed T, class Write>
-void RewritePlanes(T& bits, Write write) {
-  if constexpr (value::IntegralValue<T>) {
-    typename T::Words words = bits.Load();
-    write(words.Write(), std::uint64_t{T::kWidth});
-    bits = T::FromWords(words);
-  } else {
-    write(bits.Write(), bits.Width());
-  }
-}
-
 // As many of a net value's positions as `positions` holds, from `offset`. A
 // position the value does not reach reads x, which no connection names.
 template <BitAddressed T>
 void ReadPositions(
     const T& value, std::uint32_t offset, NetPositions& positions) {
-  ReadPlanes(value, [&](value::ConstPlanes planes, std::uint64_t width) {
-    value::Extract(positions.Write(), positions.Count(), planes, width, offset);
-  });
+  value::Extract(positions.MutableView(), value.View(), offset);
 }
 
 // A net value with the positions from `offset` replaced by `positions`, every
@@ -127,9 +112,7 @@ void ReadPositions(
 template <BitAddressed T>
 void WritePositions(
     T& into, std::uint32_t offset, const NetPositions& positions) {
-  RewritePlanes(into, [&](value::Planes planes, std::uint64_t width) {
-    value::Insert(planes, width, positions.Read(), positions.Count(), offset);
-  });
+  value::Insert(into.MutableView(), positions.View(), offset);
 }
 
 class NetName;
@@ -307,12 +290,12 @@ class PhysicalNet {
   // Puts these positions under a procedural continuous assignment and takes
   // them back out (LRM 10.6.2). What a force overrides is the drivers of the
   // physical net, so it shows under every name reaching these positions. A
-  // level is driven with the planes of a value of `width` bits, of which it
-  // keeps as many positions as resolve here.
+  // level is driven with a value, of which it keeps as many positions as
+  // resolve here.
   auto BeginTakeover(support::TakeoverLevel level) -> std::uint32_t;
   auto DriveTakeover(
       support::TakeoverLevel level, std::uint32_t generation,
-      value::ConstPlanes forced, std::uint64_t width) -> bool;
+      const value::ConstIntegralView& forced) -> bool;
   auto EndTakeover(support::TakeoverLevel level) -> bool;
 
  private:
@@ -472,10 +455,7 @@ class ResolvedNet<T> : public ConnectableNet {
 
   auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& value) -> bool {
-    return ReadPlanes(
-        value, [&](value::ConstPlanes forced, std::uint64_t width) {
-          return DriveTakeoverPlanes(level, generation, forced, width);
-        });
+    return DriveTakeoverFromView(level, generation, value.AsWords().View());
   }
 
   // The same of a value handed as its bytes, as wide as what the net holds.
@@ -483,8 +463,7 @@ class ResolvedNet<T> : public ConnectableNet {
       std::int64_t level, std::int64_t generation, const void* bytes) -> bool
     requires value::TakesBytesInPlace<T>
   {
-    return DriveTakeoverPlanes(
-        level, generation, resolved_.PlanesAt(bytes), resolved_.Width());
+    return DriveTakeoverFromView(level, generation, resolved_.ReadAt(bytes));
   }
 
   void EndTakeover(std::int64_t level) {
@@ -552,7 +531,7 @@ class ResolvedNet<T> : public ConnectableNet {
         if (driver.strength == level) {
           ReadPositions(driver.value, offset, contribution);
           value::Resolve(
-              group.Write(), group.Read(), contribution.Read(), fold);
+              group.MutableView(), group.View(), contribution.View(), fold);
         }
       }
     }
@@ -591,13 +570,12 @@ class ResolvedNet<T> : public ConnectableNet {
             resolution, own_kind, count_));
   }
 
-  auto DriveTakeoverPlanes(
-      std::int64_t level, std::int64_t generation, value::ConstPlanes forced,
-      std::uint64_t width) -> bool {
+  auto DriveTakeoverFromView(
+      std::int64_t level, std::int64_t generation,
+      const value::ConstIntegralView& forced) -> bool {
     PhysicalNet& physical = WholePhysicalNet();
     if (!physical.DriveTakeover(
-            TakeoverLevelOf(level), TakeoverGenerationOf(generation), forced,
-            width)) {
+            TakeoverLevelOf(level), TakeoverGenerationOf(generation), forced)) {
       return false;
     }
     physical.Reresolve(current_runtime());

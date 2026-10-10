@@ -48,10 +48,10 @@ struct UnknownScalars {
 
 auto ScanUnknowns(const ConstIntegralView& value) -> UnknownScalars {
   UnknownScalars found;
-  for (std::size_t i = 0; i < value.planes.value.size(); ++i) {
+  for (std::size_t i = 0; i < value.value.size(); ++i) {
     const std::uint64_t mask = ValidBitsMask(i, value.width);
-    const std::uint64_t v = value.planes.value[i];
-    const std::uint64_t u = WordAt(value.planes.unknown, i);
+    const std::uint64_t v = value.value[i];
+    const std::uint64_t u = WordOrZero(value.unknown, i);
     const std::uint64_t x_bits = v & u;
     const std::uint64_t z_bits = ~v & u & mask;
     found.any_x = found.any_x || x_bits != 0U;
@@ -140,8 +140,8 @@ auto FormatRadixBody(const ConstIntegralView& value, DigitRadix radix)
     const std::uint64_t count =
         std::min<std::uint64_t>(bits_per_digit, value.width - start);
     body.push_back(GroupDigit(
-        BitsAt(value.planes.value, start, count),
-        BitsAt(value.planes.unknown, start, count), LowBits(count)));
+        BitsAt(value.value, start, count), BitsAt(value.unknown, start, count),
+        LowBits(count)));
   }
   return body;
 }
@@ -153,18 +153,16 @@ auto FormatDecimalNumeric(const ConstIntegralView& value) -> std::string {
   // A value of one word is the machine integer it holds.
   if (bit_width <= 64U) {
     if (is_signed) {
-      return std::format(
-          "{}", ToInt64(value.planes, bit_width, value.signedness));
+      return std::format("{}", ToInt64(value));
     }
-    return std::format("{}", WordAt(value.planes.value, 0));
+    return std::format("{}", WordOrZero(value.value, 0));
   }
 
   // Wide path: copy into a working buffer, take the magnitude of a negative
   // number, then chunk-divide by 10^19 to build decimal digits group by group.
-  std::vector<std::uint64_t> words(
-      value.planes.value.begin(), value.planes.value.end());
+  std::vector<std::uint64_t> words(value.value.begin(), value.value.end());
   bool is_negative = false;
-  if (is_signed && BitAt(words, bit_width - 1U)) {
+  if (is_signed && BitAt(value.value, bit_width - 1U)) {
     is_negative = true;
     std::uint64_t carry = 1;
     for (std::uint64_t& word : words) {
@@ -173,7 +171,7 @@ auto FormatDecimalNumeric(const ConstIntegralView& value) -> std::string {
       carry = (sum < word) ? 1U : 0U;
       word = sum;
     }
-    ClearAboveWidth(words, bit_width);
+    ClearAboveWidth(std::span{words}, bit_width);
   }
 
   while (words.size() > 1U && words.back() == 0U) words.pop_back();
@@ -208,8 +206,8 @@ auto FormatDecimalNumeric(const ConstIntegralView& value) -> std::string {
 // to "z"; otherwise the byte's value is the ASCII code.
 auto FormatCharBody(const ConstIntegralView& value) -> std::string {
   const std::uint64_t bits = std::min<std::uint64_t>(8U, value.width);
-  const std::uint64_t value_byte = BitsAt(value.planes.value, 0, bits);
-  const std::uint64_t unknown_byte = BitsAt(value.planes.unknown, 0, bits);
+  const std::uint64_t value_byte = BitsAt(value.value, 0, bits);
+  const std::uint64_t unknown_byte = BitsAt(value.unknown, 0, bits);
   if (unknown_byte != 0U) {
     return (value_byte & unknown_byte) != 0U ? "x" : "z";
   }

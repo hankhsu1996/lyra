@@ -183,6 +183,18 @@ class FunctionLowerer {
   // States the end of an owned value, and of the one a frame slot holds.
   void EndValue(lir::Operand value);
   void EndSlotValue(lir::ValueId slot);
+  // States that the bytes the frame keeps for `of` come into use, or go out
+  // of it.
+  void MarkStorage(lir::StorageInstr::Op op, lir::ValueId of);
+  // What a scope owes on any way out of it for a value it ends: the value's
+  // end, and its bytes going out of use.
+  void EmitScopeDrop(const ValueEnd& end);
+  void EmitScopeDrop(const SlotEnd& end);
+  // Brings a slot's bytes into use with the first value it is to own.
+  void InitializeSlot(lir::ValueId slot, lir::Operand value);
+  // Stores a value a slot is to own, handing it on, and leaves the bytes it
+  // was made in out of use: the slot holds it from here.
+  auto StoreMoved(lir::Place place, lir::Operand value) -> lir::Operand;
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
   auto LowerForInto(const mir::Block& block, const mir::ForStmt& stmt)
@@ -244,7 +256,10 @@ class FunctionLowerer {
   // because what a target owes on the way out of one call -- a temporary it
   // made to pass an argument -- is that call's alone; what the scopes owe is
   // built once and shared.
-  auto LandingHere() -> diag::Result<lir::BlockId>;
+  // `unmade` is the value the call would have made, where it makes one whose
+  // bytes a frame keeps.
+  auto LandingHere(std::optional<lir::ValueId> unmade)
+      -> diag::Result<lir::BlockId>;
   // Where a departure continues once it reaches the scope at `index` on the
   // stack, or the frame's own edge below every scope: the cleanup run and
   // passed on outward, the region's handler, or -- at the edge -- the body's
@@ -482,12 +497,65 @@ class FunctionLowerer {
   auto UpdateTarget(
       const mir::Block& block, mir::ExprId target, const ValueChange& change)
       -> diag::Result<lir::Operand>;
+  // The bits of an integral value a target names (LRM 11.5.1): the steps to
+  // bits its chain ends in, innermost first, and what the outermost of them is
+  // taken in. A target that ends in no such step has none, and is itself what
+  // nothing is taken in.
+  struct BitsProjection {
+    mir::ExprId base;
+    std::vector<const mir::CallExpr*> steps;
+  };
+  static auto SplitBitsProjection(const mir::Block& block, mir::ExprId target)
+      -> BitsProjection;
+  // The step designating bits within a write in progress, where `landed` is
+  // where that write lands.
+  [[nodiscard]] auto DesignatedBitsStep(
+      const mir::Block& block, mir::ExprId landed) const
+      -> const mir::CallExpr*;
+  // Whether an expression names storage a write lands in. A part of a value
+  // some view reached is storage only of a copy held for the write, so it is
+  // not.
+  [[nodiscard]] auto IsAddressablePlace(
+      const mir::Block& block, mir::ExprId id) const -> bool;
+  // The parts of `bits`, outermost first: where each starts and the type it
+  // is written at.
+  auto LowerBitsParts(const mir::Block& block, const BitsProjection& bits)
+      -> diag::Result<std::vector<lir::BitsPart>>;
+  // What `change` writes over bits of `type`. Nothing reads such bits back
+  // first: an assignment operator states its own read, and no method changes
+  // an integral value where it lies.
+  static auto BitsWritten(const ValueChange& change, lir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // Writing bits of an integral value that lies where a write lands: one
+  // statement on its place, naming the parts the bits are reached through.
+  auto StoreBitsOfPlace(
+      const mir::Block& block, const BitsProjection& bits,
+      const ValueChange& change) -> diag::Result<lir::Operand>;
+  // Writing bits of an integral value some view reached: the value is held in
+  // a slot, the bits are written where they lie there, and what the slot then
+  // holds is what the view is updated to. The bits are written into the
+  // whole value, so what the part's own type cannot hold stays as it was --
+  // an x under a two-state member of a four-state structure (LRM 7.2.1).
+  auto StoreBitsInCopy(
+      const mir::Block& block, const BitsProjection& bits,
+      const ValueChange& change) -> diag::Result<lir::Operand>;
+  auto StoreBitsAtPlace(
+      const mir::Block& block, lir::Place place, const BitsProjection& bits,
+      const ValueChange& change) -> diag::Result<lir::Operand>;
+  // Writing bits of the integral value a write in progress designates: one
+  // call on the designation `designated` steps from, which hears which bits
+  // moved.
+  auto StoreBitsInDesignation(
+      const mir::Block& block, const mir::CallExpr& designated,
+      const BitsProjection& bits, const ValueChange& change)
+      -> diag::Result<lir::Operand>;
   // Whether a target reaches, somewhere along its chain, a part that is a view
   // of its whole rather than storage of its own.
   [[nodiscard]] auto ReachesViewedPart(
       const mir::Block& block, mir::ExprId target) const -> bool;
-  // Updating a part whose chain passes through a view: what the part is taken
-  // from is updated in turn, with the part changed inside it. Out of a view,
+  // Updating a part, other than bits, whose chain passes through a view: what
+  // the part is taken from is updated in turn, with the part changed inside
+  // it. Out of a view,
   // the part is extracted and the whole rebuilt around it; out of a value a
   // view reached, the value is held in a slot and the part written where it
   // lies there.

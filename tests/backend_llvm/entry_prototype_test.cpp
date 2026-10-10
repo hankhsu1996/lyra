@@ -318,14 +318,6 @@ auto Disagreement(
             told_names());
       }
       return std::nullopt;
-    case support::AnswerTold::kIntegralWidth:
-      if (told.size() != 1 || !hands(0, Hands::kWidth)) {
-        return std::format(
-            "is declared told how wide the type it is called at is and "
-            "takes{}",
-            told_names());
-      }
-      return std::nullopt;
   }
   throw InternalError("entry prototype test: unknown answer told");
 }
@@ -473,12 +465,6 @@ auto DeclaredRealizations() -> Realizations {
        {lir::OpenWriteTarget::Op::kLand, lir::OpenWriteTarget::Op::kAssignSlice,
         lir::OpenWriteTarget::Op::kReadSlice}) {
     holder(op, support::AnswerTold::kNothing);
-  }
-  for (const lir::DesignatedBitsTarget::Op op :
-       {lir::DesignatedBitsTarget::Op::kRead,
-        lir::DesignatedBitsTarget::Op::kPlace,
-        lir::DesignatedBitsTarget::Op::kReport}) {
-    holder(op, AnswerToldOf(op));
   }
   // The entry building a member's storage, for each kind of storage that holds
   // values over each domain the library lays that storage out for.

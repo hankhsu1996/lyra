@@ -33,18 +33,6 @@ auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view {
   throw InternalError("lir: unknown open-write operation");
 }
 
-auto DesignatedBitsOpName(DesignatedBitsTarget::Op op) -> std::string_view {
-  switch (op) {
-    case DesignatedBitsTarget::Op::kRead:
-      return "read_bits";
-    case DesignatedBitsTarget::Op::kPlace:
-      return "place_bits";
-    case DesignatedBitsTarget::Op::kReport:
-      return "report_bits";
-  }
-  throw InternalError("lir: unknown designated-bits operation");
-}
-
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
   switch (op) {
     case ControlEffectTarget::Op::kTakeDepartureIfDue:
@@ -55,6 +43,16 @@ auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
       return "decline_departure";
   }
   throw InternalError("lir: unknown control-effect operation");
+}
+
+auto StorageOpName(StorageInstr::Op op) -> std::string_view {
+  switch (op) {
+    case StorageInstr::Op::kLive:
+      return "storage_live";
+    case StorageInstr::Op::kDead:
+      return "storage_dead";
+  }
+  throw InternalError("lir: unknown storage operation");
 }
 
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view {
@@ -100,18 +98,10 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
             }
             throw InternalError("lir: unknown open-write operation");
           },
-          // Placing bits in a value only moves memory; reading them is what any
-          // storage's slice takes, and the report is what a slice write is,
-          // each of which can raise.
-          [](const DesignatedBitsTarget& bits) {
-            switch (bits.op) {
-              case DesignatedBitsTarget::Op::kPlace:
-                return CallEnding::kReturns;
-              case DesignatedBitsTarget::Op::kRead:
-              case DesignatedBitsTarget::Op::kReport:
-                return CallEnding::kReturnsOrDeparts;
-            }
-            throw InternalError("lir: unknown designated-bits operation");
+          // Writing bits within a write is what a slice write is, which can
+          // raise.
+          [](const DesignatedBitsTarget&) {
+            return CallEnding::kReturnsOrDeparts;
           },
           [](const EndValueTarget&) { return CallEnding::kReturns; },
           [](const CopyValueTarget&) { return CallEnding::kReturns; },

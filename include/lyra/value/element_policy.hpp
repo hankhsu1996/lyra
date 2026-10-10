@@ -25,9 +25,8 @@ namespace lyra::value {
 //
 // A comparison of two elements answers 0, 1 or x as a scalar, which a container
 // folds over its elements and whoever knows the type the comparison has holds
-// as a value of it. A stream of bits (LRM 6.24.3) is planes whose width the
-// caller states, which a policy writes one element's bits into and reads one
-// element back out of.
+// as a value of it. A stream of bits (LRM 6.24.3) is an integral value, which
+// a policy writes one element's bits into and reads one element back out of.
 template <typename P>
 concept ElementPolicy =
     std::copyable<P> &&
@@ -139,19 +138,17 @@ class StaticElem {
   // positions, answering how many are filled after it. A structure states its
   // stream as a value of its own, and an array writes its elements in turn.
   static auto WriteToStream(
-      const void* value, Planes stream, std::uint64_t stream_width,
-      std::uint64_t filled) -> std::uint64_t {
+      const void* value, const IntegralView& stream, std::uint64_t filled)
+      -> std::uint64_t {
     if constexpr (IntegralValue<T>) {
-      return lyra::value::WriteToStream(
-          Of(value), stream, stream_width, filled);
+      return lyra::value::WriteToStream(Of(value), stream, filled);
     } else if constexpr (requires {
-                           Of(value).WriteToStream(
-                               stream, stream_width, filled);
+                           Of(value).WriteToStream(stream, filled);
                          }) {
-      return Of(value).WriteToStream(stream, stream_width, filled);
+      return Of(value).WriteToStream(stream, filled);
     } else {
       return lyra::value::WriteToStream(
-          Of(value).ToBitstream(), stream, stream_width, filled);
+          Of(value).ToBitstream(), stream, filled);
     }
   }
 
@@ -159,17 +156,15 @@ class StaticElem {
   // `taken` most significant positions, built in `out`. Answers how many are
   // taken after it.
   static auto ReadFromStream(
-      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken,
+      const ConstIntegralView& stream, std::uint64_t taken,
       const void* prototype, void* out) -> std::uint64_t {
     if constexpr (IntegralValue<T>) {
-      Build(out, lyra::value::ReadFromStream<T>(stream, stream_width, taken));
+      Build(out, lyra::value::ReadFromStream<T>(stream, taken));
       return taken + T::kWidth;
     } else if constexpr (requires {
-                           Of(prototype).ReadFromStream(
-                               stream, stream_width, taken);
+                           Of(prototype).ReadFromStream(stream, taken);
                          }) {
-      auto [element, after] =
-          Of(prototype).ReadFromStream(stream, stream_width, taken);
+      auto [element, after] = Of(prototype).ReadFromStream(stream, taken);
       Build(out, std::move(element));
       return after;
     } else {
@@ -177,8 +172,7 @@ class StaticElem {
       Build(
           out,
           T::FromBitstream(
-              lyra::value::ReadFromStream<Bits>(stream, stream_width, taken),
-              Of(prototype)));
+              lyra::value::ReadFromStream<Bits>(stream, taken), Of(prototype)));
       return taken + Bits::kWidth;
     }
   }

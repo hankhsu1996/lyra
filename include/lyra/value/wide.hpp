@@ -16,34 +16,37 @@
 
 namespace lyra::value {
 
-// A value read as the words of its planes at a width it states itself, which
-// is what code compiled before any design exists reads of an integral value
+// A value held as the words of its planes at a width it states itself, which
+// is what code compiled before any design exists holds of an integral value
 // wider than a word.
 template <class T>
 concept HeldAsWords = requires(const T& bits) {
-  { bits.Read() } -> std::same_as<ConstPlanes>;
+  { bits.View() } -> std::same_as<ConstIntegralView>;
   { bits.Width() } -> std::same_as<std::uint64_t>;
 };
 
-// The planes of an integral value `width` bits wide, wider than a word, where
-// its bytes lie: the words of its value plane and then, where it can hold x or
-// z, those of its unknown plane (LRM 6.11).
-[[nodiscard]] inline auto WidePlanesAt(
-    const void* bytes, std::uint64_t width, StateDomain domain) -> ConstPlanes {
-  const std::size_t count = WordCountForBits(width);
-  const std::span<const std::uint64_t> all(
+// An integral value `width` bits wide, wider than a word, read and written
+// where its bytes lie: the words of its value plane and then, where it can
+// hold x or z, those of its unknown plane (LRM 6.11).
+[[nodiscard]] inline auto WideViewAt(
+    const void* bytes, std::uint64_t width, StateDomain domain)
+    -> ConstIntegralView {
+  return ViewOfWords(
       static_cast<const std::uint64_t*>(bytes),
-      count * (domain == StateDomain::kFourState ? 2U : 1U));
-  return ConstPlanes{.value = all.first(count), .unknown = all.subspan(count)};
+      IntegralShape{
+          .width = width,
+          .signedness = Signedness::kUnsigned,
+          .domain = domain});
 }
 
-[[nodiscard]] inline auto WidePlanesAt(
-    void* bytes, std::uint64_t width, StateDomain domain) -> Planes {
-  const std::size_t count = WordCountForBits(width);
-  const std::span<std::uint64_t> all(
+[[nodiscard]] inline auto WideMutableViewAt(
+    void* bytes, std::uint64_t width, StateDomain domain) -> IntegralView {
+  return ViewOfWords(
       static_cast<std::uint64_t*>(bytes),
-      count * (domain == StateDomain::kFourState ? 2U : 1U));
-  return Planes{.value = all.first(count), .unknown = all.subspan(count)};
+      IntegralShape{
+          .width = width,
+          .signedness = Signedness::kUnsigned,
+          .domain = domain});
 }
 
 // An integral value wider than a word where it lies in something that holds
@@ -61,8 +64,11 @@ struct WideAt {
   [[nodiscard]] auto ByteSize() const -> std::size_t {
     return IntegralBytesFor(width, kDomainArg);
   }
-  [[nodiscard]] auto Read() const -> ConstPlanes {
-    return WidePlanesAt(static_cast<const void*>(bytes), width, kDomainArg);
+  [[nodiscard]] auto View() const -> ConstIntegralView {
+    return WideViewAt(bytes, width, kDomainArg);
+  }
+  [[nodiscard]] auto MutableView() const -> IntegralView {
+    return WideMutableViewAt(bytes, width, kDomainArg);
   }
 };
 
@@ -124,7 +130,7 @@ class WideVector {
   [[nodiscard]] static auto Filled(std::uint64_t width, FourStateBit bit)
       -> WideVector {
     WideVector filled(width);
-    FillScalar(filled.Write(), width, bit);
+    FillScalar(filled.MutableView(), bit);
     return filled;
   }
 
@@ -145,15 +151,23 @@ class WideVector {
   [[nodiscard]] auto Bytes() -> void* {
     return words_.data();
   }
-  [[nodiscard]] auto Read() const -> ConstPlanes {
-    return WidePlanesAt(Bytes(), width_, kDomain);
+  [[nodiscard]] auto View() const -> ConstIntegralView {
+    return WideViewAt(Bytes(), width_, kDomain);
   }
-  [[nodiscard]] auto Write() -> Planes {
-    return WidePlanesAt(Bytes(), width_, kDomain);
+  [[nodiscard]] auto MutableView() -> IntegralView {
+    return WideMutableViewAt(Bytes(), width_, kDomain);
   }
-  // The planes of a value as wide as this one laid out at `bytes`.
-  [[nodiscard]] auto PlanesAt(const void* bytes) const -> ConstPlanes {
-    return WidePlanesAt(bytes, width_, kDomain);
+  // The value as code compiled once over words reads one.
+  [[nodiscard]] auto AsWords() const -> LoadedWords {
+    return LoadedWords::Load(
+        Bytes(), IntegralShape{
+                     .width = width_,
+                     .signedness = Signedness::kUnsigned,
+                     .domain = kDomain});
+  }
+  // A value as wide as this one laid out at `bytes`, read.
+  [[nodiscard]] auto ReadAt(const void* bytes) const -> ConstIntegralView {
+    return WideViewAt(bytes, width_, kDomain);
   }
 
   // A copy of the value, or the value itself, laid out in `out`.
@@ -176,10 +190,10 @@ class WideVector {
   }
 
   [[nodiscard]] auto operator==(const WideVector& other) const -> FourStateBit {
-    return Equal(Read(), other.Read());
+    return Equal(View(), other.View());
   }
   [[nodiscard]] auto operator!=(const WideVector& other) const -> FourStateBit {
-    return NotEqual(Read(), other.Read());
+    return NotEqual(View(), other.View());
   }
   // LRM 9.4.2: whether two values are the same bits, x and z included. Every
   // position above the width is clear in both planes, so the bits are the same
@@ -188,7 +202,7 @@ class WideVector {
     return width_ == other.width_ && std::ranges::equal(words_, other.words_);
   }
   [[nodiscard]] auto HasUnknown() const -> bool {
-    return kFourState && lyra::value::HasUnknown(Read());
+    return kFourState && lyra::value::HasUnknown(View());
   }
 
   // The value laid out at `bytes`, as wide as this one, compared with and
@@ -206,7 +220,7 @@ class WideVector {
   explicit WideVector(std::uint64_t width)
       : width_(width),
         words_(
-            WordCountForBits(width) * (kFourState ? 2U : 1U),
+            WordCountOf(IntegralShape{.width = width, .domain = kDomain}),
             std::uint64_t{0}) {
   }
 

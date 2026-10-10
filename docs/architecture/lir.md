@@ -53,10 +53,14 @@ below LIR, at LIR-to-LLVM.
   element, and component steps, spelled inside the instruction that consumes it and never held.
   Every load, store, and address-of names a place by logical identity, and address-of is the one
   operation that turns the path into a value the program can retain. An element or component step
-  reaches a part that is storage of its own -- an array's element, a structure's member; a part that
-  is a view of its whole -- a packed value's bits, a string's character, a union's member -- is
-  reached by value projection. There is no slice step, because a window is several elements rather
-  than one storage, and storage behind an indirection is reached by a dereference step.
+  reaches a part that is storage of its own -- an array's element, a structure's member. A part that
+  is a view of its whole -- a packed value's bits, a string's character, a union's member -- is no
+  step of a place: it is read by value projection, and bits of a packed value lying at a place are
+  written by a store that names the place and the bits. There is no slice step, because a window is
+  several elements rather than one storage, and storage behind an indirection is reached by a
+  dereference step.
+- When the bytes a frame keeps for a value are in use: from where a slot's first value is stored or
+  a value is made, to a point stated on every way out of the extent it belongs to.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
 - The value-aggregate selector vocabulary: which subvalue of a view a step names -- the one member
@@ -152,6 +156,18 @@ identity is the suspect, not the analysis.
    value. _Machine-execution consequence: what a callee receives, what a local holds, and what
    survives a suspension is always a value, so no consumer re-evaluates a path whose base or
    projection may have changed since._
+9. The end of a value and the end of its storage's use are two statements. A value handed on leaves
+   behind the bytes it was made in while it goes on existing, and a slot's bytes hold one value
+   after another, so neither end implies the other. The statement says only how long a frame's bytes
+   are needed. _Machine-execution consequence: where those bytes are kept is the layout derivation's
+   answer from their size, and no node records it._
+10. A write states what it writes and nothing wider. Bits written within a packed value that lies
+    somewhere a write can land -- at a place, or within a write in progress -- are one statement
+    naming where the value lies, the parts the bits are reached through, and the bits. No node
+    states the value rebuilt in order to change part of it there, and no node reads a part out at
+    its own type to write a part of that part. _Machine-execution consequence: what a write costs
+    follows the bits it names and not the value they lie in, and a bit the program did not name is
+    not written._
 
 ## Boundary to Adjacent Layers
 
@@ -284,28 +300,36 @@ structure, each have an identity a second name may denote (`storage.md`), so eac
 into it extends the place holding its value, a load reads it where it lies, and a store writes into
 the object already there. Value semantics hold because a copy of the aggregate copies its parts, so
 no two values share one and a write through one is seen through no other. A packed value's bits, a
-string's character and a union's member have no identity of their own; each is a view of its whole,
-reached by value projection -- an extract, and an update producing the whole again, which is stored
-where the whole lives (the aggregate peers of LLVM's `extractvalue` / `insertvalue`). One extract
-and one update carry every such view, and the selector says only which subvalue is named -- the one
-member an active-member value holds at a time, a runtime coordinate, a fixed-width window. A step's
-direction is the access's: reading a missing element reads the default, and writing one allocates or
-discards it by the container's own rule, which the library applies when the step is realized. A
-write in progress is not a place but a value: the write itself, which the writer owns and ends and
-which names no place, and each place designated within it -- the whole of what it was opened on, and
-each part reached from there -- which borrows the write. Each step MIR takes within a write is one
-call on a designation answering with the next, and what the step does to the write -- an element
-step tells it what forming the element did -- is the library's, as it is in the C++ rendering of the
-same MIR. Where the write lands is a call on a designation, stated before anything is written there,
-that answers with the part's address; the part is then storage like any other. A run of elements
-written within a write is a call on the container's designation. Bits written within one are a view
-of the value they lie in, so they are two calls on that value's designation: one answering with the
-value as it stands once the bits are placed in it, and one handing the write that value. That is how
-the variable learns whether the write changed it (LRM 4.3). Which library entry realizes a step, and
-whether it is an instruction or a call at all, is a realization question answered below LIR; it
-never decides which node the step is expressed as. A mutating method on a receiver -- a container's
-`delete`, a queue's `push` -- changes the storage the receiver names in place; where the receiver is
-a view, it is read out, changed, and written back as any write to a view is.
+string's character and a union's member have no identity of their own; each is a view of its whole.
+A view is read by value projection -- an extract, the aggregate peer of LLVM's `extractvalue` -- and
+one extract and one update carry every such view, the selector saying only which subvalue is named:
+the one member an active-member value holds at a time, a runtime coordinate, a fixed-width window. A
+view of a value that is itself only a value is written by the update producing the whole again
+(`insertvalue`), and so is a string's character or a union's member at a place, the whole then being
+stored where it lives. Bits of a packed value lying at a place are written where they lie. The store
+names the place, each part the bits are reached through, outermost first -- where the part starts
+within the one before it and the type that fixes how many bits it has -- and the bits. The bits ride
+on the statement and not on the place, because a place is storage a load, a store and an address-of
+can each name, and some bits of a value are none of those alone. A part reaches nothing outside the
+part it is taken in, and a start that names no position writes nothing; both are outcomes of the
+insertion the store is realized by, never control flow or a test stated here. A step's direction is
+the access's: reading a missing element reads the default, and writing one allocates or discards it
+by the container's own rule, which the library applies when the step is realized. A write in
+progress is not a place but a value: the write itself, which the writer owns and ends and which
+names no place, and each place designated within it -- the whole of what it was opened on, and each
+part reached from there -- which borrows the write. Each step MIR takes within a write is one call
+on a designation answering with the next, and what the step does to the write -- an element step
+tells it what forming the element did -- is the library's, as it is in the C++ rendering of the same
+MIR. Where the write lands is a call on a designation, stated before anything is written there, that
+answers with the part's address; the part is then storage like any other. A run of elements written
+within a write is a call on the container's designation. Bits written within one are one call on the
+designation of the value they lie in, naming the same parts and bits a store at a place names; the
+write keeps what those bits held and hears which of them moved. That is how the variable learns
+whether the write changed it (LRM 4.3). Which library entry realizes a step, and whether it is an
+instruction or a call at all, is a realization question answered below LIR; it never decides which
+node the step is expressed as. A mutating method on a receiver -- a container's `delete`, a queue's
+`push` -- changes the storage the receiver names in place; where the receiver is a view, it is read
+out, changed, and written back.
 
 LIR states an integral type as MIR does: its width, its signedness, and whether it is two-state or
 four-state. It names an operation on one by the language's operator and carries a constant of one as

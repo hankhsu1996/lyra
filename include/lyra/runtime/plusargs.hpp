@@ -69,10 +69,9 @@ template <value::IntegralValue T>
 auto ValuePlusargs(
     RuntimeEffects& runtime, const value::String& user_string, T out)
     -> value::Tuple<value::Int, T> {
-  typename T::Words held = out.Load();
-  const value::Int matched =
-      ValuePlusargsInto(runtime, user_string, held.MutableView());
-  return value::Tuple<value::Int, T>{matched, T::FromWords(held)};
+  const value::Int matched = ValuePlusargsInto(
+      runtime, user_string, out.AsMutableWords().MutableView());
+  return value::Tuple<value::Int, T>{matched, std::move(out)};
 }
 
 }  // namespace lyra::runtime

@@ -49,6 +49,13 @@ struct OneWordOperands {
 // answering one.
 using OneWordAnswer = std::variant<OneWord, llvm::Value*>;
 
+// Whether a value of `shape` is one machine word per plane, which is what the
+// instructions below are over.
+[[nodiscard]] constexpr auto IsSingleWord(const value::IntegralShape& shape)
+    -> bool {
+  return shape.width <= 64;
+}
+
 // `op` as the few instructions it is on planes of one machine word (LRM 11.4),
 // where every integral value it is handed and answers with fits one word per
 // plane. Nothing for an operation whose work is long at every width, or over a

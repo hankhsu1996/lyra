@@ -278,23 +278,28 @@ struct OpenWriteTarget {
   TypeId value;
 };
 
-// An operation on some bits of the integral value a write in progress
-// designates (LRM 11.5.1), named by the designation and where the bits start.
-// Bits are a view of the value they lie in, so writing some is two steps:
-// `kPlace` answers with the designated value as it stands once the bits it is
-// handed are in it, and `kReport` hands the write that value, which keeps what
-// the bits held and tells the variable which of them moved (LRM 4.3). `kRead`
-// answers with the bits as they stand, which an assignment operator combines
-// before they are written (LRM 11.4.1). `value` is the type of the value
-// designated and `bits` the type the bits are read or written at, which fixes
-// how many there are.
+// One part of an integral value: where it starts within what it is a part of,
+// counted from the least significant bit, and the type it is read or written
+// at, which fixes how many bits it has. A start naming no position names no
+// part (LRM 11.5.1).
+struct BitsPart {
+  Operand start;
+  TypeId type;
+};
+
+// Writes bits of the integral value a write in progress designates (LRM
+// 11.5.1), where they lie in that value, keeping what they held and telling
+// the variable which of them moved (LRM 4.3); what it costs is the bits and
+// never the value they lie in. The call's operands are the designation and the
+// bits written. `value` is the type of the value designated, and `parts` names
+// the bits as a store of bits at a place names them: outermost first, the
+// first a part of the value, each one after it a part of the one before, and
+// the last the part written, whose type is the type of the bits.
 // A LIR-only target with no MIR twin: MIR states the write as an assignment
 // into a slice designated within the write.
 struct DesignatedBitsTarget {
-  enum class Op : std::uint8_t { kRead, kPlace, kReport };
-  Op op;
   TypeId value;
-  TypeId bits;
+  std::vector<BitsPart> parts;
 };
 
 // The end of an owned value, and a second owned value equal to one the body
@@ -373,7 +378,6 @@ struct CoroutineTarget {
 // improve how a dump reads.
 auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view;
 auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view;
-auto DesignatedBitsOpName(DesignatedBitsTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
@@ -470,8 +474,9 @@ struct AggregateExtractInstr {
 // `selector` replaced by `replacement`. A pure value operation -- it never
 // mutates the operand -- so writing a part that is a view of its whole is a
 // store of the whole this builds. The peer of LLVM's `insertvalue`; a part
-// that is storage of its own is written where it lies instead. The result's
-// type is the operand's aggregate type.
+// that is storage of its own is written where it lies instead, and so are bits
+// of an integral value held at a place. The result's type is the operand's
+// aggregate type.
 struct AggregateUpdateInstr {
   Operand aggregate;
   AggregateSelector selector;
@@ -568,6 +573,51 @@ struct StoreInstr {
   Operand value;
 };
 
+// Writes `bits` over some bits of the integral value held at `place`, where
+// they lie, leaving every other bit of that value as it stands (LRM 11.5.1);
+// what it costs is the bits and never the value they lie in. `parts` names the
+// bits, outermost first: the first is a part of the value, each one after it a
+// part of the one before, and the last is the part written, whose type is the
+// type of `bits`. A part reaches nothing outside the part it is taken in, and
+// one that names no position is not written. The store yields no value; its
+// instruction result is an unused void.
+//
+// The bits ride on the statement rather than on the place, because a place is
+// storage a load, a store and an address-of can each name, and some bits of a
+// value are none of those alone.
+struct BitsStoreInstr {
+  Place place;
+  std::vector<BitsPart> parts;
+  Operand bits;
+};
+
+// Where the bytes a frame keeps for the value `of` come into use and go out of
+// it, which is apart from the value they hold being made or ended: a value
+// handed on leaves the bytes it was made in behind, and a slot's bytes hold
+// one value after another. A slot's bytes come into use where the lowering
+// says; a made value's, with the instruction that makes it, which needs no
+// statement. Either goes out of use where the lowering says, on every way out
+// of the extent it was introduced in, a departure included -- and where a call
+// that would have made the value departs instead, in that call's landing. A
+// value handed on takes its bytes out of use with it, which is what a return
+// does with the value it returns. How
+// long a frame's bytes are needed is all this states: whether a frame is where
+// they are kept is decided below, from how large they are. The statement
+// yields no value; its instruction result is an unused void.
+//
+// A LIR-only statement with no MIR twin: a target whose own language places
+// its values states none of this. It is the pair rustc's MIR states as
+// `StorageLive` and `StorageDead`, and is read as that pair is: storage that
+// comes into use while in use begins afresh, and storage that goes out of use
+// twice has gone out of use.
+struct StorageInstr {
+  enum class Op : std::uint8_t { kLive, kDead };
+  Op op;
+  ValueId of;
+};
+
+auto StorageOpName(StorageInstr::Op op) -> std::string_view;
+
 // Names the address of `place`. The result is a borrowed pointer to the place's
 // type. This is how storage itself -- a cell, an aggregate, a member the callee
 // mutates -- is handed to a callee, as opposed to a copy of its contents.
@@ -657,10 +707,10 @@ struct CloseVariablesInstr {
 
 using InstrData = std::variant<
     CallInstr, TupleInstr, ClosureInstr, ArrayInstr, AggregateExtractInstr,
-    AggregateUpdateInstr, LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr,
-    UnaryInstr, CastInstr, HandleCastInstr, DynamicCastInstr,
-    ReceiveDepartureInstr, OpenVariablesInstr, VariableAddressInstr,
-    CloseVariablesInstr>;
+    AggregateUpdateInstr, LoadInstr, StoreInstr, BitsStoreInstr, StorageInstr,
+    AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr,
+    DynamicCastInstr, ReceiveDepartureInstr, OpenVariablesInstr,
+    VariableAddressInstr, CloseVariablesInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

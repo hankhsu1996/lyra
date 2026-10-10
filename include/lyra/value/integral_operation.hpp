@@ -27,24 +27,12 @@ struct IntegralExtent {
   return IntegralExtent{.width = shape.width, .domain = shape.domain};
 }
 
-// An integral value an operation reads the bits of, and one it reads as a
-// number.
-struct BitsOperand {
-  ConstPlanes planes;
-  std::uint64_t width = 0;
-};
-struct NumberOperand {
-  ConstPlanes planes;
-  std::uint64_t width = 0;
-  Signedness signedness = Signedness::kUnsigned;
-};
-
 // One operand as an operation is applied to it: an integral value, or the
 // machine value, text or foreign buffer the operation is declared to take
 // there.
 using IntegralOperand = std::variant<
-    BitsOperand, NumberOperand, std::int64_t, bool, std::uint8_t,
-    std::string_view, const svBitVecVal*, const svLogicVecVal*>;
+    ConstIntegralView, std::int64_t, bool, std::uint8_t, std::string_view,
+    const svBitVecVal*, const svLogicVecVal*>;
 
 // An integral answer of the type the call states, and an answer that is a
 // machine predicate or number.
@@ -83,13 +71,13 @@ void RequireOperandTypes(
 // What an operation answers with where its answer is a machine value.
 using MachineAnswer = std::variant<std::monostate, bool, std::int64_t>;
 
-// Applies `op` to `operands`. An integral answer is written into `answer`,
-// whose planes are of `answer_width` bits; a machine one is what the call
-// answers. This is every operation's one statement over planes of any width:
-// the compiler evaluating an operation over constants and the library carrying
-// one out for a type it was compiled without both arrive here.
+// Applies `op` to `operands`. An integral answer is written through `answer`;
+// a machine one is what the call answers. This is every operation's one
+// statement over values of any width: the compiler evaluating an operation
+// over constants and the library carrying one out for a type it was compiled
+// without both arrive here.
 auto ApplyIntegralOperation(
     support::IntegralOp op, std::span<const IntegralOperand> operands,
-    Planes answer, std::uint64_t answer_width) -> MachineAnswer;
+    const IntegralView& answer) -> MachineAnswer;
 
 }  // namespace lyra::value

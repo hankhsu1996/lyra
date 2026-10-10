@@ -29,6 +29,8 @@ CodeGenTypes::CodeGenTypes(
       unit_(&unit),
       ptr_ty_(llvm::PointerType::getUnqual(ctx)),
       span_ty_(
+          llvm::StructType::get(ctx, {ptr_ty_, llvm::Type::getInt64Ty(ctx)})),
+      bits_part_ty_(
           llvm::StructType::get(ctx, {ptr_ty_, llvm::Type::getInt64Ty(ctx)})) {
 }
 
@@ -180,8 +182,7 @@ auto CodeGenTypes::GetFunctionType(const FnAbi& abi) -> llvm::FunctionType* {
             [&](const TypeExtentArg&) {
               params.push_back(count);
               params.push_back(flag);
-            },
-            [&](const TypeWidthArg&) { params.push_back(count); }},
+            }},
         told);
   }
   return std::visit(
@@ -194,6 +195,27 @@ auto CodeGenTypes::GetFunctionType(const FnAbi& abi) -> llvm::FunctionType* {
             return llvm::FunctionType::get(indirect.returned, params, false);
           }},
       abi.ret);
+}
+
+auto ShapeOf(const lir::IntegralType& integral) -> value::IntegralShape {
+  value::IntegralShape shape{.width = integral.bit_width};
+  switch (integral.signedness) {
+    case lir::Signedness::kSigned:
+      shape.signedness = value::Signedness::kSigned;
+      break;
+    case lir::Signedness::kUnsigned:
+      shape.signedness = value::Signedness::kUnsigned;
+      break;
+  }
+  switch (integral.state_kind) {
+    case lir::IntegralStateKind::kTwoState:
+      shape.domain = value::StateDomain::kTwoState;
+      break;
+    case lir::IntegralStateKind::kFourState:
+      shape.domain = value::StateDomain::kFourState;
+      break;
+  }
+  return shape;
 }
 
 auto CodeGenTypes::RequiredIntegralShapeOf(lir::TypeId type) const
@@ -214,24 +236,7 @@ auto CodeGenTypes::IntegralShapeOf(lir::TypeId type) const
   if (integral == nullptr) {
     return std::nullopt;
   }
-  value::IntegralShape shape{.width = integral->bit_width};
-  switch (integral->signedness) {
-    case lir::Signedness::kSigned:
-      shape.signedness = value::Signedness::kSigned;
-      break;
-    case lir::Signedness::kUnsigned:
-      shape.signedness = value::Signedness::kUnsigned;
-      break;
-  }
-  switch (integral->state_kind) {
-    case lir::IntegralStateKind::kTwoState:
-      shape.domain = value::StateDomain::kTwoState;
-      break;
-    case lir::IntegralStateKind::kFourState:
-      shape.domain = value::StateDomain::kFourState;
-      break;
-  }
-  return shape;
+  return ShapeOf(*integral);
 }
 
 auto CodeGenTypes::StorageOf(lir::TypeId type) -> support::ObjectLayout {

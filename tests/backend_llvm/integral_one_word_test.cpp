@@ -121,8 +121,9 @@ auto FewSamplesOf(const IntegralShape& shape) -> std::vector<Sample> {
 }
 
 // The types operand `index` of an operation is tried at, given the types the
-// operands before it were. An operand read as bits is told no signedness, so
-// it is tried at one; an operand after the first is tried at fewer types.
+// operands before it were. An operand read as bits is one no operation reads
+// the signedness of, so it is tried at one; an operand after the first is
+// tried at fewer types.
 auto TypesOf(
     IntegralOperandKind kind, std::size_t index,
     std::span<const std::optional<IntegralShape>> before)
@@ -308,30 +309,17 @@ class Application {
     const std::span<const IntegralOperandKind> kinds =
         operation_->operands.Kinds();
     const Sample& sample = chosen_[index];
-    const auto planes = [&] {
-      return value::ConstPlanes{
-          .value = {&sample.value, 1},
-          .unknown = shapes_.operands[index]->IsFourState()
-                         ? std::span<const std::uint64_t>{&sample.unknown, 1}
-                         : std::span<const std::uint64_t>{}};
-    };
-    const auto bits = [&]() -> value::IntegralOperand {
-      return value::BitsOperand{
-          .planes = planes(), .width = shapes_.operands[index]->width};
-    };
-    const auto number = [&]() -> value::IntegralOperand {
-      return value::NumberOperand{
-          .planes = planes(),
-          .width = shapes_.operands[index]->width,
-          .signedness = shapes_.operands[index]->signedness};
-    };
     switch (kinds[index]) {
       case IntegralOperandKind::kBits:
-        return bits();
       case IntegralOperandKind::kNumber:
-        return number();
       case IntegralOperandKind::kSameType:
-        return support::IsNumberOperand(kinds.front()) ? number() : bits();
+        return value::ConstIntegralView{
+            .value = {&sample.value, 1},
+            .unknown = shapes_.operands[index]->IsFourState()
+                           ? std::span<const std::uint64_t>{&sample.unknown, 1}
+                           : std::span<const std::uint64_t>{},
+            .width = shapes_.operands[index]->width,
+            .signedness = shapes_.operands[index]->signedness};
       case IntegralOperandKind::kMachineInt:
         return static_cast<std::int64_t>(sample.value);
       case IntegralOperandKind::kMachineBool:
@@ -388,12 +376,12 @@ class Application {
         shapes_.answer.has_value() && shapes_.answer->IsFourState();
     const value::MachineAnswer stated_machine = value::ApplyIntegralOperation(
         operation_->op, operands,
-        value::Planes{
+        value::IntegralView{
             .value = {&stated.value, 1},
             .unknown = answers_unknown
                            ? std::span<std::uint64_t>{&stated.unknown, 1}
-                           : std::span<std::uint64_t>{}},
-        shapes_.answer.has_value() ? shapes_.answer->width : 0);
+                           : std::span<std::uint64_t>{},
+            .width = shapes_.answer.has_value() ? shapes_.answer->width : 0});
 
     const auto disagrees = [&](const std::string& how) {
       std::string operands_spelled;
@@ -547,7 +535,7 @@ auto ApplicationsOf(const IntegralOperation& operation)
 }
 
 // The two statements of an operation on one word -- the instructions the code
-// generator builds for it and the library's function over planes -- answer
+// generator builds for it and the library's function over views -- answer
 // alike, bit for bit in both planes, for every operation the code generator
 // builds instructions for.
 TEST(IntegralOneWordTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {

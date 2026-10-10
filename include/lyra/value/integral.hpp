@@ -3,18 +3,24 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
+#include <utility>
+#include <variant>
 
 #include "lyra/base/fixed_array.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral_fwd.hpp"  // IWYU pragma: export
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/word_recycler.hpp"
 
 namespace lyra::value {
 
@@ -48,534 +54,17 @@ namespace lyra::value {
   return std::min<std::size_t>(PlaneBytesFor(width), 8);
 }
 
-namespace detail {
+// The most bytes a value may be and still lie in whatever holds it. A value
+// in an expression lies in the frame of the function evaluating it, so a value
+// whose size followed its declared width would make a frame's size follow it
+// too, and a frame is taken from a stack whose size no design chose. A wider
+// value owns its words apart from itself, and a frame holds a pointer for it.
+inline constexpr std::size_t kMaxInlineBytes = 1024;
 
-// The machine data one plane of a `kWidth`-bit value is held in: an unsigned
-// integer of the plane's size, or the run of words a plane wider than one
-// word is.
-template <std::uint64_t kWidth>
-using PlaneOf = std::conditional_t<
-    PlaneBytesFor(kWidth) == 1, std::uint8_t,
-    std::conditional_t<
-        PlaneBytesFor(kWidth) == 2, std::uint16_t,
-        std::conditional_t<
-            PlaneBytesFor(kWidth) == 4, std::uint32_t,
-            std::conditional_t<
-                (kWidth <= 64), std::uint64_t,
-                std::array<std::uint64_t, WordCountForBits(kWidth)>>>>>;
-
-// A plane a value does not have: a two-state value's unknown one.
-struct NoPlane {
-  auto operator==(const NoPlane&) const -> bool = default;
-};
-
-[[nodiscard]] constexpr auto CombinedDomain(StateDomain a, StateDomain b)
-    -> StateDomain {
-  return a == StateDomain::kFourState || b == StateDomain::kFourState
-             ? StateDomain::kFourState
-             : StateDomain::kTwoState;
+[[nodiscard]] constexpr auto UsesHeapWords(
+    std::uint64_t width, StateDomain domain) -> bool {
+  return IntegralBytesFor(width, domain) > kMaxInlineBytes;
 }
-
-}  // namespace detail
-
-// An integral value: `kWidth` bits read as `kSignedness`, each of which holds 0
-// or 1, or also x or z where `kDomain` is four-state (LRM 6.11). Every
-// SystemVerilog integral type is one of these -- `int` is a signed two-state
-// 32, `logic [7:0]` an unsigned four-state 8, a packed structure or union the
-// width of its members -- because how a declaration divides its bits is the
-// declaration's own, and reaches an operation only as the position a select
-// names.
-//
-// The value is its planes and nothing else: the value plane, then the unknown
-// plane when four-state, each the machine integer of the plane's size or the
-// words a wider plane is, with every position above the width clear. Copying
-// it copies those bytes, and nothing about it is looked up while the program
-// runs; each operation is the language's operator over its words at this
-// width.
-template <
-    std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
-class Integral {
-  static_assert(kWidthArg >= 1, "an integral value has at least one bit");
-
- public:
-  static constexpr std::uint64_t kWidth = kWidthArg;
-  static constexpr Signedness kSignedness = kSignednessArg;
-  static constexpr StateDomain kDomain = kDomainArg;
-  static constexpr bool kFourState = kDomain == StateDomain::kFourState;
-  static constexpr std::size_t kWords = WordCountForBits(kWidth);
-
-  using Plane = detail::PlaneOf<kWidth>;
-  using UnknownPlane = std::conditional_t<kFourState, Plane, detail::NoPlane>;
-
-  // The planes worked on as words, every position clear until written. A
-  // two-state value has no unknown words.
-  struct Words {
-    std::array<std::uint64_t, kWords> value{};
-    std::array<std::uint64_t, kFourState ? kWords : 0> unknown{};
-
-    [[nodiscard]] LYRA_FOLDED constexpr auto Read() const -> ConstPlanes {
-      return ConstPlanes{.value = value, .unknown = unknown};
-    }
-    [[nodiscard]] LYRA_FOLDED constexpr auto Write() -> Planes {
-      return Planes{.value = value, .unknown = unknown};
-    }
-
-    // These words as code compiled without the type takes a value of it, which
-    // lasts as long as they do.
-    [[nodiscard]] constexpr auto View() const -> ConstIntegralView {
-      return ConstIntegralView{
-          .planes = Read(), .width = kWidth, .signedness = kSignedness};
-    }
-    [[nodiscard]] constexpr auto MutableView() -> IntegralView {
-      return IntegralView{.planes = Write(), .width = kWidth};
-    }
-  };
-
-  // What a declaration holds before anything writes it (LRM Table 6-7): x in
-  // every position of a four-state value, 0 of a two-state one.
-  LYRA_FOLDED constexpr Integral() : Integral(AllOf(FourStateBit::kUnknown)) {
-  }
-
-  [[nodiscard]] LYRA_FOLDED static constexpr auto FromWords(const Words& words)
-      -> Integral {
-    return Integral(words);
-  }
-
-  // The planes as a constant states them, value then unknown -- the second
-  // empty for a two-state value.
-  [[nodiscard]] static constexpr auto FromWords(
-      const std::array<std::uint64_t, kWords>& value,
-      const std::array<std::uint64_t, kFourState ? kWords : 0>& unknown)
-      -> Integral {
-    return Integral(Words{.value = value, .unknown = unknown});
-  }
-
-  // An integer carried into this type, its sign repeated into every position
-  // above 64 (LRM 11.6.1).
-  [[nodiscard]] LYRA_FOLDED static constexpr auto FromInt(std::int64_t value)
-      -> Integral {
-    Words words;
-    lyra::value::FromInt(words.Write(), kWidth, value);
-    return Integral(words);
-  }
-
-  [[nodiscard]] LYRA_FOLDED static constexpr auto FromBool(bool value)
-      -> Integral {
-    return FromInt(value ? 1 : 0);
-  }
-
-  // Every position holding one scalar: what a net shows where nothing drives
-  // it, and what a driver contributes where it does not drive (LRM 6.6). A
-  // two-state value holds an x or z as 0.
-  [[nodiscard]] LYRA_FOLDED static constexpr auto Filled(FourStateBit bit)
-      -> Integral {
-    return Integral(AllOf(bit));
-  }
-
-  [[nodiscard]] LYRA_FOLDED constexpr auto Load() const -> Words {
-    Words words;
-    LoadPlane(value_, words.value);
-    if constexpr (kFourState) {
-      LoadPlane(unknown_, words.unknown);
-    }
-    return words;
-  }
-
-  // LRM 9.4.2: whether two values are the same bits, x and z included, which
-  // is what decides that a write changed a variable. Every position above the
-  // width is clear, so the bits are the same exactly where the planes are.
-  [[nodiscard]] constexpr auto IsBitIdentical(const Integral& other) const
-      -> bool {
-    return value_ == other.value_ && unknown_ == other.unknown_;
-  }
-
-  [[nodiscard]] LYRA_FOLDED constexpr auto HasUnknown() const -> bool {
-    if constexpr (kFourState) {
-      return lyra::value::HasUnknown(Load().Read());
-    } else {
-      return false;
-    }
-  }
-
-  [[nodiscard]] LYRA_FOLDED constexpr auto Truth() const -> Truthiness {
-    return lyra::value::Truth(Load().Read());
-  }
-
-  // LRM 12.4: only a definitively-one bit makes a condition true.
-  [[nodiscard]] LYRA_FOLDED constexpr auto IsTruthy() const -> bool {
-    return Truth() == Truthiness::kKnownNonzero;
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr explicit operator bool() const {
-    return IsTruthy();
-  }
-
-  [[nodiscard]] LYRA_FOLDED constexpr auto ToInt64() const -> std::int64_t {
-    return lyra::value::ToInt64(Load().Read(), kWidth, kSignedness);
-  }
-
-  [[nodiscard]] LYRA_FOLDED constexpr auto Lsb() const -> FourStateBit {
-    return LeastSignificantBit(Load().Read());
-  }
-
-  // LRM 11.4.3: arithmetic at the operands' own type.
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator+(const Integral& b) const
-      -> Integral {
-    Words out;
-    Add(out.Write(), Load().Read(), b.Load().Read(), kWidth);
-    return Integral(out);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator-(const Integral& b) const
-      -> Integral {
-    Words out;
-    Subtract(out.Write(), Load().Read(), b.Load().Read(), kWidth);
-    return Integral(out);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator*(const Integral& b) const
-      -> Integral {
-    Words out;
-    Multiply(out.Write(), Load().Read(), b.Load().Read(), kWidth);
-    return Integral(out);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator/(const Integral& b) const
-      -> Integral {
-    Words out;
-    Divide(out.Write(), Load().Read(), b.Load().Read(), kWidth, kSignedness);
-    return Integral(out);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator%(const Integral& b) const
-      -> Integral {
-    Words out;
-    Modulo(out.Write(), Load().Read(), b.Load().Read(), kWidth, kSignedness);
-    return Integral(out);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator-() const -> Integral {
-    Words out;
-    Negate(out.Write(), Load().Read(), kWidth);
-    return Integral(out);
-  }
-
-  // LRM 11.4.8: the bitwise operators.
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator&(const Integral& b) const
-      -> Integral {
-    Words out;
-    BitwiseAnd(out.Write(), Load().Read(), b.Load().Read());
-    return Integral(out);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator|(const Integral& b) const
-      -> Integral {
-    Words out;
-    BitwiseOr(out.Write(), Load().Read(), b.Load().Read());
-    return Integral(out);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator^(const Integral& b) const
-      -> Integral {
-    Words out;
-    BitwiseXor(out.Write(), Load().Read(), b.Load().Read());
-    return Integral(out);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator~() const -> Integral {
-    Words out;
-    BitwiseNot(out.Write(), Load().Read(), kWidth);
-    return Integral(out);
-  }
-
-  // LRM 11.4.4, 11.4.5: a comparison answers one bit, which can be x only
-  // where its operands can.
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator==(const Integral& b) const
-      -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(Equal(Load().Read(), b.Load().Read()));
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator!=(const Integral& b) const
-      -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(NotEqual(Load().Read(), b.Load().Read()));
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator<(const Integral& b) const
-      -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(
-        Less(Load().Read(), b.Load().Read(), kWidth, kSignedness));
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator<=(const Integral& b) const
-      -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(
-        LessEqual(Load().Read(), b.Load().Read(), kWidth, kSignedness));
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator>(const Integral& b) const
-      -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(
-        Greater(Load().Read(), b.Load().Read(), kWidth, kSignedness));
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator>=(const Integral& b) const
-      -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(
-        GreaterEqual(Load().Read(), b.Load().Read(), kWidth, kSignedness));
-  }
-
-  // LRM 11.4.7: the logical operators, whose answer can be x where either
-  // operand can.
-  template <IntegralValue B>
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator&&(const B& b) const
-      -> OneBit<detail::CombinedDomain(kDomain, B::kDomain)> {
-    return OneBit<detail::CombinedDomain(kDomain, B::kDomain)>::Filled(
-        LogicalAnd(Load().Read(), b.Load().Read()));
-  }
-  template <IntegralValue B>
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator||(const B& b) const
-      -> OneBit<detail::CombinedDomain(kDomain, B::kDomain)> {
-    return OneBit<detail::CombinedDomain(kDomain, B::kDomain)>::Filled(
-        LogicalOr(Load().Read(), b.Load().Read()));
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto operator!() const
-      -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(LogicalNot(Load().Read()));
-  }
-
-  // LRM 11.4.5 `===`: never unknown, so its answer is a two-state bit. The
-  // wildcard equality reads an x or z of its right operand as matching anything
-  // (LRM 11.4.6) and can be unknown; the two matches a `casez` and a `casex`
-  // make cannot (LRM 12.5.1).
-  [[nodiscard]] LYRA_FOLDED constexpr auto CaseEqual(const Integral& b) const
-      -> Bit;
-  [[nodiscard]] LYRA_FOLDED constexpr auto WildcardEquals(
-      const Integral& b) const -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(
-        WildcardEqual(Load().Read(), b.Load().Read()));
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto CasezEquals(const Integral& b) const
-      -> Bit;
-  [[nodiscard]] LYRA_FOLDED constexpr auto CasexEquals(const Integral& b) const
-      -> Bit;
-
-  // LRM 11.4.7 `<->`, whose answer can be x where either operand can.
-  template <IntegralValue B>
-  [[nodiscard]] LYRA_FOLDED constexpr auto LogicalEquivalence(const B& b) const
-      -> OneBit<detail::CombinedDomain(kDomain, B::kDomain)> {
-    return OneBit<detail::CombinedDomain(kDomain, B::kDomain)>::Filled(
-        lyra::value::LogicalEquivalence(Load().Read(), b.Load().Read()));
-  }
-
-  // LRM 11.4.8 `~^`.
-  [[nodiscard]] LYRA_FOLDED constexpr auto BitwiseXnor(const Integral& b) const
-      -> Integral {
-    Words out;
-    lyra::value::BitwiseXnor(
-        out.Write(), Load().Read(), b.Load().Read(), kWidth);
-    return Integral(out);
-  }
-
-  // LRM 11.4.10: the shifts, by an amount of any integral type.
-  template <IntegralValue Amount>
-  [[nodiscard]] LYRA_FOLDED constexpr auto ShiftLeft(const Amount& amount) const
-      -> Integral {
-    Words out;
-    lyra::value::ShiftLeft(
-        out.Write(), Load().Read(), kWidth, amount.Load().Read());
-    return Integral(out);
-  }
-  template <IntegralValue Amount>
-  [[nodiscard]] LYRA_FOLDED constexpr auto LogicalShiftRight(
-      const Amount& amount) const -> Integral {
-    Words out;
-    lyra::value::LogicalShiftRight(
-        out.Write(), Load().Read(), kWidth, amount.Load().Read());
-    return Integral(out);
-  }
-  template <IntegralValue Amount>
-  [[nodiscard]] LYRA_FOLDED constexpr auto ArithmeticShiftRight(
-      const Amount& amount) const -> Integral {
-    Words out;
-    lyra::value::ArithmeticShiftRight(
-        out.Write(), Load().Read(), kWidth, kSignedness, amount.Load().Read());
-    return Integral(out);
-  }
-
-  // LRM 11.4.9: the reductions, each one bit that is x only where the value
-  // can hold one.
-  [[nodiscard]] LYRA_FOLDED constexpr auto ReductionAnd() const
-      -> OneBit<kDomain> {
-    return Reduced(ReductionOp::kAnd);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto ReductionOr() const
-      -> OneBit<kDomain> {
-    return Reduced(ReductionOp::kOr);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto ReductionXor() const
-      -> OneBit<kDomain> {
-    return Reduced(ReductionOp::kXor);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto ReductionNand() const
-      -> OneBit<kDomain> {
-    return Reduced(ReductionOp::kNand);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto ReductionNor() const
-      -> OneBit<kDomain> {
-    return Reduced(ReductionOp::kNor);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto ReductionXnor() const
-      -> OneBit<kDomain> {
-    return Reduced(ReductionOp::kXnor);
-  }
-
-  // LRM 11.4.12: `{a, b}`, this value in the most significant positions. The
-  // answer is unsigned and can hold x or z where either operand can.
-  template <IntegralValue B>
-  [[nodiscard]] LYRA_FOLDED constexpr auto Concat(const B& b) const -> Integral<
-      kWidth + B::kWidth, Signedness::kUnsigned,
-      detail::CombinedDomain(kDomain, B::kDomain)> {
-    using Result = Integral<
-        kWidth + B::kWidth, Signedness::kUnsigned,
-        detail::CombinedDomain(kDomain, B::kDomain)>;
-    typename Result::Words out;
-    lyra::value::Concat(
-        out.Write(), Load().Read(), kWidth, b.Load().Read(), B::kWidth);
-    return Result::FromWords(out);
-  }
-
-  // LRM 11.4.3 power.
-  template <IntegralValue Exponent>
-  [[nodiscard]] constexpr auto Pow(const Exponent& exponent) const -> Integral {
-    Words out;
-    Power(
-        out.Write(), Load().Read(), kWidth, kSignedness, exponent.Load().Read(),
-        Exponent::kWidth, Exponent::kSignedness);
-    return Integral(out);
-  }
-
-  // LRM 11.4.11: the arms of a conditional whose condition is ambiguous, merged
-  // at the arms' own type.
-  [[nodiscard]] LYRA_FOLDED constexpr auto MergeConditional(
-      const Integral& b) const -> Integral {
-    Words out;
-    lyra::value::MergeConditional(
-        out.Write(), Load().Read(), b.Load().Read(), kWidth);
-    return Integral(out);
-  }
-
-  // LRM 6.6: two contributions to a net folded under each of the three tables,
-  // and a stronger contribution over a weaker one (LRM 28.12.1).
-  [[nodiscard]] LYRA_FOLDED constexpr auto ResolveTriState(
-      const Integral& b) const -> Integral {
-    return Resolved(NetResolution::kTriState, b);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto ResolveWiredAnd(
-      const Integral& b) const -> Integral {
-    return Resolved(NetResolution::kWiredAnd, b);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto ResolveWiredOr(
-      const Integral& b) const -> Integral {
-    return Resolved(NetResolution::kWiredOr, b);
-  }
-  [[nodiscard]] LYRA_FOLDED constexpr auto Dominating(
-      const Integral& weaker) const -> Integral {
-    Words out;
-    Dominate(out.Write(), Load().Read(), weaker.Load().Read());
-    return Integral(out);
-  }
-
-  // LRM 20.8.1 `$clog2`, answered as an `integer`; LRM 20.9 `$countbits`,
-  // answered as an `int`; and LRM 20.9 `$isunknown`.
-  [[nodiscard]] constexpr auto Clog2() const -> Integer;
-  template <IntegralValue Control>
-  [[nodiscard]] constexpr auto CountBits(const Control& control) const -> Int;
-  [[nodiscard]] constexpr auto IsUnknown() const -> Bit;
-
-  // LRM 6.24.3: how many bits the value is as a stream, and those bits, which
-  // a stream holds unsigned.
-  [[nodiscard]] static constexpr auto BitstreamWidth() -> Int;
-  [[nodiscard]] constexpr auto ToBitstream() const
-      -> Integral<kWidth, Signedness::kUnsigned, kDomain> {
-    const Words held = Load();
-    return Integral<kWidth, Signedness::kUnsigned, kDomain>::FromWords(
-        held.value, held.unknown);
-  }
-
-  // LRM 11.4.14.2: the value's blocks of `block_bits` bits in reversed order,
-  // the last one whatever the width leaves of it.
-  [[nodiscard]] constexpr auto ReverseBlocks(std::int64_t block_bits) const
-      -> Integral {
-    Words out;
-    lyra::value::ReverseBlocks(
-        out.Write(), Load().Read(), kWidth,
-        static_cast<std::uint64_t>(block_bits));
-    return Integral(out);
-  }
-
-  // The bits a part of type `Part` names of this value, held where a write
-  // lands (LRM 11.5.1).
-  template <IntegralValue Part, IntegralValue P>
-  [[nodiscard]] constexpr auto SliceRef(const P& position)
-      -> BitsRef<Integral, Part> {
-    return BitsRef<Integral, Part>{
-        *this, PositionNamed(position.Load().Read(), P::kWidth, P::kSignedness),
-        BitPositions{.lsb = 0, .width = kWidth}};
-  }
-
- private:
-  LYRA_FOLDED explicit constexpr Integral(const Words& words)
-      : value_(PlaneFrom(words.value)), unknown_(UnknownFrom(words.unknown)) {
-  }
-
-  [[nodiscard]] LYRA_FOLDED constexpr auto Reduced(ReductionOp op) const
-      -> OneBit<kDomain> {
-    return OneBit<kDomain>::Filled(Reduce(Load().Read(), kWidth, op));
-  }
-
-  [[nodiscard]] LYRA_FOLDED constexpr auto Resolved(
-      NetResolution fold, const Integral& b) const -> Integral {
-    Words out;
-    Resolve(out.Write(), Load().Read(), b.Load().Read(), fold);
-    return Integral(out);
-  }
-
-  [[nodiscard]] LYRA_FOLDED static constexpr auto AllOf(FourStateBit bit)
-      -> Words {
-    Words words;
-    FillScalar(words.Write(), kWidth, bit);
-    return words;
-  }
-
-  LYRA_FOLDED static constexpr void LoadPlane(
-      const Plane& plane, std::array<std::uint64_t, kWords>& words) {
-    if constexpr (kWidth <= 64) {
-      words[0] = plane;
-    } else {
-      words = plane;
-    }
-  }
-
-  [[nodiscard]] LYRA_FOLDED static constexpr auto PlaneFrom(
-      const std::array<std::uint64_t, kWords>& words) -> Plane {
-    if constexpr (kWidth <= 64) {
-      return static_cast<Plane>(words[0]);
-    } else {
-      return words;
-    }
-  }
-
-  [[nodiscard]] LYRA_FOLDED static constexpr auto UnknownFrom(
-      const std::array<std::uint64_t, kFourState ? kWords : 0>& words)
-      -> UnknownPlane {
-    if constexpr (kFourState) {
-      return PlaneFrom(words);
-    } else {
-      return detail::NoPlane{};
-    }
-  }
-
-  Plane value_;
-  [[no_unique_address]] UnknownPlane unknown_;
-};
-
-// A value is exactly the bytes its type lays it out in, which is what lets code
-// compiled without its type read and write one where it lies.
-static_assert(sizeof(Bit) == IntegralBytesFor(1, StateDomain::kTwoState));
-static_assert(sizeof(Logic) == IntegralBytesFor(1, StateDomain::kFourState));
-static_assert(sizeof(Int) == IntegralBytesFor(32, StateDomain::kTwoState));
-static_assert(sizeof(Time) == IntegralBytesFor(64, StateDomain::kFourState));
-static_assert(
-    sizeof(LogicVector<100>) == IntegralBytesFor(100, StateDomain::kFourState));
-static_assert(
-    alignof(LogicVector<12>) == IntegralAlignFor(12) &&
-    alignof(BitVector<100>) == IntegralAlignFor(100));
 
 // An integral type as code compiled once for every integral type is handed it:
 // how many bits a value has, read as which signedness, each holding which
@@ -599,83 +88,860 @@ template <IntegralValue T>
 inline constexpr IntegralShape kShapeOf{
     .width = T::kWidth, .signedness = T::kSignedness, .domain = T::kDomain};
 
-// The planes of one value of a type the code holding it was compiled without,
-// loaded out of the bytes the value is laid out in as the words every operation
-// takes, and stored back into bytes laid out the same way.
+// How many words a value of `shape` is: those of its value plane and then,
+// where it can hold x or z, those of its unknown plane.
+[[nodiscard]] constexpr auto WordCountOf(IntegralShape shape) -> std::size_t {
+  return WordCountForBits(shape.width) * (shape.IsFourState() ? 2U : 1U);
+}
+
+// Whether a value of `shape` is laid out as 64-bit words, which every value
+// whose plane takes a whole word or more is. A narrower one is laid out as one
+// smaller machine integer per plane.
+[[nodiscard]] constexpr auto IsLaidOutAsWords(IntegralShape shape) -> bool {
+  return PlaneBytesFor(shape.width) >= sizeof(std::uint64_t);
+}
+
+// The value of `shape` whose words lie at `words`, the value plane's and then
+// the unknown plane's where there is one, read and written.
+[[nodiscard]] inline auto ViewOfWords(
+    const std::uint64_t* words, IntegralShape shape) -> ConstIntegralView {
+  const std::span<const std::uint64_t> all(words, WordCountOf(shape));
+  const std::size_t count = WordCountForBits(shape.width);
+  return ConstIntegralView{
+      .value = all.first(count),
+      .unknown = all.subspan(count),
+      .width = shape.width,
+      .signedness = shape.signedness};
+}
+[[nodiscard]] inline auto ViewOfWords(std::uint64_t* words, IntegralShape shape)
+    -> IntegralView {
+  const std::span<std::uint64_t> all(words, WordCountOf(shape));
+  const std::size_t count = WordCountForBits(shape.width);
+  return IntegralView{
+      .value = all.first(count),
+      .unknown = all.subspan(count),
+      .width = shape.width};
+}
+
+namespace detail {
+
+// The value of `shape` laid out at `bytes` as one `Plane` per plane, read.
+template <PlaneWord Plane>
+[[nodiscard]] inline auto ViewOfPlanes(const void* bytes, IntegralShape shape)
+    -> ConstIntegralViewOf<Plane, 1, std::dynamic_extent> {
+  const std::span<const Plane> planes(
+      static_cast<const Plane*>(bytes), shape.IsFourState() ? 2U : 1U);
+  return {
+      .value = planes.template first<1>(),
+      .unknown = planes.subspan(1),
+      .width = shape.width,
+      .signedness = shape.signedness};
+}
+
+}  // namespace detail
+
+// Hands `visit` the value of `shape` laid out at `bytes`, read where it lies.
+// Which integer a word of it is, only the shape says while the program runs,
+// so this is the one place that turns a shape into a view of each kind.
+template <typename Visit>
+auto VisitLaidOut(const void* bytes, IntegralShape shape, Visit visit)
+    -> decltype(auto) {
+  const std::size_t plane = PlaneBytesFor(shape.width);
+  if (plane == sizeof(std::uint8_t)) {
+    return visit(detail::ViewOfPlanes<std::uint8_t>(bytes, shape));
+  }
+  if (plane == sizeof(std::uint16_t)) {
+    return visit(detail::ViewOfPlanes<std::uint16_t>(bytes, shape));
+  }
+  if (plane == sizeof(std::uint32_t)) {
+    return visit(detail::ViewOfPlanes<std::uint32_t>(bytes, shape));
+  }
+  return visit(ViewOfWords(static_cast<const std::uint64_t*>(bytes), shape));
+}
+
+// The words of one value laid out at some bytes, read by code compiled once
+// over words. A value laid out as words is read where it lies, and the bytes
+// have to outlive this. A narrower one is laid out as smaller machine
+// integers, so its words are made of those bytes and held here, and a view of
+// them lasts as long as this does.
 class LoadedWords {
  public:
-  // A value of `shape` with every position clear in both planes.
-  explicit LoadedWords(IntegralShape shape)
-      : shape_(shape),
-        words_(
-            WordCountForBits(shape.width) * (shape.IsFourState() ? 2U : 1U),
-            std::uint64_t{0}) {
-  }
-
   [[nodiscard]] static auto Load(const void* bytes, IntegralShape shape)
       -> LoadedWords {
-    static_assert(
-        std::endian::native == std::endian::little,
-        "a plane narrower than a word is the low bytes of one");
-    LoadedWords loaded(shape);
-    const std::size_t plane = PlaneBytesFor(shape.width);
-    const std::span<const std::byte> from(
-        static_cast<const std::byte*>(bytes), shape.Bytes());
-    if (shape.width <= 64U) {
-      for (std::size_t p = 0; p * plane < from.size(); ++p) {
-        std::memcpy(
-            &loaded.words_[p], from.subspan(p * plane, plane).data(), plane);
-      }
-    } else {
-      std::memcpy(loaded.words_.data(), from.data(), from.size());
+    if (IsLaidOutAsWords(shape)) {
+      return {
+          shape, Borrowed{.words = static_cast<const std::uint64_t*>(bytes)}};
     }
-    return loaded;
-  }
-
-  void StoreTo(void* bytes) const {
-    const std::size_t plane = PlaneBytesFor(shape_.width);
-    const std::span<std::byte> to(
-        static_cast<std::byte*>(bytes), shape_.Bytes());
-    if (shape_.width <= 64U) {
-      for (std::size_t p = 0; p * plane < to.size(); ++p) {
-        std::memcpy(to.subspan(p * plane, plane).data(), &words_[p], plane);
-      }
-    } else {
-      std::memcpy(to.data(), words_.data(), to.size());
-    }
+    return {
+        shape, VisitLaidOut(bytes, shape, [](AnyConstIntegralView auto read) {
+          return Owned{
+              .words = {WordAt(read.value, 0), WordOrZero(read.unknown, 0)}};
+        })};
   }
 
   [[nodiscard]] auto Shape() const -> IntegralShape {
     return shape_;
   }
 
-  [[nodiscard]] auto Read() const -> ConstPlanes {
-    const std::span<const std::uint64_t> all(words_.data(), words_.size());
-    const std::size_t count = WordCountForBits(shape_.width);
-    return ConstPlanes{
-        .value = all.first(count), .unknown = all.subspan(count)};
-  }
-  [[nodiscard]] auto Write() -> Planes {
-    const std::span<std::uint64_t> all(words_.data(), words_.size());
-    const std::size_t count = WordCountForBits(shape_.width);
-    return Planes{.value = all.first(count), .unknown = all.subspan(count)};
-  }
-
   [[nodiscard]] auto View() const -> ConstIntegralView {
-    return ConstIntegralView{
-        .planes = Read(),
-        .width = shape_.width,
-        .signedness = shape_.signedness};
-  }
-  [[nodiscard]] auto MutableView() -> IntegralView {
-    return IntegralView{.planes = Write(), .width = shape_.width};
+    return ViewOfWords(
+        std::visit(
+            Overloaded{
+                [](const Owned& made) { return made.words.data(); },
+                [](const Borrowed& lying) { return lying.words; }},
+            words_),
+        shape_);
   }
 
  private:
+  // The word of each plane of a value narrower than one.
+  struct Owned {
+    std::array<std::uint64_t, 2> words;
+  };
+  struct Borrowed {
+    const std::uint64_t* words;
+  };
+  using Words = std::variant<Owned, Borrowed>;
+
+  LoadedWords(IntegralShape shape, Words words) : shape_(shape), words_(words) {
+  }
+
   IntegralShape shape_;
-  // The value plane's words, then the unknown plane's where there is one.
-  base::FixedArray<std::uint64_t, 4> words_;
+  Words words_;
 };
+
+class ScopedWordsWrite;
+
+// The words of one value while code compiled once over words writes it. They
+// are held here until the value is laid out somewhere, or, for a value laid
+// out as words that is built or changed where it lies, they are the bytes
+// there.
+class WrittenWords {
+ public:
+  // A value of `shape` with every position clear in both planes.
+  explicit WrittenWords(IntegralShape shape)
+      : shape_(shape),
+        words_(Owned{.words = {WordCountOf(shape), std::uint64_t{0}}}) {
+  }
+
+  // A value of its own that starts as the one of `shape` laid out at `bytes`.
+  [[nodiscard]] static auto CopyOf(const void* bytes, IntegralShape shape)
+      -> WrittenWords {
+    const LoadedWords loaded = LoadedWords::Load(bytes, shape);
+    const ConstIntegralView read = loaded.View();
+    WrittenWords copy(shape);
+    const IntegralView written = copy.MutableView();
+    std::ranges::copy(read.value, written.value.begin());
+    std::ranges::copy(read.unknown, written.unknown.begin());
+    return copy;
+  }
+
+  // A value of `shape` with every position clear, built where it will lie: a
+  // value laid out as words is written into `bytes` as it is built, and a
+  // narrower one is laid out there when it is stored. Nothing the value is
+  // made from may lie at `bytes`, which are cleared before any of it is read.
+  [[nodiscard]] static auto ZeroedAt(void* bytes, IntegralShape shape)
+      -> WrittenWords {
+    if (!IsLaidOutAsWords(shape)) {
+      return WrittenWords(shape);
+    }
+    WrittenWords lying{
+        shape, Borrowed{.words = static_cast<std::uint64_t*>(bytes)}};
+    const IntegralView written = lying.MutableView();
+    std::ranges::fill(written.value, std::uint64_t{0});
+    std::ranges::fill(written.unknown, std::uint64_t{0});
+    return lying;
+  }
+
+  // Lays the value out at `bytes`, which does nothing where it was written
+  // there.
+  void StoreTo(void* bytes) const {
+    static_assert(
+        std::endian::native == std::endian::little,
+        "a plane narrower than a word is the low bytes of one");
+    const std::uint64_t* const words = Data();
+    const std::span<std::byte> to(
+        static_cast<std::byte*>(bytes), shape_.Bytes());
+    if (IsLaidOutAsWords(shape_)) {
+      if (words != bytes) {
+        std::memcpy(to.data(), words, to.size());
+      }
+      return;
+    }
+    const std::span<const std::uint64_t> all(words, WordCountOf(shape_));
+    const std::size_t plane = PlaneBytesFor(shape_.width);
+    for (std::size_t p = 0; p * plane < to.size(); ++p) {
+      std::memcpy(to.subspan(p * plane, plane).data(), &all[p], plane);
+    }
+  }
+
+  [[nodiscard]] auto View() const -> ConstIntegralView {
+    return ViewOfWords(Data(), shape_);
+  }
+  [[nodiscard]] auto MutableView() -> IntegralView {
+    return ViewOfWords(
+        std::visit(
+            Overloaded{
+                [](Owned& owned) { return owned.words.data(); },
+                [](Borrowed& lying) { return lying.words; }},
+            words_),
+        shape_);
+  }
+
+ private:
+  friend class ScopedWordsWrite;
+
+  // The value of `shape` laid out at `bytes`, to be changed: where it lies if
+  // it is laid out as words, and otherwise as a copy that storing lays back
+  // out, which is why only the scope that stores it back may ask.
+  [[nodiscard]] static auto At(void* bytes, IntegralShape shape)
+      -> WrittenWords {
+    if (IsLaidOutAsWords(shape)) {
+      return {shape, Borrowed{.words = static_cast<std::uint64_t*>(bytes)}};
+    }
+    return CopyOf(bytes, shape);
+  }
+
+  struct Owned {
+    base::FixedArray<std::uint64_t, 4> words;
+  };
+  struct Borrowed {
+    std::uint64_t* words;
+  };
+  using Words = std::variant<Owned, Borrowed>;
+
+  WrittenWords(IntegralShape shape, Words words)
+      : shape_(shape), words_(std::move(words)) {
+  }
+
+  // The value plane's words, then the unknown plane's where there is one.
+  [[nodiscard]] auto Data() const -> const std::uint64_t* {
+    return std::visit(
+        Overloaded{
+            [](const Owned& owned) { return owned.words.data(); },
+            [](const Borrowed& lying) -> const std::uint64_t* {
+              return lying.words;
+            }},
+        words_);
+  }
+
+  IntegralShape shape_;
+  Words words_;
+};
+
+// A value laid out at some bytes while code compiled once over words writes
+// it, laid back out at those bytes when the writing ends.
+class ScopedWordsWrite {
+ public:
+  ScopedWordsWrite(void* bytes, IntegralShape shape)
+      : words_(WrittenWords::At(bytes, shape)), bytes_(bytes) {
+  }
+  ScopedWordsWrite(const ScopedWordsWrite&) = delete;
+  ScopedWordsWrite(ScopedWordsWrite&&) = delete;
+  auto operator=(const ScopedWordsWrite&) -> ScopedWordsWrite& = delete;
+  auto operator=(ScopedWordsWrite&&) -> ScopedWordsWrite& = delete;
+  ~ScopedWordsWrite() {
+    words_.StoreTo(bytes_);
+  }
+
+  [[nodiscard]] auto MutableView() -> IntegralView {
+    return words_.MutableView();
+  }
+
+ private:
+  WrittenWords words_;
+  void* bytes_;
+};
+
+namespace detail {
+
+// The integer a word of a plane is: the smallest machine integer that holds
+// the width up to 64 bits, and a 64-bit word above.
+template <std::uint64_t kWidth>
+using PlaneOf = std::conditional_t<
+    PlaneBytesFor(kWidth) == 1, std::uint8_t,
+    std::conditional_t<
+        PlaneBytesFor(kWidth) == 2, std::uint16_t,
+        std::conditional_t<
+            PlaneBytesFor(kWidth) == 4, std::uint32_t, std::uint64_t>>>;
+
+// What a value holds while it is small enough to lie in whatever holds it:
+// the words of its value plane and then, where it can hold x or z, those of
+// its unknown plane, every position clear until written. A value no wider
+// than 64 bits has one word per plane, the smallest machine integer that
+// holds its width, and a wider one has 64-bit words.
+template <PlaneWord WordArg, std::size_t kWords, bool kFourState>
+struct InlineWords {
+  using Word = WordArg;
+  static constexpr std::size_t kUnknownWords = kFourState ? kWords : 0;
+
+  std::array<Word, kWords + kUnknownWords> words{};
+
+  [[nodiscard]] constexpr auto Value() const -> std::span<const Word, kWords> {
+    return std::span(words).template first<kWords>();
+  }
+  [[nodiscard]] constexpr auto Value() -> std::span<Word, kWords> {
+    return std::span(words).template first<kWords>();
+  }
+  [[nodiscard]] constexpr auto Unknown() const
+      -> std::span<const Word, kUnknownWords> {
+    return std::span(words).template last<kUnknownWords>();
+  }
+  [[nodiscard]] constexpr auto Unknown() -> std::span<Word, kUnknownWords> {
+    return std::span(words).template last<kUnknownWords>();
+  }
+  // Where the value's layout lies.
+  [[nodiscard]] auto Bytes() const -> const void* {
+    return words.data();
+  }
+  [[nodiscard]] auto Bytes() -> void* {
+    return words.data();
+  }
+
+  // Whether two hold the same words, asked a word at a time. Asked of the
+  // array as a whole, a host library may compare it as a run of bytes through
+  // a call, which every store into a variable would then make.
+  constexpr auto operator==(const InlineWords& other) const -> bool {
+    const std::span<const Word> mine(words);
+    const std::span<const Word> theirs(other.words);
+    bool same = true;
+    for (std::size_t i = 0; i < mine.size(); ++i) {
+      same = same && mine[i] == theirs[i];
+    }
+    return same;
+  }
+};
+
+// What a value holds past the size that lies in a frame: its words owned
+// apart from it, the value plane's and then the unknown plane's where there
+// is one, every position clear until written. Moving one hands its words on,
+// and what it was moved from is good only for being assigned or ended.
+template <std::size_t kWords, bool kFourState>
+class HeapWords {
+ public:
+  using Word = std::uint64_t;
+  static constexpr std::size_t kUnknownWords = kFourState ? kWords : 0;
+
+  HeapWords() : words_(AllocateWords(kCount)) {
+    std::ranges::fill(All(), std::uint64_t{0});
+  }
+  HeapWords(const HeapWords& other) : words_(AllocateWords(kCount)) {
+    std::ranges::copy(other.All(), words_);
+  }
+  HeapWords(HeapWords&& other) noexcept
+      : words_(std::exchange(other.words_, nullptr)) {
+  }
+  auto operator=(const HeapWords& other) -> HeapWords& {
+    if (this == &other) {
+      return *this;
+    }
+    if (words_ == nullptr) {
+      words_ = AllocateWords(kCount);
+    }
+    std::ranges::copy(other.All(), words_);
+    return *this;
+  }
+  auto operator=(HeapWords&& other) noexcept -> HeapWords& {
+    std::swap(words_, other.words_);
+    return *this;
+  }
+  ~HeapWords() {
+    DeallocateWords(words_, kCount);
+  }
+
+  [[nodiscard]] auto Value() const -> std::span<const std::uint64_t, kWords> {
+    return All().template first<kWords>();
+  }
+  [[nodiscard]] auto Value() -> std::span<std::uint64_t, kWords> {
+    return All().template first<kWords>();
+  }
+  [[nodiscard]] auto Unknown() const
+      -> std::span<const std::uint64_t, kUnknownWords> {
+    return All().template last<kUnknownWords>();
+  }
+  [[nodiscard]] auto Unknown() -> std::span<std::uint64_t, kUnknownWords> {
+    return All().template last<kUnknownWords>();
+  }
+
+  [[nodiscard]] auto Bytes() const -> const void* {
+    return words_;
+  }
+  [[nodiscard]] auto Bytes() -> void* {
+    return words_;
+  }
+
+  auto operator==(const HeapWords& other) const -> bool {
+    return std::ranges::equal(All(), other.All());
+  }
+
+ private:
+  static constexpr std::size_t kCount = kWords + kUnknownWords;
+
+  [[nodiscard]] auto All() const -> std::span<const std::uint64_t> {
+    return {words_, kCount};
+  }
+  [[nodiscard]] auto All() -> std::span<std::uint64_t> {
+    return {words_, kCount};
+  }
+
+  std::uint64_t* words_;
+};
+
+[[nodiscard]] constexpr auto CombinedDomain(StateDomain a, StateDomain b)
+    -> StateDomain {
+  return a == StateDomain::kFourState || b == StateDomain::kFourState
+             ? StateDomain::kFourState
+             : StateDomain::kTwoState;
+}
+
+}  // namespace detail
+
+// An integral value: `kWidth` bits read as `kSignedness`, each of which holds 0
+// or 1, or also x or z where `kDomain` is four-state (LRM 6.11). Every
+// SystemVerilog integral type is one of these -- `int` is a signed two-state
+// 32, `logic [7:0]` an unsigned four-state 8, a packed structure or union the
+// width of its members -- because how a declaration divides its bits is the
+// declaration's own, and reaches an operation only as the position a select
+// names.
+//
+// The value is its planes and nothing else, with every position above the
+// width clear, and nothing about it is looked up while the program runs; each
+// operation is the language's operator over its words at this width. Up to a
+// word a plane is the machine integer of its size. Above one the planes are
+// words, the value plane's and then the unknown plane's when four-state: lying
+// in the value while the value is small enough to lie in a frame, and owned
+// apart from it past that, which the type decides.
+template <
+    std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
+class Integral {
+  static_assert(kWidthArg >= 1, "an integral value has at least one bit");
+
+  // What the value holds, which its type decides and nothing outside reads.
+  using Storage = std::conditional_t<
+      UsesHeapWords(kWidthArg, kDomainArg),
+      detail::HeapWords<
+          WordCountForBits(kWidthArg), kDomainArg == StateDomain::kFourState>,
+      detail::InlineWords<
+          detail::PlaneOf<kWidthArg>, WordCountForBits(kWidthArg),
+          kDomainArg == StateDomain::kFourState>>;
+
+ public:
+  static constexpr std::uint64_t kWidth = kWidthArg;
+  static constexpr Signedness kSignedness = kSignednessArg;
+  static constexpr StateDomain kDomain = kDomainArg;
+  static constexpr bool kFourState = kDomain == StateDomain::kFourState;
+  static constexpr std::size_t kWords = WordCountForBits(kWidth);
+  static constexpr std::size_t kUnknownWords = kFourState ? kWords : 0;
+  // The integer a word of each plane is held in.
+  using Word = typename Storage::Word;
+
+  constexpr Integral() {
+    FillDefault(MutableView());
+  }
+
+  // A value with every position clear in both planes.
+  [[nodiscard]] static constexpr auto Zero() -> Integral {
+    return Integral{Storage{}};
+  }
+
+  // The planes as a constant states them, value then unknown -- the second
+  // empty for a two-state value.
+  [[nodiscard]] static constexpr auto FromWords(
+      const std::array<std::uint64_t, kWords>& value,
+      const std::array<std::uint64_t, kUnknownWords>& unknown) -> Integral {
+    Integral out = Zero();
+    const auto written = out.MutableView();
+    for (std::size_t i = 0; i < kWords; ++i) {
+      SetWord(written.value, i, value[i]);
+    }
+    for (std::size_t i = 0; i < kUnknownWords; ++i) {
+      SetWord(written.unknown, i, unknown[i]);
+    }
+    return out;
+  }
+
+  // An integer carried into this type, its sign repeated into every position
+  // above 64 (LRM 11.6.1).
+  [[nodiscard]] static constexpr auto FromInt(std::int64_t value) -> Integral {
+    Integral out = Zero();
+    lyra::value::FromInt(out.MutableView(), value);
+    return out;
+  }
+
+  [[nodiscard]] static constexpr auto FromBool(bool value) -> Integral {
+    return FromInt(value ? 1 : 0);
+  }
+
+  // Every position holding one scalar: what a net shows where nothing drives
+  // it, and what a driver contributes where it does not drive (LRM 6.6). A
+  // two-state value holds an x or z as 0.
+  [[nodiscard]] static constexpr auto Filled(FourStateBit bit) -> Integral {
+    Integral out = Zero();
+    FillScalar(out.MutableView(), bit);
+    return out;
+  }
+
+  // The value where it lies, read and written. A write that reaches part of a
+  // value wider than a word touches the words that part is in and no others.
+  [[nodiscard]] constexpr auto View() const
+      -> ConstIntegralViewOf<Word, kWords, kUnknownWords> {
+    return {
+        .value = storage_.Value(),
+        .unknown = storage_.Unknown(),
+        .width = kWidth,
+        .signedness = kSignedness};
+  }
+  [[nodiscard]] constexpr auto MutableView()
+      -> IntegralViewOf<Word, kWords, kUnknownWords> {
+    return {
+        .value = storage_.Value(),
+        .unknown = storage_.Unknown(),
+        .width = kWidth};
+  }
+
+  // The value as code compiled once over 64-bit words reads and writes one:
+  // its words where they are that already, and words made of its machine
+  // integers where it is narrower, laid back out when the writing ends.
+  [[nodiscard]] auto AsWords() const -> LoadedWords {
+    return LoadedWords::Load(storage_.Bytes(), kShapeOf<Integral>);
+  }
+  [[nodiscard]] auto AsMutableWords() -> ScopedWordsWrite {
+    return ScopedWordsWrite(storage_.Bytes(), kShapeOf<Integral>);
+  }
+
+  // LRM 9.4.2: whether two values are the same bits, x and z included, which
+  // is what decides that a write changed a variable. Every position above the
+  // width is clear, so the bits are the same exactly where the planes are.
+  [[nodiscard]] constexpr auto IsBitIdentical(const Integral& other) const
+      -> bool {
+    return storage_ == other.storage_;
+  }
+
+  [[nodiscard]] constexpr auto HasUnknown() const -> bool {
+    if constexpr (kFourState) {
+      return lyra::value::HasUnknown(View());
+    } else {
+      return false;
+    }
+  }
+
+  [[nodiscard]] constexpr auto Truth() const -> Truthiness {
+    return lyra::value::Truth(View());
+  }
+
+  // LRM 12.4: only a definitively-one bit makes a condition true.
+  [[nodiscard]] constexpr auto IsTruthy() const -> bool {
+    return Truth() == Truthiness::kKnownNonzero;
+  }
+  [[nodiscard]] constexpr explicit operator bool() const {
+    return IsTruthy();
+  }
+
+  [[nodiscard]] constexpr auto ToInt64() const -> std::int64_t {
+    return lyra::value::ToInt64(View());
+  }
+
+  [[nodiscard]] constexpr auto Lsb() const -> FourStateBit {
+    return LeastSignificantBit(View());
+  }
+
+  // LRM 11.4.3: arithmetic at the operands' own type.
+  [[nodiscard]] constexpr auto operator+(const Integral& b) const -> Integral {
+    Integral out = Zero();
+    Add(out.MutableView(), View(), b.View());
+    return out;
+  }
+  [[nodiscard]] constexpr auto operator-(const Integral& b) const -> Integral {
+    Integral out = Zero();
+    Subtract(out.MutableView(), View(), b.View());
+    return out;
+  }
+  [[nodiscard]] constexpr auto operator*(const Integral& b) const -> Integral {
+    Integral out = Zero();
+    Multiply(out.MutableView(), View(), b.View());
+    return out;
+  }
+  [[nodiscard]] constexpr auto operator/(const Integral& b) const -> Integral {
+    Integral out = Zero();
+    Divide(out.MutableView(), View(), b.View());
+    return out;
+  }
+  [[nodiscard]] constexpr auto operator%(const Integral& b) const -> Integral {
+    Integral out = Zero();
+    Modulo(out.MutableView(), View(), b.View());
+    return out;
+  }
+  [[nodiscard]] constexpr auto operator-() const -> Integral {
+    Integral out = Zero();
+    Negate(out.MutableView(), View());
+    return out;
+  }
+
+  // LRM 11.4.8: the bitwise operators.
+  [[nodiscard]] constexpr auto operator&(const Integral& b) const -> Integral {
+    Integral out = Zero();
+    BitwiseAnd(out.MutableView(), View(), b.View());
+    return out;
+  }
+  [[nodiscard]] constexpr auto operator|(const Integral& b) const -> Integral {
+    Integral out = Zero();
+    BitwiseOr(out.MutableView(), View(), b.View());
+    return out;
+  }
+  [[nodiscard]] constexpr auto operator^(const Integral& b) const -> Integral {
+    Integral out = Zero();
+    BitwiseXor(out.MutableView(), View(), b.View());
+    return out;
+  }
+  [[nodiscard]] constexpr auto operator~() const -> Integral {
+    Integral out = Zero();
+    BitwiseNot(out.MutableView(), View());
+    return out;
+  }
+
+  // LRM 11.4.4, 11.4.5: a comparison answers one bit, which can be x only
+  // where its operands can.
+  [[nodiscard]] constexpr auto operator==(const Integral& b) const
+      -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(Equal(View(), b.View()));
+  }
+  [[nodiscard]] constexpr auto operator!=(const Integral& b) const
+      -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(NotEqual(View(), b.View()));
+  }
+  [[nodiscard]] constexpr auto operator<(const Integral& b) const
+      -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(Less(View(), b.View()));
+  }
+  [[nodiscard]] constexpr auto operator<=(const Integral& b) const
+      -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(LessEqual(View(), b.View()));
+  }
+  [[nodiscard]] constexpr auto operator>(const Integral& b) const
+      -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(Greater(View(), b.View()));
+  }
+  [[nodiscard]] constexpr auto operator>=(const Integral& b) const
+      -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(GreaterEqual(View(), b.View()));
+  }
+
+  // LRM 11.4.7: the logical operators, whose answer can be x where either
+  // operand can.
+  template <IntegralValue B>
+  [[nodiscard]] constexpr auto operator&&(const B& b) const
+      -> OneBit<detail::CombinedDomain(kDomain, B::kDomain)> {
+    return OneBit<detail::CombinedDomain(kDomain, B::kDomain)>::Filled(
+        LogicalAnd(View(), b.View()));
+  }
+  template <IntegralValue B>
+  [[nodiscard]] constexpr auto operator||(const B& b) const
+      -> OneBit<detail::CombinedDomain(kDomain, B::kDomain)> {
+    return OneBit<detail::CombinedDomain(kDomain, B::kDomain)>::Filled(
+        LogicalOr(View(), b.View()));
+  }
+  [[nodiscard]] constexpr auto operator!() const -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(LogicalNot(View()));
+  }
+
+  // LRM 11.4.5 `===`: never unknown, so its answer is a two-state bit. The
+  // wildcard equality reads an x or z of its right operand as matching anything
+  // (LRM 11.4.6) and can be unknown; the two matches a `casez` and a `casex`
+  // make cannot (LRM 12.5.1).
+  [[nodiscard]] constexpr auto CaseEqual(const Integral& b) const -> Bit;
+  [[nodiscard]] constexpr auto WildcardEquals(const Integral& b) const
+      -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(WildcardEqual(View(), b.View()));
+  }
+  [[nodiscard]] constexpr auto CasezEquals(const Integral& b) const -> Bit;
+  [[nodiscard]] constexpr auto CasexEquals(const Integral& b) const -> Bit;
+
+  // LRM 11.4.7 `<->`, whose answer can be x where either operand can.
+  template <IntegralValue B>
+  [[nodiscard]] constexpr auto LogicalEquivalence(const B& b) const
+      -> OneBit<detail::CombinedDomain(kDomain, B::kDomain)> {
+    return OneBit<detail::CombinedDomain(kDomain, B::kDomain)>::Filled(
+        lyra::value::LogicalEquivalence(View(), b.View()));
+  }
+
+  // LRM 11.4.8 `~^`.
+  [[nodiscard]] constexpr auto BitwiseXnor(const Integral& b) const
+      -> Integral {
+    Integral out = Zero();
+    lyra::value::BitwiseXnor(out.MutableView(), View(), b.View());
+    return out;
+  }
+
+  // LRM 11.4.10: the shifts, by an amount of any integral type.
+  template <IntegralValue Amount>
+  [[nodiscard]] constexpr auto ShiftLeft(const Amount& amount) const
+      -> Integral {
+    Integral out = Zero();
+    lyra::value::ShiftLeft(out.MutableView(), View(), amount.View());
+    return out;
+  }
+  template <IntegralValue Amount>
+  [[nodiscard]] constexpr auto LogicalShiftRight(const Amount& amount) const
+      -> Integral {
+    Integral out = Zero();
+    lyra::value::LogicalShiftRight(out.MutableView(), View(), amount.View());
+    return out;
+  }
+  template <IntegralValue Amount>
+  [[nodiscard]] constexpr auto ArithmeticShiftRight(const Amount& amount) const
+      -> Integral {
+    Integral out = Zero();
+    lyra::value::ArithmeticShiftRight(out.MutableView(), View(), amount.View());
+    return out;
+  }
+
+  // LRM 11.4.9: the reductions, each one bit that is x only where the value
+  // can hold one.
+  [[nodiscard]] constexpr auto ReductionAnd() const -> OneBit<kDomain> {
+    return Reduced(ReductionOp::kAnd);
+  }
+  [[nodiscard]] constexpr auto ReductionOr() const -> OneBit<kDomain> {
+    return Reduced(ReductionOp::kOr);
+  }
+  [[nodiscard]] constexpr auto ReductionXor() const -> OneBit<kDomain> {
+    return Reduced(ReductionOp::kXor);
+  }
+  [[nodiscard]] constexpr auto ReductionNand() const -> OneBit<kDomain> {
+    return Reduced(ReductionOp::kNand);
+  }
+  [[nodiscard]] constexpr auto ReductionNor() const -> OneBit<kDomain> {
+    return Reduced(ReductionOp::kNor);
+  }
+  [[nodiscard]] constexpr auto ReductionXnor() const -> OneBit<kDomain> {
+    return Reduced(ReductionOp::kXnor);
+  }
+
+  // LRM 11.4.12: `{a, b}`, this value in the most significant positions. The
+  // answer is unsigned and can hold x or z where either operand can.
+  template <IntegralValue B>
+  [[nodiscard]] constexpr auto Concat(const B& b) const -> Integral<
+      kWidth + B::kWidth, Signedness::kUnsigned,
+      detail::CombinedDomain(kDomain, B::kDomain)> {
+    using Result = Integral<
+        kWidth + B::kWidth, Signedness::kUnsigned,
+        detail::CombinedDomain(kDomain, B::kDomain)>;
+    Result out = Result::Zero();
+    lyra::value::Concat(out.MutableView(), View(), b.View());
+    return out;
+  }
+
+  // LRM 11.4.3 power.
+  template <IntegralValue Exponent>
+  [[nodiscard]] auto Pow(const Exponent& exponent) const -> Integral {
+    Integral out = Zero();
+    Power(
+        out.AsMutableWords().MutableView(), AsWords().View(),
+        exponent.AsWords().View());
+    return out;
+  }
+
+  // LRM 11.4.11: the arms of a conditional whose condition is ambiguous, merged
+  // at the arms' own type.
+  [[nodiscard]] constexpr auto MergeConditional(const Integral& b) const
+      -> Integral {
+    Integral out = Zero();
+    lyra::value::MergeConditional(out.MutableView(), View(), b.View());
+    return out;
+  }
+
+  // LRM 6.6: two contributions to a net folded under each of the three tables,
+  // and a stronger contribution over a weaker one (LRM 28.12.1).
+  [[nodiscard]] constexpr auto ResolveTriState(const Integral& b) const
+      -> Integral {
+    return Resolved(NetResolution::kTriState, b);
+  }
+  [[nodiscard]] constexpr auto ResolveWiredAnd(const Integral& b) const
+      -> Integral {
+    return Resolved(NetResolution::kWiredAnd, b);
+  }
+  [[nodiscard]] constexpr auto ResolveWiredOr(const Integral& b) const
+      -> Integral {
+    return Resolved(NetResolution::kWiredOr, b);
+  }
+  [[nodiscard]] constexpr auto Dominating(const Integral& weaker) const
+      -> Integral {
+    Integral out = Zero();
+    Dominate(out.MutableView(), View(), weaker.View());
+    return out;
+  }
+
+  // LRM 20.8.1 `$clog2`, answered as an `integer`; LRM 20.9 `$countbits`,
+  // answered as an `int`; and LRM 20.9 `$isunknown`.
+  [[nodiscard]] constexpr auto Clog2() const -> Integer;
+  template <IntegralValue Control>
+  [[nodiscard]] constexpr auto CountBits(const Control& control) const -> Int;
+  [[nodiscard]] constexpr auto IsUnknown() const -> Bit;
+
+  // LRM 6.24.3: how many bits the value is as a stream, and those bits, which
+  // a stream holds unsigned.
+  [[nodiscard]] static constexpr auto BitstreamWidth() -> Int;
+  [[nodiscard]] constexpr auto ToBitstream() const
+      -> Integral<kWidth, Signedness::kUnsigned, kDomain> {
+    using Stream = Integral<kWidth, Signedness::kUnsigned, kDomain>;
+    Stream out = Stream::Zero();
+    lyra::value::Convert(out.MutableView(), View());
+    return out;
+  }
+
+  // LRM 11.4.14.2: the value's blocks of `block_bits` bits in reversed order,
+  // the last one whatever the width leaves of it.
+  [[nodiscard]] auto ReverseBlocks(std::int64_t block_bits) const -> Integral {
+    Integral out = Zero();
+    lyra::value::ReverseBlocks(
+        out.AsMutableWords().MutableView(), AsWords().View(),
+        static_cast<std::uint64_t>(block_bits));
+    return out;
+  }
+
+  // The bits a part of type `Part` names of this value, held where a write
+  // lands (LRM 11.5.1).
+  template <IntegralValue Part, IntegralValue P>
+  [[nodiscard]] constexpr auto SliceRef(const P& position)
+      -> BitsRef<Integral, Part> {
+    return BitsRef<Integral, Part>{
+        *this, PositionNamed(position.View()),
+        BitPositions{.lsb = 0, .width = kWidth}};
+  }
+
+ private:
+  explicit constexpr Integral(Storage&& held) : storage_(std::move(held)) {
+  }
+
+  [[nodiscard]] constexpr auto Reduced(ReductionOp op) const
+      -> OneBit<kDomain> {
+    return OneBit<kDomain>::Filled(Reduce(View(), op));
+  }
+
+  [[nodiscard]] constexpr auto Resolved(
+      NetResolution fold, const Integral& b) const -> Integral {
+    Integral out = Zero();
+    Resolve(out.MutableView(), View(), b.View(), fold);
+    return out;
+  }
+
+  Storage storage_;
+};
+
+// A value held in place is exactly the bytes its type lays it out in, which is
+// what lets code compiled without its type read and write one where it lies. A
+// value that owns its words is the pointer to them, whatever its width.
+static_assert(
+    sizeof(LogicVector<8 * kMaxInlineBytes>) == sizeof(void*) &&
+    sizeof(LogicVector<1U << 24U>) == sizeof(void*));
+static_assert(sizeof(Bit) == IntegralBytesFor(1, StateDomain::kTwoState));
+static_assert(sizeof(Logic) == IntegralBytesFor(1, StateDomain::kFourState));
+static_assert(sizeof(Int) == IntegralBytesFor(32, StateDomain::kTwoState));
+static_assert(sizeof(Time) == IntegralBytesFor(64, StateDomain::kFourState));
+static_assert(
+    sizeof(LogicVector<100>) == IntegralBytesFor(100, StateDomain::kFourState));
+static_assert(
+    alignof(LogicVector<12>) == IntegralAlignFor(12) &&
+    alignof(BitVector<100>) == IntegralAlignFor(100));
 
 // The members that answer at one fixed integral type, which is a type only
 // once the definition above is whole.
@@ -683,28 +949,28 @@ template <
     std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
 constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::CaseEqual(
     const Integral& b) const -> Bit {
-  return Bit::FromBool(lyra::value::CaseEqual(Load().Read(), b.Load().Read()));
+  return Bit::FromBool(lyra::value::CaseEqual(View(), b.View()));
 }
 
 template <
     std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
 constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::CasezEquals(
     const Integral& b) const -> Bit {
-  return Bit::FromBool(CasezMatch(Load().Read(), b.Load().Read()));
+  return Bit::FromBool(CasezMatch(View(), b.View()));
 }
 
 template <
     std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
 constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::CasexEquals(
     const Integral& b) const -> Bit {
-  return Bit::FromBool(CasexMatch(Load().Read(), b.Load().Read()));
+  return Bit::FromBool(CasexMatch(View(), b.View()));
 }
 
 template <
     std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
 constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::Clog2() const
     -> Integer {
-  return Integer::FromInt(CeilLog2(Load().Read(), kWidth));
+  return Integer::FromInt(CeilLog2(View()));
 }
 
 template <
@@ -712,9 +978,7 @@ template <
 template <IntegralValue Control>
 constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::CountBits(
     const Control& control) const -> Int {
-  return Int::FromInt(
-      lyra::value::CountBits(
-          Load().Read(), kWidth, control.Load().Read(), Control::kWidth));
+  return Int::FromInt(lyra::value::CountBits(View(), control.View()));
 }
 
 template <
@@ -734,12 +998,10 @@ constexpr auto Integral<kWidthArg, kSignednessArg, kDomainArg>::BitstreamWidth()
 // A value of one integral type as another (LRM 6.24.1), which a two-state type
 // holds with each x or z as 0.
 template <IntegralValue To, IntegralValue From>
-[[nodiscard]] LYRA_FOLDED constexpr auto Convert(const From& from) -> To {
-  typename To::Words out;
-  lyra::value::Convert(
-      out.Write(), To::kWidth, from.Load().Read(), From::kWidth,
-      From::kSignedness);
-  return To::FromWords(out);
+[[nodiscard]] constexpr auto Convert(const From& from) -> To {
+  To out = To::Zero();
+  lyra::value::Convert(out.MutableView(), from.View());
+  return out;
 }
 
 // LRM 11.4.12.1: `{n{a}}`, as many copies as the result `R` is wide.
@@ -748,77 +1010,62 @@ template <IntegralValue R, IntegralValue T>
   static_assert(
       R::kWidth % T::kWidth == 0 && R::kDomain == T::kDomain,
       "a replication is whole copies of its operand");
-  typename R::Words out;
-  lyra::value::Replicate(out.Write(), R::kWidth, a.Load().Read(), T::kWidth);
-  return R::FromWords(out);
+  R out = R::Zero();
+  lyra::value::Replicate(out.MutableView(), a.View());
+  return out;
 }
 
 // The number a position holds, or none where it holds x or z or a magnitude no
 // value reaches (LRM 11.5.1, 7.4.5).
 template <IntegralValue T>
-[[nodiscard]] LYRA_FOLDED constexpr auto ReadPosition(const T& position)
+[[nodiscard]] constexpr auto ReadPosition(const T& position)
     -> std::optional<std::int64_t> {
-  return PositionNamed(position.Load().Read(), T::kWidth, T::kSignedness);
+  return PositionNamed(position.View());
 }
 
 // The position an index names, in the type position arithmetic is done in.
 template <IntegralValue T>
-[[nodiscard]] LYRA_FOLDED constexpr auto ToPosition(const T& index)
-    -> Position {
-  Position::Words out;
-  lyra::value::ToPosition(
-      out.Write(), index.Load().Read(), T::kWidth, T::kSignedness);
-  return Position::FromWords(out);
+[[nodiscard]] constexpr auto ToPosition(const T& index) -> Position {
+  Position out = Position::Zero();
+  lyra::value::ToPosition(out.MutableView(), index.View());
+  return out;
 }
 
 // LRM 11.5.1: as many bits as the result `R` is wide, from `start`, counted
 // from the least significant bit. A position outside the value reads x, and a
 // two-state `R` holds each x or z read as 0.
 template <IntegralValue R, IntegralValue T>
-[[nodiscard]] LYRA_FOLDED constexpr auto ExtractBits(
-    const T& a, std::int64_t start) -> R {
-  typename R::Words out;
-  Extract(out.Write(), R::kWidth, a.Load().Read(), T::kWidth, start);
-  return R::FromWords(out);
+[[nodiscard]] constexpr auto ExtractBits(const T& a, std::int64_t start) -> R {
+  R out = R::Zero();
+  Extract(out.MutableView(), a.View(), start);
+  return out;
 }
 
 // The same bits from the position a value names, which read as `R`'s default
 // where it names none.
 template <IntegralValue R, IntegralValue T, IntegralValue P>
-[[nodiscard]] LYRA_FOLDED constexpr auto Slice(const T& a, const P& position)
-    -> R {
-  typename R::Words out;
-  lyra::value::Slice(
-      out.Write(), R::kWidth, a.Load().Read(), T::kWidth,
-      position.Load().Read(), P::kWidth, P::kSignedness);
-  return R::FromWords(out);
+[[nodiscard]] constexpr auto Slice(const T& a, const P& position) -> R {
+  R out = R::Zero();
+  lyra::value::Slice(out.MutableView(), a.View(), position.View());
+  return out;
 }
 
 // LRM 11.5.1: writes `bits` at `start`, leaving every other position; a
 // position outside the value is not written. Answers the positions written.
 template <IntegralValue T, IntegralValue Bits>
-LYRA_FOLDED constexpr auto InsertBits(
-    T& a, std::int64_t start, const Bits& bits) -> std::optional<BitPositions> {
-  typename T::Words words = a.Load();
-  const std::optional<BitPositions> written =
-      Insert(words.Write(), T::kWidth, bits.Load().Read(), Bits::kWidth, start);
-  a = T::FromWords(words);
-  return written;
+constexpr auto InsertBits(T& a, std::int64_t start, const Bits& bits)
+    -> std::optional<BitPositions> {
+  return Insert(a.MutableView(), bits.View(), start);
 }
 
 // The same write, landing only on the positions `within` names: bits written
 // through a part of a part reach nothing outside the outer part. Answers the
 // positions written.
 template <IntegralValue T, IntegralValue Bits>
-LYRA_FOLDED constexpr auto InsertBitsWithin(
+constexpr auto InsertBitsWithin(
     T& a, std::int64_t start, const Bits& bits, BitPositions within)
     -> std::optional<BitPositions> {
-  typename T::Words words = a.Load();
-  const std::optional<BitPositions> written = InsertWithin(
-      words.Write(), T::kWidth, bits.Load().Read(), Bits::kWidth, start,
-      within);
-  a = T::FromWords(words);
-  return written;
+  return InsertWithin(a.MutableView(), bits.View(), start, within);
 }
 
 // Some bits of a value held where a write lands (LRM 11.5.1): the bits of a
@@ -865,58 +1112,42 @@ class BitsRef {
     const std::optional<std::int64_t> offset = ReadPosition(position);
     const std::optional<std::int64_t> start =
         start_ && offset ? std::optional{*start_ + *offset} : std::nullopt;
-    return BitsRef<T, Inner>{*root_, start, Inside()};
+    return BitsRef<T, Inner>{*root_, start, Reached().value_or(BitPositions{})};
   }
 
   [[nodiscard]] constexpr auto Root() const -> const T& {
     return *root_;
   }
 
-  // The positions of the value a write through these bits reaches, none where
-  // they name no position or lie wholly outside it.
+  // The positions of the value a write through these bits reaches, none
+  // where they name no position or lie wholly outside it.
   [[nodiscard]] constexpr auto Reached() const -> std::optional<BitPositions> {
-    const BitPositions inside = Inside();
-    if (inside.width == 0) {
+    if (!start_) {
       return std::nullopt;
     }
-    return inside;
+    return ClampedBitRange(T::kWidth, Part::kWidth, *start_, within_);
   }
 
  private:
-  // The value's positions these bits lie in, which bound a part taken in them.
-  [[nodiscard]] constexpr auto Inside() const -> BitPositions {
-    if (!start_) {
-      return BitPositions{};
-    }
-    const std::int64_t from =
-        std::max(*start_, static_cast<std::int64_t>(within_.lsb));
-    const std::int64_t to = std::min(
-        *start_ + static_cast<std::int64_t>(Part::kWidth),
-        static_cast<std::int64_t>(within_.lsb + within_.width));
-    if (from >= to) {
-      return BitPositions{};
-    }
-    return BitPositions{
-        .lsb = static_cast<std::uint64_t>(from),
-        .width = static_cast<std::uint64_t>(to - from)};
-  }
-
   T* root_;
   std::optional<std::int64_t> start_;
   BitPositions within_;
 };
 
-// LRM 6.24.3: a value's bits written into a stream of `stream_width` bits
-// below the `filled` most significant positions already written, the first
-// item of a stream being its most significant. Answers how many are filled
-// once these are.
-template <IntegralValue T>
+// LRM 6.24.3: a value's bits written into a stream below the `filled` most
+// significant positions already written, the first item of a stream being its
+// most significant. Answers how many are filled once these are.
+template <
+    IntegralValue T, PlaneWord WrittenWord, std::size_t kWrittenValueWords,
+    std::size_t kWrittenUnknownWords>
 constexpr auto WriteToStream(
-    const T& a, Planes stream, std::uint64_t stream_width, std::uint64_t filled)
-    -> std::uint64_t {
+    const T& a,
+    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords>
+        stream,
+    std::uint64_t filled) -> std::uint64_t {
   Insert(
-      stream, stream_width, a.Load().Read(), T::kWidth,
-      static_cast<std::int64_t>(stream_width - filled - T::kWidth));
+      stream, a.View(),
+      static_cast<std::int64_t>(stream.width - filled - T::kWidth));
   return filled + T::kWidth;
 }
 
@@ -924,21 +1155,34 @@ constexpr auto WriteToStream(
 // significant positions, which a two-state `T` reads with each x or z as 0.
 template <IntegralValue T>
 [[nodiscard]] constexpr auto ReadFromStream(
-    ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) -> T {
-  typename T::Words bits;
+    AnyConstIntegralView auto stream, std::uint64_t taken) -> T {
+  T out = T::Zero();
   Extract(
-      bits.Write(), T::kWidth, stream, stream_width,
-      static_cast<std::int64_t>(stream_width - taken - T::kWidth));
-  return T::FromWords(bits);
+      out.MutableView(), stream,
+      static_cast<std::int64_t>(stream.width - taken - T::kWidth));
+  return out;
 }
 
 // LRM 5.9: text taken as a value of `R`, its last character the least
 // significant byte.
 template <IntegralValue R>
-[[nodiscard]] constexpr auto FromBytes(std::span<const char> bytes) -> R {
-  typename R::Words out;
-  lyra::value::FromBytes(out.Write(), R::kWidth, bytes);
-  return R::FromWords(out);
+[[nodiscard]] auto FromBytes(std::span<const char> bytes) -> R {
+  R out = R::Zero();
+  lyra::value::FromBytes(out.AsMutableWords().MutableView(), bytes);
+  return out;
+}
+
+// LRM 21.4: a word of digits read as a value of `R`; none where a character is
+// no digit of the radix, or there is no digit at all.
+template <IntegralValue R>
+[[nodiscard]] auto FromDigits(DigitRadix radix, std::string_view digits)
+    -> std::optional<R> {
+  R out = R::Zero();
+  if (!lyra::value::FromDigits(
+          out.AsMutableWords().MutableView(), radix, digits)) {
+    return std::nullopt;
+  }
+  return out;
 }
 
 // A value's bytes, most significant first, the top one holding whatever the
@@ -950,8 +1194,7 @@ template <IntegralValue R>
   std::string out;
   out.reserve(static_cast<std::size_t>(count));
   for (std::uint64_t i = count; i-- > 0;) {
-    out.push_back(
-        static_cast<char>(ByteAt(value.planes, value.width, i).value_or(0)));
+    out.push_back(static_cast<char>(ByteAt(value, i).value_or(0)));
   }
   return out;
 }

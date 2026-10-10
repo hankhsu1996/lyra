@@ -69,7 +69,7 @@ class String {
   }
   template <IntegralValue Bits>
   [[nodiscard]] static auto FromIntegral(const Bits& bits) -> String {
-    return FromIntegral(bits.Load().View());
+    return FromIntegral(bits.AsWords().View());
   }
 
   // LRM 11.4.5 `==` / `!=`: string equality is exact content equality (strings
@@ -151,7 +151,7 @@ class String {
   // LRM 6.16 byte, so the count over it is the sum of the characters' own.
   template <IntegralValue Control>
   [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
-    return CountBits(control_bits.Load().View());
+    return CountBits(control_bits.AsWords().View());
   }
   [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
       -> Int {
@@ -159,8 +159,12 @@ class String {
     for (const char c : impl_) {
       const std::uint64_t word = static_cast<unsigned char>(c);
       total += lyra::value::CountBits(
-          ConstPlanes{.value = std::span(&word, 1), .unknown = {}}, 8,
-          control_bits.planes, control_bits.width);
+          ConstIntegralView{
+              .value = std::span(&word, 1),
+              .unknown = {},
+              .width = 8,
+              .signedness = Signedness::kUnsigned},
+          control_bits);
     }
     return Int::FromInt(total);
   }

@@ -149,15 +149,14 @@ auto RuntimeTuple::CountBits(const ConstIntegralView& control_bits) const
 }
 
 auto RuntimeTuple::WriteToStream(
-    Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
-    -> std::uint64_t {
-  return value_.WriteToStream(stream, stream_width, filled);
+    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
+  return value_.WriteToStream(stream, filled);
 }
 
 auto RuntimeTuple::ReadFromStream(
-    ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+    const ConstIntegralView& stream, std::uint64_t taken) const
     -> std::pair<RuntimeTuple, std::uint64_t> {
-  auto [read, after] = value_.ReadFromStream(stream, stream_width, taken);
+  auto [read, after] = value_.ReadFromStream(stream, taken);
   return {RuntimeTuple(std::move(read)), after};
 }
 

@@ -1,6 +1,9 @@
 # A select names a position in the value it reaches
 
-Date: 2026-09-23. Status: accepted.
+Date: 2026-09-23. Status: accepted. P3 is narrowed by
+[a-packed-value-is-its-words](a-packed-value-is-its-words.md) D2, under which an operation over
+constants whose answer is too large to lie in what holds it, and wider than its operands together,
+stays an operation.
 
 Supersedes decisions 2 and 3 of [selector-coordinate-resolution](selector-coordinate-resolution.md)
 and the rejected alternative there that resolved a coordinate at lowering; the select clause of

@@ -311,9 +311,8 @@ void ReadBigEndian(
 
 template <value::IntegralValue T>
 auto FileTable::Read(T dest, std::int64_t fd) -> BinaryRead<T> {
-  typename T::Words held = dest.Load();
-  const value::Int read = ReadInto(held.MutableView(), fd);
-  return BinaryRead<T>{read, T::FromWords(held)};
+  const value::Int read = ReadInto(dest.AsMutableWords().MutableView(), fd);
+  return BinaryRead<T>{read, std::move(dest)};
 }
 
 template <value::IntegralValue T>
@@ -325,11 +324,10 @@ auto FileTable::ReadMemory(
   const std::int32_t read = ReadMemoryWords(
       *this, fd, T::kWidth, declared, sv_start, count,
       [&dest, &declared](std::int64_t sv_index, std::span<const char> bytes) {
-        typename T::Words word;
-        ReadBigEndian(word.MutableView(), bytes);
+        T word = T::Zero();
+        ReadBigEndian(word.AsMutableWords().MutableView(), bytes);
         dest.ElementRef(
-            value::Position::FromInt(declared.ToOrdinal(sv_index))) =
-            T::FromWords(word);
+            value::Position::FromInt(declared.ToOrdinal(sv_index))) = word;
       });
   return BinaryRead<value::UnpackedArray<T>>{
       value::Int::FromInt(read), std::move(dest)};

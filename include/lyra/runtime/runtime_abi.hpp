@@ -46,6 +46,14 @@ struct LyraSpan {
   std::uint64_t count;
 };
 
+// One part of an integral value that bits a write is handed lie in: where it
+// starts within the part before it -- the value itself for the first --
+// stated as a position, and how many bits it has.
+struct LyraBitsPart {
+  const void* start;
+  std::int64_t width;
+};
+
 // A code address whose prototype is erased, which is how a body the runtime
 // looks up crosses back: one lookup serves bodies of every signature, and the
 // asking code restores the exact type the body was generated with. It stays a
@@ -650,6 +658,23 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
 // 23.6 / 23.8): the nearest scope above it of the class `definition` describes,
 // or past the topmost a top-level instance of it.
 auto lyra_rt_enclosing_scope(void* self, const void* definition) -> void*;
+
+// Writes bits into an integral value where it lies (LRM 11.5.1): the
+// `bits_width` bits at `bits`, at the position `start` names within the last
+// of the parts `outer_parts` spans, outermost first, of the value `whole_width`
+// bits wide at `whole`. Every other bit of the value is left as it stands; a
+// part reaches nothing outside the part it is taken in, and a start naming no
+// position writes nothing.
+void lyra_rt_insert_bits(
+    void* whole, std::int64_t whole_width, bool whole_is_four_state,
+    LyraSpan outer_parts, const void* start, const void* bits,
+    std::int64_t bits_width, bool bits_are_four_state);
+
+// The bytes a body keeps apart from its frame for one value: `size` of them,
+// aligned for a word, holding whatever was last left in them, and those bytes
+// given back. Giving back none is nothing.
+auto lyra_rt_alloc_bytes(std::uint64_t size) -> void*;
+void lyra_rt_dealloc_bytes(void* bytes, std::uint64_t size);
 
 // Whether the scope `self` is an object of the class `definition` describes or
 // of one extending it.
@@ -1919,20 +1944,32 @@ auto lyra_rt_unpackedarray_count_bits(
 // the operation.
 //
 // A structure's type is handed the stream it writes its bits into, or is read
-// out of, and the control bits it counts under, as planes with how wide they
-// are, while the body compiled for a structure answers and reads values of the
-// types its own code states. Two entries stand between: `stream_write` writes
-// an integral value's bits into a stream below its `filled` most significant
-// positions, and `stream_read` lays out the integral value of `out_width` bits
-// a stream holds below its `taken` most significant ones. Each answers how
-// many positions are filled, or taken, after it.
+// out of, and the control bits it counts under, as views of their words, while
+// the function compiled for a structure answers and reads values of the types
+// its own code states. These entries stand between. `stream_write` is handed
+// the function answering a structure's stream as a value of `bits_width` bits:
+// it holds that value while the function makes it, and writes it into the
+// stream below its `filled` most significant positions. `stream_build` is
+// handed the function building a structure from such a value: it reads the
+// value out of the stream below its `taken` most significant positions and
+// holds it while the function builds the structure in `out`. `stream_read`
+// lays out the integral value of `out_width` bits a stream holds below its
+// `taken` most significant ones. Each answers how many positions are filled,
+// or taken, after it.
+using LyraStreamOf = void (*)(const void* value, void* bits);
+using LyraBuiltFromStream =
+    void (*)(const void* bits, const void* prototype, void* out);
 auto lyra_rt_stream_write(
-    const void* bits, std::int64_t bits_width, bool bits_are_four_state,
-    const void* stream, std::uint64_t stream_width, std::uint64_t filled)
+    LyraStreamOf stream_of, const void* value, std::int64_t bits_width,
+    bool bits_are_four_state, const void* stream, std::uint64_t filled)
     -> std::uint64_t;
+auto lyra_rt_stream_build(
+    LyraBuiltFromStream built_from, const void* stream, std::uint64_t taken,
+    std::int64_t bits_width, bool bits_are_four_state, const void* prototype,
+    void* out) -> std::uint64_t;
 auto lyra_rt_stream_read(
-    const void* stream, std::uint64_t stream_width, std::uint64_t taken,
-    std::int64_t out_width, bool out_is_four_state, void* out) -> std::uint64_t;
+    const void* stream, std::uint64_t taken, std::int64_t out_width,
+    bool out_is_four_state, void* out) -> std::uint64_t;
 // An index of a wildcard-indexed array where an assignment pattern states it
 // (LRM 7.8.1, 7.9.11): such an index has no type but the one it was written
 // in, so it is an object holding a copy of the value with that type, as the
@@ -2407,11 +2444,11 @@ void lyra_rt_evaluation_attempts_destroy(void* storage);
 // net resolves that many and the layout only has room for them; it fills them
 // itself from the scalar the net type states. A write into some bits of a
 // designated value is told the declared width, which bounds the bits it may
-// reach (LRM 11.5.1), the position as a value of the type positions are
-// computed in, and how many bits it writes; it takes the value as it stands
-// once those bits are in it, which the writing body builds, and tells the
-// write which of the bits it reached moved. Reading designated bits back has
-// no entry either: they are read where the designation says the value lies.
+// reach (LRM 11.5.1), the parts the bits are reached through and where they
+// start, each as a value of the type positions are computed in, and how many
+// bits it writes and whether they hold x or z; it takes the bits themselves,
+// writes them where they lie, and tells the write which of the bits it
+// reached moved.
 //
 // LRM 6.7.1 admits only a four-state type as a net's, so only the `logic`
 // layouts have a net and a driver. The net joined to may be of any integral
@@ -2453,9 +2490,10 @@ void lyra_rt_bit8_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit8_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_bit8_land(const void* designation) noexcept -> void*;
-void lyra_rt_bit8_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_bit8_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 
 void lyra_rt_bit16_cell_construct(void* storage);
 void lyra_rt_bit16_cell_destroy(void* storage);
@@ -2493,9 +2531,10 @@ void lyra_rt_bit16_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit16_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_bit16_land(const void* designation) noexcept -> void*;
-void lyra_rt_bit16_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_bit16_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 
 void lyra_rt_bit32_cell_construct(void* storage);
 void lyra_rt_bit32_cell_destroy(void* storage);
@@ -2533,9 +2572,10 @@ void lyra_rt_bit32_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit32_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_bit32_land(const void* designation) noexcept -> void*;
-void lyra_rt_bit32_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_bit32_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 
 void lyra_rt_bit64_cell_construct(void* storage);
 void lyra_rt_bit64_cell_destroy(void* storage);
@@ -2573,9 +2613,10 @@ void lyra_rt_bit64_sampled_history_push(void* history, const void* value);
 auto lyra_rt_bit64_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_bit64_land(const void* designation) noexcept -> void*;
-void lyra_rt_bit64_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_bit64_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 
 void lyra_rt_logic8_cell_construct(void* storage);
 void lyra_rt_logic8_cell_destroy(void* storage);
@@ -2613,9 +2654,10 @@ void lyra_rt_logic8_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic8_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_logic8_land(const void* designation) noexcept -> void*;
-void lyra_rt_logic8_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_logic8_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 void lyra_rt_logic8_net_construct(void* storage);
 void lyra_rt_logic8_net_destroy(void* storage);
 void lyra_rt_logic8_net_initialize_tri_state(
@@ -2677,9 +2719,10 @@ void lyra_rt_logic16_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic16_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_logic16_land(const void* designation) noexcept -> void*;
-void lyra_rt_logic16_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_logic16_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 void lyra_rt_logic16_net_construct(void* storage);
 void lyra_rt_logic16_net_destroy(void* storage);
 void lyra_rt_logic16_net_initialize_tri_state(
@@ -2741,9 +2784,10 @@ void lyra_rt_logic32_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic32_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_logic32_land(const void* designation) noexcept -> void*;
-void lyra_rt_logic32_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_logic32_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 void lyra_rt_logic32_net_construct(void* storage);
 void lyra_rt_logic32_net_destroy(void* storage);
 void lyra_rt_logic32_net_initialize_tri_state(
@@ -2805,9 +2849,10 @@ void lyra_rt_logic64_sampled_history_push(void* history, const void* value);
 auto lyra_rt_logic64_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_logic64_land(const void* designation) noexcept -> void*;
-void lyra_rt_logic64_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_logic64_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 void lyra_rt_logic64_net_construct(void* storage);
 void lyra_rt_logic64_net_destroy(void* storage);
 void lyra_rt_logic64_net_initialize_tri_state(
@@ -2900,9 +2945,10 @@ auto lyra_rt_bit_wide_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_bit_wide_land(const void* designation, std::int64_t width) noexcept
     -> void*;
-void lyra_rt_bit_wide_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_bit_wide_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 
 void lyra_rt_logic_wide_cell_construct(void* storage);
 void lyra_rt_logic_wide_cell_destroy(void* storage);
@@ -2951,9 +2997,10 @@ auto lyra_rt_logic_wide_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void*;
 auto lyra_rt_logic_wide_land(
     const void* designation, std::int64_t width) noexcept -> void*;
-void lyra_rt_logic_wide_report_bits(
-    const void* designation, std::int64_t width, const void* start,
-    const void* written, std::int64_t bits_width);
+void lyra_rt_logic_wide_insert_designated_bits(
+    const void* designation, std::int64_t width, LyraSpan outer_parts,
+    const void* start, const void* bits, std::int64_t bits_width,
+    bool bits_are_four_state);
 void lyra_rt_logic_wide_net_construct(void* storage);
 void lyra_rt_logic_wide_net_destroy(void* storage);
 auto lyra_rt_logic_wide_net_get(void* net) -> const void*;

@@ -24,7 +24,7 @@ auto NetFillOf(std::int64_t fill) -> value::FourStateBit {
 
 NetPositions::NetPositions(std::uint32_t count, value::FourStateBit bit)
     : count_(count), words_(2 * value::WordCountForBits(count)) {
-  value::FillScalar(Write(), count, bit);
+  value::FillScalar(MutableView(), bit);
 }
 
 NetPositions::NetPositions(const NetPositions&) = default;
@@ -38,18 +38,21 @@ auto NetPositions::Count() const -> std::uint32_t {
   return count_;
 }
 
-auto NetPositions::Read() const -> value::ConstPlanes {
+auto NetPositions::View() const -> value::ConstIntegralView {
   const std::span<const std::uint64_t> all(words_.data(), words_.size());
-  return value::ConstPlanes{
+  return value::ConstIntegralView{
       .value = all.first(all.size() / 2),
-      .unknown = all.subspan(all.size() / 2)};
+      .unknown = all.subspan(all.size() / 2),
+      .width = count_,
+      .signedness = value::Signedness::kUnsigned};
 }
 
-auto NetPositions::Write() -> value::Planes {
+auto NetPositions::MutableView() -> value::IntegralView {
   const std::span<std::uint64_t> all(words_.data(), words_.size());
-  return value::Planes{
+  return value::IntegralView{
       .value = all.first(all.size() / 2),
-      .unknown = all.subspan(all.size() / 2)};
+      .unknown = all.subspan(all.size() / 2),
+      .width = count_};
 }
 
 auto LevelBit(support::StrengthLevel level) -> OccupiedLevels {
@@ -62,7 +65,7 @@ auto LevelBit(support::StrengthLevel level) -> OccupiedLevels {
 auto NetPositions::Part(std::uint32_t from, std::uint32_t count) const
     -> NetPositions {
   NetPositions part(count, value::FourStateBit::kHighImpedance);
-  value::Extract(part.Write(), count, Read(), count_, from);
+  value::Extract(part.MutableView(), View(), from);
   return part;
 }
 
@@ -129,7 +132,7 @@ auto PhysicalNet::Resolve() const -> NetPositions {
     for (const NetPlacement& placement : placements_) {
       placement.net->FoldContributions(at, fold_, placement.net_offset, group);
     }
-    value::Dominate(resolved.Write(), resolved.Read(), group.Read());
+    value::Dominate(resolved.MutableView(), resolved.View(), group.View());
   }
   return resolved;
 }
@@ -164,14 +167,14 @@ auto PhysicalNet::BeginTakeover(support::TakeoverLevel level) -> std::uint32_t {
 
 auto PhysicalNet::DriveTakeover(
     support::TakeoverLevel level, std::uint32_t generation,
-    value::ConstPlanes forced, std::uint64_t width) -> bool {
+    const value::ConstIntegralView& forced) -> bool {
   return takeovers_ != nullptr &&
          takeovers_->Drive(
              level, generation, [&](std::optional<NetPositions>& held) {
                if (!held.has_value()) {
                  held.emplace(Count(), value::FourStateBit::kHighImpedance);
                }
-               value::Extract(held->Write(), held->Count(), forced, width, 0);
+               value::Extract(held->MutableView(), forced, 0);
              });
 }
 

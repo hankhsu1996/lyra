@@ -8,6 +8,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -114,6 +115,16 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "stream_write";
     case RuntimeOp::kStreamRead:
       return "stream_read";
+    case RuntimeOp::kStreamBuild:
+      return "stream_build";
+    case RuntimeOp::kInsertBits:
+      return "insert_bits";
+    case RuntimeOp::kInsertDesignatedBits:
+      return "insert_designated_bits";
+    case RuntimeOp::kAllocBytes:
+      return "alloc_bytes";
+    case RuntimeOp::kDeallocBytes:
+      return "dealloc_bytes";
     case RuntimeOp::kConstruct:
       return "construct";
     case RuntimeOp::kDestroy:
@@ -317,7 +328,7 @@ constexpr std::array kForLandings{
         .domains =
             kOneWordIntegral | kVariableObjects | DomainSet{Domain::kEmpty}},
     RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidth{.after = 0}}};
-constexpr std::array kForBitsReported{
+constexpr std::array kForBitsWritten{
     RealizedFor{.domains = kIntegral, .told = ToldHeldWidth{.after = 0}}};
 
 constexpr std::array kForWhatIsNull{RealizedFor{
@@ -427,11 +438,6 @@ auto ToldOf(support::ValueDomain domain, lir::ValueCellTarget::Op op) -> Told {
 
 auto ToldOf(support::ValueDomain domain, lir::OpenWriteTarget::Op op) -> Told {
   return ToldIn(RealizationsOf(op), domain, lir::OpenWriteOpName(op));
-}
-
-auto ToldOf(support::ValueDomain domain, lir::DesignatedBitsTarget::Op op)
-    -> Told {
-  return ToldIn(RealizationsOf(op), domain, lir::DesignatedBitsOpName(op));
 }
 
 auto ToldOf(support::ValueDomain domain, support::BuiltinFn fn) -> Told {
@@ -568,16 +574,9 @@ auto HeldObjectOf(const lir::Type& type)
           // The layout an integral value's bits are held in follows from how
           // many there are and whether an unknown plane goes with them.
           [&](const lir::IntegralBits&) -> Object {
-            const auto& integral = type.Get<lir::IntegralType>();
-            switch (integral.state_kind) {
-              case lir::IntegralStateKind::kTwoState:
-                return value::IntegralDomainFor(
-                    integral.bit_width, value::StateDomain::kTwoState);
-              case lir::IntegralStateKind::kFourState:
-                return value::IntegralDomainFor(
-                    integral.bit_width, value::StateDomain::kFourState);
-            }
-            throw InternalError("llvm codegen: unknown integral state kind");
+            const value::IntegralShape shape =
+                ShapeOf(type.Get<lir::IntegralType>());
+            return value::IntegralDomainFor(shape.width, shape.domain);
           },
           [](support::ValueDomain domain) -> Object { return domain; },
           [](support::LibraryObject object) -> Object { return object; }},
@@ -958,13 +957,6 @@ auto RuntimeSymbol(support::ValueDomain domain, lir::OpenWriteTarget::Op op)
   return Symbol(domain, lir::OpenWriteOpName(op));
 }
 
-auto RuntimeSymbol(
-    support::ValueDomain domain, lir::DesignatedBitsTarget::Op op)
-    -> std::string {
-  ToldOf(domain, op);
-  return Symbol(domain, lir::DesignatedBitsOpName(op));
-}
-
 auto RuntimeSymbol(support::BuiltinFn fn) -> std::string {
   return Symbol(support::RuntimeEntryOf(fn).name);
 }
@@ -1038,9 +1030,19 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     // 35.5.6.1).
     case RuntimeOp::kMakeDpiBitBuffer:
     case RuntimeOp::kMakeDpiLogicBuffer:
-    // The integral value whose bits go into a stream, ahead of the stream.
-    case RuntimeOp::kStreamWrite:
       return {kBits};
+    // The function answering a value's stream, then that value, which crosses
+    // with how wide its stream is and whether the stream holds x or z.
+    case RuntimeOp::kStreamWrite:
+      return {kMachine, kBits};
+    // The value written into, the parts the bits lie in, where the bits
+    // start, and the bits.
+    case RuntimeOp::kInsertBits:
+      return {kBits, kMachine, kPosition, kBits};
+    // The designation, the parts the bits lie in, where the bits start, and
+    // the bits.
+    case RuntimeOp::kInsertDesignatedBits:
+      return {kMachine, kMachine, kPosition, kBits};
     case RuntimeOp::kCellRefer:
     case RuntimeOp::kReferStorage:
     case RuntimeOp::kRunProgram:
@@ -1064,6 +1066,9 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kMakeFormatArg:
     case RuntimeOp::kSettleDeparture:
     case RuntimeOp::kStreamRead:
+    case RuntimeOp::kStreamBuild:
+    case RuntimeOp::kAllocBytes:
+    case RuntimeOp::kDeallocBytes:
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
     case RuntimeOp::kCopy:
@@ -1076,9 +1081,10 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
 
 auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
   switch (op) {
-    // The integral value planes hold is laid out at a width and with the
-    // states no operand fixes (LRM 6.24.3).
+    // The integral value a stream is read into is laid out at a width and
+    // with the states no operand fixes (LRM 6.24.3).
     case RuntimeOp::kStreamRead:
+    case RuntimeOp::kStreamBuild:
       return support::AnswerTold::kIntegralExtent;
     case RuntimeOp::kCellRefer:
     case RuntimeOp::kReferStorage:
@@ -1116,6 +1122,10 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kMakeDpiOpenArray:
     case RuntimeOp::kSettleDeparture:
     case RuntimeOp::kStreamWrite:
+    case RuntimeOp::kInsertBits:
+    case RuntimeOp::kInsertDesignatedBits:
+    case RuntimeOp::kAllocBytes:
+    case RuntimeOp::kDeallocBytes:
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
     case RuntimeOp::kCopy:
@@ -1190,6 +1200,8 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
       return kForLibraryObjects;
     case RuntimeOp::kDestroy:
       return kForWhatEndsWithWork;
+    case RuntimeOp::kInsertDesignatedBits:
+      return kForBitsWritten;
     // Realized once, or per object or member storage and never per value
     // domain alone. No value library realizes a run of elements replaced in a
     // value: a write of one goes through the write's own slice write.
@@ -1215,7 +1227,11 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kMakeDpiOpenArray:
     case RuntimeOp::kSettleDeparture:
     case RuntimeOp::kStreamWrite:
+    case RuntimeOp::kStreamBuild:
     case RuntimeOp::kStreamRead:
+    case RuntimeOp::kInsertBits:
+    case RuntimeOp::kAllocBytes:
+    case RuntimeOp::kDeallocBytes:
     case RuntimeOp::kConstruct:
       return {};
   }
@@ -1246,50 +1262,6 @@ auto RealizationsOf(lir::OpenWriteTarget::Op op)
       return {};
   }
   throw InternalError("llvm codegen: unknown open-write operation");
-}
-
-auto OperandReadingsOf(lir::DesignatedBitsTarget::Op op)
-    -> support::OperandReadings {
-  using enum support::OperandReading;
-  // Each takes the designation and where the bits start. Placing takes the
-  // bits, which the operation over integral values reads, and reporting the
-  // whole value as it stands with them in it.
-  switch (op) {
-    case lir::DesignatedBitsTarget::Op::kRead:
-      return {kMachine, kPosition};
-    case lir::DesignatedBitsTarget::Op::kPlace:
-      return {kMachine, kPosition, kBits};
-    case lir::DesignatedBitsTarget::Op::kReport:
-      return {kMachine, kPosition, kHeld};
-  }
-  throw InternalError("llvm codegen: unknown designated-bits operation");
-}
-
-auto AnswerToldOf(lir::DesignatedBitsTarget::Op op) -> support::AnswerTold {
-  switch (op) {
-    case lir::DesignatedBitsTarget::Op::kRead:
-    case lir::DesignatedBitsTarget::Op::kPlace:
-      return support::AnswerTold::kNothing;
-    // How many bits were written, which is how wide the type they were
-    // written at is.
-    case lir::DesignatedBitsTarget::Op::kReport:
-      return support::AnswerTold::kIntegralWidth;
-  }
-  throw InternalError("llvm codegen: unknown designated-bits operation");
-}
-
-auto RealizationsOf(lir::DesignatedBitsTarget::Op op)
-    -> std::span<const RealizedFor> {
-  switch (op) {
-    // Bits are read and placed by the operation over integral values, which
-    // is no entry named here.
-    case lir::DesignatedBitsTarget::Op::kRead:
-    case lir::DesignatedBitsTarget::Op::kPlace:
-      return {};
-    case lir::DesignatedBitsTarget::Op::kReport:
-      return kForBitsReported;
-  }
-  throw InternalError("llvm codegen: unknown designated-bits operation");
 }
 
 auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {

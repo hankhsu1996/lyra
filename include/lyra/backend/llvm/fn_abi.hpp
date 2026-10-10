@@ -47,18 +47,15 @@ using PassMode = std::variant<
     PassDirect, PassWithExtent, PassWithShape, PassWithType, PassWithWidth>;
 
 // What a callee is told of a type no argument is a value of: the constant of a
-// type it keeps and acts on, how wide an integral type is and whether it holds
-// x or z, or how wide alone.
+// type it keeps and acts on, or how wide an integral type is and whether it
+// holds x or z.
 struct TypeConstantArg {
   lir::TypeId type;
 };
 struct TypeExtentArg {
   lir::TypeId type;
 };
-struct TypeWidthArg {
-  lir::TypeId type;
-};
-using TypeArg = std::variant<TypeConstantArg, TypeExtentArg, TypeWidthArg>;
+using TypeArg = std::variant<TypeConstantArg, TypeExtentArg>;
 
 // What a callee takes ahead of the arguments a call states. The host's
 // `operator new` is asked for the size of a complete object of the type it

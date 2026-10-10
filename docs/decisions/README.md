@@ -30,19 +30,22 @@ the detail lives in the entry itself.
   Each choice is justified by what its cost scales with for any input. Supersedes the runtime-shape
   halves of the four entries below it.
 - [a-packed-value-is-its-words](a-packed-value-is-its-words.md) -- how the entry above is carried
-  out for packed values: one clean layout per type on both backends, an integral type in MIR that is
-  only width, signedness and state domain, every operation stated once as a function over planes and
-  a width and used as the C++ value type, the prebuilt wide entries and constant folding, the
-  four-state formula in the execution backend's code generator as a function of the operand type,
-  and a line at 64 bits. Code compiled before a design exists is told a number of bytes, a number of
-  bits or the address of a function of the design's, never a description of a type: a holder reads a
-  layout, a wide value is held as words at a width told when its holder is installed, how a routine
-  reads each operand is declared with the routine, a comparison answers a scalar, and a net's
-  positions are words and a count. States what is not yet so: a container, a union and a closure's
-  answer still act on what they hold through one constant per type. Runtime bitcode inlined per
-  module, a MIR function per operation and type, a call per operation, sign extension in storage,
-  LLVM's wide-integer legalization and any record of an integral type handed to the library are
-  rejected.
+  out for packed values: one clean layout per type on both backends, a value past a fixed size
+  owning its words so that no frame follows a declared width, an integral type in MIR that is only
+  width, signedness and state domain, every operation stated once as a function over a value read
+  and a value written and used as the C++ value type, the prebuilt wide entries and constant
+  folding, folding that makes no data the source did not write, the four-state formula in the
+  execution backend's code generator as a function of the operand type, a line at 64 bits, and the
+  front end's 2^24 - 1 bits as the widest type. Code compiled before a design exists is told a
+  number of bytes, a number of bits or the address of a function of the design's, never a
+  description of a type: a holder reads a layout, a wide value is held as words at a width told when
+  its holder is installed, how a routine reads each operand is declared with the routine, a
+  comparison answers a scalar, and a net's positions are words and a count. States what is not yet
+  so: a container, a union and a closure's answer still act on what they hold through one constant
+  per type. Runtime bitcode inlined per module, a MIR function per operation and type, a call per
+  operation, sign extension in storage, LLVM's wide-integer legalization, any record of an integral
+  type handed to the library, every value held in place at any width, a larger or predicted stack,
+  and word functions marked to be inlined always are rejected.
 - [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) -- a variable port
   connected to a whole variable of an equivalent type is a reference to the source's storage, so a
   write to one element costs the element through any hierarchy; every other connection moves only
@@ -113,11 +116,14 @@ the detail lives in the entry itself.
   hands its runtime a table of them. Composing them in a backend is rejected.
 - [slice-value-semantics](slice-value-semantics.md) -- a slice read materializes an owned value; the
   access model is value, not borrow.
-- [value-projection-write](value-projection-write.md) -- a value-aggregate interior write is an
-  owner-relative functional whole-value update through the owner, not a place store; the in-place
-  write a target may realize it as is a property of that target. How the update is stated is
-  superseded by [value-descent-as-named-calls](value-descent-as-named-calls.md), and for a part that
-  is storage of its own the update itself is superseded by
+- [value-projection-write](value-projection-write.md) -- a value-aggregate interior write replaces
+  the selected part of its owner's value, owner and selectors evaluated once, and is not a place
+  store. Bits of a packed value that lies where a write can land are written where they lie; a view
+  the library owns -- a string's character, a union's member -- and a part reached through one are
+  written as a functional whole-value update through the owner, which a target may realize in place.
+  How the write is stated is superseded by
+  [value-descent-as-named-calls](value-descent-as-named-calls.md), and a part that is storage of its
+  own is a place under
   [a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md).
 - [value-descent-as-named-calls](value-descent-as-named-calls.md) -- every level of a descent into a
   value is a call whose entry HIR-to-MIR names, composed through the receiver, so no node names a
@@ -748,8 +754,9 @@ the detail lives in the entry itself.
   per runtime object, and the value ends at the end of its full-expression and on every early exit,
   from one cleanup stack below MIR. A frame slot holds its object, a lent parameter is copied by the
   callee, and an entry states whether it answers with a new value or with storage it was handed. A
-  runtime region released at each wait, and slots pointing at the temporaries that initialized them,
-  are rejected.
+  frame holds values of bounded size, and when its bytes for a value are in use is stated apart from
+  the value's end. A runtime region released at each wait, and slots pointing at the temporaries
+  that initialized them, are rejected.
 - [a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md) -- on
   the execution backend an element or a structure member is a step of the place holding its
   variable, realized through the library as a member step is; a read answers with the value where it

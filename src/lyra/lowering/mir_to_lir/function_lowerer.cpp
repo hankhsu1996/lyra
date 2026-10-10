@@ -633,7 +633,8 @@ auto FunctionLowerer::DepartureSlot() -> lir::ValueId {
   return *departure_slot_;
 }
 
-auto FunctionLowerer::LandingHere() -> diag::Result<lir::BlockId> {
+auto FunctionLowerer::LandingHere(std::optional<lir::ValueId> unmade)
+    -> diag::Result<lir::BlockId> {
   const diag::Result<lir::BlockId> continued =
       scopes_.empty() ? diag::Result<lir::BlockId>{FrameEdge()}
                       : UnwindEntryAt(scopes_.size() - 1);
@@ -648,6 +649,9 @@ auto FunctionLowerer::LandingHere() -> diag::Result<lir::BlockId> {
   Store(
       lir::Place{.base = lir::Use{.value = DepartureSlot()}, .chain = {}},
       effect);
+  if (unmade.has_value()) {
+    MarkStorage(lir::StorageInstr::Op::kDead, *unmade);
+  }
   Terminate(lir::BranchTerm{.target = *continued});
   SetCurrent(resumed);
   return landing;
@@ -693,13 +697,13 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
           },
           [&](const ValueEnd& end) -> diag::Result<lir::BlockId> {
             return owed_then_outward([&]() -> diag::Result<void> {
-              EndValue(lir::Use{.value = end.value});
+              EmitScopeDrop(end);
               return {};
             });
           },
           [&](const SlotEnd& end) -> diag::Result<lir::BlockId> {
             return owed_then_outward([&]() -> diag::Result<void> {
-              EndSlotValue(end.slot);
+              EmitScopeDrop(end);
               return {};
             });
           },
@@ -759,16 +763,19 @@ auto FunctionLowerer::FrameEdge() -> lir::BlockId {
 auto FunctionLowerer::EmitDepartingCall(
     lir::CallTarget target, std::vector<lir::Operand> args,
     lir::TypeId result_type) -> diag::Result<lir::Operand> {
-  auto landing = LandingHere();
-  if (!landing) {
-    return std::unexpected(std::move(landing.error()));
-  }
-  const lir::BlockId returned = NewBlock();
   const lir::ValueId result = fn_.values.Add(
       lir::Local{
           .name = {}, .type = result_type, .kind = lir::LocalKind::kTemp});
   const bool owes_its_end = lir::CallMakesValue(target) &&
                             unit_->Types().Get(result_type).IsOwnedValue();
+  // A call that departs makes no value, so the bytes the value would have
+  // lain in go out of use where the departure lands.
+  auto landing =
+      LandingHere(owes_its_end ? std::optional{result} : std::nullopt);
+  if (!landing) {
+    return std::unexpected(std::move(landing.error()));
+  }
+  const lir::BlockId returned = NewBlock();
   Terminate(
       lir::DepartingCallInstr{
           .result = result,
@@ -843,6 +850,39 @@ void FunctionLowerer::EndValue(lir::Operand value) {
 
 void FunctionLowerer::EndSlotValue(lir::ValueId slot) {
   EndValue(Load(LocalPlace(slot), fn_.values.Get(slot).type));
+}
+
+void FunctionLowerer::MarkStorage(lir::StorageInstr::Op op, lir::ValueId of) {
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::StorageInstr{.op = op, .of = of});
+}
+
+void FunctionLowerer::EmitScopeDrop(const ValueEnd& end) {
+  EndValue(lir::Use{.value = end.value});
+  MarkStorage(lir::StorageInstr::Op::kDead, end.value);
+}
+
+void FunctionLowerer::EmitScopeDrop(const SlotEnd& end) {
+  EndSlotValue(end.slot);
+  MarkStorage(lir::StorageInstr::Op::kDead, end.slot);
+}
+
+auto FunctionLowerer::StoreMoved(lir::Place place, lir::Operand value)
+    -> lir::Operand {
+  const bool owned =
+      unit_->Types().Get(lir::OperandType(fn_, value)).IsOwnedValue();
+  lir::Operand handed = HandOn(std::move(value));
+  const auto* made = std::get_if<lir::Use>(&handed);
+  const std::optional<lir::ValueId> left_behind =
+      owned && made != nullptr ? std::optional{made->value} : std::nullopt;
+  lir::Operand stored = Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::StoreInstr{.place = std::move(place), .value = std::move(handed)});
+  if (left_behind.has_value()) {
+    MarkStorage(lir::StorageInstr::Op::kDead, *left_behind);
+  }
+  return stored;
 }
 
 void FunctionLowerer::OpenScope(ScopeKind kind) {
@@ -922,6 +962,13 @@ auto FunctionLowerer::NewPlaceLocal(lir::TypeId type) -> lir::ValueId {
       lir::Local{.name = {}, .type = type, .kind = lir::LocalKind::kPlace});
 }
 
+void FunctionLowerer::InitializeSlot(lir::ValueId slot, lir::Operand value) {
+  if (unit_->Types().Get(fn_.values.Get(slot).type).IsOwnedValue()) {
+    MarkStorage(lir::StorageInstr::Op::kLive, slot);
+  }
+  StoreMoved(LocalPlace(slot), std::move(value));
+}
+
 // Introduces a declared local, holding its initial value. A local the body
 // gave storage of its own was given it when the body opened, so reaching the
 // declaration is what installs the representation -- which is what makes each
@@ -938,13 +985,8 @@ auto FunctionLowerer::BindLocal(
   }
   const lir::ValueId slot = NewPlaceLocal(type);
   locals_[local.value] = PlaceBinding{.slot = slot};
-  const bool owns = unit_->Types().Get(type).IsOwnedValue();
-  Emit(
-      unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::StoreInstr{
-          .place = LocalPlace(slot),
-          .value = owns ? HandOn(std::move(init)) : std::move(init)});
-  if (!owns) {
+  InitializeSlot(slot, std::move(init));
+  if (!unit_->Types().Get(type).IsOwnedValue()) {
     return std::nullopt;
   }
   return slot;
@@ -989,8 +1031,8 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
     const lir::TypeId type =
         fn_.values.Get(std::get<lir::Use>(place.base).value).type;
     if (unit_->Types().Get(type).IsOwnedValue()) {
-      value = HandOn(std::move(value));
       EndValue(Load(place, type));
+      return StoreMoved(std::move(place), std::move(value));
     }
   }
   return Emit(
@@ -1449,11 +1491,11 @@ auto FunctionLowerer::RunCleanupsDownTo(std::size_t depth)
               return LowerCleanupInto(cleanup);
             },
             [&](const ValueEnd& end) -> diag::Result<void> {
-              EndValue(lir::Use{.value = end.value});
+              EmitScopeDrop(end);
               return {};
             },
             [&](const SlotEnd& end) -> diag::Result<void> {
-              EndSlotValue(end.slot);
+              EmitScopeDrop(end);
               return {};
             },
             [](const EndPassedOn&) -> diag::Result<void> { return {}; },
@@ -1705,6 +1747,33 @@ auto PositionOf(const mir::CallExpr& call) -> base::ComponentIndex {
   return *position;
 }
 
+// Whether a call reaches bits of an integral value (LRM 11.5.1).
+auto SelectsBits(const mir::CallExpr& call) -> bool {
+  const std::optional<support::PartSelection> selects = SelectionOf(call);
+  if (!selects.has_value()) {
+    return false;
+  }
+  switch (*selects) {
+    case support::PartSelection::kBits:
+      return true;
+    case support::PartSelection::kElement:
+    case support::PartSelection::kComponent:
+    case support::PartSelection::kSlice:
+      return false;
+  }
+  throw InternalError("mir_to_lir: unknown part selection");
+}
+
+// The one position a step to bits names where they start by.
+auto BitsStartOf(const mir::CallExpr& step) -> mir::ExprId {
+  if (step.arguments.size() != 1) {
+    throw InternalError(
+        "mir_to_lir: a step to bits names where they start and nothing else "
+        "-- please report this as a bug");
+  }
+  return step.arguments.front();
+}
+
 }  // namespace
 
 auto FunctionLowerer::StorageSelection(const mir::Block& block, mir::ExprId id)
@@ -1735,8 +1804,10 @@ auto FunctionLowerer::StoragePartAccess(
     case support::PartSelection::kElement:
     case support::PartSelection::kComponent:
       return &std::get<mir::CallExpr>(block.exprs.Get(id).data);
-    // A slice is several elements rather than one storage.
+    // A slice is several elements rather than one storage, and bits lie
+    // inside a value.
     case support::PartSelection::kSlice:
+    case support::PartSelection::kBits:
       return nullptr;
   }
   throw InternalError("mir_to_lir: unknown part selection");
@@ -1807,9 +1878,11 @@ auto FunctionLowerer::PartStep(
           lir::ElementProjection{.coordinates = *std::move(coordinates)}};
     }
     case support::PartSelection::kSlice:
+    case support::PartSelection::kBits:
       throw InternalError(
-          "mir_to_lir: a slice is several elements and never one step of a "
-          "place -- please report this as a bug");
+          "mir_to_lir: a slice is several elements and bits lie inside a "
+          "value, so neither is one step of a place -- please report this as "
+          "a bug");
   }
   throw InternalError("mir_to_lir: unknown part selection");
 }
@@ -1831,10 +1904,7 @@ auto FunctionLowerer::PlaceHolding(
 auto FunctionLowerer::HeldInSlot(lir::Operand value, lir::TypeId type)
     -> lir::ValueId {
   const lir::ValueId slot = NewPlaceLocal(type);
-  Emit(
-      unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::StoreInstr{
-          .place = LocalPlace(slot), .value = HandOn(std::move(value))});
+  InitializeSlot(slot, std::move(value));
   if (unit_->Types().Get(type).IsOwnedValue()) {
     OpenScope(SlotEnd{.slot = slot});
   }
@@ -2180,8 +2250,8 @@ auto FunctionLowerer::LowerPlace(
   }
   // A part that is a view of its whole is a position in it rather than
   // storage, so there is nothing for anything to bind. A write through one
-  // still has a realization -- read the whole, replace the part, store it back
-  // -- because nothing there has to outlive the expression.
+  // still has a realization, because nothing there has to outlive the
+  // expression.
   if (ReachesIntoValue(block, id)) {
     return Unsupported(
         "mir_to_lir: binding part of a value rather than writing it is not yet "
@@ -2868,15 +2938,25 @@ auto FunctionLowerer::LowerAssign(
 auto FunctionLowerer::UpdateTarget(
     const mir::Block& block, mir::ExprId target, const ValueChange& change)
     -> diag::Result<lir::Operand> {
+  // Bits of an integral value that lies somewhere a write can land are
+  // written where they lie.
+  const BitsProjection bits = SplitBitsProjection(block, target);
+  if (const mir::CallExpr* designated = DesignatedBitsStep(block, bits.base)) {
+    return StoreBitsInDesignation(block, *designated, bits, change);
+  }
+  if (!bits.steps.empty()) {
+    return IsAddressablePlace(block, bits.base)
+               ? StoreBitsOfPlace(block, bits, change)
+               : StoreBitsInCopy(block, bits, change);
+  }
   // A slice of elements is several of them rather than storage of its own, so
   // what it is changed to is written into the elements already there.
   if (const mir::CallExpr* slice = StorageSlice(block, target)) {
     return LowerSliceUpdate(block, *slice, target, change);
   }
-  // A target that reaches into a view of a value -- a bit or slice of a packed
-  // value, a character of a string, a member of a union, or any composition of
-  // them -- is not a place: what goes back is the whole the view is of, with
-  // the part changed.
+  // A target that reaches into a view of a value -- a character of a string, a
+  // member of a union, or any composition of them -- is not a place: what goes
+  // back is the whole the view is of, with the part changed.
   if (ReachesViewedPart(block, target)) {
     return UpdateThroughView(block, target, change);
   }
@@ -2913,7 +2993,8 @@ auto FunctionLowerer::LowerValuePartSelector(
       return lir::AggregateSelector{
           lir::ContainerElement{.operands = *std::move(operands)}};
     }
-    case support::PartSelection::kSlice: {
+    case support::PartSelection::kSlice:
+    case support::PartSelection::kBits: {
       auto operands = LowerEachExpr(block, call.arguments);
       if (!operands) {
         return std::unexpected(std::move(operands.error()));
@@ -2955,6 +3036,7 @@ auto FunctionLowerer::StorageSlice(
         return call;
       case support::PartSelection::kElement:
       case support::PartSelection::kComponent:
+      case support::PartSelection::kBits:
         return nullptr;
     }
     throw InternalError("mir_to_lir: unknown part selection");
@@ -2969,6 +3051,7 @@ auto FunctionLowerer::StorageSlice(
       return &std::get<mir::CallExpr>(block.exprs.Get(target).data);
     case support::PartSelection::kElement:
     case support::PartSelection::kComponent:
+    case support::PartSelection::kBits:
       return nullptr;
   }
   throw InternalError("mir_to_lir: unknown part selection");
@@ -2995,44 +3078,6 @@ auto FunctionLowerer::LowerSliceUpdate(
       return std::unexpected(std::move(designation.error()));
     }
     const lir::TypeId container = unit_->TranslateType(designated->value);
-    // A slice the callee states the type of is bits of an integral value (LRM
-    // 11.5.1), which are a view of it: the value as it stands with the bits
-    // placed is built, and the write is handed that.
-    const auto* direct = std::get_if<mir::Direct>(&slice.callee);
-    if (direct != nullptr && direct->type_argument.has_value()) {
-      const auto on_bits = [&](lir::DesignatedBitsTarget::Op op) {
-        return lir::DesignatedBitsTarget{
-            .op = op, .value = container, .bits = slice_type};
-      };
-      const auto named = [&](lir::Operand last) {
-        std::vector<lir::Operand> args{*designation};
-        args.insert(args.end(), bounds->begin(), bounds->end());
-        args.push_back(std::move(last));
-        return args;
-      };
-      auto changed = change(
-          [&]() -> diag::Result<lir::Operand> {
-            std::vector<lir::Operand> args{*designation};
-            args.insert(args.end(), bounds->begin(), bounds->end());
-            return EmitCallTo(
-                on_bits(lir::DesignatedBitsTarget::Op::kRead), std::move(args),
-                slice_type);
-          },
-          slice_type);
-      if (!changed) {
-        return std::unexpected(std::move(changed.error()));
-      }
-      auto placed = EmitCallTo(
-          on_bits(lir::DesignatedBitsTarget::Op::kPlace),
-          named(*std::move(changed)), container);
-      if (!placed) {
-        return std::unexpected(std::move(placed.error()));
-      }
-      return EmitCallTo(
-          on_bits(lir::DesignatedBitsTarget::Op::kReport),
-          named(*std::move(placed)),
-          unit_->TranslateType(unit_->Mir().builtins.void_type));
-    }
     return WriteSlice(
         *bounds, change, *designation, slice_type,
         lir::OpenWriteTarget{
@@ -3052,8 +3097,7 @@ auto FunctionLowerer::LowerSliceUpdate(
     return std::unexpected(std::move(place.error()));
   }
   // What is left is storage of its own that holds several parts in a row,
-  // which only an array's elements are (LRM 7.4.6): bits of an integral value
-  // are a view of the whole and are rebuilt into it.
+  // which only an array's elements are (LRM 7.4.6).
   const lir::Operand container = Load(
       *std::move(place), unit_->TranslateType(block.exprs.Get(receiver).type));
   return WriteSlice(
@@ -3082,6 +3126,169 @@ auto FunctionLowerer::WriteSlice(
   args.push_back(*std::move(changed));
   return EmitCallTo(
       std::move(writer), std::move(args),
+      unit_->TranslateType(unit_->Mir().builtins.void_type));
+}
+
+auto FunctionLowerer::SplitBitsProjection(
+    const mir::Block& block, mir::ExprId target) -> BitsProjection {
+  BitsProjection descent{.base = target, .steps = {}};
+  while (true) {
+    const auto* step =
+        std::get_if<mir::CallExpr>(&block.exprs.Get(descent.base).data);
+    if (step == nullptr || !SelectsBits(*step)) {
+      return descent;
+    }
+    const std::optional<mir::ExprId> taken_in = PartReceiver(*step);
+    if (!taken_in.has_value()) {
+      return descent;
+    }
+    descent.steps.push_back(step);
+    descent.base = *taken_in;
+  }
+}
+
+auto FunctionLowerer::DesignatedBitsStep(
+    const mir::Block& block, mir::ExprId landed) const -> const mir::CallExpr* {
+  const auto* opened =
+      std::get_if<mir::DerefExpr>(&block.exprs.Get(landed).data);
+  if (opened == nullptr) {
+    return nullptr;
+  }
+  const auto* step =
+      std::get_if<mir::CallExpr>(&block.exprs.Get(opened->pointer).data);
+  if (step == nullptr || !SelectsBits(*step)) {
+    return nullptr;
+  }
+  const std::optional<mir::ExprId> designation =
+      mir::CalleeReceiver(step->callee);
+  if (!designation.has_value() ||
+      !unit_->Mir()
+           .types.Get(block.exprs.Get(*designation).type)
+           .Is<mir::DesignationType>()) {
+    return nullptr;
+  }
+  return step;
+}
+
+auto FunctionLowerer::IsAddressablePlace(
+    const mir::Block& block, mir::ExprId id) const -> bool {
+  return NamesStorage(block, id) && !ReachesViewedPart(block, id);
+}
+
+auto FunctionLowerer::LowerBitsParts(
+    const mir::Block& block, const BitsProjection& bits)
+    -> diag::Result<std::vector<lir::BitsPart>> {
+  std::vector<lir::BitsPart> parts;
+  parts.reserve(bits.steps.size());
+  for (const mir::CallExpr* step : std::views::reverse(bits.steps)) {
+    auto start = LowerExpr(block, BitsStartOf(*step));
+    if (!start) {
+      return std::unexpected(std::move(start.error()));
+    }
+    parts.push_back(
+        lir::BitsPart{
+            .start = *std::move(start),
+            .type = unit_->TranslateType(
+                *std::get<mir::Direct>(step->callee).type_argument)});
+  }
+  return parts;
+}
+
+auto FunctionLowerer::BitsWritten(const ValueChange& change, lir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  return change(
+      []() -> diag::Result<lir::Operand> {
+        throw InternalError(
+            "mir_to_lir: bits a write lands on are read back before it, where "
+            "nothing that changes its receiver in place is applied to an "
+            "integral value -- please report this as a bug");
+      },
+      type);
+}
+
+auto FunctionLowerer::StoreBitsOfPlace(
+    const mir::Block& block, const BitsProjection& bits,
+    const ValueChange& change) -> diag::Result<lir::Operand> {
+  auto place = LowerPlace(block, bits.base, Reach::kInto);
+  if (!place) {
+    return std::unexpected(std::move(place.error()));
+  }
+  return StoreBitsAtPlace(block, *std::move(place), bits, change);
+}
+
+auto FunctionLowerer::StoreBitsInCopy(
+    const mir::Block& block, const BitsProjection& bits,
+    const ValueChange& change) -> diag::Result<lir::Operand> {
+  return UpdateTarget(
+      block, bits.base,
+      [&](const ValueReader& read_whole,
+          lir::TypeId whole_type) -> diag::Result<lir::Operand> {
+        auto read = read_whole();
+        if (!read) {
+          return std::unexpected(std::move(read.error()));
+        }
+        const lir::ValueId slot = HeldInSlot(*std::move(read), whole_type);
+        auto stored = StoreBitsAtPlace(block, LocalPlace(slot), bits, change);
+        if (!stored) {
+          return std::unexpected(std::move(stored.error()));
+        }
+        return Load(LocalPlace(slot), whole_type);
+      });
+}
+
+auto FunctionLowerer::StoreBitsAtPlace(
+    const mir::Block& block, lir::Place place, const BitsProjection& bits,
+    const ValueChange& change) -> diag::Result<lir::Operand> {
+  auto parts = LowerBitsParts(block, bits);
+  if (!parts) {
+    return std::unexpected(std::move(parts.error()));
+  }
+  auto written = BitsWritten(change, parts->back().type);
+  if (!written) {
+    return std::unexpected(std::move(written.error()));
+  }
+  return Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::BitsStoreInstr{
+          .place = std::move(place),
+          .parts = *std::move(parts),
+          .bits = *std::move(written)});
+}
+
+auto FunctionLowerer::StoreBitsInDesignation(
+    const mir::Block& block, const mir::CallExpr& designated,
+    const BitsProjection& bits, const ValueChange& change)
+    -> diag::Result<lir::Operand> {
+  const mir::ExprId receiver = *mir::CalleeReceiver(designated.callee);
+  const auto& within = unit_->Mir()
+                           .types.Get(block.exprs.Get(receiver).type)
+                           .Get<mir::DesignationType>();
+  auto designation = LowerExpr(block, receiver);
+  if (!designation) {
+    return std::unexpected(std::move(designation.error()));
+  }
+  auto outermost = LowerExpr(block, BitsStartOf(designated));
+  if (!outermost) {
+    return std::unexpected(std::move(outermost.error()));
+  }
+  auto inner = LowerBitsParts(block, bits);
+  if (!inner) {
+    return std::unexpected(std::move(inner.error()));
+  }
+  std::vector<lir::BitsPart> parts{lir::BitsPart{
+      .start = *std::move(outermost),
+      .type = unit_->TranslateType(
+          *std::get<mir::Direct>(designated.callee).type_argument)}};
+  std::ranges::move(*inner, std::back_inserter(parts));
+  auto written = BitsWritten(change, parts.back().type);
+  if (!written) {
+    return std::unexpected(std::move(written.error()));
+  }
+  return EmitCallTo(
+      lir::DesignatedBitsTarget{
+          .value = unit_->TranslateType(within.value),
+          .parts = std::move(parts)},
+      {*std::move(designation), *std::move(written)},
       unit_->TranslateType(unit_->Mir().builtins.void_type));
 }
 
@@ -3234,7 +3441,9 @@ auto FunctionLowerer::LowerConditional(
   // written through on two paths: it is storage, not a transient. Each arm is
   // an extent of its own -- what it made ends before the paths rejoin -- and
   // the value it settles passes into the slot, which owns it from there to the
-  // end of the full-expression the conditional stands in.
+  // end of the full-expression the conditional stands in. The slot's bytes
+  // come into use where an arm stores into it, so a way out of an arm before
+  // that owes the slot nothing.
   const lir::TypeId result_type = unit_->TranslateType(type);
   const lir::ValueId slot = NewPlaceLocal(result_type);
   const lir::BlockId then_id = NewBlock();
@@ -3254,10 +3463,7 @@ auto FunctionLowerer::LowerConditional(
     if (!settled) {
       return std::unexpected(std::move(settled.error()));
     }
-    Emit(
-        unit_->TranslateType(unit_->Mir().builtins.void_type),
-        lir::StoreInstr{
-            .place = LocalPlace(slot), .value = HandOn(*std::move(settled))});
+    InitializeSlot(slot, *std::move(settled));
     auto closed = CloseExtent(depth);
     if (!closed) {
       return closed;
