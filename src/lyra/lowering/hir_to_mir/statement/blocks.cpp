@@ -16,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -171,7 +172,7 @@ auto BuildCancellableRegion(
                           .target = support::BuiltinFn::kEffectNamesTarget},
                   .arguments = {caught_ref, reached}},
           .type = unit.builtins.bit1});
-  const mir::ExprId declined = BuildLogicalNot(handler, claims);
+  const mir::ExprId declined = BuildLogicalNot(unit, handler, claims);
 
   mir::Block decline;
   const mir::ExprId raised =

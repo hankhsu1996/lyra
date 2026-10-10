@@ -145,9 +145,6 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
       return LayoutOf<runtime::ScopeInfo>();
     case lir::RuntimeLibraryKind::kScopeCallable:
       return LayoutOf<runtime::ScopeCallable>();
-    case lir::RuntimeLibraryKind::kPackedType:
-    case lir::RuntimeLibraryKind::kPackedRange:
-    case lir::RuntimeLibraryKind::kUnpackedRange:
     case lir::RuntimeLibraryKind::kEnumeration:
     case lir::RuntimeLibraryKind::kPrintItem:
     case lir::RuntimeLibraryKind::kPrintLiteralItem:

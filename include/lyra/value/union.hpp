@@ -7,7 +7,7 @@
 #include "lyra/value/basic_union.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
@@ -66,8 +66,8 @@ class Union : public BasicUnion<Union<Ts...>, VariantMember<Ts...>> {
   }
 };
 
-static_assert(LyraValue<Union<PackedArray, PackedArray>>);
-static_assert(CaseEqualComparable<Union<PackedArray, PackedArray>>);
-static_assert(NetResolvable<Union<PackedArray, PackedArray>>);
+static_assert(LyraValue<Union<LogicVector<4>, LogicVector<8>>>);
+static_assert(CaseEqualComparable<Union<LogicVector<4>, LogicVector<8>>>);
+static_assert(NetResolvable<Union<LogicVector<4>, LogicVector<8>>>);
 
 }  // namespace lyra::value

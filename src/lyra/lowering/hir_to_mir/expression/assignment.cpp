@@ -68,15 +68,15 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           // A name reaches storage of one of two durations: a body's own
           // binding, which goes away when the stretch that holds it returns,
           // and everything a compilation unit declares once -- a
-          // type-associated cell, a namespace variable, a generated descriptor
-          // -- which the whole program shares and so outlives any stretch.
+          // type-associated cell, a namespace variable, a constant -- which
+          // the whole program shares and so outlives any stretch.
           [](const mir::ReferenceExpr& r) {
             return std::visit(
                 Overloaded{
                     [](const mir::LocalRef&) { return false; },
                     [](const mir::DefinitionRef&) { return true; },
                     [](const mir::StaticPropertyRef&) { return true; },
-                    [](const mir::TypeDescriptorRef&) { return true; },
+                    [](const mir::EnumTableRef&) { return true; },
                     [](const mir::IntegralConstantRef&) { return true; },
                     [](const mir::StaticVariableRef&) { return true; },
                     [](const mir::ExternalUnitVariableRef&) { return true; },
@@ -106,7 +106,7 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
             if (!TargetOutlivesDeferredUpdate(block, *receiver)) {
               return false;
             }
-            if (mir::DirectBuiltinFn(c) != support::BuiltinFn::kConcat) {
+            if (mir::DirectBuiltinFn(c) != support::BuiltinFn::kConcatBits) {
               return true;
             }
             return std::ranges::all_of(c.arguments, [&](mir::ExprId op) {
@@ -176,10 +176,10 @@ auto FreezeTarget(
   AccessPath frozen = target;
   frozen.owner = FrozenOwner(unit_lowerer, outer_frame, closure, target.owner);
   for (DescentStep& step : frozen.descent) {
-    for (mir::ExprId& coordinate : step.operands) {
+    ForEachOperand(step, [&](mir::ExprId& coordinate) {
       coordinate =
           SnapshotIntoClosure(unit_lowerer, outer_frame, closure, coordinate);
-    }
+    });
   }
   return frozen;
 }
@@ -291,13 +291,54 @@ auto One(const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
   return ConvertToType(unit, block, BuildIntLiteral(unit, block, 1), type);
 }
 
+// What an assignment operator computes from what its target held and its
+// operand (LRM 11.4.1): the operator carried out at the type its operands fix
+// between them (LRM 11.6.1 Table 11-21, 11.8.1). What the target held is an
+// operand of that operator, so it is taken to that type as a context-determined
+// operand is (LRM 11.8.2). The answer is of that type, and assigning it is
+// what brings it to the target's.
+auto AppliedTo(
+    mir::CompilationUnit& unit, mir::Block& block,
+    const hir::CompoundAssignOperator& compound, mir::TypeId applied_at,
+    mir::ExprId held, mir::ExprId operand) -> mir::ExprId {
+  return block.exprs.Add(BuildMirBinaryExpr(
+      unit, block, compound.op,
+      ConvertToPropagatedType(unit, block, held, applied_at), operand,
+      applied_at));
+}
+
+// Where an assignment writes and what it stores there: the right-hand side
+// into the target, or, for a compound one, the operator applied to what the
+// target held (LRM 11.4.1), with the target settled once for the read and the
+// write.
+struct AssignedStore {
+  AccessPath target;
+  mir::ExprId stored;
+};
+
+auto StoreOf(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    const hir::AssignExpr& assign, AccessPath target, mir::ExprId rhs)
+    -> AssignedStore {
+  if (!assign.compound.has_value()) {
+    return AssignedStore{.target = std::move(target), .stored = rhs};
+  }
+  ReadThenWritten settled =
+      ReadThenWrite(unit_lowerer, frame, std::move(target));
+  const mir::ExprId applied = AppliedTo(
+      unit_lowerer.Unit(), *frame.current_block, *assign.compound,
+      unit_lowerer.TranslateType(assign.compound->applied_at), settled.incoming,
+      rhs);
+  return AssignedStore{.target = std::move(settled.place), .stored = applied};
+}
+
 }  // namespace
 
 auto Destructure(
     ProcessLowerer& process, const WalkFrame& frame,
     const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat,
     diag::SourceSpan span) -> diag::Result<mir::ExprId> {
-  if (assign.compound_op.has_value()) {
+  if (assign.compound.has_value()) {
     throw InternalError(
         "Destructure: a compound assignment to a concatenation is not a legal "
         "SV form (LRM A.6.2 grammar)");
@@ -318,12 +359,11 @@ auto Destructure(
     }
     // Width and state domain are properties of the operand's MIR type, which
     // is what the bound value is sliced against.
-    const auto& packed =
-        unit.types.Get(process.Owner().TranslateType(op.type)).PackedShape();
-    const std::uint64_t w = packed.BitWidth();
-    part_widths.push_back(w);
-    total_width += w;
-    if (packed.state_kind == mir::IntegralStateKind::kFourState) {
+    const mir::IntegralType part =
+        unit.types.Get(process.Owner().TranslateType(op.type)).Integral();
+    part_widths.push_back(part.bit_width);
+    total_width += part.bit_width;
+    if (part.state_kind == mir::IntegralStateKind::kFourState) {
       state_kind = mir::IntegralStateKind::kFourState;
     }
   }
@@ -361,7 +401,7 @@ auto Destructure(
     }
     const mir::TypeId part_type = process.Owner().TranslateType(part.type);
     const mir::ExprId share = block.exprs.Add(BuildPackedBitsRead(
-        process.Owner(), block, read_bound(), offset, w,
+        process.Owner(), block, read_bound(), offset,
         mir::PackedVectorOf(unit.types, w, state_kind)));
     parts.push_back(
         DestructuredPart{
@@ -391,7 +431,7 @@ template <ExprLowerer Lowerer>
 auto LowerHirAssignWrite(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignExpr& a,
     diag::SourceSpan span) -> diag::Result<mir::Expr> {
-  if (a.compound_op.has_value() &&
+  if (a.compound.has_value() &&
       std::holds_alternative<hir::NonBlockingEffect>(a.timing)) {
     throw InternalError(
         "LowerHirAssignWrite: compound assignment with non-blocking timing "
@@ -414,15 +454,14 @@ auto LowerHirAssignWrite(
   auto lhs_or = lowerer.LowerLhsExpr(lowerer.HirExprs().Get(a.lhs), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 
-  const std::optional<CompoundOperation> compound_op =
-      a.compound_op.has_value()
-          ? std::optional{LowerCompoundOperation(*a.compound_op)}
-          : std::nullopt;
-  const std::array<mir::ExprId, 1> operands{rhs_id};
-  const auto store = [&](mir::Block& blk, const AccessPath& target,
+  // The store brings what is stored to the target's type.
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  const auto [target, stored] =
+      StoreOf(lowerer.Owner(), frame, a, *std::move(lhs_or), rhs_id);
+  const std::array<mir::ExprId, 1> operands{stored};
+  const auto store = [&](mir::Block& blk, const AccessPath& written,
                          std::span<const mir::ExprId> ops) -> mir::Expr {
-    return BuildStoreExpr(
-        lowerer.Owner().Unit(), blk, target, ops[0], compound_op);
+    return BuildStoreExpr(unit, blk, written, ops[0]);
   };
   // What a write to the target is belongs to the store built above, and what
   // belongs here is when it takes place. Only a procedure has a later region
@@ -430,9 +469,9 @@ auto LowerHirAssignWrite(
   // where the construction reaches it, so there is nothing to choose.
   if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
     return ApplyAssignEffect(
-        lowerer, frame, a.timing, span, *lhs_or, operands, store);
+        lowerer, frame, a.timing, span, target, operands, store);
   } else {
-    return store(block, *lhs_or, operands);
+    return store(block, target, operands);
   }
 }
 
@@ -465,18 +504,9 @@ auto LowerHirAssignExpr(
 
   // What the assignment stores is its value (LRM 11.3.6), so that is computed
   // once, held, and both written and yielded; the target read again after the
-  // write would answer differently where the write is dropped. A compound one
-  // stores the operator applied to what the target held (LRM 11.4.1), with the
-  // target settled once for the read and the write.
-  AccessPath target = *std::move(target_or);
-  mir::ExprId stored = rhs_id;
-  if (a.compound_op.has_value()) {
-    ReadThenWritten settled =
-        ReadThenWrite(lowerer.Owner(), steps.Frame(), std::move(target));
-    target = std::move(settled.place);
-    stored = body.exprs.Add(BuildMirBinaryExpr(
-        unit, body, *a.compound_op, settled.incoming, rhs_id, result_type));
-  }
+  // write would answer differently where the write is dropped.
+  const auto [target, stored] =
+      StoreOf(lowerer.Owner(), steps.Frame(), a, *std::move(target_or), rhs_id);
   const mir::LocalId value = steps.DeclareLocal(
       result_type, ConvertToType(unit, body, stored, result_type));
   const auto read_value = [&] {
@@ -498,10 +528,15 @@ auto LowerHirIncDecWrite(
   auto target_or =
       lowerer.LowerLhsExpr(lowerer.HirExprs().Get(inc.target), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  const mir::TypeId type = PathValueType(unit, block, *target_or);
+  // The target is settled once for the read and the write (LRM 11.4.2).
+  const ReadThenWritten settled =
+      ReadThenWrite(lowerer.Owner(), frame, *std::move(target_or));
+  const mir::TypeId type = block.exprs.Get(settled.incoming).type;
   return BuildStoreExpr(
-      unit, block, *target_or, One(unit, block, type),
-      LowerCompoundOperation(StepOperator(inc.op)));
+      unit, block, settled.place,
+      block.exprs.Add(BuildMirBinaryExpr(
+          unit, block, StepOperator(inc.op), settled.incoming,
+          One(unit, block, type), type)));
 }
 
 template <ExprLowerer Lowerer>

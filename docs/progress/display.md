@@ -146,16 +146,16 @@ should close as the corresponding behaviour lands.
       white-space set is fixed by which system function the source names, not by the bytes that
       reach the parser, so the same input scans differently under the two.
 - [x] `$sscanf` / `$fscanf` integral str / format and the LRM 21.3.4.3 x/z -> EOF (-1) corner.
-      Packed bit vectors lift to string via a shared `value::String::FromPackedArray` conversion
-      (LRM 5.9 MSB-first byte order), so any integral expression in str or format position now
-      reaches the scanner unchanged. A source or format operand carrying x or z makes the call
-      report EOF without scanning; an operand whose type has no unknown state is known by its type,
-      so the check costs nothing where there is no x/z to find. The rule names `$sscanf` literally
-      but the format argument's role is identical under `$fscanf`, so the guard fires on `$fscanf`'s
-      format as well; `$fscanf`'s file descriptor has no string semantics and is exempt. The same
-      conversion path unblocks `$display("%s", x)` on a packed integral operand, which previously
-      built but threw at runtime; x/z bits in that path render as `'\0'` since LRM does not pin `%s`
-      behaviour for 4-state operands.
+      Packed bit vectors lift to string through one shared conversion (LRM 5.9 MSB-first byte
+      order), so any integral expression in str or format position now reaches the scanner
+      unchanged. A source or format operand carrying x or z makes the call report EOF without
+      scanning; an operand whose type has no unknown state is known by its type, so the check costs
+      nothing where there is no x/z to find. The rule names `$sscanf` literally but the format
+      argument's role is identical under `$fscanf`, so the guard fires on `$fscanf`'s format as
+      well; `$fscanf`'s file descriptor has no string semantics and is exempt. The same conversion
+      path unblocks `$display("%s", x)` on a packed integral operand, which previously built but
+      threw at runtime; x/z bits in that path render as `'\0'` since LRM does not pin `%s` behaviour
+      for 4-state operands.
 - [x] `$sscanf` reading from a variable of `string` type, or under a control string held in one, on
       the execution backend. The build used to be refused there with no source location: the x/z
       rule asked the operand at run time, where a type holding no unknown bit already answers.

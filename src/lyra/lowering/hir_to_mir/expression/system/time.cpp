@@ -21,7 +21,7 @@ auto LowerTimeSystemSubroutineCall(
   auto& body = *frame.current_block;
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
-  const mir::ExprId unit_power_id = BuildIntLiteral(
+  const mir::ExprId unit_power_id = BuildMachineIntLiteral(
       lowerer.Owner().Unit(), body,
       static_cast<std::int64_t>(lowerer.Resolution().unit_power));
   const auto call = [&](support::BuiltinFn entry, mir::TypeId result) {
@@ -36,7 +36,7 @@ auto LowerTimeSystemSubroutineCall(
     case support::TimeKind::kTime:
       return call(support::BuiltinFn::kSimTime, builtins.time);
     case support::TimeKind::kStime:
-      return call(support::BuiltinFn::kSTime, builtins.int_type);
+      return call(support::BuiltinFn::kSTime, builtins.int_unsigned);
     case support::TimeKind::kRealtime:
       return call(support::BuiltinFn::kRealTime, builtins.real);
   }

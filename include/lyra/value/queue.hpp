@@ -14,8 +14,9 @@
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/packed_array.hpp"
-#include "lyra/value/value_type.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/reduction.hpp"
+#include "lyra/value/take_built.hpp"
 
 namespace lyra::value {
 
@@ -65,7 +66,7 @@ class OrdinalArrayMethods {
         std::move(proto), detail::MatchingPositions(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindIndex(F pred, PackedArray proto) const {
+  [[nodiscard]] auto FindIndex(F pred, Int proto) const {
     return Indices(
         std::move(proto), detail::MatchingPositions(Count(), KeyOf(pred)));
   }
@@ -75,7 +76,7 @@ class OrdinalArrayMethods {
         std::move(proto), detail::FirstMatching(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindFirstIndex(F pred, PackedArray proto) const {
+  [[nodiscard]] auto FindFirstIndex(F pred, Int proto) const {
     return Indices(
         std::move(proto), detail::FirstMatching(Count(), KeyOf(pred)));
   }
@@ -85,7 +86,7 @@ class OrdinalArrayMethods {
         std::move(proto), detail::LastMatching(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindLastIndex(F pred, PackedArray proto) const {
+  [[nodiscard]] auto FindLastIndex(F pred, Int proto) const {
     return Indices(
         std::move(proto), detail::LastMatching(Count(), KeyOf(pred)));
   }
@@ -105,7 +106,7 @@ class OrdinalArrayMethods {
         std::move(proto), detail::UniquePositions(Count(), KeyOf(key)));
   }
   template <typename F>
-  [[nodiscard]] auto UniqueIndex(F key, PackedArray proto) const {
+  [[nodiscard]] auto UniqueIndex(F key, Int proto) const {
     return Indices(
         std::move(proto), detail::UniquePositions(Count(), KeyOf(key)));
   }
@@ -158,7 +159,7 @@ class OrdinalArrayMethods {
   [[nodiscard]] auto KeyOf(F& closure) const {
     return [this, &closure](std::size_t i) {
       return closure(
-          This().RawAt(i), PackedArray::Int(static_cast<std::int32_t>(i)));
+          This().RawAt(i), Int::FromInt(static_cast<std::int64_t>(i)));
     };
   }
 
@@ -176,13 +177,13 @@ class OrdinalArrayMethods {
     }
     return Queue<Element>(std::move(proto), found);
   }
-  template <typename Index>
+  template <IntegralValue Index>
   [[nodiscard]] static auto Indices(
       Index proto, const std::vector<std::size_t>& positions) -> Queue<Index> {
     std::vector<Index> found;
     found.reserve(positions.size());
     for (const std::size_t i : positions) {
-      found.push_back(Index::Int(static_cast<std::int32_t>(i)));
+      found.push_back(Index::FromInt(static_cast<std::int64_t>(i)));
     }
     return Queue<Index>(std::move(proto), found);
   }
@@ -233,13 +234,8 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   // LRM 7.10.5 bounded queue initialized by an assignment pattern or a
   // replication: the pattern's elements, held to the bound on entry.
   Queue(
-      T element_default, std::span<const T> init, const PackedArray& max_bound)
-      : Queue(std::move(element_default), init) {
-    core_.SetBound(max_bound);
-  }
-  Queue(
       T element_default, std::span<const T> unit, std::size_t count,
-      const PackedArray& max_bound)
+      std::int64_t max_bound)
       : Queue(std::move(element_default), unit, count) {
     core_.SetBound(max_bound);
   }
@@ -256,8 +252,7 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   // it from building over an element list.
   template <OrdinalElements C>
   [[nodiscard]] static auto FromArray(
-      const C& source, T element_default, const PackedArray& max_bound)
-      -> Queue {
+      const C& source, T element_default, std::int64_t max_bound) -> Queue {
     Queue result(std::move(element_default));
     result.core_.SetBound(max_bound);
     result.core_.Assign(detail::OrdinalAddresses(source));
@@ -277,13 +272,13 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   // a shape-keeping assignment. Returns a copy carrying `bound` (a negative
   // value means unbounded) and this queue's element shape and contents, trimmed
   // to the bound.
-  [[nodiscard]] auto ConformBound(const PackedArray& bound) const -> Queue {
+  [[nodiscard]] auto ConformBound(std::int64_t bound) const -> Queue {
     return Queue(core_.WithBound(bound));
   }
 
   // LRM 7.10.2.1: size() yields an SV int.
-  [[nodiscard]] auto Size() const -> PackedArray {
-    return PackedArray::Int(static_cast<std::int32_t>(RawSize()));
+  [[nodiscard]] auto Size() const -> Int {
+    return Int::FromInt(static_cast<std::int64_t>(RawSize()));
   }
 
   [[nodiscard]] auto RawSize() const -> std::size_t {
@@ -300,17 +295,16 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
     return core_.Element().DefaultValue();
   }
 
-  [[nodiscard]] auto ToOwned() const -> Queue {
-    return *this;
+  [[nodiscard]] auto operator==(const Queue& other) const ->
+      typename StaticElem<T>::Equality {
+    return StaticElem<T>::Equality::Filled(
+        detail::SequenceEqual(core_, other.core_));
   }
-
-  [[nodiscard]] auto operator==(const Queue& other) const -> PackedArray {
-    return detail::SequenceEqual(core_, other.core_);
-  }
-  [[nodiscard]] auto operator!=(const Queue& other) const -> PackedArray {
+  [[nodiscard]] auto operator!=(const Queue& other) const ->
+      typename StaticElem<T>::Equality {
     return !(*this == other);
   }
-  [[nodiscard]] auto CaseEqual(const Queue& other) const -> PackedArray {
+  [[nodiscard]] auto CaseEqual(const Queue& other) const -> Bit {
     return detail::SequenceCaseEqual(core_, other.core_);
   }
   [[nodiscard]] auto IsBitIdentical(const Queue& other) const -> bool {
@@ -319,15 +313,15 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   [[nodiscard]] auto HasUnknown() const -> bool {
     return detail::SequenceHasUnknown(core_);
   }
-  [[nodiscard]] auto IsUnknown() const -> PackedArray {
-    return PackedArray::Bit(HasUnknown());
+  [[nodiscard]] auto IsUnknown() const -> Bit {
+    return Bit::FromBool(HasUnknown());
   }
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    return detail::SequenceBitstreamWidth(core_);
+  [[nodiscard]] auto BitstreamWidth() const -> Int {
+    return Int::FromInt(detail::SequenceBitstreamWidth(core_));
   }
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray {
-    return detail::SequenceCountBits(core_, control_bits);
+  template <IntegralValue Control>
+  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+    return Int::FromInt(detail::SequenceCountBits(core_, control_bits));
   }
   [[nodiscard]] auto MergeConditional(const Queue& other) const -> Queue {
     return Queue(core_.MergeConditional(other.core_));
@@ -337,25 +331,25 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   // where it names none; the non-const form is where a write lands, which is
   // nowhere a read sees where the position names no element. A read never
   // grows the queue -- only the write form appends at `$+1`.
-  [[nodiscard]] auto Element(const PackedArray& position) -> T& {
-    return *static_cast<T*>(core_.ExistingAt(position));
+  [[nodiscard]] auto Element(const Position& position) -> T& {
+    return *static_cast<T*>(core_.ExistingAt(ReadPosition(position)));
   }
-  [[nodiscard]] auto Element(const PackedArray& position) const -> const T& {
-    return *static_cast<const T*>(core_.ElementAt(position));
+  [[nodiscard]] auto Element(const Position& position) const -> const T& {
+    return *static_cast<const T*>(core_.ElementAt(ReadPosition(position)));
   }
-  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
+  [[nodiscard]] auto ElementRef(const Position& position, Formation& formed)
       -> T& {
-    return *static_cast<T*>(core_.ElementRef(position, formed));
+    return *static_cast<T*>(core_.ElementRef(ReadPosition(position), formed));
   }
-  [[nodiscard]] auto ElementRef(const PackedArray& position) -> T& {
+  [[nodiscard]] auto ElementRef(const Position& position) -> T& {
     Formation formed{};
     return ElementRef(position, formed);
   }
 
   // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`.
-  [[nodiscard]] auto Slice(const PackedArray& lo, const PackedArray& hi) const
+  [[nodiscard]] auto Slice(const Position& lo, const Position& hi) const
       -> Queue {
-    return Queue(core_.Slice(lo, hi));
+    return Queue(core_.Slice(ReadPosition(lo), ReadPosition(hi)));
   }
 
   // LRM 7.10.2.7 / 7.10.2.6: append / prepend a single element.
@@ -388,14 +382,14 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   }
 
   // LRM 7.10.2.2 / 7.10.2.3.
-  auto Insert(const PackedArray& index, const T& item) -> void {
-    core_.Insert(index, &item);
+  auto Insert(const Position& position, const T& item) -> void {
+    core_.Insert(ReadPosition(position), &item);
   }
   auto Delete() -> void {
     core_.Delete();
   }
-  auto DeleteIndex(const PackedArray& index) -> void {
-    core_.DeleteIndex(index);
+  auto DeleteIndex(const Position& position) -> void {
+    core_.DeleteIndex(ReadPosition(position));
   }
 
  private:
@@ -407,17 +401,16 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   BasicQueue<StaticElem<T>> core_;
 };
 
-static_assert(LyraValue<Queue<PackedArray>>);
-static_assert(Sized<Queue<PackedArray>>);
-static_assert(BitstreamSizable<Queue<PackedArray>>);
-static_assert(Indexable<Queue<PackedArray>>);
+static_assert(LyraValue<Queue<LogicVector<4>>>);
+static_assert(Sized<Queue<LogicVector<4>>>);
+static_assert(BitstreamSizable<Queue<LogicVector<4>>>);
+static_assert(Indexable<Queue<LogicVector<4>>>);
 // A queue's `Slice(lo, hi)` takes its element count from two bounds the
 // running program can move (LRM 7.10.1), not the fixed count `Sliceable` names,
 // so despite the matching arity it carries its own `Slice` rather than claiming
 // that concept.
-static_assert(Ownable<Queue<PackedArray>>);
-static_assert(ConditionallyMergeable<Queue<PackedArray>>);
-static_assert(Sortable<Queue<PackedArray>>);
-static_assert(OrdinalElements<Queue<PackedArray>>);
+static_assert(ConditionallyMergeable<Queue<LogicVector<4>>>);
+static_assert(Sortable<Queue<LogicVector<4>>>);
+static_assert(OrdinalElements<Queue<LogicVector<4>>>);
 
 }  // namespace lyra::value

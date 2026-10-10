@@ -9,6 +9,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
@@ -28,13 +29,15 @@ namespace lyra::lowering::hir_to_mir {
 // named the element by key, so what a container needs is answered from its
 // type in one place.
 [[nodiscard]] auto ElementStep(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId receiver_type,
+    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId receiver_type,
     mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep;
 
-// `arr[i]` read as a value: the element step's value entry on `base_id`.
+// `arr[i]` read as a value: the read the element step takes from `base_id`, a
+// value of `base_type`.
 [[nodiscard]] auto BuildElementAccessCallExpr(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
-    mir::ExprId idx_id, mir::TypeId result_type) -> mir::Expr;
+    hir::TypeId base_type, mir::ExprId idx_id, mir::TypeId result_type)
+    -> mir::Expr;
 
 // The three below read bits of a packed value's vector by position, for a
 // consumer that has no source-level select to lower: pattern matching (LRM
@@ -42,12 +45,11 @@ namespace lyra::lowering::hir_to_mir {
 // `base` more than once where a tag is involved, so `base` is a read that
 // evaluates nothing -- a local the caller bound.
 
-// The `width` bits starting at `bit_offset`, as an owned value of
-// `result_type`. Unguarded: the caller states which bits it wants.
+// The bits starting at `bit_offset`, as many as `result_type` is wide, as a
+// value of that type. Unguarded: the caller states which bits it wants.
 [[nodiscard]] auto BuildPackedBitsRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
-    std::uint64_t bit_offset, std::uint64_t bit_width, mir::TypeId result_type)
-    -> mir::Expr;
+    std::uint64_t bit_offset, mir::TypeId result_type) -> mir::Expr;
 
 // Member `index` of the aggregate `projection` describes, at `result_type`.
 // Reaching a tagged union's member this way is checked against the tag (LRM

@@ -48,7 +48,7 @@ auto BuildPackedTaggedValue(
   // compose into exactly the union's vector and only its signedness is left to
   // reconcile.
   const mir::IntegralStateKind state_kind =
-      unit.types.Get(result_type).PackedShape().state_kind;
+      unit.types.Get(result_type).Integral().state_kind;
   std::vector<mir::ExprId> regions;
   if (layout.tag_bits > 0) {
     const mir::ExprId named = BuildIntLiteral(

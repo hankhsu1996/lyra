@@ -71,9 +71,9 @@ auto BuildNbaSubmitAfterCall(
     // from them only in host precision, so the entry takes the wider.
     duration_id = ConvertToType(unit, block, duration_id, unit.builtins.real);
   }
-  const mir::ExprId unit_power_id = BuildIntLiteral(
+  const mir::ExprId unit_power_id = BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
-  const mir::ExprId precision_power_id = BuildIntLiteral(
+  const mir::ExprId precision_power_id = BuildMachineIntLiteral(
       unit, block,
       static_cast<std::int64_t>(process.Resolution().precision_power));
   return mir::Expr{

@@ -1,16 +1,17 @@
 #include "lyra/runtime/observation.hpp"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <utility>
 
 #include "lyra/support/event_edge.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
-auto EventEdgeOf(const value::PackedArray& edge) -> support::EventEdge {
-  return static_cast<support::EventEdge>(edge.ToInt64());
+auto EventEdgeOf(std::int64_t edge) -> support::EventEdge {
+  return static_cast<support::EventEdge>(edge);
 }
 
 auto IsEdge(
@@ -24,7 +25,7 @@ ValueWatch::~ValueWatch() = default;
 
 ArmedObservation::ArmedObservation(
     std::unique_ptr<ValueWatch> watch,
-    std::move_only_function<value::PackedArray()> condition)
+    std::move_only_function<bool()> condition)
     : watch_(std::move(watch)), condition_(std::move(condition)) {
 }
 

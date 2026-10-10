@@ -1,9 +1,11 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 
+#include <optional>
 #include <ranges>
 #include <span>
 #include <vector>
 
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -23,15 +25,6 @@ auto BuildMachineBool(
           .type = unit.builtins.machine_bool});
 }
 
-auto BuildLogicalNot(mir::Block& block, mir::ExprId operand) -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::UnaryExpr{
-                  .op = mir::UnaryOp::kLogicalNot, .operand = operand},
-          .type = block.exprs.Get(operand).type});
-}
-
 auto ReduceToCondition(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cond)
     -> mir::ExprId {
@@ -44,17 +37,21 @@ auto ReduceToCondition(
           .type = unit.builtins.machine_bool});
 }
 
+auto BuildConditionNot(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId condition)
+    -> mir::ExprId {
+  return block.exprs.Add(MakeUnary(
+      unit, block, mir::UnaryOp::kLogicalNot, condition,
+      unit.builtins.machine_bool));
+}
+
 auto ConditionAsBit(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
     -> mir::ExprId {
-  return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kFromBool},
-                  .arguments = {ReduceToCondition(unit, block, value)}},
-          .type = unit.builtins.bit1});
+  const mir::ExprId condition = ReduceToCondition(unit, block, value);
+  return block.exprs.Add(MakeBuiltinCall(
+      unit, block, support::BuiltinFn::kFromBool, std::nullopt, {condition},
+      unit.builtins.bit1));
 }
 
 auto BuildSelectionChain(
@@ -78,24 +75,36 @@ namespace {
 
 // The search through `conditions` that stops at the first one equal to
 // `settles`, answering `settles` there and the last condition's own answer
-// when none did.
+// when none did. Each condition selects between the answer it settles and the
+// search through the ones after it, so no condition is negated to be asked:
+//
+//   any:  c0 ? true : c1 ? true : ... : last
+//   all:  c0 ? (c1 ? ... last ... : false) : false
 auto Search(
     const mir::CompilationUnit& unit, mir::Block& block,
     std::span<const mir::ExprId> conditions, bool settles) -> mir::ExprId {
   if (conditions.empty()) {
     return BuildMachineBool(unit, block, !settles);
   }
-  std::vector<SelectedValue> arms;
-  arms.reserve(conditions.size() - 1);
-  for (const mir::ExprId condition : conditions.first(conditions.size() - 1)) {
-    const mir::ExprId holds = ReduceToCondition(unit, block, condition);
-    arms.push_back(
-        {.selected = settles ? holds : BuildLogicalNot(block, holds),
-         .value = BuildMachineBool(unit, block, settles)});
+  std::vector<mir::ExprId> held;
+  held.reserve(conditions.size());
+  for (const mir::ExprId condition : conditions) {
+    held.push_back(ReduceToCondition(unit, block, condition));
   }
-  return BuildSelectionChain(
-      block, arms, ReduceToCondition(unit, block, conditions.back()),
-      unit.builtins.machine_bool);
+  mir::ExprId rest = held.back();
+  for (const mir::ExprId holds :
+       std::span(held).first(held.size() - 1) | std::views::reverse) {
+    const mir::ExprId settled = BuildMachineBool(unit, block, settles);
+    rest = block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::ConditionalExpr{
+                    .condition = holds,
+                    .then_value = settles ? settled : rest,
+                    .else_value = settles ? rest : settled},
+            .type = unit.builtins.machine_bool});
+  }
+  return rest;
 }
 
 }  // namespace

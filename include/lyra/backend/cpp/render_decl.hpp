@@ -3,8 +3,8 @@
 #include <span>
 #include <vector>
 
+#include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
-#include "lyra/diag/sink.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -53,11 +53,10 @@ struct UnitClasses {
   TargetText definitions;
 };
 
-// Every render below that writes a body reports into `refusals` what it has no
+// Every render below that writes a body reports into `report` what it has no
 // form for, and goes on.
 auto RenderUnitClasses(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitClasses;
+    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitClasses;
 
 // Every closure of the unit as a type of its own: its captures as members and
 // its one body. A body that returns is the call operator, run against the
@@ -73,15 +72,13 @@ struct UnitClosures {
 };
 
 auto RenderUnitClosures(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitClosures;
+    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitClosures;
 
 // The functions of the unit's namespace -- package functions and tasks, DPI-C
 // imports, and the entry points of DPI-C exports -- as free functions. An
 // import is only declared; the user's C code defines it.
 auto RenderUnitCallables(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitText;
+    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitText;
 
 // The structs the unit declares, each the C++ type every unit naming it spells
 // it as, with its methods as members. Each goes into a header of its own, which
@@ -98,8 +95,7 @@ struct UnitStructs {
 };
 
 auto RenderUnitStructs(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitStructs;
+    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitStructs;
 
 // The unit's package variables (LRM 26.2): declared in the header, so other
 // units can name them, and defined once in the code file.
@@ -109,7 +105,7 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText;
 // unit declaring that scope writes the same definition, and the linker keeps
 // one.
 void RenderForeignScopeSymbols(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
     TargetText& out);
 
 }  // namespace lyra::backend::cpp

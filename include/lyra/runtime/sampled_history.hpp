@@ -7,7 +7,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
 
@@ -42,9 +42,7 @@ class SampledHistory {
   // run (LRM 10.5) and before any procedure can write -- so what the subject
   // evaluates to there is the default sampled value the standard defines (LRM
   // 16.5.1).
-  void Install(
-      const T& default_sampled_value, const value::PackedArray& depth) {
-    const std::int64_t entries = depth.ToInt64();
+  void Install(const T& default_sampled_value, std::int64_t entries) {
     if (entries < 1) {
       throw InternalError(
           "SampledHistory::Install: a history reaching no prior tick answers "
@@ -57,18 +55,22 @@ class SampledHistory {
   // Records what this tick settled. The entry that falls off the end is the one
   // no read can name, which is what bounds this to the declared depth.
   void Push(const T& value) {
-    RequireInstalled();
-    newest_ = (newest_ + 1) % entries_.size();
-    entries_[newest_] = value;
+    Advance() = value;
   }
 
-  // What the tick `ticks_back` ticks before this one settled, counting from 1
+  // The same of a value handed as its bytes, as wide as the default the
+  // history was installed with, taken into the words the oldest entry has.
+  void PushBytes(const void* bytes)
+    requires value::TakesBytesInPlace<T>
+  {
+    Advance().TakeBytes(bytes);
+  }
+
+  // What the tick `back` ticks before this one settled, counting from 1
   // for the most recent. Reaching past what has happened answers with the
   // default sampled value, because that is what the entry still holds.
-  [[nodiscard]] auto At(const value::PackedArray& ticks_back) const
-      -> const T& {
+  [[nodiscard]] auto At(std::int64_t back) const -> const T& {
     RequireInstalled();
-    const std::int64_t back = ticks_back.ToInt64();
     if (back < 1 || std::cmp_greater(back, entries_.size())) {
       throw InternalError(
           "SampledHistory::At: a read reaches a tick this history was not "
@@ -79,6 +81,14 @@ class SampledHistory {
   }
 
  private:
+  // Makes the oldest entry the newest and answers it, for the tick being
+  // recorded to replace.
+  [[nodiscard]] auto Advance() -> T& {
+    RequireInstalled();
+    newest_ = (newest_ + 1) % entries_.size();
+    return entries_[newest_];
+  }
+
   void RequireInstalled() const {
     if (entries_.empty()) {
       throw InternalError(

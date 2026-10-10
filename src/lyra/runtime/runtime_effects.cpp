@@ -132,20 +132,20 @@ void RuntimeEffects::SubmitNba(OwnedCall closure) {
 }
 
 void RuntimeEffects::SubmitNbaAfter(
-    const value::PackedArray& duration, const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power, OwnedCall closure) {
-  const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
-  const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
+    const value::ConstIntegralView& duration, std::int64_t unit_power,
+    std::int64_t precision_power, OwnedCall closure) {
+  const auto unit = static_cast<std::int8_t>(unit_power);
+  const auto precision = static_cast<std::int8_t>(precision_power);
   Submit(
       DelayDeadline(*this, DelayTicks(duration, unit, precision), precision),
       Region::kNba, std::move(closure));
 }
 
 void RuntimeEffects::SubmitNbaAfterReal(
-    const value::Real& duration, const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power, OwnedCall closure) {
-  const auto unit = static_cast<std::int8_t>(unit_power.ToInt64());
-  const auto precision = static_cast<std::int8_t>(precision_power.ToInt64());
+    const value::Real& duration, std::int64_t unit_power,
+    std::int64_t precision_power, OwnedCall closure) {
+  const auto unit = static_cast<std::int8_t>(unit_power);
+  const auto precision = static_cast<std::int8_t>(precision_power);
   Submit(
       DelayDeadline(
           *this, DelayTicksReal(duration, unit, precision), precision),
@@ -243,11 +243,9 @@ auto RuntimeEffects::EveryObject() -> Observable& {
 }
 
 void RuntimeEffects::EndRun(
-    std::string_view task, const value::String& origin,
-    const value::PackedArray& level) {
+    std::string_view task, const value::String& origin, std::int64_t level) {
   Runtime& rt = AsRuntime(*this);
-  rt.ReportSimulationControl(
-      task, origin.View(), static_cast<int>(level.ToInt64()));
+  rt.ReportSimulationControl(task, origin.View(), static_cast<int>(level));
   rt.RequestSimulationEnd();
 }
 
@@ -369,13 +367,13 @@ auto RuntimeEffects::TimeFormat() const -> const value::TimeFormat& {
 }
 
 void RuntimeEffects::SetTimeFormat(
-    const value::PackedArray& units_power, const value::PackedArray& precision,
-    const value::String& suffix, const value::PackedArray& min_width) {
+    std::int64_t units_power, std::int64_t precision,
+    const value::String& suffix, std::int64_t min_width) {
   AsRuntime(*this).time_format_ = value::TimeFormat{
-      .units_power = static_cast<std::int8_t>(units_power.ToInt64()),
-      .precision = static_cast<std::int32_t>(precision.ToInt64()),
+      .units_power = static_cast<std::int8_t>(units_power),
+      .precision = static_cast<std::int32_t>(precision),
       .suffix = std::string(suffix.View()),
-      .min_width = static_cast<std::int32_t>(min_width.ToInt64())};
+      .min_width = static_cast<std::int32_t>(min_width)};
 }
 
 void RuntimeEffects::ResetTimeFormat() {

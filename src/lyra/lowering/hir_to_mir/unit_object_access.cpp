@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
@@ -10,6 +11,7 @@
 #include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -154,14 +156,9 @@ auto GuardHeldInterface(
       mir::Expr{
           .data = mir::CastExpr{.operand = held},
           .type = unit.builtins.machine_bool});
-  const mir::ExprId test = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{.target = support::BuiltinFn::kFromBool},
-                  .arguments = {present}},
-          .type = unit.builtins.bit1});
+  const mir::ExprId test = body.exprs.Add(MakeBuiltinCall(
+      unit, body, support::BuiltinFn::kFromBool, std::nullopt, {present},
+      unit.builtins.bit1));
   const mir::ExprId message = body.exprs.Add(
       mir::MakeStringLiteral(
           unit.builtins.string, "use of a null virtual interface (LRM 25.9)"));

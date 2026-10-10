@@ -6,8 +6,8 @@
 #include <variant>
 
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/value/net_resolution.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/concepts.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
@@ -21,34 +21,29 @@ namespace lyra::value {
 //
 // `Member` holds the live member. It answers `Index()`; `Visit(f)` with the
 // live value; `Paired(a, b, f)` with the live values of two holders of one
-// member; and `Rebuilt(a, b, f)` / `Mapped(f)` with a holder of that member
-// carrying what `f` answers.
+// member; `Rebuilt(a, b, f)` / `Mapped(f)` with a holder of that member
+// carrying what `f` answers; `Equal(a, b)` with what comparing two unions
+// answers; and `HighImpedance()` with the fill a member driving nothing holds.
 template <typename Derived, typename Member>
 class BasicUnion {
  public:
   // LRM 11.4.5 `==` / `!=` (Any data type): equal only when the same member is
   // live and its values compare equal, never a cross-member comparison.
-  [[nodiscard]] auto operator==(const Derived& other) const -> PackedArray {
-    if (!SameMember(other)) {
-      return PackedArray::Bit(false);
-    }
-    return Member::Paired(
-        live_, other.live_,
-        [](const auto& a, const auto& b) -> PackedArray { return a == b; });
+  [[nodiscard]] auto operator==(const Derived& other) const {
+    return Member::Equal(live_, other.live_);
   }
-  [[nodiscard]] auto operator!=(const Derived& other) const -> PackedArray {
-    return !(*this == other);
+  [[nodiscard]] auto operator!=(const Derived& other) const {
+    return Inverted(*this == other);
   }
 
   // LRM 11.4.5 `===` / `!==`: the same member live, with identical bits.
-  [[nodiscard]] auto CaseEqual(const Derived& other) const -> PackedArray {
-    if (!SameMember(other)) {
-      return PackedArray::Bit(false);
-    }
-    return Member::Paired(
-        live_, other.live_, [](const auto& a, const auto& b) -> PackedArray {
-          return a.CaseEqual(b);
-        });
+  [[nodiscard]] auto CaseEqual(const Derived& other) const -> Bit {
+    return Bit::FromBool(
+        SameMember(other) &&
+        Member::Paired(
+            live_, other.live_, [](const auto& a, const auto& b) -> bool {
+              return a.CaseEqual(b).IsTruthy();
+            }));
   }
 
   // LRM 9.4.2: a union changed when another member became live or the live
@@ -66,22 +61,22 @@ class BasicUnion {
     return live_.Visit(
         [](const auto& value) -> bool { return value.HasUnknown(); });
   }
-  [[nodiscard]] auto IsUnknown() const -> PackedArray {
-    return PackedArray::Bit(HasUnknown());
+  [[nodiscard]] auto IsUnknown() const -> Bit {
+    return Bit::FromBool(HasUnknown());
   }
 
-  // Net resolution over the live member under each truth table (LRM 6.6). LRM
-  // 6.7.1 admits an unpacked union as a net's data type when every member is
-  // itself valid for a net, so a union net resolves its drivers like any other
-  // when they drive the same member.
+  // Net resolution over the live member under each of the three truth tables
+  // (LRM 6.6). LRM 6.7.1 admits an unpacked union as a net's data type when
+  // every member is itself valid for a net, so a union net resolves its
+  // drivers like any other when they drive the same member.
   [[nodiscard]] auto ResolveTriState(const Derived& other) const -> Derived {
-    return FoldedWith(other, NetResolution::kTriState);
+    return Resolved(NetResolution::kTriState, other);
   }
   [[nodiscard]] auto ResolveWiredAnd(const Derived& other) const -> Derived {
-    return FoldedWith(other, NetResolution::kWiredAnd);
+    return Resolved(NetResolution::kWiredAnd, other);
   }
   [[nodiscard]] auto ResolveWiredOr(const Derived& other) const -> Derived {
-    return FoldedWith(other, NetResolution::kWiredOr);
+    return Resolved(NetResolution::kWiredOr, other);
   }
 
   // What a stronger contribution leaves a weaker one (LRM 28.12.1), which for
@@ -101,29 +96,24 @@ class BasicUnion {
   // filled (LRM 6.7.1). A net's prototype is its declared default, which for an
   // unpacked union is its first member (LRM 7.3), so a union net nothing drives
   // reads as that member at high impedance.
+  template <typename Fill>
   [[nodiscard]] static auto FilledLike(
-      const Derived& prototype, const PackedArray& fill) -> Derived {
-    return Derived(prototype.live_.Mapped([&](const auto& value) {
-      return std::decay_t<decltype(value)>::FilledLike(value, fill);
-    }));
+      const Derived& prototype, const Fill& fill) -> Derived {
+    return Derived(prototype.live_.Mapped(
+        [&](const auto& value) { return FilledAs(value, fill); }));
   }
 
   // LRM 6.24.3 streams a union, which is not carried out yet. A structure with
   // a union member asks these only where the program measures it.
-  [[noreturn]] static auto BitstreamWidth() -> PackedArray {
+  [[noreturn]] static auto BitstreamWidth() -> Int {
     throw SimulationError(
         "$bits of a union is not yet supported on this backend; please open "
         "an issue asking for support");
   }
-  [[noreturn]] static auto ToBitstream() -> PackedArray {
-    throw SimulationError(
-        "reading this value as a stream of bits is not yet supported on this "
-        "backend; please open an issue asking for support");
-  }
   // LRM 20.9 counts over the bit stream.
-  [[nodiscard]] static auto CountBits(const PackedArray& control_bits)
-      -> PackedArray {
-    return ToBitstream().CountBits(control_bits);
+  template <IntegralValue Control>
+  [[nodiscard]] static auto CountBits(const Control& control_bits) -> Int {
+    return Stream().CountBits(control_bits);
   }
 
  protected:
@@ -139,8 +129,25 @@ class BasicUnion {
   }
 
  private:
+  [[noreturn]] static auto Stream() -> Bit {
+    throw SimulationError(
+        "reading this value as a stream of bits is not yet supported on this "
+        "backend; please open an issue asking for support");
+  }
+
   [[nodiscard]] auto Self() const -> const Derived& {
     return static_cast<const Derived&>(*this);
+  }
+
+  [[nodiscard]] auto Resolved(NetResolution fold, const Derived& other) const
+      -> Derived {
+    if (!SameMember(other)) {
+      return AcrossMembers(Self(), other);
+    }
+    return Derived(
+        Member::Rebuilt(live_, other.live_, [&](const auto& a, const auto& b) {
+          return lyra::value::Resolve(fold, a, b);
+        }));
   }
 
   [[nodiscard]] auto SameMember(const Derived& other) const -> bool {
@@ -159,7 +166,7 @@ class BasicUnion {
   // answered with an invented value.
   [[nodiscard]] static auto AcrossMembers(const Derived& a, const Derived& b)
       -> Derived {
-    const PackedArray high_impedance = PackedArray::HighImpedanceScalar();
+    const auto high_impedance = Member::HighImpedance();
     if (a.IsBitIdentical(FilledLike(a, high_impedance))) {
       return b;
     }
@@ -170,17 +177,6 @@ class BasicUnion {
         "two drivers of an unpacked-union net are driving different members; "
         "SystemVerilog gives an unpacked union no defined storage overlay, so "
         "their resolution has no defined value");
-  }
-
-  [[nodiscard]] auto FoldedWith(const Derived& other, NetResolution fold) const
-      -> Derived {
-    if (!SameMember(other)) {
-      return AcrossMembers(Self(), other);
-    }
-    return Derived(
-        Member::Rebuilt(live_, other.live_, [&](const auto& a, const auto& b) {
-          return ResolvedUnder(fold, a, b);
-        }));
   }
 
   Member live_;
@@ -202,6 +198,15 @@ class BasicUnion {
 template <typename... Ts>
 class VariantMember {
  public:
+  // What comparing two unions answers (LRM 11.4.5): one bit, unknown where any
+  // member can hold x or z.
+  using Equality = OneBit<(
+      (... ||
+       (decltype(std::declval<const Ts&>() == std::declval<const Ts&>())::
+            kDomain == StateDomain::kFourState))
+          ? StateDomain::kFourState
+          : StateDomain::kTwoState)>;
+
   [[nodiscard]] auto Index() const -> std::size_t {
     return alternatives_.index();
   }
@@ -210,6 +215,21 @@ class VariantMember {
   }
   [[nodiscard]] auto Alternatives() -> std::variant<Ts...>& {
     return alternatives_;
+  }
+
+  [[nodiscard]] static auto Equal(
+      const VariantMember& a, const VariantMember& b) -> Equality {
+    if (a.Index() != b.Index()) {
+      return Equality::FromBool(false);
+    }
+    return Paired(a, b, [](const auto& x, const auto& y) -> Equality {
+      return Convert<Equality>(x == y);
+    });
+  }
+
+  // A member of a net driving nothing (LRM 6.6).
+  [[nodiscard]] static auto HighImpedance() -> Logic {
+    return Logic::Filled(FourStateBit::kHighImpedance);
   }
 
   template <typename F>

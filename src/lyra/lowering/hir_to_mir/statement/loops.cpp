@@ -192,21 +192,13 @@ auto BuildIndexLoopStmt(
     const Read& read, const Write& write, mir::BinaryOp goes_on_while,
     mir::ExprId bound, mir::BinaryOp advance, mir::BlockId body_scope,
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
-  const mir::ExprId goes_on = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{.op = goes_on_while, .lhs = read(), .rhs = bound},
-          .type = unit.builtins.bit1});
+  const mir::ExprId goes_on = block.exprs.Add(MakeBinary(
+      unit, block, goes_on_while, read(), bound, unit.builtins.bit1));
   const mir::ExprId cond_id = ReduceToCondition(unit, block, goes_on);
 
-  const mir::ExprId next = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = advance,
-                  .lhs = read(),
-                  .rhs = BuildIntLiteral(unit, block, 1)},
-          .type = unit.builtins.int_type});
+  const mir::ExprId next = block.exprs.Add(MakeBinary(
+      unit, block, advance, read(), BuildIntLiteral(unit, block, 1),
+      unit.builtins.int_type));
 
   std::vector<mir::ForInit> for_init;
   for_init.push_back(std::move(init));

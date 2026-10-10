@@ -65,13 +65,8 @@
 #include "lyra/value/dynamic_array.hpp"          // IWYU pragma: keep
 #include "lyra/value/enumeration.hpp"            // IWYU pragma: keep
 #include "lyra/value/format.hpp"                 // IWYU pragma: keep
+#include "lyra/value/integral.hpp"               // IWYU pragma: keep
 #include "lyra/value/integral_format.hpp"        // IWYU pragma: keep
-#include "lyra/value/packed.hpp"                 // IWYU pragma: keep
-#include "lyra/value/packed_array.hpp"           // IWYU pragma: keep
-#include "lyra/value/packed_bitwise.hpp"         // IWYU pragma: keep
-#include "lyra/value/packed_convert.hpp"         // IWYU pragma: keep
-#include "lyra/value/packed_reduction.hpp"       // IWYU pragma: keep
-#include "lyra/value/packed_type.hpp"            // IWYU pragma: keep
 #include "lyra/value/queue.hpp"                  // IWYU pragma: keep
 #include "lyra/value/real.hpp"                   // IWYU pragma: keep
 #include "lyra/value/require.hpp"                // IWYU pragma: keep

@@ -128,9 +128,11 @@ auto ReadingComparison(support::BitCountReading reading)
       return mir::BinaryOp::kEquality;
     case support::BitCountReading::kAtMostOne:
       return mir::BinaryOp::kLessEqual;
-    default:
+    case support::BitCountReading::kCount:
+    case support::BitCountReading::kAny:
       return std::nullopt;
   }
+  throw InternalError("ReadingComparison: unknown bit count reading");
 }
 
 // LRM 20.9 defines `$isunknown` as `$countbits(expr, 'x, 'z) != 0`, but every
@@ -201,11 +203,9 @@ auto LowerBitVectorSystemSubroutineCall(
   if (!op) {
     return body.exprs.Get(count);
   }
-  return mir::Expr{
-      .data =
-          mir::BinaryExpr{
-              .op = *op, .lhs = count, .rhs = BuildIntLiteral(unit, body, 1)},
-      .type = unit.builtins.bit1};
+  return MakeBinary(
+      unit, body, *op, count, BuildIntLiteral(unit, body, 1),
+      unit.builtins.bit1);
 }
 
 auto BitCountControlType(const mir::CompilationUnit& unit) -> mir::TypeId {

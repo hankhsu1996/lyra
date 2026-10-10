@@ -9,14 +9,15 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enum_table.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -29,7 +30,7 @@ auto AskMembers(
     UnitLowerer& unit_lowerer, mir::Block& block, support::BuiltinFn question,
     hir::TypeId enum_type, std::vector<mir::ExprId> operands,
     mir::TypeId answer_type) -> mir::Expr {
-  const mir::ExprId members = mir::BuildEnumerationDescriptorRef(
+  const mir::ExprId members = mir::BuildEnumTableRef(
       unit_lowerer.Unit(), block, unit_lowerer.TranslateType(enum_type));
   return mir::Expr{
       .data =
@@ -79,16 +80,15 @@ auto LowerStepCall(
   mir::Block& block = *frame.current_block;
   const mir::ExprId value = block.exprs.Add(*std::move(value_or));
 
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::ExprId count{};
   if (const std::optional<hir::ExprId> step = OptionalOperand(c, 1)) {
     auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(*step), frame);
     if (!count_or) return std::unexpected(std::move(count_or.error()));
-    count = block.exprs.Add(*std::move(count_or));
+    count =
+        BuildToInt64Call(unit, block, block.exprs.Add(*std::move(count_or)));
   } else {
-    const mir::CompilationUnit& unit = lowerer.Owner().Unit();
-    count = BuildIntegralLiteral(
-        unit, block, unit.builtins.int_unsigned,
-        mir::IntegralConstant{.value_words = {1U}, .state_words = {}});
+    count = BuildMachineIntLiteral(unit, block, 1);
   }
   return AskMembers(
       lowerer.Owner(), block, question, enum_type, {value, count}, result_type);

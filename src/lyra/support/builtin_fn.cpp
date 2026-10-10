@@ -1,35 +1,119 @@
 #include "lyra/support/builtin_fn.hpp"
 
+#include <string_view>
+
 #include "lyra/base/internal_error.hpp"
+#include "lyra/support/integral_operation.hpp"
 
 namespace lyra::support {
 
+namespace {
+
+// A function of the value library, and one of the runtime's.
+constexpr auto ValueFunction(std::string_view identifier) -> FreeFunction {
+  return FreeFunction{.scope = "lyra::value", .identifier = identifier};
+}
+
+constexpr auto RuntimeFunction(std::string_view identifier) -> FreeFunction {
+  return FreeFunction{.scope = "lyra::runtime", .identifier = identifier};
+}
+
+// Whether an operation's operands leave the type it answers at unsettled, so
+// an entry that is that operation is generic over it.
+auto AnswersAtTheTypeOfTheCall(IntegralAnswer answer) -> bool {
+  switch (answer) {
+    case IntegralAnswer::kOfTheCall:
+      return true;
+    case IntegralAnswer::kOfFirstOperand:
+    case IntegralAnswer::kOneBit:
+    case IntegralAnswer::kTwoStateBit:
+    case IntegralAnswer::kJoined:
+    case IntegralAnswer::kInt:
+    case IntegralAnswer::kInteger:
+    case IntegralAnswer::kPosition:
+    case IntegralAnswer::kMachineBool:
+    case IntegralAnswer::kMachineInt:
+      return false;
+  }
+  throw InternalError("RuntimeEntryOf: unknown integral answer");
+}
+
+// An entry that is the operation `op` over integral values and nothing else,
+// reached as `declaration` says and selecting a part as `selects` says. It is
+// spelled as the operation is, and what it takes is the operation's to say.
+auto IntegralEntry(
+    IntegralOp op, EntryDeclaration declaration,
+    std::optional<PartSelection> selects = std::nullopt) -> RuntimeEntry {
+  const IntegralOperation& operation = IntegralOperationOf(op);
+  return {
+      .name = operation.name,
+      .declaration = declaration,
+      .takes_a_type_argument = AnswersAtTheTypeOfTheCall(operation.answer),
+      .selects = selects,
+      .integral = op};
+}
+
+}  // namespace
+
 auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
+  using enum OperandReading;
   switch (id) {
     case BuiltinFn::kElement:
       return {
           .name = "element",
           .declaration = Method{"Element"},
           .selects = PartSelection::kElement,
-          .index_operand = 1};
-    case BuiltinFn::kSlice:
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kAssocElement:
       return {
-          .name = "slice",
+          .name = "assocarray_element",
+          .declaration = Method{"Element"},
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kKey}};
+    case BuiltinFn::kSlice:
+      return IntegralEntry(
+          IntegralOp::kSlice, ValueFunction("Slice"), PartSelection::kSlice);
+    case BuiltinFn::kElementSlice:
+      return {
+          .name = "element_slice",
           .declaration = Method{"Slice"},
-          .selects = PartSelection::kSlice};
+          .selects = PartSelection::kSlice,
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kQueueSlice:
+      return {
+          .name = "queue_slice",
+          .declaration = Method{"Slice"},
+          .selects = PartSelection::kSlice,
+          .operands = {kMachine, kPosition, kPosition}};
     case BuiltinFn::kElementRef:
       return {
           .name = "element_ref",
           .declaration = Method{"ElementRef"},
           .answer = EntryAnswer::kPartOfTheReceiver,
           .selects = PartSelection::kElement,
-          .index_operand = 1};
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kAssocElementRef:
+      return {
+          .name = "assocarray_element_ref",
+          .declaration = Method{"ElementRef"},
+          .answer = EntryAnswer::kPartOfTheReceiver,
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kSliceRef:
       return {
           .name = "slice_ref",
           .declaration = Method{"SliceRef"},
+          .takes_a_type_argument = true,
           .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kSlice};
+          .selects = PartSelection::kSlice,
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kElementSliceRef:
+      return {
+          .name = "element_slice_ref",
+          .declaration = Method{"SliceRef"},
+          .answer = EntryAnswer::kPartOfTheReceiver,
+          .selects = PartSelection::kSlice,
+          .operands = {kMachine, kPosition, kMachine, kHeld}};
     case BuiltinFn::kComponent:
       return {
           .name = "component",
@@ -47,12 +131,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "make",
           .declaration = StaticFactory{"Make"},
-          .member_operand = 0};
+          .takes_a_type_argument = true,
+          .operands = {kHeld}};
     case BuiltinFn::kRequire:
       return {
           .name = "require",
-          .declaration = FreeFunction{"lyra::value::Require"},
-          .answer = EntryAnswer::kTheReceiver};
+          .declaration = ValueFunction("Require"),
+          .answer = EntryAnswer::kTheReceiver,
+          .operands = {kHeld, kBits}};
     case BuiltinFn::kSize:
       return {.name = "size", .declaration = Method{"Size"}};
     case BuiltinFn::kLen:
@@ -61,16 +147,18 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "bitstream_width", .declaration = Method{"BitstreamWidth"}};
     case BuiltinFn::kToBitstream:
-      return {.name = "to_bitstream", .declaration = Method{"ToBitstream"}};
+      return {
+          .name = "to_bitstream",
+          .declaration = Method{"ToBitstream"},
+          .takes_a_type_argument = true,
+          .answer_told = AnswerTold::kIntegralExtent};
     case BuiltinFn::kFromBitstream:
       return {
           .name = "from_bitstream",
           .declaration = StaticFactory{"FromBitstream"},
-          .result_prototype_operand = 1};
+          .operands = {kBits, kTyped}};
     case BuiltinFn::kReverseBlocks:
-      return {.name = "reverse_blocks", .declaration = Method{"ReverseBlocks"}};
-    case BuiltinFn::kToOwned:
-      return {.name = "to_owned", .declaration = Method{"ToOwned"}};
+      return IntegralEntry(IntegralOp::kReverseBlocks, Method{"ReverseBlocks"});
     case BuiltinFn::kDelete:
       return {
           .name = "delete",
@@ -81,7 +169,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "delete_index",
           .declaration = Method{"DeleteIndex"},
           .mutates_receiver = true,
-          .index_operand = 1};
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kAssocDeleteIndex:
+      return {
+          .name = "assocarray_delete_index",
+          .declaration = Method{"DeleteIndex"},
+          .mutates_receiver = true,
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kReverse:
       return {
           .name = "reverse",
@@ -104,102 +198,119 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "sum",
           .declaration = Method{"Sum"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kProduct:
       return {
           .name = "product",
           .declaration = Method{"Product"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kAnd:
       return {
           .name = "and",
           .declaration = Method{"And"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kOr:
       return {
           .name = "or",
           .declaration = Method{"Or"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kXor:
       return {
           .name = "xor",
           .declaration = Method{"Xor"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kFind:
       return {
           .name = "find",
           .declaration = Method{"Find"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kFindIndex:
       return {
           .name = "find_index",
           .declaration = Method{"FindIndex"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kFindFirst:
       return {
           .name = "find_first",
           .declaration = Method{"FindFirst"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kFindFirstIndex:
       return {
           .name = "find_first_index",
           .declaration = Method{"FindFirstIndex"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kFindLast:
       return {
           .name = "find_last",
           .declaration = Method{"FindLast"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kFindLastIndex:
       return {
           .name = "find_last_index",
           .declaration = Method{"FindLastIndex"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kMin:
       return {
           .name = "min",
           .declaration = Method{"Min"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kMax:
       return {
           .name = "max",
           .declaration = Method{"Max"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kUnique:
       return {
           .name = "unique",
           .declaration = Method{"Unique"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kUniqueIndex:
       return {
           .name = "unique_index",
           .declaration = Method{"UniqueIndex"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kMap:
       return {
           .name = "map",
           .declaration = Method{"Map"},
           .takes_closure = true,
-          .result_prototype_operand = 2};
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_starts_from = 2};
     case BuiltinFn::kInsert:
       return {
           .name = "insert",
           .declaration = Method{"Insert"},
-          .mutates_receiver = true};
+          .mutates_receiver = true,
+          .operands = {kMachine, kPosition, kHeld}};
     case BuiltinFn::kPopFront:
       return {
           .name = "pop_front",
@@ -214,58 +325,66 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "push_front",
           .declaration = Method{"PushFront"},
-          .mutates_receiver = true};
+          .mutates_receiver = true,
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kPushBack:
       return {
           .name = "push_back",
           .declaration = Method{"PushBack"},
-          .mutates_receiver = true};
+          .mutates_receiver = true,
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kExists:
       return {
           .name = "exists",
           .declaration = Method{"Exists"},
-          .index_operand = 1};
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kAssocFirst:
       return {
           .name = "assoc_first",
           .declaration = Method{"First"},
           .writes_the_index_back = true,
-          .index_operand = 1};
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kAssocLast:
       return {
           .name = "assoc_last",
           .declaration = Method{"Last"},
           .writes_the_index_back = true,
-          .index_operand = 1};
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kAssocNext:
       return {
           .name = "assoc_next",
           .declaration = Method{"Next"},
           .writes_the_index_back = true,
-          .index_operand = 1};
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kAssocPrev:
       return {
           .name = "assoc_prev",
           .declaration = Method{"Prev"},
           .writes_the_index_back = true,
-          .index_operand = 1};
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kAssocMinIndex:
       return {
           .name = "assoc_min_index",
           .declaration = Method{"MinIndex"},
-          .result_prototype_operand = 1};
+          .operands = {kMachine, kTyped},
+          .answer_starts_from = 1};
     case BuiltinFn::kAssocMaxIndex:
       return {
           .name = "assoc_max_index",
           .declaration = Method{"MaxIndex"},
-          .result_prototype_operand = 1};
+          .operands = {kMachine, kTyped},
+          .answer_starts_from = 1};
     case BuiltinFn::kGetc:
-      return {.name = "getc", .declaration = Method{"Getc"}};
+      return {
+          .name = "getc",
+          .declaration = Method{"Getc"},
+          .operands = {kMachine, kPosition}};
     case BuiltinFn::kPutc:
       return {
           .name = "putc",
           .declaration = Method{"Putc"},
-          .mutates_receiver = true};
+          .mutates_receiver = true,
+          .operands = {kMachine, kPosition, kNumber}};
     case BuiltinFn::kToupper:
       return {.name = "toupper", .declaration = Method{"Toupper"}};
     case BuiltinFn::kTolower:
@@ -275,7 +394,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kIcompare:
       return {.name = "icompare", .declaration = Method{"Icompare"}};
     case BuiltinFn::kSubstr:
-      return {.name = "substr", .declaration = Method{"Substr"}};
+      return {
+          .name = "substr",
+          .declaration = Method{"Substr"},
+          .operands = {kMachine, kPosition, kPosition}};
     case BuiltinFn::kAtoi:
       return {.name = "atoi", .declaration = Method{"Atoi"}};
     case BuiltinFn::kAtohex:
@@ -290,22 +412,26 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "itoa",
           .declaration = Method{"Itoa"},
-          .mutates_receiver = true};
+          .mutates_receiver = true,
+          .operands = {kMachine, kNumber}};
     case BuiltinFn::kHextoa:
       return {
           .name = "hextoa",
           .declaration = Method{"Hextoa"},
-          .mutates_receiver = true};
+          .mutates_receiver = true,
+          .operands = {kMachine, kNumber}};
     case BuiltinFn::kOcttoa:
       return {
           .name = "octtoa",
           .declaration = Method{"Octtoa"},
-          .mutates_receiver = true};
+          .mutates_receiver = true,
+          .operands = {kMachine, kNumber}};
     case BuiltinFn::kBintoa:
       return {
           .name = "bintoa",
           .declaration = Method{"Bintoa"},
-          .mutates_receiver = true};
+          .mutates_receiver = true,
+          .operands = {kMachine, kNumber}};
     case BuiltinFn::kRealtoa:
       return {
           .name = "realtoa",
@@ -323,9 +449,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .takes_the_runtime_handle = true};
     case BuiltinFn::kSampledHistoryInstall:
       return {
-          .name = "sampled_history_install", .declaration = Method{"Install"}};
+          .name = "sampled_history_install",
+          .declaration = Method{"Install"},
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kSampledHistoryPush:
-      return {.name = "sampled_history_push", .declaration = Method{"Push"}};
+      return {
+          .name = "sampled_history_push",
+          .declaration = Method{"Push"},
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kSampledHistoryAt:
       return {.name = "sampled_history_at", .declaration = Method{"At"}};
     case BuiltinFn::kEvaluationAttemptsInstall:
@@ -371,31 +502,72 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "evaluation_attempts_settle",
           .declaration = Method{"Settle"}};
     case BuiltinFn::kIsUnknown:
-      return {.name = "is_unknown", .declaration = Method{"IsUnknown"}};
+      return {
+          .name = "is_unknown",
+          .declaration = Method{"IsUnknown"},
+          .over_integral_values = BuiltinFn::kIntegralIsUnknown};
+    case BuiltinFn::kIntegralIsUnknown:
+      return IntegralEntry(IntegralOp::kIsUnknown, Method{"IsUnknown"});
     case BuiltinFn::kCountBits:
-      return {.name = "count_bits", .declaration = Method{"CountBits"}};
+      return {
+          .name = "count_bits",
+          .declaration = Method{"CountBits"},
+          .operands = {kMachine, kBits},
+          .over_integral_values = BuiltinFn::kIntegralCountBits};
+    case BuiltinFn::kIntegralCountBits:
+      return IntegralEntry(IntegralOp::kCountBits, Method{"CountBits"});
     case BuiltinFn::kBitIdentical:
-      return {.name = "bit_identical", .declaration = Method{"IsBitIdentical"}};
+      return {
+          .name = "bit_identical",
+          .declaration = Method{"IsBitIdentical"},
+          .over_integral_values = BuiltinFn::kIntegralBitIdentical};
+    case BuiltinFn::kIntegralBitIdentical:
+      return IntegralEntry(IntegralOp::kBitIdentical, Method{"IsBitIdentical"});
     case BuiltinFn::kHasUnknown:
-      return {.name = "has_unknown", .declaration = Method{"HasUnknown"}};
+      return {
+          .name = "has_unknown",
+          .declaration = Method{"HasUnknown"},
+          .over_integral_values = BuiltinFn::kIntegralHasUnknown};
+    case BuiltinFn::kIntegralHasUnknown:
+      return IntegralEntry(IntegralOp::kHasUnknown, Method{"HasUnknown"});
     case BuiltinFn::kResolveTriState:
       return {
           .name = "resolve_tri_state",
-          .declaration = Method{"ResolveTriState"}};
+          .declaration = Method{"ResolveTriState"},
+          .over_integral_values = BuiltinFn::kIntegralResolveTriState};
+    case BuiltinFn::kIntegralResolveTriState:
+      return IntegralEntry(
+          IntegralOp::kResolveTriState, Method{"ResolveTriState"});
     case BuiltinFn::kResolveWiredAnd:
       return {
           .name = "resolve_wired_and",
-          .declaration = Method{"ResolveWiredAnd"}};
+          .declaration = Method{"ResolveWiredAnd"},
+          .over_integral_values = BuiltinFn::kIntegralResolveWiredAnd};
+    case BuiltinFn::kIntegralResolveWiredAnd:
+      return IntegralEntry(
+          IntegralOp::kResolveWiredAnd, Method{"ResolveWiredAnd"});
     case BuiltinFn::kResolveWiredOr:
       return {
-          .name = "resolve_wired_or", .declaration = Method{"ResolveWiredOr"}};
+          .name = "resolve_wired_or",
+          .declaration = Method{"ResolveWiredOr"},
+          .over_integral_values = BuiltinFn::kIntegralResolveWiredOr};
+    case BuiltinFn::kIntegralResolveWiredOr:
+      return IntegralEntry(
+          IntegralOp::kResolveWiredOr, Method{"ResolveWiredOr"});
     case BuiltinFn::kDominating:
-      return {.name = "dominating", .declaration = Method{"Dominating"}};
+      return {
+          .name = "dominating",
+          .declaration = Method{"Dominating"},
+          .over_integral_values = BuiltinFn::kIntegralDominating};
+    case BuiltinFn::kIntegralDominating:
+      return IntegralEntry(IntegralOp::kDominate, Method{"Dominating"});
     case BuiltinFn::kFilledLike:
       return {
-          .name = "filled_like", .declaration = StaticFactory{"FilledLike"}};
+          .name = "filled_like",
+          .declaration = StaticFactory{"FilledLike"},
+          .operands = {kMachine, kBits}};
     case BuiltinFn::kClog2:
-      return {.name = "clog2", .declaration = Method{"Clog2"}};
+      return IntegralEntry(IntegralOp::kCeilLog2, Method{"Clog2"});
     case BuiltinFn::kLn:
       return {.name = "ln", .declaration = Method{"Ln"}};
     case BuiltinFn::kLog10:
@@ -440,7 +612,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "initialize",
           .declaration = Method{"Initialize"},
-          .ending = CallEnding::kReturns};
+          .ending = CallEnding::kReturns,
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kNetInitializeTriState:
       return {
           .name = "net_initialize_tri_state",
@@ -457,10 +630,33 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "net_initialize_retaining",
           .declaration = Method{"InitializeRetaining"}};
+    case BuiltinFn::kAggregateNetInitializeTriState:
+      return {
+          .name = "aggregate_net_initialize_tri_state",
+          .declaration = Method{"InitializeTriState"},
+          .operands = {kMachine, kHeld}};
+    case BuiltinFn::kAggregateNetInitializeWiredAnd:
+      return {
+          .name = "aggregate_net_initialize_wired_and",
+          .declaration = Method{"InitializeWiredAnd"},
+          .operands = {kMachine, kHeld}};
+    case BuiltinFn::kAggregateNetInitializeWiredOr:
+      return {
+          .name = "aggregate_net_initialize_wired_or",
+          .declaration = Method{"InitializeWiredOr"},
+          .operands = {kMachine, kHeld}};
+    case BuiltinFn::kAggregateNetInitializeRetaining:
+      return {
+          .name = "aggregate_net_initialize_retaining",
+          .declaration = Method{"InitializeRetaining"},
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kLoad:
       return {.name = "get", .declaration = Method{"Get"}};
     case BuiltinFn::kStore:
-      return {.name = "set", .declaration = Method{"Set"}};
+      return {
+          .name = "set",
+          .declaration = Method{"Set"},
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kSampledLoad:
       return {.name = "sampled_load", .declaration = Method{"SampledGet"}};
     case BuiltinFn::kArmSampling:
@@ -474,7 +670,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "designate_element",
           .declaration = Method{"ElementRef"},
           .selects = PartSelection::kElement,
-          .index_operand = 1};
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kAssocDesignateElement:
+      return {
+          .name = "assocarray_designate_element",
+          .declaration = Method{"ElementRef"},
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kDesignateComponent:
       return {
           .name = "designate_component",
@@ -484,13 +686,27 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "designate_slice",
           .declaration = Method{"SliceRef"},
-          .selects = PartSelection::kSlice};
+          .takes_a_type_argument = true,
+          .selects = PartSelection::kSlice,
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kDesignateElementSlice:
+      return {
+          .name = "designate_element_slice",
+          .declaration = Method{"SliceRef"},
+          .selects = PartSelection::kSlice,
+          .operands = {kMachine, kPosition}};
     case BuiltinFn::kReferElement:
       return {
           .name = "refer_element",
           .declaration = Method{"ReferElement"},
           .selects = PartSelection::kElement,
-          .index_operand = 1};
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kAssocReferElement:
+      return {
+          .name = "assocarray_refer_element",
+          .declaration = Method{"ReferElement"},
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kReferComponent:
       return {
           .name = "refer_component",
@@ -499,12 +715,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kReferProperty:
       return {
           .name = "refer_property",
-          .declaration = FreeFunction{"lyra::runtime::ReferProperty"},
+          .declaration = RuntimeFunction("ReferProperty"),
           .reaches_an_object = true};
     case BuiltinFn::kReferenceReportsTo:
       return {
           .name = "reference_reports_to",
-          .declaration = FreeFunction{"lyra::runtime::ReportsTo"}};
+          .declaration = RuntimeFunction("ReportsTo")};
     case BuiltinFn::kAttachDriver:
       return {.name = "attach_driver", .declaration = Method{"AttachDriver"}};
     case BuiltinFn::kNetJoin:
@@ -512,13 +728,16 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kBeginTakeover:
       return {.name = "begin_takeover", .declaration = Method{"BeginTakeover"}};
     case BuiltinFn::kDriveTakeover:
-      return {.name = "drive_takeover", .declaration = Method{"DriveTakeover"}};
+      return {
+          .name = "drive_takeover",
+          .declaration = Method{"DriveTakeover"},
+          .operands = {kMachine, kMachine, kMachine, kHeld}};
     case BuiltinFn::kEndTakeover:
       return {.name = "end_takeover", .declaration = Method{"EndTakeover"}};
     case BuiltinFn::kCurrentRuntime:
       return {
           .name = "current_runtime",
-          .declaration = FreeFunction{"lyra::runtime::current_runtime"},
+          .declaration = RuntimeFunction("current_runtime"),
           .ending = CallEnding::kReturns};
     case BuiltinFn::kSubmitNba:
       return {
@@ -529,7 +748,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "submit_nba_after",
           .declaration = Method{"SubmitNbaAfter"},
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .operands = {kMachine, kNumber}};
     case BuiltinFn::kSubmitNbaAfterReal:
       return {
           .name = "submit_nba_after_real",
@@ -543,7 +763,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kResumeInNbaRegion:
       return {
           .name = "resume_in_nba_region",
-          .declaration = FreeFunction{"lyra::runtime::ResumeInNbaRegion"}};
+          .declaration = RuntimeFunction("ResumeInNbaRegion")};
     case BuiltinFn::kSubmitPostponed:
       return {
           .name = "submit_postponed",
@@ -580,12 +800,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kIsCancelled:
       return {.name = "is_cancelled", .declaration = Method{"IsCancelled"}};
     case BuiltinFn::kFormat:
-      return {
-          .name = "format", .declaration = FreeFunction{"lyra::value::Format"}};
+      return {.name = "format", .declaration = ValueFunction("Format")};
     case BuiltinFn::kFormatRuntime:
       return {
           .name = "format_runtime",
-          .declaration = FreeFunction{"lyra::value::FormatRuntime"}};
+          .declaration = ValueFunction("FormatRuntime")};
     case BuiltinFn::kMakeRenderedFormatArg:
       return {
           .name = "make_rendered_format_arg",
@@ -593,7 +812,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kMakePatternedFormatArg:
       return {
           .name = "make_patterned_format_arg",
-          .declaration = StaticFactory{"Patterned"}};
+          .declaration = StaticFactory{"Patterned"},
+          .operands = {kNumber}};
     case BuiltinFn::kWrite:
       return {.name = "write", .declaration = Method{"Write"}};
     case BuiltinFn::kWriteln:
@@ -633,12 +853,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .takes_the_runtime_handle = true};
     case BuiltinFn::kScanString:
       return {
-          .name = "scan_string",
-          .declaration = FreeFunction{"lyra::value::ScanString"}};
+          .name = "scan_string", .declaration = ValueFunction("ScanString")};
     case BuiltinFn::kScanFile:
-      return {
-          .name = "scan_file",
-          .declaration = FreeFunction{"lyra::value::ScanFile"}};
+      return {.name = "scan_file", .declaration = ValueFunction("ScanFile")};
     case BuiltinFn::kPeekBuffered:
       return {.name = "peek_buffered", .declaration = Method{"PeekBuffered"}};
     case BuiltinFn::kAdvanceFd:
@@ -656,7 +873,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kFileGets:
       return {.name = "file_gets", .declaration = Method{"Gets"}};
     case BuiltinFn::kFileRead:
-      return {.name = "file_read", .declaration = Method{"Read"}};
+      return {
+          .name = "file_read",
+          .declaration = Method{"Read"},
+          .operands = {kMachine, kNumber}};
     case BuiltinFn::kFileReadMemory:
       return {.name = "file_read_memory", .declaration = Method{"ReadMemory"}};
     case BuiltinFn::kFileSeek:
@@ -676,46 +896,50 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kTestPlusargs:
       return {
           .name = "test_plusargs",
-          .declaration = FreeFunction{"lyra::runtime::TestPlusargs"},
+          .declaration = RuntimeFunction("TestPlusargs"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kValuePlusargs:
       return {
-          .name = "value_plusargs",
-          .declaration = FreeFunction{"lyra::runtime::ValuePlusargs"}};
+          .name = "integral_value_plusargs",
+          .declaration = RuntimeFunction("ValuePlusargs"),
+          .takes_the_runtime_handle = true,
+          .operands = {kMachine, kMachine, kNumber}};
+    case BuiltinFn::kValuePlusargsString:
+      return {
+          .name = "string_value_plusargs",
+          .declaration = RuntimeFunction("ValuePlusargs"),
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kRunHostCommand:
       return {
           .name = "run_host_command",
-          .declaration = FreeFunction{"lyra::runtime::RunHostCommand"},
+          .declaration = RuntimeFunction("RunHostCommand"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kRunNullHostCommand:
       return {
           .name = "run_null_host_command",
-          .declaration = FreeFunction{"lyra::runtime::RunNullHostCommand"}};
+          .declaration = RuntimeFunction("RunNullHostCommand")};
     case BuiltinFn::kReadMem:
-      return {
-          .name = "read_mem",
-          .declaration = FreeFunction{"lyra::runtime::ReadMem"}};
+      return {.name = "read_mem", .declaration = RuntimeFunction("ReadMem")};
     case BuiltinFn::kReadMemWithin:
       return {
           .name = "read_mem_within",
-          .declaration = FreeFunction{"lyra::runtime::ReadMemWithin"}};
+          .declaration = RuntimeFunction("ReadMemWithin")};
     case BuiltinFn::kWriteMem:
-      return {
-          .name = "write_mem",
-          .declaration = FreeFunction{"lyra::runtime::WriteMem"}};
+      return {.name = "write_mem", .declaration = RuntimeFunction("WriteMem")};
     case BuiltinFn::kWriteMemWithin:
       return {
           .name = "write_mem_within",
-          .declaration = FreeFunction{"lyra::runtime::WriteMemWithin"}};
+          .declaration = RuntimeFunction("WriteMemWithin")};
     case BuiltinFn::kDelay:
       return {
           .name = "delay",
-          .declaration = FreeFunction{"lyra::runtime::Delay"},
-          .takes_the_runtime_handle = true};
+          .declaration = RuntimeFunction("Delay"),
+          .takes_the_runtime_handle = true,
+          .operands = {kMachine, kNumber}};
     case BuiltinFn::kDelayReal:
       return {
           .name = "delay_real",
-          .declaration = FreeFunction{"lyra::runtime::DelayReal"},
+          .declaration = RuntimeFunction("DelayReal"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kObservationOnReaching:
       return {
@@ -738,23 +962,20 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kWaitRecollecting:
       return {
           .name = "wait_recollecting",
-          .declaration = FreeFunction{"lyra::runtime::WaitRecollecting"}};
+          .declaration = RuntimeFunction("WaitRecollecting")};
     case BuiltinFn::kWaitUntil:
       return {
-          .name = "wait_until",
-          .declaration = FreeFunction{"lyra::runtime::WaitUntil"}};
+          .name = "wait_until", .declaration = RuntimeFunction("WaitUntil")};
     case BuiltinFn::kWaitOn:
-      return {
-          .name = "wait_on",
-          .declaration = FreeFunction{"lyra::runtime::WaitOn"}};
+      return {.name = "wait_on", .declaration = RuntimeFunction("WaitOn")};
     case BuiltinFn::kWaitOnImplicitList:
       return {
           .name = "wait_on_implicit_list",
-          .declaration = FreeFunction{"lyra::runtime::WaitOnImplicitList"}};
+          .declaration = RuntimeFunction("WaitOnImplicitList")};
     case BuiltinFn::kParkAt:
       return {
           .name = "park_at",
-          .declaration = FreeFunction{"lyra::runtime::ParkAt"},
+          .declaration = RuntimeFunction("ParkAt"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kReadReportEmpty:
       return {
@@ -799,80 +1020,76 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kRefuseReport:
       return {
           .name = "refuse_report",
-          .declaration = FreeFunction{"lyra::runtime::RefuseReport"}};
+          .declaration = RuntimeFunction("RefuseReport")};
     case BuiltinFn::kSimTime:
       return {
           .name = "sim_time",
-          .declaration = FreeFunction{"lyra::runtime::SimTimeInUnit"},
+          .declaration = RuntimeFunction("SimTimeInUnit"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kSTime:
       return {
           .name = "stime",
-          .declaration = FreeFunction{"lyra::runtime::STimeInUnit"},
+          .declaration = RuntimeFunction("STimeInUnit"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kRealTime:
       return {
           .name = "realtime",
-          .declaration = FreeFunction{"lyra::runtime::RealTimeInUnit"},
+          .declaration = RuntimeFunction("RealTimeInUnit"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kUrandom:
       return {
           .name = "urandom",
-          .declaration = FreeFunction{"lyra::runtime::Urandom"},
+          .declaration = RuntimeFunction("Urandom"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kUrandomSeeded:
       return {
           .name = "urandom_seeded",
-          .declaration = FreeFunction{"lyra::runtime::UrandomSeeded"},
+          .declaration = RuntimeFunction("UrandomSeeded"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kUrandomRange:
       return {
           .name = "urandom_range",
-          .declaration = FreeFunction{"lyra::runtime::UrandomRange"},
+          .declaration = RuntimeFunction("UrandomRange"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kRandom:
       return {
           .name = "random",
-          .declaration = FreeFunction{"lyra::runtime::Random"},
+          .declaration = RuntimeFunction("Random"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kDistUniform:
       return {
           .name = "dist_uniform",
-          .declaration = FreeFunction{"lyra::runtime::DistUniform"}};
+          .declaration = RuntimeFunction("DistUniform")};
     case BuiltinFn::kDistNormal:
       return {
-          .name = "dist_normal",
-          .declaration = FreeFunction{"lyra::runtime::DistNormal"}};
+          .name = "dist_normal", .declaration = RuntimeFunction("DistNormal")};
     case BuiltinFn::kDistExponential:
       return {
           .name = "dist_exponential",
-          .declaration = FreeFunction{"lyra::runtime::DistExponential"}};
+          .declaration = RuntimeFunction("DistExponential")};
     case BuiltinFn::kDistPoisson:
       return {
           .name = "dist_poisson",
-          .declaration = FreeFunction{"lyra::runtime::DistPoisson"}};
+          .declaration = RuntimeFunction("DistPoisson")};
     case BuiltinFn::kDistChiSquare:
       return {
           .name = "dist_chi_square",
-          .declaration = FreeFunction{"lyra::runtime::DistChiSquare"}};
+          .declaration = RuntimeFunction("DistChiSquare")};
     case BuiltinFn::kDistT:
-      return {
-          .name = "dist_t",
-          .declaration = FreeFunction{"lyra::runtime::DistT"}};
+      return {.name = "dist_t", .declaration = RuntimeFunction("DistT")};
     case BuiltinFn::kDistErlang:
       return {
-          .name = "dist_erlang",
-          .declaration = FreeFunction{"lyra::runtime::DistErlang"}};
+          .name = "dist_erlang", .declaration = RuntimeFunction("DistErlang")};
     case BuiltinFn::kFinish:
       return {
           .name = "finish",
-          .declaration = FreeFunction{"lyra::runtime::Finish"},
+          .declaration = RuntimeFunction("Finish"),
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kDeparts};
     case BuiltinFn::kStop:
       return {
           .name = "stop",
-          .declaration = FreeFunction{"lyra::runtime::Stop"},
+          .declaration = RuntimeFunction("Stop"),
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kDeparts};
     case BuiltinFn::kEnclosingScope:
@@ -886,173 +1103,167 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kExtendSequence:
       return {
           .name = "sequence_extend",
-          .declaration = FreeFunction{"lyra::runtime::ExtendSequence"}};
+          .declaration = RuntimeFunction("ExtendSequence")};
     case BuiltinFn::kViewOf:
-      return {
-          .name = "view_of",
-          .declaration = FreeFunction{"lyra::runtime::ViewOf"}};
+      return {.name = "view_of", .declaration = RuntimeFunction("ViewOf")};
     case BuiltinFn::kObjectEventSource:
       return {
           .name = "object_event_source",
-          .declaration = FreeFunction{"lyra::runtime::EventSourceOf"},
+          .declaration = RuntimeFunction("EventSourceOf"),
           .reaches_an_object = true};
     case BuiltinFn::kOpenObjectWrite:
       return {
           .name = "open_object_write",
-          .declaration = FreeFunction{"lyra::runtime::ErasedObjectWrite"}};
+          .declaration = RuntimeFunction("ErasedObjectWrite")};
     case BuiltinFn::kWrittenObject:
       return {.name = "written_object", .declaration = Method{"Object"}};
     case BuiltinFn::kForkWaitAll:
       return {
           .name = "fork_wait_all",
-          .declaration = FreeFunction{"lyra::runtime::ForkWaitAll"},
+          .declaration = RuntimeFunction("ForkWaitAll"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kForkWaitFirst:
       return {
           .name = "fork_wait_first",
-          .declaration = FreeFunction{"lyra::runtime::ForkWaitFirst"},
+          .declaration = RuntimeFunction("ForkWaitFirst"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kSpawnAll:
       return {
           .name = "spawn_all",
-          .declaration = FreeFunction{"lyra::runtime::SpawnAll"},
+          .declaration = RuntimeFunction("SpawnAll"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kWaitFork:
       return {
           .name = "wait_fork",
-          .declaration = FreeFunction{"lyra::runtime::WaitFork"},
+          .declaration = RuntimeFunction("WaitFork"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kDisableFork:
       return {
           .name = "disable_fork",
-          .declaration = FreeFunction{"lyra::runtime::DisableFork"},
+          .declaration = RuntimeFunction("DisableFork"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kDisable:
       return {
           .name = "disable",
-          .declaration = FreeFunction{"lyra::runtime::Disable"},
+          .declaration = RuntimeFunction("Disable"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kEnterTarget:
       return {
           .name = "enter_target",
-          .declaration = FreeFunction{"lyra::runtime::EnterCancellationTarget"},
+          .declaration = RuntimeFunction("EnterCancellationTarget"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kLeaveTarget:
       return {
           .name = "leave_target",
-          .declaration = FreeFunction{"lyra::runtime::LeaveCancellationTarget"},
+          .declaration = RuntimeFunction("LeaveCancellationTarget"),
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kReturns};
     case BuiltinFn::kEffectNamesTarget:
       return {
           .name = "effect_names_target",
-          .declaration = FreeFunction{"lyra::runtime::EffectNamesTarget"},
+          .declaration = RuntimeFunction("EffectNamesTarget"),
           .ending = CallEnding::kReturns};
     case BuiltinFn::kReceiveDeparture:
       return {
           .name = "receive_departure",
-          .declaration = FreeFunction{"lyra::runtime::ReceiveDeparture"}};
+          .declaration = RuntimeFunction("ReceiveDeparture")};
     case BuiltinFn::kProcessSelf:
       return {
           .name = "process_self",
-          .declaration = FreeFunction{"lyra::runtime::ProcessSelf"},
+          .declaration = RuntimeFunction("ProcessSelf"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kProcessStatus:
       return {
           .name = "process_status",
-          .declaration = FreeFunction{"lyra::runtime::ProcessStatus"}};
+          .declaration = RuntimeFunction("ProcessStatus")};
     case BuiltinFn::kProcessKill:
       return {
           .name = "process_kill",
-          .declaration = FreeFunction{"lyra::runtime::ProcessKill"},
+          .declaration = RuntimeFunction("ProcessKill"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kProcessAwait:
       return {
           .name = "process_await",
-          .declaration = FreeFunction{"lyra::runtime::ProcessAwait"},
+          .declaration = RuntimeFunction("ProcessAwait"),
           .takes_the_runtime_handle = true,
           .answers_a_wait = true};
     case BuiltinFn::kProcessSuspend:
       return {
           .name = "process_suspend",
-          .declaration = FreeFunction{"lyra::runtime::ProcessSuspend"},
+          .declaration = RuntimeFunction("ProcessSuspend"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kProcessResume:
       return {
           .name = "process_resume",
-          .declaration = FreeFunction{"lyra::runtime::ProcessResume"},
+          .declaration = RuntimeFunction("ProcessResume"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kRegisterInitial:
       return {
           .name = "register_initial",
-          .declaration = FreeFunction{"lyra::runtime::RegisterInitialProcess"}};
+          .declaration = RuntimeFunction("RegisterInitialProcess")};
     case BuiltinFn::kRegisterFinal:
       return {
           .name = "register_final",
-          .declaration = FreeFunction{"lyra::runtime::RegisterFinalProcess"}};
+          .declaration = RuntimeFunction("RegisterFinalProcess")};
     case BuiltinFn::kEnterScopeStaticInit:
       return {
           .name = "enter_scope_static_init",
-          .declaration = FreeFunction{"lyra::runtime::EnterScopeStaticInit"},
+          .declaration = RuntimeFunction("EnterScopeStaticInit"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kEnterNamespaceStaticInit:
       return {
           .name = "enter_namespace_static_init",
-          .declaration =
-              FreeFunction{"lyra::runtime::EnterNamespaceStaticInit"},
+          .declaration = RuntimeFunction("EnterNamespaceStaticInit"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kLeaveStaticInit:
       return {
           .name = "leave_static_init",
-          .declaration = FreeFunction{"lyra::runtime::LeaveStaticInit"},
+          .declaration = RuntimeFunction("LeaveStaticInit"),
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kReturns};
     case BuiltinFn::kEnterDpiScope:
       return {
           .name = "enter_dpi_scope",
-          .declaration = FreeFunction{"lyra::runtime::EnterDpiScope"},
+          .declaration = RuntimeFunction("EnterDpiScope"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kLeaveDpiScope:
       return {
           .name = "leave_dpi_scope",
-          .declaration = FreeFunction{"lyra::runtime::LeaveDpiScope"},
+          .declaration = RuntimeFunction("LeaveDpiScope"),
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kReturns};
     case BuiltinFn::kDisableIsActive:
       return {
           .name = "disable_is_active",
-          .declaration = FreeFunction{"lyra::runtime::DisableIsActive"},
+          .declaration = RuntimeFunction("DisableIsActive"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kCheckImportTaskAcknowledged:
       return {
           .name = "check_import_task_acknowledged",
-          .declaration =
-              FreeFunction{"lyra::runtime::CheckImportTaskAcknowledged"},
+          .declaration = RuntimeFunction("CheckImportTaskAcknowledged"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kCheckImportFunctionAcknowledged:
       return {
           .name = "check_import_function_acknowledged",
-          .declaration =
-              FreeFunction{"lyra::runtime::CheckImportFunctionAcknowledged"},
+          .declaration = RuntimeFunction("CheckImportFunctionAcknowledged"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kCheckExportReachable:
       return {
           .name = "check_export_reachable",
-          .declaration = FreeFunction{"lyra::runtime::CheckExportReachable"},
+          .declaration = RuntimeFunction("CheckExportReachable"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kTakeDepartureIfDue:
       return {
           .name = "take_departure_if_due",
-          .declaration = FreeFunction{"lyra::runtime::TakeDepartureIfDue"},
+          .declaration = RuntimeFunction("TakeDepartureIfDue"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kClaimNamespaceInitialize:
       return {
           .name = "claim_namespace_initialize",
-          .declaration =
-              FreeFunction{"lyra::runtime::ClaimNamespaceInitialization"},
+          .declaration = RuntimeFunction("ClaimNamespaceInitialization"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kToInt64:
-      return {.name = "to_int64", .declaration = Method{"ToInt64"}};
+      return IntegralEntry(IntegralOp::kToInt64, Method{"ToInt64"});
     case BuiltinFn::kRound:
       return {.name = "round", .declaration = Method{"Round"}};
     case BuiltinFn::kTruncate:
@@ -1060,7 +1271,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kToBits:
       return {.name = "to_bits", .declaration = Method{"ToBits"}};
     case BuiltinFn::kFromBits:
-      return {.name = "from_bits", .declaration = StaticFactory{"FromBits"}};
+      return {
+          .name = "from_bits",
+          .declaration = StaticFactory{"FromBits"},
+          .takes_a_type_argument = true};
     case BuiltinFn::kRealValue:
       return {.name = "real_value", .declaration = Method{"Value"}};
     case BuiltinFn::kStringCStr:
@@ -1070,27 +1284,28 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kToSvLogic:
       return {
           .name = "to_sv_logic",
-          .declaration = FreeFunction{"lyra::value::ToSvLogic"}};
+          .declaration = ValueFunction("ToSvLogic"),
+          .operands = {kBits}};
     case BuiltinFn::kFromSvLogic:
-      return {
-          .name = "from_sv_logic",
-          .declaration = FreeFunction{"lyra::value::FromSvLogic"}};
+      return IntegralEntry(
+          IntegralOp::kFromSvLogic, ValueFunction("FromSvLogic"));
     case BuiltinFn::kReadCanonicalBitVec:
-      return {
-          .name = "read_canonical_bit_vec",
-          .declaration = FreeFunction{"lyra::value::ReadCanonicalBitVec"}};
+      return IntegralEntry(
+          IntegralOp::kReadCanonicalBits, ValueFunction("ReadCanonicalBitVec"));
     case BuiltinFn::kReadCanonicalLogicVec:
-      return {
-          .name = "read_canonical_logic_vec",
-          .declaration = FreeFunction{"lyra::value::ReadCanonicalLogicVec"}};
+      return IntegralEntry(
+          IntegralOp::kReadCanonicalLogic,
+          ValueFunction("ReadCanonicalLogicVec"));
     case BuiltinFn::kWriteCanonicalBitVec:
       return {
           .name = "write_canonical_bit_vec",
-          .declaration = FreeFunction{"lyra::value::WriteCanonicalBitVec"}};
+          .declaration = ValueFunction("WriteCanonicalBitVec"),
+          .operands = {kMachine, kBits}};
     case BuiltinFn::kWriteCanonicalLogicVec:
       return {
           .name = "write_canonical_logic_vec",
-          .declaration = FreeFunction{"lyra::value::WriteCanonicalLogicVec"}};
+          .declaration = ValueFunction("WriteCanonicalLogicVec"),
+          .operands = {kMachine, kBits}};
     case BuiltinFn::kDpiBitBufferData:
       return {.name = "dpi_bit_buffer_data", .declaration = Method{"Data"}};
     case BuiltinFn::kDpiLogicBufferData:
@@ -1101,60 +1316,92 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "dpi_open_array_value",
           .declaration = Method{"ToValue"},
-          .result_prototype_operand = 1};
+          .operands = {kMachine, kTyped}};
     case BuiltinFn::kRunForeignTaskOnFiber:
       return {
           .name = "run_foreign_task_on_fiber",
-          .declaration = FreeFunction{"lyra::runtime::RunForeignTaskOnFiber"},
+          .declaration = RuntimeFunction("RunForeignTaskOnFiber"),
           .takes_the_runtime_handle = true};
     case BuiltinFn::kRunExportedTaskToCompletion:
       return {
           .name = "run_exported_task_to_completion",
-          .declaration =
-              FreeFunction{"lyra::runtime::RunExportedTaskToCompletion"}};
+          .declaration = RuntimeFunction("RunExportedTaskToCompletion")};
     case BuiltinFn::kCurrentExportScope:
       return {
           .name = "current_export_scope",
-          .declaration = FreeFunction{"lyra::runtime::CurrentExportScope"}};
+          .declaration = RuntimeFunction("CurrentExportScope")};
     case BuiltinFn::kFindExportEntry:
       return {
           .name = "find_export_entry",
-          .declaration = FreeFunction{"lyra::runtime::FindExportEntry"}};
+          .declaration = RuntimeFunction("FindExportEntry")};
     case BuiltinFn::kFromInt:
-      return {.name = "from_int", .declaration = StaticFactory{"FromInt"}};
-    case BuiltinFn::kFromWords:
-      return {.name = "from_words", .declaration = StaticFactory{"FromWords"}};
+      return {
+          .name = "from_int",
+          .declaration = StaticFactory{"FromInt"},
+          .takes_a_type_argument = true};
+    case BuiltinFn::kIntegralFromInt:
+      return IntegralEntry(IntegralOp::kFromInt, StaticFactory{"FromInt"});
     case BuiltinFn::kConvertFrom:
       return {
-          .name = "convert_from", .declaration = StaticFactory{"ConvertFrom"}};
+          .name = "convert_from",
+          .declaration = ValueFunction("Convert"),
+          .takes_a_type_argument = true};
+    case BuiltinFn::kIntegralConvert:
+      return IntegralEntry(IntegralOp::kConvert, ValueFunction("Convert"));
     case BuiltinFn::kToPosition:
+      return IntegralEntry(
+          IntegralOp::kToPosition, ValueFunction("ToPosition"));
+    case BuiltinFn::kStringFromBits:
       return {
-          .name = "to_position", .declaration = StaticFactory{"ToPosition"}};
-    case BuiltinFn::kFromPackedArray:
-      return {
-          .name = "from_packed_array",
-          .declaration = StaticFactory{"FromPackedArray"}};
+          .name = "string_from_bits",
+          .declaration = StaticFactory{"FromIntegral"},
+          .operands = {kBits}};
     case BuiltinFn::kFromByteArray:
       return {
           .name = "from_byte_array",
           .declaration = StaticFactory{"FromByteArray"}};
-    case BuiltinFn::kFromString:
+    case BuiltinFn::kIntegralFromString:
+      return IntegralEntry(IntegralOp::kFromText, ValueFunction("FromString"));
+    case BuiltinFn::kByteArrayFromString:
       return {
-          .name = "from_string", .declaration = StaticFactory{"FromString"}};
-    case BuiltinFn::kFromArray:
+          .name = "byte_array_from_string",
+          .declaration = StaticFactory{"FromString"},
+          .takes_a_type_argument = true,
+          .answer_told = AnswerTold::kElementType};
+    case BuiltinFn::kByteArrayFromBits:
       return {
-          .name = "from_array",
+          .name = "byte_array_from_bits",
+          .declaration = StaticFactory{"FromIntegral"},
+          .takes_a_type_argument = true,
+          .operands = {kBits},
+          .answer_told = AnswerTold::kElementType};
+    case BuiltinFn::kDynamicArrayFromArray:
+      return {
+          .name = "dynamic_array_from_array",
           .declaration = StaticFactory{"FromArray"},
-          .result_prototype_operand = 1};
+          .operands = {kMachine, kTyped}};
+    case BuiltinFn::kUnpackedArrayFromArray:
+      return {
+          .name = "unpacked_array_from_array",
+          .declaration = StaticFactory{"FromArray"},
+          .operands = {kMachine, kTyped}};
+    case BuiltinFn::kQueueFromArray:
+      return {
+          .name = "queue_from_array",
+          .declaration = StaticFactory{"FromArray"},
+          .operands = {kMachine, kTyped}};
     case BuiltinFn::kConformBound:
       return {.name = "conform_bound", .declaration = Method{"ConformBound"}};
     case BuiltinFn::kArrayConcatElement:
-      return {.name = "concat_element", .declaration = Method{"ConcatElement"}};
+      return {
+          .name = "concat_element",
+          .declaration = Method{"ConcatElement"},
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kArrayConcatSpread:
       return {
           .name = "concat_spread",
           .declaration = Method{"ConcatSpread"},
-          .spread_operand = 1};
+          .operands = {kMachine, kTyped}};
     case BuiltinFn::kArrayConformSize:
       return {
           .name = "conform_size", .declaration = StaticFactory{"ConformSize"}};
@@ -1162,95 +1409,109 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "make_dynamic_array_default",
           .declaration = StaticFactory{"Default"},
-          .result_prototype_operand = 0};
+          .operands = {kTyped}};
     case BuiltinFn::kMakeDynamicArrayNew:
       return {
           .name = "make_dynamic_array_new",
           .declaration = StaticFactory{"New"},
-          .result_prototype_operand = 1};
+          .operands = {kMachine, kTyped}};
     case BuiltinFn::kMakeDynamicArrayNewCopy:
       return {
           .name = "make_dynamic_array_new_copy",
           .declaration = StaticFactory{"NewCopy"},
-          .result_prototype_operand = 1};
+          .operands = {kMachine, kTyped}};
     case BuiltinFn::kConcat:
-      return {.name = "concat", .declaration = Method{"Concat"}};
-    case BuiltinFn::kReplicate:
-      return {.name = "replicate", .declaration = Method{"Replicate"}};
+      return {
+          .name = "concat",
+          .declaration = Method{"Concat"},
+          .over_integral_values = BuiltinFn::kConcatBits};
+    case BuiltinFn::kConcatBits:
+      return IntegralEntry(IntegralOp::kConcat, Method{"Concat"});
+    case BuiltinFn::kReplicateBits:
+      return IntegralEntry(IntegralOp::kReplicate, ValueFunction("Replicate"));
+    case BuiltinFn::kReplicateString:
+      return {.name = "replicate_string", .declaration = Method{"Replicate"}};
     case BuiltinFn::kPow:
-      return {.name = "pow", .declaration = Method{"Pow"}};
+      return {
+          .name = "pow",
+          .declaration = Method{"Pow"},
+          .over_integral_values = BuiltinFn::kIntegralPow};
+    case BuiltinFn::kIntegralPow:
+      return IntegralEntry(IntegralOp::kPower, Method{"Pow"});
     case BuiltinFn::kShiftLeft:
-      return {.name = "shift_left", .declaration = Method{"ShiftLeft"}};
+      return IntegralEntry(IntegralOp::kShiftLeft, Method{"ShiftLeft"});
     case BuiltinFn::kLogicalShiftRight:
-      return {
-          .name = "logical_shift_right",
-          .declaration = Method{"LogicalShiftRight"}};
+      return IntegralEntry(
+          IntegralOp::kLogicalShiftRight, Method{"LogicalShiftRight"});
     case BuiltinFn::kArithmeticShiftRight:
-      return {
-          .name = "arithmetic_shift_right",
-          .declaration = Method{"ArithmeticShiftRight"}};
-    case BuiltinFn::kShiftLeftAssign:
-      return {
-          .name = "shift_left_assign",
-          .declaration = Method{"ShiftLeftAssign"},
-          .mutates_receiver = true};
-    case BuiltinFn::kLogicalShiftRightAssign:
-      return {
-          .name = "logical_shift_right_assign",
-          .declaration = Method{"LogicalShiftRightAssign"},
-          .mutates_receiver = true};
-    case BuiltinFn::kArithmeticShiftRightAssign:
-      return {
-          .name = "arithmetic_shift_right_assign",
-          .declaration = Method{"ArithmeticShiftRightAssign"},
-          .mutates_receiver = true};
+      return IntegralEntry(
+          IntegralOp::kArithmeticShiftRight, Method{"ArithmeticShiftRight"});
     case BuiltinFn::kBitwiseXnor:
-      return {.name = "bitwise_xnor", .declaration = Method{"BitwiseXnor"}};
+      return IntegralEntry(IntegralOp::kBitwiseXnor, Method{"BitwiseXnor"});
     case BuiltinFn::kLogicalEquivalence:
-      return {
-          .name = "logical_equivalence",
-          .declaration = Method{"LogicalEquivalence"}};
+      return IntegralEntry(
+          IntegralOp::kLogicalEquivalence, Method{"LogicalEquivalence"});
     case BuiltinFn::kWildcardEquals:
-      return {
-          .name = "wildcard_equals", .declaration = Method{"WildcardEquals"}};
+      return IntegralEntry(
+          IntegralOp::kWildcardEqual, Method{"WildcardEquals"});
     case BuiltinFn::kCaseEqual:
-      return {.name = "case_equal", .declaration = Method{"CaseEqual"}};
+      return {
+          .name = "case_equal",
+          .declaration = Method{"CaseEqual"},
+          .over_integral_values = BuiltinFn::kIntegralCaseEqual};
+    case BuiltinFn::kIntegralCaseEqual:
+      return IntegralEntry(IntegralOp::kCaseEqual, Method{"CaseEqual"});
     case BuiltinFn::kCasezEquals:
-      return {.name = "casez_equals", .declaration = Method{"CasezEquals"}};
+      return IntegralEntry(IntegralOp::kCasezMatch, Method{"CasezEquals"});
     case BuiltinFn::kCasexEquals:
-      return {.name = "casex_equals", .declaration = Method{"CasexEquals"}};
+      return IntegralEntry(IntegralOp::kCasexMatch, Method{"CasexEquals"});
     case BuiltinFn::kMergeConditional:
       return {
           .name = "merge_conditional",
-          .declaration = Method{"MergeConditional"}};
+          .declaration = Method{"MergeConditional"},
+          .over_integral_values = BuiltinFn::kIntegralMergeConditional};
+    case BuiltinFn::kIntegralMergeConditional:
+      return IntegralEntry(
+          IntegralOp::kMergeConditional, Method{"MergeConditional"});
     case BuiltinFn::kReductionAnd:
-      return {.name = "reduction_and", .declaration = Method{"ReductionAnd"}};
+      return IntegralEntry(IntegralOp::kReductionAnd, Method{"ReductionAnd"});
     case BuiltinFn::kReductionOr:
-      return {.name = "reduction_or", .declaration = Method{"ReductionOr"}};
+      return IntegralEntry(IntegralOp::kReductionOr, Method{"ReductionOr"});
     case BuiltinFn::kReductionXor:
-      return {.name = "reduction_xor", .declaration = Method{"ReductionXor"}};
+      return IntegralEntry(IntegralOp::kReductionXor, Method{"ReductionXor"});
     case BuiltinFn::kReductionNand:
-      return {.name = "reduction_nand", .declaration = Method{"ReductionNand"}};
+      return IntegralEntry(IntegralOp::kReductionNand, Method{"ReductionNand"});
     case BuiltinFn::kReductionNor:
-      return {.name = "reduction_nor", .declaration = Method{"ReductionNor"}};
+      return IntegralEntry(IntegralOp::kReductionNor, Method{"ReductionNor"});
     case BuiltinFn::kReductionXnor:
-      return {.name = "reduction_xnor", .declaration = Method{"ReductionXnor"}};
+      return IntegralEntry(IntegralOp::kReductionXnor, Method{"ReductionXnor"});
     case BuiltinFn::kFromBool:
-      return {.name = "from_bool", .declaration = StaticFactory{"FromBool"}};
+      return IntegralEntry(IntegralOp::kFromBool, StaticFactory{"FromBool"});
     case BuiltinFn::kEnumerationHas:
-      return {.name = "enumeration_has", .declaration = Method{"Has"}};
+      return {
+          .name = "enumeration_has",
+          .declaration = Method{"Has"},
+          .operands = {kMachine, kBits}};
     case BuiltinFn::kEnumerationName:
-      return {.name = "enumeration_name", .declaration = Method{"Name"}};
+      return {
+          .name = "enumeration_name",
+          .declaration = Method{"Name"},
+          .operands = {kMachine, kBits}};
     case BuiltinFn::kEnumerationNext:
-      return {.name = "enumeration_next", .declaration = Method{"Next"}};
+      return {
+          .name = "enumeration_next",
+          .declaration = Method{"Next"},
+          .operands = {kMachine, kBits}};
     case BuiltinFn::kEnumerationPrev:
-      return {.name = "enumeration_prev", .declaration = Method{"Prev"}};
+      return {
+          .name = "enumeration_prev",
+          .declaration = Method{"Prev"},
+          .operands = {kMachine, kBits}};
     case BuiltinFn::kParent:
       return {.name = "parent", .declaration = Method{"Parent"}};
     case BuiltinFn::kSelfHandle:
       return {
-          .name = "self_handle",
-          .declaration = FreeFunction{"lyra::runtime::SelfHandle"}};
+          .name = "self_handle", .declaration = RuntimeFunction("SelfHandle")};
     case BuiltinFn::kHierarchicalPath:
       return {
           .name = "hierarchical_path",

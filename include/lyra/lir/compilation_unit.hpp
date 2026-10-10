@@ -14,8 +14,11 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
+#include "lyra/lir/enum_table.hpp"
+#include "lyra/lir/enum_table_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
+#include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type.hpp"
@@ -278,13 +281,13 @@ struct CompilationUnit {
   // definition symbol, and the tables that record points at, under internal
   // linkage -- is here, a class holding none of it.
   std::vector<GlobalConstant> constants;
-  // The nullary function building each value the unit holds, one answer per
-  // entry of the pool that holds it. Building a value is an instruction
-  // sequence like any other, so a description and a constant are both code
-  // here, and the entry naming one is what reaches its function.
-  base::Translation<TypeDescriptorId, FunctionId> type_descriptor_initializers;
-  base::Translation<IntegralConstantId, FunctionId>
-      integral_constant_initializers;
+  // Each enumeration member table the unit holds, which an operand names.
+  base::Translation<EnumTableId, EnumTableDecl> enum_tables;
+  // Each constant integral value the unit holds: its type and its bits, which
+  // is the whole of a value of an integral type, so a target states one as
+  // data.
+  base::Translation<IntegralConstantId, IntegralConstantDecl>
+      integral_constants;
   std::optional<ClassId> root;
 };
 

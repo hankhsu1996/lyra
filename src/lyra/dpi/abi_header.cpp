@@ -89,7 +89,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           // Every other type is one no foreign signature names, so the
           // boundary lowering should have refused the declaration before a
           // header was asked to spell it.
-          [&](const mir::PackedArrayType&) { return crosses_no_boundary(); },
+          [&](const mir::IntegralType&) { return crosses_no_boundary(); },
           [&](const mir::EnumType&) { return crosses_no_boundary(); },
           [&](const mir::UnpackedArrayType&) { return crosses_no_boundary(); },
           [&](const mir::DynamicArrayType&) { return crosses_no_boundary(); },

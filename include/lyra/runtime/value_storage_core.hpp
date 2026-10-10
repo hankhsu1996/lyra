@@ -5,16 +5,26 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
+// A value whose representation is a run-time fact rather than its type's: it
+// starts with none, takes one at its first write, and can be asked whether
+// another value has the same one. A value of any other type has its
+// representation from its type, so a cell holding one is installed from the
+// start and every value of the type fits it.
+template <typename T>
+concept RepresentedAtRunTime = requires(const T& value, const T& other) {
+  { value.IsUninitialized() } -> std::same_as<bool>;
+  { value.SameRepresentation(other) } -> std::same_as<bool>;
+};
+
 // The storage half of a value cell, with no observation attached: it owns one
 // value of the declared representation and preserves that representation across
-// writes (LRM 4.3 / value-store-discipline). It is the shared substrate under
-// an observable signal cell (`Var<T>`, which adds subscriber wakeup) and a
-// non-observable procedural cell (`ActivationValueCell<T>`). Non-copyable and
-// non-movable: a cell is addressed, so its identity is its address.
+// writes (LRM 4.3). It is the shared substrate under an observable signal cell
+// (`Var<T>`, which adds subscriber wakeup) and a non-observable procedural cell
+// (`ActivationValueCell<T>`). Non-copyable and non-movable: a cell is
+// addressed, so its identity is its address.
 template <value::LyraValue T>
 class ValueStorageCore {
  public:
@@ -38,11 +48,10 @@ class ValueStorageCore {
     return value_;
   }
 
-  // True once the cell carries its declared representation. A `PackedArray` has
-  // an explicit uninitialized state fixed at first write; every other value
-  // type is usable immediately.
+  // True once the cell carries its declared representation, which a value
+  // represented at run time takes at its first write.
   [[nodiscard]] auto IsInstalled() const noexcept -> bool {
-    if constexpr (std::same_as<T, value::PackedArray>) {
+    if constexpr (RepresentedAtRunTime<T>) {
       return !value_.IsUninitialized();
     } else {
       return true;
@@ -57,13 +66,14 @@ class ValueStorageCore {
   }
 
   // Overwrites the contents with a value already at the declared
-  // representation. A `PackedArray` whose representation does not match the
-  // cell's is a missing upstream conversion, surfaced as a compiler bug rather
-  // than silently reshaping the cell. Whether the contents moved is not
-  // answered here: only whoever is armed to read that answer should pay for it,
-  // and this is the one path a write takes whether or not anything is.
+  // representation. A value represented at run time whose representation does
+  // not match the cell's is a missing upstream conversion, surfaced as a
+  // compiler bug rather than silently reshaping the cell. Whether the contents
+  // moved is not answered here: only whoever is armed to read that answer
+  // should pay for it, and this is the one path a write takes whether or not
+  // anything is.
   void Overwrite(const T& value) {
-    if constexpr (std::same_as<T, value::PackedArray>) {
+    if constexpr (RepresentedAtRunTime<T>) {
       if (!value_.SameRepresentation(value)) {
         throw InternalError(
             "ValueStorageCore::Overwrite: stored value's representation does "

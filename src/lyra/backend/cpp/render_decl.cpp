@@ -99,7 +99,7 @@ void WriteMemberSignatureTail(
 // through a pointer, `S self = *this;` for a struct received as a value.
 template <typename Owner, typename Member>
 void RenderMemberFunctionDef(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
     const Owner& owner, const Member& member, const mir::CallableCode& code,
     TargetText& out) {
   Write(out, "auto ", owner, "::", member);
@@ -110,7 +110,7 @@ void RenderMemberFunctionDef(
       WriteReceiverBinding(
           unit, code, out, ReceivesAValue(unit, code) ? "*this" : "this");
     }
-    RenderBlockStatements(ScopeView::ForCode(unit, code, refusals), out);
+    RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
   });
   out += "\n";
 }
@@ -126,7 +126,7 @@ void RenderFieldList(
     WriteDeclaration(
         out, VariableDeclaration{
                  .form = VariableForm::kNonStaticDataMember,
-                 .is_const = false,
+                 .constness = Constness::kMutable,
                  .type = CppType(unit, fields.Get(slot).type),
                  .name = CppFieldName(named_fields, slot)});
   }
@@ -142,7 +142,7 @@ void RenderClassStaticProperties(
         out,
         VariableDeclaration{
             .form = VariableForm::kInlineStaticDataMember,
-            .is_const = false,
+            .constness = Constness::kMutable,
             .type = CppType(unit, s.static_properties.Get(slot).type),
             .name = CppStaticPropertyName(s.named_static_properties, slot)});
   }
@@ -186,12 +186,12 @@ void RenderClassCallableDecl(
 
 // A class function's definition. A pure virtual has none.
 void RenderClassCallableDef(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
     mir::ClassId cls_id, const mir::Class& s, mir::CallableId id,
     const mir::CallableDecl& m, TargetText& out) {
   if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(m))) return;
   RenderMemberFunctionDef(
-      unit, refusals, CppClassPath(unit, cls_id),
+      unit, report, CppClassPath(unit, cls_id),
       CppClassCallableName(unit, s, id), m.code, out);
 }
 
@@ -205,7 +205,7 @@ void RenderClassCallableDef(
 // included, is a statement of the body, which reaches the object through its
 // receiver as every other body does.
 void RenderConstructor(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
     mir::ClassId cls_id, const mir::Class& s, const mir::ConstructorDecl& ctor,
     TargetText& signature, TargetText& code) {
   const mir::CallableCode& ctor_code = ctor.code;
@@ -214,7 +214,7 @@ void RenderConstructor(
         "RenderConstructor: a constructor is entered on the object it builds, "
         "yet states no receiver -- please report this as a bug");
   }
-  const ScopeView scope_view = ScopeView::ForCode(unit, ctor_code, refusals);
+  const ScopeView scope_view = ScopeView::ForCode(unit, ctor_code, report);
   const CppName cpp_name = CppClassName(unit, cls_id);
   const std::span<const mir::LocalId> formals = ctor_code.ParamsAfterReceiver();
 
@@ -245,21 +245,21 @@ void RenderConstructor(
 // value stays in this unit. The caller passes the name, since the definition's
 // is fixed and the others are positions.
 void RenderClassConstant(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId id, mir::TypeId type, const CppName& name,
-    const mir::ValueBuild& build, TargetText& announced, TargetText& defined) {
+    const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
+    mir::TypeId type, const CppName& name, const mir::ValueBuild& build,
+    TargetText& announced, TargetText& defined) {
   WriteDeclaration(
       announced, VariableDeclaration{
                      .form = VariableForm::kStaticDataMemberDeclaration,
-                     .is_const = true,
+                     .constness = Constness::kConst,
                      .type = CppType(unit, type),
                      .name = name});
-  const ScopeView view = ScopeView::ForConstant(unit, build.body, refusals);
+  const ScopeView view = ScopeView::ForConstant(unit, build.body, report);
   WriteDeclaration(
       defined,
       VariableDeclaration{
           .form = VariableForm::kStaticDataMemberDefinition,
-          .is_const = true,
+          .constness = Constness::kConst,
           .type = CppType(unit, type),
           .name = name,
           .qualifier = CppClassPath(unit, id)},
@@ -306,17 +306,16 @@ auto NestingOf(const mir::CompilationUnit& unit) -> ClassNesting {
 }
 
 void RenderClass(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId id, const mir::Class& s,
-    std::span<const mir::ClassId> declares_inside, TargetText& signature,
-    TargetText& code);
+    const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
+    const mir::Class& s, std::span<const mir::ClassId> declares_inside,
+    TargetText& signature, TargetText& code);
 
 // Writes a class after every class of this unit it derives from or is
 // declared inside, which the unit's class list does not guarantee, marking
 // written classes in `emitted`. The order matters wherever several classes
 // share a file: the code file, and the header a unit's scope classes share.
 void AppendClassInDependencyOrder(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
     const ClassNesting& nesting, mir::ClassId id, std::vector<bool>& emitted,
     UnitClasses& text) {
   if (emitted[id.value]) return;
@@ -324,7 +323,7 @@ void AppendClassInDependencyOrder(
   const mir::Class& cls = unit.GetClass(id);
   if (const auto& enclosing = nesting.declared_inside[id.value]) {
     AppendClassInDependencyOrder(
-        unit, refusals, nesting, *enclosing, emitted, text);
+        unit, report, nesting, *enclosing, emitted, text);
   }
   for (const mir::DeclaredClassRef& rests_on :
        mir::RestsOnDeclaredClasses(cls)) {
@@ -332,7 +331,7 @@ void AppendClassInDependencyOrder(
         Overloaded{
             [&](const mir::IntraUnitClassRef& intra) {
               AppendClassInDependencyOrder(
-                  unit, refusals, nesting, intra.class_id, emitted, text);
+                  unit, report, nesting, intra.class_id, emitted, text);
             },
             // Another unit's class is declared in that unit's own header,
             // which the file declaring this one includes.
@@ -345,22 +344,20 @@ void AppendClassInDependencyOrder(
   if (mir::IsPublished(unit, id)) {
     PublishedClass published{.id = id, .text = TargetText{}};
     RenderClass(
-        unit, refusals, id, cls, declares_inside, published.text,
+        unit, report, id, cls, declares_inside, published.text,
         text.definitions);
     text.published.push_back(std::move(published));
     return;
   }
   const TargetText::Section declared(text.internal);
   RenderClass(
-      unit, refusals, id, cls, declares_inside, text.internal,
-      text.definitions);
+      unit, report, id, cls, declares_inside, text.internal, text.definitions);
 }
 
 void RenderClass(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
-    mir::ClassId id, const mir::Class& s,
-    std::span<const mir::ClassId> declares_inside, TargetText& signature,
-    TargetText& code) {
+    const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
+    const mir::Class& s, std::span<const mir::ClassId> declares_inside,
+    TargetText& signature, TargetText& code) {
   TargetText& out = signature;
   Write(out, "class ", CppClassPath(unit, id));
   if (s.is_final) {
@@ -407,7 +404,7 @@ void RenderClass(
   if (s.constructor.has_value()) {
     const TargetText::Section declared(out);
     const TargetText::Section defined(code);
-    RenderConstructor(unit, refusals, id, s, *s.constructor, out, code);
+    RenderConstructor(unit, report, id, s, *s.constructor, out, code);
   }
 
   // The destructor is virtual, because whoever ends a value holds it as the
@@ -449,8 +446,7 @@ void RenderClass(
       const mir::CallableDecl& callable = s.callables.Get(callable_id);
       RenderClassCallableDecl(unit, s, callable_id, callable, out);
       const TargetText::Section defined(code);
-      RenderClassCallableDef(
-          unit, refusals, id, s, callable_id, callable, code);
+      RenderClassCallableDef(unit, report, id, s, callable_id, callable, code);
     }
   }
 
@@ -462,11 +458,11 @@ void RenderClass(
     for (const mir::ClassConstantId constant : s.constants.Ids()) {
       const mir::ClassConstantDecl& decl = s.constants.Get(constant);
       RenderClassConstant(
-          unit, refusals, id, decl.type, CppClassConstantName(constant),
+          unit, report, id, decl.type, CppClassConstantName(constant),
           decl.initializer, out, code);
     }
     RenderClassConstant(
-        unit, refusals, id, mir::ClassDefinitionType(unit.types),
+        unit, report, id, mir::ClassDefinitionType(unit.types),
         CppDefinitionName(), s.object_definition_initializer, out, code);
   }
 
@@ -514,13 +510,12 @@ void RenderFreeCallableSignature(
 // receiver and no class, and every name in its body resolves in the unit's
 // namespace, where it is written.
 void RenderFreeCallable(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
     mir::CallableId id, const mir::CallableDecl& callable, TargetText& out) {
   RenderFreeCallableSignature(unit, id, callable, out);
   out += " ";
   WriteBody(out, [&] {
-    RenderBlockStatements(
-        ScopeView::ForCode(unit, callable.code, refusals), out);
+    RenderBlockStatements(ScopeView::ForCode(unit, callable.code, report), out);
   });
   out += "\n";
 }
@@ -531,7 +526,7 @@ void RenderFreeCallable(
 // declared in it, and defined apart from it once every struct of the unit is
 // declared.
 void RenderStruct(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
     mir::StructId id, TargetText& declared, TargetText& defined) {
   const mir::StructDecl& decl = unit.GetStruct(id);
   const CppName name = CppStructName(decl);
@@ -549,7 +544,7 @@ void RenderStruct(
     Write(declared, StaticPrefix(method.code), "auto ", member);
     WriteMemberSignatureTail(unit, method.code, declared);
     declared += ";\n";
-    RenderMemberFunctionDef(unit, refusals, name, member, method.code, defined);
+    RenderMemberFunctionDef(unit, report, name, member, method.code, defined);
   }
   declared.Outdent();
   declared += "};\n";
@@ -570,19 +565,18 @@ auto RenderUnitForwardDeclarations(const mir::CompilationUnit& unit)
 }
 
 auto RenderUnitClasses(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitClasses {
+    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitClasses {
   UnitClasses text;
   const ClassNesting nesting = NestingOf(unit);
   std::vector<bool> emitted(unit.classes.size(), false);
   for (const mir::ClassId id : unit.classes.Ids()) {
-    AppendClassInDependencyOrder(unit, refusals, nesting, id, emitted, text);
+    AppendClassInDependencyOrder(unit, report, nesting, id, emitted, text);
   }
   return text;
 }
 
 auto RenderUnitClosures(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
+    const mir::CompilationUnit& unit, UnitRenderReport& report)
     -> UnitClosures {
   UnitClosures text;
   for (const mir::ClosureId id : unit.closures.Ids()) {
@@ -620,7 +614,7 @@ auto RenderUnitClosures(
         WriteDeclaration(
             out, VariableDeclaration{
                      .form = VariableForm::kNonStaticDataMember,
-                     .is_const = false,
+                     .constness = Constness::kMutable,
                      .type = CppType(unit, decl.fields.Get(field).type),
                      .name = CppClosureCaptureName(field)});
       }
@@ -648,7 +642,7 @@ auto RenderUnitClosures(
       } else {
         WriteReceiverBinding(unit, code, out, "this");
       }
-      RenderBlockStatements(ScopeView::ForCode(unit, code, refusals), out);
+      RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
     });
     out += "\n";
   }
@@ -660,8 +654,7 @@ auto RenderUnitClosures(
 // namespace, and inside it an export's entry point can name the unit's classes
 // the way every other body does.
 auto RenderUnitCallables(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitText {
+    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitText {
   UnitText text;
   // All are declared before any class, because a class's body may call one,
   // and defined after the classes, because an export's entry point uses them.
@@ -672,15 +665,14 @@ auto RenderUnitCallables(
     text.signature += ";\n";
     if (std::holds_alternative<mir::DefinedHere>(mir::FormOf(callable))) {
       const TargetText::Section defined(text.code);
-      RenderFreeCallable(unit, refusals, id, callable, text.code);
+      RenderFreeCallable(unit, report, id, callable, text.code);
     }
   }
   return text;
 }
 
 auto RenderUnitStructs(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> UnitStructs {
+    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitStructs {
   // Another unit names a struct by the declaration it answers to, so it is
   // declared where that unit reads, in the unit's types namespace, and its
   // methods are defined in the same namespace in the code file.
@@ -689,7 +681,7 @@ auto RenderUnitStructs(
   for (const mir::StructId id : unit.structs.Ids()) {
     TargetText declared;
     const TargetText::Section defined_section(definitions);
-    RenderStruct(unit, refusals, id, declared, definitions);
+    RenderStruct(unit, report, id, declared, definitions);
     TargetText declaration;
     AppendSectionInNamespace(declaration, CppStructTypesNamespace(), declared);
     structs.declared.push_back(
@@ -711,13 +703,13 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
     WriteDeclaration(
         text.signature, VariableDeclaration{
                             .form = VariableForm::kExternDeclaration,
-                            .is_const = false,
+                            .constness = Constness::kMutable,
                             .type = type,
                             .name = name});
     WriteDeclaration(
         text.code, VariableDeclaration{
                        .form = VariableForm::kNamespaceScopeDefinition,
-                       .is_const = false,
+                       .constness = Constness::kMutable,
                        .type = type,
                        .name = name});
   }
@@ -729,7 +721,7 @@ auto RenderUnitStaticVariables(const mir::CompilationUnit& unit) -> UnitText {
 // code calls it (LRM 35.4, 35.7), and the compiler may drop an inline
 // definition nothing in C++ uses, which would fail the link.
 void RenderForeignScopeSymbols(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals,
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
     TargetText& out) {
   for (const mir::ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     const TargetText::Section defined(out);
@@ -740,7 +732,7 @@ void RenderForeignScopeSymbols(
     out += " ";
     WriteBody(out, [&] {
       RenderBlockStatements(
-          ScopeView::ForCode(unit, entry.definition, refusals), out);
+          ScopeView::ForCode(unit, entry.definition, report), out);
     });
     out += "\n";
   }

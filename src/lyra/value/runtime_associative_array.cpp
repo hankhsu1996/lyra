@@ -8,13 +8,29 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/basic_associative_array.hpp"
-#include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wildcard_index.hpp"
+#include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::value {
+
+namespace {
+
+// The planes of an index the clause admits only as an integral (LRM 7.8.1).
+auto IntegralIndex(IndexView index) -> LoadedWords {
+  const IntegralValueType* type = index.type->AsIntegral();
+  if (type == nullptr) {
+    throw InternalError(
+        "RuntimeAssociativeArray: a wildcard index is no integral value -- "
+        "please report this as a bug");
+  }
+  return type->Load(index.bytes);
+}
+
+}  // namespace
 
 auto WitnessedKey::Less::operator()(IndexView a, IndexView b) const -> bool {
   switch (order) {
@@ -26,10 +42,10 @@ auto WitnessedKey::Less::operator()(IndexView a, IndexView b) const -> bool {
     // index.
     case AssociativeIndexOrder::kWildcardNumeric:
       return WildcardIndexBefore(
-          WildcardIndexValue(*static_cast<const PackedArray*>(a.bytes)),
-          WildcardIndexValue(*static_cast<const PackedArray*>(b.bytes)));
+          WildcardIndexWords(IntegralIndex(a).View()),
+          WildcardIndexWords(IntegralIndex(b).View()));
   }
-  throw InternalError("RuntimeAssociativeArray: unknown index order");
+  std::unreachable();
 }
 
 RuntimeAssociativeArray::RuntimeAssociativeArray() = default;
@@ -92,12 +108,12 @@ auto RuntimeAssociativeArray::Count() const -> std::size_t {
   return core_.has_value() ? core_->Count() : 0;
 }
 
-auto RuntimeAssociativeArray::Size() const -> PackedArray {
-  return PackedArray::Int(static_cast<std::int32_t>(Count()));
+auto RuntimeAssociativeArray::Size() const -> Int {
+  return Int::FromInt(static_cast<std::int64_t>(Count()));
 }
 
-auto RuntimeAssociativeArray::Exists(IndexView index) const -> PackedArray {
-  return PackedArray::Int(Installed().Exists(index) ? 1 : 0);
+auto RuntimeAssociativeArray::Exists(IndexView index) const -> Int {
+  return Int::FromInt(Installed().Exists(index) ? 1 : 0);
 }
 
 auto RuntimeAssociativeArray::Element(IndexView index) const -> const void* {
@@ -155,22 +171,22 @@ auto RuntimeAssociativeArray::Entries() const
 // An array with no element type yet holds no entries, which is all a
 // comparison with one can read.
 auto RuntimeAssociativeArray::operator==(
-    const RuntimeAssociativeArray& other) const -> PackedArray {
+    const RuntimeAssociativeArray& other) const -> FourStateBit {
   if (!core_.has_value() || !other.core_.has_value()) {
-    return PackedArray::Bit(Count() == other.Count());
+    return detail::ScalarOf(Count() == other.Count());
   }
   return core_->Equal(*other.core_);
 }
 
 auto RuntimeAssociativeArray::operator!=(
-    const RuntimeAssociativeArray& other) const -> PackedArray {
-  return !(*this == other);
+    const RuntimeAssociativeArray& other) const -> FourStateBit {
+  return Inverted(*this == other);
 }
 
 auto RuntimeAssociativeArray::CaseEqual(
-    const RuntimeAssociativeArray& other) const -> PackedArray {
+    const RuntimeAssociativeArray& other) const -> Bit {
   if (!core_.has_value() || !other.core_.has_value()) {
-    return PackedArray::Bit(Count() == other.Count());
+    return Bit::FromBool(Count() == other.Count());
   }
   return core_->CaseEqual(*other.core_);
 }
@@ -187,18 +203,17 @@ auto RuntimeAssociativeArray::HasUnknown() const -> bool {
   return core_.has_value() && core_->HasUnknown();
 }
 
-auto RuntimeAssociativeArray::IsUnknown() const -> PackedArray {
-  return PackedArray::Bit(HasUnknown());
+auto RuntimeAssociativeArray::IsUnknown() const -> Bit {
+  return Bit::FromBool(HasUnknown());
 }
 
-auto RuntimeAssociativeArray::BitstreamWidth() const -> PackedArray {
-  return core_.has_value() ? core_->BitstreamWidth() : PackedArray::Int(0);
+auto RuntimeAssociativeArray::BitstreamWidth() const -> Int {
+  return Int::FromInt(core_.has_value() ? core_->BitstreamWidth() : 0);
 }
 
-auto RuntimeAssociativeArray::CountBits(const PackedArray& control_bits) const
-    -> PackedArray {
-  return core_.has_value() ? core_->CountBits(control_bits)
-                           : PackedArray::Int(0);
+auto RuntimeAssociativeArray::CountBits(
+    const ConstIntegralView& control_bits) const -> Int {
+  return Int::FromInt(core_.has_value() ? core_->CountBits(control_bits) : 0);
 }
 
 }  // namespace lyra::value

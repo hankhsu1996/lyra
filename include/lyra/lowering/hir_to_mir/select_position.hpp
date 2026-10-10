@@ -1,7 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
+#include "lyra/hir/type_id.hpp"
+#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -35,18 +38,22 @@ struct PositionMap {
 };
 
 [[nodiscard]] auto PositionMapOf(
-    const mir::CompilationUnit& unit, mir::TypeId receiver) -> PositionMap;
+    const UnitLowerer& unit_lowerer, hir::TypeId receiver) -> PositionMap;
 
-// The position `index` names under `map`, moved by `shift` positions. Where the
-// map is the identity and nothing is moved, the index is the position as it
-// stands, whatever its width, since reading a position already answers for a
-// value too wide to name one; otherwise the index is brought to the position
-// type and moved there, where no shift a declaration can ask for wraps it. A
-// constant index yields a constant position, which the unit states rather than
-// the program computing it.
+// The position `index` names under `map`, moved by `shift` positions. The index
+// is brought to the position type and moved there, where no shift a declaration
+// can ask for wraps it. A constant index yields a constant position, which the
+// unit states rather than the program computing it.
 [[nodiscard]] auto WrapIndexAsPosition(
     mir::CompilationUnit& unit, mir::Block& block, const PositionMap& map,
     mir::ExprId index, std::int64_t shift) -> mir::ExprId;
+
+// The position a zero-based ordinal names, in the position type: an index a
+// method takes (LRM 6.16.2, 7.10.2), a bound of a queue's slice (LRM 7.10.1).
+// An ordinal too wide to name a position, or holding x or z, names none.
+[[nodiscard]] auto BuildOrdinalPosition(
+    mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ordinal)
+    -> mir::ExprId;
 
 // The far end of `count` parts in a row that start at position `start` and
 // grows toward higher positions (`up`) or lower ones: `start + count - 1` or
@@ -68,5 +75,20 @@ struct PositionMap {
 [[nodiscard]] auto BuildConstantPosition(
     mir::CompilationUnit& unit, mir::Block& block, std::int64_t position)
     -> mir::ExprId;
+
+// The type the least significant bit of a value of `value_type` is read at:
+// one bit, unsigned, in the states the value itself has, so an x or a z in
+// that bit is read as itself. Absent for a value that is not integral, which
+// has no least significant bit.
+[[nodiscard]] auto LeastSignificantBitType(
+    const mir::CompilationUnit& unit, mir::TypeId value_type)
+    -> std::optional<mir::TypeId>;
+
+// The least significant bit of an integral value, which is the whole of what
+// an edge and `$rose` / `$fell` read of one (LRM 9.4.2, 16.9.3): the one bit
+// at the value's own position zero, whatever range it was declared with.
+[[nodiscard]] auto BuildLeastSignificantBit(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value,
+    mir::TypeId bit_type) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -35,19 +35,38 @@ enum class ReceiverPlacement : std::uint8_t {
 // `T::Make<2>()` does not.
 enum class NameReachedThrough : std::uint8_t { kAValue, kAType };
 
-// A runtime function name, with the part the call names as a template argument
-// where it names one: a component by its position, `Component<2>`, and a
-// property by a pointer to it, `ReferProperty<&C::x>`. The part is a template
-// argument because each part has a type of its own.
+// What a callee states beside its target, as one template argument where C++
+// resolves types: the type the callee is called at, or the part it names -- a
+// component by its position, `Component<2>`, a property by a pointer to it,
+// `ReferProperty<&C::x>`.
+using TemplateArgument = std::variant<CppType, mir::CallPart>;
+
+// The template arguments a callee states, in the order the library declares
+// its template parameters: the type, then the part.
+auto TemplateArgumentsOf(
+    const mir::CompilationUnit& unit, std::optional<mir::TypeId> type,
+    const std::optional<mir::CallPart>& part) -> std::vector<TemplateArgument> {
+  std::vector<TemplateArgument> arguments;
+  if (type.has_value()) {
+    arguments.emplace_back(CppType(unit, *type));
+  }
+  if (part.has_value()) {
+    arguments.emplace_back(*part);
+  }
+  return arguments;
+}
+
+// A runtime function name, followed by the template arguments its callee
+// states.
 struct OperationName {
   const mir::CompilationUnit* unit;
   std::string_view identifier;
-  std::optional<mir::CallPart> part;
+  std::span<const TemplateArgument> arguments;
   NameReachedThrough reached;
 };
 
 void WriteOne(TargetText& out, const OperationName& name) {
-  if (!name.part.has_value()) {
+  if (name.arguments.empty()) {
     out += name.identifier;
     return;
   }
@@ -55,13 +74,26 @@ void WriteOne(TargetText& out, const OperationName& name) {
     out += "template ";
   }
   Write(out, name.identifier, "<");
-  std::visit(
-      Overloaded{
-          [&](base::ComponentIndex position) { Write(out, position.value); },
-          [&](const mir::ClassFieldTarget& property) {
-            WriteMemberPointer(out, *name.unit, property);
-          }},
-      *name.part);
+  std::string_view separator;
+  for (const TemplateArgument& argument : name.arguments) {
+    out += separator;
+    separator = ", ";
+    std::visit(
+        Overloaded{
+            [&](const CppType& type) { Write(out, type); },
+            [&](const mir::CallPart& part) {
+              std::visit(
+                  Overloaded{
+                      [&](base::ComponentIndex position) {
+                        Write(out, position.value);
+                      },
+                      [&](const mir::ClassFieldTarget& property) {
+                        WriteMemberPointer(out, *name.unit, property);
+                      }},
+                  part);
+            }},
+        argument);
+  }
   out += ">";
 }
 
@@ -131,22 +163,42 @@ class CallWriter {
   bool receiver_leads_arguments_ = false;
 };
 
+// The type a factory is reached on: the one its callee states where the entry
+// is generic over the type it builds, and otherwise the single type it builds,
+// which the call answers with.
+auto FactoryType(
+    const support::RuntimeEntry& entry, const mir::Direct& direct,
+    mir::TypeId result_type) -> mir::TypeId {
+  if (!entry.takes_a_type_argument) {
+    return result_type;
+  }
+  if (!direct.type_argument.has_value()) {
+    throw InternalError(
+        "Direct call: a factory generic over the type it builds is called at "
+        "none -- please report this as a bug");
+  }
+  return *direct.type_argument;
+}
+
 // A runtime library function, spelled the way its shared declaration says: a
-// free function, a method on the receiver, or a factory on the result type.
+// free function, a method on the receiver, or a factory on the type it builds.
 // Nothing about the call itself is read to decide which.
 void WriteEntryCallee(
     const ScopeView& view, const support::RuntimeEntry& entry,
-    const std::optional<mir::CallPart>& part, mir::TypeId result_type,
-    CallWriter& callee) {
+    const mir::Direct& direct, mir::TypeId result_type, CallWriter& callee) {
+  const mir::CompilationUnit& unit = view.Unit();
   std::visit(
       Overloaded{
+          // `lyra::value::Slice<lyra::value::BitVector<4>>(v, at)`.
           [&](const support::FreeFunction& f) {
+            const auto stated =
+                TemplateArgumentsOf(unit, direct.type_argument, direct.part);
             callee.Named(
-                ReceiverPlacement::kIntoArgumentList,
+                ReceiverPlacement::kIntoArgumentList, f.scope, "::",
                 OperationName{
-                    .unit = &view.Unit(),
-                    .identifier = f.qualified_name,
-                    .part = part,
+                    .unit = &unit,
+                    .identifier = f.identifier,
+                    .arguments = stated,
                     .reached = NameReachedThrough::kAType});
           },
           // A method is called on something, so a call with no receiver
@@ -158,24 +210,30 @@ void WriteEntryCallee(
                   "reached through the object it acts on, and this call names "
                   "none -- please report this as a bug");
             }
+            const auto stated =
+                TemplateArgumentsOf(unit, direct.type_argument, direct.part);
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
                 OperationName{
-                    .unit = &view.Unit(),
+                    .unit = &unit,
                     .identifier = m.identifier,
-                    .part = part,
+                    .arguments = stated,
                     .reached = NameReachedThrough::kAValue});
           },
-          // A factory is called on the type it builds, which is the call's
-          // result type: `T::Make(args)`.
+          // A factory is called on the type it builds, so that type is no
+          // template argument of its name: `T::Make<2>(args)`. One generic
+          // over the type it builds is called at the type its callee states,
+          // and one building a single type answers with it.
           [&](const support::StaticFactory& s) {
+            const auto stated =
+                TemplateArgumentsOf(unit, std::nullopt, direct.part);
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppType(view.Unit(), result_type), "::",
+                CppType(unit, FactoryType(entry, direct, result_type)), "::",
                 OperationName{
-                    .unit = &view.Unit(),
+                    .unit = &unit,
                     .identifier = s.identifier,
-                    .part = part,
+                    .arguments = stated,
                     .reached = NameReachedThrough::kAType});
           }},
       entry.declaration);
@@ -208,8 +266,7 @@ void WriteDirectCallee(
           },
           [&](const support::BuiltinFn& id) {
             WriteEntryCallee(
-                view, support::RuntimeEntryOf(id), direct.part, result_type,
-                callee);
+                view, support::RuntimeEntryOf(id), direct, result_type, callee);
           },
           // A function of another unit (LRM 26.3): `::Pkg::f`.
           [&](const mir::ExternalUnitCallableTarget& t) {
@@ -307,7 +364,8 @@ void RenderStructuralCall(
     TargetText& out) {
   CallWriter text(view, std::nullopt, out);
   WriteEntryCallee(
-      view, support::RuntimeEntryOf(fn), std::nullopt, result_type, text);
+      view, support::RuntimeEntryOf(fn), mir::Direct{.target = fn}, result_type,
+      text);
   text.Arguments({});
 }
 

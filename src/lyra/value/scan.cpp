@@ -1,6 +1,5 @@
 #include "lyra/value/scan.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -10,23 +9,16 @@
 #include <string_view>
 #include <utility>
 #include <variant>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::value {
 
 namespace {
-
-// One scanned bit as it leaves a per-spec parser. The val/unk pair mirrors
-// PackedArray's storage planes: 0=(0,0), 1=(1,0), X=(1,1), Z=(0,1).
-struct ScannedBit {
-  bool val;
-  bool unk;
-};
 
 [[nodiscard]] auto IsAsciiWhitespace(int ch) -> bool {
   return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' ||
@@ -35,26 +27,6 @@ struct ScannedBit {
 
 [[nodiscard]] auto IsDecDigit(int ch) -> bool {
   return ch >= '0' && ch <= '9';
-}
-
-[[nodiscard]] auto HexDigit(int ch) -> int {
-  if (ch >= '0' && ch <= '9') {
-    return ch - '0';
-  }
-  if (ch >= 'a' && ch <= 'f') {
-    return (ch - 'a') + 10;
-  }
-  if (ch >= 'A' && ch <= 'F') {
-    return (ch - 'A') + 10;
-  }
-  return -1;
-}
-
-[[nodiscard]] auto OctDigit(int ch) -> int {
-  if (ch >= '0' && ch <= '7') {
-    return ch - '0';
-  }
-  return -1;
 }
 
 // The absence of a byte: what a read past the end of the input yields, and
@@ -138,79 +110,9 @@ void SkipSourceWhitespace(ScanCursor& src) {
   }
 }
 
-// Build a PackedArray of the target shape from MSB-first scanned bits.
-// `bits.size() < width` zero-fills the MSBs; `bits.size() > width` drops
-// the high bits. For a 2-state target, X/Z scanned bits collapse to 0.
-auto MakePackedFromBits(
-    std::span<const ScannedBit> bits, std::uint32_t width, bool is_signed,
-    bool is_four_state) -> value::PackedArray {
-  const auto word_count = static_cast<std::size_t>((width + 63U) / 64U);
-  std::vector<std::uint64_t> val_words(word_count, 0U);
-  std::vector<std::uint64_t> unk_words(word_count, 0U);
-
-  const std::size_t bits_to_use = std::min<std::size_t>(bits.size(), width);
-  const std::size_t skip = bits.size() - bits_to_use;
-  for (std::size_t i = 0; i < bits_to_use; ++i) {
-    const std::size_t bit_pos = bits_to_use - 1U - i;
-    const ScannedBit b = bits[skip + i];
-    const std::size_t word_ix = bit_pos / 64U;
-    const std::size_t bit_ix = bit_pos % 64U;
-    if (b.val) {
-      val_words[word_ix] |= (std::uint64_t{1} << bit_ix);
-    }
-    if (b.unk) {
-      unk_words[word_ix] |= (std::uint64_t{1} << bit_ix);
-    }
-  }
-
-  if (!is_four_state) {
-    for (std::size_t w = 0; w < word_count; ++w) {
-      val_words[w] &= ~unk_words[w];
-    }
-    return value::PackedArray::FromWords(
-        std::span<const std::uint64_t>{val_words},
-        std::span<const std::uint64_t>{}, width, is_signed, false);
-  }
-  return value::PackedArray::FromWords(
-      std::span<const std::uint64_t>{val_words},
-      std::span<const std::uint64_t>{unk_words}, width, is_signed, true);
-}
-
-auto MakePackedAllX(std::uint32_t width, bool is_signed, bool is_four_state)
-    -> value::PackedArray {
-  if (!is_four_state) {
-    return value::PackedArray::FromInt(0, width, is_signed, false);
-  }
-  const auto word_count = static_cast<std::size_t>((width + 63U) / 64U);
-  std::vector<std::uint64_t> val_words(word_count, ~std::uint64_t{0});
-  std::vector<std::uint64_t> unk_words(word_count, ~std::uint64_t{0});
-  return value::PackedArray::FromWords(
-      std::span<const std::uint64_t>{val_words},
-      std::span<const std::uint64_t>{unk_words}, width, is_signed, true);
-}
-
-auto MakePackedAllZ(std::uint32_t width, bool is_signed, bool is_four_state)
-    -> value::PackedArray {
-  if (!is_four_state) {
-    return value::PackedArray::FromInt(0, width, is_signed, false);
-  }
-  const auto word_count = static_cast<std::size_t>((width + 63U) / 64U);
-  std::vector<std::uint64_t> val_words(word_count, 0U);
-  std::vector<std::uint64_t> unk_words(word_count, ~std::uint64_t{0});
-  return value::PackedArray::FromWords(
-      std::span<const std::uint64_t>{val_words},
-      std::span<const std::uint64_t>{unk_words}, width, is_signed, true);
-}
-
-auto MakePackedFromI64(
-    std::int64_t value, std::uint32_t width, bool is_signed, bool is_four_state)
-    -> value::PackedArray {
-  return value::PackedArray::FromInt(value, width, is_signed, is_four_state);
-}
-
 [[nodiscard]] auto RequireIntegralTarget(
-    const ScanTarget& target, std::string_view spec) -> value::PackedArray* {
-  auto* const* slot = std::get_if<value::PackedArray*>(&target);
+    const ScanTarget& target, std::string_view spec) -> const IntegralView& {
+  const auto* slot = std::get_if<IntegralView>(&target);
   if (slot == nullptr) {
     throw SimulationError(
         std::format(
@@ -300,135 +202,32 @@ struct DecimalResult {
   return DecimalResult{.form = DecimalResult::Form::kInt, .int_value = acc};
 }
 
-// LRM 21.3.4.3 Table 21-7 `%h` / `%x`. Each character -> one 4-bit nibble.
-[[nodiscard]] auto ReadHex(ScanCursor& src, std::size_t max_width)
-    -> std::optional<std::vector<ScannedBit>> {
+// LRM 21.3.4.3 Table 21-7 `%b`, `%o`, `%h` / `%x`: the run of characters that
+// are digits of the radix, an x, a z or `?` standing for a whole digit, or the
+// `_` that separates digits. A run holding no digit at all is no value.
+[[nodiscard]] auto ReadDigits(
+    ScanCursor& src, std::size_t max_width, DigitRadix radix)
+    -> std::optional<std::string> {
   SkipSourceWhitespace(src);
-  std::vector<ScannedBit> bits;
+  std::string run;
   bool consumed_digit = false;
-  std::size_t consumed = 0;
-  while (true) {
-    if (max_width != 0 && consumed >= max_width) {
-      break;
-    }
+  while (max_width == 0 || run.size() < max_width) {
     const int ch = src.Peek();
     if (ch == kNoByte) {
       break;
     }
-    const int hd = HexDigit(ch);
-    if (hd >= 0) {
-      for (int b = 3; b >= 0; --b) {
-        bits.push_back(
-            {.val = ((static_cast<unsigned>(hd) >> static_cast<unsigned>(b)) &
-                     1U) != 0U,
-             .unk = false});
-      }
-      consumed_digit = true;
-    } else if (ch == 'x' || ch == 'X') {
-      for (int b = 0; b < 4; ++b) {
-        bits.push_back({.val = true, .unk = true});
-      }
-      consumed_digit = true;
-    } else if (ch == 'z' || ch == 'Z' || ch == '?') {
-      for (int b = 0; b < 4; ++b) {
-        bits.push_back({.val = false, .unk = true});
-      }
-      consumed_digit = true;
-    } else if (ch == '_') {
-      // separator, no bit
-    } else {
+    const auto c = static_cast<char>(ch);
+    const bool is_digit = DigitOf(c, radix).has_value() || IsUnknownDigit(c) ||
+                          IsHighImpedanceDigit(c);
+    if (!is_digit && c != '_') {
       break;
     }
+    consumed_digit = consumed_digit || is_digit;
+    run.push_back(c);
     src.Consume();
-    ++consumed;
   }
   if (!consumed_digit) return std::nullopt;
-  return bits;
-}
-
-// LRM 21.3.4.3 Table 21-7 `%o`. 3 bits per octal digit.
-[[nodiscard]] auto ReadOctal(ScanCursor& src, std::size_t max_width)
-    -> std::optional<std::vector<ScannedBit>> {
-  SkipSourceWhitespace(src);
-  std::vector<ScannedBit> bits;
-  bool consumed_digit = false;
-  std::size_t consumed = 0;
-  while (true) {
-    if (max_width != 0 && consumed >= max_width) {
-      break;
-    }
-    const int ch = src.Peek();
-    if (ch == kNoByte) {
-      break;
-    }
-    const int od = OctDigit(ch);
-    if (od >= 0) {
-      for (int b = 2; b >= 0; --b) {
-        bits.push_back(
-            {.val = ((static_cast<unsigned>(od) >> static_cast<unsigned>(b)) &
-                     1U) != 0U,
-             .unk = false});
-      }
-      consumed_digit = true;
-    } else if (ch == 'x' || ch == 'X') {
-      for (int b = 0; b < 3; ++b) {
-        bits.push_back({.val = true, .unk = true});
-      }
-      consumed_digit = true;
-    } else if (ch == 'z' || ch == 'Z' || ch == '?') {
-      for (int b = 0; b < 3; ++b) {
-        bits.push_back({.val = false, .unk = true});
-      }
-      consumed_digit = true;
-    } else if (ch == '_') {
-      // separator
-    } else {
-      break;
-    }
-    src.Consume();
-    ++consumed;
-  }
-  if (!consumed_digit) return std::nullopt;
-  return bits;
-}
-
-// LRM 21.3.4.3 Table 21-7 `%b`. Per-character to one bit.
-[[nodiscard]] auto ReadBinary(ScanCursor& src, std::size_t max_width)
-    -> std::optional<std::vector<ScannedBit>> {
-  SkipSourceWhitespace(src);
-  std::vector<ScannedBit> bits;
-  bool consumed_digit = false;
-  std::size_t consumed = 0;
-  while (true) {
-    if (max_width != 0 && consumed >= max_width) {
-      break;
-    }
-    const int ch = src.Peek();
-    if (ch == kNoByte) {
-      break;
-    }
-    if (ch == '0') {
-      bits.push_back({.val = false, .unk = false});
-      consumed_digit = true;
-    } else if (ch == '1') {
-      bits.push_back({.val = true, .unk = false});
-      consumed_digit = true;
-    } else if (ch == 'x' || ch == 'X') {
-      bits.push_back({.val = true, .unk = true});
-      consumed_digit = true;
-    } else if (ch == 'z' || ch == 'Z' || ch == '?') {
-      bits.push_back({.val = false, .unk = true});
-      consumed_digit = true;
-    } else if (ch == '_') {
-      // separator
-    } else {
-      break;
-    }
-    src.Consume();
-    ++consumed;
-  }
-  if (!consumed_digit) return std::nullopt;
-  return bits;
+  return run;
 }
 
 // Standard scanf `%s`: skip leading whitespace, then read non-whitespace
@@ -468,41 +267,37 @@ struct DecimalResult {
   return static_cast<unsigned char>(ch & 0xFF);
 }
 
-// Build helpers: from parsed value + target metadata to a final
-// PackedArray of the target's declared shape.
-
-auto BuildIntegralFromDecimal(
-    const DecimalResult& parsed, const value::PackedArray& dest)
-    -> value::PackedArray {
-  const auto width = static_cast<std::uint32_t>(dest.BitWidth());
-  const bool is_signed = dest.IsSigned();
-  const bool is_four_state = dest.IsFourState();
+// A parsed value written into the target, at the target's own width and
+// state domain.
+void WriteDecimal(const DecimalResult& parsed, const IntegralView& dest) {
   switch (parsed.form) {
     case DecimalResult::Form::kInt:
-      return MakePackedFromI64(
-          parsed.int_value, width, is_signed, is_four_state);
+      FromInt(dest.planes, dest.width, parsed.int_value);
+      return;
     case DecimalResult::Form::kFillX:
-      return MakePackedAllX(width, is_signed, is_four_state);
+      FillScalar(dest.planes, dest.width, FourStateBit::kUnknown);
+      return;
     case DecimalResult::Form::kFillZ:
-      return MakePackedAllZ(width, is_signed, is_four_state);
+      FillScalar(dest.planes, dest.width, FourStateBit::kHighImpedance);
+      return;
   }
-  throw InternalError("BuildIntegralFromDecimal: unreachable form");
+  std::unreachable();
 }
 
-auto BuildIntegralFromBits(
-    std::span<const ScannedBit> bits, const value::PackedArray& dest)
-    -> value::PackedArray {
-  return MakePackedFromBits(
-      bits, static_cast<std::uint32_t>(dest.BitWidth()), dest.IsSigned(),
-      dest.IsFourState());
+// A scanned run of digits written into the target: a shorter run leaves the
+// positions above it 0, a longer one loses its leading digits, and a two-state
+// target holds an x or z digit as 0.
+void WriteDigits(
+    std::string_view run, DigitRadix radix, const IntegralView& dest) {
+  if (!FromDigits(dest.planes, dest.width, radix, run)) {
+    throw InternalError(
+        "$sscanf/$fscanf: a scanned run of digits holds a character that is no "
+        "digit of its radix -- please report this as a bug");
+  }
 }
 
-auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
-    -> value::PackedArray {
-  return MakePackedFromI64(
-      static_cast<std::int64_t>(ch),
-      static_cast<std::uint32_t>(dest.BitWidth()), dest.IsSigned(),
-      dest.IsFourState());
+void WriteChar(unsigned char ch, const IntegralView& dest) {
+  FromInt(dest.planes, dest.width, static_cast<std::int64_t>(ch));
 }
 
 [[nodiscard]] auto ScanFromSource(
@@ -600,40 +395,46 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
         if (auto parsed = ReadDecimal(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            auto* dest = RequireIntegralTarget(targets[target_ix], "d");
-            *dest = BuildIntegralFromDecimal(*parsed, *dest);
+            WriteDecimal(
+                *parsed, RequireIntegralTarget(targets[target_ix], "d"));
           }
         }
         break;
       }
       case 'h':
       case 'x': {
-        if (auto parsed = ReadHex(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadDigits(src, max_width, DigitRadix::kHex);
+            parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            auto* dest = RequireIntegralTarget(
-                targets[target_ix], spec == 'x' ? "x" : "h");
-            *dest = BuildIntegralFromBits(*parsed, *dest);
+            WriteDigits(
+                *parsed, DigitRadix::kHex,
+                RequireIntegralTarget(
+                    targets[target_ix], spec == 'x' ? "x" : "h"));
           }
         }
         break;
       }
       case 'b': {
-        if (auto parsed = ReadBinary(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadDigits(src, max_width, DigitRadix::kBinary);
+            parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            auto* dest = RequireIntegralTarget(targets[target_ix], "b");
-            *dest = BuildIntegralFromBits(*parsed, *dest);
+            WriteDigits(
+                *parsed, DigitRadix::kBinary,
+                RequireIntegralTarget(targets[target_ix], "b"));
           }
         }
         break;
       }
       case 'o': {
-        if (auto parsed = ReadOctal(src, max_width); parsed.has_value()) {
+        if (auto parsed = ReadDigits(src, max_width, DigitRadix::kOctal);
+            parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            auto* dest = RequireIntegralTarget(targets[target_ix], "o");
-            *dest = BuildIntegralFromBits(*parsed, *dest);
+            WriteDigits(
+                *parsed, DigitRadix::kOctal,
+                RequireIntegralTarget(targets[target_ix], "o"));
           }
         }
         break;
@@ -652,8 +453,7 @@ auto BuildIntegralFromChar(unsigned char ch, const value::PackedArray& dest)
         if (auto parsed = ReadChar(src, max_width); parsed.has_value()) {
           ok = true;
           if (!suppress) {
-            auto* dest = RequireIntegralTarget(targets[target_ix], "c");
-            *dest = BuildIntegralFromChar(*parsed, *dest);
+            WriteChar(*parsed, RequireIntegralTarget(targets[target_ix], "c"));
           }
         }
         break;
@@ -686,12 +486,11 @@ namespace detail {
 
 auto ScanImpl(
     const value::String& input, const value::String& format, NullByte null_byte,
-    value::PackedArray& consumed, std::span<const ScanTarget> targets)
-    -> value::PackedArray {
+    std::span<const ScanTarget> targets) -> ScanCount {
   ScanCursor src(input.View(), null_byte);
   const std::int32_t items = ScanFromSource(src, format.View(), targets);
-  consumed = value::PackedArray::Int(static_cast<std::int32_t>(src.Position()));
-  return value::PackedArray::Integer(items);
+  return ScanCount{
+      .items = items, .consumed = static_cast<std::int64_t>(src.Position())};
 }
 
 }  // namespace detail

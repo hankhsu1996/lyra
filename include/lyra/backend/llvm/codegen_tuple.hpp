@@ -7,8 +7,11 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "lyra/backend/llvm/codegen_types.hpp"
+#include "lyra/backend/llvm/runtime_entry.hpp"
+#include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -16,6 +19,9 @@ namespace llvm {
 class Constant;
 class Function;
 class GlobalVariable;
+class IRBuilderBase;
+class Type;
+class Value;
 }  // namespace llvm
 
 namespace lyra::lir {
@@ -37,6 +43,28 @@ enum class TupleLifecycle : std::uint8_t {
   kMove,
   kDestroy,
   kAssign,
+};
+
+// The operation of the library's that carries out `step` on an object of its
+// own.
+auto LifecycleOp(TupleLifecycle step) -> RuntimeOp;
+
+// The machine type one parameter or the answer of a virtual function of the
+// library's has where a body of this module stands in for that function.
+enum class MachineKind : std::uint8_t {
+  kVoid,
+  kAddress,
+  kTruth,
+  kInt8,
+  kInt32,
+  kInt64,
+};
+
+// What a virtual function of the library's type class takes after the type it
+// is entered on, and what it answers, read off the function's own declaration.
+struct VirtualSignature {
+  MachineKind returns;
+  std::vector<MachineKind> takes;
 };
 
 // The lifecycle of each tuple type a module uses, and the type a tuple of it
@@ -74,11 +102,71 @@ class CodeGenTuples {
   // another's when reading the module.
   auto KeyOf(lir::TypeId tuple) -> const std::string&;
   auto Emit(lir::TypeId tuple, TupleLifecycle step, llvm::Function* fn) -> void;
+  [[nodiscard]] auto MachineTypeOf(MachineKind kind) const -> llvm::Type*;
+  // A body standing in for a virtual function of signature `stands_in_for`,
+  // declared and left for its slot to fill: it takes the type it is entered
+  // on and then what that function takes, and answers what it answers.
+  auto DeclareBody(
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for) -> llvm::Function*;
   // The body one slot of the type's table holds, which does what `filling`
   // does, or the one no slot is ever entered through where nothing fills it.
   auto Body(
-      lir::TypeId tuple, std::string_view slot, llvm::Function* filling,
-      bool answers_truth) -> llvm::Constant*;
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for, llvm::Function* filling)
+      -> llvm::Constant*;
+  // A body doing what a struct method does where the two differ in how one
+  // integral value crosses, opened and left for its slot to fill: it holds
+  // storage for a value of the integral type `stated`, which the method takes
+  // or answers.
+  struct ThunkBody;
+  auto OpenThunkBody(
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for, lir::TypeId stated) -> ThunkBody;
+  // What a slot whose method answers a comparison answers: the scalar the
+  // comparison came to, or whether it holds where it is never unknown (LRM
+  // 11.4.5).
+  enum class ComparisonAnswered : std::uint8_t {
+    kAsItsScalar,
+    kAsWhetherItHolds,
+  };
+  // The body of a slot whose method answers a comparison; of the one whose
+  // method answers the value's stream of bits; of the one whose method takes a
+  // stream; and of the one whose method takes a count's control bits.
+  auto ScalarAnswerBody(
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for, lir::FunctionId method,
+      ComparisonAnswered answered) -> llvm::Constant*;
+  auto StreamWriteBody(
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for, lir::FunctionId method)
+      -> llvm::Constant*;
+  auto StreamReadBody(
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for, lir::FunctionId method)
+      -> llvm::Constant*;
+  auto ControlReadBody(
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for, lir::FunctionId method)
+      -> llvm::Constant*;
+  // The body of a slot a structure answers with nothing.
+  auto NullBody(
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for) -> llvm::Constant*;
+  // The integral value of type `read` that `planes`, `planes_width` bits
+  // wide, hold below their `taken` most significant positions, laid out at
+  // `laid_out`; and the bits of the value of type `written` at `value`,
+  // written into the stream `stream`, `stream_width` bits wide, below its
+  // `filled` most significant positions. Each answers how many positions are
+  // taken, or filled, after it.
+  auto ReadOutOfPlanes(
+      llvm::IRBuilderBase& b, llvm::Value* planes, llvm::Value* planes_width,
+      llvm::Value* taken, llvm::Value* laid_out, lir::TypeId read)
+      -> llvm::Value*;
+  auto WriteIntoStream(
+      llvm::IRBuilderBase& b, llvm::Value* value, lir::TypeId written,
+      llvm::Value* stream, llvm::Value* stream_width, llvm::Value* filled)
+      -> llvm::Value*;
 
   CodeGenModule* owner_;
   CodeGenTypes* types_;

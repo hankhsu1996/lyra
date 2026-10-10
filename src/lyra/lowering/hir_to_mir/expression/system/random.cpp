@@ -112,13 +112,14 @@ auto LowerRandomSystemSubroutineCall(
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    arguments.push_back(body.exprs.Add(*std::move(lowered)));
+    arguments.push_back(
+        BuildToInt64Call(unit, body, body.exprs.Add(*std::move(lowered))));
   }
 
   // An omitted low bound is the zero LRM 18.13.2 defines it to be, and the
   // runtime entry always takes both.
   if (info.kind == support::RandomKind::kUrandomRange && operands.size() == 1) {
-    arguments.push_back(BuildIntLiteral(unit, body, 0));
+    arguments.push_back(BuildMachineIntLiteral(unit, body, 0));
   }
 
   return mir::Expr{
@@ -181,23 +182,25 @@ auto LowerDistributionSystemSubroutineCall(
   // design declared it, and the generator works in 32 signed bits.
   std::vector<mir::ExprId> arguments;
   arguments.reserve(operands.size());
-  arguments.push_back(ConvertToType(unit, body, seed.incoming, int_type));
+  arguments.push_back(BuildToInt64Call(
+      unit, body, ConvertToType(unit, body, seed.incoming, int_type)));
   for (const hir::ExprId operand : std::span{operands}.subspan(1)) {
     auto lowered = lowerer.LowerExpr(hir_exprs.Get(operand), step_frame);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
     const mir::ExprId raw = body.exprs.Add(*std::move(lowered));
-    arguments.push_back(ConvertToType(unit, body, raw, int_type));
+    arguments.push_back(
+        BuildToInt64Call(unit, body, ConvertToType(unit, body, raw, int_type)));
   }
   // LRM Annex N Table N.1: a seeded `$random` is the uniform draw bounded by
   // the whole signed range, which the source writes as one operand and the
   // entry takes as three.
   if (info.kind == support::DistributionKind::kRandom) {
-    arguments.push_back(
-        BuildIntLiteral(unit, body, std::numeric_limits<std::int32_t>::min()));
-    arguments.push_back(
-        BuildIntLiteral(unit, body, std::numeric_limits<std::int32_t>::max()));
+    arguments.push_back(BuildMachineIntLiteral(
+        unit, body, std::numeric_limits<std::int32_t>::min()));
+    arguments.push_back(BuildMachineIntLiteral(
+        unit, body, std::numeric_limits<std::int32_t>::max()));
   }
 
   const mir::TypeId payload_type =

@@ -6,15 +6,14 @@
 #include <vector>
 
 #include "lyra/base/component_index.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -29,43 +28,110 @@ struct RequiredTag {
   base::ComponentIndex member = {};
 };
 
-// One step of a descent into a value: the entry that answers with the part's
-// value, the entry that answers with the part itself, and the operands both of
-// them take beside it.
-//
-// Which entries those are follows from the type of the value the step descends
-// into, and this is the layer that holds that type, so it is settled here and
-// nothing below chooses. Two entries rather than one read two ways, because a
-// consumer that had to work out from the position which one a step meant could
-// work it out differently.
-struct DescentStep {
-  support::BuiltinFn value_entry;
-  support::BuiltinFn part_entry;
-  // The part this step names, where naming it is what the step does rather than
-  // a value it is handed. It travels with the entries for the same reason it
-  // travels with a callee: the part has a type of its own.
-  std::optional<base::ComponentIndex> position;
-  // Where the part is, as values the program computes: an index, a start
-  // position, a key. A deferred write freezes these where the statement is
-  // reached (LRM 10.4.2).
-  std::vector<mir::ExprId> operands;
-  // How many parts the step takes, where it reaches several in a row -- bits of
-  // a packed value, or a slice of an unpacked array. The part's type
-  // fixes it, so it is a number rather than a value the program computes, and
-  // nothing freezes it.
-  std::optional<std::uint64_t> count;
-  mir::TypeId part_type;
-  // What the value stepped into has to hold for the step to be valid, where
-  // the part is a member of a tagged union. Reading the part and writing it
-  // each check it their own way, and naming the part checks nothing.
+// Bits of an integral value (LRM 11.5.1): where they start in the value's own
+// numbering, as many as the part's type is wide. `required_tag` is what the
+// value has to hold for the step to be valid, where the bits are a member of a
+// tagged union; reading the part and writing it each check it their own way,
+// and naming the part checks nothing.
+struct StepToBits {
+  mir::ExprId start;
   std::optional<RequiredTag> required_tag = std::nullopt;
 };
 
-// What a call realizing `step` is handed beside its receiver: the step's
-// operands, then its count as a machine count where it has one.
-[[nodiscard]] auto StepArguments(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    const DescentStep& step) -> std::vector<mir::ExprId>;
+// Elements of a fixed-size or dynamic array in a row (LRM 7.4.6): where they
+// start in the array's own numbering, and how many there are. The part's type
+// fixes the count, so it is a number rather than a value the program computes.
+struct StepToElementRun {
+  mir::ExprId start;
+  std::uint64_t count = 0;
+};
+
+// One element of a container that numbers its elements, at the position the
+// program computes (LRM 7.4.5, 7.10.1).
+struct StepToElement {
+  mir::ExprId position;
+};
+
+// One element of an associative array, at the key the program computes: a
+// value of the type the source wrote it in, which names no place in any order
+// (LRM 7.8).
+struct StepToAssocElement {
+  mir::ExprId key;
+};
+
+// The elements of a queue between two positions the running program can move
+// (LRM 7.10.1). It builds a queue of its own, so it reaches nothing a write
+// could land in or a reference could name.
+struct StepToQueueRun {
+  mir::ExprId lowest;
+  mir::ExprId highest;
+};
+
+// A component of a product, or the member an active-member value holds, by its
+// declaration-order position (LRM 7.2, 7.3).
+struct StepToComponent {
+  base::ComponentIndex position;
+};
+
+// One step of a descent into a value: which kind of part it reaches, and the
+// part's type.
+//
+// The kind follows from the type of the value the step descends into, and this
+// is the layer that holds that type, so it is settled here. Which library
+// entry takes a step of a kind for each thing a path is taken for -- a read, a
+// write, a reference -- is a fact of the kind, stated once where steps are
+// realized.
+struct DescentStep {
+  std::variant<
+      StepToBits, StepToElementRun, StepToElement, StepToAssocElement,
+      StepToQueueRun, StepToComponent>
+      to;
+  mir::TypeId part_type;
+};
+
+// Each value the program computes that `step` is handed -- a start, a
+// coordinate, a bound -- as `visit` may replace it. A deferred write freezes
+// these where the statement is reached (LRM 10.4.2).
+template <typename Visit>
+void ForEachOperand(DescentStep& step, Visit visit) {
+  std::visit(
+      Overloaded{
+          [&](StepToBits& bits) { visit(bits.start); },
+          [&](StepToElementRun& run) { visit(run.start); },
+          [&](StepToElement& element) { visit(element.position); },
+          [&](StepToAssocElement& element) { visit(element.key); },
+          [&](StepToQueueRun& run) {
+            visit(run.lowest);
+            visit(run.highest);
+          },
+          [](StepToComponent&) {}},
+      step.to);
+}
+
+// What the value `step` is taken into has to hold for the step to be valid:
+// the tag of a tagged packed union, which only bits of one are behind.
+[[nodiscard]] inline auto TagRequiredBy(const DescentStep& step)
+    -> std::optional<RequiredTag> {
+  return std::visit(
+      Overloaded{
+          [](const StepToBits& bits) { return bits.required_tag; },
+          [](const StepToElementRun&) -> std::optional<RequiredTag> {
+            return std::nullopt;
+          },
+          [](const StepToElement&) -> std::optional<RequiredTag> {
+            return std::nullopt;
+          },
+          [](const StepToAssocElement&) -> std::optional<RequiredTag> {
+            return std::nullopt;
+          },
+          [](const StepToQueueRun&) -> std::optional<RequiredTag> {
+            return std::nullopt;
+          },
+          [](const StepToComponent&) -> std::optional<RequiredTag> {
+            return std::nullopt;
+          }},
+      step.to);
+}
 
 // A property of an object as what owns a value (LRM 8.4): the object, as the
 // expression the source reaches it through -- a class handle, or the running
@@ -118,7 +184,7 @@ struct AccessPath {
 
 // The type of the value a further step would descend into: the part the descent
 // has reached so far, or what the owner's place holds where it has reached
-// none. A step asks this to settle which entries realize it.
+// none.
 [[nodiscard]] auto PathValueType(
     const mir::CompilationUnit& unit, const mir::Block& block,
     const AccessPath& path) -> mir::TypeId;
@@ -149,26 +215,18 @@ struct AccessPath {
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
-// The read `step` takes from the value `receiver` names: its value entry,
-// answering at the part's type.
+// The read `step` takes from the value `receiver` names, answering at the
+// part's type.
 [[nodiscard]] auto StepRead(
     const mir::CompilationUnit& unit, mir::Block& block,
     const DescentStep& step, mir::ExprId receiver) -> mir::Expr;
-
-// What a step's read answered with, as a value a consumer may keep. A packed
-// part is answered as a view of the value it is a part of, so it is taken as a
-// value of its own (Rust's `&[T]::to_owned() -> Vec<T>` pattern); any other
-// part already is one.
-[[nodiscard]] auto OwnedValue(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::Expr read)
-    -> mir::Expr;
 
 // The type a read of a part of `source_type` answers at, where the part is
 // declared `part_type`. LRM 11.8.1: a part-select is unsigned regardless of the
 // operands, and its state domain follows the value it selects from, so a member
 // of a packed aggregate (LRM 7.2.1, selected as a part-select of the
-// aggregate's vector) is produced with the member's dimensions, unsigned, in
-// the aggregate's state domain. The member's declared signedness and, for a
+// aggregate's vector) is produced at the member's width, unsigned, in the
+// aggregate's state domain. The member's declared signedness and, for a
 // 2-state member of a 4-state aggregate, its narrower state domain are reached
 // by an explicit conversion of what was read. A part of a value that is not
 // packed is read at its declared type.
@@ -177,16 +235,14 @@ struct AccessPath {
     -> mir::TypeId;
 
 // The path as an expression yielding the part's value, for a caller that reads
-// it and writes nothing. A packed part is yielded as the view its step answers
-// with.
+// it and writes nothing.
 [[nodiscard]] auto PathValue(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
-// The path's value as one a consumer may keep, at the type the part is declared
-// with: a packed part is read at the type the read answers at, taken as a value
-// of its own, and brought to its declared type.
-[[nodiscard]] auto PathOwnedValue(
+// The path's value at the type the part is declared with: a packed part is
+// read at the type the read answers at and brought to its declared type.
+[[nodiscard]] auto PathValueAsDeclared(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
@@ -268,24 +324,13 @@ struct PathBits {
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> PathBits;
 
-// What an assignment applies to the value its target holds (LRM 11.4.1): an
-// operator the target language applies to two values of one type, or the
-// library entry that applies one to the value a place holds. Which of the two
-// an operator is follows from the operator alone, and this layer is where an
-// assignment is built, so it is settled here and no consumer of the assignment
-// classifies anything.
-using CompoundOperation = std::variant<mir::BinaryOp, support::BuiltinFn>;
-
-// Builds `lhs = rhs` or `lhs op= rhs` against the part `path` names. Three
-// shapes come out of it, each an ordinary MIR node with nothing left to decide:
-// replacing the whole of what a capability wrapper holds acts on the wrapper,
-// so it is a call taking the wrapper as its destination; applying a
-// library-performed operator is a call on the place the path designates, which
-// updates what that place holds; every other write is a store into that place,
-// compound or not. Each yields nothing.
+// Builds `lhs = rhs` against the part `path` names. Two shapes come out of it,
+// each an ordinary MIR node with nothing left to decide: replacing the whole of
+// what a capability wrapper holds acts on the wrapper, so it is a call taking
+// the wrapper as its destination; every other write is a store into the place
+// the path designates. Each yields nothing.
 [[nodiscard]] auto BuildStoreExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
-    mir::ExprId rhs_id,
-    std::optional<CompoundOperation> compound_op = std::nullopt) -> mir::Expr;
+    mir::ExprId rhs_id) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

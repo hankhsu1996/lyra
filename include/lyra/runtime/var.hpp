@@ -22,10 +22,75 @@
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
+
+// A value a wait reads by bit position (LRM 9.4.2): an integral value, of a
+// type known where it is compiled or one held as its words at a width it was
+// told. A write into one says which of its bits it reached; a write into any
+// other value says only that it changed it.
+template <class T>
+concept BitAddressed = value::IntegralValue<T> || value::HeldAsWords<T>;
+
+// Answers `read` asked of the planes and the width of a bit-addressed value.
+template <BitAddressed T, class Read>
+auto ReadPlanes(const T& bits, Read read) -> decltype(auto) {
+  if constexpr (value::IntegralValue<T>) {
+    const typename T::Words words = bits.Load();
+    return read(words.Read(), T::kWidth);
+  } else {
+    return read(bits.Read(), bits.Width());
+  }
+}
+
+// A bit-addressed value that is one word in each plane it carries.
+template <class T>
+concept HeldInOneWord = value::IntegralValue<T> && T::kWords == 1;
+
+// The bits of `storage` at `reached` kept as they stand before a write that
+// reaches them, every bit of it where none are named.
+template <BitAddressed T>
+auto KeptBefore(
+    const T& storage, std::optional<value::BitPositions> reached = std::nullopt)
+    -> Change {
+  if constexpr (HeldInOneWord<T>) {
+    const typename T::Words words = storage.Load();
+    std::uint64_t unknown = 0;
+    if constexpr (T::kFourState) {
+      unknown = words.unknown[0];
+    }
+    return Change::ReachingInWord(
+        words.value[0], unknown,
+        reached.value_or(value::BitPositions{.lsb = 0, .width = T::kWidth}));
+  } else {
+    return ReadPlanes(
+        storage, [&](value::ConstPlanes planes, std::uint64_t width) {
+          return Change::Reaching(
+              planes,
+              reached.value_or(value::BitPositions{.lsb = 0, .width = width}));
+        });
+  }
+}
+
+// The same bits of `storage` once the write has landed.
+template <BitAddressed T>
+void KeepAfter(Change& change, const T& storage) {
+  if constexpr (HeldInOneWord<T>) {
+    const typename T::Words words = storage.Load();
+    std::uint64_t unknown = 0;
+    if constexpr (T::kFourState) {
+      unknown = words.unknown[0];
+    }
+    change.SetAfterInWord(words.value[0], unknown);
+  } else {
+    ReadPlanes(storage, [&](value::ConstPlanes planes, std::uint64_t) {
+      change.SetAfter(planes);
+    });
+  }
+}
 
 // What a write into part of an owner's storage writes through (LRM 11.5.1).
 // The write reaches the owner's storage and lands its part there directly; the
@@ -79,7 +144,7 @@ class Ref;
 // otherwise.
 class RareWriteState {
  public:
-  RareWriteState() = default;
+  RareWriteState();
   RareWriteState(const RareWriteState&) = delete;
   auto operator=(const RareWriteState&) -> RareWriteState& = delete;
   RareWriteState(RareWriteState&&) = delete;
@@ -121,12 +186,12 @@ class VariableCell : public Observable {
   VariableCell();
   ~VariableCell();
 
+  // Every store asks whether one is installed, so it is read where the store
+  // is written.
   [[nodiscard]] auto Rare() const -> RareWriteState* {
     return rare_.get();
   }
-  void InstallRare(std::unique_ptr<RareWriteState> rare) {
-    rare_ = std::move(rare);
-  }
+  void InstallRare(std::unique_ptr<RareWriteState> rare);
 
  private:
   std::unique_ptr<RareWriteState> rare_;
@@ -209,17 +274,16 @@ template <value::LyraValue T>
 CellRareState<T>::~CellRareState() = default;
 
 // Replaces the whole of `storage` by `overwrite`, a write already known to
-// change it, and answers what its waits are told. Of a packed value the change
-// keeps its words from before, so a wait reading bits the new value leaves as
-// they were is passed over; of any other value nothing but that it changed can
-// be shown, so nothing is kept.
+// change it, and answers what its waits are told. Of a bit-addressed value the
+// change keeps its words from before, so a wait reading bits the new value
+// leaves as they were is passed over; of any other value nothing but that it
+// changed can be shown, so nothing is kept.
 template <class T, class Overwrite>
 auto ReplaceWhole(const T& storage, Overwrite overwrite) -> Change {
-  if constexpr (std::same_as<T, value::PackedArray>) {
-    Change change =
-        Change::Reaching(storage, {.lsb = 0, .width = storage.BitWidth()});
+  if constexpr (BitAddressed<T>) {
+    Change change = KeptBefore(storage);
     overwrite();
-    change.SetAfter(storage);
+    KeepAfter(change, storage);
     return change;
   } else {
     overwrite();
@@ -237,14 +301,15 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   auto operator=(Var&&) -> Var& = delete;
   ~Var();
 
-  // The write a declaration makes. The first one installs the cell's
-  // representation and contents from `prototype`, a value of the declared
-  // type; a later one -- a declaration reached again, which begins a fresh
-  // variable in the one storage -- overwrites at that representation. What is
-  // fixed is the representation, not the number of times a declaration runs,
-  // so a prototype that does not match the installed one is the lowering
-  // defect and is what refuses. A store before any of this is one too, and the
-  // store path is what refuses it.
+  // The write a declaration makes, which may run more than once: a declaration
+  // reached again begins a fresh variable in the one storage. A value whose
+  // type states its representation is overwritten every time. A value
+  // represented at run time takes its representation from the first such
+  // write and is overwritten at it by each later one, so what is fixed is the
+  // representation, not the number of times a declaration runs: a value that
+  // does not match the installed one is the lowering defect and is what
+  // refuses, and so is a store into such a cell before any declaration ran,
+  // which the store path refuses.
   void Initialize(T prototype) {
     if (!this->IsInstalled()) {
       this->Install(std::move(prototype));
@@ -264,10 +329,23 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // that was overridden.
   void Set(const T& new_val);
 
+  // The same write of a value handed as its bytes, as wide as what the cell
+  // holds, which the cell compares with and takes into the words it has.
+  void SetBytes(const void* bytes)
+    requires value::TakesBytesInPlace<T>
+  {
+    if (TakenOver()) {
+      return;
+    }
+    StoreBy(
+        [&] { return this->Get().HoldsBytes(bytes); },
+        [&] { this->Storage().TakeBytes(bytes); });
+  }
+
   // Starts a procedural continuous assignment at `level`, superseding whatever
   // was driving that level, and answers with the generation its evaluation
   // carries (LRM 10.6).
-  auto BeginTakeover(const value::PackedArray& level) -> value::PackedArray;
+  auto BeginTakeover(std::int64_t level) -> std::int64_t;
 
   // States what the takeover at `level` has evaluated to. It reaches the cell
   // only when no higher level covers it, and is recorded either way so that
@@ -276,14 +354,19 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // is how an evaluation superseded by a later takeover, or ended by a
   // `deassign` or `release`, learns to stop.
   auto DriveTakeover(
-      const value::PackedArray& level, const value::PackedArray& generation,
-      const T& new_val) -> bool;
+      std::int64_t level, std::int64_t generation, const T& new_val) -> bool;
+
+  // The same of a value handed as its bytes, as wide as what the cell holds,
+  // which the level takes into the words it has once it holds a value.
+  auto DriveTakeoverBytes(
+      std::int64_t level, std::int64_t generation, const void* bytes) -> bool
+    requires value::TakesBytesInPlace<T>;
 
   // Ends the procedural continuous assignment at `level`, handing the cell to
   // the highest level still in effect. Where none is left the cell is left
   // exactly as it stands, which is what a released variable keeps (LRM
   // 10.6.2).
-  void EndTakeover(const value::PackedArray& level);
+  void EndTakeover(std::int64_t level);
 
   // Arms the cell to answer for its sampled value (LRM 16.5.1) and installs the
   // one every read answers with until the first change of some later slot.
@@ -340,24 +423,30 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // of the old value, except the old words a packed value's waits are passed
   // over by.
   void Store(const T& new_val) {
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      if (!this->IsInstalled()) {
-        throw InternalError(
-            "Var<PackedArray>: store into a cell that was never initialized");
-      }
+    StoreBy(
+        [&] { return this->Get().IsBitIdentical(new_val); },
+        [&] { this->Overwrite(new_val); });
+  }
+
+  // That path over however the arriving value is held: `already_held` answers
+  // whether the cell holds the same bits, and `overwrite` replaces what it
+  // holds.
+  template <class AlreadyHeld, class Overwrite>
+  void StoreBy(AlreadyHeld already_held, Overwrite overwrite) {
+    if (!this->IsInstalled()) {
+      throw InternalError("Var: store into a cell that was never initialized");
     }
     if (CellRareState<T>* rare = ExistingRareState()) {
       rare->KeepPreponed();
     }
     if (!this->HasMembers()) {
-      this->Overwrite(new_val);
+      overwrite();
       return;
     }
-    if (this->Get().IsBitIdentical(new_val)) {
+    if (already_held()) {
       return;
     }
-    PublishTransition(
-        ReplaceWhole(this->Get(), [&] { this->Overwrite(new_val); }));
+    PublishTransition(ReplaceWhole(this->Get(), overwrite));
   }
 
   // Whether a procedural continuous assignment shows through the cell (LRM
@@ -366,6 +455,12 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     const CellRareState<T>* rare = ExistingRareState();
     return rare != nullptr && rare->TakenOver();
   }
+
+  // Has the takeover at `level` record what it evaluated to, through `record`,
+  // and shows whatever the highest level in effect then holds.
+  template <class Record>
+  auto RecordTakeover(
+      std::int64_t level, std::int64_t generation, Record record) -> bool;
 
   // What only a sampled or taken-over cell keeps, made the first time either
   // is asked for. This cell is the only thing that makes it, so it is always
@@ -401,42 +496,56 @@ class KeptPart {
   Part before_;
 };
 
-// Writes `value` into the bits `bits` names (LRM 11.5.1) and answers what the
-// write did to the bits of its value it reached, kept only where `watched` says
-// something reads the answer: none where it moved none.
-auto WriteBits(
-    value::PackedArrayRef& bits, const value::PackedArray& value, bool watched)
-    -> std::optional<Change>;
-
-// A packed part keeps only the words it lies in, as a change reaching its
-// bits, so a wait is compared on them by position. Some of a packed value's
-// bits are a part a write lands on as well, kept as the words of the value
-// they lie in. No design shapes a packed part, so this is compiled once, in the
-// library.
-template <>
-class KeptPart<value::PackedArray> {
+// A bit-addressed part keeps only the words it lies in, as a change reaching
+// its bits, so a wait is compared on them by position. Some of a bit-addressed
+// value's bits are a part a write lands on as well, kept as the words of the
+// value they lie in.
+template <BitAddressed Part>
+class KeptPart<Part> {
  public:
-  explicit KeptPart(const value::PackedArray& part);
-  KeptPart(const value::PackedArray& storage, value::BitPositions reached);
-  KeptPart(const KeptPart&) = delete;
-  auto operator=(const KeptPart&) -> KeptPart& = delete;
-  KeptPart(KeptPart&&) = delete;
-  auto operator=(KeptPart&&) -> KeptPart& = delete;
-  ~KeptPart();
+  explicit KeptPart(const Part& part) : reached_(KeptBefore(part)) {
+  }
+  KeptPart(const Part& storage, value::BitPositions reached)
+      : reached_(KeptBefore(storage, reached)) {
+  }
 
-  [[nodiscard]] auto ChangeTo(const value::PackedArray& part)
-      -> std::optional<Change>;
+  [[nodiscard]] auto ChangeTo(const Part& part) -> std::optional<Change> {
+    KeepAfter(reached_, part);
+    if (reached_.Unmoved()) {
+      return std::nullopt;
+    }
+    return reached_;
+  }
 
  private:
   Change reached_;
 };
 
+// Writes `value` into the bits `bits` names (LRM 11.5.1) and answers what the
+// write did to the bits of its value it reached, kept only where `watched` says
+// something reads the answer: none where it moved none.
+template <class Bits, class Value>
+auto WriteBits(Bits& bits, const Value& value, bool watched)
+    -> std::optional<Change> {
+  const std::optional<value::BitPositions> reached =
+      watched ? bits.Reached() : std::nullopt;
+  if (!reached.has_value()) {
+    bits = value;
+    return std::nullopt;
+  }
+  KeptPart<std::remove_cvref_t<decltype(bits.Root())>> kept(
+      bits.Root(), *reached);
+  bits = value;
+  return kept.ChangeTo(bits.Root());
+}
+
 // Writes `value` into storage a reference names, at the representation the
-// storage already has; the first write into a packed value nothing has written
-// yet is the one that gives it one, as a local's declaration does.
+// storage already has; the first write into a value represented at run time
+// that nothing has written yet is the one that gives it one, as a local's
+// declaration does.
 template <value::LyraValue T>
 void StoreInto(T& storage, const T& value) {
-  if constexpr (std::same_as<T, value::PackedArray>) {
+  if constexpr (RepresentedAtRunTime<T>) {
     if (!storage.IsUninitialized() && !storage.SameRepresentation(value)) {
       throw InternalError(
           "StoreInto: a value's representation does not match the storage a "
@@ -721,22 +830,41 @@ void Var<T>::Set(const T& new_val) {
 }
 
 template <value::LyraValue T>
-auto Var<T>::BeginTakeover(const value::PackedArray& level)
-    -> value::PackedArray {
-  return TakeoverGenerationValue(
-      RareState().Takeovers().Begin(TakeoverLevelOf(level)));
+auto Var<T>::BeginTakeover(std::int64_t level) -> std::int64_t {
+  return std::int64_t{RareState().Takeovers().Begin(TakeoverLevelOf(level))};
 }
 
 template <value::LyraValue T>
 auto Var<T>::DriveTakeover(
-    const value::PackedArray& level, const value::PackedArray& generation,
-    const T& new_val) -> bool {
+    std::int64_t level, std::int64_t generation, const T& new_val) -> bool {
+  return RecordTakeover(
+      level, generation, [&](std::optional<T>& held) { held = new_val; });
+}
+
+template <value::LyraValue T>
+auto Var<T>::DriveTakeoverBytes(
+    std::int64_t level, std::int64_t generation, const void* bytes) -> bool
+  requires value::TakesBytesInPlace<T>
+{
+  return RecordTakeover(level, generation, [&](std::optional<T>& held) {
+    if (held.has_value()) {
+      held->TakeBytes(bytes);
+    } else {
+      held.emplace(this->Get().Holding(bytes));
+    }
+  });
+}
+
+template <value::LyraValue T>
+template <class Record>
+auto Var<T>::RecordTakeover(
+    std::int64_t level, std::int64_t generation, Record record) -> bool {
   const CellRareState<T>* rare = ExistingRareState();
   Takeovers<T>* takeovers =
       rare == nullptr ? nullptr : rare->ExistingTakeovers();
   if (takeovers == nullptr ||
       !takeovers->Drive(
-          TakeoverLevelOf(level), TakeoverGenerationOf(generation), new_val)) {
+          TakeoverLevelOf(level), TakeoverGenerationOf(generation), record)) {
     return false;
   }
   // A level that just recorded always leaves something showing, and it is this
@@ -748,7 +876,7 @@ auto Var<T>::DriveTakeover(
 }
 
 template <value::LyraValue T>
-void Var<T>::EndTakeover(const value::PackedArray& level) {
+void Var<T>::EndTakeover(std::int64_t level) {
   // Ending a level nothing occupies is what a `release` on an untaken variable
   // does, and the language gives it no effect (LRM 10.6.2).
   const CellRareState<T>* rare = ExistingRareState();
@@ -836,15 +964,15 @@ class WriteBracket {
   }
 
   // The part landed on is not what it was, and `change` says which of its bits
-  // moved. A write into a packed value lands on the whole or on some of its
-  // bits, and either way `change` names bits of the whole by their position;
-  // the waits on any other value are not bit-addressed.
+  // moved. A write into a bit-addressed value lands on the whole or on some of
+  // its bits, and either way `change` names bits of the whole by their
+  // position; the waits on any other value are not bit-addressed.
   void Landed(const Change& change) {
     if (!Open()) {
       return;
     }
     outcome_ = Outcome::kSettled;
-    if constexpr (std::same_as<ValueType, value::PackedArray>) {
+    if constexpr (BitAddressed<ValueType>) {
       sink_.PublishTransition(change);
     } else {
       sink_.PublishTransition(Change::Whole());
@@ -891,7 +1019,7 @@ class WriteBracket {
 template <class Sink, class Slice>
 class DesignatedSlice;
 
-template <class Sink>
+template <class Sink, class Bits>
 class DesignatedBits;
 
 // A place designated within a write: the whole of what the write was opened
@@ -938,16 +1066,20 @@ class Designation {
         *write_, component};
   }
 
-  // Bits of a packed value lie in the value's own words, so they are a place
-  // the write lands on; a slice of any other value is several elements.
-  template <typename... Bounds>
-  auto SliceRef(const Bounds&... bounds) {
-    if constexpr (std::same_as<Part, value::PackedArray>) {
-      return DesignatedBits<Sink>{*write_, part_->SliceRef(bounds...)};
-    } else {
-      auto slice = part_->SliceRef(bounds...);
-      return DesignatedSlice<Sink, decltype(slice)>{*write_, std::move(slice)};
-    }
+  // The bits of a value of `Bits` at `position` within the part (LRM 11.5.1).
+  // They lie in the part's own words, so they are a place the write lands on.
+  template <typename Bits, typename Position>
+  auto SliceRef(const Position& position) {
+    auto bits = part_->template SliceRef<Bits>(position);
+    return DesignatedBits<Sink, decltype(bits)>{*write_, std::move(bits)};
+  }
+
+  // `count` elements of the part from `start` (LRM 7.4.6), which are several
+  // places rather than one.
+  template <typename Position>
+  auto SliceRef(const Position& start, std::int64_t count) {
+    auto slice = part_->SliceRef(start, count);
+    return DesignatedSlice<Sink, decltype(slice)>{*write_, std::move(slice)};
   }
 
   auto operator*() -> Part& {
@@ -1002,14 +1134,15 @@ class DesignatedSlice {
   Slice slice_;
 };
 
-// Bits of a packed value designated within a write (LRM 11.5.1). They lie in
-// the value's own words, so the write lands on them where they are, and each
+// Bits of a bit-addressed value designated within a write (LRM 11.5.1), named
+// by `Bits`, the designation of them the value hands out. They lie in the
+// value's own words, so the write lands on them where they are, and each
 // assignment through them keeps what they held, writes them, and tells the
 // write which bits it reached.
-template <class Sink>
-class DesignatedBits : public value::AssignmentOperators<DesignatedBits<Sink>> {
+template <class Sink, class Bits>
+class DesignatedBits {
  public:
-  DesignatedBits(WriteBracket<Sink>& write, value::PackedArrayRef bits)
+  DesignatedBits(WriteBracket<Sink>& write, Bits bits)
       : write_(&write), bits_(std::move(bits)) {
   }
 
@@ -1026,7 +1159,8 @@ class DesignatedBits : public value::AssignmentOperators<DesignatedBits<Sink>> {
     return this;
   }
 
-  auto operator=(const value::PackedArray& value) -> DesignatedBits& {
+  template <class Value>
+  auto operator=(const Value& value) -> DesignatedBits& {
     if (const std::optional<Change> change =
             WriteBits(bits_, value, write_->Undecided())) {
       write_->Landed(*change);
@@ -1034,20 +1168,17 @@ class DesignatedBits : public value::AssignmentOperators<DesignatedBits<Sink>> {
     return *this;
   }
 
-  [[nodiscard]] auto ToOwned() const -> value::PackedArray {
-    return bits_.ToOwned();
-  }
-
-  // Bits within these, written within the same write.
-  [[nodiscard]] auto SliceRef(
-      const value::PackedArray& position, std::int64_t width) const
-      -> DesignatedBits {
-    return DesignatedBits{*write_, bits_.SliceRef(position, width)};
+  // The bits of a value of `Inner` within these, written within the same
+  // write.
+  template <class Inner, class Position>
+  [[nodiscard]] auto SliceRef(const Position& position) const {
+    auto inner = bits_.template SliceRef<Inner>(position);
+    return DesignatedBits<Sink, decltype(inner)>{*write_, std::move(inner)};
   }
 
  private:
   WriteBracket<Sink>* write_;
-  value::PackedArrayRef bits_;
+  Bits bits_;
 };
 
 // A write opened in the full-expression that writes, and ended with it, which
@@ -1091,6 +1222,6 @@ auto Ref<T>::Mutate() const -> ScopedMutation<Ref<T>> {
   return ScopedMutation<Ref<T>>{*this};
 }
 
-static_assert(MutationSink<Ref<value::PackedArray>>);
+static_assert(MutationSink<Ref<value::Logic>>);
 
 }  // namespace lyra::runtime

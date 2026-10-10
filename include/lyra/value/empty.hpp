@@ -4,7 +4,7 @@
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/format.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
@@ -19,15 +19,15 @@ namespace lyra::value {
 // mandate them while a type with one value has nothing to read from them.
 struct Empty {
   // NOLINTNEXTLINE(readability-named-parameter)
-  auto operator==(const Empty&) const -> PackedArray {
-    return PackedArray::Bit(true);
+  auto operator==(const Empty&) const -> Bit {
+    return Bit::FromBool(true);
   }
-  auto operator!=(const Empty& other) const -> PackedArray {
+  auto operator!=(const Empty& other) const -> Bit {
     return !(*this == other);
   }
   // NOLINTNEXTLINE(readability-named-parameter)
-  [[nodiscard]] static auto CaseEqual(const Empty&) -> PackedArray {
-    return PackedArray::Bit(true);
+  [[nodiscard]] static auto CaseEqual(const Empty&) -> Bit {
+    return Bit::FromBool(true);
   }
   // NOLINTNEXTLINE(readability-named-parameter)
   [[nodiscard]] static auto IsBitIdentical(const Empty&) -> bool {
@@ -36,16 +36,16 @@ struct Empty {
   [[nodiscard]] static auto HasUnknown() -> bool {
     return false;
   }
-  [[nodiscard]] static auto IsUnknown() -> PackedArray {
-    return PackedArray::Bit(false);
+  [[nodiscard]] static auto IsUnknown() -> Bit {
+    return Bit::FromBool(false);
   }
   // LRM 20.6.2 `$bits` / 20.9 `$countbits`: a value carrying no bits.
-  [[nodiscard]] static auto BitstreamWidth() -> PackedArray {
-    return PackedArray::Int(0);
+  [[nodiscard]] static auto BitstreamWidth() -> Int {
+    return Int::FromInt(0);
   }
   // NOLINTNEXTLINE(readability-named-parameter)
-  [[nodiscard]] static auto CountBits(const PackedArray&) -> PackedArray {
-    return PackedArray::Int(0);
+  [[nodiscard]] static auto CountBits(const ConstIntegralView&) -> Int {
+    return Int::FromInt(0);
   }
 };
 
@@ -63,6 +63,6 @@ struct Formatter<Empty> {
 
 static_assert(LyraValue<Empty>);
 static_assert(CaseEqualComparable<Empty>);
-static_assert(BitstreamSizable<Empty>);
+static_assert(BitstreamSizable<Empty, ConstIntegralView>);
 
 }  // namespace lyra::value

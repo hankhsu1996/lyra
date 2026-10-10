@@ -1,14 +1,13 @@
 #pragma once
 
-#include <algorithm>
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <memory>
-#include <utility>
+#include <optional>
 #include <vector>
 
+#include "lyra/base/fixed_array.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/observable.hpp"
@@ -18,30 +17,36 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/strength_level.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/net_resolution.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
+#include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
 
-// Which level a contribution is driven at. It arrives as a PackedArray
-// literal, the way every compile-time scalar crosses into a runtime entry.
-[[nodiscard]] inline auto StrengthLevelOf(const value::PackedArray& level)
-    -> support::StrengthLevel {
-  return static_cast<support::StrengthLevel>(level.ToInt64());
+// A value of an integral type of `count` positions with every one holding
+// `fill` (LRM 6.7.1), as a value of the type `T` that lays it out: `fill` in
+// each of its positions, and every position above them clear.
+template <BitAddressed T>
+[[nodiscard]] auto FilledOver(std::uint64_t count, value::FourStateBit fill)
+    -> T {
+  if constexpr (value::IntegralValue<T>) {
+    typename T::Words words;
+    value::FillScalar(words.Write(), count, fill);
+    return T::FromWords(words);
+  } else {
+    return T::Filled(count, fill);
+  }
 }
 
-// A position or a count of them, as a compile-time scalar reaches a runtime
-// entry: the same `PackedArray` literal carriage every other one takes.
-[[nodiscard]] inline auto PositionOf(const value::PackedArray& count)
-    -> std::uint32_t {
-  return static_cast<std::uint32_t>(count.ToInt64());
-}
+// The scalar a net type contributes at each position (LRM 6.7.1), which
+// arrives at a net's install as the machine integer every runtime scalar is.
+[[nodiscard]] auto NetFillOf(std::int64_t fill) -> value::FourStateBit;
 
 // One contribution to a net's resolution: a logic value and the strength it is
 // driven at (LRM 28.11). Strength rides the contribution rather than the net's
 // resolved value, because all it decides is which contribution determines a
 // position, and nothing that reads a net asks how strongly it got there.
-template <value::NetResolvable T>
+template <class T>
 struct DriveContribution {
   T value{};
   support::StrengthLevel strength{};
@@ -52,37 +57,199 @@ struct DriveContribution {
 // drivers last decided, which is how a net stores a value (LRM 6.6.4).
 enum class OwnContribution : std::uint8_t { kFixed, kRetained };
 
-template <value::NetResolvable T>
-class Driver;
+// Whether any contribution sits at a given level, one bit per level, so a
+// resolution visits only the levels that exist. A contribution at high
+// impedance is never recorded, because it determines no position (LRM
+// 28.12.1) -- which is what leaves positions nobody drives resolving in no
+// passes at all.
+using OccupiedLevels = std::uint32_t;
 
-template <value::NetResolvable T>
-class ResolvedNet;
+[[nodiscard]] auto LevelBit(support::StrengthLevel level) -> OccupiedLevels;
 
-template <value::NetResolvable T>
+// Some positions of nets whose values are read bit by bit: one four-state bit
+// each, and how many there are. A connection cuts a net at the positions it
+// names (LRM 23.3.3.7), so how many resolve together is settled while the
+// design is constructed, and two nets of different declared types may reach
+// the same ones; positions therefore carry no type, and everything done to
+// them is done over their words at their count.
+class NetPositions {
+ public:
+  // `count` positions each holding `bit`.
+  NetPositions(std::uint32_t count, value::FourStateBit bit);
+
+  // Defined in the library, as everything here is: a unit holding a net reaches
+  // positions only through what the library has already compiled.
+  NetPositions(const NetPositions&);
+  NetPositions(NetPositions&&) noexcept;
+  auto operator=(const NetPositions&) -> NetPositions&;
+  auto operator=(NetPositions&&) noexcept -> NetPositions&;
+  ~NetPositions();
+
+  [[nodiscard]] auto Count() const -> std::uint32_t;
+  [[nodiscard]] auto Read() const -> value::ConstPlanes;
+  [[nodiscard]] auto Write() -> value::Planes;
+
+  // `count` of these positions from `from`.
+  [[nodiscard]] auto Part(std::uint32_t from, std::uint32_t count) const
+      -> NetPositions;
+
+ private:
+  std::uint32_t count_;
+  // The value plane's words, then the unknown plane's.
+  base::FixedArray<std::uint64_t, 2> words_;
+};
+
+// Rewrites a bit-addressed value through `write`, which is handed the value's
+// planes and how many positions they hold.
+template <BitAddressed T, class Write>
+void RewritePlanes(T& bits, Write write) {
+  if constexpr (value::IntegralValue<T>) {
+    typename T::Words words = bits.Load();
+    write(words.Write(), std::uint64_t{T::kWidth});
+    bits = T::FromWords(words);
+  } else {
+    write(bits.Write(), bits.Width());
+  }
+}
+
+// As many of a net value's positions as `positions` holds, from `offset`. A
+// position the value does not reach reads x, which no connection names.
+template <BitAddressed T>
+void ReadPositions(
+    const T& value, std::uint32_t offset, NetPositions& positions) {
+  ReadPlanes(value, [&](value::ConstPlanes planes, std::uint64_t width) {
+    value::Extract(positions.Write(), positions.Count(), planes, width, offset);
+  });
+}
+
+// A net value with the positions from `offset` replaced by `positions`, every
+// other position left as it stands.
+template <BitAddressed T>
+void WritePositions(
+    T& into, std::uint32_t offset, const NetPositions& positions) {
+  RewritePlanes(into, [&](value::Planes planes, std::uint64_t width) {
+    value::Insert(planes, width, positions.Read(), positions.Count(), offset);
+  });
+}
+
+class NetName;
 class PhysicalNet;
+
+// A value a net holds (LRM 6.7.1): an integral one, whose positions resolve
+// wherever a connection put them, or an unpacked aggregate, which folds one
+// contribution into another itself.
+template <class T>
+concept NetValue = BitAddressed<T> || value::NetResolvable<T>;
+
+template <NetValue T>
+class Driver;
 
 // Where one declared net sits in a physical net: the net, and where among that
 // net's own positions the ones the physical net covers begin. Every name in a
 // physical net covers the whole of it, so how many positions it covers is the
-// physical net's width, and a name reaching part of one reaches it as a
+// physical net's count, and a name reaching part of one reaches it as a
 // separate physical net -- what a connection relates is positions, and
 // positions related to two different things at two alignments are two physical
 // nets. A net no connection reached is the one placement of its own physical
 // net at offset zero.
-template <value::NetResolvable T>
 struct NetPlacement {
-  ResolvedNet<T>* net{};
+  NetName* net{};
   std::uint32_t net_offset{};
 };
 
 // Some of a declared net's own positions and the physical net it reaches there.
 // A net's reaches cover it exactly and in order, so a name whose positions were
 // never split reaches one.
-template <value::NetResolvable T>
 struct NetReach {
-  std::shared_ptr<PhysicalNet<T>> physical;
+  std::shared_ptr<PhysicalNet> physical;
   std::uint32_t net_offset{};
-  std::uint32_t width{};
+  std::uint32_t count{};
+};
+
+// A declared net as the physical nets it reaches see it: which of them it
+// reaches and over which of its own positions, the strengths its own
+// contributions sit at, and the two things a resolution asks of it -- its
+// contributions as they stand over some of its positions, and to show what
+// those positions resolved to. What type the net's own value is does not
+// appear, which is what lets nets of different types reach one physical net.
+class NetName {
+ public:
+  NetName(const NetName&) = delete;
+  auto operator=(const NetName&) -> NetName& = delete;
+  NetName(NetName&&) = delete;
+  auto operator=(NetName&&) -> NetName& = delete;
+
+  // States that `count` of this name's positions from `here`, and the same
+  // many of `other`'s from `there`, are one physical net.
+  void Join(
+      NetName& other, std::uint32_t here, std::uint32_t there,
+      std::uint32_t count);
+
+  // The physical nets this name reaches, covering its positions exactly and in
+  // order.
+  [[nodiscard]] auto Reaches() const -> const std::vector<NetReach>&;
+
+  // Gives this name the physical net its declaration makes of its `count`
+  // positions, which is the first it reaches: the scalar the net type
+  // contributes at each of them and the strength it is held at, how
+  // contributions of equal strength fold, and whether resolution keeps that
+  // contribution current. Answers what the positions resolve to before any
+  // driver attaches.
+  auto Declare(
+      support::StrengthLevel strength, value::FourStateBit own_fill,
+      value::NetResolution fold, OwnContribution own_kind, std::uint32_t count)
+      -> NetPositions;
+
+  // Records that one of this name's own contributions sits at `level`.
+  void Occupy(support::StrengthLevel level);
+
+ protected:
+  NetName();
+  ~NetName();
+
+ private:
+  friend class PhysicalNet;
+
+  // One reach, the name's own, until a connection states that some of these
+  // positions are also some of another name's -- which cuts this net's reaches
+  // where those positions end, since what the two share resolves together and
+  // what it does not goes on resolving alone.
+  std::vector<NetReach> reaches_;
+  // Whether any of this net's own contributions sits at a given level, which a
+  // resolution reads from every name reaching it. Recording it per name is what
+  // leaves a driver attached after a connection needing nothing propagated, and
+  // a connection made after one needing nothing rebuilt.
+  OccupiedLevels occupied_{};
+
+  // Folds each of this name's contributions at `level` into `group` under
+  // `fold`, as it stands over the positions `group` holds, which begin at
+  // `offset` among this name's own.
+  virtual void FoldContributions(
+      support::StrengthLevel level, value::NetResolution fold,
+      std::uint32_t offset, NetPositions& group) const = 0;
+
+  // Shows `positions` over this name's own from `offset`, publishing under
+  // this name if what it shows moved (LRM 23.3.3.7).
+  virtual void ShowPositions(
+      RuntimeEffects& runtime, std::uint32_t offset,
+      const NetPositions& positions) = 0;
+
+  // Which of this net's reaches begins at `position`, cutting what it reaches
+  // so that one does and so that it covers no more than `within` positions. A
+  // connection names some of a net's own positions; what the net reaches there
+  // was fixed by whatever connections came before, so the two are made to agree
+  // here.
+  auto ReachAt(std::uint32_t position, std::uint32_t within) -> std::size_t;
+
+  // Cuts a physical net in two, `at` positions from its start, and gives every
+  // name reaching it the two reaches that replace the one.
+  static void CutPhysical(
+      std::shared_ptr<PhysicalNet> physical, std::uint32_t at);
+
+  // Makes one physical net of two that cover the same positions, leaving every
+  // name of the second reaching the first.
+  static void MergePhysical(
+      std::shared_ptr<PhysicalNet> keep, std::shared_ptr<PhysicalNet> folded);
 };
 
 // A physical net: the positions that resolve together. LRM 10.11 names it,
@@ -104,90 +271,20 @@ struct NetReach {
 // A name keeps its own contributions, its own observers, and a copy of what
 // these positions produced over the ones it reaches, so reading a net reaches
 // its own storage directly and never follows a pointer to get there.
-template <value::NetResolvable T>
 class PhysicalNet {
  public:
   PhysicalNet(
-      T nondriving, DriveContribution<T> own, value::PackedArray own_fill,
-      value::NetResolution fold, OwnContribution own_kind, std::uint32_t width)
-      : nondriving_(std::move(nondriving)),
-        own_(std::move(own)),
-        own_fill_(std::move(own_fill)),
-        fold_(fold),
-        own_kind_(own_kind),
-        width_(width) {
-  }
+      DriveContribution<NetPositions> own, value::FourStateBit own_fill,
+      value::NetResolution fold, OwnContribution own_kind);
 
   PhysicalNet(const PhysicalNet&) = delete;
   auto operator=(const PhysicalNet&) -> PhysicalNet& = delete;
   PhysicalNet(PhysicalNet&&) = delete;
   auto operator=(PhysicalNet&&) -> PhysicalNet& = delete;
-  ~PhysicalNet() = default;
+  ~PhysicalNet();
 
- private:
-  friend class ResolvedNet<T>;
-
-  // Whether any contribution sits at a given level, one bit per level, so a
-  // resolution visits only the levels that exist. A contribution at high
-  // impedance is never recorded, because it determines no position (LRM
-  // 28.12.1) -- which is what leaves positions nobody drives resolving in no
-  // passes at all.
-  using OccupiedLevels = std::uint32_t;
-
-  [[nodiscard]] static auto LevelBit(support::StrengthLevel level)
-      -> OccupiedLevels {
-    if (level == support::StrengthLevel::kHighImpedance) {
-      return 0U;
-    }
-    return OccupiedLevels{1} << static_cast<unsigned>(level);
-  }
-
-  // How many positions a value of this type states. An aggregate net states one
-  // indivisible position, because nothing names a part of one: a connection
-  // reaching such a net covers the whole of it.
-  [[nodiscard]] static auto PositionsOf(const T& value) -> std::uint32_t {
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      return static_cast<std::uint32_t>(value.BitWidth());
-    } else {
-      return 1;
-    }
-  }
-
-  // Whether a placement stands for the whole of the name reaching it, so
-  // carrying a value between the two leaves every position where it already is.
-  // That is the case every design connecting whole nets is in.
-  [[nodiscard]] auto CoversTheName(
-      const NetPlacement<T>& placement, std::uint64_t net_width) const -> bool {
-    return placement.net_offset == 0 && width_ == net_width;
-  }
-
-  // A name's value seen at these positions.
-  [[nodiscard]] auto FromPlacement(
-      const T& value, const NetPlacement<T>& placement) const -> T {
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      if (CoversTheName(placement, value.BitWidth())) {
-        return value;
-      }
-      return value.ExtractBits(placement.net_offset, width_);
-    } else {
-      return value;
-    }
-  }
-
-  // These positions seen at a name's, written over whatever that name held
-  // there.
-  [[nodiscard]] auto IntoPlacement(
-      T into, const T& value, const NetPlacement<T>& placement) const -> T {
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      if (CoversTheName(placement, into.BitWidth())) {
-        return value;
-      }
-      into.InsertBits(placement.net_offset, width_, value);
-      return into;
-    } else {
-      return value;
-    }
-  }
+  // How many positions resolve together here.
+  [[nodiscard]] auto Count() const -> std::uint32_t;
 
   // What these positions resolve to, from the contributions every name reaching
   // them has made. Between levels the stronger contribution determines every
@@ -198,12 +295,7 @@ class PhysicalNet {
   // every level starts from the all-`z` value every fold treats as its
   // identity, so a level nothing occupies and positions with no drivers are not
   // cases of their own.
-  //
-  // Every operation here reads the same way from every net-valid value type,
-  // which is what `value::NetResolvable` states, so one realization serves
-  // every net type and a backend that erases the value type still resolves
-  // correctly.
-  [[nodiscard]] auto Resolve() const -> T;
+  [[nodiscard]] auto Resolve() const -> NetPositions;
 
   // Recomputes these positions and gives every name reaching them what they
   // produced over the positions it reaches, each publishing under its own name
@@ -212,155 +304,144 @@ class PhysicalNet {
   // any of them.
   void Reresolve(RuntimeEffects& runtime);
 
+  // Puts these positions under a procedural continuous assignment and takes
+  // them back out (LRM 10.6.2). What a force overrides is the drivers of the
+  // physical net, so it shows under every name reaching these positions. A
+  // level is driven with the planes of a value of `width` bits, of which it
+  // keeps as many positions as resolve here.
+  auto BeginTakeover(support::TakeoverLevel level) -> std::uint32_t;
+  auto DriveTakeover(
+      support::TakeoverLevel level, std::uint32_t generation,
+      value::ConstPlanes forced, std::uint64_t width) -> bool;
+  auto EndTakeover(support::TakeoverLevel level) -> bool;
+
+ private:
+  friend class NetName;
+
+  // Adds a name over these positions, at the offset among its own that the
+  // first of them stands at. A name already here at that offset is already
+  // saying this, which is what an alias repeated in two statements states.
+  void Admit(const NetPlacement& placement);
+
   // These positions cut in two at `at`, which keeps the low part and hands back
   // the high one. Every name here covers the whole of these positions, so each
   // is placed in both halves, the high one at that name's own offset advanced
   // by the cut. A cut is what a connection reaching part of these positions
   // asks for: the part it reaches goes on to resolve with whatever it is
   // coupled to, and the rest of these positions is a resolution of its own.
-  [[nodiscard]] auto Split(std::uint32_t at)
-      -> std::shared_ptr<PhysicalNet<T>> {
-    if constexpr (!std::same_as<T, value::PackedArray>) {
-      throw InternalError(
-          "PhysicalNet: an aggregate states one indivisible position, so a "
-          "connection reaching one reaches the whole of it");
-    } else {
-      if (at == 0 || at >= width_) {
-        throw InternalError(
-            "PhysicalNet: a cut falls inside these positions, since a cut at "
-            "either end asks for the positions that are already here");
-      }
-      if (takeovers_ != nullptr) {
-        throw InternalError(
-            "PhysicalNet: every connection is stated while the design "
-            "resolves, which is before any procedural continuous assignment "
-            "can have taken these positions over");
-      }
-      const std::uint32_t above = width_ - at;
-      auto high = std::make_shared<PhysicalNet<T>>(
-          SliceOfPositions(nondriving_, at, above),
-          DriveContribution<T>{
-              .value = SliceOfPositions(own_.value, at, above),
-              .strength = own_.strength},
-          own_fill_, fold_, own_kind_, above);
-      for (const NetPlacement<T>& placement : placements_) {
-        high->placements_.push_back(
-            NetPlacement<T>{
-                .net = placement.net, .net_offset = placement.net_offset + at});
-      }
-      nondriving_ = SliceOfPositions(nondriving_, 0, at);
-      own_.value = SliceOfPositions(own_.value, 0, at);
-      width_ = at;
-      return high;
-    }
-  }
+  [[nodiscard]] auto Split(std::uint32_t at) -> std::shared_ptr<PhysicalNet>;
 
-  // Adds a name over these positions, at the offset among its own that the
-  // first of them stands at. A name already here at that offset is already
-  // saying this, which is what an alias repeated in two statements states.
-  void Admit(const NetPlacement<T>& placement) {
-    for (const auto& existing : placements_) {
-      if (existing.net == placement.net &&
-          existing.net_offset == placement.net_offset) {
-        return;
-      }
-    }
-    placements_.push_back(placement);
-  }
-
-  // Some of a value's positions, as a value of its own.
-  [[nodiscard]] static auto SliceOfPositions(
-      const T& value, std::uint32_t from, std::uint32_t width) -> T {
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      return value.ExtractBits(from, width);
-    } else {
-      return value;
-    }
-  }
-
-  T nondriving_{};
-  DriveContribution<T> own_{};
+  DriveContribution<NetPositions> own_;
   // The scalar the net type contributes at every position (LRM 6.6.5, 6.6.6),
-  // which is what a net type states; the filled contribution above is that
-  // scalar taken to these positions. Two nets state the same net type when they
-  // agree on this, on the strength it is held at, on the fold, and on whether
-  // resolution keeps it current -- and on nothing about how wide either is,
-  // which is what lets a connection reach fewer positions than a whole net.
-  value::PackedArray own_fill_{};
-  value::NetResolution fold_{};
-  OwnContribution own_kind_{};
-  std::uint32_t width_{};
-  std::vector<NetPlacement<T>> placements_;
+  // which is what a net type states; the contribution above is that scalar
+  // taken to these positions. Two nets state the same net type when they agree
+  // on this, on the strength it is held at, on the fold, and on whether
+  // resolution keeps it current -- and on nothing about how many positions
+  // either has, which is what lets a connection reach fewer than a whole net.
+  value::FourStateBit own_fill_;
+  value::NetResolution fold_;
+  OwnContribution own_kind_;
+  std::vector<NetPlacement> placements_;
   // The procedural continuous assignments these positions have been put under
   // (LRM 10.6.2), absent until the first one starts, so positions nobody forces
-  // carry neither the storage nor the work of maintaining it. It belongs here
-  // rather than to any name because what a force overrides is the drivers of
-  // the physical net, so it shows under every name reaching these positions.
-  std::unique_ptr<Takeovers<T>> takeovers_;
+  // carry neither the storage nor the work of maintaining it.
+  std::unique_ptr<Takeovers<NetPositions>> takeovers_;
 };
 
-// A net: a name for some positions, the contributions the sources in its
-// own unit make to them, and what those positions last resolved to (LRM 6.5,
-// 6.6). Readable and observable like a `Var<T>` (it extends `Observable`, so a
-// process can wait on it), but never written directly: a value reaches it by a
-// driver updating its own contribution, or by a procedural continuous
-// assignment overriding what the contributions resolve to (LRM 10.6.2), and
-// either way the positions re-resolve and the net publishes on a real change
-// (LRM 9.4.2). The net owns the contribution storage; a `Driver<T>` names one
-// contribution by an index the net issued, so the storage stays the net's to
-// reorganize.
+// A net as a connection reaches it: the name its positions resolve under. A
+// connection relates positions of two nets (LRM 23.3.3.7, 10.11), and positions
+// are held the same way whatever type either net gives its own value, so this
+// is what one net takes of another it is joined to without naming the other's
+// type.
+//
+// Deriving from this has to leave the net's own address equal to the address
+// of this part, for the reason an observable's does: generated code hands a
+// net's address across a C boundary, where the pointer carries no type to
+// adjust by.
+class ConnectableNet : public Observable {
+ public:
+  ConnectableNet(const ConnectableNet&) = delete;
+  auto operator=(const ConnectableNet&) -> ConnectableNet& = delete;
+  ConnectableNet(ConnectableNet&&) = delete;
+  auto operator=(ConnectableNet&&) -> ConnectableNet& = delete;
+
+  [[nodiscard]] auto Name() const -> NetName&;
+
+ protected:
+  explicit ConnectableNet(NetName& name);
+  ~ConnectableNet();
+
+ private:
+  NetName* name_;
+};
+
+// A net (LRM 6.5, 6.6): readable and observable like a `Var<T>` (it extends
+// `Observable`, so a process can wait on it), but never written directly. A
+// value reaches it by a driver updating its own contribution, and what it shows
+// is what every contribution reaching it resolves to, published on a real
+// change (LRM 9.4.2). The net owns the contribution storage; a `Driver<T>`
+// names one contribution by an index the net issued, so the storage stays the
+// net's to reorganize.
+//
+// LRM 6.7.1 admits two kinds of data type, and a net of each is a class of its
+// own: an integral type, whose positions a connection may name some of, and an
+// unpacked aggregate, which no connection names any position of.
+template <NetValue T>
+class ResolvedNet;
+
+// A net of an integral type: a name for some positions, the contributions the
+// sources in its own unit make to them, and what those positions last resolved
+// to. A procedural continuous assignment may override what the contributions
+// resolve to (LRM 10.6.2).
 //
 // What resolves is not the net. A bidirectional connection and an `alias` each
 // state that positions across several nets are the same physical net
 // (LRM 23.3.3.7, 10.11), so what resolves is that and every name reaching it
 // shows what it produced. A net no connection reached is the one name of a
 // physical net covering it exactly, which is the same walk over one.
-template <value::NetResolvable T>
-class ResolvedNet : public Observable {
+template <NetValue T>
+  requires BitAddressed<T>
+class ResolvedNet<T> : public ConnectableNet {
  public:
   ResolvedNet();
 
-  // Fixes what the net's declaration gives it -- the declared type, from a
-  // value carrying it, and what its declared net type states: which truth
-  // table resolves contributions of equal strength, and the contribution the
-  // net type itself makes, as the value it shows where nothing drives it and
-  // the strength it holds that value at (LRM 6.7.1). The net is therefore a
-  // readable, well-typed observable before any driver attaches, and its value
-  // at that point comes from the same resolution every later value comes from.
-  // Installing twice is a lowering defect.
+  // Fixes what the net's declaration gives it -- how many positions its
+  // declared type has, which the type laying its value out does not say where
+  // it lays out a narrower one, and what its declared net type states: which
+  // truth table resolves contributions of equal strength, and the contribution
+  // the net type itself makes, as the scalar it shows where nothing drives it
+  // and the strength it holds that scalar at (LRM 6.7.1). The net is therefore
+  // a readable observable of its declared count before any driver attaches,
+  // and its value at that point comes from the same resolution every later
+  // value comes from. Installing twice is a lowering defect.
   //
-  // One entry per resolution, since a truth table has no spelling as a value
-  // the call could carry: tri-state for `wire` / `tri` (LRM 6.6.1 Table 6-2),
-  // wired-and for `wand` / `triand` and wired-or for `wor` / `trior` (LRM 6.6.3
-  // Tables 6-3 and 6-4), and one that resolves tri-state and leaves its own
-  // contribution holding what the drivers last decided, which is how a net
+  // One entry per resolution: tri-state for `wire` / `tri` (LRM 6.6.1 Table
+  // 6-2), wired-and for `wand` / `triand` and wired-or for `wor` / `trior` (LRM
+  // 6.6.3 Tables 6-3 and 6-4), and one that resolves tri-state and leaves its
+  // own contribution holding what the drivers last decided, which is how a net
   // stores a value (LRM 6.6.4).
   void InitializeTriState(
-      T prototype, const value::PackedArray& fill,
-      const value::PackedArray& strength) {
+      std::int64_t count, std::int64_t fill, std::int64_t strength) {
     Install(
-        std::move(prototype), fill, strength, value::NetResolution::kTriState,
+        count, fill, strength, value::NetResolution::kTriState,
         OwnContribution::kFixed);
   }
   void InitializeWiredAnd(
-      T prototype, const value::PackedArray& fill,
-      const value::PackedArray& strength) {
+      std::int64_t count, std::int64_t fill, std::int64_t strength) {
     Install(
-        std::move(prototype), fill, strength, value::NetResolution::kWiredAnd,
+        count, fill, strength, value::NetResolution::kWiredAnd,
         OwnContribution::kFixed);
   }
   void InitializeWiredOr(
-      T prototype, const value::PackedArray& fill,
-      const value::PackedArray& strength) {
+      std::int64_t count, std::int64_t fill, std::int64_t strength) {
     Install(
-        std::move(prototype), fill, strength, value::NetResolution::kWiredOr,
+        count, fill, strength, value::NetResolution::kWiredOr,
         OwnContribution::kFixed);
   }
   void InitializeRetaining(
-      T prototype, const value::PackedArray& fill,
-      const value::PackedArray& strength) {
+      std::int64_t count, std::int64_t fill, std::int64_t strength) {
     Install(
-        std::move(prototype), fill, strength, value::NetResolution::kTriState,
+        count, fill, strength, value::NetResolution::kTriState,
         OwnContribution::kRetained);
   }
 
@@ -384,46 +465,43 @@ class ResolvedNet : public Observable {
   // reaching those positions. A name covering only part of one has no way to
   // say which part it meant, which is the same gap a force naming part of a
   // target already has.
-  auto BeginTakeover(const value::PackedArray& level) -> value::PackedArray {
-    PhysicalNet<T>& physical = WholePhysicalNet();
-    if (physical.takeovers_ == nullptr) {
-      physical.takeovers_ = std::make_unique<Takeovers<T>>();
-    }
-    return TakeoverGenerationValue(
-        physical.takeovers_->Begin(TakeoverLevelOf(level)));
+  auto BeginTakeover(std::int64_t level) -> std::int64_t {
+    return std::int64_t{
+        WholePhysicalNet().BeginTakeover(TakeoverLevelOf(level))};
   }
 
   auto DriveTakeover(
-      const value::PackedArray& level, const value::PackedArray& generation,
-      const T& value) -> bool {
-    PhysicalNet<T>& physical = WholePhysicalNet();
-    if (physical.takeovers_ == nullptr ||
-        !physical.takeovers_->Drive(
-            TakeoverLevelOf(level), TakeoverGenerationOf(generation), value)) {
-      return false;
-    }
-    physical.Reresolve(current_runtime());
-    return true;
+      std::int64_t level, std::int64_t generation, const T& value) -> bool {
+    return ReadPlanes(
+        value, [&](value::ConstPlanes forced, std::uint64_t width) {
+          return DriveTakeoverPlanes(level, generation, forced, width);
+        });
   }
 
-  void EndTakeover(const value::PackedArray& level) {
-    PhysicalNet<T>& physical = WholePhysicalNet();
-    if (physical.takeovers_ == nullptr) {
-      return;
-    }
-    physical.takeovers_->End(TakeoverLevelOf(level));
-    physical.Reresolve(current_runtime());
+  // The same of a value handed as its bytes, as wide as what the net holds.
+  auto DriveTakeoverBytes(
+      std::int64_t level, std::int64_t generation, const void* bytes) -> bool
+    requires value::TakesBytesInPlace<T>
+  {
+    return DriveTakeoverPlanes(
+        level, generation, resolved_.PlanesAt(bytes), resolved_.Width());
   }
 
-  // States that `width` positions of this net from `here`, and the same many of
+  void EndTakeover(std::int64_t level) {
+    PhysicalNet& physical = WholePhysicalNet();
+    if (physical.EndTakeover(TakeoverLevelOf(level))) {
+      physical.Reresolve(current_runtime());
+    }
+  }
+
+  // States that `count` positions of this net from `here`, and the same many of
   // `other` from `there`, are one physical net (LRM 23.3.3.7, 10.11). Every
   // driver reaching either side becomes a contribution to the same fold, at the
   // strength it drives at, which is what makes the connection
   // non-strength-reducing (LRM 23.3.3); no net's resolved value is ever an
   // input to another's resolution. Stating the same positions twice over is a
-  // connection
-  // restating what another established, which is a shape a design writes rather
-  // than a mistake.
+  // connection restating what another established, which is a shape a design
+  // writes rather than a mistake.
   //
   // One physical net has one net type, so the two have to state the same one.
   // Where they differ the standard names a dominating type per pair of nets
@@ -432,9 +510,17 @@ class ResolvedNet : public Observable {
   // report names what the design wrote rather than which net type won, because
   // which net type a net is, is not something below the net's declaration knows
   // or should learn.
+  //
+  // The other net may be of another integral type, as nets of two widths
+  // joined over some of their positions are: what the two share is positions,
+  // which carry no type.
   void Join(
-      ResolvedNet* other, const value::PackedArray& here,
-      const value::PackedArray& there, const value::PackedArray& width);
+      ConnectableNet* other, std::int64_t here, std::int64_t there,
+      std::int64_t count) {
+    name_.Join(
+        other->Name(), static_cast<std::uint32_t>(here),
+        static_cast<std::uint32_t>(there), static_cast<std::uint32_t>(count));
+  }
 
   // Attaches a new driver at the strength its source drives at and returns its
   // handle. Its contribution starts at the non-driving one, so a driver that
@@ -443,74 +529,114 @@ class ResolvedNet : public Observable {
   // into it is a stable identity. The handle is the net's own, so a source that
   // can hold one by value copies it out of the reference and one that cannot
   // keeps the reference itself.
-  auto AttachDriver(const value::PackedArray& strength) -> Driver<T>&;
+  auto AttachDriver(std::int64_t strength) -> Driver<T>&;
 
  private:
   friend class Driver<T>;
-  friend class PhysicalNet<T>;
 
-  // Which of this net's reaches begins at `position`, cutting what it reaches
-  // so that one does and so that it covers no more than `within` positions. A
-  // connection names some of a net's own positions; what the net reaches there
-  // was fixed by whatever connections came before, so the two are made to agree
-  // here.
-  auto ReachAt(std::uint32_t position, std::uint32_t within) -> std::size_t;
+  // This net as the physical nets it reaches see it. It is a part of the net
+  // rather than something the net is, so the net stays the one thing a wait
+  // registers on, at the address its storage has.
+  class Name final : public NetName {
+   public:
+    explicit Name(ResolvedNet& net) : net_(&net) {
+    }
 
-  // Cuts a physical net in two, `at` positions from its start, and gives every
-  // name reaching it the two reaches that replace the one.
-  static void CutPhysical(
-      std::shared_ptr<PhysicalNet<T>> physical, std::uint32_t at);
-
-  // Makes one physical net of two that cover the same positions, leaving every
-  // name of the second reaching the first.
-  static void MergePhysical(
-      std::shared_ptr<PhysicalNet<T>> keep,
-      std::shared_ptr<PhysicalNet<T>> folded);
-
-  void Install(
-      T prototype, const value::PackedArray& fill,
-      const value::PackedArray& strength, value::NetResolution resolution,
-      OwnContribution own_kind) {
-    if constexpr (std::same_as<T, value::PackedArray>) {
-      if (!resolved_.IsUninitialized()) {
-        throw InternalError(
-            "ResolvedNet: the net's declared type is already fixed");
+   private:
+    void FoldContributions(
+        support::StrengthLevel level, value::NetResolution fold,
+        std::uint32_t offset, NetPositions& group) const override {
+      NetPositions contribution(
+          group.Count(), value::FourStateBit::kHighImpedance);
+      for (const DriveContribution<T>& driver : net_->contributions_) {
+        if (driver.strength == level) {
+          ReadPositions(driver.value, offset, contribution);
+          value::Resolve(
+              group.Write(), group.Read(), contribution.Read(), fold);
+        }
       }
     }
-    nondriving_ =
-        T::FilledLike(prototype, value::PackedArray::HighImpedanceScalar());
-    const std::uint32_t width = PhysicalNet<T>::PositionsOf(nondriving_);
-    auto physical = std::make_shared<PhysicalNet<T>>(
-        nondriving_,
-        DriveContribution<T>{
-            .value = T::FilledLike(prototype, fill),
-            .strength = StrengthLevelOf(strength)},
-        fill, resolution, own_kind, width);
-    physical->Admit(NetPlacement<T>{.net = this, .net_offset = 0});
-    resolved_ = physical->Resolve();
-    reaches_.push_back(
-        NetReach<T>{
-            .physical = std::move(physical), .net_offset = 0, .width = width});
+
+    // The positions are written into the net's value where they lie, and what
+    // is kept of them from before says which moved (LRM 9.4.2).
+    void ShowPositions(
+        RuntimeEffects& runtime, std::uint32_t offset,
+        const NetPositions& positions) override {
+      KeptPart<T> kept(
+          net_->resolved_,
+          value::BitPositions{.lsb = offset, .width = positions.Count()});
+      WritePositions(net_->resolved_, offset, positions);
+      if (const std::optional<Change> change = kept.ChangeTo(net_->resolved_)) {
+        runtime.WakeParkedOn(net_->Members(), *change);
+      }
+    }
+
+    ResolvedNet* net_;
+  };
+
+  void Install(
+      std::int64_t count, std::int64_t fill, std::int64_t strength,
+      value::NetResolution resolution, OwnContribution own_kind) {
+    if (count_ != 0) {
+      throw InternalError(
+          "ResolvedNet: the net's declared type is already fixed");
+    }
+    count_ = static_cast<std::uint32_t>(count);
+    nondriving_ = FilledOver<T>(count_, value::FourStateBit::kHighImpedance);
+    resolved_ = nondriving_;
+    WritePositions(
+        resolved_, 0,
+        name_.Declare(
+            static_cast<support::StrengthLevel>(strength), NetFillOf(fill),
+            resolution, own_kind, count_));
+  }
+
+  auto DriveTakeoverPlanes(
+      std::int64_t level, std::int64_t generation, value::ConstPlanes forced,
+      std::uint64_t width) -> bool {
+    PhysicalNet& physical = WholePhysicalNet();
+    if (!physical.DriveTakeover(
+            TakeoverLevelOf(level), TakeoverGenerationOf(generation), forced,
+            width)) {
+      return false;
+    }
+    physical.Reresolve(current_runtime());
+    return true;
   }
 
   // The physical net this name reaches, where it reaches one covering the whole
   // of it. An operation written on a name rather than on some of its positions
-  // needs that,
-  // because a name reaching several has no way to say which it meant.
-  [[nodiscard]] auto WholePhysicalNet() -> PhysicalNet<T>& {
-    if (reaches_.size() != 1 ||
-        reaches_.front().width != PhysicalNet<T>::PositionsOf(nondriving_)) {
+  // needs that, because a name reaching several has no way to say which it
+  // meant.
+  [[nodiscard]] auto WholePhysicalNet() -> PhysicalNet& {
+    const std::vector<NetReach>& reaches = name_.Reaches();
+    if (reaches.size() != 1 || reaches.front().count != count_) {
       throw SimulationError(
           "a procedural continuous assignment names a net that a connection "
           "reaches over part of one resolution, so what it overrides is part "
           "of a physical net, which is not yet supported (LRM 10.6.2)");
     }
-    return *reaches_.front().physical;
+    return *reaches.front().physical;
   }
 
   void UpdateContribution(
       RuntimeEffects& runtime, std::size_t index, const T& value) {
     ContributionOf(index).value = value;
+    ReresolveJoint(runtime, Change::Whole());
+  }
+
+  // The same of a value handed as its bytes, as wide as the contribution,
+  // taken into the words the contribution has. Bytes it already holds move no
+  // resolution.
+  void UpdateContributionBytes(
+      RuntimeEffects& runtime, std::size_t index, const void* bytes)
+    requires value::TakesBytesInPlace<T>
+  {
+    T& contribution = ContributionOf(index).value;
+    if (contribution.HoldsBytes(bytes)) {
+      return;
+    }
+    contribution.TakeBytes(bytes);
     ReresolveJoint(runtime, Change::Whole());
   }
 
@@ -520,9 +646,9 @@ class ResolvedNet : public Observable {
   // the resolution over it where it was. A net no connection split has one
   // reach, which is the same walk over one.
   void ReresolveJoint(RuntimeEffects& runtime, const Change& change) {
-    for (const NetReach<T>& reach : reaches_) {
+    for (const NetReach& reach : name_.Reaches()) {
       if (change.KnownUnchanged(
-              {.lsb = reach.net_offset, .width = reach.width})) {
+              {.lsb = reach.net_offset, .width = reach.count})) {
         continue;
       }
       reach.physical->Reresolve(runtime);
@@ -542,31 +668,12 @@ class ResolvedNet : public Observable {
     return contributions_[index];
   }
 
-  // Stores the resolved value and wakes what waits here only when it actually
-  // changed (LRM 9.4.2). A contribution that moves without changing the
-  // resolved value wakes no observer.
-  void PublishIfChanged(RuntimeEffects& runtime, T next) {
-    if (resolved_.IsBitIdentical(next)) {
-      return;
-    }
-    runtime.WakeParkedOn(this->Members(), ReplaceWhole(resolved_, [&] {
-                           resolved_ = std::move(next);
-                         }));
-  }
-
   T resolved_{};
   T nondriving_{};
-  // The physical nets this name reaches, covering its positions exactly and in
-  // order. One, its own, until a connection states that some of these
-  // positions are also some of another name's -- which cuts this net's reaches
-  // where those positions end, since what the two share resolves together and
-  // what it does not goes on resolving alone.
-  std::vector<NetReach<T>> reaches_;
-  // Whether any of this net's own contributions sits at a given level, which a
-  // resolution reads from every name reaching it. Recording it per name is what
-  // leaves a driver attached after a connection needing nothing propagated, and
-  // a connection made after one needing nothing rebuilt.
-  typename PhysicalNet<T>::OccupiedLevels occupied_{};
+  // How many positions the declared type has, none until the net is
+  // installed.
+  std::uint32_t count_ = 0;
+  Name name_{*this};
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued. They are the net's rather than each
   // source's so that a source reaching its driver by address holds nothing that
@@ -576,165 +683,226 @@ class ResolvedNet : public Observable {
   std::deque<Driver<T>> drivers_;
 };
 
+// A net of an unpacked aggregate (LRM 6.7.1): a structure, a union, or a
+// fixed-size array, every element of which is a valid net data type. It
+// resolves element by element and bit by bit under the same tables and
+// strengths an integral net does, which the aggregate's own operations carry
+// out. It keeps no positions another net could reach, so what resolves is the
+// net itself.
+template <NetValue T>
+  requires(!BitAddressed<T>)
+class ResolvedNet<T> : public Observable {
+ public:
+  ResolvedNet();
+
+  // Fixes what the net's declaration gives it: the declared type, from a value
+  // carrying it, the scalar the net type contributes in every bit and the
+  // strength it holds it at (LRM 6.7.1), and which truth table resolves
+  // contributions of equal strength -- one entry per table, and one that
+  // resolves tri-state and keeps what the drivers last decided (LRM 6.6.4).
+  // Installing twice is a lowering defect.
+  void InitializeTriState(
+      const T& prototype, std::int64_t fill, std::int64_t strength) {
+    Install(
+        prototype, fill, strength, value::NetResolution::kTriState,
+        OwnContribution::kFixed);
+  }
+  void InitializeWiredAnd(
+      const T& prototype, std::int64_t fill, std::int64_t strength) {
+    Install(
+        prototype, fill, strength, value::NetResolution::kWiredAnd,
+        OwnContribution::kFixed);
+  }
+  void InitializeWiredOr(
+      const T& prototype, std::int64_t fill, std::int64_t strength) {
+    Install(
+        prototype, fill, strength, value::NetResolution::kWiredOr,
+        OwnContribution::kFixed);
+  }
+  void InitializeRetaining(
+      const T& prototype, std::int64_t fill, std::int64_t strength) {
+    Install(
+        prototype, fill, strength, value::NetResolution::kTriState,
+        OwnContribution::kRetained);
+  }
+
+  ResolvedNet(const ResolvedNet&) = delete;
+  auto operator=(const ResolvedNet&) -> ResolvedNet& = delete;
+  ResolvedNet(ResolvedNet&&) = delete;
+  auto operator=(ResolvedNet&&) -> ResolvedNet& = delete;
+  ~ResolvedNet();
+
+  [[nodiscard]] auto Get() const noexcept -> const T& {
+    return resolved_;
+  }
+
+  // Puts the net under a procedural continuous assignment and takes it back
+  // out (LRM 10.6.2). A `force` overrides every driver, so what it changes is
+  // what the net shows, never the contributions, which are what the net
+  // answers with again once released.
+  auto BeginTakeover(std::int64_t level) -> std::int64_t {
+    if (takeovers_ == nullptr) {
+      takeovers_ = std::make_unique<Takeovers<T>>();
+    }
+    return std::int64_t{takeovers_->Begin(TakeoverLevelOf(level))};
+  }
+
+  auto DriveTakeover(
+      std::int64_t level, std::int64_t generation, const T& value) -> bool {
+    if (takeovers_ == nullptr ||
+        !takeovers_->Drive(
+            TakeoverLevelOf(level), TakeoverGenerationOf(generation), value)) {
+      return false;
+    }
+    Reresolve(current_runtime());
+    return true;
+  }
+
+  void EndTakeover(std::int64_t level) {
+    if (takeovers_ == nullptr) {
+      return;
+    }
+    takeovers_->End(TakeoverLevelOf(level));
+    Reresolve(current_runtime());
+  }
+
+  // Attaches a new driver at the strength its source drives at and returns its
+  // handle, which is the net's own. Its contribution starts at the non-driving
+  // one, so attaching is not itself an act of driving.
+  auto AttachDriver(std::int64_t strength) -> Driver<T>&;
+
+ private:
+  friend class Driver<T>;
+
+  void Install(
+      const T& prototype, std::int64_t fill, std::int64_t strength,
+      value::NetResolution resolution, OwnContribution own_kind) {
+    if constexpr (RepresentedAtRunTime<T>) {
+      if (!resolved_.IsUninitialized()) {
+        throw InternalError(
+            "ResolvedNet: the net's declared type is already fixed");
+      }
+    }
+    nondriving_ = T::FilledLike(
+        prototype, value::Logic::Filled(value::FourStateBit::kHighImpedance));
+    own_ = DriveContribution<T>{
+        .value =
+            T::FilledLike(prototype, value::Logic::Filled(NetFillOf(fill))),
+        .strength = static_cast<support::StrengthLevel>(strength)};
+    fold_ = resolution;
+    own_kind_ = own_kind;
+    resolved_ = Resolve();
+  }
+
+  // What the net resolves to: between levels the stronger contribution
+  // determines every bit it drives (LRM 28.12.1), and within one the net
+  // type's table folds them (LRM 6.6.1, 6.6.3), each level starting from the
+  // all-`z` value every fold treats as its identity.
+  [[nodiscard]] auto Resolve() const -> T {
+    const OccupiedLevels occupied = occupied_ | LevelBit(own_.strength);
+    T resolved = nondriving_;
+    for (std::size_t level = support::kStrengthLevelCount; level-- > 0;) {
+      const auto at = static_cast<support::StrengthLevel>(level);
+      if ((occupied & LevelBit(at)) == 0U) {
+        continue;
+      }
+      T group = own_.strength == at ? own_.value : nondriving_;
+      for (const DriveContribution<T>& driver : contributions_) {
+        if (driver.strength == at) {
+          group = value::Resolve(fold_, group, driver.value);
+        }
+      }
+      resolved = resolved.Dominating(group);
+    }
+    return resolved;
+  }
+
+  // Recomputes the net and publishes if what it shows moved. A net type that
+  // stores a value takes the resolution it just took part in as its own
+  // contribution (LRM 6.6.4), and a takeover displaces what the net shows and
+  // not what it holds (LRM 10.6.2).
+  void Reresolve(RuntimeEffects& runtime) {
+    const T resolved = Resolve();
+    if (own_kind_ == OwnContribution::kRetained) {
+      own_.value = resolved;
+    }
+    const T* forced = takeovers_ == nullptr ? nullptr : takeovers_->Highest();
+    PublishIfChanged(runtime, forced == nullptr ? resolved : *forced);
+  }
+
+  void UpdateContribution(
+      RuntimeEffects& runtime, std::size_t index, const T& value) {
+    ContributionOf(index).value = value;
+    Reresolve(runtime);
+  }
+
+  // A write into part of a contribution resolves the net again unless it is
+  // known to have moved nothing.
+  void ReresolveJoint(RuntimeEffects& runtime, const Change& change) {
+    if (change.KnownUnchanged({})) {
+      return;
+    }
+    Reresolve(runtime);
+  }
+
+  // The contribution a driver names, through the index the net issued it. A
+  // driver reads its contribution back to write part of it without disturbing
+  // the rest (LRM 6.6.1).
+  [[nodiscard]] auto ContributionOf(std::size_t index)
+      -> DriveContribution<T>& {
+    if (index >= contributions_.size()) {
+      throw InternalError("ResolvedNet: driver names no attached contribution");
+    }
+    return contributions_[index];
+  }
+
+  // Stores the resolved value and wakes subscribers only when it actually
+  // changed (LRM 9.4.2).
+  void PublishIfChanged(RuntimeEffects& runtime, const T& next) {
+    if (resolved_.IsBitIdentical(next)) {
+      return;
+    }
+    resolved_ = next;
+    runtime.WakeParkedOn(this->Members(), Change::Whole());
+  }
+
+  T resolved_{};
+  T nondriving_{};
+  // The contribution the net type makes to its own resolution, the table
+  // contributions of equal strength fold under, and whether resolution keeps
+  // that contribution current (LRM 6.7.1, 6.6.4).
+  DriveContribution<T> own_{};
+  value::NetResolution fold_{};
+  OwnContribution own_kind_{};
+  // The procedural continuous assignments the net has been put under (LRM
+  // 10.6.2), absent until the first one starts.
+  std::unique_ptr<Takeovers<T>> takeovers_;
+  // Whether any contribution of a driver sits at a given level.
+  OccupiedLevels occupied_{};
+  std::vector<DriveContribution<T>> contributions_;
+  // The handles this net has issued, which growth must not move.
+  std::deque<Driver<T>> drivers_;
+};
+
 // Defaulted here rather than where they are declared, for the reason a variable
 // cell's are: one defaulted on its first declaration is defined by every unit
 // that holds a net.
-template <value::NetResolvable T>
-ResolvedNet<T>::ResolvedNet() = default;
+template <NetValue T>
+  requires BitAddressed<T>
+ResolvedNet<T>::ResolvedNet() : ConnectableNet(name_) {
+}
 
-template <value::NetResolvable T>
+template <NetValue T>
+  requires BitAddressed<T>
 ResolvedNet<T>::~ResolvedNet() = default;
 
-template <value::NetResolvable T>
-auto PhysicalNet<T>::Resolve() const -> T {
-  OccupiedLevels occupied = LevelBit(own_.strength);
-  for (const auto& placement : placements_) {
-    occupied |= placement.net->occupied_;
-  }
-  T resolved = nondriving_;
-  for (std::size_t level = support::kStrengthLevelCount; level-- > 0;) {
-    const auto at = static_cast<support::StrengthLevel>(level);
-    if ((occupied & LevelBit(at)) == 0U) {
-      continue;
-    }
-    T group = own_.strength == at ? own_.value : nondriving_;
-    for (const auto& placement : placements_) {
-      for (const auto& driver : placement.net->contributions_) {
-        if (driver.strength == at) {
-          group = value::ResolvedUnder(
-              fold_, group, FromPlacement(driver.value, placement));
-        }
-      }
-    }
-    resolved = resolved.Dominating(group);
-  }
-  return resolved;
-}
+template <NetValue T>
+  requires(!BitAddressed<T>)
+ResolvedNet<T>::ResolvedNet() = default;
 
-template <value::NetResolvable T>
-void PhysicalNet<T>::Reresolve(RuntimeEffects& runtime) {
-  T next = Resolve();
-  // A net type that stores a value holds what its drivers last decided, so its
-  // own contribution takes the resolution it just took part in: the positions
-  // something drove are what it now carries, and the positions nothing drove
-  // are the ones it decided itself, which leaves them as they were (LRM 6.6.4).
-  // A takeover displaces what the positions show and not what they hold, so
-  // this happens before one is consulted (LRM 10.6.2).
-  if (own_kind_ == OwnContribution::kRetained) {
-    own_.value = next;
-  }
-  const T* forced = takeovers_ == nullptr ? nullptr : takeovers_->Highest();
-  if (forced != nullptr) {
-    next = *forced;
-  }
-  for (const NetPlacement<T>& placement : placements_) {
-    placement.net->PublishIfChanged(
-        runtime, IntoPlacement(placement.net->resolved_, next, placement));
-  }
-}
-
-template <value::NetResolvable T>
-void ResolvedNet<T>::Join(
-    ResolvedNet* other, const value::PackedArray& here,
-    const value::PackedArray& there, const value::PackedArray& width) {
-  std::uint32_t at_here = PositionOf(here);
-  std::uint32_t at_there = PositionOf(there);
-  std::uint32_t remaining = PositionOf(width);
-  // The two sides reach physical nets whose reaches fall wherever earlier
-  // connections left them, so the coupling is taken in the pieces both sides
-  // have whole. Each piece cuts what is longer than it, which is what leaves
-  // every physical net covered entirely by every name in it.
-  while (remaining > 0) {
-    // Each side is asked in turn and cuts as it answers, so asking the first
-    // again after the second has answered is what settles the piece: a cut for
-    // one side reaches every name in the physical net it cut, the other side
-    // among them.
-    std::uint32_t piece = reaches_[ReachAt(at_here, remaining)].width;
-    piece = other->reaches_[other->ReachAt(at_there, piece)].width;
-    const std::shared_ptr<PhysicalNet<T>> mine =
-        reaches_[ReachAt(at_here, piece)].physical;
-    const std::shared_ptr<PhysicalNet<T>> theirs =
-        other->reaches_[other->ReachAt(at_there, piece)].physical;
-    MergePhysical(mine, theirs);
-    at_here += piece;
-    at_there += piece;
-    remaining -= piece;
-  }
-}
-
-template <value::NetResolvable T>
-auto ResolvedNet<T>::ReachAt(std::uint32_t position, std::uint32_t within)
-    -> std::size_t {
-  for (std::size_t at = 0; at < reaches_.size(); ++at) {
-    const NetReach<T>& reach = reaches_[at];
-    if (position < reach.net_offset ||
-        position - reach.net_offset >= reach.width) {
-      continue;
-    }
-    if (position > reach.net_offset) {
-      CutPhysical(reach.physical, position - reach.net_offset);
-      return ReachAt(position, within);
-    }
-    if (reach.width > within) {
-      CutPhysical(reach.physical, within);
-      return ReachAt(position, within);
-    }
-    return at;
-  }
-  throw InternalError(
-      "ResolvedNet: a net's own reaches cover every position it has, so a "
-      "connection naming one reaches a physical net that holds it");
-}
-
-template <value::NetResolvable T>
-void ResolvedNet<T>::CutPhysical(
-    std::shared_ptr<PhysicalNet<T>> physical, std::uint32_t at) {
-  const std::shared_ptr<PhysicalNet<T>> above = physical->Split(at);
-  for (const NetPlacement<T>& placement : above->placements_) {
-    std::vector<NetReach<T>>& reaches = placement.net->reaches_;
-    for (std::size_t i = 0; i < reaches.size(); ++i) {
-      if (reaches[i].physical != physical) {
-        continue;
-      }
-      const NetReach<T> tail{
-          .physical = above,
-          .net_offset = reaches[i].net_offset + at,
-          .width = reaches[i].width - at};
-      reaches[i].width = at;
-      reaches.insert(
-          reaches.begin() + static_cast<std::ptrdiff_t>(i) + 1, tail);
-      break;
-    }
-  }
-}
-
-template <value::NetResolvable T>
-void ResolvedNet<T>::MergePhysical(
-    std::shared_ptr<PhysicalNet<T>> keep,
-    std::shared_ptr<PhysicalNet<T>> folded) {
-  if (keep == folded) {
-    return;
-  }
-  if (keep->fold_ != folded->fold_ || keep->own_kind_ != folded->own_kind_ ||
-      keep->own_.strength != folded->own_.strength ||
-      !keep->own_fill_.IsBitIdentical(folded->own_fill_)) {
-    throw SimulationError(
-        "a connection makes one physical net of positions whose nets state "
-        "dissimilar net types; a resolution over net types that resolve "
-        "differently (LRM 23.3.3.7, 10.11) is not yet supported");
-  }
-  // Both cover the same number of positions and the coupling puts their first
-  // ones together, so each name keeps the offset it had among its own.
-  for (const NetPlacement<T>& placement : folded->placements_) {
-    keep->Admit(placement);
-    for (NetReach<T>& reach : placement.net->reaches_) {
-      if (reach.physical == folded) {
-        reach.physical = keep;
-      }
-    }
-  }
-  keep->Reresolve(current_runtime());
-}
+template <NetValue T>
+  requires(!BitAddressed<T>)
+ResolvedNet<T>::~ResolvedNet() = default;
 
 // The drive capability for a net: a handle to one contribution of a
 // `ResolvedNet`. The net issues it and owns it, so a source may hold it either
@@ -749,7 +917,7 @@ void ResolvedNet<T>::MergePhysical(
 // not drive keep contributing high-impedance and defer to whoever does drive
 // them. The positions then re-resolve, which is the only place a resolved value
 // is ever written.
-template <value::NetResolvable T>
+template <NetValue T>
 class Driver {
  public:
   using ValueType = T;
@@ -766,6 +934,13 @@ class Driver {
   // contribution -- never a resolved value.
   void Set(const T& value) const {
     Net().UpdateContribution(current_runtime(), contribution_, value);
+  }
+
+  // The same of a value handed as its bytes, as wide as the contribution.
+  void SetBytes(const void* bytes) const
+    requires value::TakesBytesInPlace<T>
+  {
+    Net().UpdateContributionBytes(current_runtime(), contribution_, bytes);
   }
 
   // This driver's own contribution as it currently stands -- what it publishes
@@ -811,20 +986,31 @@ class Driver {
 
 // Defaulted here rather than where it is declared, for the reason a net's own
 // constructor is: a source holding a driver slot constructs one.
-template <value::NetResolvable T>
+template <NetValue T>
 Driver<T>::Driver() = default;
 
-template <value::NetResolvable T>
-auto ResolvedNet<T>::AttachDriver(const value::PackedArray& strength)
-    -> Driver<T>& {
-  const support::StrengthLevel level = StrengthLevelOf(strength);
+template <NetValue T>
+  requires BitAddressed<T>
+auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
+  const auto level = static_cast<support::StrengthLevel>(strength);
   contributions_.push_back(
       DriveContribution<T>{.value = nondriving_, .strength = level});
-  occupied_ |= PhysicalNet<T>::LevelBit(level);
+  name_.Occupy(level);
   drivers_.emplace_back(*this, contributions_.size() - 1);
   return drivers_.back();
 }
 
-static_assert(MutationSink<Driver<value::PackedArray>>);
+template <NetValue T>
+  requires(!BitAddressed<T>)
+auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
+  const auto level = static_cast<support::StrengthLevel>(strength);
+  contributions_.push_back(
+      DriveContribution<T>{.value = nondriving_, .strength = level});
+  occupied_ |= LevelBit(level);
+  drivers_.emplace_back(*this, contributions_.size() - 1);
+  return drivers_.back();
+}
+
+static_assert(MutationSink<Driver<value::Logic>>);
 
 }  // namespace lyra::runtime

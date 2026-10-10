@@ -103,6 +103,13 @@ class Renderer {
   auto Named(
       const WalkFrame& frame, const std::string& name, mir::ExprId element_text)
       -> mir::ExprId;
+  // What stands ahead of the part a loop is at: the separator, or nothing
+  // ahead of the first, which is the one `ordinal` counts as zero.
+  auto SeparatorAfterFirst(const WalkFrame& frame, mir::LocalId ordinal)
+      -> mir::ExprId;
+  // The `int` a loop's own `counter` holds, moved on by `step`.
+  auto Advanced(const WalkFrame& frame, mir::LocalId counter, std::int64_t step)
+      -> mir::ExprId;
 
   auto BuildBody(const WalkFrame& frame, mir::LocalId value, hir::TypeId type)
       -> mir::ExprId;
@@ -173,6 +180,32 @@ auto Renderer::Join(const WalkFrame& frame, std::vector<mir::ExprId> parts)
             .type = StringType()});
   }
   return joined;
+}
+
+auto Renderer::SeparatorAfterFirst(const WalkFrame& frame, mir::LocalId ordinal)
+    -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  const mir::ExprId past_first = block.exprs.Add(MakeBinary(
+      Unit(), block, mir::BinaryOp::kInequality,
+      Read(frame, ordinal, IntType()), BuildIntLiteral(Unit(), block, 0),
+      Unit().builtins.bit1));
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ConditionalExpr{
+                  .condition = ReduceToCondition(Unit(), block, past_first),
+                  .then_value = Text(frame, kSeparator),
+                  .else_value = Text(frame, "")},
+          .type = StringType()});
+}
+
+auto Renderer::Advanced(
+    const WalkFrame& frame, mir::LocalId counter, std::int64_t step)
+    -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  return block.exprs.Add(MakeBinary(
+      Unit(), block, mir::BinaryOp::kAdd, Read(frame, counter, IntType()),
+      BuildIntLiteral(Unit(), block, step), IntType()));
 }
 
 auto Renderer::FormatLeaf(
@@ -331,7 +364,7 @@ auto Renderer::PackedMember(
   const ProjectedMember& projected = projection.members.at(index.value);
   const mir::ExprId subject = Read(frame, value, mir_type);
   const mir::ExprId member = block.exprs.Add(BuildPackedBitsRead(
-      Owner(), block, subject, projected.bit_offset, projected.bit_width,
+      Owner(), block, subject, projected.bit_offset,
       Owner().TranslateType(field.type)));
   return Named(frame, field.name, Render(frame, member, field.type));
 }
@@ -461,14 +494,9 @@ auto Renderer::BuildEnumeration(
                           .target = support::BuiltinFn::kLen, .receiver = name},
                   .arguments = {}},
           .type = IntType()});
-  const mir::ExprId has_name = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kInequality,
-                  .lhs = length,
-                  .rhs = BuildIntLiteral(Unit(), block, 0)},
-          .type = Unit().builtins.bit1});
+  const mir::ExprId has_name = block.exprs.Add(MakeBinary(
+      Unit(), block, mir::BinaryOp::kInequality, length,
+      BuildIntLiteral(Unit(), block, 0), Unit().builtins.bit1));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -529,28 +557,9 @@ auto Renderer::BuildIndexedElements(
   mir::Block loop_body;
   const WalkFrame body_frame = frame.WithBlock(&loop_body);
   {
-    const mir::ExprId separator =
-        loop_body.exprs.Add(
-            mir::Expr{
-                .data =
-                    mir::ConditionalExpr{
-                        .condition = ReduceToCondition(
-                            Unit(), loop_body,
-                            loop_body.exprs.Add(
-                                mir::Expr{
-                                    .data =
-                                        mir::BinaryExpr{
-                                            .op = mir::BinaryOp::kInequality,
-                                            .lhs = Read(
-                                                body_frame, ordinal, IntType()),
-                                            .rhs = BuildIntLiteral(
-                                                Unit(), loop_body, 0)},
-                                    .type = Unit().builtins.bit1})),
-                        .then_value = Text(body_frame, kSeparator),
-                        .else_value = Text(body_frame, "")},
-                .type = StringType()});
+    const mir::ExprId separator = SeparatorAfterFirst(body_frame, ordinal);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body, Read(body_frame, value, mir_type),
+        Owner(), loop_body, Read(body_frame, value, mir_type), type,
         Read(body_frame, index, IntType()), element_mir));
     const mir::ExprId grown = Join(
         body_frame, {Read(body_frame, text, StringType()), separator,
@@ -561,34 +570,13 @@ auto Renderer::BuildIndexedElements(
   }
   const mir::BlockId loop_scope = block.child_scopes.Add(std::move(loop_body));
 
-  const mir::ExprId bound = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kLessThan,
-                  .lhs = Read(frame, ordinal, IntType()),
-                  .rhs = count},
-          .type = Unit().builtins.bit1});
-  const mir::ExprId next_ordinal = Assign(
-      Unit(), frame, ordinal, IntType(),
-      block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kAdd,
-                      .lhs = Read(frame, ordinal, IntType()),
-                      .rhs = BuildIntLiteral(Unit(), block, 1)},
-              .type = IntType()}));
+  const mir::ExprId bound = block.exprs.Add(MakeBinary(
+      Unit(), block, mir::BinaryOp::kLessThan, Read(frame, ordinal, IntType()),
+      count, Unit().builtins.bit1));
+  const mir::ExprId next_ordinal =
+      Assign(Unit(), frame, ordinal, IntType(), Advanced(frame, ordinal, 1));
   const mir::ExprId next_index = Assign(
-      Unit(), frame, index, IntType(),
-      block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kAdd,
-                      .lhs = Read(frame, index, IntType()),
-                      .rhs = BuildIntLiteral(Unit(), block, index_step)},
-              .type = IntType()}));
+      Unit(), frame, index, IntType(), Advanced(frame, index, index_step));
 
   std::vector<mir::ForInit> init;
   init.emplace_back(
@@ -649,30 +637,11 @@ auto Renderer::BuildAssociativeEntries(
   mir::Block loop_body;
   const WalkFrame body_frame = frame.WithBlock(&loop_body);
   {
-    const mir::ExprId separator =
-        loop_body.exprs.Add(
-            mir::Expr{
-                .data =
-                    mir::ConditionalExpr{
-                        .condition = ReduceToCondition(
-                            Unit(), loop_body,
-                            loop_body.exprs.Add(
-                                mir::Expr{
-                                    .data =
-                                        mir::BinaryExpr{
-                                            .op = mir::BinaryOp::kInequality,
-                                            .lhs = Read(
-                                                body_frame, ordinal, IntType()),
-                                            .rhs = BuildIntLiteral(
-                                                Unit(), loop_body, 0)},
-                                    .type = Unit().builtins.bit1})),
-                        .then_value = Text(body_frame, kSeparator),
-                        .else_value = Text(body_frame, "")},
-                .type = StringType()});
+    const mir::ExprId separator = SeparatorAfterFirst(body_frame, ordinal);
     const mir::ExprId index_text =
         Render(body_frame, Read(body_frame, key, key_type), array.key_type);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body, Read(body_frame, value, mir_type),
+        Owner(), loop_body, Read(body_frame, value, mir_type), type,
         Read(body_frame, key, key_type), element_mir));
     const mir::ExprId grown = Join(
         body_frame, {Read(body_frame, text, StringType()), separator,
@@ -689,16 +658,8 @@ auto Renderer::BuildAssociativeEntries(
   const mir::ExprId next = TraversalStep(
       frame, value, mir_type, key, key_type, support::BuiltinFn::kAssocNext);
   const mir::ExprId next_more = Assign(Unit(), frame, more, IntType(), next);
-  const mir::ExprId next_ordinal = Assign(
-      Unit(), frame, ordinal, IntType(),
-      block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kAdd,
-                      .lhs = Read(frame, ordinal, IntType()),
-                      .rhs = BuildIntLiteral(Unit(), block, 1)},
-              .type = IntType()}));
+  const mir::ExprId next_ordinal =
+      Assign(Unit(), frame, ordinal, IntType(), Advanced(frame, ordinal, 1));
 
   std::vector<mir::ForInit> init;
   init.emplace_back(mir::ForInitDecl{.induction_var = more, .init = first});

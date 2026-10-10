@@ -3,7 +3,7 @@
 #include <cstddef>
 
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
@@ -16,11 +16,11 @@ namespace lyra::value {
 // A chandle is a value type rather than a bare host pointer because it appears
 // as an associative-array element, a class member, and a struct field, and
 // every such element must satisfy `LyraValue`. Its operator surface therefore
-// follows LRM Table 11-1's "Any data type" row: equality yields a 1-bit
-// `PackedArray`, as it does for every other value type. LRM 6.14 gives `===` /
-// `!==` the same semantics as `==` / `!=`, so `CaseEqualComparable` holds and
-// `CaseEqual` shares pointer identity with `IsBitIdentical`. Relational
-// operators are not defined on a chandle, so `Ordered` does not.
+// follows LRM Table 11-1's "Any data type" row: equality yields a bit, a
+// chandle holding no x or z. LRM 6.14 gives `===` / `!==` the same semantics as
+// `==` / `!=`, so `CaseEqualComparable` holds and `CaseEqual` shares pointer
+// identity with `IsBitIdentical`. Relational operators are not defined on a
+// chandle, so `Ordered` does not.
 class Chandle {
  public:
   Chandle() = default;
@@ -43,18 +43,18 @@ class Chandle {
   }
 
   // LRM 11.4.5 `==` / `!=` (Any data type), compared as pointer identity.
-  [[nodiscard]] auto operator==(const Chandle& o) const -> PackedArray {
-    return PackedArray::Bit(p_ == o.p_);
+  [[nodiscard]] auto operator==(const Chandle& o) const -> Bit {
+    return Bit::FromBool(p_ == o.p_);
   }
-  [[nodiscard]] auto operator!=(const Chandle& o) const -> PackedArray {
-    return PackedArray::Bit(p_ != o.p_);
+  [[nodiscard]] auto operator!=(const Chandle& o) const -> Bit {
+    return Bit::FromBool(p_ != o.p_);
   }
 
   // LRM 6.14: `===` / `!==` on a chandle carry the same semantics as `==` /
   // `!=`. Coincides with `IsBitIdentical` because a chandle's value is its bit
   // pattern.
-  [[nodiscard]] auto CaseEqual(const Chandle& o) const -> PackedArray {
-    return PackedArray::Bit(p_ == o.p_);
+  [[nodiscard]] auto CaseEqual(const Chandle& o) const -> Bit {
+    return Bit::FromBool(p_ == o.p_);
   }
 
   // LRM 9.4.2 update event predicate (engine change-detection hook).
@@ -67,8 +67,8 @@ class Chandle {
     return false;
   }
 
-  [[nodiscard]] static auto IsUnknown() -> PackedArray {
-    return PackedArray::Bit(false);
+  [[nodiscard]] static auto IsUnknown() -> Bit {
+    return Bit::FromBool(false);
   }
 
   // LRM 6.14: a chandle tested for a boolean value is 0 when null, 1 otherwise.
@@ -83,6 +83,5 @@ class Chandle {
 static_assert(LyraValue<Chandle>);
 static_assert(CaseEqualComparable<Chandle>);
 static_assert(!Ordered<Chandle>);
-static_assert(!WildcardComparable<Chandle>);
 
 }  // namespace lyra::value

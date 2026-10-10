@@ -5,8 +5,8 @@
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/managed_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
 
@@ -74,14 +74,14 @@ class ObjectRef {
     return handle_;
   }
 
-  [[nodiscard]] auto operator==(const ObjectRef& o) const -> PackedArray {
+  [[nodiscard]] auto operator==(const ObjectRef& o) const -> Bit {
     return handle_ == o.handle_;
   }
-  [[nodiscard]] auto operator!=(const ObjectRef& o) const -> PackedArray {
+  [[nodiscard]] auto operator!=(const ObjectRef& o) const -> Bit {
     return handle_ != o.handle_;
   }
 
-  [[nodiscard]] auto CaseEqual(const ObjectRef& o) const -> PackedArray {
+  [[nodiscard]] auto CaseEqual(const ObjectRef& o) const -> Bit {
     return handle_.CaseEqual(o.handle_);
   }
 
@@ -93,27 +93,22 @@ class ObjectRef {
     return ManagedRef::HasUnknown();
   }
 
-  [[nodiscard]] static auto IsUnknown() -> PackedArray {
+  [[nodiscard]] static auto IsUnknown() -> Bit {
     return ManagedRef::IsUnknown();
   }
 
   // LRM 6.24.3 streams a class object as its members, which is not carried out
   // yet; the execution backend answers a handle the same way. A structure with
   // a handle member asks these only where the program measures it.
-  [[noreturn]] static auto BitstreamWidth() -> PackedArray {
+  [[noreturn]] static auto BitstreamWidth() -> Int {
     throw SimulationError(
         "$bits of a class object is not yet supported on this backend; please "
         "open an issue asking for support");
   }
-  [[noreturn]] static auto ToBitstream() -> PackedArray {
-    throw SimulationError(
-        "reading this value as a stream of bits is not yet supported on this "
-        "backend; please open an issue asking for support");
-  }
   // LRM 20.9 counts over the bit stream.
-  [[nodiscard]] static auto CountBits(const PackedArray& control_bits)
-      -> PackedArray {
-    return ToBitstream().CountBits(control_bits);
+  template <IntegralValue Control>
+  [[nodiscard]] static auto CountBits(const Control& control_bits) -> Int {
+    return Stream().CountBits(control_bits);
   }
 
   explicit operator bool() const {
@@ -121,6 +116,12 @@ class ObjectRef {
   }
 
  private:
+  [[noreturn]] static auto Stream() -> Bit {
+    throw SimulationError(
+        "reading this value as a stream of bits is not yet supported on this "
+        "backend; please open an issue asking for support");
+  }
+
   ManagedRef handle_;
   void* view_ = nullptr;
 };
@@ -128,6 +129,5 @@ class ObjectRef {
 static_assert(LyraValue<ObjectRef>);
 static_assert(CaseEqualComparable<ObjectRef>);
 static_assert(!Ordered<ObjectRef>);
-static_assert(!WildcardComparable<ObjectRef>);
 
 }  // namespace lyra::value

@@ -48,10 +48,6 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'p';
     case SymbolCategory::kClosureInvoke:
       return 'i';
-    case SymbolCategory::kTypeDescription:
-      return 't';
-    case SymbolCategory::kIntegralConstant:
-      return 'l';
     case SymbolCategory::kConstructorPrologue:
       return 's';
     case SymbolCategory::kBaseObjectDestructor:
@@ -212,20 +208,6 @@ auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
   return SymbolName(
       SymbolCategory::kNamespaceVariable,
       {SymbolPart::Name(unit_name), std::move(variable)});
-}
-
-auto TypeDescriptionSymbol(std::string_view unit_name, std::uint32_t ordinal)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kTypeDescription,
-      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
-}
-
-auto IntegralConstantSymbol(std::string_view unit_name, std::uint32_t ordinal)
-    -> std::string {
-  return SymbolName(
-      SymbolCategory::kIntegralConstant,
-      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)

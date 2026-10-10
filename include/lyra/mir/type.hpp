@@ -32,26 +32,23 @@ enum class Signedness {
   kUnsigned,
 };
 
-struct PackedRange {
-  std::int64_t left;
-  std::int64_t right;
-
-  [[nodiscard]] auto ElementCount() const -> std::uint64_t;
-  [[nodiscard]] auto IsAscending() const -> bool;
-  [[nodiscard]] auto Contains(std::int64_t index) const -> bool;
-
-  auto operator==(const PackedRange&) const -> bool = default;
-};
-
-struct PackedArrayType {
-  IntegralStateKind state_kind;
+// An integral value's type is how many bits it has, whether they are read as
+// signed, and how many values a bit can take (LRM 6.11). How a declaration
+// divides those bits into dimensions or members is the source's account of
+// them, and reaches this layer only as the bit positions a select names.
+struct IntegralType {
+  std::uint64_t bit_width;
   Signedness signedness;
-  std::vector<PackedRange> dims;
+  IntegralStateKind state_kind;
 
-  [[nodiscard]] auto BitWidth() const -> std::uint64_t;
-
-  auto operator==(const PackedArrayType&) const -> bool = default;
+  auto operator==(const IntegralType&) const -> bool = default;
 };
+
+// The planes a value of `integral` is held in, every position clear: one word
+// per 64 bits of its width, and an unknown plane only where a bit of the type
+// can be x or z.
+[[nodiscard]] auto BlankIntegralConstant(const IntegralType& integral)
+    -> IntegralConstant;
 
 // A member is its whole value at the enumeration's base type: over a 4-state
 // base it may hold x or z bits, and the base may be wider than a machine word
@@ -64,22 +61,22 @@ struct EnumMember {
 };
 
 struct EnumType {
-  PackedArrayType base;
+  IntegralType base;
   std::vector<EnumMember> members;
 
   auto operator==(const EnumType&) const -> bool = default;
 };
 
-// Folds into `seed` what decides a packed array's meaning -- four-stateness,
-// signedness, and the dimensions its width comes from -- and, for an
-// enumeration, that plus every member's name and whole value. Shared by every
-// pool keyed on one of these, so equal keys cannot hash apart.
-void HashPackedShape(std::size_t& seed, const PackedArrayType& packed);
+// Folds into `seed` what decides an integral type's meaning -- its width,
+// signedness and state domain -- and, for an enumeration, that plus every
+// member's name and whole value. Shared by every pool keyed on one of these,
+// so equal keys cannot hash apart.
+void HashIntegral(std::size_t& seed, const IntegralType& integral);
 void HashEnumeration(std::size_t& seed, const EnumType& enumeration);
 
 // One declared unpacked dimension, `[left:right]`. Element order runs
 // left-to-right (LRM 7.6), so the leftmost element (index `left`) is storage
-// ordinal 0. Distinct from `PackedRange`, whose ordinal counts from the right
+// ordinal 0, where a packed dimension's bits count from the right
 // (least-significant) end.
 struct UnpackedRange {
   std::int64_t left;
@@ -120,9 +117,9 @@ struct UnpackedRange {
 
 // An unpacked array is an element type plus its declared range. The range is
 // the array's coordinate system: a source index names an element through it.
-// The range lives on the type, not the runtime value -- the backend value is
-// ordinal-only payload, and a select reads the range here to name the element
-// by its ordinal.
+// The range lives on the type, not the runtime value: the backend value is
+// ordinal-only payload, so what needs the declared bounds -- how many elements
+// there are, the coordinates a foreign caller is told -- reads them here.
 struct UnpackedArrayType {
   TypeId element_type;
   UnpackedRange dim;
@@ -178,9 +175,9 @@ struct MachineCStringType {
 
 // A primitive machine boolean (the generic-language `bool`, C `_Bool`): the
 // two-valued scalar a predicate reduction produces and a condition consumes.
-// Distinct from the SV 1-bit `PackedArrayType`, a four-state simulation value
-// reached through a value wrapper, and not a width of `MachineIntType`, whose
-// values are the integers and admit arithmetic a boolean's two do not.
+// Distinct from a 1-bit SV `IntegralType`, a simulation value reached through
+// a value wrapper, and not a width of `MachineIntType`, whose values are the
+// integers and admit arithmetic a boolean's two do not.
 struct MachineBoolType {
   auto operator==(const MachineBoolType&) const -> bool = default;
 };
@@ -200,7 +197,7 @@ enum class MachineFloatWidth : std::uint8_t { k32, k64 };
 [[nodiscard]] auto BitsOf(MachineFloatWidth width) -> std::uint32_t;
 
 // A primitive machine integer (the generic-language `iN` / `uN`, C `intN_t`):
-// a fixed-width 2-state scalar, distinct from the 4-state SV `PackedArrayType`.
+// a fixed-width 2-state scalar, distinct from the SV `IntegralType`.
 // It is plain machine data, not a simulation value, and lowers to a raw target
 // integer rather than a value wrapper -- a scope's time precision power
 // (LRM 3.14.2), a foreign call's by-value integer argument.
@@ -315,25 +312,9 @@ struct DiagnosticType {
 // is a different thing -- receiver semantics reason about one -- while these
 // are inert payloads.
 enum class RuntimeLibraryKind : std::uint8_t {
-  // The declared representation of an integral value: its dimension stack,
-  // signedness, and state domain. A factory that builds a value of a type takes
-  // one to say which type, so the shape reaches the runtime as an inert payload
-  // like any other rather than as a value of the type being built, whose
-  // contents would be constructed and then discarded.
-  kPackedType,
-  // One declared dimension of an integral type: a pair of bounds. It is a
-  // payload of that type's descriptor rather than a value any expression has,
-  // so it appears in a type position only.
-  kPackedRange,
-  // The declared range of an unpacked array: the coordinate system a select on
-  // one resolves a source index against. It is that type's whole description,
-  // where an integral type's is a stack of dimensions plus its signedness and
-  // state domain -- one description each, of the shape each family needs.
-  kUnpackedRange,
   // The members an enumeration declares, each its whole value at the base type
-  // and its name, in declared order. It is that type's description for the
-  // questions asked of a value against its members, where the base's own
-  // description is what every other operation on the value takes.
+  // and its name, in declared order: what the questions asked of a value
+  // against its members are answered from.
   kEnumeration,
   kPrintItem,
   kPrintLiteralItem,
@@ -391,7 +372,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // boundary as, used as a borrowed-pointer pointee to spell the by-pointer
   // carrier an export's C entry point receives. This is a plumbing type, never
   // an SV value type: it has no declared range, signedness, or four-state
-  // expression semantics, and no `PackedArray` operation acts on it.
+  // expression semantics, and no operation on an integral value acts on it.
   // `kDpiBitChunk` is a 32-bit value-plane word; `kDpiLogicChunk` is a
   // two-plane `{ aval, bval }` record, each plane a 32-bit word. Each backend's
   // type mapping realizes it: the C++ backend as `svBitVecVal` /
@@ -602,12 +583,13 @@ struct TaggedUnionType {
 
 // Observable storage wrapper around a value type. Declares that a member's
 // storage is a module-scope cell whose write fires the LRM 9.4.2 update event,
-// so subscribers wake on a change. HIR-to-MIR wraps a member declaration whose
-// value type is a SystemVerilog data type (not a handle, child instance, or
-// external ref) in this wrapper. The C++ backend renders the wrapper as
-// `lyra::runtime::Var<T>` where T is the inner value type; the C++ template
-// requires `T` to satisfy `lyra::value::LyraValue`, so a value type that forgot
-// to implement the contract fails at template instantiation.
+// so subscribers wake on a change. The lowering wraps the storage of a variable
+// (LRM 6.5), a class handle's and a chandle's included; a pointer, a child
+// instance and a reference to storage elsewhere are not wrapped. The C++
+// backend renders the wrapper as `lyra::runtime::Var<T>` where T is the inner
+// value type; the C++ template requires `T` to satisfy
+// `lyra::value::LyraValue`, so a value type that forgot to implement the
+// contract fails at template instantiation.
 struct ObservableType {
   TypeId value;
 
@@ -716,7 +698,7 @@ struct ObjectWriteType {
 class Type {
  private:
   using Data = std::variant<
-      PackedArrayType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
+      IntegralType, EnumType, UnpackedArrayType, DynamicArrayType, QueueType,
       AssociativeArrayType, WildcardIndexType, StringType, MachineCStringType,
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
@@ -731,15 +713,16 @@ class Type {
   explicit Type(Data data) : data_(std::move(data)) {
   }
 
-  // True for any type whose value-level shape is a single packed vector: a
-  // packed array, or an enumeration through its base. A site that treats the
-  // type as its integral representation asks this; one that must tell them
-  // apart matches on the alternatives directly.
-  [[nodiscard]] auto IsIntegralPacked() const -> bool;
+  // True for any type whose value is a single vector of bits: an integral
+  // type, or an enumeration through its base. A site that treats the type as
+  // its integral representation asks this; one that must tell them apart
+  // matches on the alternatives directly.
+  [[nodiscard]] auto IsIntegral() const -> bool;
 
-  // The packed shape an integral type's value is structured by. A type that is
-  // not integral has no such shape and is a caller error, never a width guess.
-  [[nodiscard]] auto PackedShape() const -> const PackedArrayType&;
+  // The integral type a value of this type is, an enumeration's being its
+  // base. A type that is not integral has none and is a caller error, never a
+  // width guess.
+  [[nodiscard]] auto Integral() const -> const IntegralType&;
 
   // True for the two SV floating-point types (LRM 6.12), which share one set
   // of conversions -- the axis a cast or an operator decides on is the family,
@@ -763,7 +746,8 @@ class Type {
   // itself. What follows is that the handle is not the whole of the value:
   // whoever ends the storage ends the value, and a holder that outlives it is
   // left naming nothing. A type answering false is one the holder has entire --
-  // a machine quantity, or an address whose value is the address.
+  // an integral value, a machine quantity, or an address whose value is the
+  // address.
   //
   // Narrower than being a domain the runtime realizes values of, which a
   // chandle also is: its value is the pointer it carries, and the pointer is in

@@ -18,13 +18,13 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/struct_decl.hpp"
-#include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -779,11 +779,11 @@ inline void WriteOne(TargetText& out, const StructRef& ref) {
   return MintedWord{.word = "closure"};
 }
 
-// The name of the run-time description of a type, `sv_type_<n>`: a position in
-// the unit's list of descriptions, since the source names none.
-[[nodiscard]] inline auto CppTypeDescriptorName(
-    mir::TypeDescriptorId descriptor) -> MintedName {
-  return MintedCppName("type", descriptor.value);
+// The name of an enumeration's member table, `sv_enum_<n>`: a position in the
+// unit's list of them, since the source names none.
+[[nodiscard]] inline auto CppEnumTableName(mir::EnumTableId table)
+    -> MintedName {
+  return MintedCppName("enum", table.value);
 }
 
 // The name of a constant value the unit uses, `sv_const_<n>`: a position in the

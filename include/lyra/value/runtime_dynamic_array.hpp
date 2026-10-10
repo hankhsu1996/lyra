@@ -8,10 +8,11 @@
 
 #include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/value_type.hpp"
+#include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::value {
 
@@ -49,7 +50,7 @@ class RuntimeDynamicArray {
 
   // LRM 7.5.2: the current element count, and as an SV `int`.
   [[nodiscard]] auto Count() const -> std::size_t;
-  [[nodiscard]] auto Size() const -> PackedArray;
+  [[nodiscard]] auto Size() const -> Int;
 
   // The element at storage position `position` -- the coordinate LRM 7.12
   // walks a container by.
@@ -59,9 +60,10 @@ class RuntimeDynamicArray {
   // LRM 7.4.5: the element `position` names, the element default where it names
   // none; and the element as storage a write lands in, where no read reaches
   // where it names none.
-  [[nodiscard]] auto Element(const PackedArray& position) const -> const void*;
-  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
-      -> void*;
+  [[nodiscard]] auto Element(std::optional<std::int64_t> position) const
+      -> const void*;
+  [[nodiscard]] auto ElementRef(
+      std::optional<std::int64_t> position, Formation& formed) -> void*;
 
   // LRM 7.5.3: empties the array.
   void Delete();
@@ -69,14 +71,15 @@ class RuntimeDynamicArray {
   // LRM 7.4.5 / 7.4.6: the `count` elements from `start`, each the element
   // default where it lies outside the array, every one of them where `start`
   // names no position.
-  [[nodiscard]] auto SliceElements(const PackedArray& start, std::int64_t count)
-      const -> std::vector<const void*>;
+  [[nodiscard]] auto SliceElements(
+      std::optional<std::int64_t> start, std::int64_t count) const
+      -> std::vector<const void*>;
 
   // LRM 7.6: the window takes `replacement`, element for element; an element
   // outside the array is skipped and a start naming no position writes
   // nothing. Answers whether any element took a different value (LRM 4.3).
   auto AssignSlice(
-      const PackedArray& start, std::int64_t count,
+      std::optional<std::int64_t> start, std::int64_t count,
       std::span<const void* const> replacement) -> bool;
 
   // LRM 10.10: a copy of this array with copies of `items` appended in order.
@@ -87,18 +90,17 @@ class RuntimeDynamicArray {
   void Permute(std::span<const std::size_t> order);
 
   [[nodiscard]] auto operator==(const RuntimeDynamicArray& other) const
-      -> PackedArray;
+      -> FourStateBit;
   [[nodiscard]] auto operator!=(const RuntimeDynamicArray& other) const
-      -> PackedArray;
-  [[nodiscard]] auto CaseEqual(const RuntimeDynamicArray& other) const
-      -> PackedArray;
+      -> FourStateBit;
+  [[nodiscard]] auto CaseEqual(const RuntimeDynamicArray& other) const -> Bit;
   [[nodiscard]] auto IsBitIdentical(const RuntimeDynamicArray& other) const
       -> bool;
   [[nodiscard]] auto HasUnknown() const -> bool;
-  [[nodiscard]] auto IsUnknown() const -> PackedArray;
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray;
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray;
+  [[nodiscard]] auto IsUnknown() const -> Bit;
+  [[nodiscard]] auto BitstreamWidth() const -> Int;
+  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
+      -> Int;
 
  private:
   explicit RuntimeDynamicArray(BasicDynamicArray<WitnessedElem> core);
@@ -113,6 +115,6 @@ class RuntimeDynamicArray {
 static_assert(LyraValue<RuntimeDynamicArray>);
 static_assert(CaseEqualComparable<RuntimeDynamicArray>);
 static_assert(Sized<RuntimeDynamicArray>);
-static_assert(BitstreamSizable<RuntimeDynamicArray>);
+static_assert(BitstreamSizable<RuntimeDynamicArray, ConstIntegralView>);
 
 }  // namespace lyra::value

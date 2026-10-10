@@ -4,18 +4,14 @@
 #include <variant>
 
 #include "lyra/base/overloaded.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::mir {
 
 auto MakeAssignExpr(
-    const BuiltinMirTypes& builtins, ExprId target, ExprId value,
-    std::optional<BinaryOp> compound_op) -> Expr {
+    const BuiltinMirTypes& builtins, ExprId target, ExprId value) -> Expr {
   return Expr{
-      .data =
-          AssignExpr{
-              .target = target, .compound_op = compound_op, .value = value},
+      .data = AssignExpr{.target = target, .value = value},
       .type = builtins.void_type};
 }
 

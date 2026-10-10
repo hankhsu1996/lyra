@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <new>
+#include <utility>
 
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -48,26 +51,33 @@ class AnyValue {
     return bytes_.get();
   }
 
-  [[nodiscard]] auto operator==(const AnyValue& other) const -> PackedArray;
-  [[nodiscard]] auto operator!=(const AnyValue& other) const -> PackedArray;
-  [[nodiscard]] auto CaseEqual(const AnyValue& other) const -> PackedArray;
+  [[nodiscard]] auto operator==(const AnyValue& other) const -> FourStateBit;
+  [[nodiscard]] auto operator!=(const AnyValue& other) const -> FourStateBit;
+  [[nodiscard]] auto CaseEqual(const AnyValue& other) const -> Bit;
   [[nodiscard]] auto ResolveTriState(const AnyValue& other) const -> AnyValue;
   [[nodiscard]] auto ResolveWiredAnd(const AnyValue& other) const -> AnyValue;
   [[nodiscard]] auto ResolveWiredOr(const AnyValue& other) const -> AnyValue;
   [[nodiscard]] auto Dominating(const AnyValue& weaker) const -> AnyValue;
   [[nodiscard]] static auto FilledLike(
-      const AnyValue& prototype, const PackedArray& fill) -> AnyValue;
+      const AnyValue& prototype, const Logic& fill) -> AnyValue;
   // Two values hold the same bits only where they are of one type; a holder
   // with no value differs from one with a value.
   [[nodiscard]] auto IsBitIdentical(const AnyValue& other) const -> bool;
   [[nodiscard]] auto HasUnknown() const -> bool;
-  [[nodiscard]] auto IsUnknown() const -> PackedArray;
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray;
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray;
-  [[nodiscard]] auto ToBitstream() const -> PackedArray;
-  [[nodiscard]] static auto FromBitstream(
-      const PackedArray& bits, const AnyValue& prototype) -> AnyValue;
+  [[nodiscard]] auto IsUnknown() const -> Bit;
+  [[nodiscard]] auto BitstreamWidth() const -> Int;
+  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
+      -> Int;
+  // The value's bits written into a stream below its `filled` most significant
+  // positions, and a value of this one's shape the stream holds below its
+  // `taken` most significant ones (LRM 6.24.3), each with how many positions
+  // are filled, or taken, after it.
+  auto WriteToStream(
+      Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+      -> std::uint64_t;
+  [[nodiscard]] auto ReadFromStream(
+      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+      -> std::pair<AnyValue, std::uint64_t>;
 
  private:
   // Frees storage a value was being built in, for a build that did not finish:
@@ -100,10 +110,14 @@ class AnyValue {
   std::unique_ptr<void, End> bytes_;
 };
 
+// Whether two types hold their values the same way: the same type, or two
+// integral types of one shape, which generated code and the library may each
+// state of their own.
+[[nodiscard]] auto SameType(const ValueType& a, const ValueType& b) -> bool;
+
 static_assert(LyraValue<AnyValue>);
 static_assert(NetResolvable<AnyValue>);
 static_assert(CaseEqualComparable<AnyValue>);
-static_assert(BitstreamSizable<AnyValue>);
-static_assert(BitstreamConvertible<AnyValue>);
+static_assert(BitstreamSizable<AnyValue, ConstIntegralView>);
 
 }  // namespace lyra::value

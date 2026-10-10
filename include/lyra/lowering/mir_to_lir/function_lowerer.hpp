@@ -18,7 +18,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/value_build.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -49,19 +48,7 @@ class FunctionLowerer {
       UnitLowerer& unit, const mir::ClosureDecl& closure, std::string name);
   auto Run() -> diag::Result<lir::Function>;
 
-  // Lowers one value the unit holds -- a type's description, a constant the
-  // source wrote. Building a value at this layer is an instruction sequence, so
-  // what carries one is a nullary function whose whole content is that
-  // expression and a return.
-  static auto LowerValueBuild(
-      UnitLowerer& unit, const mir::ValueBuild& build, std::string name)
-      -> diag::Result<lir::Function>;
-
  private:
-  FunctionLowerer(
-      UnitLowerer& unit, const mir::ValueBuild& build, std::string name);
-  auto RunValueBuild() -> diag::Result<lir::Function>;
-
   // The branch targets a `break` and a `continue` inside one loop transfer to.
   // A labeled loop is also the target of a labeled break from a nested loop.
   // `scope_depth` is how many scopes were open where the loop began, so a
@@ -121,9 +108,9 @@ class FunctionLowerer {
   // values of gets storage of its own among the body's variables, and the
   // binding names it by the address the body opened over that storage -- which
   // is the one storage a reference can bind and the one that outlives a
-  // suspension of the body. A local whose type is stable as it stands -- a
-  // pointer, a code reference, a machine scalar -- is a slot of the body's own
-  // frame.
+  // suspension of the body. A local whose type is stable as it stands -- an
+  // integral value, a pointer, a code reference, a machine scalar -- is a slot
+  // of the body's own frame.
   //
   // Nothing about what the body does with the local is consulted. The two
   // follow from the declared type alone, so a local's storage is settled where
@@ -319,7 +306,7 @@ class FunctionLowerer {
   // member place has once its receiver is resolved.
   auto SymbolPlace(std::string symbol, mir::TypeId type) -> lir::Place;
   // The value naming a referent yields, whether that is the reference itself --
-  // a descriptor, a function, a local bound to a value that never had storage
+  // a member table, a function, a local bound to a value that never had storage
   // -- or what the storage it names holds.
   auto ReferenceValue(
       const mir::Block& block, mir::ExprId id,
@@ -470,13 +457,6 @@ class FunctionLowerer {
       -> diag::Result<lir::Place>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
       -> diag::Result<lir::Operand>;
-  // The value a compound assignment stores: its operator applied to the old
-  // value and the right-hand side (LRM 11.4.1). An assignment carries only the
-  // operators a target applies to two values of one type, so this is the
-  // ordinary binary instruction and nothing else.
-  auto LowerCompoundOperator(
-      mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
-      lir::TypeId type) -> lir::Operand;
   // A method that changes the object it is applied to. The entry changes the
   // object where it lies, and answers with whatever result of its own the
   // method states -- a queue pop yields the element it removed (LRM 7.10.2.4).
@@ -528,12 +508,10 @@ class FunctionLowerer {
   // storage, or what a write in progress designates of it -- then the slice's
   // bounds and what the slice is changed to. `read` answers with the slice's
   // value at those bounds, where the change reads one.
-  using SliceReader = std::function<diag::Result<lir::Operand>(
-      const std::vector<lir::Operand>& bounds)>;
   auto WriteSlice(
-      const mir::Block& block, const mir::CallExpr& slice,
-      const ValueChange& change, const lir::Operand& container,
-      lir::TypeId slice_type, lir::CallTarget writer, const SliceReader& read)
+      const std::vector<lir::Operand>& bounds, const ValueChange& change,
+      const lir::Operand& container, lir::TypeId slice_type,
+      lir::CallTarget writer, const ValueReader& read)
       -> diag::Result<lir::Operand>;
   // Which subvalue one reaching call names, in the vocabulary this layer's
   // aggregate instructions take.
@@ -614,7 +592,6 @@ class FunctionLowerer {
   const mir::CallableCode* code_;
   std::optional<Construction> construction_;
   const mir::ClosureDecl* closure_;
-  const mir::ValueBuild* build_;
   std::string name_;
   lir::Function fn_;
   // A block while it is being built, which is before its exit is decided. The

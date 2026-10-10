@@ -5,8 +5,8 @@
 #include <span>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/library_value_types.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/value_type.hpp"
@@ -15,10 +15,22 @@ namespace lyra::value {
 
 namespace {
 
-void RequirePackedWord(const ValueType& type) {
-  if (&type != &lyra_rt_packed_value_type) {
+auto WordType(const ValueType& type) -> const IntegralValueType& {
+  const IntegralValueType* word = type.AsIntegral();
+  if (word == nullptr) {
     throw InternalError("memory: an element is a packed word");
   }
+  return *word;
+}
+
+// The parts a level of a memory is made of, which every level above the word
+// has.
+auto PartsOf(const ValueType& type) -> const PartsByPosition& {
+  const PartsByPosition* parts = type.Parts();
+  if (parts == nullptr) {
+    throw InternalError("memory walk: a level above the word holds no parts");
+  }
+  return *parts;
 }
 
 // The storage position an address names in a level of `count` parts, which is
@@ -52,12 +64,14 @@ auto InnerAddress(
 
 // The part of `level` at storage position `position`, for reading where the
 // level is, and as storage a write lands in where it may be written.
-auto PartOf(const ValueType& type, const void* level, std::size_t position)
+auto PartOf(
+    const PartsByPosition& parts, const void* level, std::size_t position)
     -> const void* {
-  return type.PartAt(level, position);
+  return parts.At(level, position);
 }
-auto PartOf(const ValueType& type, void* level, std::size_t position) -> void* {
-  return type.PartRefAt(level, position);
+auto PartOf(const PartsByPosition& parts, void* level, std::size_t position)
+    -> void* {
+  return parts.RefAt(level, position);
 }
 
 // The leaf at one grid coordinate, each level reached through its type's
@@ -70,9 +84,10 @@ auto LeafAt(
   const ValueType* type = &lyra_rt_unpackedarray_value_type;
   for (std::size_t d = 0; d < dims.size(); ++d) {
     const std::int64_t address = d == 0 ? top : InnerAddress(dims, d, ordinal);
-    const ValueType& part = type->PartType(level);
-    level = PartOf(
-        *type, level, PositionOf(type->PartCount(level), address, dims[d]));
+    const PartsByPosition& parts = PartsOf(*type);
+    const ValueType& part = parts.Type(level);
+    level =
+        PartOf(parts, level, PositionOf(parts.Count(level), address, dims[d]));
     type = &part;
   }
   return MemoryWordOf(*type, level);
@@ -80,26 +95,24 @@ auto LeafAt(
 
 }  // namespace
 
-auto MemoryWordOf(const ValueType& type, void* element) -> PackedArray& {
-  RequirePackedWord(type);
-  return *static_cast<PackedArray*>(element);
+auto MemoryWordOf(const ValueType& type, void* element) -> MemoryWord {
+  return MemoryWord{.type = &WordType(type), .bytes = element};
 }
 
 auto MemoryWordOf(const ValueType& type, const void* element)
-    -> const PackedArray& {
-  RequirePackedWord(type);
-  return *static_cast<const PackedArray*>(element);
+    -> ConstMemoryWord {
+  return ConstMemoryWord{.type = &WordType(type), .bytes = element};
 }
 
 auto MemoryLeaf(
     RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
-    std::int64_t top, std::size_t ordinal) -> PackedArray& {
+    std::int64_t top, std::size_t ordinal) -> MemoryWord {
   return LeafAt(static_cast<void*>(&memory), dims, top, ordinal);
 }
 
 auto MemoryLeaf(
     const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
-    std::int64_t top, std::size_t ordinal) -> const PackedArray& {
+    std::int64_t top, std::size_t ordinal) -> ConstMemoryWord {
   return LeafAt(static_cast<const void*>(&memory), dims, top, ordinal);
 }
 

@@ -9,7 +9,7 @@
 #include <string_view>
 
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::runtime {
 
@@ -166,13 +166,13 @@ auto UniformIn(DistInt& seed, DistInt start, DistInt end) -> DistInt {
 
 // Every argument to these functions is an integer value (LRM 20.14.2),
 // whatever integral type the design declared the variable it came from.
-auto IntegerArgument(const value::PackedArray& value) -> DistInt {
-  return static_cast<DistInt>(value.ToInt64());
+auto IntegerArgument(std::int64_t value) -> DistInt {
+  return static_cast<DistInt>(value);
 }
 
 auto DrawnWith(DistInt value, DistInt seed) -> DistributionDraw {
   return DistributionDraw{
-      value::PackedArray::Int(value), value::PackedArray::Int(seed)};
+      value::Int::FromInt(value), value::Int::FromInt(seed)};
 }
 
 // LRM 20.14.2 requires a positive mean, degree of freedom, and stage count. A
@@ -189,9 +189,8 @@ void RequirePositive(
 
 }  // namespace
 
-auto DistUniform(
-    const value::PackedArray& seed, const value::PackedArray& start,
-    const value::PackedArray& end) -> DistributionDraw {
+auto DistUniform(std::int64_t seed, std::int64_t start, std::int64_t end)
+    -> DistributionDraw {
   DistInt state = IntegerArgument(seed);
   const DistInt drawn =
       UniformIn(state, IntegerArgument(start), IntegerArgument(end));
@@ -199,17 +198,15 @@ auto DistUniform(
 }
 
 auto DistNormal(
-    const value::PackedArray& seed, const value::PackedArray& mean,
-    const value::PackedArray& standard_deviation) -> DistributionDraw {
+    std::int64_t seed, std::int64_t mean, std::int64_t standard_deviation)
+    -> DistributionDraw {
   DistInt state = IntegerArgument(seed);
   const double drawn =
       Normal(state, IntegerArgument(mean), IntegerArgument(standard_deviation));
   return DrawnWith(RoundDraw(drawn), state);
 }
 
-auto DistExponential(
-    const value::PackedArray& seed, const value::PackedArray& mean)
-    -> DistributionDraw {
+auto DistExponential(std::int64_t seed, std::int64_t mean) -> DistributionDraw {
   const DistInt shape = IntegerArgument(mean);
   RequirePositive(shape, "$dist_exponential", "mean");
   DistInt state = IntegerArgument(seed);
@@ -217,8 +214,7 @@ auto DistExponential(
   return DrawnWith(RoundDraw(drawn), state);
 }
 
-auto DistPoisson(const value::PackedArray& seed, const value::PackedArray& mean)
-    -> DistributionDraw {
+auto DistPoisson(std::int64_t seed, std::int64_t mean) -> DistributionDraw {
   const DistInt shape = IntegerArgument(mean);
   RequirePositive(shape, "$dist_poisson", "mean");
   DistInt state = IntegerArgument(seed);
@@ -226,9 +222,8 @@ auto DistPoisson(const value::PackedArray& seed, const value::PackedArray& mean)
   return DrawnWith(drawn, state);
 }
 
-auto DistChiSquare(
-    const value::PackedArray& seed,
-    const value::PackedArray& degrees_of_freedom) -> DistributionDraw {
+auto DistChiSquare(std::int64_t seed, std::int64_t degrees_of_freedom)
+    -> DistributionDraw {
   const DistInt shape = IntegerArgument(degrees_of_freedom);
   RequirePositive(shape, "$dist_chi_square", "degree of freedom");
   DistInt state = IntegerArgument(seed);
@@ -236,9 +231,8 @@ auto DistChiSquare(
   return DrawnWith(RoundDraw(drawn), state);
 }
 
-auto DistT(
-    const value::PackedArray& seed,
-    const value::PackedArray& degrees_of_freedom) -> DistributionDraw {
+auto DistT(std::int64_t seed, std::int64_t degrees_of_freedom)
+    -> DistributionDraw {
   const DistInt shape = IntegerArgument(degrees_of_freedom);
   RequirePositive(shape, "$dist_t", "degree of freedom");
   DistInt state = IntegerArgument(seed);
@@ -246,9 +240,8 @@ auto DistT(
   return DrawnWith(RoundDraw(drawn), state);
 }
 
-auto DistErlang(
-    const value::PackedArray& seed, const value::PackedArray& stages,
-    const value::PackedArray& mean) -> DistributionDraw {
+auto DistErlang(std::int64_t seed, std::int64_t stages, std::int64_t mean)
+    -> DistributionDraw {
   const DistInt stage_count = IntegerArgument(stages);
   const DistInt average = IntegerArgument(mean);
   RequirePositive(stage_count, "$dist_erlang", "k_stage");

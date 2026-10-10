@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/system/scan.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -24,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/struct_methods.hpp"
@@ -77,12 +79,12 @@ auto LiftStringSource(
                          .types.Get(source_type)
                          .Get<mir::UnpackedArrayType>();
     const auto& elem = unit_lowerer.Unit().types.Get(ua.element_type);
-    if (!elem.IsIntegralPacked() || elem.PackedShape().BitWidth() != 8U) {
+    if (!elem.IsIntegral() || elem.Integral().bit_width != 8U) {
       throw InternalError(
           "LiftStringSource: $sscanf unpacked-array source must have an "
           "8-bit integral element (LRM 21.3.4.3)");
     }
-  } else if (!source.IsIntegralPacked()) {
+  } else if (!source.IsIntegral()) {
     throw InternalError(
         "LiftStringSource: $sscanf source is not string, integral, or "
         "unpacked array of byte (LRM 21.3.4.3)");
@@ -100,7 +102,7 @@ auto LiftStringFormat(
     mir::ExprId format_id) -> mir::ExprId {
   const auto& t = unit_lowerer.Unit().types.Get(format_type);
   if (t.Is<mir::StringType>()) return format_id;
-  if (!t.IsIntegralPacked()) {
+  if (!t.IsIntegral()) {
     throw InternalError(
         "LiftStringFormat: scan format is not string or integral (LRM "
         "21.3.4.3)");
@@ -121,17 +123,9 @@ auto EmitScanOperandsKnown(
   std::vector<mir::ExprId> known;
   for (const mir::ExprId operand : operands) {
     if (!CarriesUnknowns(unit, body.exprs.Get(operand).type)) continue;
-    const mir::ExprId unknown_id = body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kIsUnknown,
-                            .receiver = operand},
-                    .arguments = {}},
-            .type = bit_t});
-    known.push_back(BuildLogicalNot(body, unknown_id));
+    const mir::ExprId unknown_id = body.exprs.Add(MakeBuiltinCall(
+        unit, body, support::BuiltinFn::kIsUnknown, operand, {}, bit_t));
+    known.push_back(BuildLogicalNot(unit, body, unknown_id));
   }
   return BuildMirLogicalAnd(unit, body, bit_t, known);
 }
@@ -142,7 +136,7 @@ auto ValidateTargetType(
     -> diag::Result<void> {
   const auto& target = unit.types.Get(mir_type);
   if (target.Is<mir::StringType>()) return {};
-  if (target.IsIntegralPacked()) return {};
+  if (target.IsIntegral()) return {};
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
       std::format(
@@ -159,7 +153,7 @@ auto LowerScanSystemSubroutineCall(
     const support::ScanSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
   // $fscanf(fd, format, target...) / $sscanf(str, format, target...) --
-  // LRM 21.3.4.2. Source and format, then one target per conversion.
+  // LRM 21.3.4.3. Source and format, then one target per conversion.
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
   if (operands.size() < 3) {
     throw InternalError(
@@ -244,15 +238,20 @@ auto LowerScanSystemSubroutineCall(
   mir::Block scan_body;
   const WalkFrame scan_frame = step_frame.WithBlock(&scan_body);
 
+  // The descriptor, read as the number the file broker works in, each time a
+  // call names it.
+  const auto fd_number = [&]() {
+    return BuildToInt64Call(
+        unit, scan_body,
+        scan_body.exprs.Add(
+            mir::MakeLocalRefExpr(source_var, raw_source_type)));
+  };
   mir::ExprId source_id{};
-  mir::ExprId fd_id{};
   if (is_file) {
-    if (!unit.types.Get(raw_source_type).IsIntegralPacked()) {
+    if (!unit.types.Get(raw_source_type).IsIntegral()) {
       throw InternalError(
           "LowerScanSystemSubroutineCall: $fscanf fd is not packed-integer");
     }
-    fd_id =
-        scan_body.exprs.Add(mir::MakeLocalRefExpr(source_var, raw_source_type));
     const mir::ExprId runtime_id =
         scan_body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
     const mir::ExprId files_id = scan_body.exprs.Add(
@@ -273,7 +272,7 @@ auto LowerScanSystemSubroutineCall(
                         mir::Direct{
                             .target = support::BuiltinFn::kPeekBuffered,
                             .receiver = files_id},
-                    .arguments = {fd_id}},
+                    .arguments = {fd_number()}},
             .type = string_t});
   } else {
     source_id = LiftStringSource(
@@ -347,8 +346,10 @@ auto LowerScanSystemSubroutineCall(
     // LRM 21.3.4.3 "the offending input character is left unread in the input
     // stream": how far the parse advanced is what lets the file form rewind
     // the unconsumed tail before the next read.
-    const mir::ExprId consumed_read = ProjectCompletionComponent(
-        scan_body, completion, payload_type, kScanConsumed, int_type);
+    const mir::ExprId consumed_read = BuildToInt64Call(
+        unit, scan_body,
+        ProjectCompletionComponent(
+            scan_body, completion, payload_type, kScanConsumed, int_type));
     const mir::ExprId advance_call = scan_body.exprs.Add(
         mir::Expr{
             .data =
@@ -357,7 +358,7 @@ auto LowerScanSystemSubroutineCall(
                         mir::Direct{
                             .target = support::BuiltinFn::kAdvanceFd,
                             .receiver = files_after},
-                    .arguments = {fd_id, consumed_read}},
+                    .arguments = {fd_number(), consumed_read}},
             .type = void_t});
     scan_body.AppendStmt(mir::ExprStmt{.expr = advance_call});
   }
@@ -369,14 +370,11 @@ auto LowerScanSystemSubroutineCall(
         scan_body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
     const mir::ExprId k_lit_id =
         BuildIntegerLiteral(unit, scan_body, static_cast<std::int64_t>(k + 1));
-    const mir::ExprId cond_id = scan_body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = mir::BinaryOp::kGreaterEqual,
-                    .lhs = count_read_id,
-                    .rhs = k_lit_id},
-            .type = bit_t});
+    // The count is an `integer`, so the comparison answers a bit that can be
+    // unknown (LRM 11.4.4), and the condition reads its truth.
+    const mir::ExprId cond_id = scan_body.exprs.Add(MakeBinary(
+        unit, scan_body, mir::BinaryOp::kGreaterEqual, count_read_id, k_lit_id,
+        OneBitAnswerType(unit, std::array{integer_t, integer_t})));
 
     mir::Block then_body;
     const WalkFrame then_frame = scan_frame.WithBlock(&then_body);

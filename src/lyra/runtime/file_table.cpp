@@ -20,6 +20,10 @@
 
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/support/file_descriptor.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
+#include "lyra/value/string.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::runtime {
 
@@ -94,10 +98,9 @@ void WriteToStream(
 }
 
 void DispatchWrite(
-    FileTable& files, StreamDispatcher& stream,
-    const value::PackedArray& descriptor_pa, std::string_view body,
-    bool append_newline) {
-  const auto descriptor = static_cast<std::int32_t>(descriptor_pa.ToInt64());
+    FileTable& files, StreamDispatcher& stream, std::int64_t descriptor_value,
+    std::string_view body, bool append_newline) {
+  const auto descriptor = static_cast<std::int32_t>(descriptor_value);
   if (descriptor == 0) return;
   const auto raw = static_cast<std::uint32_t>(descriptor);
 
@@ -136,13 +139,11 @@ void DispatchWrite(
 
 }  // namespace
 
-void FileTable::Write(
-    const value::PackedArray& descriptor, const value::String& text) {
+void FileTable::Write(std::int64_t descriptor, const value::String& text) {
   DispatchWrite(*this, *stream_, descriptor, text.View(), false);
 }
 
-void FileTable::Writeln(
-    const value::PackedArray& descriptor, const value::String& text) {
+void FileTable::Writeln(std::int64_t descriptor, const value::String& text) {
   DispatchWrite(*this, *stream_, descriptor, text.View(), true);
 }
 
@@ -150,11 +151,11 @@ ChannelCancellation::ChannelCancellation(std::vector<std::stop_token> tokens)
     : tokens_(std::move(tokens)) {
 }
 
-auto ChannelCancellation::IsCancelled() const noexcept
-    -> lyra::value::PackedArray {
-  const bool cancelled = std::ranges::any_of(
-      tokens_, [](const std::stop_token& t) { return t.stop_requested(); });
-  return lyra::value::PackedArray::Bit(cancelled);
+auto ChannelCancellation::IsCancelled() const noexcept -> value::Bit {
+  return value::Bit::FromBool(
+      std::ranges::any_of(tokens_, [](const std::stop_token& t) {
+        return t.stop_requested();
+      }));
 }
 
 auto FileTable::Open(
@@ -202,7 +203,8 @@ auto FileTable::Open(
   return 0;
 }
 
-void FileTable::Close(std::int32_t descriptor) {
+void FileTable::Close(std::int64_t descriptor_value) {
+  const auto descriptor = static_cast<std::int32_t>(descriptor_value);
   if (descriptor == 0) return;
   const auto raw = static_cast<std::uint32_t>(descriptor);
   if ((raw & (1U << 31U)) != 0U) {
@@ -302,8 +304,8 @@ void FileTable::ClearError(std::int32_t fd) {
   fd_pool_.at(*idx).error = ErrorRecord{};
 }
 
-auto FileTable::PeekBuffered(const value::PackedArray& fd_pa) -> value::String {
-  const auto fd = static_cast<std::int32_t>(fd_pa.ToInt64());
+auto FileTable::PeekBuffered(std::int64_t fd_value) -> value::String {
+  const auto fd = static_cast<std::int32_t>(fd_value);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) {
     SetError(fd, EBADF, "$fscanf: not an open file descriptor");
@@ -349,13 +351,12 @@ auto FileTable::PeekBuffered(const value::PackedArray& fd_pa) -> value::String {
   return value::String(std::move(out));
 }
 
-void FileTable::AdvanceFd(
-    const value::PackedArray& fd_pa, const value::PackedArray& n_pa) {
-  const auto fd = static_cast<std::int32_t>(fd_pa.ToInt64());
+void FileTable::AdvanceFd(std::int64_t fd_value, std::int64_t n_value) {
+  const auto fd = static_cast<std::int32_t>(fd_value);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) return;
   if (!slot->permits_read) return;
-  const auto n = static_cast<std::int32_t>(n_pa.ToInt64());
+  const auto n = static_cast<std::int32_t>(n_value);
   auto remaining = static_cast<std::size_t>(n < 0 ? 0 : n);
   const std::size_t peek_len = slot->peek_len;
   slot->peek_len = 0;
@@ -392,35 +393,29 @@ void FileTable::AdvanceFd(
 
 namespace {
 
-// Narrow a 32-bit signed int wrapped in a PackedArray. Identity for
-// well-formed int-shaped inputs; descriptor / offset / operation operands
-// all enter as `int`.
-auto AsInt32(const value::PackedArray& pa) -> std::int32_t {
-  return static_cast<std::int32_t>(pa.ToInt64());
+// The `int` the source wrote for a descriptor, offset, operation or character
+// (LRM 21.3), which reaches here widened to a machine integer.
+auto AsInt32(std::int64_t value) -> std::int32_t {
+  return static_cast<std::int32_t>(value);
 }
 
-auto MakeInt(std::int32_t v) -> value::PackedArray {
-  return value::PackedArray::Int(v);
+auto MakeInt(std::int32_t v) -> value::Int {
+  return value::Int::FromInt(v);
 }
 
 }  // namespace
 
-auto FileTable::Open(const value::String& name) -> value::PackedArray {
+auto FileTable::Open(const value::String& name) -> value::Int {
   return MakeInt(Open(name.View(), std::nullopt));
 }
 
 auto FileTable::OpenWithMode(
-    const value::String& name, const value::String& mode)
-    -> value::PackedArray {
+    const value::String& name, const value::String& mode) -> value::Int {
   return MakeInt(Open(name.View(), mode.View()));
 }
 
-void FileTable::Close(const value::PackedArray& descriptor) {
-  Close(AsInt32(descriptor));
-}
-
-auto FileTable::Getc(const value::PackedArray& fd_pa) -> value::PackedArray {
-  const std::int32_t fd = AsInt32(fd_pa);
+auto FileTable::Getc(std::int64_t fd_value) -> value::Int {
+  const std::int32_t fd = AsInt32(fd_value);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) {
     SetError(fd, EBADF, "$fgetc: not an open file descriptor");
@@ -448,10 +443,8 @@ auto FileTable::Getc(const value::PackedArray& fd_pa) -> value::PackedArray {
   return MakeInt(c & 0xFF);
 }
 
-auto FileTable::Ungetc(
-    const value::PackedArray& c_pa, const value::PackedArray& fd_pa)
-    -> value::PackedArray {
-  const std::int32_t fd = AsInt32(fd_pa);
+auto FileTable::Ungetc(std::int64_t c, std::int64_t fd_value) -> value::Int {
+  const std::int32_t fd = AsInt32(fd_value);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) {
     SetError(fd, EBADF, "$ungetc: not an open file descriptor");
@@ -467,15 +460,15 @@ auto FileTable::Ungetc(
     SetError(fd, EAGAIN, "$ungetc: putback buffer full");
     return MakeInt(-1);
   }
-  slot->putback = static_cast<char>(AsInt32(c_pa) & 0xFF);
+  slot->putback = static_cast<char>(AsInt32(c) & 0xFF);
   return MakeInt(0);
 }
 
-auto FileTable::Gets(const value::PackedArray& fd_pa) -> TextRead {
+auto FileTable::Gets(std::int64_t fd_value) -> TextRead {
   const auto read_nothing = [] {
     return TextRead{MakeInt(0), value::String{}};
   };
-  const std::int32_t fd = AsInt32(fd_pa);
+  const std::int32_t fd = AsInt32(fd_value);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) {
     SetError(fd, EBADF, "$fgets: not an open file descriptor");
@@ -509,25 +502,19 @@ auto FileTable::Gets(const value::PackedArray& fd_pa) -> TextRead {
       MakeInt(static_cast<std::int32_t>(line.size())), value::String{line}};
 }
 
-auto FileTable::Read(value::PackedArray dest, const value::PackedArray& fd_pa)
-    -> PackedRead {
-  const auto unchanged = [&dest] { return PackedRead{MakeInt(0), dest}; };
-  const std::int32_t fd = AsInt32(fd_pa);
+auto FileTable::ReadInto(const value::IntegralView& dest, std::int64_t fd_value)
+    -> value::Int {
+  const std::int32_t fd = AsInt32(fd_value);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) {
     SetError(fd, EBADF, "$fread: not an open file descriptor");
-    return unchanged();
+    return MakeInt(0);
   }
   if (!slot->permits_read) {
     SetError(fd, EBADF, "$fread: file not open for reading");
-    return unchanged();
+    return MakeInt(0);
   }
-  const std::uint64_t width = dest.BitWidth();
-  if (width == 0U) {
-    SetError(fd, EINVAL, "$fread: destination has zero bit width");
-    return unchanged();
-  }
-  const auto byte_count = static_cast<std::size_t>((width + 7U) / 8U);
+  const auto byte_count = static_cast<std::size_t>((dest.width + 7U) / 8U);
   std::vector<char> buf(byte_count, '\0');
   std::size_t pos = 0;
   // LRM 21.3.4.1: any pending $ungetc byte is the next byte read from the
@@ -541,27 +528,34 @@ auto FileTable::Read(value::PackedArray dest, const value::PackedArray& fd_pa)
   const auto got = pos + static_cast<std::size_t>(slot->file->gcount());
   if (got == 0U) {
     SetError(fd, 0, "$fread: EOF");
-    return unchanged();
+    return MakeInt(0);
   }
-  // LRM 21.3.4.4: 2-value, big-endian (first byte fills the MSBs). On a
-  // short read, the trailing buffer is already zero from the vector
-  // constructor and lands in the destination's LSBs ("as much as
-  // available"). PackedArray::FromBytes supports any width; the
-  // destination's declared shape (sign / 4-state) is preserved.
-  return PackedRead{
-      MakeInt(static_cast<std::int32_t>(got)),
-      value::PackedArray::FromBytes(
-          buf, width, dest.IsSigned(), dest.IsFourState())};
+  // LRM 21.3.4.4: 2-value, big-endian. On a short read, the trailing buffer is
+  // already zero from the vector constructor and lands in the destination's
+  // LSBs ("as much as available").
+  ReadBigEndian(dest, buf);
+  return MakeInt(static_cast<std::int32_t>(got));
+}
+
+void ReadBigEndian(
+    const value::IntegralView& dest, std::span<const char> bytes) {
+  const std::uint64_t spanned = std::uint64_t{bytes.size()} * 8U;
+  std::vector<std::uint64_t> read(value::WordCountForBits(spanned));
+  const value::Planes read_planes{.value = read, .unknown = {}};
+  value::FromBytes(read_planes, spanned, bytes);
+  value::Extract(
+      dest.planes, dest.width, read_planes.AsConst(), spanned,
+      static_cast<std::int64_t>(spanned) -
+          static_cast<std::int64_t>(dest.width));
 }
 
 auto ReadMemoryWords(
-    FileTable& files, const value::PackedArray& fd_pa,
-    const value::PackedArray& element_prototype,
+    FileTable& files, std::int64_t fd_value, std::uint64_t element_width,
     const value::UnpackedRange& declared, std::int64_t start_sv,
     std::int64_t count,
-    const std::function<void(std::int64_t, value::PackedArray)>& write_word)
+    const std::function<void(std::int64_t, std::span<const char>)>& write_word)
     -> std::int32_t {
-  const std::int32_t fd = AsInt32(fd_pa);
+  const std::int32_t fd = AsInt32(fd_value);
   auto* slot = files.ResolveSlot(fd);
   if (slot == nullptr) {
     files.SetError(fd, EBADF, "$fread: not an open file descriptor");
@@ -572,7 +566,7 @@ auto ReadMemoryWords(
     return 0;
   }
 
-  // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EBADF
+  // LRM 21.3.4.4: out-of-range start has no defined behaviour. Stamp EINVAL
   // and return 0 so the user sees the failure rather than a silent no-op.
   if (start_sv < declared.Low() || start_sv > declared.High()) {
     files.SetError(fd, EINVAL, "$fread: start index out of array range");
@@ -583,10 +577,6 @@ auto ReadMemoryWords(
   const auto target_count =
       std::min(static_cast<std::size_t>(count), available_elements);
 
-  const auto element_width = element_prototype.BitWidth();
-  if (element_width == 0U) return 0;
-  const bool elem_signed = element_prototype.IsSigned();
-  const bool elem_four_state = element_prototype.IsFourState();
   const auto bytes_per_elem =
       static_cast<std::size_t>((element_width + 7U) / 8U);
   std::size_t total_bytes = 0;
@@ -604,42 +594,22 @@ auto ReadMemoryWords(
     slot->file->read(rest.data(), static_cast<std::streamsize>(rest.size()));
     const auto got_this = pos + static_cast<std::size_t>(slot->file->gcount());
     if (got_this == 0U) break;
-    // Partial element gets LSB zero-padding via PackedArray::FromBytes'
-    // "shorter input -> trailing zeros" path -- consistent with the packed
-    // form's "as much as available" behaviour.
-    auto effective = std::span<const char>(buf).first(got_this);
-    // Written by source-declared index: the declared range is the receiver's
-    // static-type coordinate system, and the holder resolves it.
-    write_word(
-        start_sv + static_cast<std::int64_t>(k),
-        value::PackedArray::FromBytes(
-            effective, element_width, elem_signed, elem_four_state));
+    // A partial element keeps the zeros the buffer started with in the bytes
+    // the file did not reach, which are its least significant -- the packed
+    // form's "as much as available" behaviour. Written by source-declared
+    // index: the declared range is the receiver's static-type coordinate
+    // system, and the holder resolves it.
+    write_word(start_sv + static_cast<std::int64_t>(k), buf);
     total_bytes += got_this;
     if (got_this < bytes_per_elem) break;
   }
   return static_cast<std::int32_t>(total_bytes);
 }
 
-auto FileTable::ReadMemory(
-    value::UnpackedArray<value::PackedArray> dest, const value::PackedArray& fd,
-    const value::UnpackedRange& declared, const value::PackedArray& sv_start,
-    const value::PackedArray& count) -> MemoryRead {
-  if (dest.RawSize() == 0U) return MemoryRead{MakeInt(0), std::move(dest)};
-  const std::int32_t read = ReadMemoryWords(
-      *this, fd, dest.RawAt(0), declared, sv_start.ToInt64(), count.ToInt64(),
-      [&dest, &declared](std::int64_t sv_index, value::PackedArray word) {
-        dest.ElementRef(
-            value::PackedArray::FromInt(
-                declared.ToOrdinal(sv_index), 64U, true, false)) =
-            std::move(word);
-      });
-  return MemoryRead{MakeInt(read), std::move(dest)};
-}
-
 auto FileTable::Seek(
-    const value::PackedArray& fd_pa, const value::PackedArray& offset,
-    const value::PackedArray& operation) -> value::PackedArray {
-  const std::int32_t fd = AsInt32(fd_pa);
+    std::int64_t fd_value, std::int64_t offset, std::int64_t operation)
+    -> value::Int {
+  const std::int32_t fd = AsInt32(fd_value);
   auto* slot = ResolveSlot(fd);
   if (slot == nullptr) {
     SetError(fd, EBADF, "$fseek: not an open file descriptor");
@@ -676,12 +646,12 @@ auto FileTable::Seek(
   return MakeInt(0);
 }
 
-auto FileTable::Rewind(const value::PackedArray& fd_pa) -> value::PackedArray {
-  return Seek(fd_pa, MakeInt(0), MakeInt(0));
+auto FileTable::Rewind(std::int64_t fd) -> value::Int {
+  return Seek(fd, 0, 0);
 }
 
-auto FileTable::Tell(const value::PackedArray& fd_pa) -> value::PackedArray {
-  const std::int32_t fd = AsInt32(fd_pa);
+auto FileTable::Tell(std::int64_t fd_value) -> value::Int {
+  const std::int32_t fd = AsInt32(fd_value);
   std::fstream* stream = Resolve(fd);
   if (stream == nullptr) {
     SetError(fd, EBADF, "$ftell: not an open file descriptor");
@@ -695,15 +665,15 @@ auto FileTable::Tell(const value::PackedArray& fd_pa) -> value::PackedArray {
   return MakeInt(static_cast<std::int32_t>(pos));
 }
 
-auto FileTable::Eof(const value::PackedArray& fd_pa) -> value::PackedArray {
-  const std::int32_t fd = AsInt32(fd_pa);
+auto FileTable::Eof(std::int64_t fd_value) -> value::Int {
+  const std::int32_t fd = AsInt32(fd_value);
   std::fstream* stream = Resolve(fd);
   if (stream == nullptr) return MakeInt(0);
   return MakeInt(stream->eof() ? 1 : 0);
 }
 
-auto FileTable::Error(const value::PackedArray& fd_pa) -> TextRead {
-  const std::int32_t fd = AsInt32(fd_pa);
+auto FileTable::Error(std::int64_t fd_value) -> TextRead {
+  const std::int32_t fd = AsInt32(fd_value);
   const int errno_value = LastError(fd);
   if (errno_value == 0) {
     return TextRead{MakeInt(0), value::String{}};
@@ -726,8 +696,8 @@ void FileTable::FlushAll() {
   }
 }
 
-void FileTable::Flush(const value::PackedArray& descriptor_pa) {
-  const std::int32_t descriptor = AsInt32(descriptor_pa);
+void FileTable::Flush(std::int64_t descriptor_value) {
+  const std::int32_t descriptor = AsInt32(descriptor_value);
   if (descriptor == 0) return;
   const auto raw = static_cast<std::uint32_t>(descriptor);
   if ((raw & (1U << 31U)) != 0U) {
@@ -749,10 +719,10 @@ void FileTable::Flush(const value::PackedArray& descriptor_pa) {
   }
 }
 
-auto FileTable::CancellationFor(const lyra::value::PackedArray& descriptor)
+auto FileTable::CancellationFor(std::int64_t descriptor)
     -> ChannelCancellation {
   std::vector<std::stop_token> tokens;
-  const auto raw_signed = static_cast<std::int32_t>(descriptor.ToInt64());
+  const auto raw_signed = static_cast<std::int32_t>(descriptor);
   if (raw_signed == 0) return ChannelCancellation{std::move(tokens)};
   const auto raw = static_cast<std::uint32_t>(raw_signed);
   if ((raw & (1U << 31U)) != 0U) {

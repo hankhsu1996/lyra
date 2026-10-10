@@ -9,7 +9,6 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/binary_op.hpp"
@@ -23,14 +22,6 @@ namespace lyra::lowering::hir_to_mir {
 // operator that names one. An operator a library performs names none, nor does
 // one that may leave an operand unevaluated, and neither reaches this.
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
-
-// What an assignment applies to the value its target holds, for the operator
-// the source suffixed with `=` (LRM 11.4.1). The clause admits arithmetic,
-// bitwise and shift compounds; the first two are operators a target applies,
-// and a shift is applied by the entry that performs it, because a shift's
-// amount is sized on its own and no two-values-of-one-type operator can say
-// that. This is the one place that fork is taken.
-auto LowerCompoundOperation(hir::BinaryOp op) -> CompoundOperation;
 
 // A source binary operator over two operands that are both evaluated. Takes the
 // lowered operand ids (already in `block`): an operator a library performs is a

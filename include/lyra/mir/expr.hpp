@@ -17,6 +17,7 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/closure.hpp"
 #include "lyra/mir/declared_class.hpp"
+#include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
@@ -24,7 +25,6 @@
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
-#include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
@@ -142,13 +142,9 @@ struct BlockExpr {
 // binds what the write stores and reads that binding (LRM 11.3.6), so no
 // consumer works out what a write yields.
 //
-// `compound_op.has_value()` marks the assignment as `target op= value`;
-// `nullopt` is a simple write. `value` is already typed to match `target`. The
-// operator is one a target applies to two values of one type, which is all
-// `BinaryOp` holds: an operator a library performs is applied by the entry that
-// performs it, so an assignment of that kind is an ordinary call on the place
-// and never reaches here. "Evaluate the left-hand side once" (LRM 11.4.1) is a
-// property of the one target expression, whichever shape the assignment took.
+// `value` is already typed to match `target`. An assignment operator (LRM
+// 11.4.1) is the operator applied to what the target held and then this write,
+// which the lowering states as those two steps.
 //
 // `target` is a place, whose write is a store, or a part of a value reached by
 // a sequence of calls, whose write leaves the owner holding an updated whole.
@@ -158,7 +154,6 @@ struct BlockExpr {
 // encounter it.
 struct AssignExpr {
   ExprId target;
-  std::optional<BinaryOp> compound_op = std::nullopt;
   ExprId value;
 };
 
@@ -345,10 +340,16 @@ using DirectTarget = std::variant<
 // part named has a type of its own, so a target with a type system settles the
 // part where it settles types -- which is naming the operation, not handing it
 // a value. Absent for every entry that names no part.
+// `type_argument` is the type a callee generic over one is called at, where its
+// operands do not settle it: the destination of a conversion, the type some
+// bits of a value are read or written at. It is part of which function is
+// called, and what the call answers with follows from it. Absent for every
+// callee that is generic over no type.
 struct Direct {
   DirectTarget target;
   std::optional<ExprId> receiver = std::nullopt;
   std::optional<CallPart> part = std::nullopt;
+  std::optional<TypeId> type_argument = std::nullopt;
 };
 
 // A call through a code address the program computed -- the indirect-call
@@ -544,25 +545,18 @@ struct DefinitionRef {
   DeclaredClassRef of;
 };
 
-// A runtime description, named by the entry holding it: what an operation on a
-// value needs from that value's declaration rather than from the value. An
-// integral type says its dimension stack, its signedness and its state domain;
-// an unpacked array says its declared range, for an operation that walks it in
-// the coordinates it was declared with. A description is settled at compile
-// time and shared by every use
-// that needs the same thing of a declaration, so the unit states it once and a
-// use names which one. `Expr::type` is the description's own runtime type,
-// which is also what says which of the descriptions this is.
-struct TypeDescriptorRef {
-  TypeDescriptorId descriptor;
+// The members an enumeration declares, named by the entry holding them: what
+// the questions LRM 6.19.5 and 6.24.2 ask of a value are answered against. The
+// members are settled at compile time and shared by every question about that
+// enumeration, so the unit states them once and a use names which table.
+// `Expr::type` is the library's member table.
+struct EnumTableRef {
+  EnumTableId table;
 };
 
-// A constant integral value the unit was written with, named by the entry
-// holding it. The value is settled before the program runs and shared by every
-// use that reaches it, so the unit states it once and a use says which one --
-// the same relation a type's run-time description has to the uses naming one,
-// over a value rather than over what describes it. `Expr::type` is the
-// constant's own integral type.
+// A constant integral value, named by the entry holding it. The value is
+// settled before the program runs and shared by every use that reaches it, so
+// a use says which one. `Expr::type` is the constant's own integral type.
 struct IntegralConstantRef {
   IntegralConstantId constant;
 };
@@ -632,11 +626,11 @@ struct FunctionRef {
 
 // Which declared thing a reference names. The alternatives differ in the table
 // that resolves the name -- a body's own bindings, a class's arena, another
-// unit's signature, the descriptors this unit generates -- and that is the
+// unit's signature, the constants this unit holds -- and that is the
 // referent's business: every one of them reaches storage, a constant or code
 // that exists whether or not this expression names it.
 using ReferenceTarget = std::variant<
-    LocalRef, DefinitionRef, TypeDescriptorRef, IntegralConstantRef,
+    LocalRef, DefinitionRef, EnumTableRef, IntegralConstantRef,
     StaticPropertyRef, StaticVariableRef, ExternalUnitVariableRef,
     ExternalStaticPropertyRef, ClassConstantRef, FunctionRef>;
 
@@ -690,6 +684,20 @@ struct Expr {
   return fn != nullptr ? std::optional{*fn} : std::nullopt;
 }
 
+// The callee of a call to the library entry `entry` that answers with a value
+// of `answer`. An entry generic over the type it answers with is called at
+// that type; any other states no type.
+[[nodiscard]] inline auto BuiltinCalleeAnswering(
+    support::BuiltinFn entry, std::optional<ExprId> receiver, TypeId answer)
+    -> Direct {
+  return Direct{
+      .target = entry,
+      .receiver = receiver,
+      .type_argument = support::RuntimeEntryOf(entry).takes_a_type_argument
+                           ? std::optional(answer)
+                           : std::nullopt};
+}
+
 [[nodiscard]] inline auto MakeFieldAccessExpr(
     ExprId receiver, FieldRef field, TypeId type) -> Expr {
   return Expr{
@@ -697,12 +705,10 @@ struct Expr {
       .type = type};
 }
 
-// A write of `value` into `target`, applying `compound_op` to what the target
-// holds where one is given. Typed `void`, which is the whole of what a write
-// yields.
+// A write of `value` into `target`. Typed `void`, which is the whole of what a
+// write yields.
 [[nodiscard]] auto MakeAssignExpr(
-    const BuiltinMirTypes& builtins, ExprId target, ExprId value,
-    std::optional<BinaryOp> compound_op = std::nullopt) -> Expr;
+    const BuiltinMirTypes& builtins, ExprId target, ExprId value) -> Expr;
 
 // The object the call dispatches on, absent for a call that dispatches on
 // nothing. The one place the question is answered, so no consumer works out
@@ -806,7 +812,8 @@ struct Expr {
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kMakeActiveMember,
-                      .part = index},
+                      .part = index,
+                      .type_argument = built},
               .arguments = {value}},
       .type = built};
 }
@@ -910,8 +917,9 @@ struct Expr {
 
 // Installs what a capability wrapper's declaration gives it, once at
 // construction. `entry` names which install this is, and `prototype` is a value
-// of the declared type, of which only the representation is used. No runtime
-// handle: it runs before any process, so there are no subscribers to fire.
+// of the declared type: the wrapper takes its representation and holds it. No
+// runtime handle: it runs before any process, so there are no subscribers to
+// fire.
 [[nodiscard]] inline auto MakeCapabilityInstallCallExpr(
     ExprId wrapper, ExprId prototype, support::BuiltinFn entry,
     TypeId void_type) -> Expr {
@@ -924,19 +932,20 @@ struct Expr {
 }
 
 // Installs what a net's declaration gives it, once at construction. `entry`
-// names which resolution the net performs (LRM 6.6), `prototype` carries the
-// declared representation, and the two operands beside it are the contribution
-// the net type makes to the net's own resolution: the scalar the net shows
-// where nothing drives it, filling that representation, and the strength it
-// holds that scalar at (LRM 6.7.1, 28.11).
+// names which resolution the net performs (LRM 6.6), `data` is what the net's
+// data type gives it -- how many positions an integral type has, or a value of
+// an unpacked aggregate type -- and the two operands beside it are the
+// contribution the net type makes to the net's own resolution: the scalar the
+// net shows where nothing drives it, and the strength it holds that scalar at
+// (LRM 6.7.1, 28.11).
 [[nodiscard]] inline auto MakeNetInstallCallExpr(
-    ExprId net, ExprId prototype, ExprId fill, ExprId strength,
+    ExprId net, ExprId data, ExprId fill, ExprId strength,
     support::BuiltinFn entry, TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee = Direct{.target = entry, .receiver = net},
-              .arguments = {prototype, fill, strength}},
+              .arguments = {data, fill, strength}},
       .type = void_type};
 }
 

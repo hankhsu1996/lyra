@@ -8,6 +8,7 @@
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
 
@@ -101,14 +102,26 @@ class OpenWrite {
     landing_of_ = &kTupleLandingOf;
   }
 
+  // The same, for an integral value wider than a word where it lies, which is
+  // its bytes too: `part` names them with how wide the value is. What is kept
+  // of it is the bits it held, so the write tells which moved.
+  template <value::HeldAsWords Wide>
+  void LandWide(Wide part) {
+    if (!Undecided()) {
+      return;
+    }
+    std::construct_at(Landing<WideLanding<Wide>>(landing_.data()), part);
+    landing_of_ = &kWideLandingOf<Wide>;
+  }
+
  private:
   // Room for the largest bracket any wrapper opens: the wrapper, a reference
   // to its storage, what the write has learned, and a copy of the storage for
   // a write the wrapper turns away to land in.
-  static constexpr std::size_t kBracketCapacity = 160;
+  static constexpr std::size_t kBracketCapacity = 192;
   // Room for what a write keeps of the largest part it lands on, beside where
   // the part lies.
-  static constexpr std::size_t kLandingCapacity = 128;
+  static constexpr std::size_t kLandingCapacity = 176;
 
   // What the room holds, asked of the bracket one wrapper opened there.
   struct BracketOf {
@@ -168,6 +181,14 @@ class OpenWrite {
     value::RuntimeTuple before;
   };
 
+  template <value::HeldAsWords Wide>
+  struct WideLanding {
+    explicit WideLanding(Wide landed) : part(landed), kept(landed) {
+    }
+    Wide part;
+    KeptPart<Wide> kept;
+  };
+
   // What the landing room holds, asked of the part one write landed on. Ending
   // it tells the bracket what the landing found.
   struct LandingOf {
@@ -198,6 +219,17 @@ class OpenWrite {
         if (!value::RuntimeTuple::BitIdentical(
                 landing->before.Bytes(), landing->part)) {
           bracket_of.landed(bracket, Change::Whole());
+        }
+        std::destroy_at(landing);
+      }};
+
+  template <value::HeldAsWords Wide>
+  static constexpr LandingOf kWideLandingOf{
+      .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
+        auto* landing = Landing<WideLanding<Wide>>(room);
+        if (const std::optional<Change> change =
+                landing->kept.ChangeTo(landing->part)) {
+          bracket_of.landed(bracket, *change);
         }
         std::destroy_at(landing);
       }};

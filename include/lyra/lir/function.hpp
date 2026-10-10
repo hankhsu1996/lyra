@@ -14,11 +14,11 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/pool_id.hpp"
+#include "lyra/lir/enum_table_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/operator.hpp"
-#include "lyra/lir/type_descriptor_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -100,22 +100,17 @@ struct BoolConst {
   TypeId type;
 };
 
-// A runtime description, named by the entry holding it. Its contents are an
-// instruction sequence and an operand is a leaf, so what the operand carries is
-// which description this is, not how the description is built. The identity is
-// the description's own and not a type's: this layer tells two declarations
-// apart by what they need of the machine rather than by what they declare, so a
-// type here says nothing about which description a use meant.
-struct TypeDescriptorRef {
-  TypeDescriptorId descriptor;
+// An enumeration's member table, named by the entry holding it. Its contents
+// are data the unit states and an operand is a leaf, so what the operand
+// carries is which table it is.
+struct EnumTableRef {
+  EnumTableId table;
   TypeId type;
 };
 
 // A constant value of the unit, named by the entry holding it. Its contents are
-// an instruction sequence and an operand is a leaf, so what the operand carries
-// is which constant it is, not how the constant is built -- the same split a
-// type's run-time description is named under, over a value rather than over
-// what describes it.
+// data the unit states and an operand is a leaf, so what the operand carries is
+// which constant it is.
 struct IntegralConstantRef {
   IntegralConstantId constant;
   TypeId type;
@@ -145,17 +140,21 @@ struct DefinitionRef {
 // rather than a value of its own because it has no dataflow origin to name --
 // it is materialized at the use site.
 using Operand = std::variant<
-    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, TypeDescriptorRef,
+    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, EnumTableRef,
     IntegralConstantRef, StaticRef, DefinitionRef>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the
 // arguments because the part named has a type of its own. A target whose calls
 // take only values writes it as one more argument; one that resolves types
-// writes it where it resolves them.
+// writes it where it resolves them. `type_argument` is the type an entry
+// generic over one is called at, which is part of which code is called: a
+// target calling code compiled once for every type hands that code what it
+// needs of the type.
 struct BuiltinTarget {
   support::BuiltinFn fn;
   std::optional<base::ComponentIndex> position = std::nullopt;
+  std::optional<TypeId> type_argument = std::nullopt;
 };
 
 // A function of this unit, named outright. The callee is static, so it is
@@ -263,12 +262,13 @@ struct ValueCellTarget {
 // designated within it. `kLand` is where the write lands: the part designated,
 // whose value from before the write the write keeps where anything will ask
 // whether the write changed the variable (LRM 4.3); it answers with where the
-// part lies. `kAssignSlice` writes a slice of what is designated within the
-// write -- a container's elements (LRM 7.6), a packed value's bits (LRM 11.5.1)
-// -- telling it what moved. `kReadSlice` answers with that slice as it stands,
-// which an assignment operator combines before the slice is written (LRM
-// 11.4.1). `value` is what the part or the container holds, and the domain it
-// is realized in names the runtime entry.
+// part lies. `kAssignSlice` writes a run of the elements of the container
+// designated within the write (LRM 7.4.6), telling it what moved. `kReadSlice`
+// answers with that run as it stands, which an assignment operator combines
+// before the run is written (LRM 11.4.1), read at the type the call answers
+// at: the slice's operands say where it starts and nothing of how much of the
+// value it takes. `value` is what the part or the container holds, and the
+// domain it is realized in names the runtime entry.
 // A LIR-only target with no MIR twin: MIR states the landing as a dereference
 // and the slice write as an assignment into a designated slice, and a place is
 // named by an address here, so each is a call on the designation.
@@ -276,6 +276,25 @@ struct OpenWriteTarget {
   enum class Op : std::uint8_t { kLand, kAssignSlice, kReadSlice };
   Op op;
   TypeId value;
+};
+
+// An operation on some bits of the integral value a write in progress
+// designates (LRM 11.5.1), named by the designation and where the bits start.
+// Bits are a view of the value they lie in, so writing some is two steps:
+// `kPlace` answers with the designated value as it stands once the bits it is
+// handed are in it, and `kReport` hands the write that value, which keeps what
+// the bits held and tells the variable which of them moved (LRM 4.3). `kRead`
+// answers with the bits as they stand, which an assignment operator combines
+// before they are written (LRM 11.4.1). `value` is the type of the value
+// designated and `bits` the type the bits are read or written at, which fixes
+// how many there are.
+// A LIR-only target with no MIR twin: MIR states the write as an assignment
+// into a slice designated within the write.
+struct DesignatedBitsTarget {
+  enum class Op : std::uint8_t { kRead, kPlace, kReport };
+  Op op;
+  TypeId value;
+  TypeId bits;
 };
 
 // The end of an owned value, and a second owned value equal to one the body
@@ -354,6 +373,7 @@ struct CoroutineTarget {
 // improve how a dump reads.
 auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view;
 auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view;
+auto DesignatedBitsOpName(DesignatedBitsTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
@@ -366,8 +386,8 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
     ConstructTarget, LibraryConstructorTarget, SymbolTarget, ForeignTarget,
-    ValueCellTarget, OpenWriteTarget, EndValueTarget, CopyValueTarget,
-    ControlEffectTarget, CoroutineTarget>;
+    ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget, EndValueTarget,
+    CopyValueTarget, ControlEffectTarget, CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands
@@ -456,16 +476,6 @@ struct AggregateUpdateInstr {
   Operand aggregate;
   AggregateSelector selector;
   Operand replacement;
-};
-
-// Asks whether a tagged union's active tag is `index`, yielding a boolean. Not
-// an aggregate access: it reads no subvalue but a predicate over the sum's
-// discriminant, the non-throwing guard a pattern match tests before it reads a
-// member (LRM 12.6). Only a tagged union has an observable tag, so this is the
-// one operation that names one.
-struct TagTestInstr {
-  Operand aggregate;
-  base::ComponentIndex index;
 };
 
 // Where one declaration put one of its own members: the member's stable
@@ -566,8 +576,8 @@ struct AddrOfInstr {
 };
 
 // Applies an operator to values. The operator's semantics come from the operand
-// type: the same `kAdd` is a machine add over a machine integer and an
-// X-propagating library add over a four-state packed value.
+// type: the same `kAdd` is a machine add over a machine integer and an add
+// that propagates X over a four-state integral value.
 struct BinaryInstr {
   BinaryOp op;
   Operand lhs;
@@ -647,8 +657,8 @@ struct CloseVariablesInstr {
 
 using InstrData = std::variant<
     CallInstr, TupleInstr, ClosureInstr, ArrayInstr, AggregateExtractInstr,
-    AggregateUpdateInstr, TagTestInstr, LoadInstr, StoreInstr, AddrOfInstr,
-    BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr, DynamicCastInstr,
+    AggregateUpdateInstr, LoadInstr, StoreInstr, AddrOfInstr, BinaryInstr,
+    UnaryInstr, CastInstr, HandleCastInstr, DynamicCastInstr,
     ReceiveDepartureInstr, OpenVariablesInstr, VariableAddressInstr,
     CloseVariablesInstr>;
 

@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <span>
 
+#include "lyra/base/fixed_array.hpp"
 #include "lyra/runtime/observation.hpp"
-#include "lyra/value/packed.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 
@@ -39,24 +39,18 @@ struct Trigger {
   auto operator=(Trigger&&) noexcept -> Trigger&;
   ~Trigger();
 
-  // Each field beside the cell and the observation arrives as a PackedArray
-  // literal -- the value model routes compile-time scalars as SV values, the
-  // same way the runtime effect entries take their int args -- and converts to
-  // its native field type here.
   Trigger(
       Observable* observable, Observation observation,
-      const value::PackedArray& lsb_bit_offset,
-      const value::PackedArray& bit_width);
+      std::int64_t lsb_bit_offset, std::int64_t bit_width);
 };
 
 // What a write that changed an observable did to it, as far as a wait on some
 // of its bits can be told. Where the observable is a packed value, the change
-// is which bits the write reached and what they held before it, and the
-// storage after the write is read where it lies while the change is told: a
-// leaf reading none of those bits is passed over without a comparison, and a
-// leaf reading some compares only the bits it shares with the write. Where the
-// observable is not a packed value, nothing about its bits can be shown
-// unchanged and every wait is asked.
+// is which bits the write reached and the words they lie in before and after
+// it: a leaf reading none of those bits is passed over without a comparison,
+// and a leaf reading some compares only the bits it shares with the write.
+// Where the observable is not a packed value, nothing about its bits can be
+// shown unchanged and every wait is asked.
 //
 // It is only ever told for a write that changed the bits it reached, so a leaf
 // reading all of them is moved without being compared.
@@ -77,11 +71,17 @@ class Change {
   // reaches them. The words kept are the storage's own words those bits lie
   // in, so the bits cost the words they span and no value is built.
   [[nodiscard]] static auto Reaching(
-      const value::PackedArray& storage, value::BitPositions reached) -> Change;
+      value::ConstPlanes storage, value::BitPositions reached) -> Change;
 
-  // The same storage once the write has landed, borrowed while the change is
-  // told.
-  void SetAfter(const value::PackedArray& storage);
+  // The same words of the storage once the write has landed.
+  void SetAfter(value::ConstPlanes storage);
+
+  // The same two for storage that is one word in each plane, which is handed
+  // over as those words; a plane a two-state value does not carry is clear.
+  [[nodiscard]] static auto ReachingInWord(
+      std::uint64_t value, std::uint64_t unknown, value::BitPositions reached)
+      -> Change;
+  void SetAfterInWord(std::uint64_t value, std::uint64_t unknown);
 
   // Whether the bits reached hold what they held before. Asked before the
   // change is told, so a write that moved nothing is no change.
@@ -101,13 +101,22 @@ class Change {
 
   // The bits reached, a width of zero for a change whose parts are not bits.
   value::BitPositions reached_;
-  // The storage's words from `first_word_` on that the bits reached lie in, as
-  // they stood before the write, and the same words after it, where they lie.
+  // The storage's words the bits reached lie in, `count_` of each plane from
+  // `first_word_` on, as four runs one after another: the value plane and the
+  // unknown plane as they stood before the write, then both as they stand
+  // after it. A word a plane does not reach is clear. Bits lying in one word
+  // need no buffer.
+  static constexpr std::size_t kBeforeValue = 0;
+  static constexpr std::size_t kBeforeUnknown = 1;
+  static constexpr std::size_t kAfterValue = 2;
+  static constexpr std::size_t kAfterUnknown = 3;
+  [[nodiscard]] auto WordsOf(std::size_t run) -> std::span<std::uint64_t>;
+  [[nodiscard]] auto WordsOf(std::size_t run) const
+      -> std::span<const std::uint64_t>;
+
   std::size_t first_word_ = 0;
-  value::PackedWordArray before_value_;
-  value::PackedWordArray before_unknown_;
-  std::span<const std::uint64_t> after_value_;
-  std::span<const std::uint64_t> after_unknown_;
+  std::size_t count_ = 0;
+  base::FixedArray<std::uint64_t, 4> words_;
 };
 
 }  // namespace lyra::runtime

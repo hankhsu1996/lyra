@@ -5,13 +5,17 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
+#include "lyra/value/position.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
@@ -23,7 +27,8 @@ class StringCharRef;
 // SV semantics -- equality on contents, lexicographic compare, and the method
 // family in LRM 6.16.1 through 6.16.15 -- are exposed as member operators and
 // methods so emitted code dispatches `receiver.Method(args)` exactly the way
-// it would on any other class.
+// it would on any other class. Each answers with the type the clause gives it,
+// and takes an index or a character of whatever integral type names one.
 class String {
  public:
   String() = default;
@@ -38,8 +43,9 @@ class String {
   // viewed as a contiguous character sequence in element order. The low
   // byte of each element becomes one byte of the result, embedded NULs
   // included -- the scan itself decides what a NUL means there.
-  [[nodiscard]] static auto FromByteArray(
-      const UnpackedArray<PackedArray>& bytes) -> String {
+  template <IntegralValue Element>
+  [[nodiscard]] static auto FromByteArray(const UnpackedArray<Element>& bytes)
+      -> String {
     std::string out;
     out.reserve(bytes.RawSize());
     for (std::size_t i = 0; i < bytes.RawSize(); ++i) {
@@ -53,29 +59,32 @@ class String {
   // LRM 6.16: a string value holds no NUL, so building one from bits strips
   // every NUL byte -- which is also why the empty `""` (the packed `8'h00`
   // of LRM 11.10.3) strips to the empty string.
-  [[nodiscard]] static auto FromPackedArray(const PackedArray& bits) -> String {
+  [[nodiscard]] static auto FromIntegral(const ConstIntegralView& bits)
+      -> String {
     std::string out;
-    for (char c : bits.ByteString()) {
+    for (const char c : BytesOf(bits)) {
       if (c != '\0') out.push_back(c);
     }
     return String{std::move(out)};
   }
+  template <IntegralValue Bits>
+  [[nodiscard]] static auto FromIntegral(const Bits& bits) -> String {
+    return FromIntegral(bits.Load().View());
+  }
 
   // LRM 11.4.5 `==` / `!=`: string equality is exact content equality (strings
-  // are 2-state, no x/z to propagate). The result is a 1-bit 2-state
-  // `PackedArray` so callers do not branch on the operand type.
-  [[nodiscard]] auto operator==(const String& o) const -> PackedArray {
-    return PackedArray::FromInt(impl_ == o.impl_ ? 1 : 0, 1, false, false);
+  // are 2-state, no x/z to propagate), so the answer is a bit.
+  [[nodiscard]] auto operator==(const String& o) const -> Bit {
+    return Bit::FromBool(impl_ == o.impl_);
   }
-  [[nodiscard]] auto operator!=(const String& o) const -> PackedArray {
-    return PackedArray::FromInt(impl_ != o.impl_ ? 1 : 0, 1, false, false);
+  [[nodiscard]] auto operator!=(const String& o) const -> Bit {
+    return Bit::FromBool(impl_ != o.impl_);
   }
 
   // LRM 11.4.5 `===`: a string has no unknown plane, so case equality is exact
-  // content equality and matches `==`. Returned as a 1-bit `PackedArray` for
-  // uniform handling at SV expression sites.
-  [[nodiscard]] auto CaseEqual(const String& o) const -> PackedArray {
-    return PackedArray::FromInt(impl_ == o.impl_ ? 1 : 0, 1, false, false);
+  // content equality and matches `==`.
+  [[nodiscard]] auto CaseEqual(const String& o) const -> Bit {
+    return Bit::FromBool(impl_ == o.impl_);
   }
 
   // LRM 9.4.2 update event predicate (engine change-detection hook): host bool
@@ -89,23 +98,22 @@ class String {
     return false;
   }
 
-  [[nodiscard]] static auto IsUnknown() -> PackedArray {
-    return PackedArray::Bit(false);
+  [[nodiscard]] static auto IsUnknown() -> Bit {
+    return Bit::FromBool(false);
   }
 
-  // LRM 11.4.4 relational operators on `String` (LRM 6.16). The result is
-  // 2-state.
-  [[nodiscard]] auto operator<(const String& o) const -> PackedArray {
-    return PackedArray::FromInt(impl_ < o.impl_ ? 1 : 0, 1, false, false);
+  // LRM 11.4.4 relational operators on `String` (LRM 6.16).
+  [[nodiscard]] auto operator<(const String& o) const -> Bit {
+    return Bit::FromBool(impl_ < o.impl_);
   }
-  [[nodiscard]] auto operator<=(const String& o) const -> PackedArray {
-    return PackedArray::FromInt(impl_ <= o.impl_ ? 1 : 0, 1, false, false);
+  [[nodiscard]] auto operator<=(const String& o) const -> Bit {
+    return Bit::FromBool(impl_ <= o.impl_);
   }
-  [[nodiscard]] auto operator>(const String& o) const -> PackedArray {
-    return PackedArray::FromInt(impl_ > o.impl_ ? 1 : 0, 1, false, false);
+  [[nodiscard]] auto operator>(const String& o) const -> Bit {
+    return Bit::FromBool(impl_ > o.impl_);
   }
-  [[nodiscard]] auto operator>=(const String& o) const -> PackedArray {
-    return PackedArray::FromInt(impl_ >= o.impl_ ? 1 : 0, 1, false, false);
+  [[nodiscard]] auto operator>=(const String& o) const -> Bit {
+    return Bit::FromBool(impl_ >= o.impl_);
   }
 
   // LRM 11.4.12 over string operands, Table 6-9: the parts join contents in the
@@ -133,53 +141,56 @@ class String {
     return String{std::move(out)};
   }
 
-  // LRM 6.16.1: len() yields an SV int.
   // LRM 20.6.2 `$bits`: a string occupies 8 bits per character (LRM 6.16, a
   // string element is a byte).
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    return PackedArray::Int(static_cast<std::int32_t>(8 * impl_.size()));
+  [[nodiscard]] auto BitstreamWidth() const -> Int {
+    return Int::FromInt(static_cast<std::int64_t>(8 * impl_.size()));
   }
 
   // LRM 20.9 `$countbits`: a string's bit stream is its characters, each an
   // LRM 6.16 byte, so the count over it is the sum of the characters' own.
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
+  template <IntegralValue Control>
+  [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
+    return CountBits(control_bits.Load().View());
+  }
+  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
+      -> Int {
+    std::int64_t total = 0;
     for (const char c : impl_) {
-      total = total + PackedArray::Byte(static_cast<std::int8_t>(c))
-                          .CountBits(control_bits);
+      const std::uint64_t word = static_cast<unsigned char>(c);
+      total += lyra::value::CountBits(
+          ConstPlanes{.value = std::span(&word, 1), .unknown = {}}, 8,
+          control_bits.planes, control_bits.width);
     }
-    return total;
+    return Int::FromInt(total);
   }
 
-  [[nodiscard]] auto Len() const -> PackedArray {
-    return PackedArray::Int(static_cast<std::int32_t>(impl_.size()));
+  // LRM 6.16.1: len() yields an SV int.
+  [[nodiscard]] auto Len() const -> Int {
+    return Int::FromInt(static_cast<std::int64_t>(impl_.size()));
   }
 
   // LRM 6.16.2. Out-of-range index or zero byte -- no change.
-  void Putc(const PackedArray& i_arg, const PackedArray& c_arg) {
-    const auto c = static_cast<std::int8_t>(c_arg.ToInt64());
-    if (c == 0) return;
-    const auto i = i_arg.ToInt64();
-    if (i < 0 || static_cast<std::size_t>(i) >= impl_.size()) return;
-    impl_[static_cast<std::size_t>(i)] = static_cast<char>(c);
+  template <IntegralValue C>
+  void Putc(const Position& position, const C& c_arg) {
+    PutCharacter(position, c_arg.ToInt64());
   }
 
   // LRM 6.16.3: getc() yields an SV byte. Out-of-range index returns 0.
-  [[nodiscard]] auto Getc(const PackedArray& i_arg) const -> PackedArray {
-    const auto i = i_arg.ToInt64();
-    if (i < 0 || static_cast<std::size_t>(i) >= impl_.size()) {
-      return PackedArray::Byte(0);
+  [[nodiscard]] auto Getc(const Position& position) const -> Byte {
+    const std::optional<std::size_t> at =
+        ElementOrdinal(position, impl_.size());
+    if (!at) {
+      return Byte::FromInt(0);
     }
-    return PackedArray::Byte(
-        static_cast<std::int8_t>(impl_[static_cast<std::size_t>(i)]));
+    return Byte::FromInt(static_cast<std::int8_t>(impl_[*at]));
   }
 
   // The read side of indexed character access `s[i]`: the character value, with
   // the same out-of-range default as `getc`. Distinct from `Getc` only in role
   // (the indexing form versus the LRM 6.16.3 method), so it shares the query.
-  [[nodiscard]] auto Element(const PackedArray& i_arg) const -> PackedArray {
-    return Getc(i_arg);
+  [[nodiscard]] auto Element(const Position& position) const -> Byte {
+    return Getc(position);
   }
 
   // The write side of indexed character access `s[i]`: a write-back reference
@@ -189,19 +200,7 @@ class String {
   // `operator=` through `putc`, and reads-modifies-writes for each compound
   // operator. The read/write pair `Element` / `ElementRef` mirrors a packed
   // array element. Defined after `StringCharRef` below.
-  [[nodiscard]] auto ElementRef(const PackedArray& i_arg) -> StringCharRef;
-
-  // The functional counterpart of the in-place character write, for a caller
-  // holding a copy of the string rather than its storage: a new string
-  // equal to the receiver with character `i_arg` replaced under the same LRM
-  // 6.16.2 `putc` rules (an out-of-range index or a NUL byte leaves it
-  // unchanged).
-  [[nodiscard]] auto WithElement(
-      const PackedArray& i_arg, const PackedArray& value) const -> String {
-    String result{*this};
-    result.Putc(i_arg, value);
-    return result;
-  }
+  [[nodiscard]] auto ElementRef(const Position& position) -> StringCharRef;
 
   // LRM 6.16.4. Receiver unchanged.
   [[nodiscard]] auto Toupper() const -> String {
@@ -223,50 +222,49 @@ class String {
 
   // LRM 6.16.6: compare() yields an SV int. ANSI C strcmp semantics:
   // negative / zero / positive.
-  [[nodiscard]] auto Compare(const String& s) const -> PackedArray {
+  [[nodiscard]] auto Compare(const String& s) const -> Int {
     const int r = impl_.compare(s.impl_);
-    if (r < 0) return PackedArray::Int(-1);
-    if (r > 0) return PackedArray::Int(1);
-    return PackedArray::Int(0);
+    if (r < 0) return Int::FromInt(-1);
+    if (r > 0) return Int::FromInt(1);
+    return Int::FromInt(0);
   }
 
   // LRM 6.16.7: icompare() yields an SV int. Case-insensitive strcmp.
-  [[nodiscard]] auto Icompare(const String& s) const -> PackedArray {
+  [[nodiscard]] auto Icompare(const String& s) const -> Int {
     const std::size_t n = std::min(impl_.size(), s.impl_.size());
     for (std::size_t k = 0; k < n; ++k) {
       const int a = std::tolower(static_cast<unsigned char>(impl_[k]));
       const int b = std::tolower(static_cast<unsigned char>(s.impl_[k]));
-      if (a != b) return PackedArray::Int((a < b) ? -1 : 1);
+      if (a != b) return Int::FromInt((a < b) ? -1 : 1);
     }
-    if (impl_.size() == s.impl_.size()) return PackedArray::Int(0);
-    return PackedArray::Int((impl_.size() < s.impl_.size()) ? -1 : 1);
+    if (impl_.size() == s.impl_.size()) return Int::FromInt(0);
+    return Int::FromInt((impl_.size() < s.impl_.size()) ? -1 : 1);
   }
 
   // LRM 6.16.8. i..j inclusive. Returns "" if i<0, j<i, or j>=len.
-  [[nodiscard]] auto Substr(
-      const PackedArray& i_arg, const PackedArray& j_arg) const -> String {
-    const auto i = static_cast<std::int32_t>(i_arg.ToInt64());
-    const auto j = static_cast<std::int32_t>(j_arg.ToInt64());
-    const auto n = static_cast<std::int32_t>(impl_.size());
-    if (i < 0 || j < i || j >= n) return String{};
-    const auto first = static_cast<std::size_t>(i);
-    const auto last = static_cast<std::size_t>(j);
-    return String{impl_.substr(first, last - first + 1)};
+  [[nodiscard]] auto Substr(const Position& first, const Position& last) const
+      -> String {
+    const std::optional<std::size_t> from = ElementOrdinal(first, impl_.size());
+    const std::optional<std::size_t> to = ElementOrdinal(last, impl_.size());
+    if (!from || !to || *to < *from) {
+      return String{};
+    }
+    return String{impl_.substr(*from, *to - *from + 1)};
   }
 
   // LRM 6.16.9: the ato* family yields an SV integer (4-state). Parse leading
   // optional sign and digits (with `_` skipped); 0 if no digits were consumed.
-  [[nodiscard]] auto Atoi() const -> PackedArray {
-    return PackedArray::Integer(ParseInt(10));
+  [[nodiscard]] auto Atoi() const -> Integer {
+    return Integer::FromInt(ParseInt(10));
   }
-  [[nodiscard]] auto Atohex() const -> PackedArray {
-    return PackedArray::Integer(ParseInt(16));
+  [[nodiscard]] auto Atohex() const -> Integer {
+    return Integer::FromInt(ParseInt(16));
   }
-  [[nodiscard]] auto Atooct() const -> PackedArray {
-    return PackedArray::Integer(ParseInt(8));
+  [[nodiscard]] auto Atooct() const -> Integer {
+    return Integer::FromInt(ParseInt(8));
   }
-  [[nodiscard]] auto Atobin() const -> PackedArray {
-    return PackedArray::Integer(ParseInt(2));
+  [[nodiscard]] auto Atobin() const -> Integer {
+    return Integer::FromInt(ParseInt(2));
   }
 
   // LRM 6.16.10. Parse leading real-number syntax; 0.0 if none.
@@ -279,13 +277,24 @@ class String {
   }
 
   // LRM 6.16.11 through 6.16.15. Each replaces receiver with the ASCII
-  // representation of the argument in the corresponding base / format.
-  // Out-of-line so std::format does not leak into every translation unit
-  // that includes this header.
-  void Itoa(const PackedArray& i);
-  void Hextoa(const PackedArray& i);
-  void Octtoa(const PackedArray& i);
-  void Bintoa(const PackedArray& i);
+  // representation of the argument in the corresponding base / format, the
+  // argument read as the number it holds.
+  template <IntegralValue I>
+  void Itoa(const I& i) {
+    SetDecimal(i.ToInt64());
+  }
+  template <IntegralValue I>
+  void Hextoa(const I& i) {
+    SetHex(i.ToInt64());
+  }
+  template <IntegralValue I>
+  void Octtoa(const I& i) {
+    SetOctal(i.ToInt64());
+  }
+  template <IntegralValue I>
+  void Bintoa(const I& i) {
+    SetBinary(i.ToInt64());
+  }
   void Realtoa(const Real& r);
 
   [[nodiscard]] auto View() const -> std::string_view {
@@ -300,41 +309,47 @@ class String {
     return impl_.c_str();
   }
 
+  // The write `putc` makes at a position, the character read as the number
+  // its value holds.
+  void PutCharacter(const Position& position, std::int64_t character) {
+    const auto c = static_cast<std::int8_t>(character);
+    if (c == 0) return;
+    if (const std::optional<std::size_t> at =
+            ElementOrdinal(position, impl_.size())) {
+      impl_[*at] = static_cast<char>(c);
+    }
+  }
+
+  // Out-of-line so std::format does not leak into every translation unit that
+  // includes this header.
+  void SetDecimal(std::int64_t i);
+  void SetHex(std::int64_t i);
+  void SetOctal(std::int64_t i);
+  void SetBinary(std::int64_t i);
+
  private:
   // Hand-rolled to avoid std::from_chars's pointer-pair API; accumulates one
   // digit at a time. Underscores are skipped per the LRM atoi family rules.
-  [[nodiscard]] auto ParseInt(int base) const -> std::int32_t {
+  [[nodiscard]] auto ParseInt(std::uint64_t base) const -> std::int32_t {
     std::size_t k = 0;
     bool negative = false;
     if (k < impl_.size() && (impl_[k] == '+' || impl_[k] == '-')) {
       negative = (impl_[k] == '-');
       ++k;
     }
-    std::int64_t value = 0;
+    std::uint64_t value = 0;
     bool any_digit = false;
     for (; k < impl_.size(); ++k) {
       const char ch = impl_[k];
       if (ch == '_') continue;
-      const int digit = DigitValue(ch, base);
-      if (digit < 0) break;
-      value = (value * base) + digit;
+      const std::optional<std::uint64_t> digit = DigitOf(ch);
+      if (!digit || *digit >= base) break;
+      value = (value * base) + *digit;
       any_digit = true;
     }
     if (!any_digit) return 0;
-    if (negative) value = -value;
+    if (negative) value = std::uint64_t{0} - value;
     return static_cast<std::int32_t>(value);
-  }
-
-  [[nodiscard]] static auto DigitValue(char ch, int base) -> int {
-    int v = -1;
-    if (ch >= '0' && ch <= '9')
-      v = ch - '0';
-    else if (ch >= 'a' && ch <= 'f')
-      v = (ch - 'a') + 10;
-    else if (ch >= 'A' && ch <= 'F')
-      v = (ch - 'A') + 10;
-    if (v < 0 || v >= base) return -1;
-    return v;
   }
 
   std::string impl_;
@@ -343,14 +358,11 @@ class String {
 // The write-back location for a string character (the write side of `s[i]`). A
 // string exposes no in-place character reference -- writes go through `putc`
 // (LRM 6.16.2) -- so the proxy captures the receiver and index once and routes
-// every write through it: `operator=` is `putc`, and each compound operator
-// reads the current character (`getc`), combines with `rhs`, and writes back.
-// The captured index is the eval-once mechanism: the lvalue is built once by
-// the caller, and both the read and the write here use the same captured index.
+// every write through it: `operator=` is `putc`.
 class StringCharRef {
  public:
-  StringCharRef(String& target, PackedArray index)
-      : target_(&target), index_(std::move(index)) {
+  StringCharRef(String& target, const Position& position)
+      : target_(&target), position_(position) {
   }
 
   StringCharRef(const StringCharRef&) = delete;
@@ -359,54 +371,26 @@ class StringCharRef {
   auto operator=(StringCharRef&&) noexcept -> StringCharRef& = default;
   ~StringCharRef() = default;
 
-  [[nodiscard]] auto ToOwned() const -> PackedArray {
-    return target_->Getc(index_);
-  }
-  auto operator=(const PackedArray& value) -> StringCharRef& {
-    target_->Putc(index_, value);
+  auto operator=(const Byte& value) -> StringCharRef& {
+    target_->PutCharacter(position_, value.ToInt64());
     return *this;
-  }
-  auto operator+=(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned() + rhs;
-  }
-  auto operator-=(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned() - rhs;
-  }
-  auto operator*=(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned() * rhs;
-  }
-  auto operator/=(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned() / rhs;
-  }
-  auto operator%=(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned() % rhs;
-  }
-  auto operator&=(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned() & rhs;
-  }
-  auto operator|=(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned() | rhs;
-  }
-  auto operator^=(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned() ^ rhs;
-  }
-  auto ShiftLeftAssign(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned().ShiftLeft(rhs);
-  }
-  auto LogicalShiftRightAssign(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned().LogicalShiftRight(rhs);
-  }
-  auto ArithmeticShiftRightAssign(const PackedArray& rhs) -> StringCharRef& {
-    return *this = ToOwned().ArithmeticShiftRight(rhs);
   }
 
  private:
   String* target_;
-  PackedArray index_;
+  Position position_;
 };
 
-inline auto String::ElementRef(const PackedArray& i_arg) -> StringCharRef {
-  return StringCharRef{*this, i_arg};
+inline auto String::ElementRef(const Position& position) -> StringCharRef {
+  return StringCharRef{*this, position};
+}
+
+// LRM 5.9: a string value assigned to an integral variable is right-justified
+// -- a destination wider than the text pads its leftmost bits with zeros, and a
+// narrower one truncates the leftmost characters.
+template <IntegralValue R>
+[[nodiscard]] auto FromString(const String& text) -> R {
+  return FromBytes<R>(text.View());
 }
 
 static_assert(LyraValue<String>);
@@ -419,22 +403,9 @@ static_assert(Indexable<String>);
 // Defined here rather than alongside the rest of `UnpackedArray` because it is
 // the one member that reads a `String`, whose definition depends on the array.
 template <typename T>
-auto UnpackedArray<T>::FromString(
-    const String& text, const PackedType& element_type,
-    const PackedArray& count) -> UnpackedArray<T> {
-  const std::string_view chars = text.View();
-  const auto element_count = static_cast<std::size_t>(count.ToInt64());
-  const T element_default{element_type};
-  std::vector<T> elements;
-  elements.reserve(element_count);
-  for (std::size_t i = 0; i < element_count; ++i) {
-    elements.push_back(
-        i < chars.size()
-            ? PackedArray::FromInt(
-                  static_cast<unsigned char>(chars[i]), element_type)
-            : element_default);
-  }
-  return UnpackedArray<T>{element_default, std::span<const T>{elements}};
+auto UnpackedArray<T>::FromString(const String& text, std::int64_t count)
+    -> UnpackedArray<T> {
+  return OfBytes(text.View(), count);
 }
 
 }  // namespace lyra::value

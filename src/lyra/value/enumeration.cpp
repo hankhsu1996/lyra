@@ -4,74 +4,77 @@
 #include <cstdint>
 #include <optional>
 #include <span>
-#include <string>
+#include <vector>
 
-#include "lyra/value/packed_array.hpp"
-#include "lyra/value/packed_type.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::value {
 
-Enumeration::Enumeration(
-    const PackedType& base, std::span<const std::uint64_t> planes,
-    std::span<const char* const> names)
-    : base_(base) {
-  // A 2-state base has no unknown plane, so a member contributes its value
-  // plane alone.
-  const std::size_t words = (base.bit_width + 63U) / 64U;
-  const std::size_t unknown = base.is_four_state ? words : 0U;
-  members_.reserve(names.size());
-  names_.reserve(names.size());
-  for (std::size_t i = 0; i < names.size(); ++i) {
-    const std::span<const std::uint64_t> member =
-        planes.subspan(i * (words + unknown), words + unknown);
-    members_.push_back(
-        PackedArray::FromWords(
-            member.first(words), member.subspan(words, unknown), base));
-    names_.emplace_back(names[i]);
+auto EnumerationPlanes(
+    std::uint64_t width, bool four_state, std::span<const ConstPlanes> members)
+    -> std::vector<std::uint64_t> {
+  const std::size_t words = WordCountForBits(width);
+  std::vector<std::uint64_t> planes;
+  planes.reserve(members.size() * EnumerationMemberWords(width, four_state));
+  for (const ConstPlanes& member : members) {
+    for (std::size_t i = 0; i < words; ++i) {
+      planes.push_back(WordAt(member.value, i));
+    }
+    for (std::size_t i = 0; four_state && i < words; ++i) {
+      planes.push_back(WordAt(member.unknown, i));
+    }
   }
+  return planes;
 }
 
-auto Enumeration::PositionOf(const PackedArray& value) const
+auto Enumeration::MemberAt(std::size_t position) const -> ConstPlanes {
+  const std::size_t words = WordCountForBits(width);
+  const std::size_t stride = EnumerationMemberWords(width, four_state);
+  const std::span<const std::uint64_t> member =
+      std::span(planes, members * stride).subspan(position * stride, stride);
+  return ConstPlanes{
+      .value = member.first(words), .unknown = member.subspan(words)};
+}
+
+auto Enumeration::PositionOf(ConstPlanes value) const
     -> std::optional<std::size_t> {
-  for (std::size_t i = 0; i < members_.size(); ++i) {
-    if (members_[i].IsBitIdentical(value)) {
+  for (std::size_t i = 0; i < members; ++i) {
+    if (CaseEqual(MemberAt(i), value)) {
       return i;
     }
   }
   return std::nullopt;
 }
 
-auto Enumeration::StepCount(const PackedArray& count) const -> std::size_t {
-  return static_cast<std::size_t>(
-      static_cast<std::uint64_t>(count.ToInt64()) % members_.size());
-}
-
-auto Enumeration::Has(const PackedArray& value) const -> bool {
-  return PositionOf(value).has_value();
-}
-
-auto Enumeration::Name(const PackedArray& value) const -> String {
+auto Enumeration::NameOf(ConstPlanes value) const -> String {
   const std::optional<std::size_t> at = PositionOf(value);
-  return at ? String(names_[*at]) : String();
+  return at ? String(std::span(names, members)[*at]) : String();
 }
 
-auto Enumeration::Next(const PackedArray& value, const PackedArray& count) const
-    -> PackedArray {
+auto Enumeration::Stepped(ConstPlanes value, std::size_t steps) const
+    -> std::optional<ConstPlanes> {
   const std::optional<std::size_t> at = PositionOf(value);
   if (!at) {
-    return PackedArray(base_);
+    return std::nullopt;
   }
-  return members_[(*at + StepCount(count)) % members_.size()];
+  return MemberAt((*at + steps) % members);
 }
 
-auto Enumeration::Prev(const PackedArray& value, const PackedArray& count) const
-    -> PackedArray {
-  const std::optional<std::size_t> at = PositionOf(value);
-  if (!at) {
-    return PackedArray(base_);
-  }
-  return members_[(*at + members_.size() - StepCount(count)) % members_.size()];
+auto Enumeration::MemberAfter(ConstPlanes value, std::int64_t count) const
+    -> std::optional<ConstPlanes> {
+  return Stepped(
+      value,
+      static_cast<std::size_t>(static_cast<std::uint64_t>(count) % members));
+}
+
+// Stepping back `count` places lands where stepping on by the rest of a whole
+// turn through the members does.
+auto Enumeration::MemberBefore(ConstPlanes value, std::int64_t count) const
+    -> std::optional<ConstPlanes> {
+  return Stepped(
+      value, members - static_cast<std::size_t>(
+                           static_cast<std::uint64_t>(count) % members));
 }
 
 }  // namespace lyra::value

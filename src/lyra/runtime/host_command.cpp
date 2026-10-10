@@ -6,7 +6,7 @@
 
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -25,14 +25,14 @@ void PublishPendingOutput(RuntimeEffects& runtime) {
 }  // namespace
 
 auto RunHostCommand(RuntimeEffects& runtime, const value::String& command)
-    -> value::PackedArray {
+    -> value::Int {
   PublishPendingOutput(runtime);
   const std::string terminal_command_line{command.View()};
-  return value::PackedArray::Int(std::system(terminal_command_line.c_str()));
+  return value::Int::FromInt(std::system(terminal_command_line.c_str()));
 }
 
-auto RunNullHostCommand() -> value::PackedArray {
-  return value::PackedArray::Int(std::system(nullptr));
+auto RunNullHostCommand() -> value::Int {
+  return value::Int::FromInt(std::system(nullptr));
 }
 
 }  // namespace lyra::runtime

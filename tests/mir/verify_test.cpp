@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -16,9 +17,12 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir {
 namespace {
@@ -365,6 +369,174 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
 
   EXPECT_NO_THROW(Verify(call_on(true)));
   EXPECT_THROW(Verify(call_on(false)), InternalError);
+}
+
+// The verifier refuses `unit`, and its refusal says `why`.
+void ExpectRefused(const CompilationUnit& unit, std::string_view why) {
+  try {
+    Verify(unit);
+    ADD_FAILURE() << "accepted a unit whose refusal says \"" << why << "\"";
+  } catch (const InternalError& error) {
+    const std::string message = error.what();
+    EXPECT_NE(message.find(why), std::string::npos) << message;
+  }
+}
+
+// An element of a numbered container is named by a position, so an index left
+// in the type the source wrote it in is refused; the entry reaching an
+// associative array takes a value of its index type, which is no ordinal (LRM
+// 7.8).
+TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
+  const auto element_of = [](bool keyed, bool as_position) {
+    return UnitWithBody([keyed, as_position](CompilationUnit& u, Block& body) {
+      const TypeId element = u.builtins.int_type;
+      const TypeId container =
+          keyed
+              ? u.types.Intern(
+                    Type{AssociativeArrayType{
+                        .element_type = element,
+                        .key_type = u.builtins.int_type}})
+              : u.types.Intern(Type{DynamicArrayType{.element_type = element}});
+      const support::BuiltinFn entry = keyed ? support::BuiltinFn::kAssocElement
+                                             : support::BuiltinFn::kElement;
+      const TypeId index_type =
+          as_position ? PositionType(u.types) : u.builtins.int_type;
+      const ExprId array =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = container});
+      const ExprId at =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = index_type});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{.target = entry, .receiver = array},
+                              .arguments = {at}},
+                      .type = element})});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(element_of(false, true)));
+  EXPECT_NO_THROW(Verify(element_of(true, false)));
+  ExpectRefused(element_of(false, false), "position type");
+}
+
+// A call on `entry` whose receiver is of type `container` and whose one
+// argument is of type `argument`, answering a value of type `answer`.
+auto UnitCalling(
+    support::BuiltinFn entry, const auto& container_of, const auto& argument_of,
+    const auto& answer_of) -> CompilationUnit {
+  return UnitWithBody([&](CompilationUnit& u, Block& body) {
+    const ExprId receiver =
+        body.exprs.Add(Expr{.data = NullLiteral{}, .type = container_of(u)});
+    const ExprId argument =
+        body.exprs.Add(Expr{.data = NullLiteral{}, .type = argument_of(u)});
+    body.AppendStmt(
+        ExprStmt{
+            .expr = body.exprs.Add(
+                Expr{
+                    .data =
+                        CallExpr{
+                            .callee =
+                                Direct{.target = entry, .receiver = receiver},
+                            .arguments = {argument}},
+                    .type = answer_of(u)})});
+  });
+}
+
+// An entry reaching by a position is called on something that numbers its
+// parts, and one reaching by a key on an associative array (LRM 7.8).
+TEST(MirVerifyTest, AnEntryIsCalledOnTheKindOfContainerItReaches) {
+  const auto element = [](CompilationUnit& u) { return u.builtins.int_type; };
+  const auto keyed = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{AssociativeArrayType{
+            .element_type = u.builtins.int_type,
+            .key_type = u.builtins.int_type}});
+  };
+  const auto numbered = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{DynamicArrayType{.element_type = u.builtins.int_type}});
+  };
+  const auto position = [](CompilationUnit& u) {
+    return PositionType(u.types);
+  };
+
+  EXPECT_NO_THROW(Verify(
+      UnitCalling(support::BuiltinFn::kElement, numbered, position, element)));
+  EXPECT_NO_THROW(Verify(
+      UnitCalling(support::BuiltinFn::kAssocElement, keyed, element, element)));
+  ExpectRefused(
+      UnitCalling(support::BuiltinFn::kElement, keyed, position, element),
+      "reaches by a position into an associative array");
+  ExpectRefused(
+      UnitCalling(
+          support::BuiltinFn::kAssocElement, numbered, element, element),
+      "reaches by a key into something that is no associative array");
+}
+
+// An entry the source states over values of several kinds is not named over
+// an integral value, which the entry over integral values alone carries out;
+// and an entry reading an operand as a machine value is handed no integral
+// one.
+TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
+  const auto integral = [](CompilationUnit& u) { return u.builtins.int_type; };
+  const auto string = [](CompilationUnit& u) { return u.builtins.string; };
+  const auto bit = [](CompilationUnit& u) { return u.builtins.bit1; };
+
+  EXPECT_NO_THROW(
+      Verify(UnitCalling(support::BuiltinFn::kCaseEqual, string, string, bit)));
+  EXPECT_NO_THROW(Verify(UnitCalling(
+      support::BuiltinFn::kIntegralCaseEqual, integral, integral, bit)));
+  ExpectRefused(
+      UnitCalling(support::BuiltinFn::kCaseEqual, integral, integral, bit),
+      "where its first operand is integral");
+
+  EXPECT_NO_THROW(
+      Verify(UnitCalling(support::BuiltinFn::kCompare, string, string, bit)));
+  ExpectRefused(
+      UnitCalling(support::BuiltinFn::kCompare, string, integral, bit),
+      "reads that operand as a machine value");
+}
+
+// An operation over integral values whose operands are all constants is stated
+// as the constant it evaluates to, so one left standing as an operation is
+// refused; the same operation over a value the program computes stands.
+TEST(MirVerifyTest, AnOperationOverConstantsIsStatedAsItsConstant) {
+  const auto one = [](const CompilationUnit& u, Block& body) {
+    return body.exprs.Add(
+        Expr{
+            .data =
+                ReferenceExpr{
+                    .target =
+                        IntegralConstantRef{
+                            .constant = u.integral_constants.Intern(
+                                IntegralConstantDecl{
+                                    .type = u.builtins.int_type,
+                                    .value =
+                                        IntegralConstant{
+                                            .value_words = {1},
+                                            .state_words = {}}})}},
+            .type = u.builtins.int_type});
+  };
+  const auto computed = [](const CompilationUnit& u, Block& body) {
+    return body.exprs.Add(
+        Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+  };
+
+  EXPECT_NO_THROW(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        body.AppendStmt(
+            ExprStmt{.expr = AddSum(u, body, one(u, body), computed(u, body))});
+      })));
+  ExpectRefused(
+      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        body.AppendStmt(
+            ExprStmt{.expr = AddSum(u, body, one(u, body), one(u, body))});
+      }),
+      "an operation over constants");
 }
 
 }  // namespace

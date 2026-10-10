@@ -269,8 +269,8 @@ name where it lives -- is the use site's decision, never a property of the acces
 no first-class value in LIR at all: a storage cell, a scope, an object-tree node. Such a type is
 address-only, and every operation over it consumes its address, so loading or storing a place of
 that type is a lowering defect. Address-only is a fact about the storage object, not about how
-values are represented: a packed value reached through an opaque handle is an ordinary first-class
-value, and a place holding one is loaded and stored like any other. The cell that holds it is what
+values are represented: a packed value is an ordinary first-class value however the layers below lay
+it out, and a place holding one is loaded and stored like any other. The cell that holds it is what
 may only be addressed.
 
 A place is the access path to independently addressable storage -- storage with an identity of its
@@ -297,16 +297,20 @@ each part reached from there -- which borrows the write. Each step MIR takes wit
 call on a designation answering with the next, and what the step does to the write -- an element
 step tells it what forming the element did -- is the library's, as it is in the C++ rendering of the
 same MIR. Where the write lands is a call on a designation, stated before anything is written there,
-that answers with the part's address; the part is then storage like any other. A slice written
-within a write is a call on the container's designation. That is how the variable learns whether the
-write changed it (LRM 4.3). Which library entry realizes a step, and whether it is an instruction or
-a call at all, is a realization question answered below LIR; it never decides which node the step is
-expressed as. A mutating method on a receiver -- a container's `delete`, a queue's `push` -- changes
-the storage the receiver names in place; where the receiver is a view, it is read out, changed, and
-written back as any write to a view is.
+that answers with the part's address; the part is then storage like any other. A run of elements
+written within a write is a call on the container's designation. Bits written within one are a view
+of the value they lie in, so they are two calls on that value's designation: one answering with the
+value as it stands once the bits are placed in it, and one handing the write that value. That is how
+the variable learns whether the write changed it (LRM 4.3). Which library entry realizes a step, and
+whether it is an instruction or a call at all, is a realization question answered below LIR; it
+never decides which node the step is expressed as. A mutating method on a receiver -- a container's
+`delete`, a queue's `push` -- changes the storage the receiver names in place; where the receiver is
+a view, it is read out, changed, and written back as any write to a view is.
 
-LIR carries the fact that a packed value is two-state or four-state; it does not carry how a
-four-state value is stored. The canonical encoding of a four-state value -- value bits plus a state
-mask -- is the runtime ABI profile's; turning that encoding into a concrete size, alignment, and
-aggregate placement is the physical-layout derivation's. LIR states the state-ness; the layers below
-realize it.
+LIR states an integral type as MIR does: its width, its signedness, and whether it is two-state or
+four-state. It names an operation on one by the language's operator and carries a constant of one as
+its bits at its type. It does not carry how a value is stored. The encoding of a four-state value --
+its value bits, and beside them the bits saying which positions hold x or z -- is the runtime ABI
+profile's, shared by generated code and the library; turning that encoding into a concrete size,
+alignment, and placement, and an operator into the instructions or the library call that performs it
+at that width, is the derivation's below. LIR states the type; the layers below realize it.

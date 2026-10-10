@@ -40,7 +40,7 @@ auto BuildMatch(
     mir::ExprId value) -> mir::ExprId {
   const mir::TypeId compared_at = block.exprs.Get(left).type;
   const mir::Type& type = unit.types.Get(compared_at);
-  const bool integral = type.IsIntegralPacked();
+  const bool integral = type.IsIntegral();
   if (integral || type.IsRealFamily() || type.Is<mir::StringType>()) {
     value = ConvertToType(unit, block, value, compared_at);
   }

@@ -1,6 +1,5 @@
 #include "lyra/mir/type.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -11,34 +10,10 @@
 #include "lyra/base/hash.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/integral_constant.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::mir {
-
-auto PackedRange::ElementCount() const -> std::uint64_t {
-  const std::int64_t span = (left >= right) ? (left - right) : (right - left);
-  return static_cast<std::uint64_t>(span) + 1U;
-}
-
-auto PackedRange::IsAscending() const -> bool {
-  return left <= right;
-}
-
-auto PackedRange::Contains(std::int64_t index) const -> bool {
-  const std::int64_t lo = std::min(left, right);
-  const std::int64_t hi = std::max(left, right);
-  return index >= lo && index <= hi;
-}
-
-auto PackedArrayType::BitWidth() const -> std::uint64_t {
-  if (dims.empty()) {
-    return 1U;
-  }
-  std::uint64_t width = 1U;
-  for (const auto& dim : dims) {
-    width *= dim.ElementCount();
-  }
-  return width;
-}
 
 auto BitsOf(MachineIntWidth width) -> std::uint32_t {
   switch (width) {
@@ -86,17 +61,29 @@ void HashEnum(std::size_t& seed, E value) {
 
 }  // namespace
 
-void HashPackedShape(std::size_t& seed, const PackedArrayType& packed) {
-  HashEnum(seed, packed.state_kind);
-  HashEnum(seed, packed.signedness);
-  for (const PackedRange& dim : packed.dims) {
-    HashField(seed, dim.left);
-    HashField(seed, dim.right);
+auto BlankIntegralConstant(const IntegralType& integral) -> IntegralConstant {
+  const std::size_t words = value::WordCountForBits(integral.bit_width);
+  switch (integral.state_kind) {
+    case IntegralStateKind::kTwoState:
+      return IntegralConstant{
+          .value_words = std::vector<std::uint64_t>(words, 0U),
+          .state_words = {}};
+    case IntegralStateKind::kFourState:
+      return IntegralConstant{
+          .value_words = std::vector<std::uint64_t>(words, 0U),
+          .state_words = std::vector<std::uint64_t>(words, 0U)};
   }
+  throw InternalError("BlankIntegralConstant: unknown IntegralStateKind");
+}
+
+void HashIntegral(std::size_t& seed, const IntegralType& integral) {
+  HashField(seed, integral.bit_width);
+  HashEnum(seed, integral.signedness);
+  HashEnum(seed, integral.state_kind);
 }
 
 void HashEnumeration(std::size_t& seed, const EnumType& enumeration) {
-  HashPackedShape(seed, enumeration.base);
+  HashIntegral(seed, enumeration.base);
   for (const EnumMember& member : enumeration.members) {
     HashField(seed, member.name);
     HashIntegralConstant(seed, member.value);
@@ -107,7 +94,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   std::size_t seed = std::hash<std::size_t>{}(type.data_.index());
   type.Visit(
       Overloaded{
-          [&](const PackedArrayType& t) { HashPackedShape(seed, t); },
+          [&](const IntegralType& t) { HashIntegral(seed, t); },
           [&](const EnumType& t) { HashEnumeration(seed, t); },
           [&](const UnpackedArrayType& t) {
             HashId(seed, t.element_type);
@@ -201,18 +188,18 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
   return seed;
 }
 
-auto Type::IsIntegralPacked() const -> bool {
-  return Is<PackedArrayType>() || Is<EnumType>();
+auto Type::IsIntegral() const -> bool {
+  return Is<IntegralType>() || Is<EnumType>();
 }
 
-auto Type::PackedShape() const -> const PackedArrayType& {
-  if (const auto* packed = As<PackedArrayType>()) {
-    return *packed;
+auto Type::Integral() const -> const IntegralType& {
+  if (const auto* integral = As<IntegralType>()) {
+    return *integral;
   }
   if (const auto* enumeration = As<EnumType>()) {
     return enumeration->base;
   }
-  throw InternalError("mir: type has no packed shape; it is not integral");
+  throw InternalError("mir: type is not integral");
 }
 
 auto Type::IsRealFamily() const -> bool {
@@ -252,13 +239,15 @@ auto Type::IsRuntimeStoredValue() const -> bool {
   // it is gone.
   return Visit(
       Overloaded{
-          // The simulation values, every one of which the runtime builds and
-          // keeps: one vector of bits however it is named, a sequence of values
-          // however it is sized and indexed, the ones held all at once or one
-          // at a time, and the single quantities whose representation the
-          // library still decides.
-          [](const PackedArrayType&) { return true; },
-          [](const EnumType&) { return true; },
+          // An integral value is the bits its type declares, and an
+          // enumeration's is its base's, so whoever holds one holds it entire.
+          [](const IntegralType&) { return false; },
+          [](const EnumType&) { return false; },
+
+          // The simulation values the runtime builds and keeps: a sequence of
+          // values however it is sized and indexed, the ones held all at once
+          // or one at a time, and the single quantities whose representation
+          // the library decides.
           [](const UnpackedArrayType&) { return true; },
           [](const DynamicArrayType&) { return true; },
           [](const QueueType&) { return true; },
@@ -347,7 +336,7 @@ auto Type::PartsAreStorage() const -> bool {
           // 7.4.1), a string one sequence of characters (LRM 6.16), and a union
           // holds one member at a time over storage its members share (LRM
           // 7.3), so a part of any of them is a view of the whole.
-          [](const PackedArrayType&) { return false; },
+          [](const IntegralType&) { return false; },
           [](const EnumType&) { return false; },
           [](const StringType&) { return false; },
           [](const UnionType&) { return false; },
@@ -390,7 +379,7 @@ auto Type::PartsAreStorage() const -> bool {
 }
 
 auto Type::BitsAreWrittenInPlace() const -> bool {
-  return Is<PackedArrayType>();
+  return Is<IntegralType>();
 }
 
 auto Type::ContainerElementType() const -> std::optional<TypeId> {
@@ -415,7 +404,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // One vector of bits, under a set of names or not: what looks like
           // an element is bits of that vector rather than a value held beside
           // the others.
-          [](const PackedArrayType&) -> Element { return std::nullopt; },
+          [](const IntegralType&) -> Element { return std::nullopt; },
           [](const EnumType&) -> Element { return std::nullopt; },
 
           // Held all at once, or one at a time, but never as a sequence of one

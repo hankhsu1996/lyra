@@ -1,37 +1,28 @@
 #pragma once
 
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 
 #include "lyra/support/takeover_level.hpp"
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
-// Which level a takeover entry acts on. It arrives as a PackedArray literal,
-// the way every compile-time scalar crosses into a runtime entry.
-[[nodiscard]] inline auto TakeoverLevelOf(const value::PackedArray& level)
+// Which level a takeover entry acts on. It arrives as a machine integer, the
+// way every runtime scalar crosses into a runtime entry.
+[[nodiscard]] inline auto TakeoverLevelOf(std::int64_t level)
     -> support::TakeoverLevel {
-  return static_cast<support::TakeoverLevel>(level.ToInt64());
+  return static_cast<support::TakeoverLevel>(level);
 }
 
-// The width and domain a takeover's generation crosses in. It is a counter the
-// evaluation carries and hands back, never a value the design can see, so what
-// decides its shape is only that both ends agree on one.
-inline constexpr std::uint64_t kTakeoverGenerationBits = 32;
-
-[[nodiscard]] inline auto TakeoverGenerationValue(std::uint32_t generation)
-    -> value::PackedArray {
-  return value::PackedArray::FromInt(
-      static_cast<std::int64_t>(generation), kTakeoverGenerationBits, false,
-      false);
-}
-
-[[nodiscard]] inline auto TakeoverGenerationOf(
-    const value::PackedArray& generation) -> std::uint32_t {
-  return static_cast<std::uint32_t>(generation.ToInt64());
+// A takeover's generation is a counter the evaluation carries and hands back,
+// never a value the design can see, so it crosses a runtime entry in both
+// directions as the machine integer every runtime scalar is.
+[[nodiscard]] inline auto TakeoverGenerationOf(std::int64_t generation)
+    -> std::uint32_t {
+  return static_cast<std::uint32_t>(generation);
 }
 
 // The procedural continuous assignments in effect on one cell, each holding
@@ -69,10 +60,21 @@ class Takeovers {
   auto Drive(
       support::TakeoverLevel level, std::uint32_t generation, const T& value)
       -> bool {
+    return Drive(
+        level, generation, [&](std::optional<T>& held) { held = value; });
+  }
+
+  // The same where the value arrives in a form of the caller's own: `record`
+  // is handed what the level holds, which is nothing until the first value
+  // after the level began, and leaves the value there.
+  template <std::invocable<std::optional<T>&> Record>
+  auto Drive(
+      support::TakeoverLevel level, std::uint32_t generation, Record record)
+      -> bool {
     if (GenerationOf(level) != generation) {
       return false;
     }
-    Slot(level) = value;
+    record(Slot(level));
     return true;
   }
 

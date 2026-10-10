@@ -5,7 +5,7 @@
 #include <utility>
 
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
@@ -23,11 +23,11 @@ namespace lyra::value {
 // that entry is the only place the type is needed.
 //
 // Its operator surface is LRM Table 11-1's "Any data type" row, as a chandle's
-// is: equality yields a 1-bit `PackedArray`, `===` / `!==` carry the same
-// meaning as `==` / `!=`, and no relational operator is defined. Identity is
-// the address, which is the object's identity because SystemVerilog classes are
-// singly inherited (LRM 8.13) -- a handle to a base and a handle to the derived
-// object hold the same address.
+// is: equality yields a bit, `===` / `!==` carry the same meaning as `==` /
+// `!=`, and no relational operator is defined. Identity is the address, which
+// is the object's identity because SystemVerilog classes are singly inherited
+// (LRM 8.13) -- a handle to a base and a handle to the derived object hold the
+// same address.
 class ManagedRef {
  public:
   ManagedRef() = default;
@@ -50,18 +50,18 @@ class ManagedRef {
   }
 
   // LRM 11.4.5 `==` / `!=` (Any data type), compared as object identity.
-  [[nodiscard]] auto operator==(const ManagedRef& o) const -> PackedArray {
-    return PackedArray::Bit(share_.get() == o.share_.get());
+  [[nodiscard]] auto operator==(const ManagedRef& o) const -> Bit {
+    return Bit::FromBool(share_.get() == o.share_.get());
   }
-  [[nodiscard]] auto operator!=(const ManagedRef& o) const -> PackedArray {
-    return PackedArray::Bit(share_.get() != o.share_.get());
+  [[nodiscard]] auto operator!=(const ManagedRef& o) const -> Bit {
+    return Bit::FromBool(share_.get() != o.share_.get());
   }
 
   // LRM 11.4.5: `===` / `!==` on a handle carry the same semantics as `==` /
   // `!=`. Coincides with `IsBitIdentical` because a handle's value is which
   // object it names.
-  [[nodiscard]] auto CaseEqual(const ManagedRef& o) const -> PackedArray {
-    return PackedArray::Bit(share_.get() == o.share_.get());
+  [[nodiscard]] auto CaseEqual(const ManagedRef& o) const -> Bit {
+    return Bit::FromBool(share_.get() == o.share_.get());
   }
 
   // LRM 9.4.2 update event predicate (engine change-detection hook).
@@ -74,8 +74,8 @@ class ManagedRef {
     return false;
   }
 
-  [[nodiscard]] static auto IsUnknown() -> PackedArray {
-    return PackedArray::Bit(false);
+  [[nodiscard]] static auto IsUnknown() -> Bit {
+    return Bit::FromBool(false);
   }
 
   // LRM 8.4: a handle tested for a boolean value is 0 when null, 1 otherwise.
@@ -90,6 +90,5 @@ class ManagedRef {
 static_assert(LyraValue<ManagedRef>);
 static_assert(CaseEqualComparable<ManagedRef>);
 static_assert(!Ordered<ManagedRef>);
-static_assert(!WildcardComparable<ManagedRef>);
 
 }  // namespace lyra::value

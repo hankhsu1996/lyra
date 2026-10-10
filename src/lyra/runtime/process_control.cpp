@@ -12,8 +12,8 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -60,7 +60,7 @@ auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef {
   return RefToObject(runtime.CurrentProcess().shared_from_this());
 }
 
-auto ProcessStatus(const value::ObjectRef& self) -> lyra::value::PackedArray {
+auto ProcessStatus(const value::ObjectRef& self) -> value::Int {
   const RuntimeProcess& node = ProcessNodeOf(self);
   const ProcessStatusCode code = [&] {
     switch (node.ExecutionState()) {
@@ -78,7 +78,7 @@ auto ProcessStatus(const value::ObjectRef& self) -> lyra::value::PackedArray {
     }
     throw InternalError("ProcessStatus: unknown process execution state");
   }();
-  return lyra::value::PackedArray::Int(static_cast<std::int32_t>(code));
+  return value::Int::FromInt(static_cast<std::int32_t>(code));
 }
 
 void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime) {

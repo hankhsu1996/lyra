@@ -10,6 +10,7 @@
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lir/enum_table_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
@@ -21,6 +22,7 @@
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/type.hpp"
@@ -65,12 +67,12 @@ class UnitLowerer {
   [[nodiscard]] static auto TranslateDeclaration(
       const mir::TypeDeclarationRef& ref) -> lir::TypeDeclarationRef;
 
-  // Translates a MIR description to its LIR-owned identity. Every description
-  // the unit holds is lowered, in pool order, so the two pools run in step and
-  // the position carries across.
-  [[nodiscard]] static auto TranslateDescriptor(mir::TypeDescriptorId id)
-      -> lir::TypeDescriptorId {
-    return lir::TypeDescriptorId{.value = id.value};
+  // Translates a MIR enumeration member table to its LIR-owned identity. Every
+  // table the unit holds is lowered, in pool order, so the two pools run in
+  // step and the position carries across.
+  [[nodiscard]] static auto TranslateEnumTable(mir::EnumTableId id)
+      -> lir::EnumTableId {
+    return lir::EnumTableId{.value = id.value};
   }
 
   // Translates a MIR constant to its LIR-owned identity. Every constant the

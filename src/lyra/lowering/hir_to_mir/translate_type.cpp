@@ -1,4 +1,4 @@
-#include <cstdint>
+#include <cstddef>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -36,49 +36,32 @@ auto TranslateSignedness(hir::Signedness s) -> mir::Signedness {
                                        : mir::Signedness::kUnsigned;
 }
 
-// Projects a recursive HIR packed array onto MIR's flat single-vector shape
-// (LRM 7.4.1). A scalar-bit terminal contributes how many states its bits have
-// and this one dimension; any other element (a nested packed array, or a packed
-// aggregate's single-vector projection) contributes its own flat dimensions,
-// onto which this dimension prepends.
-auto FlattenPackedArray(
-    const UnitLowerer& unit_lowerer, const hir::PackedArrayType& pa)
-    -> mir::PackedArrayType {
-  const mir::PackedRange dim{.left = pa.dim.left, .right = pa.dim.right};
-  const hir::Type& element = unit_lowerer.Hir().types.Get(pa.element_type);
-  if (const auto* scalar = element.As<hir::ScalarBitType>()) {
-    return mir::PackedArrayType{
-        .state_kind = StateKindOf(scalar->atom),
-        .signedness = TranslateSignedness(pa.signedness),
-        .dims = {dim},
-    };
-  }
-  const mir::PackedArrayType& inner =
-      (unit_lowerer.Unit().types.Get(
-           unit_lowerer.TranslateType(pa.element_type)))
-          .PackedShape();
-  std::vector<mir::PackedRange> dims;
-  dims.reserve(inner.dims.size() + 1U);
-  dims.push_back(dim);
-  dims.insert(dims.end(), inner.dims.begin(), inner.dims.end());
-  return mir::PackedArrayType{
-      .state_kind = inner.state_kind,
-      .signedness = TranslateSignedness(pa.signedness),
-      .dims = std::move(dims),
+// A packed array is one vector of bits (LRM 7.4.1): as many elements as its
+// dimension spans, each as wide as its element type. The bits take as many
+// values as the element's do.
+auto IntegralOfPackedArray(
+    const UnitLowerer& unit_lowerer, const hir::PackedArrayType& packed)
+    -> mir::IntegralType {
+  const mir::IntegralType element =
+      unit_lowerer.Unit()
+          .types.Get(unit_lowerer.TranslateType(packed.element_type))
+          .Integral();
+  return mir::IntegralType{
+      .bit_width = packed.dim.ElementCount() * element.bit_width,
+      .signedness = TranslateSignedness(packed.signedness),
+      .state_kind = element.state_kind,
   };
 }
 
-// A packed aggregate's single-vector projection (LRM 7.2.1 / 7.3.1 / 7.3.2):
-// one flat vector as wide as the aggregate's members place it, `logic` iff any
-// member is 4-state.
-auto FlattenPackedAggregate(
+// The vector a packed aggregate's members project onto (LRM 7.2.1 / 7.3.1 /
+// 7.3.2): as wide as its members place it, `logic` iff any member is 4-state.
+auto IntegralOfPackedAggregate(
     const PackedProjection& layout, hir::Signedness signedness)
-    -> mir::PackedArrayType {
-  return mir::PackedArrayType{
-      .state_kind = layout.state_kind,
+    -> mir::IntegralType {
+  return mir::IntegralType{
+      .bit_width = layout.bit_width,
       .signedness = TranslateSignedness(signedness),
-      .dims = {mir::PackedRange{
-          .left = static_cast<std::int64_t>(layout.bit_width) - 1, .right = 0}},
+      .state_kind = layout.state_kind,
   };
 }
 
@@ -139,40 +122,40 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
   return type.Visit(
       Overloaded{
           [&](const hir::ScalarBitType& src) -> mir::Type {
-            // A bare scalar is a one-bit unsigned vector in MIR's flat shape.
-            return mir::Type{mir::PackedArrayType{
-                .state_kind = StateKindOf(src.atom),
+            // A bare scalar is a one-bit unsigned vector.
+            return mir::Type{mir::IntegralType{
+                .bit_width = 1,
                 .signedness = mir::Signedness::kUnsigned,
-                .dims = {mir::PackedRange{.left = 0, .right = 0}},
+                .state_kind = StateKindOf(src.atom),
             }};
           },
           [&](const hir::PackedArrayType& src) -> mir::Type {
-            return mir::Type{FlattenPackedArray(*this, src)};
+            return mir::Type{IntegralOfPackedArray(*this, src)};
           },
           // A packed aggregate is the vector its members project onto: every
           // value operation runs on that vector, and a member is reached as a
-          // part-select of it, which is settled before this layer.
+          // part-select of it, placed where the select is lowered.
           [&](const hir::PackedStructType& src) -> mir::Type {
-            return mir::Type{FlattenPackedAggregate(
+            return mir::Type{IntegralOfPackedAggregate(
                 ProjectPackedAggregate(*this, type), src.signedness)};
           },
           [&](const hir::PackedUnionType& src) -> mir::Type {
-            return mir::Type{FlattenPackedAggregate(
+            return mir::Type{IntegralOfPackedAggregate(
                 ProjectPackedAggregate(*this, type), src.signedness)};
           },
           [&](const hir::EnumType& src) -> mir::Type {
-            // An enumeration keeps a MIR type of its own, carrying its base's
-            // packed shape and its members. A value operation reads the packed
-            // shape and so treats the value as its base integral; only what
-            // an enumeration answers about a value (LRM 6.19.5, 6.24.2) reads
-            // the members.
-            const auto& base_mir_data =
-                Unit().types.Get(TranslateType(src.base_type));
-            const auto* base_pa = base_mir_data.As<mir::PackedArrayType>();
-            if (base_pa == nullptr) {
+            // An enumeration keeps a MIR type of its own, carrying its base
+            // integral type and its members. A value operation reads the base
+            // and so treats the value as that integral; only what an
+            // enumeration answers about a value (LRM 6.19.5, 6.24.2) reads the
+            // members.
+            const auto* base = Unit()
+                                   .types.Get(TranslateType(src.base_type))
+                                   .As<mir::IntegralType>();
+            if (base == nullptr) {
               throw InternalError(
-                  "TranslateType: enum base did not lower to a "
-                  "PackedArrayType");
+                  "TranslateType: enum base did not lower to an integral "
+                  "type");
             }
             std::vector<mir::EnumMember> members;
             members.reserve(src.members.size());
@@ -181,10 +164,10 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
                   mir::EnumMember{
                       .name = m.name,
                       .value = CanonicalIntegralConstant(
-                          *base_pa, LowerHirIntegralConstant(m.value))});
+                          *base, LowerHirIntegralConstant(m.value))});
             }
             return mir::Type{mir::EnumType{
-                .base = *base_pa,
+                .base = *base,
                 .members = std::move(members),
             }};
           },

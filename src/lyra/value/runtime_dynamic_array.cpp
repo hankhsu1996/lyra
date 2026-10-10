@@ -9,13 +9,12 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/basic_dynamic_array.hpp"
-#include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/packed_array.hpp"
-#include "lyra/value/position.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/value_type.hpp"
+#include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::value {
 
@@ -83,8 +82,8 @@ auto RuntimeDynamicArray::Count() const -> std::size_t {
   return core_.has_value() ? core_->Count() : 0;
 }
 
-auto RuntimeDynamicArray::Size() const -> PackedArray {
-  return PackedArray::Int(static_cast<std::int32_t>(Count()));
+auto RuntimeDynamicArray::Size() const -> Int {
+  return Int::FromInt(static_cast<std::int64_t>(Count()));
 }
 
 auto RuntimeDynamicArray::ElementAt(std::size_t position) const -> const void* {
@@ -103,13 +102,13 @@ auto RuntimeDynamicArray::ElementAt(std::size_t position) -> void* {
   return Core().At(position);
 }
 
-auto RuntimeDynamicArray::Element(const PackedArray& position) const -> const
-    void* {
+auto RuntimeDynamicArray::Element(std::optional<std::int64_t> position) const
+    -> const void* {
   return Core().ElementAt(position);
 }
 
 auto RuntimeDynamicArray::ElementRef(
-    const PackedArray& position, Formation& formed) -> void* {
+    std::optional<std::int64_t> position, Formation& formed) -> void* {
   return Core().ElementRef(position, formed);
 }
 
@@ -118,16 +117,15 @@ void RuntimeDynamicArray::Delete() {
 }
 
 auto RuntimeDynamicArray::SliceElements(
-    const PackedArray& start, std::int64_t count) const
+    std::optional<std::int64_t> start, std::int64_t count) const
     -> std::vector<const void*> {
-  return Core().SliceElements(ReadPosition(start), SliceCount(count));
+  return Core().SliceElements(start, SliceCount(count));
 }
 
 auto RuntimeDynamicArray::AssignSlice(
-    const PackedArray& start, std::int64_t count,
+    std::optional<std::int64_t> start, std::int64_t count,
     std::span<const void* const> replacement) -> bool {
-  return Core().AssignSlice(
-      ReadPosition(start), SliceCount(count), replacement);
+  return Core().AssignSlice(start, SliceCount(count), replacement);
 }
 
 auto RuntimeDynamicArray::Concat(std::span<const void* const> items) const
@@ -142,22 +140,22 @@ void RuntimeDynamicArray::Permute(std::span<const std::size_t> order) {
 // An array with no element type yet holds no elements, which is all a
 // comparison with one can read.
 auto RuntimeDynamicArray::operator==(const RuntimeDynamicArray& other) const
-    -> PackedArray {
+    -> FourStateBit {
   if (!core_.has_value() || !other.core_.has_value()) {
-    return PackedArray::Bit(Count() == other.Count());
+    return detail::ScalarOf(Count() == other.Count());
   }
   return detail::SequenceEqual(*core_, *other.core_);
 }
 
 auto RuntimeDynamicArray::operator!=(const RuntimeDynamicArray& other) const
-    -> PackedArray {
-  return !(*this == other);
+    -> FourStateBit {
+  return Inverted(*this == other);
 }
 
 auto RuntimeDynamicArray::CaseEqual(const RuntimeDynamicArray& other) const
-    -> PackedArray {
+    -> Bit {
   if (!core_.has_value() || !other.core_.has_value()) {
-    return PackedArray::Bit(Count() == other.Count());
+    return Bit::FromBool(Count() == other.Count());
   }
   return detail::SequenceCaseEqual(*core_, *other.core_);
 }
@@ -174,19 +172,19 @@ auto RuntimeDynamicArray::HasUnknown() const -> bool {
   return core_.has_value() && detail::SequenceHasUnknown(*core_);
 }
 
-auto RuntimeDynamicArray::IsUnknown() const -> PackedArray {
-  return PackedArray::Bit(HasUnknown());
+auto RuntimeDynamicArray::IsUnknown() const -> Bit {
+  return Bit::FromBool(HasUnknown());
 }
 
-auto RuntimeDynamicArray::BitstreamWidth() const -> PackedArray {
-  return core_.has_value() ? detail::SequenceBitstreamWidth(*core_)
-                           : PackedArray::Int(0);
+auto RuntimeDynamicArray::BitstreamWidth() const -> Int {
+  return Int::FromInt(
+      core_.has_value() ? detail::SequenceBitstreamWidth(*core_) : 0);
 }
 
-auto RuntimeDynamicArray::CountBits(const PackedArray& control_bits) const
-    -> PackedArray {
-  return core_.has_value() ? detail::SequenceCountBits(*core_, control_bits)
-                           : PackedArray::Int(0);
+auto RuntimeDynamicArray::CountBits(const ConstIntegralView& control_bits) const
+    -> Int {
+  return Int::FromInt(
+      core_.has_value() ? detail::SequenceCountBits(*core_, control_bits) : 0);
 }
 
 }  // namespace lyra::value

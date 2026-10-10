@@ -10,7 +10,7 @@
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/trigger.hpp"
-#include "lyra/value/packed.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
 

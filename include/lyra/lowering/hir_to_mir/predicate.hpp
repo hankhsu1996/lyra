@@ -58,6 +58,12 @@ struct Predicate {
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
     -> mir::ExprId;
 
+// The logical negation of an integral value (LRM 11.4.7): one bit, which can
+// be x exactly where the value can hold one, however wide the value is.
+[[nodiscard]] auto BuildLogicalNot(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value)
+    -> mir::ExprId;
+
 // An expression of the source as a predicate: its own value.
 template <ExprLowerer Lowerer>
 auto ExpressionPredicate(Lowerer& lowerer, hir::ExprId id) -> Predicate;

@@ -37,10 +37,9 @@ class Observable {
   }
 
   // What an occurrence here is reported to: the memberships of the waits
-  // enrolled here, each for its awaiter's whole life.
-  [[nodiscard]] auto Members() noexcept -> IntrusiveList<WaitMembership>& {
-    return members_;
-  }
+  // enrolled here, each for its awaiter's whole life. Defined in this class's
+  // own source file, since only a write that found a wait enrolled asks it.
+  [[nodiscard]] auto Members() noexcept -> IntrusiveList<WaitMembership>&;
 
  private:
   IntrusiveList<WaitMembership> members_;

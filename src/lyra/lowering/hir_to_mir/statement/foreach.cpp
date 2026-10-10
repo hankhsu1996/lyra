@@ -77,8 +77,8 @@ auto DimensionOf(const UnitLowerer& unit_lowerer, hir::TypeId type)
   const auto whole_vector = [&]() -> Dimension {
     const std::uint64_t width = unit_lowerer.Unit()
                                     .types.Get(unit_lowerer.TranslateType(type))
-                                    .PackedShape()
-                                    .BitWidth();
+                                    .Integral()
+                                    .bit_width;
     return Dimension{
         .indices =
             DeclaredRange{
@@ -160,11 +160,13 @@ auto ReadsTheArray(const IndexSet& indices) -> bool {
 }
 
 // One iterated dimension: how many dimensions of the array lie above it,
-// iterated or not, the indices it has, and its loop variable with the type of
-// the value that variable holds. `element_type` is the type of one element of
-// the dimension, absent where the iterated type names none.
+// iterated or not, the type it is the outermost dimension of, the indices it
+// has, and its loop variable with the type of the value that variable holds.
+// `element_type` is the type of one element of the dimension, absent where the
+// iterated type names none.
 struct Level {
   std::size_t position = 0;
+  hir::TypeId container;
   IndexSet indices;
   std::optional<mir::TypeId> element_type;
   hir::ProceduralVarId var;
@@ -226,11 +228,10 @@ auto IteratedValue(const Nest& nest, const WalkFrame& frame, std::size_t depth)
     }
     const mir::ExprId index =
         PathValue(unit, block, IndexPath(nest, frame, enclosing));
-    const mir::TypeId container = PathValueType(unit, block, reached);
     reached = DescendInto(
-        std::move(reached),
-        ElementStep(
-            unit_lowerer, block, container, index, *enclosing.element_type));
+        std::move(reached), ElementStep(
+                                unit_lowerer, block, enclosing.container, index,
+                                *enclosing.element_type));
   }
   return PathValue(unit, block, reached);
 }
@@ -366,7 +367,8 @@ auto LowerForeachStmt(
           "LowerForeachStmt: a foreach lists more dimensions than its array "
           "has, which the front end rejects (LRM 12.7.3)");
     }
-    const Dimension dimension = DimensionOf(unit_lowerer, *iterated);
+    const hir::TypeId container = *iterated;
+    const Dimension dimension = DimensionOf(unit_lowerer, container);
     iterated = dimension.element;
     if (!f.loop_vars[position].has_value()) {
       continue;
@@ -376,6 +378,7 @@ auto LowerForeachStmt(
     levels.push_back(
         Level{
             .position = position,
+            .container = container,
             .indices = dimension.indices,
             .element_type = dimension.element.has_value()
                                 ? std::optional{unit_lowerer.TranslateType(

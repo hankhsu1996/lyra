@@ -323,6 +323,15 @@ a consumer noticing that an operand looks like a literal and substituting its ow
 second evaluator keyed on a shape, and it breaks on the first operand that is constant without being
 written as a literal. **Fold by asking the operation, never by matching the operand.**
 
+That is not the optimization the section above hands to the optimizer, and no build setting governs
+it. An optimizer rewrites a program already built, which takes analysis and is done only where a
+build asks; a builder answering a node with nothing left to differ takes none, and clang's code
+generator and LLVM's `IRBuilder` both do it in a build that optimizes nothing. It sits in the layer
+that states the language's operators because that is the last one where every such operation is
+still an operation: an operation on a value wider than a machine word reaches the layers below as a
+call on the library, which no builder there can answer. The same holds for anything else a node
+reads only its operands to answer, and stops holding the moment it reads something the run decides.
+
 Worked shape: `v[2:0]` on a `logic [7:0] v` reached the run as its two bounds, its form, and the
 declared range, and the run recovered "three bits from bit zero" on every evaluation -- 43% of a
 representative compute block. Asked the question, only `v` differs between evaluations; the start

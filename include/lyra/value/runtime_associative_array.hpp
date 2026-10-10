@@ -9,10 +9,11 @@
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/basic_associative_array.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/value_type.hpp"
+#include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::value {
 
@@ -110,10 +111,10 @@ class RuntimeAssociativeArray {
 
   // LRM 7.9.1: the entry count, and as an SV `int`.
   [[nodiscard]] auto Count() const -> std::size_t;
-  [[nodiscard]] auto Size() const -> PackedArray;
+  [[nodiscard]] auto Size() const -> Int;
 
   // LRM 7.9.3.
-  [[nodiscard]] auto Exists(IndexView index) const -> PackedArray;
+  [[nodiscard]] auto Exists(IndexView index) const -> Int;
 
   // LRM 7.8.6: the element `index` names, or the array's own value for an
   // absent one, without allocating.
@@ -144,18 +145,18 @@ class RuntimeAssociativeArray {
       -> std::vector<std::pair<const AnyValue*, const void*>>;
 
   [[nodiscard]] auto operator==(const RuntimeAssociativeArray& other) const
-      -> PackedArray;
+      -> FourStateBit;
   [[nodiscard]] auto operator!=(const RuntimeAssociativeArray& other) const
-      -> PackedArray;
+      -> FourStateBit;
   [[nodiscard]] auto CaseEqual(const RuntimeAssociativeArray& other) const
-      -> PackedArray;
+      -> Bit;
   [[nodiscard]] auto IsBitIdentical(const RuntimeAssociativeArray& other) const
       -> bool;
   [[nodiscard]] auto HasUnknown() const -> bool;
-  [[nodiscard]] auto IsUnknown() const -> PackedArray;
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray;
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray;
+  [[nodiscard]] auto IsUnknown() const -> Bit;
+  [[nodiscard]] auto BitstreamWidth() const -> Int;
+  [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
+      -> Int;
 
  private:
   using Core = BasicAssociativeArray<WitnessedKey, WitnessedElem>;
@@ -170,6 +171,6 @@ class RuntimeAssociativeArray {
 static_assert(LyraValue<RuntimeAssociativeArray>);
 static_assert(CaseEqualComparable<RuntimeAssociativeArray>);
 static_assert(Sized<RuntimeAssociativeArray>);
-static_assert(BitstreamSizable<RuntimeAssociativeArray>);
+static_assert(BitstreamSizable<RuntimeAssociativeArray, ConstIntegralView>);
 
 }  // namespace lyra::value

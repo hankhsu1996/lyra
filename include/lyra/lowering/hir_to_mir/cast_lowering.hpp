@@ -9,12 +9,11 @@
 namespace lyra::lowering::hir_to_mir {
 
 // Materializes "view `operand_id` as type `dst_type`" as a value-layer
-// `CallExpr` to the matching `lyra::value` factory: integral-to-integral
-// reshape calls `PackedArray::ConvertFrom`; the real-integral bridge nests
-// `.ToInt64()` / `.Round()` inside a `Real` ctor or `PackedArray::FromInt`;
-// packed bits and unpacked-byte arrays lift to `String::FromPackedArray` /
-// `String::FromByteArray`; cross-precision real reshape calls the
-// `RealValue<Other>` ctor; identical / same-shape inputs return the operand
+// `CallExpr` to the matching runtime entry: an integral-to-integral or a
+// cross-precision real reshape is a conversion into the destination type; the
+// real-integral bridge reads the source out as a machine integer and lands it
+// in the destination type; an integral value's bytes and an unpacked byte
+// array lift to a string; identical / same-shape inputs return the operand
 // expression unchanged. The (source, destination) type pair fully drives the
 // choice; this helper is the one place that makes it. Reinterpreting a
 // reference, and converting a machine integer's width, are structurally
@@ -22,7 +21,7 @@ namespace lyra::lowering::hir_to_mir {
 // directly at its producer, not through this helper.
 //
 // `block` is the destination scope for any intermediate `ExprId` the helper
-// interns when the factory call nests an inner one.
+// interns when a conversion nests another call.
 [[nodiscard]] auto BuildValueConversion(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::Expr;
@@ -46,6 +45,13 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId;
 
+// The same through the conversion LRM 11.8.2 puts on a context-determined
+// operand: `operand_id` unchanged when it is already at the propagated type
+// `dst_type`, otherwise that conversion interned into `block`.
+[[nodiscard]] auto ConvertToPropagatedType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId dst_type) -> mir::ExprId;
+
 // Returns `operand_id` at the type a comparison against `compared_with`
 // happens at, which is that type whenever it is a handle and the operand's own
 // otherwise. LRM 8.4 admits `null` as one operand of a handle comparison, and a
@@ -61,8 +67,10 @@ namespace lyra::lowering::hir_to_mir {
 // runtime signature takes where it wants a count, an index, or a bit pattern
 // rather than an SV-typed value. The result type is that machine integer and
 // nothing about the operand changes it, which is why it is stated here once
-// instead of at each site that needs a value as a number.
-[[nodiscard]] auto MakeToInt64Call(
-    const mir::CompilationUnit& unit, mir::ExprId operand_id) -> mir::Expr;
+// instead of at each site that needs a value as a number. A constant reads out
+// as a constant, so the answer is then a literal of that machine integer.
+[[nodiscard]] auto BuildToInt64Call(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id)
+    -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

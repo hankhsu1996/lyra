@@ -20,6 +20,70 @@ module Top;
   logic signed [7:0] arithmetic_right_keeps_unknown;
   logic signed [7:0] arithmetic_right_unknown_sign;
 
+  logic [6:0] left_to_top_7;
+  logic signed [6:0] arithmetic_right_to_bottom_7;
+  logic [32:0] left_into_top_33;
+  logic [32:0] right_from_top_33;
+  logic signed [32:0] arithmetic_right_from_top_33;
+  logic [32:0] left_by_width_33;
+  logic signed [32:0] arithmetic_right_by_width_33;
+  logic [62:0] left_to_top_63;
+  logic [62:0] left_by_width_63;
+  logic [63:0] left_to_top_64;
+  logic [63:0] left_by_width_64;
+  logic [63:0] right_from_top_64;
+  logic signed [63:0] arithmetic_right_from_top_64;
+  logic [63:0] unknown_amount_64;
+
+  // A bit moves to the position the amount names, and past either end of the
+  // operand is lost, whatever the operand's width.
+  initial begin
+    logic [6:0] a7;
+    logic signed [6:0] s7;
+    logic [32:0] a33;
+    logic signed [32:0] s33;
+    logic [62:0] a63;
+    logic [63:0] a64;
+    logic signed [63:0] s64;
+    logic [7:0] amount;
+
+    left_by_width_33 = '1;
+    left_by_width_63 = '1;
+    left_by_width_64 = '1;
+    unknown_amount_64 = '0;
+
+    a7 = 7'b0000001;
+    left_to_top_7 = a7 << 6;
+    s7 = 7'sb1000000;
+    arithmetic_right_to_bottom_7 = s7 >>> 6;
+
+    a33 = 33'h0_8000_0000;
+    left_into_top_33 = a33 << 1;
+    a33 = 33'h1_0000_0000;
+    right_from_top_33 = a33 >> 32;
+    amount = 8'd33;
+    left_by_width_33 = a33 << amount;
+    s33 = 33'sh1_0000_0000;
+    arithmetic_right_from_top_33 = s33 >>> 32;
+    arithmetic_right_by_width_33 = s33 >>> amount;
+
+    a63 = 63'h1;
+    left_to_top_63 = a63 << 62;
+    amount = 8'd63;
+    left_by_width_63 = a63 << amount;
+
+    a64 = 64'h1;
+    left_to_top_64 = a64 << 63;
+    amount = 8'd64;
+    left_by_width_64 = a64 << amount;
+    a64 = 64'h8000_0000_0000_0000;
+    right_from_top_64 = a64 >> 63;
+    s64 = 64'sh8000_0000_0000_0000;
+    arithmetic_right_from_top_64 = s64 >>> 63;
+    amount = 8'b0000_00x1;
+    unknown_amount_64 = a64 >> amount;
+  end
+
   initial begin
     logic [7:0] a;
     logic signed [7:0] s;
@@ -95,6 +159,44 @@ module Top;
     if (arithmetic_right_unknown_sign !== 8'bxxx00011)
       $fatal(1, "arithmetic_right_unknown_sign was %b, expected xxx00011",
              arithmetic_right_unknown_sign);
+
+    if (left_to_top_7 !== 7'b1000000)
+      $fatal(1, "left_to_top_7 was %b, expected 1000000", left_to_top_7);
+    if (arithmetic_right_to_bottom_7 !== 7'b1111111)
+      $fatal(1, "arithmetic_right_to_bottom_7 was %b, expected 1111111",
+             arithmetic_right_to_bottom_7);
+    if (left_into_top_33 !== 33'h1_0000_0000)
+      $fatal(1, "left_into_top_33 was %h, expected 100000000",
+             left_into_top_33);
+    if (right_from_top_33 !== 33'h0_0000_0001)
+      $fatal(1, "right_from_top_33 was %h, expected 000000001",
+             right_from_top_33);
+    if (arithmetic_right_from_top_33 !== 33'h1_ffff_ffff)
+      $fatal(1, "arithmetic_right_from_top_33 was %h, expected 1ffffffff",
+             arithmetic_right_from_top_33);
+    if (left_by_width_33 !== 33'h0)
+      $fatal(1, "left_by_width_33 was %h, expected 0", left_by_width_33);
+    if (arithmetic_right_by_width_33 !== 33'h1_ffff_ffff)
+      $fatal(1, "arithmetic_right_by_width_33 was %h, expected 1ffffffff",
+             arithmetic_right_by_width_33);
+    if (left_to_top_63 !== 63'h4000_0000_0000_0000)
+      $fatal(1, "left_to_top_63 was %h, expected 4000000000000000",
+             left_to_top_63);
+    if (left_by_width_63 !== 63'h0)
+      $fatal(1, "left_by_width_63 was %h, expected 0", left_by_width_63);
+    if (left_to_top_64 !== 64'h8000_0000_0000_0000)
+      $fatal(1, "left_to_top_64 was %h, expected 8000000000000000",
+             left_to_top_64);
+    if (left_by_width_64 !== 64'h0)
+      $fatal(1, "left_by_width_64 was %h, expected 0", left_by_width_64);
+    if (right_from_top_64 !== 64'h1)
+      $fatal(1, "right_from_top_64 was %h, expected 1", right_from_top_64);
+    if (arithmetic_right_from_top_64 !== 64'hffff_ffff_ffff_ffff)
+      $fatal(1, "arithmetic_right_from_top_64 was %h, expected all ones",
+             arithmetic_right_from_top_64);
+    if (unknown_amount_64 !== 64'bx)
+      $fatal(1, "unknown_amount_64 was %b, expected every bit x",
+             unknown_amount_64);
     $display("All checks passed");
   end
 endmodule

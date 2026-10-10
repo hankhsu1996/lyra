@@ -1,12 +1,14 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/wildcard_index.hpp"
 
@@ -16,20 +18,20 @@
 namespace lyra::value {
 
 // Numerical key ordering for integral-indexed associative arrays (LRM 7.8.4):
-// the SystemVerilog `<` operator respects the shared signedness of the index
-// type, so a 1-bit result of 1 means strictly-less. Every key carries the same
-// declared index shape (slang casts each index expression to the index type),
-// so the comparison is total over the keys actually stored.
-struct PackedArrayKeyLess {
-  [[nodiscard]] auto operator()(
-      const PackedArray& a, const PackedArray& b) const -> bool {
-    return static_cast<bool>(a < b);
+// the SystemVerilog `<` operator respects the signedness of the index type, so
+// a known 1 means strictly-less. Every key is of the declared index type
+// (slang casts each index expression to it), so the comparison is total over
+// the keys actually stored.
+template <IntegralValue K>
+struct IntegralKeyLess {
+  [[nodiscard]] auto operator()(const K& a, const K& b) const -> bool {
+    return (a < b).IsTruthy();
   }
 };
 
 // LRM 7.8.2 string-keyed associative array: keys order lexicographically. The
-// value-type `<` returns a 1-bit `PackedArray`; the host predicate `std::map`
-// needs is recovered with the explicit-bool conversion.
+// value-type `<` answers a one-bit value; the host predicate `std::map` needs
+// is recovered with the explicit-bool conversion.
 struct StringKeyLess {
   [[nodiscard]] auto operator()(const String& a, const String& b) const
       -> bool {
@@ -46,25 +48,42 @@ struct StringKeyLess {
 // array from a string- or integral-keyed one.
 class WildcardKey {
  public:
-  WildcardKey(const PackedArray& index)  // NOLINT(google-explicit-constructor)
-      : value_(WildcardIndexValue(index)) {
+  template <IntegralValue I>
+  WildcardKey(const I& index)  // NOLINT(google-explicit-constructor)
+      : WildcardKey(index.Load().View()) {
+  }
+  explicit WildcardKey(const ConstIntegralView& index)
+      : value_(index.planes.value.begin(), index.planes.value.end()),
+        unknown_(index.planes.unknown.begin(), index.planes.unknown.end()),
+        width_(index.width),
+        order_(WildcardIndexWords(index)) {
   }
 
-  [[nodiscard]] auto Value() const -> const PackedArray& {
-    return value_;
+  // The index as the program wrote it, read as unsigned.
+  [[nodiscard]] auto View() const -> ConstIntegralView {
+    return ConstIntegralView{
+        .planes = ConstPlanes{.value = value_, .unknown = unknown_},
+        .width = width_,
+        .signedness = Signedness::kUnsigned};
+  }
+  [[nodiscard]] auto Order() const -> const std::vector<std::uint64_t>& {
+    return order_;
   }
   [[nodiscard]] auto HasUnknown() const -> bool {
-    return value_.HasUnknown();
+    return lyra::value::HasUnknown(View().planes);
   }
 
  private:
-  PackedArray value_;
+  std::vector<std::uint64_t> value_;
+  std::vector<std::uint64_t> unknown_;
+  std::uint64_t width_;
+  std::vector<std::uint64_t> order_;
 };
 
 struct WildcardKeyLess {
   [[nodiscard]] auto operator()(
       const WildcardKey& a, const WildcardKey& b) const -> bool {
-    return WildcardIndexBefore(a.Value(), b.Value());
+    return WildcardIndexBefore(a.Order(), b.Order());
   }
 };
 
@@ -102,9 +121,9 @@ struct AssocKeyTraits<String> {
 };
 
 // LRM 7.8.4: integral keys order by signed/unsigned numerical value.
-template <>
-struct AssocKeyTraits<PackedArray> {
-  using Less = PackedArrayKeyLess;
+template <IntegralValue K>
+struct AssocKeyTraits<K> {
+  using Less = IntegralKeyLess<K>;
 };
 
 template <>
@@ -128,7 +147,7 @@ template <>
 struct Formatter<WildcardKey> {
   static auto Format(const FormatSpec& spec, const WildcardKey& key)
       -> std::string {
-    return lyra::value::Format(spec, MakeFormatArg(key.Value()));
+    return FormatIntegralOperand(spec, key.View(), FormatContext{});
   }
 };
 

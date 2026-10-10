@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
@@ -27,6 +28,7 @@
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -36,6 +38,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/event_edge.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -91,10 +94,40 @@ auto BuildConditionClosure(
   return block.exprs.Add(closure.Build(held_id));
 }
 
+// What an event control reads of the expression it watches (LRM 9.4.2), as a
+// value of the block the expression was lowered into: an edge is a transition
+// of the least significant bit, which is that bit as a `logic` whatever type
+// the expression has, and any other event is a change anywhere in the value.
+auto BuildWatchedPart(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    support::EventEdge edge, mir::ExprId value) -> mir::ExprId {
+  switch (edge) {
+    case support::EventEdge::kAnyChange:
+      return value;
+    case support::EventEdge::kPosedge:
+    case support::EventEdge::kNegedge:
+    case support::EventEdge::kBothEdges: {
+      const std::optional<mir::TypeId> bit_type =
+          LeastSignificantBitType(unit, block.exprs.Get(value).type);
+      if (!bit_type.has_value()) {
+        throw InternalError(
+            "BuildWatchedPart: an edge is watched on a value that is not "
+            "integral, which the front end refuses -- please report this as a "
+            "bug");
+      }
+      return ConvertToType(
+          unit, block, BuildLeastSignificantBit(unit, block, value, *bit_type),
+          mir::PackedVectorOf(
+              unit.types, 1, mir::IntegralStateKind::kFourState));
+    }
+  }
+  throw InternalError("BuildWatchedPart: unknown event edge");
+}
+
 // The observation one event expression is watched through (LRM 9.4.2): a
-// closure that answers what the expression is worth now, and the `iff`
-// qualifier where the source wrote one. It is one value every leaf of that
-// expression names, since the value being watched is the expression's and
+// closure that answers what the wait reads of the expression now, and the
+// `iff` qualifier where the source wrote one. It is one value every leaf of
+// that expression names, since the value being watched is the expression's and
 // there is one of it.
 //
 // Where the waiting process decides the wait, `report` holds a pointer to the
@@ -126,11 +159,14 @@ auto BuildObservationLocal(
   auto value_or =
       lowerer.LowerExpr(lowerer.HirExprs().Get(trigger.signal), evaluation);
   if (!value_or) return std::unexpected(std::move(value_or.error()));
-  const mir::ExprId value_id = closure.Body().exprs.Add(*std::move(value_or));
+  const mir::ExprId value_id = BuildWatchedPart(
+      unit, closure.Body(), trigger.edge,
+      closure.Body().exprs.Add(*std::move(value_or)));
 
   std::vector<mir::ExprId> arguments{
       block.exprs.Add(closure.Build(value_id)),
-      BuildIntLiteral(unit, block, static_cast<std::int64_t>(trigger.edge))};
+      BuildMachineIntLiteral(
+          unit, block, static_cast<std::int64_t>(trigger.edge))};
   if (!trigger.condition.has_value()) {
     return DeclareObservation(
         unit, frame, block, support::BuiltinFn::kObservationOfValue,
@@ -199,9 +235,9 @@ auto BuildDelayWaitStmt(
 
   const mir::ExprId runtime_id =
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId unit_power_id = BuildIntLiteral(
+  const mir::ExprId unit_power_id = BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(process.Resolution().unit_power));
-  const mir::ExprId precision_power_id = BuildIntLiteral(
+  const mir::ExprId precision_power_id = BuildMachineIntLiteral(
       unit, block,
       static_cast<std::int64_t>(process.Resolution().precision_power));
   const support::BuiltinFn entry =
@@ -302,23 +338,13 @@ auto WaitUntilOneFires(
   };
   mir::ExprId fired = fires(observations.front());
   for (const mir::LocalId observation : observations.subspan(1)) {
-    fired = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = mir::BinaryOp::kBitwiseOr,
-                    .lhs = fired,
-                    .rhs = fires(observation)},
-            .type = unit.builtins.machine_int64});
+    fired = block.exprs.Add(MakeBinary(
+        unit, block, mir::BinaryOp::kBitwiseOr, fired, fires(observation),
+        unit.builtins.machine_int64));
   }
-  const mir::ExprId none = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kEquality,
-                  .lhs = fired,
-                  .rhs = BuildMachineIntLiteral(unit, block, 0)},
-          .type = unit.builtins.machine_bool});
+  const mir::ExprId none = block.exprs.Add(MakeBinary(
+      unit, block, mir::BinaryOp::kEquality, fired,
+      BuildMachineIntLiteral(unit, block, 0), unit.builtins.machine_bool));
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::WhileStmt{
@@ -642,8 +668,8 @@ auto LowerWaitStmt(
   }
   mir::Block& test_block = test.Body();
   const mir::ExprId cond_id = test_block.exprs.Add(*std::move(cond_or));
-  const mir::ExprId not_yet =
-      BuildLogicalNot(test_block, ReduceToCondition(unit, test_block, cond_id));
+  const mir::ExprId not_yet = BuildConditionNot(
+      unit, test_block, ReduceToCondition(unit, test_block, cond_id));
   const mir::ExprId waiting_id = wrapper.exprs.Add(test.Build(not_yet));
 
   mir::Block inner_block;

@@ -14,22 +14,24 @@
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/net_resolution.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/position.hpp"
 
 namespace lyra::value {
 
-// A dynamic array (LRM 7.5), written once over what its element answers:
-// compiled with the element's C++ type for the C++ backend, and once in the
-// library, with the element type's table, for the execution backend. Every
-// element is handed in and out by its address.
+// A dynamic array (LRM 7.5), written over what its element answers: compiled
+// with the element's C++ type for the C++ backend, and in the library, with
+// the element type's table, for the execution backend. Every element is handed
+// in and out by its address.
 //
 // The elements are one contiguous array per generation, each at its index times
 // the element's size from the start, so an element is one address computation
 // away. An index names the same storage for the generation's whole life, and an
 // ordering method permutes the values the elements hold rather than the
 // elements; a change of size makes a new generation.
+//
+// A position arrives as what the program's position value names: a number, or
+// none where it holds x or z.
 template <ElementPolicy Elem>
 class BasicDynamicArray {
  public:
@@ -117,15 +119,15 @@ class BasicDynamicArray {
 
   // LRM 7.4.5: the element a position names, the element default where it
   // names none.
-  [[nodiscard]] auto ElementAt(const PackedArray& position) const -> const
-      void* {
+  [[nodiscard]] auto ElementAt(std::optional<std::int64_t> position) const
+      -> const void* {
     const auto ordinal = ElementOrdinal(position, count_);
     return ordinal ? At(*ordinal) : elem_.Default();
   }
 
   // LRM 7.4.5: the element a position names, or, where it names none, storage
   // no read reaches, so a write there is discarded.
-  [[nodiscard]] auto ExistingAt(const PackedArray& position) -> void* {
+  [[nodiscard]] auto ExistingAt(std::optional<std::int64_t> position) -> void* {
     Formation formed{};
     return ElementRef(position, formed);
   }
@@ -133,8 +135,8 @@ class BasicDynamicArray {
   // The same, saying whether the position named an element: an array never
   // grows by being written, so a write either lands in an existing element or
   // nowhere.
-  [[nodiscard]] auto ElementRef(const PackedArray& position, Formation& formed)
-      -> void* {
+  [[nodiscard]] auto ElementRef(
+      std::optional<std::int64_t> position, Formation& formed) -> void* {
     const auto ordinal = ElementOrdinal(position, count_);
     formed = ordinal ? Formation::kExisting : Formation::kNowhere;
     return ordinal ? At(*ordinal) : DiscardTarget(elem_, discard_);
@@ -149,13 +151,12 @@ class BasicDynamicArray {
       -> BasicDynamicArray {
     const bool paired = count_ == other.count_;
     return Built(elem_, count_, [&](std::size_t i, void* out) {
-      const bool agree =
-          paired && detail::ElementsAgree(elem_, At(i), other.At(i));
+      const bool agree = paired && elem_.Agree(At(i), other.At(i));
       elem_.Copy(agree ? At(i) : elem_.Default(), out);
     });
   }
 
-  // Net resolution element by element under each truth table (LRM 6.6). LRM
+  // Net resolution element by element under a truth table (LRM 6.6). LRM
   // 6.7.1 composes a net over an unpacked array out of its elements' bits, so
   // folding two contributions is folding each element pair.
   [[nodiscard]] auto Resolved(
@@ -180,37 +181,38 @@ class BasicDynamicArray {
   // These elements' shapes with every bit set to `fill` (LRM 6.7.1). The
   // element default stays this array's, which an invalid-index read returns
   // under LRM 7.4.5 whether the array is a net or a variable.
-  [[nodiscard]] auto FilledLike(const PackedArray& fill) const
-      -> BasicDynamicArray {
+  template <typename Fill>
+  [[nodiscard]] auto FilledLike(const Fill& fill) const -> BasicDynamicArray {
     return Built(elem_, count_, [&](std::size_t i, void* out) {
       elem_.FilledLike(At(i), fill, out);
     });
   }
 
-  // LRM 6.24.3: the elements' own streams laid end to end, the element at
-  // index 0 most significant -- the order a `foreach` traverses them in (LRM
-  // 11.4.14.1). A fixed-size array, the one kind streamed whole, holds at least
-  // one element.
-  [[nodiscard]] auto ToBitstream() const -> PackedArray {
-    PackedArray stream = elem_.ToBitstream(At(0));
-    for (std::size_t i = 1; i < count_; ++i) {
-      stream = stream.Concat(elem_.ToBitstream(At(i)));
+  // LRM 6.24.3: the elements' own streams written into `stream` below its
+  // `filled` most significant positions, the element at index 0 most
+  // significant -- the order a `foreach` traverses them in (LRM 11.4.14.1).
+  // Answers how many are filled after them.
+  [[nodiscard]] auto WriteToStream(
+      Planes stream, std::uint64_t stream_width, std::uint64_t filled) const
+      -> std::uint64_t {
+    for (std::size_t i = 0; i < count_; ++i) {
+      filled = elem_.WriteToStream(At(i), stream, stream_width, filled);
     }
-    return stream;
+    return filled;
   }
 
   // The inverse, each element taking its own width off the front of what is
   // left (LRM 11.4.14.3). These elements state the count and every element's
-  // shape, both of which a sequence of bits carries nothing of.
-  [[nodiscard]] auto FromBitstream(const PackedArray& bits) const
-      -> BasicDynamicArray {
-    std::uint64_t consumed = 0;
-    return Built(elem_, count_, [&](std::size_t i, void* out) {
-      const auto width =
-          static_cast<std::uint64_t>(elem_.BitstreamWidth(At(i)).ToInt64());
-      elem_.FromBitstream(BitstreamSegment(bits, consumed, width), At(i), out);
-      consumed += width;
-    });
+  // shape, both of which a sequence of bits carries nothing of. Answers the
+  // array and how many positions are taken after it.
+  [[nodiscard]] auto ReadFromStream(
+      ConstPlanes stream, std::uint64_t stream_width, std::uint64_t taken) const
+      -> std::pair<BasicDynamicArray, std::uint64_t> {
+    BasicDynamicArray read =
+        Built(elem_, count_, [&](std::size_t i, void* out) {
+          taken = elem_.ReadFromStream(stream, stream_width, taken, At(i), out);
+        });
+    return {std::move(read), taken};
   }
 
   // LRM 7.4.5 / 7.4.6: the `count` elements from `start`, each the element

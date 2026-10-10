@@ -62,7 +62,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const RuntimeClassType&) {
             return refers_to_no_class("an object of a runtime class");
           },
-          [&](const PackedArrayType&) { return not_an_object(); },
+          [&](const IntegralType&) { return not_an_object(); },
           [&](const EnumType&) { return not_an_object(); },
           [&](const UnpackedArrayType&) { return not_an_object(); },
           [&](const DynamicArrayType&) { return not_an_object(); },

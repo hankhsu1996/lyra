@@ -11,8 +11,8 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/value/packed.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::value {
 
@@ -29,39 +29,6 @@ auto Pow10Double(int exp) -> double {
   return result;
 }
 
-auto StateKindOf(const PackedArray& pa) -> IntegralStateKind {
-  return pa.IsFourState() ? IntegralStateKind::kFourState
-                          : IntegralStateKind::kTwoState;
-}
-
-auto WordCountFor(const PackedArray& pa) -> std::size_t {
-  return WordCountForBits(pa.BitWidth());
-}
-
-auto ValueWordAt(const PackedArray& pa, std::size_t word_index)
-    -> std::uint64_t {
-  const auto words = pa.ValueWords();
-  return word_index < words.size() ? words[word_index] : 0U;
-}
-
-auto UnknownWordAt(const PackedArray& pa, std::size_t word_index)
-    -> std::uint64_t {
-  const auto words = pa.UnknownWords();
-  return word_index < words.size() ? words[word_index] : 0U;
-}
-
-auto ValueBit(const PackedArray& pa, std::uint64_t bit_index) -> bool {
-  const auto wi = static_cast<std::size_t>(bit_index / 64U);
-  const std::uint64_t mask = std::uint64_t{1} << (bit_index % 64U);
-  return (ValueWordAt(pa, wi) & mask) != 0U;
-}
-
-auto UnknownBit(const PackedArray& pa, std::uint64_t bit_index) -> bool {
-  const auto wi = static_cast<std::size_t>(bit_index / 64U);
-  const std::uint64_t mask = std::uint64_t{1} << (bit_index % 64U);
-  return (UnknownWordAt(pa, wi) & mask) != 0U;
-}
-
 // Strip leading '0' digits, keeping at least one digit. 'x'/'z'/'X'/'Z' are
 // never stripped.
 auto StripLeadingZeros(std::string body) -> std::string {
@@ -71,54 +38,28 @@ auto StripLeadingZeros(std::string body) -> std::string {
   return body.substr(first_nonzero);
 }
 
-// X bit: value=1, unknown=1.
-auto HasX(const PackedArray& pa) -> bool {
-  if (StateKindOf(pa) == IntegralStateKind::kTwoState) return false;
-  const std::size_t wc = WordCountFor(pa);
-  for (std::size_t i = 0; i < wc; ++i) {
-    const std::uint64_t mask = ValidBitsMask(i, pa.BitWidth());
-    if ((ValueWordAt(pa, i) & UnknownWordAt(pa, i) & mask) != 0U) {
-      return true;
-    }
-  }
-  return false;
-}
+// Which of x and z a value holds anywhere, and whether it holds nothing else.
+struct UnknownScalars {
+  bool any_x = false;
+  bool any_z = false;
+  bool all_x = true;
+  bool all_z = true;
+};
 
-// Z bit: value=0, unknown=1.
-auto HasZ(const PackedArray& pa) -> bool {
-  if (StateKindOf(pa) == IntegralStateKind::kTwoState) return false;
-  const std::size_t wc = WordCountFor(pa);
-  for (std::size_t i = 0; i < wc; ++i) {
-    const std::uint64_t mask = ValidBitsMask(i, pa.BitWidth());
-    if ((~ValueWordAt(pa, i) & UnknownWordAt(pa, i) & mask) != 0U) {
-      return true;
-    }
+auto ScanUnknowns(const ConstIntegralView& value) -> UnknownScalars {
+  UnknownScalars found;
+  for (std::size_t i = 0; i < value.planes.value.size(); ++i) {
+    const std::uint64_t mask = ValidBitsMask(i, value.width);
+    const std::uint64_t v = value.planes.value[i];
+    const std::uint64_t u = WordAt(value.planes.unknown, i);
+    const std::uint64_t x_bits = v & u;
+    const std::uint64_t z_bits = ~v & u & mask;
+    found.any_x = found.any_x || x_bits != 0U;
+    found.any_z = found.any_z || z_bits != 0U;
+    found.all_x = found.all_x && x_bits == mask;
+    found.all_z = found.all_z && z_bits == mask;
   }
-  return false;
-}
-
-auto IsAllX(const PackedArray& pa) -> bool {
-  if (StateKindOf(pa) == IntegralStateKind::kTwoState) return false;
-  if (pa.BitWidth() == 0U) return false;
-  const std::size_t wc = WordCountFor(pa);
-  for (std::size_t i = 0; i < wc; ++i) {
-    const std::uint64_t mask = ValidBitsMask(i, pa.BitWidth());
-    if ((ValueWordAt(pa, i) & mask) != mask) return false;
-    if ((UnknownWordAt(pa, i) & mask) != mask) return false;
-  }
-  return true;
-}
-
-auto IsAllZ(const PackedArray& pa) -> bool {
-  if (StateKindOf(pa) == IntegralStateKind::kTwoState) return false;
-  if (pa.BitWidth() == 0U) return false;
-  const std::size_t wc = WordCountFor(pa);
-  for (std::size_t i = 0; i < wc; ++i) {
-    const std::uint64_t mask = ValidBitsMask(i, pa.BitWidth());
-    if ((ValueWordAt(pa, i) & mask) != 0U) return false;
-    if ((UnknownWordAt(pa, i) & mask) != mask) return false;
-  }
-  return true;
+  return found;
 }
 
 enum class UnknownSummary : std::uint8_t {
@@ -130,13 +71,14 @@ enum class UnknownSummary : std::uint8_t {
   kMixed,
 };
 
-auto SummarizeUnknowns(const PackedArray& pa) -> UnknownSummary {
-  const bool x = HasX(pa);
-  const bool z = HasZ(pa);
-  if (!x && !z) return UnknownSummary::kNone;
-  if (x && z) return UnknownSummary::kMixed;
-  if (x) return IsAllX(pa) ? UnknownSummary::kAllX : UnknownSummary::kPartialX;
-  return IsAllZ(pa) ? UnknownSummary::kAllZ : UnknownSummary::kPartialZ;
+auto SummarizeUnknowns(const ConstIntegralView& value) -> UnknownSummary {
+  const UnknownScalars found = ScanUnknowns(value);
+  if (!found.any_x && !found.any_z) return UnknownSummary::kNone;
+  if (found.any_x && found.any_z) return UnknownSummary::kMixed;
+  if (found.any_x) {
+    return found.all_x ? UnknownSummary::kAllX : UnknownSummary::kPartialX;
+  }
+  return found.all_z ? UnknownSummary::kAllZ : UnknownSummary::kPartialZ;
 }
 
 enum class GroupSummary : std::uint8_t {
@@ -150,21 +92,27 @@ enum class GroupSummary : std::uint8_t {
 // LRM 21.2.1.3: per-group X/Z classification for hex/octal display.
 // Any X in the group -> uppercase X (kPartialX); Z-only partial -> uppercase Z.
 auto SummarizeGroup(
-    std::uint32_t value_bits, std::uint32_t unknown_bits, std::uint32_t mask)
+    std::uint64_t value_bits, std::uint64_t unknown_bits, std::uint64_t mask)
     -> GroupSummary {
   if (unknown_bits == 0U) return GroupSummary::kNone;
-  const std::uint32_t x_bits = value_bits & unknown_bits;
-  const std::uint32_t z_bits = (~value_bits) & unknown_bits & mask;
+  const std::uint64_t x_bits = value_bits & unknown_bits;
+  const std::uint64_t z_bits = (~value_bits) & unknown_bits & mask;
   if (x_bits == mask) return GroupSummary::kAllX;
   if (z_bits == mask) return GroupSummary::kAllZ;
   if (x_bits != 0U) return GroupSummary::kPartialX;
   return GroupSummary::kPartialZ;
 }
 
-// Returns the X/Z letter for an unknown group; caller dispatches kNone to the
-// radix-specific digit lookup (hex digits for %h, '0'..'7' for %o).
-auto UnknownLetterForGroup(GroupSummary s) -> char {
-  switch (s) {
+constexpr std::string_view kHexDigits = "0123456789abcdef";
+
+// The character one digit's bits print as: the digit itself, or the letter
+// its x and z bits make it.
+auto GroupDigit(
+    std::uint64_t value_bits, std::uint64_t unknown_bits, std::uint64_t mask)
+    -> char {
+  switch (SummarizeGroup(value_bits, unknown_bits, mask)) {
+    case GroupSummary::kNone:
+      return kHexDigits[value_bits];
     case GroupSummary::kAllX:
       return 'x';
     case GroupSummary::kAllZ:
@@ -173,132 +121,59 @@ auto UnknownLetterForGroup(GroupSummary s) -> char {
       return 'X';
     case GroupSummary::kPartialZ:
       return 'Z';
-    case GroupSummary::kNone:
-      break;
   }
-  throw InternalError(
-      "UnknownLetterForGroup: kNone has no letter; caller must dispatch");
+  std::unreachable();
 }
 
-auto FormatBinaryBody(const PackedArray& pa) -> std::string {
+// LRM 21.2.1.3: a value written out most significant digit first in a radix
+// whose digits each cover a whole number of bits, the top digit covering
+// whatever the width leaves of it.
+auto FormatRadixBody(const ConstIntegralView& value, DigitRadix radix)
+    -> std::string {
+  const std::uint64_t bits_per_digit = BitsPerDigit(radix);
+  const std::uint64_t digits =
+      (value.width + bits_per_digit - 1U) / bits_per_digit;
   std::string body;
-  body.reserve(static_cast<std::size_t>(pa.BitWidth()));
-  for (std::uint64_t i = pa.BitWidth(); i > 0U; --i) {
-    const std::uint64_t bit_pos = i - 1U;
-    const bool vb = ValueBit(pa, bit_pos);
-    const bool ub = UnknownBit(pa, bit_pos);
-    if (!ub) {
-      body.push_back(vb ? '1' : '0');
-    } else {
-      body.push_back(vb ? 'x' : 'z');
-    }
+  body.reserve(static_cast<std::size_t>(digits));
+  for (std::uint64_t n = digits; n > 0U; --n) {
+    const std::uint64_t start = (n - 1U) * bits_per_digit;
+    const std::uint64_t count =
+        std::min<std::uint64_t>(bits_per_digit, value.width - start);
+    body.push_back(GroupDigit(
+        BitsAt(value.planes.value, start, count),
+        BitsAt(value.planes.unknown, start, count), LowBits(count)));
   }
   return body;
 }
 
-constexpr std::string_view kHexDigits = "0123456789abcdef";
+auto FormatDecimalNumeric(const ConstIntegralView& value) -> std::string {
+  const std::uint64_t bit_width = value.width;
+  const bool is_signed = value.signedness == Signedness::kSigned;
 
-auto FormatHexBody(const PackedArray& pa) -> std::string {
-  const std::uint64_t num_nibbles = (pa.BitWidth() + 3U) / 4U;
-  std::string body;
-  body.reserve(static_cast<std::size_t>(num_nibbles));
-  for (std::uint64_t n = num_nibbles; n > 0U; --n) {
-    const std::uint64_t nibble_start = (n - 1U) * 4U;
-    const std::uint64_t nibble_bits =
-        std::min<std::uint64_t>(4U, pa.BitWidth() - nibble_start);
-    std::uint32_t nibble_val = 0;
-    std::uint32_t nibble_unk = 0;
-    for (std::uint64_t b = 0; b < nibble_bits; ++b) {
-      if (ValueBit(pa, nibble_start + b)) nibble_val |= (1U << b);
-      if (UnknownBit(pa, nibble_start + b)) nibble_unk |= (1U << b);
-    }
-    const std::uint32_t nibble_mask = (1U << nibble_bits) - 1U;
-    const auto summary = SummarizeGroup(nibble_val, nibble_unk, nibble_mask);
-    if (summary == GroupSummary::kNone) {
-      body.push_back(kHexDigits[nibble_val]);
-    } else {
-      body.push_back(UnknownLetterForGroup(summary));
-    }
-  }
-  return body;
-}
-
-auto FormatOctalBody(const PackedArray& pa) -> std::string {
-  const std::uint64_t num_octets = (pa.BitWidth() + 2U) / 3U;
-  std::string body;
-  body.reserve(static_cast<std::size_t>(num_octets));
-  for (std::uint64_t n = num_octets; n > 0U; --n) {
-    const std::uint64_t octet_start = (n - 1U) * 3U;
-    const std::uint64_t octet_bits =
-        std::min<std::uint64_t>(3U, pa.BitWidth() - octet_start);
-    std::uint32_t octet_val = 0;
-    std::uint32_t octet_unk = 0;
-    for (std::uint64_t b = 0; b < octet_bits; ++b) {
-      if (ValueBit(pa, octet_start + b)) octet_val |= (1U << b);
-      if (UnknownBit(pa, octet_start + b)) octet_unk |= (1U << b);
-    }
-    const std::uint32_t octet_mask = (1U << octet_bits) - 1U;
-    const auto summary = SummarizeGroup(octet_val, octet_unk, octet_mask);
-    if (summary == GroupSummary::kNone) {
-      body.push_back(static_cast<char>('0' + octet_val));
-    } else {
-      body.push_back(UnknownLetterForGroup(summary));
-    }
-  }
-  return body;
-}
-
-auto FormatDecimalNumeric(const PackedArray& pa) -> std::string {
-  const std::uint64_t bit_width = pa.BitWidth();
-  const bool is_signed = pa.IsSigned();
-
-  // Narrow path: <= 64 bits fit in a single uint64. Avoids the chunked
-  // bignum loop below for the common 32 / 64-bit cases.
+  // A value of one word is the machine integer it holds.
   if (bit_width <= 64U) {
-    const std::uint64_t value_word = ValueWordAt(pa, 0);
-    const std::uint64_t mask = ValidBitsMask(0, bit_width);
-    const std::uint64_t raw = value_word & mask;
     if (is_signed) {
-      std::int64_t s = 0;
-      if (bit_width >= 64U) {
-        s = static_cast<std::int64_t>(raw);
-      } else {
-        const std::uint64_t sign_bit = std::uint64_t{1} << (bit_width - 1U);
-        if ((raw & sign_bit) != 0U) {
-          s = static_cast<std::int64_t>(raw | ~mask);
-        } else {
-          s = static_cast<std::int64_t>(raw);
-        }
-      }
-      return std::format("{}", s);
+      return std::format(
+          "{}", ToInt64(value.planes, bit_width, value.signedness));
     }
-    return std::format("{}", raw);
+    return std::format("{}", WordAt(value.planes.value, 0));
   }
 
-  // Wide path: copy into a working buffer, sign-extend if needed, then
-  // chunk-divide by 10^19 to build decimal digits group-by-group.
-  const auto value_words = pa.ValueWords();
-  std::vector<std::uint64_t> words(value_words.begin(), value_words.end());
-  MaskUnusedTopBits(
-      std::span<std::uint64_t>{words.data(), words.size()}, bit_width);
-
+  // Wide path: copy into a working buffer, take the magnitude of a negative
+  // number, then chunk-divide by 10^19 to build decimal digits group by group.
+  std::vector<std::uint64_t> words(
+      value.planes.value.begin(), value.planes.value.end());
   bool is_negative = false;
-  if (is_signed) {
-    const std::uint64_t sign_pos = bit_width - 1U;
-    const auto sign_word = static_cast<std::size_t>(sign_pos / 64U);
-    const std::uint64_t sign_mask = std::uint64_t{1} << (sign_pos % 64U);
-    if (sign_word < words.size() && (words[sign_word] & sign_mask) != 0U) {
-      is_negative = true;
-      std::uint64_t carry = 1;
-      for (std::uint64_t& word : words) {
-        word = ~word;
-        const std::uint64_t sum = word + carry;
-        carry = (sum < word) ? 1U : 0U;
-        word = sum;
-      }
-      MaskUnusedTopBits(
-          std::span<std::uint64_t>{words.data(), words.size()}, bit_width);
+  if (is_signed && BitAt(words, bit_width - 1U)) {
+    is_negative = true;
+    std::uint64_t carry = 1;
+    for (std::uint64_t& word : words) {
+      word = ~word;
+      const std::uint64_t sum = word + carry;
+      carry = (sum < word) ? 1U : 0U;
+      word = sum;
     }
+    ClearAboveWidth(words, bit_width);
   }
 
   while (words.size() > 1U && words.back() == 0U) words.pop_back();
@@ -331,41 +206,32 @@ auto FormatDecimalNumeric(const PackedArray& pa) -> std::string {
 // rval=101 -> 'e'). X/Z handling follows the Verilog simulator convention:
 // any X bit in the low byte collapses to "x"; otherwise any Z bit collapses
 // to "z"; otherwise the byte's value is the ASCII code.
-auto FormatCharBody(const PackedArray& pa) -> std::string {
-  std::uint8_t value_byte = 0;
-  std::uint8_t unknown_byte = 0;
-  const std::uint64_t bits = std::min<std::uint64_t>(8U, pa.BitWidth());
-  for (std::uint64_t i = 0; i < bits; ++i) {
-    if (ValueBit(pa, i)) {
-      value_byte |= static_cast<std::uint8_t>(1U << i);
-    }
-    if (UnknownBit(pa, i)) {
-      unknown_byte |= static_cast<std::uint8_t>(1U << i);
-    }
-  }
+auto FormatCharBody(const ConstIntegralView& value) -> std::string {
+  const std::uint64_t bits = std::min<std::uint64_t>(8U, value.width);
+  const std::uint64_t value_byte = BitsAt(value.planes.value, 0, bits);
+  const std::uint64_t unknown_byte = BitsAt(value.planes.unknown, 0, bits);
   if (unknown_byte != 0U) {
-    const std::uint8_t x_bits = value_byte & unknown_byte;
-    return x_bits != 0U ? "x" : "z";
+    return (value_byte & unknown_byte) != 0U ? "x" : "z";
   }
   std::string out;
   out.push_back(static_cast<char>(value_byte));
   return out;
 }
 
-auto FormatStringBody(const PackedArray& pa) -> std::string {
+auto FormatStringBody(const ConstIntegralView& value) -> std::string {
   // LRM 21.2.1.7: the value's bytes render as ASCII characters, most
   // significant byte first. The LRM leaves a NUL byte's rendering unpinned;
   // match the de-facto convention -- a NUL (and an x/z byte, which reaches here
   // as 0x00) renders as a space, so it stays one column rather than vanishing.
-  std::string out = pa.ByteString();
+  std::string out = BytesOf(value);
   for (char& c : out) {
     if (c == '\0') c = ' ';
   }
   return out;
 }
 
-auto FormatDecimalBody(const PackedArray& pa) -> std::string {
-  switch (SummarizeUnknowns(pa)) {
+auto FormatDecimalBody(const ConstIntegralView& value) -> std::string {
+  switch (SummarizeUnknowns(value)) {
     case UnknownSummary::kNone:
       break;
     case UnknownSummary::kAllX:
@@ -379,7 +245,7 @@ auto FormatDecimalBody(const PackedArray& pa) -> std::string {
     case UnknownSummary::kMixed:
       return "X";
   }
-  return FormatDecimalNumeric(pa);
+  return FormatDecimalNumeric(value);
 }
 
 // Decimal digits of the largest value `bit_width` bits can hold, which is the
@@ -399,8 +265,9 @@ auto DecimalDigitsOfWidest(std::uint64_t bit_width) -> std::uint64_t {
 // value has to expand its field. A signed decimal needs one column more than
 // that, for the sign its most negative value carries; the other radices print
 // every bit pattern in the same width whatever the type's signedness.
-auto AutoWidthFor(FormatKind kind, const PackedArray& value) -> std::int32_t {
-  const std::uint64_t bit_width = value.BitWidth();
+auto AutoWidthFor(FormatKind kind, const ConstIntegralView& value)
+    -> std::int32_t {
+  const std::uint64_t bit_width = value.width;
   switch (kind) {
     case FormatKind::kHex:
       return static_cast<std::int32_t>((bit_width + 3U) / 4U);
@@ -410,7 +277,8 @@ auto AutoWidthFor(FormatKind kind, const PackedArray& value) -> std::int32_t {
       return static_cast<std::int32_t>((bit_width + 2U) / 3U);
     case FormatKind::kDecimal:
       return static_cast<std::int32_t>(
-          DecimalDigitsOfWidest(bit_width) + (value.IsSigned() ? 1U : 0U));
+          DecimalDigitsOfWidest(bit_width) +
+          (value.signedness == Signedness::kSigned ? 1U : 0U));
     case FormatKind::kString:
     case FormatKind::kChar:
     case FormatKind::kRealDecimal:
@@ -420,7 +288,7 @@ auto AutoWidthFor(FormatKind kind, const PackedArray& value) -> std::int32_t {
     case FormatKind::kTime:
       return -1;
   }
-  return -1;
+  std::unreachable();
 }
 
 }  // namespace
@@ -440,7 +308,7 @@ auto FormatTimeMagnitude(
   return body;
 }
 
-auto FormatIntegral(const FormatSpec& spec, const PackedArray& value)
+auto FormatIntegral(const FormatSpec& spec, const ConstIntegralView& value)
     -> std::string {
   std::string body;
   switch (spec.kind) {
@@ -448,13 +316,13 @@ auto FormatIntegral(const FormatSpec& spec, const PackedArray& value)
       body = FormatDecimalBody(value);
       break;
     case FormatKind::kHex:
-      body = FormatHexBody(value);
+      body = StripLeadingZeros(FormatRadixBody(value, DigitRadix::kHex));
       break;
     case FormatKind::kBinary:
-      body = FormatBinaryBody(value);
+      body = StripLeadingZeros(FormatRadixBody(value, DigitRadix::kBinary));
       break;
     case FormatKind::kOctal:
-      body = FormatOctalBody(value);
+      body = StripLeadingZeros(FormatRadixBody(value, DigitRadix::kOctal));
       break;
     case FormatKind::kChar:
       body = FormatCharBody(value);
@@ -475,11 +343,6 @@ auto FormatIntegral(const FormatSpec& spec, const PackedArray& value)
     case FormatKind::kTime:
       throw InternalError(
           "FormatIntegral: kTime must route through FormatTimeMagnitude");
-  }
-
-  if (spec.kind == FormatKind::kHex || spec.kind == FormatKind::kBinary ||
-      spec.kind == FormatKind::kOctal) {
-    body = StripLeadingZeros(std::move(body));
   }
 
   FormatSpec effective = spec;

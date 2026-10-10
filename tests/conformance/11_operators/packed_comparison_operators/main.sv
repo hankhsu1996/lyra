@@ -35,6 +35,58 @@ module Top;
   logic equal_known_mismatch;
   logic not_equal_known_mismatch;
 
+  logic signed_less_1;
+  logic signed_less_7;
+  logic signed_less_33;
+  logic unsigned_less_33;
+  logic equal_63;
+  logic equal_top_bit_differs_63;
+  logic unsigned_greater_64;
+  logic signed_less_64;
+  logic equal_unknown_top_known_mismatch_33;
+  logic less_unknown_top_33;
+
+  // The most significant bit of an operand is its sign where both operands are
+  // signed and its largest place otherwise, whatever the operand's width.
+  initial begin
+    logic signed [0:0] s1;
+    logic signed [6:0] s7;
+    logic signed [32:0] s33;
+    logic [32:0] u33;
+    logic [62:0] a63;
+    logic [62:0] b63;
+    logic [63:0] u64;
+    logic signed [63:0] s64;
+
+    less_unknown_top_33 = 1'b0;
+
+    s1 = 1'sb1;
+    signed_less_1 = (s1 < 1'sb0);
+    s7 = 7'sb1000000;
+    signed_less_7 = (s7 < 7'sb0111111);
+
+    s33 = 33'sh1_0000_0000;
+    u33 = 33'h1_0000_0000;
+    signed_less_33 = (s33 < 33'sh0_ffff_ffff);
+    unsigned_less_33 = (u33 < 33'h0_ffff_ffff);
+
+    a63 = 63'h4000_0000_0000_0001;
+    b63 = 63'h4000_0000_0000_0001;
+    equal_63 = (a63 == b63);
+    b63 = 63'h0000_0000_0000_0001;
+    equal_top_bit_differs_63 = (a63 == b63);
+
+    u64 = 64'hffff_ffff_ffff_ffff;
+    s64 = -64'sd1;
+    unsigned_greater_64 = (u64 > 64'd1);
+    signed_less_64 = (s64 < 64'sd1);
+
+    u33 = 33'h0_0000_0004;
+    u33[32] = 1'bx;
+    equal_unknown_top_known_mismatch_33 = (u33 == 33'h0_0000_0005);
+    less_unknown_top_33 = (u33 < 33'h0_0000_0005);
+  end
+
   initial begin
     logic signed [7:0] a;
     logic signed [7:0] b;
@@ -168,6 +220,28 @@ module Top;
     if (not_equal_known_mismatch !== 1'b1)
       $fatal(1, "not_equal_known_mismatch was %b, expected 1",
              not_equal_known_mismatch);
+
+    if (signed_less_1 !== 1'b1)
+      $fatal(1, "signed_less_1 was %b, expected 1", signed_less_1);
+    if (signed_less_7 !== 1'b1)
+      $fatal(1, "signed_less_7 was %b, expected 1", signed_less_7);
+    if (signed_less_33 !== 1'b1)
+      $fatal(1, "signed_less_33 was %b, expected 1", signed_less_33);
+    if (unsigned_less_33 !== 1'b0)
+      $fatal(1, "unsigned_less_33 was %b, expected 0", unsigned_less_33);
+    if (equal_63 !== 1'b1) $fatal(1, "equal_63 was %b, expected 1", equal_63);
+    if (equal_top_bit_differs_63 !== 1'b0)
+      $fatal(1, "equal_top_bit_differs_63 was %b, expected 0",
+             equal_top_bit_differs_63);
+    if (unsigned_greater_64 !== 1'b1)
+      $fatal(1, "unsigned_greater_64 was %b, expected 1", unsigned_greater_64);
+    if (signed_less_64 !== 1'b1)
+      $fatal(1, "signed_less_64 was %b, expected 1", signed_less_64);
+    if (equal_unknown_top_known_mismatch_33 !== 1'b0)
+      $fatal(1, "equal_unknown_top_known_mismatch_33 was %b, expected 0",
+             equal_unknown_top_known_mismatch_33);
+    if (less_unknown_top_33 !== 1'bx)
+      $fatal(1, "less_unknown_top_33 was %b, expected x", less_unknown_top_33);
     $display("All checks passed");
   end
 endmodule

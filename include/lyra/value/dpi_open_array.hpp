@@ -4,17 +4,14 @@
 #include <cstdint>
 #include <optional>
 #include <span>
-#include <type_traits>
 #include <variant>
 #include <vector>
 
 #include "lyra/value/dpi_canonical.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::value {
-
-class ValueType;
 
 // A DPI-C open array as the foreign side sees it (LRM 35.5.6.1, Annex H.12): a
 // canonical image of the whole actual, plus the coordinate system of each
@@ -34,45 +31,56 @@ class ValueType;
 // the call site supplied (Annex H.7.5, H.7.6).
 class DpiOpenArray {
  public:
-  // `bounds` is the declared range of each unpacked dimension, outermost first
-  // -- empty where the actual is a single packed value. `element_type` is what
-  // the actual's declaration says one element is, which is what fixes the
-  // image's own element shape: reading it off an element of the value instead
-  // would have no answer for an actual holding none. `addressable_elements`
-  // says an individual value of the element type crosses in the same canonical
-  // form the image holds it in, which is what lets the foreign side take the
-  // address of the array or of one element (Annex H.12.4).
+  // An image with every element clear, each element `element_width` bits in
+  // the canonical form of `element_domain`. `bounds` states the declared range
+  // of each unpacked dimension, left bound then right, outermost first -- empty
+  // where the actual is a single packed value. `addressable_elements` says an
+  // individual value of the element type crosses in the same canonical form
+  // the image holds it in, which is what lets the foreign side take the
+  // address of the array or of one element (Annex H.12.4). That is a fact of
+  // the formal's declaration and not of the actual's type: a formal whose
+  // packed dimension is unsized makes every element cross as a canonical
+  // vector whatever the element is.
+  DpiOpenArray(
+      std::span<const std::int64_t> bounds, std::uint64_t element_width,
+      StateDomain element_domain, bool addressable_elements);
+
+  // The image of `sv`, a value whose unpacked layers are the bounds' dimensions
+  // and whose leaves are the elements, of the integral type its own type
+  // reaches under those layers.
   template <typename T>
   DpiOpenArray(
-      const T& sv, std::span<const UnpackedRange> bounds,
-      const PackedType& element_type, bool addressable_elements) {
-    Shape(bounds, element_type, addressable_elements);
+      const T& sv, std::span<const std::int64_t> bounds,
+      bool addressable_elements)
+      : DpiOpenArray(
+            bounds, ElementOf<T>::kWidth, ElementOf<T>::kDomain,
+            addressable_elements) {
     std::size_t position = 0;
     Fill(sv, 0, position);
   }
 
-  // The same image built from an actual of `sv_type`, a type the library was
-  // compiled without, which is how the execution backend hands every aggregate
-  // over. Each level is read through its type's ordered parts, and the walk
-  // ends after one level per unpacked dimension, where the leaves are.
-  DpiOpenArray(
-      const void* sv, const ValueType& sv_type,
-      std::span<const UnpackedRange> bounds, const PackedType& element_type,
-      bool addressable_elements);
-
   // The SV value the image now holds, shaped like `prototype` -- the write-back
   // of an `output` or `inout` open array. Reading through a prototype is what
-  // gives each element its declared width, signedness, and state domain, since
-  // the canonical form carries none of them.
+  // says how many elements each layer holds, which the image's type does not.
   template <typename T>
   [[nodiscard]] auto ToValue(const T& prototype) const -> T {
     std::size_t position = 0;
     return Rebuild(prototype, 0, position);
   }
 
-  // The same write-back into a value of `type` already shaped like the
-  // prototype, each leaf written where it lies.
-  void WriteBack(void* value, const ValueType& type) const;
+  // One element's canonical groups at an image position: written from the
+  // planes of a value as wide as an element, and read back into the planes of
+  // one (Annex H.7.3 gives a packed element one canonical representation, a
+  // flat vector of its own width).
+  void WriteElement(std::size_t position, ConstPlanes value);
+  void ReadElement(std::size_t position, Planes out) const;
+
+  // The storage ordinal of the element at C position `position` in a dimension:
+  // the two agree while the declared range ascends and mirror each other while
+  // it descends, since SV element order runs from the left bound (LRM 7.6) and
+  // the C layout runs from the lowest index (Annex H.7.3).
+  [[nodiscard]] auto OrdinalAt(
+      std::size_t dimension, std::size_t position) const -> std::size_t;
 
   [[nodiscard]] auto Handle() -> svOpenArrayHandle {
     return this;
@@ -112,15 +120,21 @@ class DpiOpenArray {
   }
 
  private:
-  // Fixes the coordinate system, the element shape, and the storage the image
-  // needs, all of which follow from the bounds and the element type.
-  void Shape(
-      std::span<const UnpackedRange> bounds, const PackedType& element_type,
-      bool addressable_elements);
+  // The integral type the leaves of a value of `T` are, under however many
+  // unpacked layers `T` has.
+  template <typename T>
+  struct Leaf {
+    using Type = typename Leaf<typename T::ElementType>::Type;
+  };
+  template <IntegralValue T>
+  struct Leaf<T> {
+    using Type = T;
+  };
+  template <typename T>
+  using ElementOf = typename Leaf<T>::Type;
 
-  // The 32-bit groups one element occupies in canonical form (Annex H.7.7).
   [[nodiscard]] auto GroupsPerElement() const -> std::size_t {
-    return (static_cast<std::size_t>(element_width_) + 31U) / 32U;
+    return CanonicalGroups(element_width_);
   }
 
   [[nodiscard]] auto ElementCount() const -> std::size_t;
@@ -133,13 +147,6 @@ class DpiOpenArray {
   // The address of the element at an image position, or null where the foreign
   // side may not address elements at all.
   [[nodiscard]] auto AddressAt(std::size_t position) -> void*;
-
-  // The storage ordinal of the element at C position `position` in a dimension:
-  // the two agree while the declared range ascends and mirror each other while
-  // it descends, since SV element order runs from the left bound (LRM 7.6) and
-  // the C layout runs from the lowest index (Annex H.7.3).
-  [[nodiscard]] auto OrdinalAt(
-      std::size_t dimension, std::size_t position) const -> std::size_t;
 
   // The one place an image position becomes storage. Empty where the image
   // holds the other state domain, so a caller that asked for the wrong word
@@ -164,19 +171,13 @@ class DpiOpenArray {
     return std::span{*words}.subspan(position * groups, groups);
   }
 
-  // One element's canonical groups at an image position, in whichever state
-  // domain the image holds.
-  void WriteLeaf(const PackedArray& value, std::size_t position);
-  [[nodiscard]] auto ReadLeaf(
-      const PackedArray& prototype, std::size_t position) const -> PackedArray;
-
   // Walks a value against the dimensions, descending one layer per dimension
   // and visiting the leaves in C layout order so `position` advances with the
   // image. A leaf ends the walk, so the innermost layer consumes no dimension.
   template <typename T>
   void Fill(const T& value, std::size_t dimension, std::size_t& position) {
-    if constexpr (std::is_same_v<T, PackedArray>) {
-      WriteLeaf(value, position);
+    if constexpr (IntegralValue<T>) {
+      WriteElement(position, value.Load().Read());
       ++position;
     } else {
       for (std::size_t p = 0; p < value.RawSize(); ++p) {
@@ -185,22 +186,15 @@ class DpiOpenArray {
     }
   }
 
-  // The two walks above, over a value whose type is a run-time fact.
-  void FillErased(
-      const void* value, const ValueType& type, std::size_t dimension,
-      std::size_t& position);
-  void WriteErased(
-      void* value, const ValueType& type, std::size_t dimension,
-      std::size_t& position) const;
-
   template <typename T>
   [[nodiscard]] auto Rebuild(
       const T& prototype, std::size_t dimension, std::size_t& position) const
       -> T {
-    if constexpr (std::is_same_v<T, PackedArray>) {
-      const PackedArray value = ReadLeaf(prototype, position);
+    if constexpr (IntegralValue<T>) {
+      typename T::Words read;
+      ReadElement(position, read.Write());
       ++position;
-      return value;
+      return T::FromWords(read);
     } else {
       const std::size_t count = prototype.RawSize();
       std::vector<typename T::ElementType> elements(count);

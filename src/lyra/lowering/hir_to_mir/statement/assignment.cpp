@@ -111,9 +111,9 @@ auto LowerStreamingUnpackAssign(
   // The stream's own shape is on the type the pack just gave it, so it is read
   // there rather than worked out again from the value it came from. By value:
   // the pool's view does not survive the interning below.
-  const mir::PackedArrayType source =
-      unit.types.Get(wrapper.exprs.Get(source_id).type).PackedShape();
-  if (source.BitWidth() < targets_width) {
+  const mir::IntegralType source =
+      unit.types.Get(wrapper.exprs.Get(source_id).type).Integral();
+  if (source.bit_width < targets_width) {
     throw InternalError(
         "LowerStreamingUnpackAssign: the front end refuses a source with "
         "fewer bits than the targets need (LRM 11.4.14.3) -- please report "
@@ -128,8 +128,8 @@ auto LowerStreamingUnpackAssign(
   const mir::ExprId distributable_id = BuildReorderedStream(
       unit, wrapper,
       wrapper.exprs.Add(BuildPackedBitsRead(
-          process.Owner(), wrapper, source_id,
-          source.BitWidth() - targets_width, targets_width, stream_type)),
+          process.Owner(), wrapper, source_id, source.bit_width - targets_width,
+          stream_type)),
       lhs_stream.block_bits);
   const mir::LocalId stream_var =
       wrapper_frame.bindings->DeclareAnonymous(stream_type);
@@ -151,7 +151,7 @@ auto LowerStreamingUnpackAssign(
     const mir::ExprId segment_id = wrapper.exprs.Add(BuildPackedBitsRead(
         process.Owner(), wrapper,
         wrapper.exprs.Add(mir::MakeLocalRefExpr(stream_var, stream_type)),
-        targets_width - consumed - target.width, target.width, segment_type));
+        targets_width - consumed - target.width, segment_type));
     consumed += target.width;
     auto value_or = BuildFromBitstream(
         unit, wrapper, segment_id, target.type, target_expr.span);
@@ -316,7 +316,7 @@ auto LowerExprStmt(
     // LRM 11.4.14.3: the same grammatical position, filled from a stream of
     // bits rather than from a value of the target's own shape.
     if (const auto* stream = std::get_if<hir::StreamingConcatExpr>(&lhs.data)) {
-      if (assign->compound_op.has_value()) {
+      if (assign->compound.has_value()) {
         throw InternalError(
             "LowerExprStmt: compound assignment with a streaming lvalue is "
             "not a legal SV form (LRM A.6.2 grammar)");
@@ -372,7 +372,7 @@ auto LowerExprStmt(
     return stmt;
   }
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
-    if (!assign->compound_op.has_value() &&
+    if (!assign->compound.has_value() &&
         std::holds_alternative<hir::ImmediateEffect>(assign->timing)) {
       // Peek through an implicit conversion wrapper that slang inserts when
       // the call's return type does not match the LHS type bit-for-bit.

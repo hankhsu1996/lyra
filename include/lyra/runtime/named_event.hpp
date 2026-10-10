@@ -5,7 +5,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::runtime {
 
@@ -40,8 +40,7 @@ class NamedEvent : public Observable {
   // LRM 15.5.3: `e.triggered` is true iff the most recent trigger happened
   // in the current simulation time step. No mutation, no clearing -- the
   // answer is a timestamp comparison.
-  [[nodiscard]] auto Triggered(RuntimeEffects& runtime) const
-      -> value::PackedArray;
+  [[nodiscard]] auto Triggered(RuntimeEffects& runtime) const -> value::Bit;
 
  private:
   std::optional<SimTime> last_triggered_at_;

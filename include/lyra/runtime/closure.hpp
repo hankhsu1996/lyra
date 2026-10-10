@@ -4,6 +4,7 @@
 #include <memory>
 
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
@@ -92,19 +93,16 @@ class ClosureValue {
   // Runs a body that takes nothing and answers what it settled on.
   [[nodiscard]] auto RunValue() -> value::AnyValue;
 
-  // The same, for a body answering a value of `type`, one of the library's own
-  // kinds.
-  template <typename T>
-  [[nodiscard]] auto RunValueOf(const value::ValueTypeOf<T>& type) -> T {
-    RequireAnswers(type);
-    return value::TakeBuilt<T>([&](void* out) { RunValueInto(out); });
-  }
+  // Runs a body an event control reads one scalar of. What an edge is a
+  // transition of is the watched expression's least significant bit (LRM
+  // 9.4.2), which the body answers as a `logic`; whether an `iff` qualifier
+  // holds (LRM 12.4) the body answers as a `bit`. Each type is the language's
+  // own, so nothing here is told what the body answers.
+  [[nodiscard]] auto RunWatchedBit() -> value::FourStateBit;
+  [[nodiscard]] auto RunTruth() -> bool;
 
  private:
   explicit ClosureValue(const ClosureDefinition* definition);
-
-  // Refuses a caller expecting a value of another type than the body answers.
-  void RequireAnswers(const value::ValueType& type) const;
 
   // Runs a body that takes nothing into `out`, which is sized for the type it
   // answers.

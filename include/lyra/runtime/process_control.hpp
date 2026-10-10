@@ -4,8 +4,8 @@
 
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
@@ -32,7 +32,7 @@ auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef;
 // handle after its body terminates. A terminated process reports FINISHED or
 // KILLED by how it terminated -- the completion slot is gone by then, so the
 // distinction is read from the node's persistent terminal cause.
-auto ProcessStatus(const value::ObjectRef& self) -> lyra::value::PackedArray;
+auto ProcessStatus(const value::ObjectRef& self) -> value::Int;
 
 // LRM 9.7 `process::kill()`: forcibly terminate the process and all its
 // descendant subprocesses. Each terminated node is marked KILLED and its frame

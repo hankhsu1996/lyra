@@ -6,6 +6,8 @@
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/basic_union.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 
 namespace lyra::value {
 
@@ -23,6 +25,18 @@ class HeldMember {
   }
   [[nodiscard]] auto Value() const -> const AnyValue& {
     return value_;
+  }
+
+  [[nodiscard]] static auto Equal(const HeldMember& a, const HeldMember& b)
+      -> FourStateBit {
+    if (a.index_ != b.index_) {
+      return FourStateBit::kZero;
+    }
+    return a.value_ == b.value_;
+  }
+
+  [[nodiscard]] static auto HighImpedance() -> Logic {
+    return Logic::Filled(FourStateBit::kHighImpedance);
   }
 
   template <typename F>

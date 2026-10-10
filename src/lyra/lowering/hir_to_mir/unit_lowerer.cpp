@@ -34,6 +34,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -50,7 +51,6 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/mir/unit_values.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/def_path.hpp"
 
@@ -182,7 +182,7 @@ auto PopulateNamespaceOwnStorage(
     unit.named_static_variables.push_back(
         mir::NamedStaticVariable{.name = d.name, .variable = variable});
 
-    // Phase 1: install the cell's declared representation and default.
+    // The install body gives the cell its declared representation and default.
     const mir::ExprId prototype = install_block.exprs.Add(
         BuildDefaultValueFromHir(unit_lowerer, install_block, d.type));
     install_block.AppendStmt(
@@ -193,7 +193,8 @@ auto PopulateNamespaceOwnStorage(
                     support::BuiltinFn::kInitialize,
                     unit.builtins.void_type))});
 
-    // Phase 2: a user initializer (LRM 10.5) writes the value through the cell.
+    // The value body runs a user initializer (LRM 10.5), which writes through
+    // the cell.
     if (var->initializer.has_value()) {
       auto value_or = expr_lowerer.LowerExpr(
           scope.exprs.Get(*var->initializer), value_frame);
@@ -282,17 +283,9 @@ void GuardNamespaceInitialization(
                               support::BuiltinFn::kClaimNamespaceInitialize},
                   .arguments = {runtime, name}},
           .type = unit.builtins.machine_int64});
-  const mir::ExprId took_it = outer.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kInequality,
-                  .lhs = claimed,
-                  .rhs = outer.exprs.Add(
-                      mir::Expr{
-                          .data = mir::MachineIntLiteral{.value = 0},
-                          .type = unit.builtins.machine_int64})},
-          .type = unit.builtins.machine_bool});
+  const mir::ExprId took_it = outer.exprs.Add(MakeBinary(
+      unit, outer, mir::BinaryOp::kInequality, claimed,
+      BuildMachineIntLiteral(unit, outer, 0), unit.builtins.machine_bool));
 
   mir::Block bring_up;
   for (const std::string& read : reads) {
@@ -687,7 +680,6 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
 }
 
 auto UnitLowerer::Finish() -> mir::CompilationUnit {
-  mir::SettleUnitValues(unit_);
   mir::Verify(unit_);
   return std::move(unit_);
 }
@@ -978,6 +970,12 @@ auto UnitLowerer::TakePublishedClass(const hir::ExternalClass& published)
   }
   for (const hir::TypeId type : published.local_property_types) {
     record.private_field_types.push_back(TranslateType(type));
+  }
+  // A class that is a type of the instance declaring it (LRM 6.22) holds that
+  // instance after its properties, which an object built from here has to have
+  // room for like any other.
+  if (published.takes_declaring_instance) {
+    record.private_field_types.push_back(unit_.builtins.scope_ptr);
   }
   for (const hir::ExternalClassRef& iface : published.implements) {
     record.implements.push_back(PublishedClass(iface));

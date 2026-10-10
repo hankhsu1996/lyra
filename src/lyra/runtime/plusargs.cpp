@@ -9,7 +9,8 @@
 #include <vector>
 
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -107,46 +108,38 @@ auto PlusArgsSource::MatchPrefix(std::string_view prefix) const
 }
 
 auto TestPlusargs(RuntimeEffects& runtime, const value::String& user_string)
-    -> value::PackedArray {
+    -> value::Int {
   const auto match = runtime.PlusArgs().MatchPrefix(user_string.View());
-  return value::PackedArray::Int(match.has_value() ? 1 : 0);
+  return value::Int::FromBool(match.has_value());
 }
 
-auto ValuePlusargs(
+auto ValuePlusargsInto(
     RuntimeEffects& runtime, const value::String& user_string,
-    value::PackedArray out)
-    -> value::Tuple<value::PackedArray, value::PackedArray> {
-  using Completion = value::Tuple<value::PackedArray, value::PackedArray>;
-  const auto missed = [&out] {
-    return Completion{value::PackedArray::Int(0), out};
-  };
+    const value::IntegralView& out) -> value::Int {
   const auto parsed = ParseUserString(user_string.View());
   const auto base = BaseForFormat(parsed.format_letter);
   // %s / %e / %f / %g on an integral target converts nothing.
-  if (!base.has_value()) return missed();
+  if (!base.has_value()) return value::Int::FromInt(0);
   const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
-  if (!match.has_value()) return missed();
-  const std::int64_t converted = ConvertIntegralRemainder(*match, *base);
-  return Completion{
-      value::PackedArray::Int(1),
-      value::PackedArray::FromInt(
-          converted, out.BitWidth(), out.IsSigned(), out.IsFourState())};
+  if (!match.has_value()) return value::Int::FromInt(0);
+  value::FromInt(
+      out.planes, out.width, ConvertIntegralRemainder(*match, *base));
+  return value::Int::FromInt(1);
 }
 
 auto ValuePlusargs(
     RuntimeEffects& runtime, const value::String& user_string,
-    value::String out) -> value::Tuple<value::PackedArray, value::String> {
-  using Completion = value::Tuple<value::PackedArray, value::String>;
+    value::String out) -> value::Tuple<value::Int, value::String> {
+  using Completion = value::Tuple<value::Int, value::String>;
   const auto missed = [&out] {
-    return Completion{value::PackedArray::Int(0), out};
+    return Completion{value::Int::FromInt(0), out};
   };
   const auto parsed = ParseUserString(user_string.View());
   const char letter = parsed.format_letter;
   if (letter != 's' && letter != 'S') return missed();
   const auto match = runtime.PlusArgs().MatchPrefix(parsed.prefix);
   if (!match.has_value()) return missed();
-  return Completion{
-      value::PackedArray::Int(1), value::String(std::string(*match))};
+  return Completion{value::Int::FromInt(1), value::String(std::string(*match))};
 }
 
 }  // namespace lyra::runtime

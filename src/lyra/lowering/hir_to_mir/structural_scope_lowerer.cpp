@@ -252,11 +252,18 @@ auto BuildHierarchySegment(
     const mir::CompilationUnit& unit, mir::Block& block,
     const std::string& name, std::span<const mir::ExprId> indices)
     -> mir::ExprId {
+  // An index crosses to the library as the machine integer it names.
+  std::vector<mir::ExprId> numbers;
+  numbers.reserve(indices.size());
+  for (const mir::ExprId index : indices) {
+    numbers.push_back(BuildToInt64Call(unit, block, index));
+  }
+  const mir::TypeId numbers_type = mir::MachineArrayOf(
+      unit.types, unit.builtins.machine_int64, numbers.size());
   const mir::ExprId indices_id = block.exprs.Add(
       mir::Expr{
-          .data = mir::CompositeExpr{.parts = {indices.begin(), indices.end()}},
-          .type = mir::MachineArrayOf(
-              unit.types, unit.builtins.int_type, indices.size())});
+          .data = mir::CompositeExpr{.parts = std::move(numbers)},
+          .type = numbers_type});
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -421,15 +428,11 @@ auto ChooseByPosition(
     const Run& run = runs[back - 1];
     auto built = build(run.alternative);
     if (!built) return std::unexpected(std::move(built.error()));
-    const mir::ExprId before_end = block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = mir::BinaryOp::kLessThan,
-                    .lhs = position(),
-                    .rhs = BuildIntLiteral(
-                        unit, block, static_cast<std::int64_t>(run.end))},
-            .type = unit.builtins.bit1});
+    const mir::ExprId at = position();
+    const mir::ExprId before_end = block.exprs.Add(MakeBinary(
+        unit, block, mir::BinaryOp::kLessThan, at,
+        BuildIntLiteral(unit, block, static_cast<std::int64_t>(run.end)),
+        unit.builtins.bit1));
     chosen = block.exprs.Add(
         mir::Expr{
             .data =
@@ -453,27 +456,17 @@ auto BuildElement(
   const auto position = [&] {
     mir::ExprId at = BuildIntLiteral(unit, block, 0);
     for (std::size_t d = 0; d < coords.size(); ++d) {
-      const mir::ExprId scaled = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kMul,
-                      .lhs = at,
-                      .rhs = BuildIntLiteral(
-                          unit, block,
-                          static_cast<std::int64_t>(
-                              member.array_dims[d].ElementCount()))},
-              .type = unit.builtins.int_type});
-      at = block.exprs.Add(
-          mir::Expr{
-              .data =
-                  mir::BinaryExpr{
-                      .op = mir::BinaryOp::kAdd,
-                      .lhs = scaled,
-                      .rhs = block.exprs.Add(
-                          mir::MakeLocalRefExpr(
-                              coords[d], unit.builtins.int_type))},
-              .type = unit.builtins.int_type});
+      const mir::ExprId scaled = block.exprs.Add(MakeBinary(
+          unit, block, mir::BinaryOp::kMul, at,
+          BuildIntLiteral(
+              unit, block,
+              static_cast<std::int64_t>(member.array_dims[d].ElementCount())),
+          unit.builtins.int_type));
+      at = block.exprs.Add(MakeBinary(
+          unit, block, mir::BinaryOp::kAdd, scaled,
+          block.exprs.Add(
+              mir::MakeLocalRefExpr(coords[d], unit.builtins.int_type)),
+          unit.builtins.int_type));
     }
     return at;
   };
@@ -490,7 +483,7 @@ auto BuildElement(
 // complete, and the sequence the next dimension counts out while they are not.
 // Counting a dimension out is what the object graph does at construction, so
 // the work reaches the target as a loop over one body rather than as one
-// expression per element, and how many objects a declaration covers stops being
+// expression per element, and how many objects a declaration covers is not
 // something the artifact grows with. The sequence a member holds is complete
 // when the member receives it, which is why the one that grows is a local the
 // steps below own and nothing else can name.
@@ -1165,13 +1158,12 @@ auto PositionWithinNet(
     mir::CompilationUnit& unit, mir::Block& block,
     const JoinedPositions& operand, std::uint32_t offset) -> mir::ExprId {
   const PathBits within = BitsWithinOwner(unit, block, operand.part);
-  return ConvertToType(
+  return BuildToInt64Call(
       unit, block,
       BuildPositionSum(
           unit, block, within.first,
           BuildConstantPosition(
-              unit, block, static_cast<std::int64_t>(offset))),
-      unit.builtins.int_type);
+              unit, block, static_cast<std::int64_t>(offset))));
 }
 
 // Equally many positions of two operands that one construct places in the same
@@ -1253,7 +1245,7 @@ auto BuildNetJoinStmt(
                       unit, block, *coupling.here, coupling.here_offset),
                   PositionWithinNet(
                       unit, block, *coupling.there, coupling.there_offset),
-                  BuildIntLiteral(unit, block, coupling.width),
+                  BuildMachineIntLiteral(unit, block, coupling.width),
                   unit.builtins.void_type))}};
 }
 
@@ -1400,12 +1392,12 @@ void ValidateOwnedChildConstruction(
   }
 }
 
-// Lowers an owned-child construction site to the MIR call shape
-// `AddOwnedChild(parent, make_unique<Child>(parent, HierarchySegment{label,
-// indices}, ctor_args...))`: the child instance is built carrying
-// its complete hierarchy identity, then handed to the parent to own. What
-// comes back is a borrowed pointer, which is what a route navigates through
-// and what the caller stores. `runtime_label` is the child's name as a
+// Lowers an owned-child construction site to two calls, the construction of
+// the child over `(parent, segment{label, indices}, ctor_args...)` and the
+// parent taking ownership of what it built: the child instance is built
+// carrying its complete hierarchy identity, then handed to the parent to own.
+// What comes back is a borrowed pointer, which is what a route navigates
+// through and what the caller stores. `runtime_label` is the child's name as a
 // hierarchical name writes it (LRM 23.6), empty for a scope the source gave
 // none, and `indices` are the coordinates it stands at on that name -- a
 // loop's block stands at its index. `arm_frame` must point at the block where
@@ -1414,10 +1406,10 @@ void ValidateOwnedChildConstruction(
 //
 // Where the child hangs in the runtime tree and who keeps the borrowed handle
 // to it are separate: `runtime_parent_handle` names an object this one already
-// holds a handle to, and the handle to the new child lands in `handle_field` of
-// this class regardless. So one object can build a whole nested tree and still
-// reach every node of it in one step. Absent means the child hangs directly
-// under this object.
+// holds a handle to, and the handle to the new child comes back to this class
+// regardless. So one object can build a whole nested tree and still reach
+// every node of it in one step. Absent means the child hangs directly under
+// this object.
 auto BuildOwnedChildHandle(
     UnitLowerer& unit_lowerer, const WalkFrame& arm_frame,
     std::optional<mir::FieldId> runtime_parent_handle,
@@ -1622,23 +1614,17 @@ auto LowerRepeatedGenerate(
       handle_type);
   if (!built) return std::unexpected(std::move(built.error()));
   AppendToSequence(unit, loop_body, sequence, sequence_type, *built);
+  const auto read_counted = [&] {
+    return loop_body.exprs.Add(
+        mir::MakeLocalRefExpr(counted, unit.builtins.int_type));
+  };
+  const mir::ExprId one_more = loop_body.exprs.Add(MakeBinary(
+      unit, loop_body, mir::BinaryOp::kAdd, read_counted(),
+      BuildIntLiteral(unit, loop_body, 1), unit.builtins.int_type));
   loop_body.AppendStmt(
       mir::ExprStmt{
           .expr = loop_body.exprs.Add(
-              mir::MakeAssignExpr(
-                  unit.builtins,
-                  loop_body.exprs.Add(
-                      mir::MakeLocalRefExpr(counted, unit.builtins.int_type)),
-                  loop_body.exprs.Add(
-                      mir::Expr{
-                          .data =
-                              mir::BinaryExpr{
-                                  .op = mir::BinaryOp::kAdd,
-                                  .lhs = loop_body.exprs.Add(
-                                      mir::MakeLocalRefExpr(
-                                          counted, unit.builtins.int_type)),
-                                  .rhs = BuildIntLiteral(unit, loop_body, 1)},
-                          .type = unit.builtins.int_type})))});
+              mir::MakeAssignExpr(unit.builtins, read_counted(), one_more))});
   // The step is the expression the source wrote, and it reaches the next index
   // by writing the loop's own, so it is placed for its effect and its value is
   // dropped -- every form LRM 27.4 admits for it says where the index goes in
@@ -1879,8 +1865,8 @@ auto LowerStandAloneGenerate(
               BuildSequenceConstructionCall(unit, body, sequence_type, {}))});
   for (const hir::StructuralScopeId scope_id : gen.blocks.Ids()) {
     const auto& binding = gen_binding.blocks.Get(scope_id);
-    const std::array index{
-        BuildIntLiteral(unit, body, stand_alone.indices[scope_id.value])};
+    const std::array index{BuildMachineIntLiteral(
+        unit, body, stand_alone.indices[scope_id.value])};
     auto arguments =
         LowerConstructorArguments(lowerer, body_frame, binding.arguments);
     if (!arguments) return std::unexpected(std::move(arguments.error()));
@@ -2669,11 +2655,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       };
 
       // Every observable value cell installs its declared representation and
-      // default at construction (LRM 10.5), so its type is fixed by
-      // construction and a later store -- including a user initializer -- is
-      // verified against it rather than discovered from whichever store runs
-      // first. A non-observable value member carries no cell wrapper, so it
-      // installs its representation through an ordinary store of the default.
+      // default ahead of every initializer (LRM 10.5), so a later store --
+      // including a user initializer -- is held to that representation rather
+      // than fixing it by running first. A non-observable value member carries
+      // no cell wrapper, so an ordinary store of its initializer, or of the
+      // default where it has none, is what gives it its value.
       if (unit_lowerer.Unit().types.Get(mir_field_type).IsCapabilityWrapper()) {
         const mir::ExprId install_target = install_block.exprs.Add(
             mir::MakeFieldAccessExpr(
@@ -2723,18 +2709,21 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (net != nullptr) {
       const mir::ExprId net_target = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(self_object(), cell, mir_field_type));
-      const mir::ExprId prototype = ctor_block.exprs.Add(
-          BuildDefaultValueFromHir(unit_lowerer, ctor_block, d.type));
-      const NetInstall install =
-          BuildNetInstall(unit_lowerer.Unit(), ctor_block, *net);
+      const NetData data =
+          unit_lowerer.Unit().types.Get(mir_value_type).IsIntegral()
+              ? NetData{IntegralNetData{
+                    .position_count = BuildNetPositionCount(
+                        unit_lowerer.Unit(), ctor_block, mir_value_type)}}
+              : NetData{AggregateNetData{
+                    .prototype = ctor_block.exprs.Add(BuildDefaultValueFromHir(
+                        unit_lowerer, ctor_block, d.type))}};
       ctor_block.AppendStmt(
           mir::Stmt{
               .label = std::nullopt,
               .data = mir::ExprStmt{
-                  .expr = ctor_block.exprs.Add(
-                      mir::MakeNetInstallCallExpr(
-                          net_target, prototype, install.fill, install.strength,
-                          install.entry, void_type))}});
+                  .expr = ctor_block.exprs.Add(BuildNetInstall(
+                      unit_lowerer.Unit(), ctor_block, *net, net_target, data,
+                      void_type))}});
     }
   }
 
@@ -3086,7 +3075,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     auto depth_or =
         LowerExpr(hir_scope.exprs.Get(history.depth), activate_frame);
     if (!depth_or) return std::unexpected(std::move(depth_or.error()));
-    const mir::ExprId depth = activate_block.exprs.Add(*std::move(depth_or));
+    const mir::ExprId depth = BuildToInt64Call(
+        unit_lowerer.Unit(), activate_block,
+        activate_block.exprs.Add(*std::move(depth_or)));
     activate_block.AppendStmt(
         mir::ExprStmt{
             .expr = activate_block.exprs.Add(

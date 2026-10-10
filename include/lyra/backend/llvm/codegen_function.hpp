@@ -2,13 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <span>
-#include <string>
 #include <string_view>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 #include <llvm/ADT/STLFunctionalExtras.h>
@@ -16,11 +13,14 @@
 
 #include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/codegen_tuple.hpp"
+#include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/integral_operation.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -75,33 +75,87 @@ class CodeGenFunction {
   // as clang builds a class-type result through `sret`, and is ended by the end
   // LIR states for it.
   auto StorageFor(lir::TypeId type) -> llvm::Value*;
-  // Calls the entry `symbol`, which builds its answer in `out`, handed to it
-  // last; what the call answers is `out`.
+  // `count` arguments that are each an address this target computed.
+  [[nodiscard]] auto Addresses(std::size_t count) const -> std::vector<ArgAbi>;
+  // Calls the library entry `symbol` on this target's own account, handing it
+  // `args` as `arranged` says each of what they were built from crosses. The
+  // entry answers the machine value `result`, which is what this answers.
+  auto CallEntry(
+      std::string_view symbol, llvm::Type* result, std::vector<ArgAbi> arranged,
+      std::span<llvm::Value* const> args) -> llvm::Value*;
+  // The same of an entry that builds its answer in `out`, handed to it last;
+  // what the call answers is `out`.
   auto BuildInto(
-      std::string_view symbol, std::vector<llvm::Value*> args, llvm::Value* out)
-      -> llvm::Value*;
+      std::string_view symbol, std::vector<ArgAbi> arranged,
+      std::vector<llvm::Value*> args, llvm::Value* out) -> llvm::Value*;
   // The runtime object an owned value of `type` is. For a product that is the
   // tuple domain the library holds one as, while its lifecycle here is the one
   // compiled for its type.
   [[nodiscard]] auto ObjectOf(lir::TypeId type) const -> support::RuntimeObject;
-  // Ends the object `value` names, where ending one has anything to do.
-  void EndObject(support::RuntimeObject object, llvm::Value* value);
   // What carries out a lifecycle step on an owned value of `type`: the step
   // compiled for its tuple type, as clang emits a class's implicit special
-  // members, or the entry the library defines over its object.
-  auto OwnedCallee(
-      lir::TypeId type, TupleLifecycle tuple_step, RuntimeOp object_op,
-      llvm::Type* result, std::span<llvm::Value* const> args)
+  // members, or the entry the library defines over its object. An integral
+  // value has neither, its bytes being the whole of it.
+  auto OwnedCallee(lir::TypeId type, TupleLifecycle step)
       -> llvm::FunctionCallee;
-  // Ends the value `value` names, where ending one has anything to do; copies
-  // it into `out`; writes it into the value already at `storage`, which goes
-  // on being that value; and moves it into `out` and ends what the move left
-  // behind, so the value lives in `out` and nowhere else.
+  // The lifecycle of an owned value. `EndValue` ends the value `value` names,
+  // where ending one has anything to do. `CopyValue` builds a second value
+  // equal to it in the unbuilt storage `out`, and answers `out`.
+  // `RelocateValue` moves it into the unbuilt storage `out` and ends what the
+  // move left behind, so the value lives in `out` and nowhere else.
+  // `AssignValue` writes it into the value already built at `out`, which goes
+  // on being that value.
   void EndValue(lir::TypeId type, llvm::Value* value);
   auto CopyValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
       -> llvm::Value*;
-  void AssignValue(lir::TypeId type, llvm::Value* storage, llvm::Value* value);
   void RelocateValue(lir::TypeId type, llvm::Value* value, llvm::Value* out);
+  void AssignValue(lir::TypeId type, llvm::Value* value, llvm::Value* out);
+  // What each of the three is over an integral value, which owns nothing: its
+  // bytes copied to `out`.
+  void CopyIntegralBytes(
+      lir::TypeId type, llvm::Value* value, llvm::Value* out);
+
+  // A value an operation is handed, with the type it is a value of.
+  struct OperandRef {
+    llvm::Value* value = nullptr;
+    lir::TypeId type;
+  };
+  // The two destinations of a call that can depart, as LLVM names those of an
+  // invoke (`InvokeInst::getNormalDest`, `getUnwindDest`): the block the call
+  // returns to, and the landing a departure out of it reaches.
+  struct InvokeDest {
+    llvm::BasicBlock* normal;
+    llvm::BasicBlock* unwind;
+  };
+  // The call on `callee`, made the way the place it is emitted at asks: naming
+  // where a departure lands where the call being lowered names one, and
+  // continuing in place everywhere else. What it answers is the call.
+  auto EmitCallOrInvoke(
+      llvm::FunctionCallee callee, std::span<llvm::Value* const> args)
+      -> llvm::Value*;
+
+  // What emits the operations over integral values (LRM 11.4): an emitter of
+  // its own built over this one, as clang keeps scalar expressions apart from
+  // the function they are emitted into.
+  class IntegralEmitter;
+  // `op` applied to `operands`, answering at `answer_type`: the few
+  // instructions it is where every integral value it is handed and answers
+  // with fits one word per plane, and a call on the library's entry otherwise.
+  // An integral answer is laid out in `out`, which is what this answers with;
+  // a machine answer is the value itself. `out` may be an operand's own
+  // storage, every operand being read before anything is written.
+  auto LowerIntegral(
+      support::IntegralOp op, std::span<const OperandRef> operands,
+      lir::TypeId answer_type, llvm::Value* out) -> llvm::Value*;
+  // Each operand a call states, with the type it is a value of.
+  auto LowerOperandRefs(std::span<const lir::Operand> operands)
+      -> diag::Result<std::vector<OperandRef>>;
+  // A call on the entry `target` names, which is the operation `op` over
+  // integral values, applied to the operands the call states.
+  auto LowerIntegralCall(
+      support::IntegralOp op, const lir::BuiltinTarget& target,
+      const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
   // Where component `index` of a tuple lives, given where the tuple does.
   auto ComponentAddress(
       lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value*;
@@ -109,28 +163,24 @@ class CodeGenFunction {
   auto ResolveCall(
       const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<ResolvedCall>;
+  // What a call answers with: the answer the callee builds in `out` where the
+  // call makes a value, the callee's own answer otherwise, and nothing for a
+  // call that answers nothing. Whether a target is entered as a callee or
+  // realized as instructions of this body is decided by the target's kind and
+  // the types it states, never by the values in hand.
   auto LowerCall(
       const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   // Opens a landing: the pad the platform transfers to, and the target the
   // departure names, which is what the body's own test reads.
   auto LowerReceiveDeparture() -> diag::Result<llvm::Value*>;
-  // What a call enters, given what it hands over. A dispatch through an
-  // interface class's part enters a body with the value's start instead of the
-  // part, as C++ adjusts `this` for a virtual base, so the receiver in `args`
-  // is rewritten there.
+  // What a call arranged as `abi` enters. A dispatch through an interface
+  // class's part enters a body with the value's start instead of the part, as
+  // C++ adjusts `this` for a virtual base, so the receiver in `args` is
+  // rewritten there.
   auto ResolveCallee(
-      const lir::CallInstr& call, lir::TypeId result_type,
+      const lir::CallInstr& call, lir::TypeId result_type, const FnAbi& abi,
       std::span<llvm::Value*> args) -> diag::Result<llvm::FunctionCallee>;
-  // An entry the runtime publishes, declared with the types of the values
-  // crossing to it: the call is where an entry's signature comes from, so the
-  // two cannot disagree about what is passed.
-  auto Entry(
-      std::string_view symbol, llvm::Type* result,
-      std::span<llvm::Value* const> args) -> llvm::FunctionCallee;
-  auto Entry(
-      std::string_view symbol, lir::TypeId result,
-      std::span<llvm::Value* const> args) -> llvm::FunctionCallee;
   // A {pointer, length} view over a scratch buffer of `element` this function
   // fills with `values`, for an entry that takes a sequence of them.
   auto SpanOver(std::span<llvm::Value* const> values, llvm::Type* element)
@@ -140,30 +190,31 @@ class CodeGenFunction {
   auto LowerTuple(
       const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  // The type of a union's member `index`. Both union kinds hold their member
-  // types positionally, so this reads either one.
-  [[nodiscard]] auto UnionMemberType(
-      lir::TypeId union_type, std::uint32_t index) const -> lir::TypeId;
   auto LowerAggregateExtract(
-      const lir::AggregateExtractInstr& extract, llvm::Value* out)
-      -> diag::Result<llvm::Value*>;
+      const lir::AggregateExtractInstr& extract, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
   auto LowerAggregateUpdate(
-      const lir::AggregateUpdateInstr& update, llvm::Value* out)
-      -> diag::Result<llvm::Value*>;
-  auto LowerTagTest(const lir::TagTestInstr& test, lir::TypeId result_type)
-      -> diag::Result<llvm::Value*>;
+      const lir::AggregateUpdateInstr& update, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
+  // The position a selector names bits of an integral value by (LRM 11.5.1).
+  // It names them by that one operand: how many bits is the width of the type
+  // they are read at, or of the value written over them.
+  auto IntegralPosition(const lir::AggregateSelector& selector)
+      -> diag::Result<OperandRef>;
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   auto LowerAddrOf(
       const lir::AddrOfInstr& addr, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  auto LowerBinary(const lir::BinaryInstr& binary, llvm::Value* out)
+  auto LowerBinary(
+      const lir::BinaryInstr& binary, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto LowerMachineBinary(
       const lir::BinaryInstr& binary, lir::Signedness signedness)
       -> diag::Result<llvm::Value*>;
-  auto LowerUnary(const lir::UnaryInstr& unary, llvm::Value* out)
+  auto LowerUnary(
+      const lir::UnaryInstr& unary, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto LowerMachineUnary(const lir::UnaryInstr& unary)
       -> diag::Result<llvm::Value*>;
@@ -239,107 +290,35 @@ class CodeGenFunction {
   // reference value, and each further step walks one projection.
   auto ResolvePlaceAddress(const lir::Place& place, Access access)
       -> diag::Result<llvm::Value*>;
-  // Which of a part's two entries an access steps through: `read`, which
-  // answers with the part as it is, or `write`, which answers with the storage
+  // Which of an element's two entries an access steps through: the one
+  // answering with the element as it is, or the one answering with the storage
   // a write lands in.
-  static auto StepEntry(
-      Access access, support::BuiltinFn read, support::BuiltinFn write)
-      -> support::BuiltinFn;
+  static auto EntryFor(Access access, const ElementEntries& entries)
+      -> const StepEntry&;
   auto LowerIntConst(const lir::IntConst& constant)
       -> diag::Result<llvm::Value*>;
   auto LowerStrConst(const lir::StrConst& constant) -> llvm::Value*;
   auto LowerRealConst(const lir::RealConst& constant)
       -> diag::Result<llvm::Value*>;
   auto LowerNullConst(const lir::NullConst& constant) -> llvm::Value*;
-  auto LowerTypeDescriptorRef(const lir::TypeDescriptorRef& ref)
-      -> diag::Result<llvm::Value*>;
-  auto LowerIntegralConstantRef(const lir::IntegralConstantRef& ref)
-      -> llvm::Value*;
-  // Reads what `cell` holds, running `make` to fill it on the first use that
-  // finds it empty. What a cell starts out holding is the one state a built
-  // value is never in, which is what lets the emptiness be the question. What
-  // building means is the caller's, because what each kind of value owes before
-  // its address can be kept differs.
-  auto BuiltOnce(
-      llvm::GlobalVariable* cell, const std::function<llvm::Value*()>& make)
-      -> llvm::Value*;
   auto LowerTerminatorInto(const lir::Terminator& terminator)
       -> diag::Result<void>;
 
-  auto BuiltinCallee(
-      const lir::BuiltinTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type, std::span<llvm::Value* const> args)
-      -> diag::Result<llvm::FunctionCallee>;
-  // What form an entry takes a call's operands in. The host's `operator new` is
-  // asked for the size of a complete object of the type it allocates.
-  struct OperandsAsStated {};
-  struct OperandsAfterSize {
-    lir::TypeId of;
-  };
-  using OperandForm = std::variant<OperandsAsStated, OperandsAfterSize>;
+  // Where the value `storage` holds lies in it, or nothing where what `held`
+  // states is storage that hands its contents out through its own access.
+  auto HeldAt(llvm::Value* storage, support::DeclaredMemberStorage held)
+      -> std::optional<llvm::Value*>;
+  // Where the part a designation names lies.
+  auto DesignatedPart(llvm::Value* designation) -> llvm::Value*;
 
-  // The entry that brings a value of one type into existence, which of its
-  // operands carries the shape that value is seeded from, and what form it
-  // takes the rest in. A type comes into existence one way, so naming it names
-  // all three.
-  struct Construction {
-    std::string symbol;
-    std::optional<std::size_t> shape_operand = std::nullopt;
-    OperandForm operand_form = OperandsAsStated{};
-  };
-  [[nodiscard]] auto ConstructionOf(
-      const lir::CallInstr& call, lir::TypeId result) const
-      -> diag::Result<Construction>;
-
-  // What a call's entry is handed, given the operands the call states. Nothing
-  // here is anything the call means; it is this target's encoding of it.
-  auto CallArgs(
-      const lir::CallInstr& call, lir::TypeId result_type,
-      std::vector<llvm::Value*> operands)
-      -> diag::Result<std::vector<llvm::Value*>>;
-
-  // The operands a call states, put into the form its entry takes them in.
-  auto ArgsInForm(
-      const OperandForm& form, const std::vector<llvm::Value*>& operands)
-      -> diag::Result<std::vector<llvm::Value*>>;
-
-  // Which operand of a call crosses with its type, and the type it crosses
-  // with: one whose type the entry, compiled once for every type, has no other
-  // way to know. Which of an entry's operands that is is the entry's own
-  // property.
-  struct ErasedArgument {
-    std::size_t position;
-    lir::TypeId type;
-  };
-
-  // This target's own encoding of a call: which operand crosses erased, and
-  // what form the entry takes the operands in. Both are decided by the target
-  // and by nothing else about the call, so they are read from it together and a
-  // target that gains an alternative answers for both or fails to build.
-  struct CallEncoding {
-    std::optional<ErasedArgument> erased = std::nullopt;
-    OperandForm operand_form = OperandsAsStated{};
-  };
-  [[nodiscard]] auto EncodingOf(
-      const lir::CallInstr& call, lir::TypeId result_type) const
-      -> diag::Result<CallEncoding>;
-
-  // The operand of a call on a library entry that crosses with its type, read
-  // off the entry's own declaration: a union's member, a result prototype, a
-  // spread part, or a coordinate.
-  [[nodiscard]] auto BuiltinErasedOperand(
-      const lir::BuiltinTarget& target, const lir::CallInstr& call,
-      lir::TypeId result_type) const -> std::optional<ErasedArgument>;
-
-  // The operand at one position, crossing with the type the call states it in.
-  // Every such operand but a union member crosses this way; a member crosses
-  // with the type its union declares for it.
-  [[nodiscard]] auto OfItsOwnType(
-      const lir::CallInstr& call, std::size_t position) const -> ErasedArgument;
-
+  // Appends to `args` the arguments `operands` cross as, and to `arranged`
+  // how each crosses. They are what selects a part of a value, so they follow
+  // the value an entry acts on, and each is read the way `readings` says the
+  // operand after that value is.
   auto SelectorArgs(
-      lir::TypeId container, const std::vector<lir::Operand>& operands,
-      std::vector<llvm::Value*>& shape) -> diag::Result<void>;
+      const support::OperandReadings& readings,
+      std::span<const lir::Operand> operands, std::vector<ArgAbi>& arranged,
+      std::vector<llvm::Value*>& args) -> diag::Result<void>;
 
   // The type of an operand, and the value domain a library entry is chosen by.
   [[nodiscard]] auto OperandType(const lir::Operand& operand) const
@@ -353,30 +332,6 @@ class CodeGenFunction {
   [[nodiscard]] auto PlaceValueCellDomain(
       const lir::Place& place, lir::TypeId value) const
       -> std::optional<support::ValueDomain>;
-  // The storage an operand reaches: this target holds storage as its address,
-  // and holds as a handle only what names storage someone else owns -- a
-  // driver, which names a contribution the net owns, and a reference, which
-  // names the storage a caller lent -- so an operand is either that address or
-  // the handle itself, and either way reaches exactly one.
-  [[nodiscard]] auto StorageReached(lir::TypeId operand) const
-      -> const lir::Type&;
-  // The wrapper an operand reaches and the domain its storage is realized in,
-  // for an operation that acts on the wrapper itself rather than reaching
-  // through it. A wrapper classifies the same way whether it arrives as an
-  // operand or as a place.
-  struct WrapperBehindRef {
-    support::ValueDomain domain{};
-    WrapperKind kind{};
-  };
-  [[nodiscard]] auto WrapperBehind(lir::TypeId operand) const
-      -> diag::Result<WrapperBehindRef>;
-  // The representation the values held by the storage an operand reaches are
-  // realized in, for an operation whose own name already says which storage it
-  // acts on. Storage reached this way holds values of one representation --
-  // what a wrapper represents, or what every tick of a clocking event settled
-  // -- so the entry is named once per representation rather than per call.
-  [[nodiscard]] auto StorageDomainBehind(lir::TypeId operand) const
-      -> diag::Result<support::ValueDomain>;
   // Place access: the capability wrapper a place names the storage of, which
   // wrapper it is, and the domain that representation picks its library entries
   // by; nothing when the place names ordinary addressable storage. It is the
@@ -429,6 +384,10 @@ class CodeGenFunction {
   const lir::Function* fn_;
   llvm::Function* value_;
   llvm::IRBuilder<> builder_;
+  CallArranger arranger_;
+  // Where the call being lowered goes on from, while that call is one that can
+  // depart; nothing while what is lowered continues in place.
+  std::optional<InvokeDest> invoke_dest_;
   std::unordered_map<lir::ValueId, llvm::Value*> values_;
   std::vector<llvm::BasicBlock*> blocks_;
   // Where frame storage is allocated: the end of the code the body opens with,

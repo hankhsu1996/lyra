@@ -2,13 +2,13 @@
 
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <iterator>
 #include <map>
 #include <utility>
 
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::value {
 
@@ -193,18 +193,31 @@ class BasicAssociativeArray {
   }
 
   // LRM 11.2.2 aggregate equality / 11.4.5: the same key set, each paired
-  // element comparing equal by `==` (which propagates X / Z) or by `===`.
+  // element comparing equal by `==` (which propagates X / Z), answering what
+  // the element policy's comparison does.
   [[nodiscard]] auto Equal(const BasicAssociativeArray& other) const
-      -> PackedArray {
-    return Paired(
-        other, [&](const void* a, const void* b) { return elem_.Equal(a, b); });
+      -> FourStateBit {
+    if (!SameKeys(other)) {
+      return FourStateBit::kZero;
+    }
+    FourStateBit result = FourStateBit::kOne;
+    for (const auto& [key, slot] : map_) {
+      result =
+          LogicalAnd(result, elem_.Equal(slot, other.map_.find(key)->second));
+    }
+    return result;
   }
-  [[nodiscard]] auto CaseEqual(const BasicAssociativeArray& other) const
-      -> PackedArray {
-    return Paired(other, [&](const void* a, const void* b) {
-      return PackedArray::ConvertFrom(
-          elem_.CaseEqual(a, b), 1, false, ElementsAreFourState());
-    });
+  // LRM 11.4.5 `===`, which is never unknown.
+  [[nodiscard]] auto CaseEqual(const BasicAssociativeArray& other) const {
+    if (!SameKeys(other)) {
+      return elem_.CaseAnswer(false);
+    }
+    for (const auto& [key, slot] : map_) {
+      if (!elem_.CaseEqual(slot, other.map_.find(key)->second)) {
+        return elem_.CaseAnswer(false);
+      }
+    }
+    return elem_.CaseAnswer(true);
   }
 
   // LRM 9.4.2 update event predicate: the array's own value for an absent
@@ -239,48 +252,37 @@ class BasicAssociativeArray {
 
   // LRM 20.6.2 `$bits` / LRM 20.9 `$countbits`: the entries' elements laid end
   // to end, a key being no part of the stream.
-  [[nodiscard]] auto BitstreamWidth() const -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
+  [[nodiscard]] auto BitstreamWidth() const -> std::int64_t {
+    std::int64_t total = 0;
     for (const auto& [key, slot] : map_) {
-      total = total + elem_.BitstreamWidth(slot);
+      total += elem_.BitstreamWidth(slot);
     }
     return total;
   }
-  [[nodiscard]] auto CountBits(const PackedArray& control_bits) const
-      -> PackedArray {
-    PackedArray total = PackedArray::Int(0);
+  template <typename Control>
+  [[nodiscard]] auto CountBits(const Control& control_bits) const
+      -> std::int64_t {
+    std::int64_t total = 0;
     for (const auto& [key, slot] : map_) {
-      total = total + elem_.CountBits(slot, control_bits);
+      total += elem_.CountBits(slot, control_bits);
     }
     return total;
   }
 
  private:
-  // LRM 11.4.5: a comparison of two arrays answers in the state class an
-  // element's own equality does, read off the element default so key sets that
-  // differ, and empty ones, answer in the same class.
-  [[nodiscard]] auto ElementsAreFourState() const -> bool {
-    return elem_.Equal(elem_.Default(), elem_.Default()).IsFourState();
-  }
-
-  // Two arrays' paired elements reduced by `same`: no pairing at all where the
-  // key sets differ, and matching empties pair.
-  template <typename Same>
-  [[nodiscard]] auto Paired(const BasicAssociativeArray& other, Same same) const
-      -> PackedArray {
-    const bool four_state = ElementsAreFourState();
+  // Whether two arrays hold one key set, which is what pairs their elements;
+  // matching empties pair.
+  [[nodiscard]] auto SameKeys(const BasicAssociativeArray& other) const
+      -> bool {
     if (map_.size() != other.map_.size()) {
-      return PackedArray::FromInt(0, 1, false, four_state);
+      return false;
     }
-    PackedArray result = PackedArray::FromInt(1, 1, false, four_state);
     for (const auto& [key, slot] : map_) {
-      const auto paired = other.map_.find(key);
-      if (paired == other.map_.end()) {
-        return PackedArray::FromInt(0, 1, false, four_state);
+      if (!other.map_.contains(key)) {
+        return false;
       }
-      result = result && same(slot, paired->second);
     }
-    return result;
+    return true;
   }
 
   void Swap(BasicAssociativeArray& other) noexcept {

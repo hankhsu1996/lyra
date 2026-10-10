@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <optional>
 #include <string>
 #include <utility>
@@ -17,6 +18,7 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/with_clause_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
@@ -43,9 +45,11 @@
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/time.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
+#include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -108,11 +112,10 @@ auto ResultPrototypeType(
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
 // index are the closure's two parameters (LRM 7.12.4); an `IterationBindingRef`
 // in the body resolves to one of them by the clause identity registered here.
-// The body is a normal expression lowered through `lowerer.LowerExpr`. When the
-// source has no `with` clause LRM 7.12.1 defines the default as `with (item)`;
-// this synthesises the identity closure (body returns the element parameter) so
-// MIR always carries the closure argument and downstream consumers see one
-// uniform shape.
+// When the source has no `with` clause LRM 7.12.1 defines the default as
+// `with (item)`; this synthesises the identity closure (body returns the
+// element parameter) so MIR always carries the closure argument and downstream
+// consumers see one uniform shape.
 template <ExprLowerer Lowerer>
 auto BuildArrayMethodClosure(
     Lowerer& lowerer, WalkFrame frame, hir::TypeId hir_receiver_type,
@@ -168,10 +171,6 @@ auto BuildArrayMethodClosure(
   return closure.Build(body_return_value);
 }
 
-// Fans out a system-subroutine call to the per-family handler under
-// `expression/system/*.cpp`. The visitor is exhaustive over
-// `support::SystemSubroutineSemantic`; new arms force a compile-time
-// update here.
 // A structural context admits only a pure value query -- one that reads state
 // and sequences nothing. Every other family is an effect that needs a process
 // body, so it has no structural lowering.
@@ -331,6 +330,27 @@ auto LowerSystemSubroutineCall(
       desc.semantic);
 }
 
+// An operand as the entry reads it. One read as a position is an ordinal the
+// source wrote in a type of its own (LRM 6.16.2, 7.10.2), so it is brought to
+// the position type here, where it is written; every other operand is stated
+// as it stands.
+auto StatedAsRead(
+    mir::CompilationUnit& unit, mir::Block& block,
+    support::OperandReading reading, mir::ExprId operand) -> mir::ExprId {
+  switch (reading) {
+    case support::OperandReading::kPosition:
+      return BuildOrdinalPosition(unit, block, operand);
+    case support::OperandReading::kHeld:
+    case support::OperandReading::kBits:
+    case support::OperandReading::kNumber:
+    case support::OperandReading::kTyped:
+    case support::OperandReading::kKey:
+    case support::OperandReading::kMachine:
+      return operand;
+  }
+  throw InternalError("StatedAsRead: unknown operand reading");
+}
+
 // Built-in method dispatch (LRM 6.16 / 7.9 / 7.10 / 7.12 / 9.7 / 15.5). The
 // call states the object the entry acts on, so every operand here is one the
 // callee takes.
@@ -387,10 +407,18 @@ auto LowerBuiltinMethodCall(
   }
   std::vector<mir::ExprId> args;
   args.reserve(c.arguments.size() + 1);
+
+  // The entry reads its operands in one order: the object it acts on where it
+  // has one, the engine where it reaches it, then these.
+  const std::size_t leading =
+      (receiver.has_value() ? 1 : 0) + (entry.takes_the_runtime_handle ? 1 : 0);
+
   for (const hir::ExprId operand : RequiredOperands(c)) {
     auto arg_or = lowerer.LowerExpr(hir_exprs.Get(operand), frame);
     if (!arg_or) return std::unexpected(std::move(arg_or.error()));
-    args.push_back(block.exprs.Add(*std::move(arg_or)));
+    args.push_back(StatedAsRead(
+        lowerer.Owner().Unit(), block, entry.operands.At(leading + args.size()),
+        block.exprs.Add(*std::move(arg_or))));
   }
 
   // LRM 7.12.1: reduction / ordering / locator array methods take a
@@ -431,24 +459,21 @@ auto BuildBuiltinMethodCall(
     arguments.push_back(
         block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
   }
+  arguments.insert(arguments.end(), operands.begin(), operands.end());
 
-  // A prototype is never written at the source, so it is supplied, at the
-  // result type's own canonical default, at the position the entry reads it
-  // from; the entry counts positions from the object it acts on. Every other
-  // position takes the next operand the source wrote.
-  const std::size_t ahead = receiver.has_value() ? 1 : 0;
-  const auto supply_a_prototype_read_here = [&] {
-    if (entry.result_prototype_operand == ahead + arguments.size()) {
-      arguments.push_back(block.exprs.Add(BuildDefaultValueExpr(
-          unit_lowerer.Unit(), block,
-          ResultPrototypeType(unit_lowerer, result_type))));
+  // The value the entry's answer starts from is no operand the source wrote,
+  // so it is supplied here, at the result type's own canonical default.
+  if (entry.answer_starts_from.has_value()) {
+    const std::size_t ahead = receiver.has_value() ? 1 : 0;
+    if (*entry.answer_starts_from != ahead + arguments.size()) {
+      throw InternalError(
+          "BuildBuiltinMethodCall: the value an entry's answer starts from "
+          "does not follow the operands the source wrote");
     }
-  };
-  for (const mir::ExprId written : operands) {
-    supply_a_prototype_read_here();
-    arguments.push_back(written);
+    arguments.push_back(block.exprs.Add(BuildDefaultValueExpr(
+        unit_lowerer.Unit(), block,
+        ResultPrototypeType(unit_lowerer, result_type))));
   }
-  supply_a_prototype_read_here();
 
   // An entry answering a wait answers the wait its caller then stops at, so
   // that is what the call is, whatever the source-level call it came from
@@ -456,12 +481,9 @@ auto BuildBuiltinMethodCall(
   // `await`, and nothing could be stopped at.
   const mir::TypeId answered =
       entry.answers_a_wait ? unit_lowerer.Unit().builtins.wait : result_type;
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = method, .receiver = receiver},
-              .arguments = std::move(arguments)},
-      .type = answered};
+  return MakeBuiltinCall(
+      unit_lowerer.Unit(), block, method, receiver, std::move(arguments),
+      answered);
 }
 
 auto ArrayMethodIndexType(const mir::CompilationUnit& unit, mir::TypeId array)
@@ -521,7 +543,20 @@ auto LowerHirCallExpr(
   return std::visit(
       Overloaded{
           [&](const hir::SystemSubroutineRef& sys) -> diag::Result<mir::Expr> {
-            return LowerSystemSubroutineCall(lowerer, frame, c, sys, span);
+            auto lowered =
+                LowerSystemSubroutineCall(lowerer, frame, c, sys, span);
+            // Every operator around the call was typed against the type the
+            // front end gave it, so a call stated at another type hands them
+            // an operand they were not typed for.
+            if (lowered && lowered->type != result_type) {
+              throw InternalError(
+                  std::format(
+                      "LowerHirCallExpr: the system subroutine {} is lowered "
+                      "at another type than the call has -- please report "
+                      "this as a bug",
+                      support::LookupSystemSubroutine(sys.id).name));
+            }
+            return lowered;
           },
           [](const hir::StructuralSubroutineRef&) -> diag::Result<mir::Expr> {
             throw InternalError(

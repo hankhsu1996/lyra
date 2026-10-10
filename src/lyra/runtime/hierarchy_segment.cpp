@@ -1,17 +1,16 @@
 #include "lyra/runtime/hierarchy_segment.hpp"
 
+#include <cstdint>
 #include <span>
 #include <string>
 #include <utility>
-
-#include "lyra/value/packed_array.hpp"
 
 namespace lyra::runtime {
 
 HierarchySegment::HierarchySegment() = default;
 
 HierarchySegment::HierarchySegment(
-    std::string base_name, std::span<const value::PackedArray> indices)
+    std::string base_name, std::span<const std::int64_t> indices)
     : base_name_(std::move(base_name)),
       indices_(indices.begin(), indices.end()) {
 }
@@ -26,9 +25,9 @@ HierarchySegment::~HierarchySegment() = default;
 
 auto HierarchySegment::Display() const -> std::string {
   std::string out(base_name_);
-  for (const auto& idx : indices_) {
+  for (const std::int64_t index : indices_) {
     out.push_back('[');
-    out.append(std::to_string(idx.ToInt64()));
+    out.append(std::to_string(index));
     out.push_back(']');
   }
   return out;

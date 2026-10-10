@@ -5,7 +5,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
-#include "lyra/value/packed_array.hpp"
+#include "lyra/value/integral.hpp"
 #include "lyra/value/real.hpp"
 
 namespace lyra::runtime {
@@ -18,7 +18,7 @@ namespace lyra::runtime {
 // negative value is its own bits read as an unsigned integer the width of a
 // time variable, which is the widest wait the language can name.
 auto DelayTicks(
-    const value::PackedArray& duration, std::int8_t unit_power,
+    const value::ConstIntegralView& duration, std::int8_t unit_power,
     std::int8_t precision_power) -> SimDuration;
 
 // The same for a delay written as a real expression, which unlike an integral
@@ -54,15 +54,21 @@ auto DelayDeadline(
 //
 // The two entries differ only in how the amount the design wrote becomes a
 // count of steps. Each is built at its stop, where the amount is known, and
-// the moment is taken from when it is built.
+// the moment is taken from when it is built. An integral amount of any type is
+// read through its planes.
 auto Delay(
-    RuntimeEffects& runtime, const value::PackedArray& duration,
-    const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> Wait;
+    RuntimeEffects& runtime, const value::ConstIntegralView& duration,
+    std::int64_t unit_power, std::int64_t precision_power) -> Wait;
+
+template <value::IntegralValue T>
+auto Delay(
+    RuntimeEffects& runtime, const T& duration, std::int64_t unit_power,
+    std::int64_t precision_power) -> Wait {
+  return Delay(runtime, duration.Load().View(), unit_power, precision_power);
+}
 
 auto DelayReal(
     RuntimeEffects& runtime, const value::Real& duration,
-    const value::PackedArray& unit_power,
-    const value::PackedArray& precision_power) -> Wait;
+    std::int64_t unit_power, std::int64_t precision_power) -> Wait;
 
 }  // namespace lyra::runtime

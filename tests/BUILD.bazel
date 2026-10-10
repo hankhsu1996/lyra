@@ -71,10 +71,21 @@ cc_test(
 )
 
 cc_test(
-    name = "value_packed_array_test",
-    srcs = ["value/packed_array_test.cpp"],
+    name = "value_integral_test",
+    srcs = ["value/integral_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "value_integral_operation_test",
+    srcs = ["value/integral_operation_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:support",
         "//:value",
         "@googletest//:gtest_main",
     ],
@@ -218,6 +229,67 @@ cc_test(
     deps = [
         "//:status",
         "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "support_builtin_fn_test",
+    srcs = ["support/builtin_fn_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:support",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# Holds every prototype the runtime's ABI header declares to the declaration of
+# the entry it realizes, so the header is read as text.
+cc_test(
+    name = "backend_llvm_entry_prototype_test",
+    srcs = ["backend_llvm/entry_prototype_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:runtime_headers"],
+    deps = [
+        "//:backend_llvm",
+        "//:base",
+        "//:lir",
+        "//:support",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# Holds the machine type a callee is declared at to the arrangement of the call
+# crossing to it, and a name to one type.
+cc_test(
+    name = "backend_llvm_function_type_test",
+    srcs = ["backend_llvm/function_type_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:backend_llvm",
+        "//:base",
+        "//:lir",
+        "@googletest//:gtest_main",
+        "@llvm-project//llvm:Core",
+    ],
+)
+
+# Holds the instructions the execution backend builds for an operation on one
+# word to the library's statement of that operation, by folding the first over
+# constants.
+cc_test(
+    name = "backend_llvm_integral_one_word_test",
+    srcs = ["backend_llvm/integral_one_word_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:backend_llvm",
+        "//:base",
+        "//:support",
+        "//:value",
+        "@googletest//:gtest_main",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
     ],
 )
 

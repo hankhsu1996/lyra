@@ -146,14 +146,9 @@ auto BuildUniquenessReportBody(
                     .then_value = BuildIntLiteral(unit, body, 1),
                     .else_value = BuildIntLiteral(unit, body, 0)},
             .type = int_type});
-    const mir::ExprId counted = body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = mir::BinaryOp::kAdd,
-                    .lhs = read_count(body),
-                    .rhs = one_if_held},
-            .type = int_type});
+    const mir::ExprId counted = body.exprs.Add(MakeBinary(
+        unit, body, mir::BinaryOp::kAdd, read_count(body), one_if_held,
+        int_type));
     body.AppendStmt(
         mir::ExprStmt{
             .expr = body.exprs.Add(
@@ -177,14 +172,9 @@ auto BuildUniquenessReportBody(
               " of {} {} matched", arms.size(), NounFor(arm_kind).many)});
   AppendReportEmit(unit, report, std::move(items), std::move(origin));
 
-  const mir::ExprId violated = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::BinaryExpr{
-                  .op = mir::BinaryOp::kGreaterThan,
-                  .lhs = read_count(body),
-                  .rhs = BuildIntLiteral(unit, body, 1)},
-          .type = unit.builtins.bit1});
+  const mir::ExprId violated = body.exprs.Add(MakeBinary(
+      unit, body, mir::BinaryOp::kGreaterThan, read_count(body),
+      BuildIntLiteral(unit, body, 1), unit.builtins.bit1));
   body.AppendStmt(
       mir::IfStmt{
           .condition = ReduceToCondition(unit, body, violated),

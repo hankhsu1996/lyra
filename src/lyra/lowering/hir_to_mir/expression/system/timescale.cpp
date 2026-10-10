@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/system/timescale.hpp"
 
+#include <cstddef>
 #include <expected>
 #include <format>
 #include <string>
@@ -11,6 +12,7 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -34,17 +36,23 @@ auto LowerTimeFormatSystemSubroutineCall(
         "$timeformat takes either no arguments or exactly four (LRM 20.4.3)");
   }
 
+  const auto& unit = process.Owner().Unit();
   const mir::ExprId runtime_id =
       body.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  // Every argument but the suffix is a number the runtime keeps as its own
+  // setting rather than a value of the design.
+  constexpr std::size_t kSuffixPosition = 2;
   std::vector<mir::ExprId> call_args;
-  for (const auto& arg : args) {
-    if (!arg.has_value()) {
+  for (std::size_t i = 0; i < args.size(); ++i) {
+    if (!args[i].has_value()) {
       throw InternalError(
           "$timeformat positional argument unexpectedly elided");
     }
-    auto lowered = process.LowerExpr(hir_proc.exprs.Get(*arg), frame);
+    auto lowered = process.LowerExpr(hir_proc.exprs.Get(*args[i]), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
-    call_args.push_back(body.exprs.Add(*std::move(lowered)));
+    const mir::ExprId value = body.exprs.Add(*std::move(lowered));
+    call_args.push_back(
+        i == kSuffixPosition ? value : BuildToInt64Call(unit, body, value));
   }
 
   const support::BuiltinFn builtin = args.empty()
@@ -55,7 +63,7 @@ auto LowerTimeFormatSystemSubroutineCall(
           mir::CallExpr{
               .callee = mir::Direct{.target = builtin, .receiver = runtime_id},
               .arguments = std::move(call_args)},
-      .type = process.Owner().Unit().builtins.void_type};
+      .type = unit.builtins.void_type};
 }
 
 auto LowerPrintTimescaleSystemSubroutineCall(
@@ -88,7 +96,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
           .type = builtins.string});
 
   const mir::ExprId fd_id =
-      BuildIntLiteral(process.Owner().Unit(), body, support::kStdoutFd);
+      BuildMachineIntLiteral(process.Owner().Unit(), body, support::kStdoutFd);
   const mir::ExprId files_id =
       body.exprs.Add(BuildFilesCallExpr(process.Owner(), body));
   return mir::Expr{

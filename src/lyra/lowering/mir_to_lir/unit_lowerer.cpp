@@ -24,12 +24,12 @@
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_descriptor_id.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -252,38 +252,42 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
   }
 
-  // Building a value is an instruction sequence at this layer, so each value
-  // the unit holds is a function here and the entry holding it is what reaches
-  // that function. What each is built from was settled upstream, so this reads
-  // two finished sets and takes them in either order.
-  base::Translation<lir::IntegralConstantId, lir::FunctionId> constants(
-      mir_->integral_constants.size());
+  // An integral constant is its type and its bits here, which is the whole of
+  // a value of an integral type.
+  base::Translation<lir::IntegralConstantId, lir::IntegralConstantDecl>
+      constants(mir_->integral_constants.size());
   for (const mir::IntegralConstantId id : mir_->integral_constants.Ids()) {
-    auto fn = FunctionLowerer::LowerValueBuild(
-        *this, mir_->builds.constants.Get(id),
-        lir::IntegralConstantSymbol(mir_->name, id.value));
-    if (!fn) {
-      return std::unexpected(std::move(fn.error()));
-    }
-    constants.Append(out_.functions.Add(*std::move(fn)));
+    const mir::IntegralConstantDecl& decl = mir_->integral_constants.Get(id);
+    constants.Append(
+        lir::IntegralConstantDecl{
+            .type = TranslateType(decl.type),
+            .value = lir::IntegralConstant{
+                .value_words = decl.value.value_words,
+                .state_words = decl.value.state_words}});
   }
-  out_.integral_constant_initializers = std::move(constants);
+  out_.integral_constants = std::move(constants);
 
-  base::Translation<lir::TypeDescriptorId, lir::FunctionId> descriptors(
-      mir_->type_descriptors.size());
-  for (const mir::TypeDescriptorId id : mir_->type_descriptors.Ids()) {
-    // A description is unique only within its unit, while the whole program
-    // links into one name space, so the unit qualifies it -- the same reason a
-    // namespace callable is qualified.
-    auto fn = FunctionLowerer::LowerValueBuild(
-        *this, mir_->builds.descriptors.Get(id),
-        lir::TypeDescriptionSymbol(mir_->name, id.value));
-    if (!fn) {
-      return std::unexpected(std::move(fn.error()));
+  // An enumeration's member table is its base type and its members' names and
+  // bits here.
+  base::Translation<lir::EnumTableId, lir::EnumTableDecl> tables(
+      mir_->enum_tables.size());
+  for (const mir::EnumTableId id : mir_->enum_tables.Ids()) {
+    const mir::EnumType& enumeration = mir_->enum_tables.Get(id);
+    lir::EnumTableDecl table{
+        .base = out_.types.Intern(TranslateType(mir::Type{enumeration.base})),
+        .members = {}};
+    table.members.reserve(enumeration.members.size());
+    for (const mir::EnumMember& member : enumeration.members) {
+      table.members.push_back(
+          lir::EnumTableMember{
+              .name = member.name,
+              .value = lir::IntegralConstant{
+                  .value_words = member.value.value_words,
+                  .state_words = member.value.state_words}});
     }
-    descriptors.Append(out_.functions.Add(*std::move(fn)));
+    tables.Append(std::move(table));
   }
-  out_.type_descriptor_initializers = std::move(descriptors);
+  out_.enum_tables = std::move(tables);
   return std::move(out_);
 }
 
@@ -546,8 +550,8 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     [&](const mir::DefinitionRef&) {
                       return not_data("a definition read whole");
                     },
-                    [&](const mir::TypeDescriptorRef&) {
-                      return not_data("a type's description");
+                    [&](const mir::EnumTableRef&) {
+                      return not_data("an enumeration's member table");
                     },
                     [&](const mir::IntegralConstantRef&) {
                       return not_data("an integral constant");
@@ -592,8 +596,9 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     [&](const mir::LocalRef&) {
                       return not_data("the address of a local");
                     },
-                    [&](const mir::TypeDescriptorRef&) {
-                      return not_data("the address of a type's description");
+                    [&](const mir::EnumTableRef&) {
+                      return not_data(
+                          "the address of an enumeration's member table");
                     },
                     [&](const mir::IntegralConstantRef&) {
                       return not_data("the address of an integral constant");

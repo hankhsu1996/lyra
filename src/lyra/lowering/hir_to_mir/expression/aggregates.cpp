@@ -62,21 +62,13 @@ auto BuildsFromAnElementList(const mir::Type& ty) -> bool {
          ty.Is<mir::QueueType>();
 }
 
-// The value a sequence repeated `count_id` times denotes, landing in the type
-// given (LRM 11.4.12). What the sequence is made of -- bits or characters -- is
-// the entry's own question, so the same call serves both.
-auto BuildReplicateCall(
-    mir::ExprId run, mir::ExprId count_id, mir::TypeId result_type)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kReplicate,
-                      .receiver = run},
-              .arguments = {count_id}},
-      .type = result_type};
+// Bits repeated as many times as fill `result_type`, an integral type (LRM
+// 11.4.12.1).
+auto BuildBitsReplication(
+    const mir::CompilationUnit& unit, const mir::Block& block, mir::ExprId run,
+    mir::TypeId result_type) -> mir::Expr {
+  return MakeBuiltinCall(
+      unit, block, support::BuiltinFn::kReplicateBits, run, {}, result_type);
 }
 
 // An unpacked array concatenation (LRM 10.10) as the chain of appends it folds
@@ -244,11 +236,23 @@ auto LowerHirReplicationExpr(
   if (!concat_or) return std::unexpected(std::move(concat_or.error()));
   const mir::ExprId concat_id = block.exprs.Add(*std::move(concat_or));
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  if (unit.types.Get(result_type).IsIntegral()) {
+    return BuildBitsReplication(unit, block, concat_id, result_type);
+  }
+  // Characters are repeated as many times as the multiplier evaluates to, which
+  // for a string need not be a constant (LRM 11.4.12.2).
   auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(r.count), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
   const mir::ExprId value_id = block.exprs.Add(*std::move(count_or));
-  return BuildReplicateCall(
-      concat_id, block.exprs.Add(MakeToInt64Call(unit, value_id)), result_type);
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kReplicateString,
+                      .receiver = concat_id},
+              .arguments = {BuildToInt64Call(unit, block, value_id)}},
+      .type = result_type};
 }
 
 // A pattern that states every element by position, dispatched on the
@@ -317,19 +321,15 @@ auto BuildKeyedPatternBase(
   const mir::ExprId fill = block.exprs.Add(*std::move(fill_or));
 
   const auto& hir_ty = lowerer.Owner().Hir().types.Get(hir_result_type);
-  if (const auto* packed = hir_ty.template As<hir::PackedArrayType>()) {
+  if (hir_ty.template Is<hir::PackedArrayType>()) {
     // By value: the pool's view does not survive the interning below.
-    const mir::PackedArrayType result_pa =
-        unit.types.Get(result_type).PackedShape();
+    const mir::IntegralType result_integral =
+        unit.types.Get(result_type).Integral();
+    const mir::TypeId copies = mir::PackedVectorOf(
+        unit.types, result_integral.bit_width, result_integral.state_kind);
     return BuildValueConversion(
         unit, block,
-        block.exprs.Add(BuildReplicateCall(
-            fill,
-            BuildMachineIntLiteral(
-                unit, block,
-                static_cast<std::int64_t>(packed->dim.ElementCount())),
-            mir::PackedVectorOf(
-                unit.types, result_pa.BitWidth(), result_pa.state_kind))),
+        block.exprs.Add(BuildBitsReplication(unit, block, fill, copies)),
         result_type);
   }
   const auto& array_ty =
@@ -364,11 +364,11 @@ auto LowerHirAssignmentPatternKeyedExpr(
   const auto& hir_ty = lowerer.Owner().Hir().types.Get(hir_result_type);
   const mir::TypeId element_type = [&] {
     if (const auto* packed = hir_ty.template As<hir::PackedArrayType>()) {
-      const mir::PackedArrayType result_pa =
-          unit.types.Get(result_type).PackedShape();
+      const mir::IntegralType result_integral =
+          unit.types.Get(result_type).Integral();
       return mir::PackedVectorOf(
-          unit.types, result_pa.BitWidth() / packed->dim.ElementCount(),
-          result_pa.state_kind);
+          unit.types, result_integral.bit_width / packed->dim.ElementCount(),
+          result_integral.state_kind);
     }
     return unit.types.Get(result_type)
         .Get<mir::UnpackedArrayType>()
@@ -408,7 +408,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
     const AccessPath target = DescendInto(
         AccessPath{.owner = owner, .descent = {}},
         ElementStep(
-            lowerer.Owner(), body, result_type, index_id, element_type));
+            lowerer.Owner(), body, hir_result_type, index_id, element_type));
     body.AppendStmt(
         mir::ExprStmt{
             .expr =
@@ -460,28 +460,30 @@ auto LowerHirAssignmentPatternReplicationExpr(
     item_ids.push_back(*item);
   }
 
-  auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
-  if (!count_or) return std::unexpected(std::move(count_or.error()));
-  const mir::ExprId count_value = block.exprs.Add(*std::move(count_or));
-  const mir::ExprId count_id =
-      block.exprs.Add(MakeToInt64Call(unit, count_value));
   // Every type read below is read by value or where it is used: lowering the
   // count and building the concatenation intern types, which can relocate what
   // the pool holds.
   if (BuildsFromAnElementList(unit.types.Get(result_type))) {
+    auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
+    if (!count_or) return std::unexpected(std::move(count_or.error()));
+    const mir::ExprId count_value = block.exprs.Add(*std::move(count_or));
+    const mir::ExprId count_id = BuildToInt64Call(unit, block, count_value);
     return BuildArrayRepeatCall(
         unit, block, result_type,
         BuildElementDefault(lowerer.Owner(), block, hir_result_type),
         std::move(item_ids), count_id);
   }
+  // A packed target is as many copies of the items as fill it, which its own
+  // type states.
   const mir::ExprId inner_id = BuildPackedConcat(unit, block, item_ids);
   const mir::IntegralStateKind inner_state =
-      unit.types.Get(block.exprs.Get(inner_id).type).PackedShape().state_kind;
+      unit.types.Get(block.exprs.Get(inner_id).type).Integral().state_kind;
   const std::uint64_t result_width =
-      unit.types.Get(result_type).PackedShape().BitWidth();
-  const mir::ExprId repl_id = block.exprs.Add(BuildReplicateCall(
-      inner_id, count_id,
-      mir::PackedVectorOf(unit.types, result_width, inner_state)));
+      unit.types.Get(result_type).Integral().bit_width;
+  const mir::TypeId copies =
+      mir::PackedVectorOf(unit.types, result_width, inner_state);
+  const mir::ExprId repl_id =
+      block.exprs.Add(BuildBitsReplication(unit, block, inner_id, copies));
   return BuildValueConversion(unit, block, repl_id, result_type);
 }
 
@@ -500,7 +502,8 @@ auto LowerHirDynamicArrayNewExpr(
   auto& block = *frame.current_block;
   auto size_or = lowerer.LowerExpr(lowerer.HirExprs().Get(n.size), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
-  const mir::ExprId size_id = block.exprs.Add(*std::move(size_or));
+  const mir::ExprId size_id = BuildToInt64Call(
+      lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(size_or)));
 
   const hir::Type& hir_result_ty =
       lowerer.Owner().Hir().types.Get(hir_result_type);
@@ -575,8 +578,7 @@ auto LowerHirAssociativeAssignmentPatternExpr(
 
 // One concrete instantiation per pass class. The handler templates are defined
 // in this file rather than the header so the file-local helpers stay private,
-// so the dispatchers in process_lowerer.cpp / structural_scope_lowerer.cpp link
-// against the symbols emitted here.
+// so each pass class's dispatcher links against the symbols emitted here.
 template auto LowerHirConcatExpr(
     ProcessLowerer&, WalkFrame, const hir::ConcatExpr&, hir::TypeId,
     mir::TypeId) -> diag::Result<mir::Expr>;

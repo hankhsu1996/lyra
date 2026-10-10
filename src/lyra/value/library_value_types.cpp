@@ -1,11 +1,11 @@
 #include "lyra/value/library_value_types.hpp"
 
+#include "lyra/value/any_value.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/index_order.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/packed_array.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
@@ -14,7 +14,7 @@
 #include "lyra/value/runtime_union.hpp"
 #include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
-#include "lyra/value/value_type.hpp"
+#include "lyra/value/value_type_of.hpp"
 
 namespace lyra::value {
 
@@ -32,7 +32,7 @@ auto ValueTypeOf<T>::OrderBefore(const void* lhs, const void* rhs) const
   }
 }
 
-template class ValueTypeOf<PackedArray>;
+template class ValueTypeOf<AnyValue>;
 template class ValueTypeOf<String>;
 template class ValueTypeOf<Real>;
 template class ValueTypeOf<ShortReal>;
@@ -49,8 +49,8 @@ template class ValueTypeOf<ObjectRef>;
 }  // namespace lyra::value
 
 extern "C" {
-constinit const lyra::value::ValueTypeOf<lyra::value::PackedArray>
-    lyra_rt_packed_value_type;
+constinit const lyra::value::ValueTypeOf<lyra::value::AnyValue>
+    lyra_rt_wildcard_index_value_type;
 constinit const lyra::value::ValueTypeOf<lyra::value::String>
     lyra_rt_string_value_type;
 constinit const lyra::value::ValueTypeOf<lyra::value::Real>

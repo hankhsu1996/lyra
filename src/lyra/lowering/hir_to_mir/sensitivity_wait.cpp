@@ -205,8 +205,8 @@ struct WatchedBitPositions {
 auto AllBits(const mir::CompilationUnit& unit, mir::Block& block)
     -> WatchedBitPositions {
   return WatchedBitPositions{
-      .first = BuildIntLiteral(unit, block, 0),
-      .width = BuildIntLiteral(unit, block, 0)};
+      .first = BuildMachineIntLiteral(unit, block, 0),
+      .width = BuildMachineIntLiteral(unit, block, 0)};
 }
 
 template <typename Lowerer>
@@ -215,7 +215,8 @@ auto WatchedBitPositionsOf(
     Lowerer& lowerer, const hir::WatchedPart& part)
     -> diag::Result<WatchedBitPositions> {
   const auto int_literal = [&](std::uint64_t value) {
-    return BuildIntLiteral(unit, block, static_cast<std::int64_t>(value));
+    return BuildMachineIntLiteral(
+        unit, block, static_cast<std::int64_t>(value));
   };
   return std::visit(
       Overloaded{
@@ -229,8 +230,7 @@ auto WatchedBitPositionsOf(
             if (!part) return std::unexpected(std::move(part.error()));
             const PathBits named = BitsWithinOwner(unit, block, *part);
             return WatchedBitPositions{
-                .first = ConvertToType(
-                    unit, block, named.first, unit.builtins.int_type),
+                .first = BuildToInt64Call(unit, block, named.first),
                 .width = int_literal(named.width)};
           },
           [&](const hir::WatchedBits& bits)

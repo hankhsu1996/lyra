@@ -28,30 +28,29 @@ enough to warrant its own focused review.
       god-objects it used to sit on (R9 / R10).
 
 - [x] R2 -- Non-integral value-change observability. The wrapping-gate realignment this entry
-      originally described had already landed under R12: observable storage is a first-class
-      `mir::ObservableType` (R12), `Var<T>` gates on the `LyraValue` concept rather than an
-      integral-packed predicate (`decisions/value-type-concepts.md`), `IsObservableScalarType` is
-      gone, and the runtime cell is uniformly generic over every value type (`PackedArray`,
-      `String`, `Real`, `UnpackedArray<T>`, `DynamicArray<T>`, `Queue<T>`, `AssociativeArray<K,V>`).
-      As a direct consequence of that generality, every implicit value-change construct --
-      `always_comb` / `always_latch`, `@*`, `wait`, and continuous assignment -- already subscribes
-      to and wakes on any value type with no per-type code: the change-detection hook is each type's
-      `IsBitIdentical`, and a non-`PackedArray` cell fires its any-change waiters on every real
-      change. The minimal `Var<String>` / `Var<double>` / `Var<vector<T>>` specializations this
-      entry once anticipated were never needed (the single generic template covers all), and the
-      "reject unsupported sensitivity uses at lowering" half proved unnecessary too -- the slang
-      frontend already rejects every LRM-illegal value-change event source: an edge qualifier on a
-      non-integral operand and an aggregate (non-singular) event expression both fail frontend
-      binding (LRM 9.4.2, "event expressions shall return singular values"). The work was the
-      inverse of the original framing -- two frontend lowering gates were over-broad and rejected
-      forms the architecture and the LRM both allow. Both are now lifted: the `@(expr)`
-      event-control path admits any value-change-observable operand as an any-change event (the
-      legal `@(string)` / `@(real)` / `@(enum)`), and the input-port-connection path admits any
-      value type (the driver rides the generic continuous-assign path). An edge carries no
-      restriction of its own either: binding admits only an integral operand, and every integral
-      value is one packed vector at run time, which is what classifying an edge needs.
-      `hir::Type::IsValueChangeObservable` is the single HIR-level predicate the value-change gate
-      uses. A value-type x construct coverage matrix backs it (`@`, `wait`, `always_comb`, `@*`,
+      originally described had already landed under R12: observable storage is a first-class type in
+      MIR (R12), the observable cell admits every value type rather than only an integral one
+      (`decisions/value-type-concepts.md`), and the runtime cell is uniformly generic over every
+      value type (an integral of any width, a string, a real, and every unpacked array, dynamic
+      array, queue and associative array). As a direct consequence of that generality, every
+      implicit value-change construct -- `always_comb` / `always_latch`, `@*`, `wait`, and
+      continuous assignment -- already subscribes to and wakes on any value type with no per-type
+      code: the change-detection hook is each type's own bit-identity comparison, and a cell holding
+      anything other than an integral fires its any-change waiters on every real change. The minimal
+      per-type cells for a string, a real and a sequence this entry once anticipated were never
+      needed (the one generic cell covers all), and the "reject unsupported sensitivity uses at
+      lowering" half proved unnecessary too -- the slang frontend already rejects every LRM-illegal
+      value-change event source: an edge qualifier on a non-integral operand and an aggregate
+      (non-singular) event expression both fail frontend binding (LRM 9.4.2, "event expressions
+      shall return singular values"). The work was the inverse of the original framing -- two
+      frontend lowering gates were over-broad and rejected forms the architecture and the LRM both
+      allow. Both are now lifted: the `@(expr)` event-control path admits any
+      value-change-observable operand as an any-change event (the legal `@(string)` / `@(real)` /
+      `@(enum)`), and the input-port-connection path admits any value type (the driver rides the
+      generic continuous-assign path). An edge carries no restriction of its own either: binding
+      admits only an integral operand, and every integral value is one vector of bits at run time,
+      which is what classifying an edge needs. One HIR-level predicate is what the value-change gate
+      asks. A value-type x construct coverage matrix backs it (`@`, `wait`, `always_comb`, `@*`,
       continuous assignment, input port over string / real / enum / unpacked).
 
 - [x] R3 -- Collapse the runtime's dual hierarchy into a single object tree. The mirrored
@@ -245,10 +244,10 @@ enough to warrant its own focused review.
 
 - [x] R17a -- Signed-slice re-interpretation is explicit in MIR. HIR-to-MIR types a packed struct /
       union field slice with the runtime-honest unsigned signedness and wraps signed-field accesses
-      with an explicit `ConversionExpr` re-tag to the declared field type. Render is a pure
-      mechanical translation of `Call(kSlice)` / `Call(kToOwned)` / `ConversionExpr` independently.
+      with an explicit conversion to the declared field type. Render is a pure mechanical
+      translation of the slice call and of the conversion, each on its own.
 
-- [x] R17b -- Slice's `count` argument flows as a `PackedArray` value end to end (subsumed by R26).
+- [x] R17b -- A slice's count argument flows as an operand of the call end to end (subsumed by R26).
       The backend-side window-projection peek that emitted a raw native integer for a literal count
       is gone; render reads the call's argument list mechanically.
 
@@ -258,9 +257,10 @@ enough to warrant its own focused review.
       HIR-to-MIR.
 
 - [x] R17d -- An SV-facing runtime method's signature carries the SV value types directly:
-      size-style queries return a `PackedArray`, and integral arguments to string methods arrive as
-      `PackedArray`. The backend post-process casts that wrapped a host integer back into an SV
-      shape are gone; render reads call result and argument types straight from MIR.
+      size-style queries return the SV integral type the standard gives them, and integral arguments
+      to string methods arrive as values of their SV type. The backend post-process casts that
+      wrapped a host integer back into an SV shape are gone; render reads call result and argument
+      types straight from MIR.
 
 - [x] R18 -- The MIR-to-C++ backend is a rendering fold: per-node-kind handlers are free functions
       that take only what they read, with no `RenderContext`, no render-pass class hierarchy, and no
@@ -272,19 +272,16 @@ enough to warrant its own focused review.
       construction pass -- matching the distinction `lowering_organization.md` draws (invariant 9
       and the "Rendering Folds" section).
 
-- [x] R19 -- LRM 10.5 variable initialization lowers to an `AssignExpr` statement at the top of
-      `constructor.body.root_stmts`, with the value being the user-supplied expression when present
-      or the LRM Table 6-7 type default. `mir::MemberDecl.initializer` is removed; MIR has exactly
-      one mechanism for construction-time work (the statement list). `RenderField` emits a pure
-      value-init declaration (`Var<T> name{};` or `T name{};`) with no inline initializer;
-      `RenderContext::in_class_member_init_` and `WithClassMemberInit` are removed. The C++ runtime
-      takes `RuntimeServices&` at `Scope` construction (Bind no longer wires services), and
-      `PackedArray` / `UnpackedArray<T>` / `DynamicArray<T>` gain default constructors with a 0-bit
-      sentinel shape that the first `AssignFrom` adopts -- so a constructor-body `Set` works without
-      the deferred-bind dance. Vars whose MIR type is non-assignable (pointer / vector / object /
-      external-unit-object / external-ref / event) are filtered out of the init-statement path --
-      their declaration shape itself fixes the field at construction. See
-      `docs/decisions/variable-initialization.md`.
+- [x] R19 -- LRM 10.5 variable initialization lowers to an assignment statement at the top of the
+      constructor's body, with the value being the user-supplied expression when present or the LRM
+      Table 6-7 type default. A member declaration carries no initializer; MIR has exactly one
+      mechanism for construction-time work (the statement list). The C++ backend emits a member as a
+      value-initialized declaration with no inline initializer. A scope takes the runtime's services
+      where it is constructed, and every value type is default-constructible at its declared type --
+      so a write in a constructor body works without a deferred bind. Vars whose MIR type is
+      non-assignable (pointer / vector / object / external-unit-object / external-ref / event) are
+      filtered out of the init-statement path -- their declaration shape itself fixes the field at
+      construction. See `docs/decisions/variable-initialization.md`.
 
 - [x] R20 -- **Runtime effects as generic calls** (design settled in
       `decisions/runtime-effects-as-generic-calls.md`). Every runtime effect is now an ordinary
@@ -320,33 +317,32 @@ enough to warrant its own focused review.
       instance field versus a body-frame variable) is the real software pair that replaces the
       former symmetric axis.
 
-- [x] R23 -- "Materialise a reference into an owning value" is an explicit
-      `Call(ArrayMethod{kToOwned})` node in MIR (Rust's `ToOwned` trait). HIR-to-MIR inserts the
-      wrap at the read boundary; render is a mechanical translation. The `RenderExpr` /
-      `RenderExprNatural` split and `ProducesPackedArrayRef` predicate are gone.
+- [x] R23 -- "Materialise a reference into an owning value" is an explicit call in MIR (Rust's
+      `ToOwned` trait). HIR-to-MIR inserts the wrap at the read boundary; render is a mechanical
+      translation. The render's two expression entry points and its predicate for which expressions
+      yield a reference are gone.
 
 - [x] R25 -- **Closed: both carve-outs resolved.** The two value-query families this entry set aside
       as not fitting the generic `(receiver).name(args)` member-call rule are both settled. An
       enumerated type's methods (`first` / `last` / `num`, no receiver) are answered from the
       enumeration's own declared members, so the call the source wrote reaches a question put to the
       member list the unit states for that enumeration. `$isunknown` needs no special
-      type-associated or constant-fold path: it is the generic instance built-in call
-      `(x).IsUnknown()` returning the SV `bit` type (1-bit `PackedArray`, LRM 20.9), now wired end
-      to end -- recognized at AST-to-HIR by `KnownSystemName::IsUnknown`, lowered through the
-      context-free call family in both procedural and continuous-assign positions
-      (`../decisions/context-free-call-lowering.md`). The cross-cutting value-model (SV-typed
-      runtime signatures, the representation bridge inside the method body, the backend reading the
-      stated result type) is settled.
+      type-associated or constant-fold path: it is the generic instance built-in call on its
+      operand, returning the SV `bit` type (LRM 20.9), now wired end to end -- recognized at
+      AST-to-HIR by its system name and lowered through the context-free call family in both
+      procedural and continuous-assign positions (`../decisions/context-free-call-lowering.md`). The
+      cross-cutting value-model (SV-typed runtime signatures, the representation bridge inside the
+      method body, the backend reading the stated result type) is settled.
 
 - [x] R26 -- Runtime container protocols are pinned as explicit C++20 concepts in a single
       value-layer concept header; each container `static_assert`s every protocol it satisfies. Slice
-      is aligned across the four conforming containers: the signature is
-      `Slice(PackedArray, PackedArray)`, with Queue's two arguments meaning inclusive bounds (LRM
-      7.10.1) and the three fixed-width containers meaning `(offset, count)` (LRM 7.4.5 / 11.5.2
-      require canonical-fill at the type-fixed width, which is not derivable from `(lo, hi)`). A
-      single HIR-to-MIR range-bounds unfolder dispatches by container kind; the call's argument list
-      flows through render with no type-dependent argument projection. Signature drift on any pinned
-      protocol is now a compile-time failure. Subsumes R17b.
+      is aligned across the four conforming containers: a slice takes two integral operands, with
+      Queue's two arguments meaning inclusive bounds (LRM 7.10.1) and the three fixed-width
+      containers meaning `(offset, count)` (LRM 7.4.5 / 11.5.2 require canonical-fill at the
+      type-fixed width, which is not derivable from `(lo, hi)`). A single HIR-to-MIR range-bounds
+      unfolder dispatches by container kind; the call's argument list flows through render with no
+      type-dependent argument projection. Signature drift on any pinned protocol is now a
+      compile-time failure. Subsumes R17b.
 
 - [x] R28 -- The read-vs-write access surface is aligned at the noun-level naming axis across every
       container and across both lowering and runtime: bare `Element` / `Slice` for read,
@@ -555,10 +551,9 @@ enough to warrant its own focused review.
       `kGetSignal` / `kGetChild`) now ride `BuiltinFnCallee` with the signal / child name as a
       regular `StringLiteral` argument and the index list as an element list. The `kGetSignal` cast
       is lifted to a MIR cast whose destination type is the call site's slot type, so the backend
-      emits the conversion mechanically from a stated MIR fact. The `kGetChild` index conversion
-      moved into the runtime (which now accepts `std::span<const value::PackedArray>` and calls
-      `.ToInt64()` itself), so the render side has no `.ToInt64()` injection and no
-      `std::array{...}` wrapper. Every call -- regardless of callee variant -- now renders as
+      emits the conversion mechanically from a stated MIR fact. The `kGetChild` index conversion is
+      stated in MIR, where each index reads out as a machine integer, so the render side injects no
+      conversion and no array wrapper. Every call -- regardless of callee variant -- now renders as
       `fn(rendered_args...)`.
 
 - [x] R43 -- Replace the constructor-of-pointer fallback. The expression set grew a `NullLiteral`
@@ -1329,17 +1324,11 @@ enough to warrant its own focused review.
       ahead of the loop for exactly this reason, and the assignment-pattern rendering now does too.
       Found by writing the second one.
 
-- [ ] R88 -- The execution backend publishes no entry for the guard a tagged-union member access
-      carries (LRM 11.9), so an ordinary read of a packed tagged union's member refuses there with
-      `the runtime library publishes no entry named lyra_rt_packed_require`. Reproduced on a
-      four-line program whose only content is `pt.Bits`; the C++ backend runs it.
-
-      The target shape is the entry, beside the other value-domain entries. What makes it worth an
-      entry here rather than a note is that the guard is the general "yield the receiver when a
-      condition holds, raise otherwise" operation, so every construct the language checks while
-      evaluating an access meets it, not only this one.
-
-      Not blocked. It sits in the execution backend's own surface rather than in any lowering.
+- [x] R88 -- The execution backend published no entry for the guard a tagged-union member access
+      carries (LRM 11.9), so an ordinary read of a packed tagged union's member was refused there.
+      The guard is the general "yield the receiver when a condition holds, raise otherwise"
+      operation, and it is now one entry both backends reach. A program whose only content is
+      building a packed tagged union and reading its member back runs on the execution backend.
 
 - [x] R89 -- A compile holds every whole-design representation at once, so its peak memory is their
       sum and not the largest of them. Measured on a generated design: the peak tracks the total
@@ -1536,21 +1525,13 @@ enough to warrant its own focused review.
 
       Not blocked.
 
-- [ ] R99 -- Nobody owns the rule that a packed value's bits above its declared width are clear, so
-      every step along a value's path re-establishes it. Masking the top word is a few percent of a
-      profiled run on its own, and the passes that do it are not independent: a conversion masks its
-      destination, the constructor it is handed to masks again, and an operator masks its result
-      buffer before handing it to that same constructor. A deliberately broken conversion that skips
-      its own mask changes no observable answer in the corpus, because a later pass covers for it --
-      which is what an unowned invariant looks like from the outside.
-
-      **Target shape**: name the point at which the rule holds and say so once -- most likely the
-      construction of a value, which every path already goes through -- so that a step in the middle
-      may assume it and stop restating it. Until that is written down, the masks are all load-bearing
-      by ignorance and none of them can be removed safely.
-
-      Found while measuring R91: with no document stating the rule, a defensive mask cannot be told
-      from a necessary one, and the test that would separate them does not exist either.
+- [x] R99 -- Nobody owned the rule that a packed value's bits above its declared width are clear, so
+      every step along a value's path re-established it: a conversion masked its destination, the
+      constructor it was handed to masked again, and an operator masked its result before handing it
+      to that same constructor. The rule is now part of a packed value's layout, stated with it, and
+      it has one owner: each operation over a value's words leaves its own answer clean, and the
+      value type built from that answer, its construction and whatever holds it apply no mask of
+      their own.
 
 - [ ] R100 -- The AST-to-HIR declare pass builds a class's whole declared shape and then holds it in
       the pass's own private state rather than recording it where a peer can read it, so the unit's
@@ -2804,36 +2785,23 @@ enough to warrant its own focused review.
       demangler show it raw; the Itanium scheme, whose shape rustc's legacy symbols borrow, would let
       every one of them read it.
 
-- [ ] R175 -- An integral value whose width its specialization fixes is a runtime object, and every
-      operation on one is a call into the runtime. A 32-bit two-state integer is 48 bytes, a product
-      of two of them is a call that builds a third, every temporary is ended by another call, and a
-      literal is built at run time the first time it is reached. The same program written by hand
-      holds a 32-bit integer in four bytes and multiplies it in one instruction, and so does what
-      clang and rustc make of it. A four-state value or a wide one is a fixed number of words with
-      the operations written inline, which is how Verilator holds them. Nothing in the standard asks
-      for more: the width, the signedness and the state domain are all fixed where the
-      specialization is.
-
-      The record on integral representation chose one class for every integral so that the C++
-      backend's text has one shape and no bridges between shapes, which still holds. Its rule that
-      the class is not a template over the width carries no reason of its own, and its own findings
-      expect the execution backend to lower an integral to an integer of its width. One class
-      template over width, signedness and state domain keeps the one shape and lets the compiler see
-      every operation.
+- [x] R175 -- An integral value whose width its specialization fixes was a runtime object, and every
+      operation on one a call into the runtime. It is now the bits its type declares: a 32-bit
+      two-state integer is four bytes, a four-state one eight, and a wider one a fixed number of
+      words. An operation on a value up to 64 bits is instructions where it is written on both
+      backends, a wider one is a call taking the words, a temporary has nothing to end, and a
+      literal is a constant of the program. One value type per width, signedness and state domain
+      keeps the C++ backend's text in one shape.
 
       The one reason to keep a width at run time is to compile one unit for several widths, which
-      the specialization-sharing goal in the performance file would need. That is rustc's choice
-      between monomorphizing and erasing, and rustc makes it per use rather than for the whole
-      language. Here it is per type: a width no parameter reaches, such as an `int`'s, is fixed
-      whatever is shared, and only a width a shared parameter reaches would need the run-time form.
-      Not blocked; needs a design pass of its own, and it is the largest distance between a
-      compiled design and the same design written by hand.
+      sharing a specialization across parameter values would need. That stays a choice per type: a
+      width no parameter reaches, such as an `int`'s, is fixed whatever is shared.
 
-- [ ] R176 -- The description of a packed type that formatting and conversion read is built by
-      generated code the first time it is reached, through runtime calls, and every reach first
-      checks whether it exists yet. Clang emits type information as read-only data, and rustc
-      evaluates such data while compiling. Every fact in the description is fixed where the type is
-      declared. The target is a constant in the unit that declares the type. Not blocked.
+- [x] R176 -- The description of a packed type that formatting and conversion read was built by
+      generated code the first time it was reached. No such description exists: a routine that reads
+      an integral value is told its width, its signedness and whether it can hold x or z as
+      constants of the call, and an enumeration's member table is constant data of the unit that
+      asks about it.
 
 - [ ] R177 -- Every block inside a method of a class owns a disable target, built when the program
       starts and destroyed at exit, whether or not anything disables it. No hierarchical name
@@ -2950,6 +2918,137 @@ enough to warrant its own focused review.
 - [ ] R192 -- An emitted C++ project carries headers only the compiler reads, because the runtime it
       ships is gathered by directory and the directory holds both. Nothing emitted includes them.
       Target: the shipped set stated by what the runtime's own headers include. Not blocked.
+
+- [ ] R213 -- On the execution backend an operation on an integral wider than 64 bits reaches the
+      library through a table of code addresses the generated module reads while the program runs,
+      so every such operation is a load and an indirect call. The field names a runtime routine by
+      its symbol and calls it directly, as clang does for every compiler-rt entry, and nothing about
+      our conditions differs. The table exists because the operations are one list, read by the
+      folder, the library and the code generator alike, and a symbol per row of that list needs the
+      list expanded into one definition per row by a build step, which this build does not have.
+      Target: each operation's entry is a symbol that is a function of its row, defined once per row
+      from the one list, and called directly. Measured on Ibex under callgrind, `--release`, the
+      calls through the table are below the report's threshold, so this is shape and not a cost
+      found. Blocked on the build gaining a step that expands the list.
+
+- [ ] R214 -- Seven places in the library ask a type whether it is integral and how wide, each to
+      read an element, a component or a key through the one constant its type is known by: the two
+      passes of a scan over its targets, the leaf of an open array handed to a foreign call, a word
+      of a memory being written to a file, the index of a wildcard-indexed array, a byte array read
+      as a string, and whether two types are the same. Each is reached from a call that knew the
+      answer where it was compiled. Target: the caller hands the routine the integral's numbers, or
+      calls the routine that exists for integral words, and no type is asked what kind it is. It
+      closes with the open boxes on what the library is told of an element's type in the value
+      representation file. Not blocked.
+
+- [ ] R193 -- A net whose data type is an unpacked aggregate cannot be joined to another net. An
+      `inout` port connected to one, whole or by element, and an `alias` naming one, are refused
+      where the design is compiled, as "a net whose data type is an unpacked aggregate is not yet
+      supported where a connection or an alias names some of a net's bits". An `input` port over a
+      whole one or over one element runs, since it is a continuous assignment and not a join. The
+      standard does not make an unpacked array of nets indivisible: LRM 23.3.3.5 matches an unpacked
+      array port element by element, so what it describes is one net per element, where one net per
+      aggregate is what is built. Target: an unpacked array of nets is its elements' nets, each
+      joined, aliased and resolved as any net is. Not blocked; it needs a second form of a join in
+      the middle layers, one side of which is a net and not positions.
+
+- [ ] R194 -- A force on a net that a connection reaches over part of it is refused when it runs, on
+      both backends, as "a procedural continuous assignment names a net that a connection reaches
+      over part of one resolution". LRM 10.6.2 admits any net as the target. Reproduced with an
+      eight-bit wire whose low four bits are connected to a child's `inout` port: the resolved value
+      before the force is right, and the force ends the run. Target: a force overrides the positions
+      its target names, whichever physical net each lies on. Not blocked.
+
+- [ ] R196 -- On the C++ backend whatever holds a packed value is compiled again by every unit, once
+      per distinct width it declares: the variable, the net and its driver, the reference, the
+      sampled history, and the write path each of them stores through. The library compiles those
+      holders once per storage layout, and only the execution backend uses them. The test that reads
+      what an emitted unit defines admits any runtime entity over an integral type as the design's
+      own, which is the rule that would otherwise catch this; held to the rule it had before, a
+      sixty-line design with three widths fails it with 118 runtime entities defined in its one
+      unit. Target: the part of a holder that reads only a layout is the library's, keyed by the
+      layout, and the typed shell a unit sees adds nothing the unit must compile, so the test goes
+      back to admitting only what a design shaped. Not blocked; the C++ backend's compile time under
+      this has not been measured.
+
+      The same test passes only because its design reaches neither a force nor a memory load. With a
+      `force` and a `$readmemh` added it fails on five functions the library alone decides that are
+      written in its headers: the radix a memory file is read in, the level and the generation of a
+      takeover read out of a machine integer, and the two that count a memory's leaves and place an
+      address in its range. Target: each is defined in the library's own source, and the test's
+      design states a force, a release and a memory load.
+
+- [ ] R205 -- Three operations over a constant do not reach the one folder. A conversion of constant
+      bits to a string and the text of a constant under a format are each folded by a function of
+      its own, called where its expression is lowered, and an enumeration method called on a
+      constant (`next`, `prev`, `name`) is not folded. Every operation the list of integral
+      operations states is built through the one builder and folded there, a system function called
+      on a constant among them, and MIR's own check refuses one over constants that is left as an
+      operation. The three are not rows of that list, since one answers text and one takes a member
+      table, and the entry each row publishes to the execution backend is generated from the list.
+      Target: the list admits an answer that is text and an operand that is a member table, each of
+      the three is a row, and the two functions beside the folder go. Not blocked; it changes the
+      entries generated from the list.
+
+- [ ] R206 -- An enumeration's members are held inside the enumeration's type as their bits, where
+      every other constant an expression names is held once by the unit and named, and nothing in
+      MIR's own check holds a value an enumeration is asked about to the base type its member table
+      states. Found by reading. Target: a member is a constant the unit names, and the check refuses
+      a question put with a value of another type. Not blocked.
+
+- [ ] R207 -- The descent into a value states closed sets that are not ones. What a path is taken
+      for, by the kind of part a step reaches, is a product in which several combinations exist only
+      to fail; a step's kind is tested with a narrowing cast where a further kind would compile
+      silently; and which kind of part a select reaches is found by a chain of type tests beside a
+      visit over the same type whose other arms only fail. A user's index already of the position
+      type is never converted, so the rule that an ordinal is a position passes it without having
+      checked anything. A run of elements is called a run in the steps and a slice in the entries.
+      Found by reading. Target: a step that builds a value is not a step of a descent, the path
+      taken by reference admits only the two kinds that may be lent, and one visit over the receiver
+      answers both the kind of part and how it is numbered. Not blocked.
+
+- [ ] R208 -- Several facts of an integral value are stated in more than one place with nothing but
+      a test holding them together. A constant's type is on its declaration below MIR and on every
+      operand naming it. What an operator answers, and which operation an operator is, are each
+      written by the folder and by the code generator. And width, signedness and state domain travel
+      as five different records, one of which, the planes the library loads out of a value's bytes,
+      is built with a signedness its producer made up wherever the entry reads bits and no number.
+      Found by reading. Target: each has one producer the others read, and loaded planes state a
+      signedness only where a number was loaded. Not blocked.
+
+- [ ] R209 -- Two families of calls pass a count their result type fixes as an operand beside that
+      type: a run of array elements and the conversions to an array of bytes. And an operand a
+      runtime entry takes as a machine integer is converted by hand at each call site that builds
+      one, about twenty-five of them; MIR's own check refuses an integral value handed where an
+      entry reads a machine value, so a conversion left out is refused on both backends, but nothing
+      makes the conversion from the entry's declaration. Found by reading. Target: no count a type
+      fixes is an operand, and one builder converts what an entry reads as a machine value. Not
+      blocked.
+
+- [ ] R211 -- The code this change added names several roles in words of its own. How an argument
+      crosses to a callee is arrangement in clang and rustc, and the step that arranges a call uses
+      the field's word, a pass mode; the declaration it arranges from calls what an entry does with
+      an operand a reading and what a realization is handed of a type a telling. The two kinds of
+      integral operand are two enumerations with the same two members. And two groups of functions
+      are still named as nouns: those that emit a body standing in for one of a structure's methods
+      are named for the body, and the builder of an integral type is named for a packed vector,
+      which the type no longer is. Found by reading. Target: the field's word where it has one, and
+      one word per concept. Not blocked.
+
+- [ ] R212 -- Smaller shapes inside the value library and the execution backend that the change
+      left. A comparison in the C++ library answers a scalar where it was compiled without the type
+      of what it compares and a one-bit value of the type the language gives the answer where it was
+      compiled with it, bridged by three small functions; the per-type table hands an integral type
+      a value to read a shape from in three operations, which that type does not read; the fold over
+      a net's positions is untyped while two steps beside it are compiled per layout; an exhaustive
+      switch ends two different ways, one in the library's compiled sources and another in the
+      operations over words; a handful of comparisons against one member of a two-member set remain
+      in the value library where a switch belongs; an element update that assumes the element's
+      domain; a table slot that carries how an integral crosses whatever fills it; a completion of a
+      value and an integral's planes that checks its first component's type and not its second; and
+      an operation over more than a word that is handed its own identity while the program runs, and
+      reads its arguments back out of a list it just built, under a template that already has both.
+      Found by reading. Target: each is brought to the form its siblings have. Not blocked.
 
 ## Out of Scope
 

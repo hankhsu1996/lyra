@@ -371,7 +371,7 @@ auto LowerIntraAssignmentStmt(
                 hir::AssignExpr{
                     .timing = hir::ImmediateEffect{},
                     .lhs = lhs,
-                    .compound_op = std::nullopt,
+                    .compound = std::nullopt,
                     .rhs = rhs},
             .span = span});
     return body.stmts.Add(

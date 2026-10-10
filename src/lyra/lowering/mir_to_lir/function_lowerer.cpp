@@ -272,7 +272,12 @@ auto FunctionLowerer::LowerCallTarget(
                     [&](const support::BuiltinFn& fn)
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{lir::BuiltinTarget{
-                          .fn = fn, .position = ComponentPartOf(d)}};
+                          .fn = fn,
+                          .position = ComponentPartOf(d),
+                          .type_argument =
+                              d.type_argument.transform([&](mir::TypeId type) {
+                                return unit_->TranslateType(type);
+                              })}};
                     },
                     [&](const mir::UnitCallableTarget& t)
                         -> diag::Result<lir::CallTarget> {
@@ -351,7 +356,6 @@ FunctionLowerer::FunctionLowerer(
       code_(&code),
       construction_(std::nullopt),
       closure_(nullptr),
-      build_(nullptr),
       name_(std::move(name)),
       variable_slot_(code.locals.size(), std::nullopt),
       locals_(code.locals.size(), std::nullopt) {
@@ -369,7 +373,6 @@ FunctionLowerer::FunctionLowerer(
               .constructor = &constructor,
               .prologue = std::move(prologue)}),
       closure_(nullptr),
-      build_(nullptr),
       name_(std::move(name)),
       variable_slot_(constructor.code.locals.size(), std::nullopt),
       locals_(constructor.code.locals.size(), std::nullopt) {
@@ -381,20 +384,9 @@ FunctionLowerer::FunctionLowerer(
       code_(&closure.invoke),
       construction_(std::nullopt),
       closure_(&closure),
-      build_(nullptr),
       name_(std::move(name)),
       variable_slot_(closure.invoke.locals.size(), std::nullopt),
       locals_(closure.invoke.locals.size(), std::nullopt) {
-}
-
-FunctionLowerer::FunctionLowerer(
-    UnitLowerer& unit, const mir::ValueBuild& build, std::string name)
-    : unit_(&unit),
-      code_(nullptr),
-      construction_(std::nullopt),
-      closure_(nullptr),
-      build_(&build),
-      name_(std::move(name)) {
 }
 
 void FunctionLowerer::BindCaptureReceiver(mir::LocalId receiver) {
@@ -407,41 +399,6 @@ void FunctionLowerer::BindCaptureReceiver(mir::LocalId receiver) {
           .kind = lir::LocalKind::kParam});
   fn_.params.push_back(value);
   BindLocal(receiver, type, lir::Use{.value = value});
-}
-
-auto FunctionLowerer::LowerValueBuild(
-    UnitLowerer& unit, const mir::ValueBuild& build, std::string name)
-    -> diag::Result<lir::Function> {
-  return FunctionLowerer(unit, build, std::move(name)).RunValueBuild();
-}
-
-auto FunctionLowerer::RunValueBuild() -> diag::Result<lir::Function> {
-  fn_.name = std::move(name_);
-  const auto in_function = diag::FailureContext::InFunction(fn_.name);
-  const profiling::TimeTraceScope span(
-      "lower function", [&] { return fn_.name; });
-  // The type is the built expression's own, so a description and a constant
-  // reach this the same way and neither is named here.
-  fn_.result_type =
-      unit_->TranslateType(build_->body.exprs.Get(build_->value).type);
-  SetCurrent(NewBlock());
-  auto value = LowerExpr(build_->body, build_->value);
-  if (!value) {
-    return std::unexpected(std::move(value.error()));
-  }
-  const lir::Operand answer = HandOn(*std::move(value));
-  auto cleaned = RunCleanupsDownTo(0);
-  if (!cleaned) {
-    return std::unexpected(std::move(cleaned.error()));
-  }
-  Terminate(lir::ReturnTerm{.value = answer});
-  for (OpenBlock& block : blocks_) {
-    fn_.blocks.push_back(
-        lir::BasicBlock{
-            .instrs = std::move(block.instrs),
-            .terminator = *std::move(block.terminator)});
-  }
-  return std::move(fn_);
 }
 
 auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
@@ -460,8 +417,8 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // variable storage, so nothing about what the body does with one is read
   // here -- not whether anything writes it, not whether anything binds a
   // second name to it. A variable of a type whose values the runtime builds
-  // gets storage of its own there, which a reference can bind and which
-  // survives a suspension, and so does a cell MIR declared, which is a
+  // and keeps gets storage of its own there, which a reference can bind and
+  // which survives a suspension, and so does a cell MIR declared, which is a
   // variable the source declared; any other stays a value of the body.
   for (const mir::LocalId local : code_->locals.Ids()) {
     const mir::TypeId declared = code_->locals.Get(local).type;
@@ -1901,7 +1858,7 @@ auto FunctionLowerer::NamesStorage(
             [](const mir::ExternalStaticPropertyRef&) { return true; },
             // What the unit holds as a value, or reaches only to ask
             // something of, is not storage a part could be reached in.
-            [](const mir::TypeDescriptorRef&) { return false; },
+            [](const mir::EnumTableRef&) { return false; },
             [](const mir::IntegralConstantRef&) { return false; },
             [](const mir::DefinitionRef&) { return false; },
             [](const mir::ClassConstantRef&) { return false; },
@@ -2033,9 +1990,9 @@ auto FunctionLowerer::ReferenceValue(
                     }},
                 *binding);
           },
-          [&](const mir::TypeDescriptorRef& ref) -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::TypeDescriptorRef{
-                .descriptor = UnitLowerer::TranslateDescriptor(ref.descriptor),
+          [&](const mir::EnumTableRef& ref) -> diag::Result<lir::Operand> {
+            return lir::Operand{lir::EnumTableRef{
+                .table = UnitLowerer::TranslateEnumTable(ref.table),
                 .type = unit_->TranslateType(type)}};
           },
           [&](const mir::IntegralConstantRef& ref)
@@ -2194,11 +2151,11 @@ auto FunctionLowerer::ReferencePlace(
                                 .mutability = lir::Mutability::kReadOnly}})},
                 .chain = {lir::Projection{lir::DerefProjection{}}}};
           },
-          // A descriptor, a constant and a function are values the unit holds,
-          // not storage anything writes through.
-          [](const mir::TypeDescriptorRef&) -> diag::Result<lir::Place> {
+          // A member table, a constant and a function are values the unit
+          // holds, not storage anything writes through.
+          [](const mir::EnumTableRef&) -> diag::Result<lir::Place> {
             return Unsupported(
-                "mir_to_lir: a type's runtime descriptor names no place");
+                "mir_to_lir: an enumeration's member table names no place");
           },
           [](const mir::IntegralConstantRef&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: a constant names no place");
@@ -2898,36 +2855,13 @@ auto FunctionLowerer::LowerCoroutineAwait(
   return completion.value_or(park);
 }
 
-auto FunctionLowerer::LowerCompoundOperator(
-    mir::BinaryOp op, lir::Operand old_value, lir::Operand rhs,
-    lir::TypeId type) -> lir::Operand {
-  return Emit(
-      type, lir::BinaryInstr{
-                .op = TranslateBinaryOp(op),
-                .lhs = std::move(old_value),
-                .rhs = std::move(rhs)});
-}
-
 auto FunctionLowerer::LowerAssign(
     const mir::Block& block, const mir::AssignExpr& assign)
     -> diag::Result<lir::Operand> {
   return UpdateTarget(
       block, assign.target,
-      [&](const ValueReader& read_old,
-          lir::TypeId type) -> diag::Result<lir::Operand> {
-        auto rhs = LowerExpr(block, assign.value);
-        if (!rhs) {
-          return std::unexpected(std::move(rhs.error()));
-        }
-        if (!assign.compound_op.has_value()) {
-          return *std::move(rhs);
-        }
-        auto old_value = read_old();
-        if (!old_value) {
-          return std::unexpected(std::move(old_value.error()));
-        }
-        return LowerCompoundOperator(
-            *assign.compound_op, *std::move(old_value), *std::move(rhs), type);
+      [&](const ValueReader&, lir::TypeId) -> diag::Result<lir::Operand> {
+        return LowerExpr(block, assign.value);
       });
 }
 
@@ -3048,23 +2982,64 @@ auto FunctionLowerer::LowerSliceUpdate(
       unit_->Mir().types.Get(block.exprs.Get(receiver).type);
   const lir::TypeId slice_type =
       unit_->TranslateType(block.exprs.Get(target).type);
+  auto bounds = LowerEachExpr(block, slice.arguments);
+  if (!bounds) {
+    return std::unexpected(std::move(bounds.error()));
+  }
   // A slice of what a write in progress designates is written within that
-  // write, which hears what moved; an assignment operator combining bits of a
-  // packed value reads those bits through the write first (LRM 11.4.1).
+  // write, which hears what moved; a change that reads the slice first reads
+  // it through the write too.
   if (const auto* designated = receiver_ty.As<mir::DesignationType>()) {
     auto designation = LowerExpr(block, receiver);
     if (!designation) {
       return std::unexpected(std::move(designation.error()));
     }
     const lir::TypeId container = unit_->TranslateType(designated->value);
+    // A slice the callee states the type of is bits of an integral value (LRM
+    // 11.5.1), which are a view of it: the value as it stands with the bits
+    // placed is built, and the write is handed that.
+    const auto* direct = std::get_if<mir::Direct>(&slice.callee);
+    if (direct != nullptr && direct->type_argument.has_value()) {
+      const auto on_bits = [&](lir::DesignatedBitsTarget::Op op) {
+        return lir::DesignatedBitsTarget{
+            .op = op, .value = container, .bits = slice_type};
+      };
+      const auto named = [&](lir::Operand last) {
+        std::vector<lir::Operand> args{*designation};
+        args.insert(args.end(), bounds->begin(), bounds->end());
+        args.push_back(std::move(last));
+        return args;
+      };
+      auto changed = change(
+          [&]() -> diag::Result<lir::Operand> {
+            std::vector<lir::Operand> args{*designation};
+            args.insert(args.end(), bounds->begin(), bounds->end());
+            return EmitCallTo(
+                on_bits(lir::DesignatedBitsTarget::Op::kRead), std::move(args),
+                slice_type);
+          },
+          slice_type);
+      if (!changed) {
+        return std::unexpected(std::move(changed.error()));
+      }
+      auto placed = EmitCallTo(
+          on_bits(lir::DesignatedBitsTarget::Op::kPlace),
+          named(*std::move(changed)), container);
+      if (!placed) {
+        return std::unexpected(std::move(placed.error()));
+      }
+      return EmitCallTo(
+          on_bits(lir::DesignatedBitsTarget::Op::kReport),
+          named(*std::move(placed)),
+          unit_->TranslateType(unit_->Mir().builtins.void_type));
+    }
     return WriteSlice(
-        block, slice, change, *designation, slice_type,
+        *bounds, change, *designation, slice_type,
         lir::OpenWriteTarget{
             .op = lir::OpenWriteTarget::Op::kAssignSlice, .value = container},
-        [&](const std::vector<lir::Operand>& bounds)
-            -> diag::Result<lir::Operand> {
+        [&]() -> diag::Result<lir::Operand> {
           std::vector<lir::Operand> args{*designation};
-          args.insert(args.end(), bounds.begin(), bounds.end());
+          args.insert(args.end(), bounds->begin(), bounds->end());
           return EmitCallTo(
               lir::OpenWriteTarget{
                   .op = lir::OpenWriteTarget::Op::kReadSlice,
@@ -3076,38 +3051,34 @@ auto FunctionLowerer::LowerSliceUpdate(
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
+  // What is left is storage of its own that holds several parts in a row,
+  // which only an array's elements are (LRM 7.4.6): bits of an integral value
+  // are a view of the whole and are rebuilt into it.
   const lir::Operand container = Load(
       *std::move(place), unit_->TranslateType(block.exprs.Get(receiver).type));
   return WriteSlice(
-      block, slice, change, container, slice_type,
-      lir::BuiltinTarget{.fn = support::BuiltinFn::kSliceRef},
-      [&](const std::vector<lir::Operand>& bounds)
-          -> diag::Result<lir::Operand> {
+      *bounds, change, container, slice_type,
+      lir::BuiltinTarget{.fn = support::BuiltinFn::kElementSliceRef},
+      [&]() -> diag::Result<lir::Operand> {
         std::vector<lir::Operand> args{container};
-        args.insert(args.end(), bounds.begin(), bounds.end());
+        args.insert(args.end(), bounds->begin(), bounds->end());
         return EmitCallTo(
-            lir::BuiltinTarget{.fn = support::BuiltinFn::kSlice},
+            lir::BuiltinTarget{.fn = support::BuiltinFn::kElementSlice},
             std::move(args), slice_type);
       });
 }
 
 auto FunctionLowerer::WriteSlice(
-    const mir::Block& block, const mir::CallExpr& slice,
-    const ValueChange& change, const lir::Operand& container,
-    lir::TypeId slice_type, lir::CallTarget writer, const SliceReader& read)
+    const std::vector<lir::Operand>& bounds, const ValueChange& change,
+    const lir::Operand& container, lir::TypeId slice_type,
+    lir::CallTarget writer, const ValueReader& read)
     -> diag::Result<lir::Operand> {
-  auto bounds = LowerEachExpr(block, slice.arguments);
-  if (!bounds) {
-    return std::unexpected(std::move(bounds.error()));
-  }
-  auto changed = change([&] { return read(*bounds); }, slice_type);
+  auto changed = change(read, slice_type);
   if (!changed) {
     return std::unexpected(std::move(changed.error()));
   }
   std::vector<lir::Operand> args{container};
-  args.insert(
-      args.end(), std::make_move_iterator(bounds->begin()),
-      std::make_move_iterator(bounds->end()));
+  args.insert(args.end(), bounds.begin(), bounds.end());
   args.push_back(*std::move(changed));
   return EmitCallTo(
       std::move(writer), std::move(args),

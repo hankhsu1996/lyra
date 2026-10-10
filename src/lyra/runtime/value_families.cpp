@@ -1,189 +1,65 @@
 #include "lyra/runtime/value_families.hpp"
 
-#include "lyra/support/value_domain.hpp"
-
 namespace lyra::runtime {
 
-namespace {
-
-// Every family below is stated over the domains a value may have, so a domain
-// gained is a domain each of them needs. Nothing would otherwise report a
-// family that missed one: it compiles, and every unit that uses it goes back to
-// compiling its own copy silently. A switch naming every domain is what fails
-// instead: a domain added or removed is a case missing or gone here, so give
-// each family below the same treatment and then correct this list.
-constexpr auto FamiliesCover(support::ValueDomain domain) -> bool {
-  switch (domain) {
-    case support::ValueDomain::kPacked:
-    case support::ValueDomain::kString:
-    case support::ValueDomain::kReal:
-    case support::ValueDomain::kShortReal:
-    case support::ValueDomain::kChandle:
-    case support::ValueDomain::kEmpty:
-    case support::ValueDomain::kTuple:
-    case support::ValueDomain::kUnion:
-    case support::ValueDomain::kTaggedUnion:
-    case support::ValueDomain::kDynArray:
-    case support::ValueDomain::kUnpackedArray:
-    case support::ValueDomain::kQueue:
-    case support::ValueDomain::kAssocArray:
-    case support::ValueDomain::kManagedRef:
-      return true;
-  }
-  return false;
-}
-static_assert(FamiliesCover(support::ValueDomain::kPacked));
-
-}  // namespace
-
-template class ValueStorageCore<value::PackedArray>;
 template class ValueStorageCore<value::String>;
 template class ValueStorageCore<value::Real>;
 template class ValueStorageCore<value::ShortReal>;
 template class ValueStorageCore<value::Chandle>;
-template class ValueStorageCore<value::RuntimeTuple>;
-template class ValueStorageCore<value::RuntimeUnion>;
-template class ValueStorageCore<value::RuntimeTaggedUnion>;
-template class ValueStorageCore<value::RuntimeDynamicArray>;
-template class ValueStorageCore<value::RuntimeUnpackedArray>;
-template class ValueStorageCore<value::RuntimeQueue>;
-template class ValueStorageCore<value::RuntimeAssociativeArray>;
 template class ValueStorageCore<value::ObjectRef>;
 
-template class Var<value::PackedArray>;
 template class Var<value::String>;
 template class Var<value::Real>;
 template class Var<value::ShortReal>;
 template class Var<value::Chandle>;
-template class Var<value::RuntimeTuple>;
-template class Var<value::RuntimeUnion>;
-template class Var<value::RuntimeTaggedUnion>;
-template class Var<value::RuntimeDynamicArray>;
-template class Var<value::RuntimeUnpackedArray>;
-template class Var<value::RuntimeQueue>;
-template class Var<value::RuntimeAssociativeArray>;
 template class Var<value::ObjectRef>;
 
-template class CellRareState<value::PackedArray>;
 template class CellRareState<value::String>;
 template class CellRareState<value::Real>;
 template class CellRareState<value::ShortReal>;
-template class CellRareState<value::RuntimeTuple>;
-template class CellRareState<value::RuntimeUnion>;
-template class CellRareState<value::RuntimeTaggedUnion>;
-template class CellRareState<value::RuntimeDynamicArray>;
-template class CellRareState<value::RuntimeUnpackedArray>;
-template class CellRareState<value::RuntimeQueue>;
-template class CellRareState<value::RuntimeAssociativeArray>;
 template class CellRareState<value::ObjectRef>;
 
-template class Ref<value::PackedArray>;
 template class Ref<value::String>;
 template class Ref<value::Real>;
 template class Ref<value::ShortReal>;
 template class Ref<value::Chandle>;
-template class Ref<value::RuntimeTuple>;
-template class Ref<value::RuntimeUnion>;
-template class Ref<value::RuntimeTaggedUnion>;
-template class Ref<value::RuntimeDynamicArray>;
-template class Ref<value::RuntimeUnpackedArray>;
-template class Ref<value::RuntimeQueue>;
-template class Ref<value::RuntimeAssociativeArray>;
 template class Ref<value::ObjectRef>;
 
-template class ScopedMutation<Ref<value::PackedArray>>;
 template class ScopedMutation<Ref<value::String>>;
 template class ScopedMutation<Ref<value::Real>>;
 template class ScopedMutation<Ref<value::ShortReal>>;
 template class ScopedMutation<Ref<value::Chandle>>;
-template class ScopedMutation<Ref<value::RuntimeTuple>>;
-template class ScopedMutation<Ref<value::RuntimeUnion>>;
-template class ScopedMutation<Ref<value::RuntimeTaggedUnion>>;
-template class ScopedMutation<Ref<value::RuntimeDynamicArray>>;
-template class ScopedMutation<Ref<value::RuntimeUnpackedArray>>;
-template class ScopedMutation<Ref<value::RuntimeQueue>>;
-template class ScopedMutation<Ref<value::RuntimeAssociativeArray>>;
 template class ScopedMutation<Ref<value::ObjectRef>>;
 
-template class Takeovers<value::PackedArray>;
 template class Takeovers<value::String>;
 template class Takeovers<value::Real>;
 template class Takeovers<value::ShortReal>;
 template class Takeovers<value::Chandle>;
-template class Takeovers<value::RuntimeTuple>;
-template class Takeovers<value::RuntimeUnion>;
-template class Takeovers<value::RuntimeTaggedUnion>;
-template class Takeovers<value::RuntimeDynamicArray>;
-template class Takeovers<value::RuntimeUnpackedArray>;
-template class Takeovers<value::RuntimeQueue>;
-template class Takeovers<value::RuntimeAssociativeArray>;
 template class Takeovers<value::ObjectRef>;
 
-template class ActivationValueCell<value::PackedArray>;
 template class ActivationValueCell<value::String>;
 template class ActivationValueCell<value::Real>;
 template class ActivationValueCell<value::ShortReal>;
 template class ActivationValueCell<value::Chandle>;
-template class ActivationValueCell<value::RuntimeTuple>;
-template class ActivationValueCell<value::RuntimeUnion>;
-template class ActivationValueCell<value::RuntimeTaggedUnion>;
-template class ActivationValueCell<value::RuntimeDynamicArray>;
-template class ActivationValueCell<value::RuntimeUnpackedArray>;
-template class ActivationValueCell<value::RuntimeQueue>;
-template class ActivationValueCell<value::RuntimeAssociativeArray>;
 template class ActivationValueCell<value::ObjectRef>;
 
-template class SampledHistory<value::PackedArray>;
 template class SampledHistory<value::String>;
 template class SampledHistory<value::Real>;
 template class SampledHistory<value::ShortReal>;
-template class SampledHistory<value::RuntimeTuple>;
-template class SampledHistory<value::RuntimeUnion>;
-template class SampledHistory<value::RuntimeTaggedUnion>;
-template class SampledHistory<value::RuntimeDynamicArray>;
-template class SampledHistory<value::RuntimeUnpackedArray>;
-template class SampledHistory<value::RuntimeQueue>;
-template class SampledHistory<value::RuntimeAssociativeArray>;
 template class SampledHistory<value::ObjectRef>;
 
-template class ResolvedNet<value::PackedArray>;
-template class ResolvedNet<value::RuntimeTuple>;
-template class ResolvedNet<value::RuntimeUnion>;
-template class ResolvedNet<value::RuntimeUnpackedArray>;
-
-template class Driver<value::PackedArray>;
-template class Driver<value::RuntimeTuple>;
-template class Driver<value::RuntimeUnion>;
-template class Driver<value::RuntimeUnpackedArray>;
-
-template class CompletionSlot<value::PackedArray>;
 template class CompletionSlot<value::String>;
 template class CompletionSlot<value::Real>;
 template class CompletionSlot<value::ShortReal>;
 template class CompletionSlot<value::Chandle>;
-template class CompletionSlot<value::RuntimeTuple>;
-template class CompletionSlot<value::RuntimeUnion>;
-template class CompletionSlot<value::RuntimeTaggedUnion>;
-template class CompletionSlot<value::RuntimeDynamicArray>;
-template class CompletionSlot<value::RuntimeUnpackedArray>;
-template class CompletionSlot<value::RuntimeQueue>;
-template class CompletionSlot<value::RuntimeAssociativeArray>;
 template class CompletionSlot<value::ObjectRef>;
 template class CompletionSlot<value::Tuple<>>;
 
 template class Coroutine<void>;
-template class Coroutine<value::PackedArray>;
 template class Coroutine<value::String>;
 template class Coroutine<value::Real>;
 template class Coroutine<value::ShortReal>;
 template class Coroutine<value::Chandle>;
-template class Coroutine<value::RuntimeTuple>;
-template class Coroutine<value::RuntimeUnion>;
-template class Coroutine<value::RuntimeTaggedUnion>;
-template class Coroutine<value::RuntimeDynamicArray>;
-template class Coroutine<value::RuntimeUnpackedArray>;
-template class Coroutine<value::RuntimeQueue>;
-template class Coroutine<value::RuntimeAssociativeArray>;
 template class Coroutine<value::ObjectRef>;
 template class Coroutine<value::Tuple<>>;
 

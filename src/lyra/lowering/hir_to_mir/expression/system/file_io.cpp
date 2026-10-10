@@ -6,6 +6,7 @@
 #include <expected>
 #include <format>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -18,9 +19,11 @@
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -28,7 +31,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_descriptor.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -36,9 +38,8 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// Assembles the file-IO call as an instance method on the `files` broker.
-// `files = runtime.Files()` is interned first; subsequent operands flow
-// after it in their runtime-signature order.
+// A file-IO call acts on the runtime's file broker, which is its receiver; the
+// operands follow in the entry's own order.
 auto BuildFileIoCall(
     const ProcessLowerer& process, const WalkFrame& frame,
     support::BuiltinFn builtin_fn, std::vector<mir::ExprId> operands,
@@ -60,19 +61,31 @@ auto LowerOperand(
   return process.LowerExpr(process.HirBody().exprs.Get(operand), frame);
 }
 
+// A descriptor, a position, a count or a character the source wrote, read out
+// as the machine integer the file broker works in (LRM 21.3).
+auto BuildMachineIntOperand(
+    ProcessLowerer& process, const WalkFrame& frame, hir::ExprId operand)
+    -> diag::Result<mir::ExprId> {
+  auto operand_or = LowerOperand(process, frame, operand);
+  if (!operand_or) return std::unexpected(std::move(operand_or.error()));
+  mir::Block& block = *frame.current_block;
+  return BuildToInt64Call(
+      process.Owner().Unit(), block, block.exprs.Add(*std::move(operand_or)));
+}
+
+// Every operand of the calls built here is a machine integer (LRM 21.3).
 auto LowerFixedOperandCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     support::BuiltinFn builtin_fn, std::size_t operand_count,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
   const std::vector<hir::ExprId> operands =
       RequiredOperands(call, operand_count);
   std::vector<mir::ExprId> lowered;
   lowered.reserve(operands.size());
   for (const hir::ExprId operand : operands) {
-    auto operand_or = LowerOperand(process, frame, operand);
+    auto operand_or = BuildMachineIntOperand(process, frame, operand);
     if (!operand_or) return std::unexpected(std::move(operand_or.error()));
-    lowered.push_back(block.exprs.Add(*std::move(operand_or)));
+    lowered.push_back(*operand_or);
   }
   return BuildFileIoCall(
       process, frame, builtin_fn, std::move(lowered), result_type);
@@ -110,9 +123,9 @@ auto LowerFileFlushCall(
   std::vector<mir::ExprId> operands;
   const std::optional<hir::ExprId> fd = OptionalOperand(call, 0);
   if (fd) {
-    auto fd_or = LowerOperand(process, frame, *fd);
+    auto fd_or = BuildMachineIntOperand(process, frame, *fd);
     if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-    operands.push_back(frame.current_block->exprs.Add(*std::move(fd_or)));
+    operands.push_back(*fd_or);
   }
   return BuildFileIoCall(
       process, frame,
@@ -182,12 +195,11 @@ auto LowerFileGetsCall(
   auto line_or = process.LowerLhsExpr(line_hir, steps.Frame());
   if (!line_or) return std::unexpected(std::move(line_or.error()));
 
-  auto fd_or = LowerOperand(process, steps.Frame(), operands[1]);
+  auto fd_or = BuildMachineIntOperand(process, steps.Frame(), operands[1]);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  const mir::ExprId fd_id = steps.Body().exprs.Add(*std::move(fd_or));
 
   return BuildTextRead(
-      process, steps, support::BuiltinFn::kFileGets, {fd_id},
+      process, steps, support::BuiltinFn::kFileGets, {*fd_or},
       *std::move(line_or), line_type);
 }
 
@@ -244,17 +256,15 @@ auto LowerFileReadCall(
       unit.builtins.int_type);
   std::vector<mir::ExprId> operands{dest.incoming};
 
-  auto fd_or = LowerOperand(process, step_frame, head[1]);
+  auto fd_or = BuildMachineIntOperand(process, step_frame, head[1]);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  operands.push_back(body.exprs.Add(*std::move(fd_or)));
+  operands.push_back(*fd_or);
 
   if (memory != nullptr) {
-    // The destination's declared range, as the one description its type has --
-    // the same operand a select on it takes, because both are asking the
-    // declaration where an address lands.
-    operands.push_back(
-        mir::BuildTypeDescriptorRef(
-            unit, body, mir::ValueTypeOf(unit, dest_type)));
+    // The destination's declared range, which is what says where a source
+    // address lands in it.
+    operands.push_back(BuildDeclaredRanges(
+        unit, body, std::span<const hir::UnpackedRange>{&memory->dim, 1}));
     const std::int64_t lowest = std::min(memory->dim.left, memory->dim.right);
     const std::int64_t highest = std::max(memory->dim.left, memory->dim.right);
     // The start the source left out is the lowest declared index, and the
@@ -262,18 +272,19 @@ auto LowerFileReadCall(
     // what stands between the start and the end. Materializing both keeps one
     // entry for every form the source may write.
     if (const std::optional<hir::ExprId> start = OptionalOperand(call, 2)) {
-      auto start_or = LowerOperand(process, step_frame, *start);
+      auto start_or = BuildMachineIntOperand(process, step_frame, *start);
       if (!start_or) return std::unexpected(std::move(start_or.error()));
-      operands.push_back(body.exprs.Add(*std::move(start_or)));
+      operands.push_back(*start_or);
     } else {
-      operands.push_back(BuildIntLiteral(unit, body, lowest));
+      operands.push_back(BuildMachineIntLiteral(unit, body, lowest));
     }
     if (const std::optional<hir::ExprId> count = OptionalOperand(call, 3)) {
-      auto count_or = LowerOperand(process, step_frame, *count);
+      auto count_or = BuildMachineIntOperand(process, step_frame, *count);
       if (!count_or) return std::unexpected(std::move(count_or.error()));
-      operands.push_back(body.exprs.Add(*std::move(count_or)));
+      operands.push_back(*count_or);
     } else {
-      operands.push_back(BuildIntLiteral(unit, body, highest - lowest + 1));
+      operands.push_back(
+          BuildMachineIntLiteral(unit, body, highest - lowest + 1));
     }
   }
 
@@ -301,9 +312,9 @@ auto LowerFileErrorCall(
   const std::vector<hir::ExprId> operands = RequiredOperands(call, 2);
   BlockBuilder steps(frame);
 
-  auto fd_or = LowerOperand(process, steps.Frame(), operands[0]);
+  auto fd_or = BuildMachineIntOperand(process, steps.Frame(), operands[0]);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  const mir::ExprId fd_id = steps.Body().exprs.Add(*std::move(fd_or));
+  const mir::ExprId fd_id = *fd_or;
 
   const hir::Expr& message_hir = process.HirExprs().Get(operands[1]);
   const mir::TypeId message_type =
