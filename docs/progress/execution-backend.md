@@ -30,6 +30,13 @@ nothing about either backend; it states what IEEE 1800 requires and both are hel
 one refuses is recorded once for the path, so the cases absent from that record are the cases it
 runs -- coverage is read off a file that only ever shrinks, never asserted.
 
+A program its host refuses memory ends the same on both: one line saying it is out of memory, a
+failing exit status, and no `final` procedure, whether the request came while the design was built,
+while its processes were registered, or on entering a subroutine. A line the design had not
+finished, what it wrote to a file it opened and the file still holds, and the immediate cover report
+are not delivered. A failure of the tool raised while processes are registered is likewise reported
+and ends the program with a failing status on both.
+
 ## Runtime-value lifetime
 
 A value the generated side makes is an object in its own frame, built there by the entry that

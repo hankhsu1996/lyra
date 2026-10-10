@@ -39,9 +39,10 @@ package(features = ["parse_headers"])
 # The two sides of `nightly` are complements, so every target is covered once
 # and none twice, and a new one joins whichever side its tag puts it on.
 #
-# `cost` says what a test answers: what the compiler costs as it is shipped. A
-# build that changes that cost on purpose, as the sanitizer one does to every
-# append, would be measuring itself, so it leaves the target out.
+# `cost` says what a test answers: what the compiler, or a program it built,
+# costs as it is shipped -- time, stack, memory. A build that changes that cost
+# on purpose, as the sanitizer one does to every append and to the address
+# space, would be measuring itself, so it leaves the target out.
 
 cc_library(
     name = "framework",
@@ -441,6 +442,24 @@ cc_test(
     name = "compile_stack_tests",
     size = "medium",
     srcs = ["compile_stack_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"],
+    tags = ["cost"],
+    deps = [
+        ":framework",
+        "//:driver",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# Which of a program's requests an address limit refuses is set by what the
+# runtime asks for and when, and a build under the sanitizer maps address space
+# of its own that no limit this small leaves room for. The program is linked
+# with the host C++ compiler, whichever one the executing machine has.
+cc_test(
+    name = "out_of_memory_tests",
+    size = "medium",
+    srcs = ["out_of_memory_test.cpp"],
     copts = LYRA_COPTS,
     data = ["//:lyra"],
     tags = ["cost"],

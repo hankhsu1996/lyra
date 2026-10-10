@@ -114,14 +114,16 @@ void Runtime::RunSimulation() {
     // initializer reads sealed endpoints and no process runs before all of
     // them have.
     //
-    // Initializing runs in no process, so an initializer that ends the run --
-    // by asking (LRM 20.2) or by an error of the design (LRM 20.10) -- leaves
-    // the initialization itself, and this is where that lands: what is left of
-    // it does not run. The rest of the run still walks to its end -- creating a
-    // process runs none of its statements, and the final procedures run
-    // because the simulation reached its end (LRM 9.2.3).
+    // Neither stretch runs in a process, so whatever leaves one lands here. An
+    // initializer that ends the run -- by asking (LRM 20.2) or by an error of
+    // the design (LRM 20.10) -- leaves the initialization itself, and what is
+    // left of it does not run. The rest of the run still walks to its end --
+    // creating a process runs none of its statements, and the final procedures
+    // run because the simulation reached its end (LRM 9.2.3). Creating
+    // processes is therefore left only by a failure of the tool, which is
+    // reported and ends the run.
     RunAsLanding(*this, [this] { WalkInitialize(design_->Root()); });
-    WalkActivate(design_->Root());
+    RunAsLanding(*this, [this] { WalkActivate(design_->Root()); });
 
     // LRM 4.4: slots run in time order and the simulator never goes backwards,
     // so the earliest pending slot is always the next one. Time moves only to a

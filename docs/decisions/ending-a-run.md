@@ -49,6 +49,8 @@ $fatal                      report + stop + departure
 $finish / $exit / $stop     stop + departure
 a design run-time error     report [+ stop + departure]  by its chosen severity
 an internal inconsistency   the tool stops the run; none of the three, and no ending of the design's
+a refused request for       the program ends where it asked; none of the three, and nothing of
+memory                      the run after it
 ```
 
 The composition is not new. `$fatal` already lowers to a severity emit followed by a finish request,
@@ -113,6 +115,15 @@ D5. What decides whether `final` procedures run is whether the simulation reache
     code, and the state it would read is already known to be wrong. What the tool owes either way --
     the immediate cover report (LRM 16.3), the output drain, the exit status -- is owed because the
     run is over, so it is not on this axis at all.
+
+    One ending pays none of that: a request for memory the host refuses. Whatever runs after it
+    may ask again -- composing a report, leaving a frame, stopping the engine -- so the request is
+    where the program ends, having written one line it needed nothing to write and every line the
+    design had finished on standard output. A line it had not finished, the cover report and what
+    a file the design opened still holds are not delivered. LLVM's own handler and Rust's standard
+    library end a program the same way and for that reason; the status is a failing exit rather
+    than their signal, because who acts on it is the design's author, and a signal is how a defect
+    of the tool reads.
 
 D6. `$stop` ends the run where a tool has no interactive mode, and the diagnostic is the whole of
     what separates it from `$finish`. LRM 20.2 has `$stop` suspend the simulation and `$finish` exit

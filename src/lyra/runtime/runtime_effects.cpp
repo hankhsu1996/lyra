@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <exception>
 #include <format>
-#include <new>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -279,8 +278,6 @@ void ReportRaisedError(
     rt.ReportDesignError(error.what());
   } catch (const InternalError& error) {
     rt.ReportToolFailure(std::format("internal error: {}", error.what()));
-  } catch (const std::bad_alloc&) {
-    rt.ReportToolFailure("out of memory");
   } catch (const std::exception& error) {
     rt.ReportToolFailure(std::format("unexpected error: {}", error.what()));
   }

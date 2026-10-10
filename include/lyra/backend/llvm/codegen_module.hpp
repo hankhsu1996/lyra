@@ -113,8 +113,8 @@ inline constexpr std::uint64_t kOffsetToTopEntry = 2;
 // C++ runtime ends the program if it is ever entered.
 inline constexpr std::string_view kNoBody = "__cxa_pure_virtual";
 
-// The allocation function a value's storage comes from (C++ ABI mangling of
-// `operator new(std::size_t)`).
+// The allocation function storage the program asks for comes from (C++ ABI
+// mangling of `operator new(std::size_t)`).
 inline constexpr std::string_view kOperatorNew = "_Znwm";
 
 // Module-level code generation: owns the context and module, declares every
@@ -191,6 +191,11 @@ class CodeGenModule {
   // descriptions of that part's class and of the wanted one, and a hint of
   // where the wanted part sits, it answers the wanted part or null.
   auto DynamicCast() -> llvm::FunctionCallee;
+  // The host's allocation function, handed a size and answering with storage
+  // of it, and its sized deallocation function, handed the storage and its
+  // size (C++ ABI mangling of `operator delete(void*, std::size_t)`).
+  auto OperatorNew() -> llvm::FunctionCallee;
+  auto SizedOperatorDelete() -> llvm::FunctionCallee;
 
   // The library kind a value of `type` is, which names the entries acting on
   // it; a type the library realizes as no kind of its own is one this backend
@@ -283,9 +288,6 @@ class CodeGenModule {
       -> llvm::FunctionCallee;
   auto MemberStorageDestructor(support::DeclaredMemberStorage storage)
       -> llvm::Function*;
-  // The host's sized deallocation function, handed the storage and its size
-  // (C++ ABI mangling of `operator delete(void*, std::size_t)`).
-  auto SizedOperatorDelete() -> llvm::FunctionCallee;
   // What registers a function to run on an object when the program exits (C++
   // ABI 3.3.6.3): handed the function, the object and this module's handle.
   auto AtExit() -> llvm::FunctionCallee;
