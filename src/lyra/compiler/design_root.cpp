@@ -59,7 +59,7 @@ auto BuildDesignRootHir(
         root.root_scope.instance_members.Declare();
     root.root_scope.instance_members.Define(
         instance, hir::InstanceMemberDecl{
-                      .instance_name = top.instance_name,
+                      .instance_name = top.name_in_a_path,
                       .array_dims = {},
                       .alternatives = {hir::InstanceAlternative{
                           .scope_class = scope_class, .arguments = {}}},

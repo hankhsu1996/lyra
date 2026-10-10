@@ -38,6 +38,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/timing.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
@@ -1135,8 +1136,8 @@ void VerifyInstanceMembers(
   for (const InstanceMemberId id : scope.instance_members.Ids()) {
     const InstanceMemberDecl& instance = scope.instance_members.Get(id);
     std::size_t objects = 1;
-    for (const std::uint32_t count : instance.array_dims) {
-      objects *= count;
+    for (const UnpackedRange& dim : instance.array_dims) {
+      objects *= dim.ElementCount();
     }
     const bool every_one_built =
         instance.taken.size() == objects &&

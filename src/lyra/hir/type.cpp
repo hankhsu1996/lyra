@@ -50,6 +50,10 @@ auto UnpackedRange::ElementCount() const -> std::uint64_t {
   return static_cast<std::uint64_t>(span) + 1U;
 }
 
+auto UnpackedRange::LowestIndex() const -> std::int64_t {
+  return std::min(left, right);
+}
+
 namespace {
 
 template <typename T>

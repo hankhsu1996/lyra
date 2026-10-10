@@ -72,10 +72,12 @@ enum class ProceduralScopeKind : std::uint8_t {
 struct ProceduralScopeDecl {
   ProceduralScopeKind kind = ProceduralScopeKind::kBlock;
   // The identifier the source gave this scope -- a `block_identifier` (LRM
-  // 9.3.5) or a subroutine name -- absent when it gave none. Its presence is
-  // what a hierarchical path can reach (LRM 23.9), so everything that follows
-  // from reachability reads it here. Distinct from `Stmt.label` (LRM 6.21
-  // statement label); the two never share storage.
+  // 9.3.5) or a subroutine name -- as a hierarchical name writes it (LRM 23.6),
+  // which is escaped where such a name has to escape it; absent when the
+  // source gave none. Its presence is what a hierarchical path can reach (LRM
+  // 23.9), so everything that follows from reachability reads it here.
+  // Distinct from `Stmt.label` (LRM 6.21 statement label); the two never share
+  // storage.
   std::optional<std::string> source_name;
   std::vector<ProceduralVarId> declarations;
   std::vector<ProceduralScopeId> child_scopes;

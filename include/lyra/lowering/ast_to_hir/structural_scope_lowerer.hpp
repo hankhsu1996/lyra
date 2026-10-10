@@ -1,9 +1,7 @@
 #pragma once
 
-#include <cstdint>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -21,6 +19,7 @@
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
 
@@ -74,9 +73,9 @@ class StructuralScopeLowerer {
       hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
       hir::StructuralDataObjectKind kind) -> diag::Result<void>;
   auto BuildInstanceMember(
-      std::string_view instance_name,
+      const slang::ast::Symbol& declared,
       std::span<const slang::ast::InstanceSymbol* const> elements,
-      std::vector<std::uint32_t> dims, WalkFrame frame)
+      std::vector<hir::UnpackedRange> dims, WalkFrame frame)
       -> diag::Result<hir::InstanceMemberDecl>;
   auto PopulateMember(const slang::ast::Symbol& member, WalkFrame frame)
       -> diag::Result<void>;

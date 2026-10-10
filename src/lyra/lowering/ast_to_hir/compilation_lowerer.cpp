@@ -35,6 +35,7 @@
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -388,6 +389,7 @@ auto TopLevelUnits(
     tops.emplace_back(
         TopLevelUnit{
             .instance_name = std::string{inst->name},
+            .name_in_a_path = NameInAPath(*inst),
             .unit_name = policy.NameOf(*inst)});
   }
   return tops;

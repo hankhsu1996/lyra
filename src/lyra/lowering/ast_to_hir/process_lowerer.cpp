@@ -18,6 +18,7 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/lowering/ast_to_hir/lifetime_extension.hpp"
+#include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -121,7 +122,7 @@ auto ProcessLowerer::RunConcurrentAssertion(
   if (named_block != nullptr) {
     labelled.emplace(
         owner_->LookupProceduralScope(*named_block),
-        hir::ProceduralScopeKind::kBlock, std::string{named_block->name});
+        hir::ProceduralScopeKind::kBlock, NameInAPath(*named_block));
   }
   const WalkFrame frame =
       labelled.has_value() ? root_frame.WithOpenScope(&*labelled) : root_frame;

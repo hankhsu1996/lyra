@@ -39,6 +39,7 @@
 #include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
+#include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -629,7 +630,8 @@ auto BuildInterfaceForwardingMethod(
   hir::ProceduralBody body;
   OpenProceduralScope root{
       class_frame.ProceduralScopes().Declare(),
-      hir::ProceduralScopeKind::kSubroutineRoot, std::string{name}};
+      hir::ProceduralScopeKind::kSubroutineRoot,
+      NameInAPath(name, impl.getParentScope()->getCompilation())};
   std::vector<hir::SubroutineParam> params;
   std::vector<std::optional<hir::ExprId>> args;
   for (const hir::ExternalCalleeParam& formal : forwarded->interface.params) {

@@ -35,6 +35,7 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
 #include "lyra/hir/subroutine.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/hir/value_ref.hpp"
 
 namespace lyra::hir {
@@ -315,9 +316,13 @@ struct InstanceAlternative {
   auto operator==(const InstanceAlternative&) const -> bool = default;
 };
 
-// A child built from another compilation unit. `array_dims` is empty for a
-// scalar instance and holds one element count per dimension, outermost first,
-// for an instance array (`Child c[2][3]` is `{2, 3}`).
+// A child built from another compilation unit, under the name a hierarchical
+// name writes for it (LRM 23.6): the identifier as it stands, or escaped where
+// such a name has to escape it. `array_dims` is empty for a scalar instance
+// and holds the range each dimension declares, outermost first, for an
+// instance array (`Child c[2][3:5]` is `{[0:1], [3:5]}`). The range is how
+// many elements a dimension has and which index selects each, the element at
+// a position being the one that many above the range's lowest index.
 //
 // Every element of an array takes what its instantiation wrote (LRM 23.3.2),
 // so its elements differ only where something written elsewhere reached one of
@@ -327,7 +332,7 @@ struct InstanceAlternative {
 // instantiation are one unit and this scope states the same thing for each.
 struct InstanceMemberDecl {
   std::string instance_name;
-  std::vector<std::uint32_t> array_dims;
+  std::vector<UnpackedRange> array_dims;
   std::vector<InstanceAlternative> alternatives;
   std::vector<std::uint32_t> taken;
 
@@ -338,13 +343,13 @@ struct InstanceMemberDecl {
 // another unit that it neither owns nor builds; the parent binds them during
 // elaboration, the way it binds a `ref` port's internal name to the connected
 // variable. `array_dims` is empty for a port standing for one instance and
-// holds one element count per dimension, outermost first, for a port carrying
-// a range: the port is one member however many instances it stands for,
+// holds the range each dimension declares, outermost first, for a port
+// carrying one: the port is one member however many instances it stands for,
 // holding a handle on each. Which kind of instance is bound at each position
 // is what the type this scope published for the port states.
 struct InterfacePortDecl {
   std::string name;
-  std::vector<std::uint32_t> array_dims;
+  std::vector<UnpackedRange> array_dims;
 
   auto operator==(const InterfacePortDecl&) const -> bool = default;
 };
@@ -669,8 +674,9 @@ struct Generate {
 }
 
 struct StructuralScope {
-  // LRM source name of a generate child (label, or `genblk<n>` when unnamed,
-  // LRM 27.6); empty for other scopes.
+  // The label of a generate child as a hierarchical name writes it (LRM 23.6,
+  // 27.6), escaped where such a name has to escape it; empty for a block the
+  // source gave no label and for other scopes.
   std::string source_name;
   TimeResolution time_resolution;
   base::Registry<StructuralDataObjectDecl, StructuralDataObjectId>

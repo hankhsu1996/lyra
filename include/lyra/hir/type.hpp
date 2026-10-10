@@ -174,6 +174,7 @@ struct UnpackedRange {
   std::int64_t right;
 
   [[nodiscard]] auto ElementCount() const -> std::uint64_t;
+  [[nodiscard]] auto LowestIndex() const -> std::int64_t;
 
   auto operator==(const UnpackedRange&) const -> bool = default;
 };

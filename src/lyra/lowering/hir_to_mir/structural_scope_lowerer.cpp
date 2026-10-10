@@ -243,46 +243,50 @@ void AppendToSequence(
                   grown))});
 }
 
-// Builds one object an external-unit instance member declares, at the positions
-// `coords` names, and hands back the borrowed pointer the runtime tree returns.
-// The object is built and given to the tree to own, its Segment the label plus
-// those positions (LRM 23.3.3.5). A position is a value the construction counts
-// out rather than a constant, so a declaration covering many objects builds
-// them in a loop; a scalar instance is the position-free case, built by the
-// same expression. `arguments` are what the object's constructor is passed, one
-// per parameter it takes at construction.
-auto BuildOwnedInstance(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId parent_self,
-    const std::string& runtime_label, std::string_view declaring_unit,
-    mir::TypeId owning_pointer_type, mir::TypeId borrowed_pointer_type,
-    std::span<const mir::LocalId> coords, std::vector<mir::Expr> arguments)
+// What a scope adds to the hierarchical name of everything inside it (LRM
+// 23.6): `name`, which arrives as such a name writes it, and one index per
+// dimension it is an element of. A scope standing alone has no index, and one
+// the source gave no name has an empty name, which keeps it off every
+// hierarchical name the run reports.
+auto BuildHierarchySegment(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const std::string& name, std::span<const mir::ExprId> indices)
     -> mir::ExprId {
-  mir::Block& block = *frame.current_block;
-  const auto& builtins = unit_lowerer.Unit().builtins;
-
-  std::vector<mir::ExprId> indices;
-  indices.reserve(coords.size());
-  for (const mir::LocalId coord : coords) {
-    indices.push_back(
-        block.exprs.Add(mir::MakeLocalRefExpr(coord, builtins.int_type)));
-  }
-  const mir::TypeId indices_type = mir::MachineArrayOf(
-      unit_lowerer.Unit().types, builtins.int_type, indices.size());
   const mir::ExprId indices_id = block.exprs.Add(
       mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(indices)},
-          .type = indices_type});
-  const mir::ExprId segment_id = block.exprs.Add(
+          .data = mir::CompositeExpr{.parts = {indices.begin(), indices.end()}},
+          .type = mir::MachineArrayOf(
+              unit.types, unit.builtins.int_type, indices.size())});
+  return block.exprs.Add(
       mir::Expr{
           .data =
               mir::CallExpr{
                   .callee = mir::Construct{},
                   .arguments =
                       {block.exprs.Add(
-                           mir::MakeStringLiteral(
-                               builtins.string, runtime_label)),
+                           mir::MakeStringLiteral(unit.builtins.string, name)),
                        indices_id}},
-          .type = builtins.hierarchy_segment});
+          .type = unit.builtins.hierarchy_segment});
+}
+
+// Builds one object an external-unit instance member declares and hands back
+// the borrowed pointer the runtime tree returns. The object is built and given
+// to the tree to own, under `runtime_label` and the index `indices` give it in
+// each dimension of its declaration (LRM 23.3.3.5). An index is a value the
+// construction counts out rather than a constant, so a declaration covering
+// many objects builds them in a loop; a scalar instance is the index-free
+// case, built by the same expression. `arguments` are what the object's
+// constructor is passed, one per parameter it takes at construction.
+auto BuildOwnedInstance(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId parent_self,
+    const std::string& runtime_label, std::string_view declaring_unit,
+    mir::TypeId owning_pointer_type, mir::TypeId borrowed_pointer_type,
+    std::span<const mir::ExprId> indices, std::vector<mir::Expr> arguments)
+    -> mir::ExprId {
+  mir::Block& block = *frame.current_block;
+  const auto& builtins = unit_lowerer.Unit().builtins;
+  const mir::ExprId segment_id =
+      BuildHierarchySegment(unit_lowerer.Unit(), block, runtime_label, indices);
 
   // This unit read what the instantiated one published, which states what may
   // be reached and never how much storage an object takes, so the object is
@@ -355,6 +359,25 @@ auto BuildAlternative(
   auto arguments =
       LowerConstructorArguments(lowerer, frame, alternative.arguments);
   if (!arguments) return std::unexpected(std::move(arguments.error()));
+
+  // An element is selected by an index of the range its dimension declares
+  // (LRM 23.6), and the one at a position is that many above the lowest.
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  std::vector<mir::ExprId> indices;
+  indices.reserve(coords.size());
+  for (std::size_t d = 0; d < coords.size(); ++d) {
+    indices.push_back(block.exprs.Add(
+        mir::Expr{
+            .data =
+                mir::BinaryExpr{
+                    .op = mir::BinaryOp::kAdd,
+                    .lhs = BuildIntLiteral(
+                        unit, block, member.array_dims[d].LowestIndex()),
+                    .rhs = block.exprs.Add(
+                        mir::MakeLocalRefExpr(
+                            coords[d], unit.builtins.int_type))},
+            .type = unit.builtins.int_type}));
+  }
   const mir::ExprId built = BuildOwnedInstance(
       unit_lowerer, frame, parent_self, member.instance_name,
       unit_lowerer.Hir()
@@ -362,7 +385,7 @@ auto BuildAlternative(
           .unit_name,
       MakeExternalUnitPointer(
           unit_lowerer, alternative, mir::PointerOwnership::kUnique),
-      borrowed, coords, *std::move(arguments));
+      borrowed, indices, *std::move(arguments));
   return ObjectAs(block, built, held);
 }
 
@@ -438,7 +461,8 @@ auto BuildElement(
                       .lhs = at,
                       .rhs = BuildIntLiteral(
                           unit, block,
-                          static_cast<std::int64_t>(member.array_dims[d]))},
+                          static_cast<std::int64_t>(
+                              member.array_dims[d].ElementCount()))},
               .type = unit.builtins.int_type});
       at = block.exprs.Add(
           mir::Expr{
@@ -481,7 +505,7 @@ auto BuildInstanceMemberValue(
   }
 
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const std::uint32_t count = member.array_dims[coords.size()];
+  const std::uint64_t count = member.array_dims[coords.size()].ElementCount();
   const mir::TypeId sequence_type = SequenceOver(
       unit_lowerer, held, member.array_dims.size() - coords.size());
 
@@ -1381,12 +1405,12 @@ void ValidateOwnedChildConstruction(
 // indices}, ctor_args...))`: the child instance is built carrying
 // its complete hierarchy identity, then handed to the parent to own. What
 // comes back is a borrowed pointer, which is what a route navigates through
-// and what the caller stores. `runtime_label` is the SV-visible identifier; an
-// anonymous scope gets an empty label, which keeps it off every hierarchical
-// path the runtime reports (LRM 23.6), and `indices` are the coordinates it
-// stands at on that path -- a loop's block stands at its index. `arm_frame`
-// must point at the block where the stmts land and carry the constructor's
-// bindings so a `self` read resolves to the receiver binding.
+// and what the caller stores. `runtime_label` is the child's name as a
+// hierarchical name writes it (LRM 23.6), empty for a scope the source gave
+// none, and `indices` are the coordinates it stands at on that name -- a
+// loop's block stands at its index. `arm_frame` must point at the block where
+// the stmts land and carry the constructor's bindings so a `self` read
+// resolves to the receiver binding.
 //
 // Where the child hangs in the runtime tree and who keeps the borrowed handle
 // to it are separate: `runtime_parent_handle` names an object this one already
@@ -1409,11 +1433,6 @@ auto BuildOwnedChildHandle(
   const mir::TypeId child_ptr_type =
       MakeUniqueObjectPointer(unit_lowerer, child_scope_id);
 
-  const auto string_literal = [&](const std::string& s) -> mir::ExprId {
-    return arm_block.exprs.Add(
-        mir::Expr{
-            .data = mir::StringLiteral{.value = s}, .type = builtins.string});
-  };
   const auto self_read = [&]() -> mir::ExprId {
     return arm_block.exprs.Add(MakeSelfRefExpr(arm_frame, self_ptr_type));
   };
@@ -1433,19 +1452,8 @@ auto BuildOwnedChildHandle(
   // Build the child's structural identity once and pass it as the child's
   // own ctor argument. The child holds onto it from the moment its
   // constructor returns; %m and debug traces read from that single source.
-  const mir::TypeId indices_type = mir::MachineArrayOf(
-      unit_lowerer.Unit().types, builtins.int_type, indices.size());
-  const mir::ExprId indices_id = arm_block.exprs.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = {indices.begin(), indices.end()}},
-          .type = indices_type});
-  const mir::ExprId segment_id = arm_block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = {string_literal(runtime_label), indices_id}},
-          .type = builtins.hierarchy_segment});
+  const mir::ExprId segment_id = BuildHierarchySegment(
+      unit_lowerer.Unit(), arm_block, runtime_label, indices);
 
   std::vector<mir::ExprId> ctor_call_args;
   ctor_call_args.reserve(2 + arguments.size());
