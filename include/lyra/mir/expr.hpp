@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -719,7 +720,7 @@ struct Expr {
 
 // `callee(arguments...)`, answering `type`.
 [[nodiscard]] inline auto MakeCallExpr(
-    Callee callee, std::vector<ExprId> arguments, TypeId type) -> Expr {
+    Direct callee, std::vector<ExprId> arguments, TypeId type) -> Expr {
   return Expr{
       .data =
           CallExpr{

@@ -97,11 +97,11 @@ class WideVector {
     if (this == &other) {
       return *this;
     }
-    if (words_.size() == other.words_.size()) {
-      std::ranges::copy(other.words_, words_.begin());
-    } else {
-      words_ = other.words_;
+    if (SameRepresentation(other)) {
+      TakeBytes(other.Bytes());
+      return *this;
     }
+    words_ = other.words_;
     width_ = other.width_;
     return *this;
   }
@@ -109,11 +109,11 @@ class WideVector {
     if (this == &other) {
       return *this;
     }
-    if (words_.size() == other.words_.size()) {
-      std::ranges::copy(other.words_, words_.begin());
-    } else {
-      words_ = std::move(other.words_);
+    if (SameRepresentation(other)) {
+      TakeBytes(other.Bytes());
+      return *this;
     }
+    words_ = std::move(other.words_);
     width_ = other.width_;
     return *this;
   }
