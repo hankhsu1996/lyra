@@ -4,15 +4,25 @@
 // array, and an expression operand reports its self-determined type without
 // being evaluated. A user-defined name is prefixed by the scope that declares
 // it and an enumeration carries its members' encoded values (LRM 20.6.1).
+// An enumeration written in place as a member's type is given a name the
+// system generates, whose number is the system's to choose, and the name of a
+// type is a constant.
 module Top;
   typedef bit node;
   typedef enum bit [1:0] {A, B, C = 3} step;
+  typedef struct packed {
+    enum logic [1:0] {IDLE, BUSY} mode;
+    logic valid;
+  } status;
+
+  localparam string kNameOfStatus = $typename(status);
 
   node unpacked_vector[2:0];
   int elements[];
   int signed explicitly_signed;
   string text;
   step state;
+  status flags;
   int i;
 
   int probe_calls;
@@ -22,6 +32,9 @@ module Top;
   string name_of_signed;
   string name_of_string;
   string name_of_enum;
+  string name_of_status;
+  string before_number;
+  string after_number;
   string name_of_expression;
   string name_of_call;
 
@@ -37,6 +50,9 @@ module Top;
     name_of_signed = $typename(explicitly_signed);
     name_of_string = $typename(text);
     name_of_enum = $typename(state);
+    name_of_status = $typename(flags);
+    before_number = "struct packed{enum{IDLE=2'd0,BUSY=2'd1}Top.e$";
+    after_number = " mode;logic valid;}Top.status";
     name_of_expression = $typename(i + i);
     name_of_call = $typename(probe());
   end
@@ -55,6 +71,15 @@ module Top;
       $fatal(1, "a string was '%s', expected 'string'", name_of_string);
     if (name_of_enum != "enum{A=2'd0,B=2'd1,C=2'd3}Top.step")
       $fatal(1, "the enumeration was '%s'", name_of_enum);
+    if (name_of_status.len() <= before_number.len() + after_number.len()
+        || name_of_status.substr(0, before_number.len() - 1) != before_number
+        || name_of_status.substr(name_of_status.len() - after_number.len(),
+                                 name_of_status.len() - 1) != after_number)
+      $fatal(1, "the structure holding an enumeration was '%s'",
+             name_of_status);
+    if (kNameOfStatus != name_of_status)
+      $fatal(1, "the constant name was '%s', the name where it runs '%s'",
+             kNameOfStatus, name_of_status);
     if (name_of_expression != "int")
       $fatal(1, "the sum of two ints was '%s', expected 'int'",
              name_of_expression);
