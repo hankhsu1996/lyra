@@ -1,9 +1,6 @@
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 
-#include <algorithm>
 #include <array>
-#include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -18,15 +15,14 @@
 #include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/inc_dec_op.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -35,7 +31,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -94,24 +89,12 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
             return TargetOutlivesDeferredUpdate(block, d.pointer);
           },
           // A call in target position names a place through the object it
-          // dispatches on. A join stands for the destructuring LHS it came
-          // from, which writes each operand through that operand's own root, so
-          // the whole outlives the update exactly when every operand does.
+          // dispatches on.
           [&](const mir::CallExpr& c) {
             const std::optional<mir::ExprId> receiver =
                 mir::CalleeReceiver(c.callee);
-            if (!receiver.has_value()) {
-              return false;
-            }
-            if (!TargetOutlivesDeferredUpdate(block, *receiver)) {
-              return false;
-            }
-            if (mir::DirectBuiltinFn(c) != support::BuiltinFn::kConcatBits) {
-              return true;
-            }
-            return std::ranges::all_of(c.arguments, [&](mir::ExprId op) {
-              return TargetOutlivesDeferredUpdate(block, op);
-            });
+            return receiver.has_value() &&
+                   TargetOutlivesDeferredUpdate(block, *receiver);
           },
           // A form that names no storage: a value composed, read, converted,
           // chosen, awaited, or written somewhere else. The target lowering
@@ -185,30 +168,19 @@ auto FreezeTarget(
 }
 
 // What a deferred update writes, and where it writes it, once both are frozen
-// into a closure's environment: the navigation to the target's owner is
+// into a closure's environment: the navigation to the place's owner is
 // evaluated where the statement is reached and captured as a reference, the
 // descent above it is restated over that capture with its coordinates
-// snapshotted, and each operand is snapshotted. LRM 10.4.2 settles both there,
+// snapshotted, and the value is snapshotted. LRM 10.4.2 settles both there,
 // however much later the update runs.
-struct FrozenAssignment {
-  AccessPath target;
-  std::vector<mir::ExprId> operands;
-};
-
-auto FreezeAssignmentInto(
+auto FreezeShareInto(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
-    ClosureBuilder& closure, const AccessPath& target_in_outer,
-    std::span<const mir::ExprId> operands_in_outer) -> FrozenAssignment {
-  FrozenAssignment frozen{
-      .target =
-          FreezeTarget(unit_lowerer, outer_frame, closure, target_in_outer),
-      .operands = {}};
-  frozen.operands.reserve(operands_in_outer.size());
-  for (const mir::ExprId op : operands_in_outer) {
-    frozen.operands.push_back(
-        SnapshotIntoClosure(unit_lowerer, outer_frame, closure, op));
-  }
-  return frozen;
+    ClosureBuilder& closure, const Share& share_in_outer) -> Share {
+  return Share{
+      .place = FreezeTarget(
+          unit_lowerer, outer_frame, closure, share_in_outer.place),
+      .value = SnapshotIntoClosure(
+          unit_lowerer, outer_frame, closure, share_in_outer.value)};
 }
 
 // The update runs after the stretch that reached the statement returns, and it
@@ -239,36 +211,39 @@ auto CheckTargetOutlivesUpdate(
   return {};
 }
 
-// Applies a target's write where the statement is reached, or as an update due
-// later. `effect_fn(block, target, operands)`
-// builds the write into `block`, the same node for either timing, so a target
-// says nothing about when its write happens (LRM 10.4).
-template <typename EffectFn>
-auto ApplyAssignEffect(
-    ProcessLowerer& process, WalkFrame frame, const hir::EffectTiming& timing,
-    diag::SourceSpan span, const AccessPath& target_in_outer,
-    std::span<const mir::ExprId> operands_in_outer, EffectFn effect_fn)
-    -> diag::Result<mir::Expr> {
-  auto& block = *frame.current_block;
-  const auto* deferred = std::get_if<hir::NonBlockingEffect>(&timing);
-  if (deferred == nullptr) {
-    return effect_fn(block, target_in_outer, operands_in_outer);
+// The stores one nonblocking assignment makes, as one update due later. The
+// source wrote one statement, so however many places it writes they are frozen
+// together and due at one placement, which is what makes a control on the
+// assignment read once and land every share in the same slot (LRM 9.4.5,
+// 10.4.2).
+auto BuildDeferredStores(
+    ProcessLowerer& process, WalkFrame frame, diag::SourceSpan span,
+    const std::optional<hir::DelayOrEventControl>& control,
+    std::span<const Share> shares) -> diag::Result<mir::Expr> {
+  for (const Share& share : shares) {
+    auto outlives = CheckTargetOutlivesUpdate(
+        *frame.current_block, share.place.owner, span);
+    if (!outlives) return std::unexpected(std::move(outlives.error()));
   }
-  auto outlives = CheckTargetOutlivesUpdate(block, target_in_outer.owner, span);
-  if (!outlives) return std::unexpected(std::move(outlives.error()));
   return BuildDeferredEffect(
-      process, frame, deferred->control,
-      [&](ClosureBuilder& closure) -> diag::Result<FrozenAssignment> {
-        return FreezeAssignmentInto(
-            process.Owner(), frame, closure, target_in_outer,
-            operands_in_outer);
+      process, frame, control,
+      [&](ClosureBuilder& closure) -> diag::Result<std::vector<Share>> {
+        std::vector<Share> frozen;
+        frozen.reserve(shares.size());
+        for (const Share& share : shares) {
+          frozen.push_back(
+              FreezeShareInto(process.Owner(), frame, closure, share));
+        }
+        return frozen;
       },
-      [&](mir::Block& body, const FrozenAssignment& frozen) {
-        body.AppendStmt(
-            mir::ExprStmt{
-                .expr = body.exprs.Add(effect_fn(
-                    body, frozen.target,
-                    std::span<const mir::ExprId>(frozen.operands)))});
+      [&](mir::Block& body, const std::vector<Share>& frozen) {
+        for (const Share& share : frozen) {
+          body.AppendStmt(
+              mir::ExprStmt{
+                  .expr = body.exprs.Add(BuildStoreExpr(
+                      process.Owner().Unit(), body, share.place,
+                      share.value))});
+        }
       });
 }
 
@@ -332,99 +307,93 @@ auto StoreOf(
   return AssignedStore{.target = std::move(settled.place), .stored = applied};
 }
 
+// An increment or a decrement of a join, as steps of `frame`'s block: the
+// members settled and read together, the step applied at `type`, and each
+// member given its share of the result (LRM 11.4.2, 11.4.12). Answers what the
+// members held before and after.
+struct SteppedJoin {
+  mir::ExprId before;
+  mir::ExprId after;
+};
+
+template <ExprLowerer Lowerer>
+auto StepJoin(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::IncDecExpr& inc,
+    const hir::Expr& target, std::optional<mir::TypeId> type)
+    -> diag::Result<SteppedJoin> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  auto lvalue = LowerLvalue(lowerer, target, frame);
+  if (!lvalue) return std::unexpected(std::move(lvalue.error()));
+  auto settled = ReadThenWrite(lowerer.Owner(), frame, *std::move(lvalue));
+  if (!settled) return std::unexpected(std::move(settled.error()));
+  const mir::TypeId stepped_at = type.value_or(settled->lvalue.type);
+  const mir::ExprId before = EvaluatedOnce(
+      frame, ConvertToType(unit, block, settled->incoming, stepped_at));
+  const mir::ExprId after = EvaluatedOnce(
+      frame, block.exprs.Add(BuildMirBinaryExpr(
+                 unit, block, StepOperator(inc.op), before,
+                 One(unit, block, stepped_at), stepped_at)));
+  auto stored = AppendStores(lowerer.Owner(), frame, settled->lvalue, after);
+  if (!stored) return std::unexpected(std::move(stored.error()));
+  return SteppedJoin{.before = before, .after = after};
+}
+
 }  // namespace
 
-auto Destructure(
-    ProcessLowerer& process, const WalkFrame& frame,
-    const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat,
-    diag::SourceSpan span) -> diag::Result<mir::ExprId> {
-  if (assign.compound.has_value()) {
-    throw InternalError(
-        "Destructure: a compound assignment to a concatenation is not a legal "
-        "SV form (LRM A.6.2 grammar)");
-  }
-  const hir::ProceduralBody& hir_proc = process.HirBody();
-  mir::CompilationUnit& unit = process.Owner().Unit();
+template <ExprLowerer Lowerer>
+auto AssignToJoin(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::AssignExpr& assign,
+    const hir::Expr& lhs, diag::SourceSpan span) -> diag::Result<mir::ExprId> {
+  UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
+  const auto* deferred = std::get_if<hir::NonBlockingEffect>(&assign.timing);
 
-  std::vector<std::uint64_t> part_widths;
-  part_widths.reserve(lhs_concat.operands.size());
-  mir::IntegralStateKind state_kind = mir::IntegralStateKind::kTwoState;
-  std::uint64_t total_width = 0;
-  for (const hir::ExprId op_id : lhs_concat.operands) {
-    const hir::Expr& op = hir_proc.exprs.Get(op_id);
-    if (!process.Owner().Hir().types.Get(op.type).IsIntegral()) {
-      throw InternalError(
-          "Destructure: a destructuring operand is not an integral type");
-    }
-    // Width and state domain are properties of the operand's MIR type, which
-    // is what the bound value is sliced against.
-    const mir::IntegralType part =
-        unit.types.Get(process.Owner().TranslateType(op.type)).Integral();
-    part_widths.push_back(part.bit_width);
-    total_width += part.bit_width;
-    if (part.state_kind == mir::IntegralStateKind::kFourState) {
-      state_kind = mir::IntegralStateKind::kFourState;
-    }
-  }
-  if (total_width == 0) {
-    throw InternalError("Destructure: the total width must be positive");
-  }
-
-  // The right-hand side is evaluated once and the bound value is what gets
-  // distributed, which is what makes `{a, b} = {b, a}` swap.
-  const mir::TypeId bound_type =
-      mir::PackedVectorOf(unit.types, total_width, state_kind);
-  auto rhs_or = process.LowerExpr(hir_proc.exprs.Get(assign.rhs), frame);
+  auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(assign.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  const mir::LocalId bound = frame.bindings->DeclareAnonymous(bound_type);
-  block.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = bound,
-          .init = ConvertToType(
-              unit, block, block.exprs.Add(*std::move(rhs_or)), bound_type)});
-  const auto read_bound = [&] {
-    return block.exprs.Add(mir::MakeLocalRefExpr(bound, bound_type));
-  };
+  mir::ExprId stored = block.exprs.Add(*std::move(rhs_or));
+  auto lvalue_or = LowerLvalue(lowerer, lhs, frame);
+  if (!lvalue_or) return std::unexpected(std::move(lvalue_or.error()));
+  Lvalue lvalue = *std::move(lvalue_or);
 
-  // MSB-first: operands[0] takes the high bits, operands.back() the low ones.
-  std::vector<DestructuredPart> parts;
-  parts.reserve(lhs_concat.operands.size());
-  std::uint64_t offset = total_width;
-  for (std::size_t i = 0; i < lhs_concat.operands.size(); ++i) {
-    const std::uint64_t w = part_widths[i];
-    offset -= w;
-    const hir::Expr& part = hir_proc.exprs.Get(lhs_concat.operands[i]);
-    auto part_lhs_or = process.LowerLhsExpr(part, frame);
-    if (!part_lhs_or) {
-      return std::unexpected(std::move(part_lhs_or.error()));
-    }
-    const mir::TypeId part_type = process.Owner().TranslateType(part.type);
-    const mir::ExprId share = block.exprs.Add(BuildPackedBitsRead(
-        process.Owner(), block, read_bound(), offset,
-        mir::PackedVectorOf(unit.types, w, state_kind)));
-    parts.push_back(
-        DestructuredPart{
-            .target = *std::move(part_lhs_or),
-            .value = ConvertToType(unit, block, share, part_type)});
+  // An assignment operator applies to what the members hold together, with
+  // every member settled once for the read and the write (LRM 11.4.1).
+  if (assign.compound.has_value()) {
+    auto settled = ReadThenWrite(unit_lowerer, frame, std::move(lvalue));
+    if (!settled) return std::unexpected(std::move(settled.error()));
+    lvalue = std::move(settled->lvalue);
+    stored = AppliedTo(
+        unit, block, *assign.compound,
+        unit_lowerer.TranslateType(assign.compound->applied_at),
+        settled->incoming, stored);
   }
 
-  if (const auto* deferred =
-          std::get_if<hir::NonBlockingEffect>(&assign.timing)) {
-    auto effect_or = BuildDestructuredDeferredAssign(
-        process, frame, span, deferred->control, parts);
-    if (!effect_or) return std::unexpected(std::move(effect_or.error()));
+  // What is stored is evaluated once, before any member is written, which is
+  // what makes `{a, b} = {b, a}` swap, and it is the assignment's value (LRM
+  // 11.3.6).
+  const mir::ExprId value = EvaluatedOnce(frame, stored);
+  if (deferred == nullptr) {
+    auto written = AppendStores(unit_lowerer, frame, lvalue, value);
+    if (!written) return std::unexpected(std::move(written.error()));
+    return value;
+  }
+  // Only a procedure has a later region to place a write in (LRM 10.4), and
+  // there every member is frozen where the statement is reached (LRM 10.4.2).
+  auto shares = Shares(unit_lowerer, frame, lvalue, value);
+  if (!shares) return std::unexpected(std::move(shares.error()));
+  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
+    auto update =
+        BuildDeferredStores(lowerer, frame, span, deferred->control, *shares);
+    if (!update) return std::unexpected(std::move(update.error()));
     block.AppendStmt(
-        mir::ExprStmt{.expr = block.exprs.Add(*std::move(effect_or))});
+        mir::ExprStmt{.expr = block.exprs.Add(*std::move(update))});
+    return value;
   } else {
-    for (const DestructuredPart& part : parts) {
-      block.AppendStmt(
-          mir::ExprStmt{
-              .expr = block.exprs.Add(
-                  BuildStoreExpr(unit, block, part.target, part.value))});
-    }
+    throw InternalError(
+        "AssignToJoin: a nonblocking assignment outside a procedure, which "
+        "the front end refuses (LRM 10.4.2)");
   }
-  return read_bound();
 }
 
 template <ExprLowerer Lowerer>
@@ -437,42 +406,40 @@ auto LowerHirAssignWrite(
         "LowerHirAssignWrite: compound assignment with non-blocking timing "
         "is not a legal SV form (LRM A.6.2 grammar)");
   }
-  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-    const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
-    if (const auto* concat = std::get_if<hir::ConcatExpr>(&lhs.data)) {
-      BlockBuilder steps(frame);
-      auto bound = Destructure(lowerer, steps.Frame(), a, *concat, span);
-      if (!bound) return std::unexpected(std::move(bound.error()));
-      return steps.Build(*bound);
-    }
+  const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
+  // A write to one place is the store itself. A write to a join takes several
+  // steps, so it is a sequence of them standing where the expression does.
+  if (IsJoin(lhs)) {
+    BlockBuilder steps(frame);
+    auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs, span);
+    if (!value) return std::unexpected(std::move(value.error()));
+    return steps.Build(*value);
   }
   auto& block = *frame.current_block;
 
   auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.rhs), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const mir::ExprId rhs_id = block.exprs.Add(*std::move(rhs_or));
-  auto lhs_or = lowerer.LowerLhsExpr(lowerer.HirExprs().Get(a.lhs), frame);
+  auto lhs_or = lowerer.LowerLhsExpr(lhs, frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
 
   // The store brings what is stored to the target's type.
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
-  const auto [target, stored] =
+  auto [target, stored] =
       StoreOf(lowerer.Owner(), frame, a, *std::move(lhs_or), rhs_id);
-  const std::array<mir::ExprId, 1> operands{stored};
-  const auto store = [&](mir::Block& blk, const AccessPath& written,
-                         std::span<const mir::ExprId> ops) -> mir::Expr {
-    return BuildStoreExpr(unit, blk, written, ops[0]);
-  };
-  // What a write to the target is belongs to the store built above, and what
-  // belongs here is when it takes place. Only a procedure has a later region
-  // to place one in (LRM 10.4); a write a construction performs takes place
-  // where the construction reaches it, so there is nothing to choose.
+  // What a write to the target is belongs to the store, and what belongs here
+  // is when it takes place. Only a procedure has a later region to place one in
+  // (LRM 10.4); a write a construction performs takes place where the
+  // construction reaches it, so there is nothing to choose.
   if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-    return ApplyAssignEffect(
-        lowerer, frame, a.timing, span, target, operands, store);
-  } else {
-    return store(block, target, operands);
+    if (const auto* deferred = std::get_if<hir::NonBlockingEffect>(&a.timing)) {
+      const std::array shares{
+          Share{.place = std::move(target), .value = stored}};
+      return BuildDeferredStores(
+          lowerer, frame, span, deferred->control, shares);
+    }
   }
+  return BuildStoreExpr(unit, block, target, stored);
 }
 
 template <ExprLowerer Lowerer>
@@ -488,12 +455,10 @@ auto LowerHirAssignExpr(
   BlockBuilder steps(frame);
   mir::Block& body = steps.Body();
   const hir::Expr& lhs = lowerer.HirExprs().Get(a.lhs);
-  if constexpr (std::same_as<Lowerer, ProcessLowerer>) {
-    if (const auto* concat = std::get_if<hir::ConcatExpr>(&lhs.data)) {
-      auto value_or = Destructure(lowerer, steps.Frame(), a, *concat, span);
-      if (!value_or) return std::unexpected(std::move(value_or.error()));
-      return steps.Build(*value_or);
-    }
+  if (IsJoin(lhs)) {
+    auto value = AssignToJoin(lowerer, steps.Frame(), a, lhs, span);
+    if (!value) return std::unexpected(std::move(value.error()));
+    return steps.Build(ConvertToType(unit, body, *value, result_type));
   }
 
   auto rhs_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.rhs), steps.Frame());
@@ -525,8 +490,14 @@ auto LowerHirIncDecWrite(
     -> diag::Result<mir::Expr> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
-  auto target_or =
-      lowerer.LowerLhsExpr(lowerer.HirExprs().Get(inc.target), frame);
+  const hir::Expr& target = lowerer.HirExprs().Get(inc.target);
+  if (IsJoin(target)) {
+    BlockBuilder steps(frame);
+    auto stepped = StepJoin(lowerer, steps.Frame(), inc, target, std::nullopt);
+    if (!stepped) return std::unexpected(std::move(stepped.error()));
+    return steps.Build(stepped->after);
+  }
+  auto target_or = lowerer.LowerLhsExpr(target, frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   // The target is settled once for the read and the write (LRM 11.4.2).
   const ReadThenWritten settled =
@@ -546,8 +517,15 @@ auto LowerHirIncDecExpr(
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   BlockBuilder steps(frame);
   mir::Block& body = steps.Body();
-  auto target_or =
-      lowerer.LowerLhsExpr(lowerer.HirExprs().Get(inc.target), steps.Frame());
+  const bool yields_before =
+      inc.op == hir::IncDecOp::kPostInc || inc.op == hir::IncDecOp::kPostDec;
+  const hir::Expr& target = lowerer.HirExprs().Get(inc.target);
+  if (IsJoin(target)) {
+    auto stepped = StepJoin(lowerer, steps.Frame(), inc, target, result_type);
+    if (!stepped) return std::unexpected(std::move(stepped.error()));
+    return steps.Build(yields_before ? stepped->before : stepped->after);
+  }
+  auto target_or = lowerer.LowerLhsExpr(target, steps.Frame());
   if (!target_or) return std::unexpected(std::move(target_or.error()));
 
   // The value before the step and the value after it are both held, since a
@@ -568,11 +546,15 @@ auto LowerHirIncDecExpr(
       mir::ExprStmt{
           .expr = body.exprs.Add(
               BuildStoreExpr(unit, body, settled.place, read(after)))});
-  const bool yields_before =
-      inc.op == hir::IncDecOp::kPostInc || inc.op == hir::IncDecOp::kPostDec;
   return steps.Build(read(yields_before ? before : after));
 }
 
+template auto AssignToJoin(
+    ProcessLowerer&, const WalkFrame&, const hir::AssignExpr&, const hir::Expr&,
+    diag::SourceSpan) -> diag::Result<mir::ExprId>;
+template auto AssignToJoin(
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::AssignExpr&,
+    const hir::Expr&, diag::SourceSpan) -> diag::Result<mir::ExprId>;
 template auto LowerHirAssignWrite(
     ProcessLowerer&, WalkFrame, const hir::AssignExpr&, diag::SourceSpan)
     -> diag::Result<mir::Expr>;
@@ -597,38 +579,5 @@ template auto LowerHirIncDecExpr(
 template auto LowerHirIncDecExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::IncDecExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
-
-auto BuildDestructuredDeferredAssign(
-    ProcessLowerer& process, WalkFrame frame, diag::SourceSpan span,
-    const std::optional<hir::DelayOrEventControl>& control,
-    std::span<const DestructuredPart> parts) -> diag::Result<mir::Expr> {
-  for (const DestructuredPart& part : parts) {
-    auto outlives = CheckTargetOutlivesUpdate(
-        *frame.current_block, part.target.owner, span);
-    if (!outlives) return std::unexpected(std::move(outlives.error()));
-  }
-  return BuildDeferredEffect(
-      process, frame, control,
-      [&](ClosureBuilder& closure)
-          -> diag::Result<std::vector<FrozenAssignment>> {
-        std::vector<FrozenAssignment> frozen;
-        frozen.reserve(parts.size());
-        for (const DestructuredPart& part : parts) {
-          const std::array<mir::ExprId, 1> operands{part.value};
-          frozen.push_back(FreezeAssignmentInto(
-              process.Owner(), frame, closure, part.target, operands));
-        }
-        return frozen;
-      },
-      [&](mir::Block& body, const std::vector<FrozenAssignment>& frozen) {
-        for (const FrozenAssignment& part : frozen) {
-          body.AppendStmt(
-              mir::ExprStmt{
-                  .expr = body.exprs.Add(BuildStoreExpr(
-                      process.Owner().Unit(), body, part.target,
-                      part.operands.front()))});
-        }
-      });
-}
 
 }  // namespace lyra::lowering::hir_to_mir

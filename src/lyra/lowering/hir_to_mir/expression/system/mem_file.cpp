@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -185,19 +186,19 @@ auto LowerMemFileSystemSubroutineCallStmt(
   // not address keeps what it held, and it rides the completion back out (LRM
   // 13.5, 21.4). A dump only reads it.
   const mir::TypeId mem_type = unit_lowerer.TranslateType(mem_hir.type);
-  std::optional<AccessPath> mem_place;
+  std::optional<Lvalue> mem_place;
   mir::ExprId mem_value{};
   if (is_store) {
     auto mem_or = process.LowerExpr(mem_hir, step_frame);
     if (!mem_or) return std::unexpected(std::move(mem_or.error()));
     mem_value = body.exprs.Add(*std::move(mem_or));
   } else {
-    auto place_or = process.LowerLhsExpr(mem_hir, step_frame);
+    auto place_or = LowerLvalue(process, mem_hir, step_frame);
     if (!place_or) return std::unexpected(std::move(place_or.error()));
-    ReadThenWritten memory =
-        ReadThenWrite(unit_lowerer, step_frame, *std::move(place_or));
-    mem_place = std::move(memory.place);
-    mem_value = memory.incoming;
+    auto memory = ReadThenWrite(unit_lowerer, step_frame, *std::move(place_or));
+    if (!memory) return std::unexpected(std::move(memory.error()));
+    mem_place = std::move(memory->lvalue);
+    mem_value = memory->incoming;
   }
 
   std::vector<mir::ExprId> operands;
@@ -260,11 +261,11 @@ auto LowerMemFileSystemSubroutineCallStmt(
         std::nullopt);
     const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
     const std::array writebacks{CompletionWriteback{
-        .place = *mem_place,
+        .target = *mem_place,
         .component = *layout.formals.front().component,
         .type = mem_type}};
-    BindCompletion(
-        unit, step_frame,
+    auto completion = BindCompletion(
+        unit_lowerer, step_frame,
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -272,6 +273,7 @@ auto LowerMemFileSystemSubroutineCallStmt(
                     .arguments = std::move(operands)},
             .type = payload},
         payload, writebacks);
+    if (!completion) return std::unexpected(std::move(completion.error()));
   }
 
   mir::Stmt stmt = steps.BuildStatement();

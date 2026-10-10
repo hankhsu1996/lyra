@@ -150,9 +150,8 @@ struct BlockExpr {
 // `target` is a place, whose write is a store, or a part of a value reached by
 // a sequence of calls, whose write leaves the owner holding an updated whole.
 // What settles that a write is meant is this position, not what the target is.
-// A join in target position (LRM 11.4.12 destructuring LHS) is desugared
-// upstream into a snapshot + per-part assignment sequence, so render does not
-// encounter it.
+// A target is never several places: a source language's write to a join of
+// them reaches this layer as a held value and one write per place.
 struct AssignExpr {
   ExprId target;
   ExprId value;

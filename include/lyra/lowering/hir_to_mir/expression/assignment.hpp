@@ -11,15 +11,10 @@
 // where nothing reads it -- a statement, a loop's initializer or step -- it
 // lowers to the write alone.
 
-#include <optional>
-#include <span>
-
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/timing.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -56,32 +51,15 @@ auto LowerHirIncDecWrite(
     Lowerer& lowerer, WalkFrame frame, const hir::IncDecExpr& inc)
     -> diag::Result<mir::Expr>;
 
-// One part of a left-hand-side destructuring (LRM 11.4.12): the place it
-// writes and the share of the distributed value it takes.
-struct DestructuredPart {
-  AccessPath target;
-  mir::ExprId value;
-};
-
-// An assignment to a concatenation (LRM 11.4.12), as steps of `frame`'s block:
-// the right side bound once at an unsigned type as wide as the targets
-// together, and each target given its share, most significant first. The
-// source wrote one assignment, so a nonblocking one carries every part into one
-// deferred effect: a control on it is read once, and every part's share lands
-// in the same slot. Answers the binding, which is the assignment's value (LRM
-// 11.3.6).
-auto Destructure(
-    ProcessLowerer& process, const WalkFrame& frame,
-    const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat,
-    diag::SourceSpan span) -> diag::Result<mir::ExprId>;
-
-// The deferred half of a destructuring assignment. The source wrote one
-// statement, so the parts are frozen together and due at one placement, which
-// is what makes a control on such an assignment read once and land every part
-// in the same slot (LRM 9.4.5, 10.4.2).
-auto BuildDestructuredDeferredAssign(
-    ProcessLowerer& process, WalkFrame frame, diag::SourceSpan span,
-    const std::optional<hir::DelayOrEventControl>& control,
-    std::span<const DestructuredPart> parts) -> diag::Result<mir::Expr>;
+// An assignment whose left-hand side `lhs` is a join of lvalues (LRM A.8.5) --
+// a concatenation, an assignment pattern, a stream -- as steps of `frame`'s
+// block: what is stored evaluated once, and each place given its share, now or
+// in one update due later. An assignment operator applies to what the places
+// hold together (LRM 11.4.1). Answers what was stored, which is the
+// assignment's value (LRM 11.3.6).
+template <ExprLowerer Lowerer>
+auto AssignToJoin(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::AssignExpr& assign,
+    const hir::Expr& lhs, diag::SourceSpan span) -> diag::Result<mir::ExprId>;
 
 }  // namespace lyra::lowering::hir_to_mir

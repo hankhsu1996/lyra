@@ -10,6 +10,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
+#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
@@ -227,6 +228,21 @@ auto LowerAssignmentPatternFromElements(
   std::vector<hir::ExprId> element_ids;
   element_ids.reserve(ap.elements().size());
   for (const auto* elem : ap.elements()) {
+    // Where the pattern is a target, slang models each destination as an
+    // assignment whose right side is a placeholder for the member it takes;
+    // the destination is the left side, and HIR carries just that. The
+    // placeholder sits under as many conversions as take the member's type to
+    // the destination's.
+    if (elem->kind == slang::ast::ExpressionKind::Assignment) {
+      const auto& taking = elem->as<slang::ast::AssignmentExpression>();
+      const slang::ast::Expression* taken = &taking.right();
+      while (taken->kind == slang::ast::ExpressionKind::Conversion) {
+        taken = &taken->as<slang::ast::ConversionExpression>().operand();
+      }
+      if (taken->kind == slang::ast::ExpressionKind::EmptyArgument) {
+        elem = &taking.left();
+      }
+    }
     auto lowered = lowerer.LowerExpr(*elem, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     element_ids.push_back(frame.Exprs().Add(*std::move(lowered)));
@@ -278,13 +294,9 @@ auto LowerSimpleAssignmentPattern(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::SimpleAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  // LRM 10.9.1 positional assignment pattern `'{a, b, ...}`. As an rvalue it
-  // lowers from its elements; its LHS-destructuring form is not yet supported.
-  if (ap.isLValue) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedAssignmentPatternKind,
-        "assignment pattern as LHS destructuring is not yet supported");
-  }
+  // LRM 10.9.1 positional assignment pattern `'{a, b, ...}`. It is the same
+  // list of elements on either side of an assignment: values that build the
+  // aggregate, or the destinations one is taken apart into (LRM 10.9).
   return LowerAssignmentPatternFromElements(lowerer, frame, ap, span);
 }
 

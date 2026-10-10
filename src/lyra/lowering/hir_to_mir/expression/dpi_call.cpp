@@ -29,6 +29,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -617,7 +618,7 @@ auto PopulateForeignImportBoundary(
   struct Writeback {
     mir::LocalId temp{};
     mir::TypeId carrier_type{};
-    AccessPath actual;
+    Lvalue actual;
     support::DpiCarrier carrier{};
     mir::TypeId sv_type{};
   };
@@ -633,18 +634,18 @@ auto PopulateForeignImportBoundary(
 
     // An actual the foreign side writes back to is read to seed its boundary
     // object and written once the call returns, and the source writes it once.
-    std::optional<AccessPath> written_place;
+    std::optional<Lvalue> written_place;
     mir::TypeId actual_type{};
     mir::ExprId seed_sv{};
     if (support::DpiDirectionWritesBack(param.direction)) {
       const hir::Expr& actual_hir = hir_exprs.Get(actual);
-      auto place_or = lowerer.LowerLhsExpr(actual_hir, cframe);
+      auto place_or = LowerLvalue(lowerer, actual_hir, cframe);
       if (!place_or) return std::unexpected(std::move(place_or.error()));
       actual_type = unit_lowerer.TranslateType(actual_hir.type);
-      ReadThenWritten taken =
-          ReadThenWrite(unit_lowerer, cframe, *std::move(place_or));
-      seed_sv = taken.incoming;
-      written_place = std::move(taken.place);
+      auto taken = ReadThenWrite(unit_lowerer, cframe, *std::move(place_or));
+      if (!taken) return std::unexpected(std::move(taken.error()));
+      seed_sv = taken->incoming;
+      written_place = std::move(taken->lvalue);
     } else {
       auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
       if (!sv_or) return std::unexpected(std::move(sv_or.error()));
@@ -716,8 +717,8 @@ auto PopulateForeignImportBoundary(
     const mir::ExprId rhs_id = BuildBoundaryReadback(
         unit_lowerer, cframe, wb.carrier, temp_ref, wb.carrier_type,
         wb.sv_type);
-    const mir::Expr assign = BuildStoreExpr(unit, body, wb.actual, rhs_id);
-    body.AppendStmt(mir::ExprStmt{.expr = body.exprs.Add(assign)});
+    auto stored = AppendStores(unit_lowerer, cframe, wb.actual, rhs_id);
+    if (!stored) return std::unexpected(std::move(stored.error()));
   }
 
   // LRM 35.9 items b and c, checked where the foreign frame has just returned

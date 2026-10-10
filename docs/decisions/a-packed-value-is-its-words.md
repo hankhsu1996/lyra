@@ -274,8 +274,8 @@ And beside them:
   the runtime entries that performed a packed operation up to a word are gone on both backends.
 - Measured on Ibex, whole run under callgrind, `--release`, both programs ending at `$finish` at
   26548: the execution backend 7.16 G instructions, from 13.13 G before this entry, against
-  Verilator's 0.122 G. The C++ backend was last measured on 2026-10-08, before D7 to D10 were
-  carried out, at 6.04 G from 10.87 G, and has not been measured since.
+  Verilator's 0.122 G. The C++ backend 3.03 G from 10.87 G, measured on the merged tree, so what
+  else merged in between is in that figure.
 - The C++ backend's compile time under one instantiation per distinct type, which
   [a-value-is-its-machine-data](a-value-is-its-machine-data.md) says is measured on the way, has not
   been measured; this entry was accepted without it.

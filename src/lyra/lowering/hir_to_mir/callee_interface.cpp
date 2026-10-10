@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 #include <span>
 #include <utility>
@@ -10,8 +11,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine.hpp"
-#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -164,9 +165,10 @@ auto ProjectCompletionComponent(
 }
 
 auto BindCompletion(
-    mir::CompilationUnit& unit, const WalkFrame& frame, mir::Expr call,
+    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::Expr call,
     mir::TypeId payload_type, std::span<const CompletionWriteback> writebacks)
-    -> mir::LocalId {
+    -> diag::Result<mir::LocalId> {
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& body = *frame.current_block;
   const mir::ExprId call_id = body.exprs.Add(std::move(call));
   const mir::ExprId completion_value =
@@ -184,10 +186,9 @@ auto BindCompletion(
   for (const CompletionWriteback& writeback : writebacks) {
     const mir::ExprId component = ProjectCompletionComponent(
         body, completion, payload_type, writeback.component, writeback.type);
-    body.AppendStmt(
-        mir::ExprStmt{
-            .expr = body.exprs.Add(
-                BuildStoreExpr(unit, body, writeback.place, component))});
+    auto stored =
+        AppendStores(unit_lowerer, frame, writeback.target, component);
+    if (!stored) return std::unexpected(std::move(stored.error()));
   }
   return completion;
 }

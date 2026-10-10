@@ -20,6 +20,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"  // IWYU pragma: keep
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"  // IWYU pragma: keep
@@ -52,14 +53,16 @@ auto ProcessDrawEntry(support::RandomKind kind, std::size_t argument_count)
 
 // The variable a seed argument names (LRM 20.14.1: the seed "shall be an
 // integral variable"). A seed whose declared type is not the one the argument
-// position takes arrives read through a conversion; the variable the draw
-// advances is what that conversion reads.
+// position takes arrives read through conversions; the variable the draw
+// advances is what they read.
 auto SeedVariable(
     const base::Arena<hir::Expr, hir::ExprId>& exprs, hir::ExprId seed)
     -> hir::ExprId {
-  const auto* conversion =
-      std::get_if<hir::ConversionExpr>(&exprs.Get(seed).data);
-  return conversion == nullptr ? seed : conversion->operand;
+  while (const auto* conversion =
+             std::get_if<hir::ConversionExpr>(&exprs.Get(seed).data)) {
+    seed = conversion->operand;
+  }
+  return seed;
 }
 
 // The runtime entry each LRM 20.14.2 distribution function generates through.
@@ -171,19 +174,26 @@ auto LowerDistributionSystemSubroutineCall(
   const hir::Expr& hir_seed =
       hir_exprs.Get(SeedVariable(hir_exprs, operands[0]));
   const mir::TypeId seed_type = unit_lowerer.TranslateType(hir_seed.type);
-  auto seed_place_or = lowerer.LowerLhsExpr(hir_seed, step_frame);
+  if (IsJoin(hir_seed)) {
+    return diag::Fail(
+        hir_seed.span, diag::DiagCode::kUnsupportedSubroutineArgument,
+        "the seed a random number is drawn through shall be an integral "
+        "variable (LRM 20.14.1)");
+  }
+  auto seed_place_or = LowerLvalue(lowerer, hir_seed, step_frame);
   if (!seed_place_or) {
     return std::unexpected(std::move(seed_place_or.error()));
   }
-  const ReadThenWritten seed =
+  auto seed =
       ReadThenWrite(unit_lowerer, step_frame, *std::move(seed_place_or));
+  if (!seed) return std::unexpected(std::move(seed.error()));
 
   // Every argument is an integer value (LRM 20.14.2) whatever integral type the
   // design declared it, and the generator works in 32 signed bits.
   std::vector<mir::ExprId> arguments;
   arguments.reserve(operands.size());
   arguments.push_back(BuildToInt64Call(
-      unit, body, ConvertToType(unit, body, seed.incoming, int_type)));
+      unit, body, ConvertToType(unit, body, seed->incoming, int_type)));
   for (const hir::ExprId operand : std::span{operands}.subspan(1)) {
     auto lowered = lowerer.LowerExpr(hir_exprs.Get(operand), step_frame);
     if (!lowered) {
@@ -221,10 +231,8 @@ auto LowerDistributionSystemSubroutineCall(
       ProjectCompletionComponent(
           body, completion, payload_type, kAdvancedSeed, int_type),
       seed_type);
-  body.AppendStmt(
-      mir::ExprStmt{
-          .expr = body.exprs.Add(
-              BuildStoreExpr(unit, body, seed.place, advanced))});
+  auto stored = AppendStores(unit_lowerer, step_frame, seed->lvalue, advanced);
+  if (!stored) return std::unexpected(std::move(stored.error()));
 
   return steps.Build(ProjectCompletionComponent(
       body, completion, payload_type, kDrawnValue, int_type));

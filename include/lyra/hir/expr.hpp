@@ -78,12 +78,10 @@ struct CompoundAssignOperator {
 // amount. LRM A.6.2 forbids compound on non-blocking, so non-blocking timing
 // carrying a compound operator is an InternalError.
 //
-// `lhs` is an ExprId pointing at any expression whose form is addressable.
-// Allowed forms: a PrimaryExpr var reference, ElementSelectExpr /
-// RangeSelectExpr on an addressable base, or a ConcatExpr of addressable
-// operands (the latter is the LRM 11.4.12 destructuring LHS form).
-// Lvalue-ness is positional -- determined by appearance in this `lhs`
-// field, not by an extra tag on the expression.
+// `lhs` is an lvalue (LRM A.8.5): an expression naming storage -- a variable
+// or a select on one -- or a concatenation, an assignment pattern or a
+// streaming concatenation of lvalues. Lvalue-ness is positional -- determined
+// by appearance in this `lhs` field, not by an extra tag on the expression.
 struct AssignExpr {
   EffectTiming timing;
   ExprId lhs;
@@ -95,8 +93,7 @@ struct AssignExpr {
 
 // LRM 11.4.2: `++a`, `a++`, `--a`, `a--`. Behave as blocking assignments;
 // postfix yields the operand's prior value, prefix yields the new value. The
-// target names storage, in the same forms an assignment's left side may take
-// except a concatenation, which slang rejects here at AST construction.
+// target names storage, in the same forms an assignment's left side may take.
 // Whether a form names storage is decided by the position it appears in, and
 // settled while lowering from the AST -- HIR holds only forms that passed.
 struct IncDecExpr {

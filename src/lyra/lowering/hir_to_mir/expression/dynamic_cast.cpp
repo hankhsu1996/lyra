@@ -11,6 +11,7 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -121,14 +122,13 @@ auto LowerHirDynamicCastExpr(
   // the only run on which it is written: an invalid assignment leaves the
   // destination alone, and reaching it is part of writing it.
   mir::Block taken;
-  auto target_or = lowerer.LowerLhsExpr(
-      lowerer.HirExprs().Get(c.destination), steps.Frame().WithBlock(&taken));
+  const WalkFrame taken_frame = steps.Frame().WithBlock(&taken);
+  auto target_or =
+      LowerLvalue(lowerer, lowerer.HirExprs().Get(c.destination), taken_frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  const AccessPath target = *std::move(target_or);
-  taken.AppendStmt(
-      mir::ExprStmt{
-          .expr = taken.exprs.Add(
-              BuildStoreExpr(unit, taken, target, read_value(taken)))});
+  auto stored =
+      AppendStores(lowerer.Owner(), taken_frame, *target_or, read_value(taken));
+  if (!stored) return std::unexpected(std::move(stored.error()));
 
   std::optional<mir::BlockId> invalid_scope;
   if (c.on_invalid == hir::InvalidAssignmentHandling::kReported) {

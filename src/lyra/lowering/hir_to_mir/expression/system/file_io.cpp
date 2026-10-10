@@ -25,6 +25,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -158,8 +159,8 @@ auto RequireStringDestination(
 // delivered, and all of it is replaced.
 auto BuildTextRead(
     ProcessLowerer& process, BlockBuilder& steps, support::BuiltinFn builtin_fn,
-    std::vector<mir::ExprId> operands, AccessPath destination,
-    mir::TypeId destination_type) -> mir::Expr {
+    std::vector<mir::ExprId> operands, Lvalue destination,
+    mir::TypeId destination_type) -> diag::Result<mir::Expr> {
   auto& unit = process.Owner().Unit();
   const mir::TypeId count_type = unit.builtins.int_type;
   const CompletionLayout layout = BuildCompletionLayout(
@@ -168,16 +169,17 @@ auto BuildTextRead(
       count_type);
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const std::array writebacks{CompletionWriteback{
-      .place = std::move(destination),
+      .target = std::move(destination),
       .component = *layout.formals.front().component,
       .type = destination_type}};
-  const mir::LocalId completion = BindCompletion(
-      unit, steps.Frame(),
+  auto completion = BindCompletion(
+      process.Owner(), steps.Frame(),
       BuildFileIoCall(
           process, steps.Frame(), builtin_fn, std::move(operands), payload),
       payload, writebacks);
+  if (!completion) return std::unexpected(std::move(completion.error()));
   return steps.Build(ProjectCompletionComponent(
-      steps.Body(), completion, payload, kCompletionResult, count_type));
+      steps.Body(), *completion, payload, kCompletionResult, count_type));
 }
 
 // $fgets(str, fd) -- LRM 21.3.4.2.
@@ -192,7 +194,7 @@ auto LowerFileGetsCall(
   auto valid_or =
       RequireStringDestination(process.Owner().Unit(), line_type, name, span);
   if (!valid_or) return std::unexpected(std::move(valid_or.error()));
-  auto line_or = process.LowerLhsExpr(line_hir, steps.Frame());
+  auto line_or = LowerLvalue(process, line_hir, steps.Frame());
   if (!line_or) return std::unexpected(std::move(line_or.error()));
 
   auto fd_or = BuildMachineIntOperand(process, steps.Frame(), operands[1]);
@@ -246,15 +248,15 @@ auto LowerFileReadCall(
   // crosses in as well as riding the completion back (LRM 13.5, 21.3.4.4).
   const hir::Expr& dest_hir = hir_proc.exprs.Get(head[0]);
   const mir::TypeId dest_type = unit_lowerer.TranslateType(dest_hir.type);
-  auto dest_or = process.LowerLhsExpr(dest_hir, step_frame);
+  auto dest_or = LowerLvalue(process, dest_hir, step_frame);
   if (!dest_or) return std::unexpected(std::move(dest_or.error()));
-  ReadThenWritten dest =
-      ReadThenWrite(unit_lowerer, step_frame, *std::move(dest_or));
+  auto dest = ReadThenWrite(unit_lowerer, step_frame, *std::move(dest_or));
+  if (!dest) return std::unexpected(std::move(dest.error()));
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{
           .direction = hir::ParamDirection::kInOut, .type = dest_type}},
       unit.builtins.int_type);
-  std::vector<mir::ExprId> operands{dest.incoming};
+  std::vector<mir::ExprId> operands{dest->incoming};
 
   auto fd_or = BuildMachineIntOperand(process, step_frame, head[1]);
   if (!fd_or) return std::unexpected(std::move(fd_or.error()));
@@ -290,19 +292,20 @@ auto LowerFileReadCall(
 
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const std::array writebacks{CompletionWriteback{
-      .place = std::move(dest.place),
+      .target = std::move(dest->lvalue),
       .component = *layout.formals.front().component,
       .type = dest_type}};
-  const mir::LocalId completion = BindCompletion(
-      unit, step_frame,
+  auto completion = BindCompletion(
+      unit_lowerer, step_frame,
       BuildFileIoCall(
           process, step_frame,
           memory != nullptr ? support::BuiltinFn::kFileReadMemory
                             : support::BuiltinFn::kFileRead,
           std::move(operands), payload),
       payload, writebacks);
+  if (!completion) return std::unexpected(std::move(completion.error()));
   return steps.Build(ProjectCompletionComponent(
-      body, completion, payload, kCompletionResult, unit.builtins.int_type));
+      body, *completion, payload, kCompletionResult, unit.builtins.int_type));
 }
 
 // $ferror(fd, str) -- LRM 21.3.7.
@@ -322,7 +325,7 @@ auto LowerFileErrorCall(
   auto valid_or = RequireStringDestination(
       process.Owner().Unit(), message_type, name, span);
   if (!valid_or) return std::unexpected(std::move(valid_or.error()));
-  auto message_or = process.LowerLhsExpr(message_hir, steps.Frame());
+  auto message_or = LowerLvalue(process, message_hir, steps.Frame());
   if (!message_or) return std::unexpected(std::move(message_or.error()));
 
   return BuildTextRead(

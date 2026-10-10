@@ -97,9 +97,9 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
 
 Measured on Ibex, whole run under callgrind, `--release`, both programs ending at `$finish` at
 26548: the execution backend 7.16 G instructions, against 13.13 G at the end of phase 1 -- 45%
-fewer, and 59x Verilator's 0.122 G. The C++ backend was last measured on 2026-10-08, before the
-boxes on wide values, comparisons, nets and operand readings were closed, at 6.04 G (455 K per
-cycle) against 10.87 G at the end of phase 1; it has not been measured since.
+fewer, and 59x Verilator's 0.122 G. The C++ backend 3.03 G instructions (228 K per cycle) against
+10.87 G at the end of phase 1, measured on the merged tree, so what else merged in between is in
+that figure.
 
 ## What the library is told of an element's type
 

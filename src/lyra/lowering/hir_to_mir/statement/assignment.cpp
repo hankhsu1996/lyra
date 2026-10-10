@@ -1,13 +1,10 @@
 #include "lyra/lowering/hir_to_mir/statement/assignment.hpp"
 
-#include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
 #include <utility>
 #include <variant>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -15,15 +12,12 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
-#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/sformat.hpp"
+#include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
@@ -32,157 +26,11 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// LRM 11.4.12: an assignment statement to a concatenation, as a block of its
-// own, where nothing reads the value it binds.
-auto LowerDestructuringAssign(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::AssignExpr& assign, const hir::ConcatExpr& lhs_concat,
-    diag::SourceSpan span) -> diag::Result<mir::Stmt> {
-  BlockBuilder steps(frame);
-  auto bound = Destructure(process, steps.Frame(), assign, lhs_concat, span);
-  if (!bound) return std::unexpected(std::move(bound.error()));
-  mir::Stmt stmt = steps.BuildStatement();
-  stmt.label = std::move(label);
-  return stmt;
-}
-
-// One target of an unpack, with the width it takes off the stream. The width
-// comes from the target's type, so it is read where the targets are gathered
-// and carried to where each share is cut.
-struct UnpackTarget {
-  mir::TypeId type;
-  std::uint64_t width;
-};
-
-// LRM 11.4.14.3 unpack. The source is a bit-stream value, or the stream another
-// streaming concatenation built; either way it is read out as bits, and the
-// targets are filled from the stream's most significant end in the order the
-// source wrote them. Where the stream carries more bits than the targets need,
-// the surplus is at its least significant end and is dropped -- which is why
-// the usable bits are taken before the re-ordering rather than after.
-//
-// The shape follows the LRM 11.4.12 destructuring: the source is
-// snapshotted once and distributed, so a target appearing on both sides reads
-// what the assignment started with.
-auto LowerStreamingUnpackAssign(
-    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
-    const hir::AssignExpr& assign, const hir::StreamingConcatExpr& lhs_stream,
-    diag::SourceSpan span) -> diag::Result<mir::Stmt> {
-  const hir::ProceduralBody& hir_proc = process.HirBody();
-  const mir::CompilationUnit& unit = process.Owner().Unit();
-  mir::Block wrapper;
-  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
-
-  // What each target is and how wide, and never its state domain: the bits come
-  // from the source, so the stream's domain is the source's, and a target's own
-  // is applied where its share is read back at its shape.
-  std::vector<UnpackTarget> targets;
-  targets.reserve(lhs_stream.operands.size());
-  std::uint64_t targets_width = 0;
-  for (const hir::ExprId op_id : lhs_stream.operands) {
-    const hir::Expr& target = hir_proc.exprs.Get(op_id);
-    const mir::TypeId target_type = process.Owner().TranslateType(target.type);
-    const std::optional<StreamShape> shape =
-        FixedStreamShapeOf(unit, target_type);
-    if (!shape.has_value()) {
-      return diag::Fail(
-          target.span, diag::DiagCode::kUnsupportedExpressionForm,
-          "filling a value of this type from a stream of bits is not yet "
-          "supported (LRM 11.4.14.3)");
-    }
-    targets.push_back(UnpackTarget{.type = target_type, .width = shape->width});
-    targets_width += shape->width;
-  }
-
-  const hir::Expr& rhs = hir_proc.exprs.Get(assign.rhs);
-  auto rhs_or = process.LowerExpr(rhs, wrapper_frame);
-  if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
-  auto source_or = BuildToBitstream(
-      unit, wrapper, wrapper.exprs.Add(*std::move(rhs_or)), rhs.span);
-  if (!source_or) return std::unexpected(std::move(source_or.error()));
-  const mir::ExprId source_id = *source_or;
-  // The stream's own shape is on the type the pack just gave it, so it is read
-  // there rather than worked out again from the value it came from. By value:
-  // the pool's view does not survive the interning below.
-  const mir::IntegralType source =
-      unit.types.Get(wrapper.exprs.Get(source_id).type).Integral();
-  if (source.bit_width < targets_width) {
-    throw InternalError(
-        "LowerStreamingUnpackAssign: the front end refuses a source with "
-        "fewer bits than the targets need (LRM 11.4.14.3) -- please report "
-        "this as a bug");
-  }
-
-  // The bits the targets will take, in the order they will take them: the
-  // surplus dropped and the blocks re-ordered once, ahead of any target's
-  // share, so the source is evaluated once and no part recomputes the whole.
-  const mir::TypeId stream_type =
-      mir::PackedVectorOf(unit.types, targets_width, source.state_kind);
-  const mir::ExprId distributable_id = BuildReorderedStream(
-      unit, wrapper,
-      wrapper.exprs.Add(BuildPackedBitsRead(
-          process.Owner(), wrapper, source_id, source.bit_width - targets_width,
-          stream_type)),
-      lhs_stream.block_bits);
-  const mir::LocalId stream_var =
-      wrapper_frame.bindings->DeclareAnonymous(stream_type);
-  wrapper.AppendStmt(
-      mir::LocalDeclStmt{.target = stream_var, .init = distributable_id});
-
-  std::vector<DestructuredPart> parts;
-  parts.reserve(targets.size());
-  std::uint64_t consumed = 0;
-  for (std::size_t i = 0; i < targets.size(); ++i) {
-    const UnpackTarget& target = targets[i];
-    const hir::Expr& target_expr = hir_proc.exprs.Get(lhs_stream.operands[i]);
-    auto part_lhs_or = process.LowerLhsExpr(target_expr, wrapper_frame);
-    if (!part_lhs_or) {
-      return std::unexpected(std::move(part_lhs_or.error()));
-    }
-    const mir::TypeId segment_type =
-        mir::PackedVectorOf(unit.types, target.width, source.state_kind);
-    const mir::ExprId segment_id = wrapper.exprs.Add(BuildPackedBitsRead(
-        process.Owner(), wrapper,
-        wrapper.exprs.Add(mir::MakeLocalRefExpr(stream_var, stream_type)),
-        targets_width - consumed - target.width, segment_type));
-    consumed += target.width;
-    auto value_or = BuildFromBitstream(
-        unit, wrapper, segment_id, target.type, target_expr.span);
-    if (!value_or) return std::unexpected(std::move(value_or.error()));
-    parts.push_back(
-        DestructuredPart{
-            .target = *std::move(part_lhs_or), .value = *value_or});
-  }
-
-  if (const auto* deferred =
-          std::get_if<hir::NonBlockingEffect>(&assign.timing)) {
-    auto effect_or = BuildDestructuredDeferredAssign(
-        process, wrapper_frame, span, deferred->control, parts);
-    if (!effect_or) return std::unexpected(std::move(effect_or.error()));
-    wrapper.AppendStmt(
-        mir::ExprStmt{.expr = wrapper.exprs.Add(*std::move(effect_or))});
-  } else {
-    for (const DestructuredPart& part : parts) {
-      wrapper.AppendStmt(
-          mir::ExprStmt{
-              .expr = wrapper.exprs.Add(BuildStoreExpr(
-                  process.Owner().Unit(), wrapper, part.target, part.value))});
-    }
-  }
-
-  const mir::BlockId wrapper_scope_id =
-      frame.current_block->child_scopes.Add(std::move(wrapper));
-  return mir::Stmt{
-      .label = std::move(label),
-      .data = mir::BlockStmt{.scope = wrapper_scope_id}};
-}
 
 // The statement-position lowering a system subroutine needs when its effect
 // cannot be expressed as a bare value: a file write whose formatted output is
@@ -304,25 +152,19 @@ auto LowerExprStmt(
   const hir::ProceduralBody& hir_proc = process.HirBody();
   auto& block = *frame.current_block;
 
-  // LRM 11.4.12: an assignment statement to a concatenation is a block of its
+  // An assignment statement to a join of lvalues (LRM A.8.5) is a block of its
   // own rather than an expression whose value nobody reads.
   const hir::Expr& inner = hir_proc.exprs.Get(e.expr);
   if (const auto* assign = std::get_if<hir::AssignExpr>(&inner.data)) {
     const hir::Expr& lhs = hir_proc.exprs.Get(assign->lhs);
-    if (const auto* concat = std::get_if<hir::ConcatExpr>(&lhs.data)) {
-      return LowerDestructuringAssign(
-          process, frame, std::move(label), *assign, *concat, inner.span);
-    }
-    // LRM 11.4.14.3: the same grammatical position, filled from a stream of
-    // bits rather than from a value of the target's own shape.
-    if (const auto* stream = std::get_if<hir::StreamingConcatExpr>(&lhs.data)) {
-      if (assign->compound.has_value()) {
-        throw InternalError(
-            "LowerExprStmt: compound assignment with a streaming lvalue is "
-            "not a legal SV form (LRM A.6.2 grammar)");
-      }
-      return LowerStreamingUnpackAssign(
-          process, frame, std::move(label), *assign, *stream, inner.span);
+    if (IsJoin(lhs)) {
+      BlockBuilder steps(frame);
+      auto stored =
+          AssignToJoin(process, steps.Frame(), *assign, lhs, inner.span);
+      if (!stored) return std::unexpected(std::move(stored.error()));
+      mir::Stmt stmt = steps.BuildStatement();
+      stmt.label = std::move(label);
+      return stmt;
     }
   }
 

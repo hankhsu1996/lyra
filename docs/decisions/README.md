@@ -166,6 +166,11 @@ the detail lives in the entry itself.
   from the place's type; naming it that way is never a call, while reading it and replacing the
   whole of it are, per [owner-transition-and-observation](owner-transition-and-observation.md),
   which supersedes both of those answers here.
+- [a-write-names-a-place-or-a-join](a-write-names-a-place-or-a-join.md) -- what a write names is one
+  place or a join of lvalues (a concatenation, an assignment pattern, a stream), every kind of write
+  asks it for the share each place takes and makes its own write to each, a write that reads first
+  settles every place once, every place is located before the first is written, and MIR carries only
+  writes to one place. Surveys Rust, Python, Go, Clang, slang, CIRCT, Verilator and Icarus.
 - [declarations-before-bodies](declarations-before-bodies.md) -- every structural declaration's
   identity and shape is CU-global and queryable before any executable lowering begins.
 - [a-name-arrives-with-the-identity](a-name-arrives-with-the-identity.md) -- what a declaration is
