@@ -26,9 +26,6 @@ OpenPiton:1x1:hello:
 OpenTitan:default:hello:
   stops: run
   says: did not end within
-VeeR-EH2:default:hello:
-  stops: run
-  says: did not end within
 Vortex:mini:hello:
   stops: build
   says: an omitted subroutine argument is not yet supported

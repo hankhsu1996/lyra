@@ -1,0 +1,21 @@
+The VeeR EH2 testbench ties the JTAG reset inactive and the JTAG clock low, so
+no event ever resets the tap. Its registers keep their default initial value,
+which is x for a 4-state variable (IEEE 1800-2023 6.8, Table 6-7), and that x
+reaches the debug module's write enable and then the core's reset. Tie the
+reset low, as the EH1 and EL2 testbenches do.
+
+Reported as https://github.com/verilator/rtlmeter/issues/52
+
+diff --git a/designs/VeeR-EH2/src/tb_top.sv b/designs/VeeR-EH2/src/tb_top.sv
+index 80f84d2..b370af2 100644
+--- a/designs/VeeR-EH2/src/tb_top.sv
++++ b/designs/VeeR-EH2/src/tb_top.sv
+@@ -752,7 +752,7 @@ eh2_veer_wrapper rvtop (
+ assign tck = 0;
+ assign tms = 1;
+ assign tdi = 0;
+-assign trstn = 1;
++assign trstn = 0;
+ assign srstn = 1;
+ 
+ `ifdef RV_BUILD_AHB_LITE
