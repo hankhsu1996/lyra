@@ -99,9 +99,40 @@ jobs:
         run: |
           bazel test //... --verbose_failures
 
+  # The scheduled measurements start from an optimized build, and a compiler
+  # reports things of one that it does not of an unoptimized one: what it
+  # concludes after inlining is fatal here like any other warning. A job of its
+  # own because a different compilation mode shares neither analysis nor a
+  # single output with the build above, so a step beside it would only wait.
+  optimized:
+    name: Build Optimized
+    needs: changes
+    if: ${{ needs.changes.outputs.src == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-opt-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Build
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel build -c opt //... $RBE_FLAGS
+
   build-status:
     name: Build Status
-    needs: [changes, build]
+    needs: [changes, build, optimized]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -110,6 +141,9 @@ jobs:
           if [[ "${{ needs.changes.outputs.src }}" != "true" ]]; then
             echo "No source changes detected, skipping build"
             exit 0
+          elif [[ "${{ needs.optimized.result }}" != "success" ]]; then
+            echo "Optimized build failed"
+            exit 1
           elif [[ "${{ needs.build.result }}" != "success" ]]; then
             echo "Build or tests failed"
             exit 1

@@ -160,6 +160,8 @@ bazel test //tests:llvm_tests --test_filter='12_statements.case_default_item'
 
 `bazel test //...` is the merge gate's own set, so a green run before committing is what says "this
 lands green". Do not widen or narrow it: the answer holds only while the two are the same command.
+The gate asks one thing more, that the whole graph still builds optimized, and
+`bazel build -c opt //...` answers it here.
 
 Two targets are out of it, and they are one subject: whether an emitted C++ project still builds and
 runs. `cpp_tests` asks that over the whole corpus, once per case, and `emitted_project_tests` asks

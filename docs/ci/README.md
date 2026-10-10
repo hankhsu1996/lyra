@@ -75,20 +75,23 @@ remote queue, never another core here.
 
 ## When to run what
 
-Five moments, each answering a different question, and the answers are not interchangeable.
+Each moment answers a different question, and the answers are not interchangeable.
 
 | Moment     | Question                        | Command                                      |
 | ---------- | ------------------------------- | -------------------------------------------- |
 | edit loop  | did that edit do what I meant   | one case, or the binary on one file directly |
 | pre-commit | will this land green            | `bazel test //...`                           |
 | merge gate | is `main` still correct         | `bazel test //...`                           |
+| merge gate | does it still build optimized   | `bazel build -c opt //...`                   |
 | nightly    | is the C++ path still correct   | `bazel test //... --config=nightly`          |
 | nightly    | is any of it reading freed bits | `bazel test //... --config=asan`             |
 | nightly    | how far does a real design get  | `bazel test //tests:external_design_tests`   |
 
-Pre-commit and the merge gate are the same command, and that is the whole point: a green run before
+Pre-commit and the merge gate run the same tests, and that is the whole point: a green run before
 committing means "this lands green" only while the two sets are identical. Any change that makes the
-local command wider or narrower than the gate turns its answer back into a guess.
+local command wider or narrower than the gate turns its answer back into a guess. The optimized
+build is the one place the gate is wider, and the section on the gating workflows says why it is
+there all the same.
 
 Every run someone waits on stops at the first case that fails, and every scheduled run does not. The
 two want different things from a red result. A defect the whole corpus shares and a defect one case
@@ -201,16 +204,16 @@ because no case names a path.
 
 Each runs on push to `main` and on pull requests.
 
-| Workflow               | What it enforces                                               |
-| ---------------------- | -------------------------------------------------------------- |
-| `bazel-build.yml`      | `bazel build //...` with warnings fatal, then the default set  |
-| `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy |
-| `bazel-lint.yml`       | `buildifier` formatting and lint warnings                      |
-| `md-format.yml`        | Prettier over every markdown file                              |
-| `ascii-policy.yml`     | ASCII-only, on the diff against `origin/main`                  |
-| `exception-policy.yml` | The thrown-type policy, on the same diff                       |
-| `architecture.yml`     | Layer boundaries between the IRs and the backends              |
-| `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)    |
+| Workflow               | What it enforces                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------- |
+| `bazel-build.yml`      | `bazel build //...` with warnings fatal, then the default set, and the same build optimized |
+| `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy                              |
+| `bazel-lint.yml`       | `buildifier` formatting and lint warnings                                                   |
+| `md-format.yml`        | Prettier over every markdown file                                                           |
+| `ascii-policy.yml`     | ASCII-only, on the diff against `origin/main`                                               |
+| `exception-policy.yml` | The thrown-type policy, on the same diff                                                    |
+| `architecture.yml`     | Layer boundaries between the IRs and the backends                                           |
+| `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)                                 |
 
 `bazel-build.yml` runs its two commands as steps of one job rather than as two jobs. The separate
 durations are worth having, but a second runner would not inherit the first's analysis: Bazel holds
@@ -219,6 +222,17 @@ around fifty seconds against a critical path of one, because both commands find 
 cached remotely. One job keeps the two durations honest, since the first pays for analysis once and
 the second then reports what running the tests costs. A compile failure still shows as the build
 step going red.
+
+Its third command, `bazel build -c opt //...`, is a job of its own: the whole graph built optimized,
+and nothing run. The benchmark and the external designs both start from an optimized compiler, and a
+compiler reports of an optimized build what it does not of an unoptimized one, because what it
+concludes about a value after inlining exists only there. With warnings fatal, such a report stops
+both scheduled jobs from measuring anything, and a nightly would be the first to find it, a day
+after the change that caused it had merged. A different compilation mode shares neither analysis nor
+one output with the build beside it, which is why it is not a step of that job. It is the one thing
+the gate asks that `bazel test //...` on a developer's machine does not, so a change can pass there
+and fail here; the command above reproduces it, and under remote execution it compiles only what the
+change touched.
 
 ## Nightly workflows
 
@@ -276,8 +290,8 @@ is why there is no such job.
 ## What is deliberately absent
 
 **A per-pull-request benchmark.** A timing carries a regression only once something compares it to
-the same case on `main`, and a job that prints absolute times without that comparison spends a full
-optimized build on every pull request to say nothing. The comparison is what has to exist first, and
+the same case on `main`, and a job that prints absolute times without that comparison spends a
+benchmark run on every pull request to say nothing. The comparison is what has to exist first, and
 the job that wants it will not look like a copy of the nightly one, because fetching a baseline and
 choosing a threshold are most of it.
 
@@ -305,10 +319,10 @@ fi
 bazel build -c opt //:lyra $RBE_FLAGS
 ```
 
-`bazel-build.yml` runs two, so it appends them to `.bazelrc.user` instead -- the untracked layer the
-build configuration already reserves for one checkout's own key. Two command lines can drift apart;
-one rc file cannot, and flags that differ between the two invocations would throw away the analysis
-that keeping them in one job exists to share.
+The job of `bazel-build.yml` that builds and tests runs two, so it appends them to `.bazelrc.user`
+instead -- the untracked layer the build configuration already reserves for one checkout's own key.
+Two command lines can drift apart; one rc file cannot, and flags that differ between the two
+invocations would throw away the analysis that keeping them in one job exists to share.
 
 Remote execution resolves the toolchain registered for the remote platform, which is that image's
 system GCC rather than the clang a local build picks up. A change can therefore compile in one place
