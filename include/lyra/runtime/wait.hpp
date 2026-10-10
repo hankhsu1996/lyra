@@ -1,9 +1,10 @@
 #pragma once
 
-#include <deque>
+#include <cstddef>
 #include <memory>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
@@ -136,6 +137,11 @@ class Awaiter {
   }
 
  protected:
+  // An awaiter that watches up to `places` places. How many there are is
+  // settled by what it is built from -- the list an event control names, the
+  // branches of a fork -- so its memberships are made here, all at once.
+  explicit Awaiter(std::size_t places);
+
   // Enrols on the place `trigger` watches, for this awaiter's whole life.
   void EnrolOnLeaf(const Trigger& trigger);
 
@@ -169,7 +175,10 @@ class Awaiter {
   virtual void ReachedWhileUnparked() {
   }
 
-  std::deque<WaitMembership> memberships_;
+  // One block, of as many as the awaiter was built to watch and never resized,
+  // because the places enrolled on point at these.
+  std::vector<WaitMembership> memberships_;
+  std::size_t enrolled_ = 0;
   Activation* parked_ = nullptr;
 };
 
@@ -182,6 +191,9 @@ class Awaiter {
 class StateAwaiter : public Awaiter {
  public:
   auto Begin() -> Resumption final;
+
+ protected:
+  using Awaiter::Awaiter;
 
  private:
   [[nodiscard]] auto Holds() const -> bool override = 0;

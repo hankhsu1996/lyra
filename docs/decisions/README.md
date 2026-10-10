@@ -1134,6 +1134,11 @@ the detail lives in the entry itself.
   randomization call draws from the generator installed for whatever is running, and a static
   initialization installs one just as a process does, seeded from the container the standard names
   rather than from whatever process happens to be executing.
+- [a-generator-is-split-from-the-one-that-made-it](a-generator-is-split-from-the-one-that-made-it.md)
+  -- which generator `$urandom` draws by, chosen from what LRM 18.14 fixes: one per thread and per
+  object, each made by drawing from its creator's, in unbounded number. It is a splittable generator
+  of four words, a child takes its whole state from its parent and nothing 32 bits wide passes
+  between them, and changing it changes every value a recorded seed stands for.
 - [dpi-context-scope-is-an-extent](dpi-context-scope-is-an-extent.md) -- the scope a `context`
   import makes current is stated as an entering call and a cleanup that gives it back on every way
   out, never as a value whose destructor does it, and the chain it pushes onto belongs to whatever

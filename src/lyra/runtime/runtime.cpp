@@ -353,10 +353,10 @@ auto Runtime::ClaimNamespaceInitialization(std::string_view name) -> bool {
   return initialized_namespaces_.emplace(name).second;
 }
 
-void Runtime::EnterStaticInit(RandomSeed seed) {
+void Runtime::EnterStaticInit(DrawRng rng) {
   displacing_.push_back(
       DisplacingState{
-          .state = RunningState{.rng = DrawRng{seed}, .import_calls = {}},
+          .state = RunningState{.rng = rng, .import_calls = {}},
           .displaced = running_});
   running_ = &displacing_.back().state;
 }
@@ -486,7 +486,7 @@ void RegisterStartingProcess(
   Runtime& rt = AsRuntime(current_runtime());
   auto process = std::make_shared<RuntimeProcess>(
       owning_scope, std::move(coroutine),
-      unit_instance->InitializationSeeds().NextSeed(), written_at);
+      unit_instance->InitializationSeeds().Split(), written_at);
   rt.QueueStart(kind, process->TopActivation());
   rt.RegisterProcessInRegistry(std::move(process));
 }
@@ -531,24 +531,24 @@ void RegisterFinalProcess(
   Runtime& rt = AsRuntime(current_runtime());
   auto process = std::make_shared<RuntimeProcess>(
       owning_scope, std::move(coroutine),
-      unit_instance->InitializationSeeds().NextSeed(), written_at);
+      unit_instance->InitializationSeeds().Split(), written_at);
   rt.QueueFinal(process->TopActivation());
   rt.RegisterProcessInRegistry(std::move(process));
 }
 
 void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance) {
   AsRuntime(runtime).EnterStaticInit(
-      unit_instance->InitializationSeeds().NextSeed());
+      unit_instance->InitializationSeeds().Split());
 }
 
 void EnterNamespaceStaticInit(RuntimeEffects& runtime) {
   // A namespace is not instantiated, so nothing holds its seeds across runs of
   // anything: its initialization RNG exists for this one bring-up and hands out
-  // the one seed it is ever asked for. Starting a fresh one here is that
-  // generator, which is what gives every package the same starting point and
-  // keeps one package's draws out of another's (LRM 18.14.1).
+  // the one generator it is ever asked for. Starting a fresh one here is that
+  // RNG, which is what gives every package the same starting point and keeps
+  // one package's draws out of another's (LRM 18.14.1).
   InitializationRng seeds;
-  AsRuntime(runtime).EnterStaticInit(seeds.NextSeed());
+  AsRuntime(runtime).EnterStaticInit(seeds.Split());
 }
 
 auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)

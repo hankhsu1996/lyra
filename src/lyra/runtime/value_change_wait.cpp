@@ -19,13 +19,15 @@ namespace {
 // and a stop says only that an activation is parked here now.
 class StandingAwaiter final : public Awaiter {
  public:
-  explicit StandingAwaiter(std::span<const Trigger> triggers) {
+  explicit StandingAwaiter(std::span<const Trigger> triggers)
+      : Awaiter(triggers.size()) {
     for (const Trigger& trigger : triggers) {
       Watch(trigger);
     }
   }
 
-  explicit StandingAwaiter(std::span<const Trigger* const> triggers) {
+  explicit StandingAwaiter(std::span<const Trigger* const> triggers)
+      : Awaiter(triggers.size()) {
     for (const Trigger* trigger : triggers) {
       Watch(*trigger);
     }
@@ -87,7 +89,8 @@ class StandingAwaiter final : public Awaiter {
 // asks (LRM 9.7).
 class ReachedPlacesAwaiter : public Awaiter {
  public:
-  explicit ReachedPlacesAwaiter(std::span<const Trigger> triggers) {
+  explicit ReachedPlacesAwaiter(std::span<const Trigger> triggers)
+      : Awaiter(triggers.size()) {
     for (const Trigger& trigger : triggers) {
       EnrolOnLeaf(trigger);
     }

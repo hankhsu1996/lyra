@@ -147,7 +147,7 @@ auto LowerDistributionSystemSubroutineCall(
   const mir::TypeId int_type = unit.builtins.int_type;
 
   // LRM 20.14.1 makes `$random`'s seed optional, and a call that omits one
-  // names no stream to advance, so it draws where LRM 18.13.1 does.
+  // names no variable to advance, so the stream it advances is the run's.
   if (operands.empty()) {
     auto& block = *frame.current_block;
     return mir::Expr{

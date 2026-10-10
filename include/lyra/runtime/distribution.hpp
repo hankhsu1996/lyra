@@ -13,6 +13,10 @@ namespace lyra::runtime {
 // variable the design keeps its stream in.
 using DistributionDraw = value::Tuple<value::Int, value::Int>;
 
+// $random as LRM Annex N Table N.1 gives it: the uniform draw over the whole
+// signed range, advancing `seed`.
+auto RandomDraw(std::int32_t& seed) -> std::int32_t;
+
 // $dist_uniform (LRM 20.14.2): uniformly distributed over the closed interval
 // the two bounds describe.
 auto DistUniform(std::int64_t seed, std::int64_t start, std::int64_t end)

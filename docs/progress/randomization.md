@@ -26,15 +26,16 @@ Done when:
       static processes and static initializers and the language reaches it no other way -- it cannot
       be manually seeded and its state cannot be read. An independent **process RNG** serves every
       randomization system call made from that process. Seeding is hierarchical: a dynamically
-      created process draws its seed from the process that created it, and a static process draws
-      from the initialization RNG of the unit instance whose declaration it belongs to, so a whole
-      hierarchy subtree is determined by the seed of its root process. A static process is every
-      elaborated `initial`, `always`, `always_comb`, `always_latch`, and `always_ff` procedure and
-      every elaborated continuous assignment (Annex P), so the continuous assignments of a unit
-      instance take initialization seeds alongside its procedures. `$urandom` returns 32 unsigned
-      bits and `$urandom_range` bounds the result, reversing its two arguments when they arrive in
-      the other order (LRM 18.13.1 -- 18.13.2). Both are thread stable: the values a process
-      observes do not depend on the order in which processes execute.
+      created process's generator is split from that of the process that created it, whole and not
+      through a 32-bit seed, so no two of however many children one parent has draw alike; and a
+      static process's is split from the initialization RNG of the unit instance whose declaration
+      it belongs to, so a whole hierarchy subtree is determined by the seed of its root process. A
+      static process is every elaborated `initial`, `always`, `always_comb`, `always_latch`, and
+      `always_ff` procedure and every elaborated continuous assignment (Annex P), so the continuous
+      assignments of a unit instance take initialization seeds alongside its procedures. `$urandom`
+      returns 32 unsigned bits and `$urandom_range` bounds the result, reversing its two arguments
+      when they arrive in the other order (LRM 18.13.1 -- 18.13.2). Both are thread stable: the
+      values a process observes do not depend on the order in which processes execute.
 
 - [x] A randomization call made from a static initializer. LRM 18.14.1 requires the initialization
       RNG to serve static initializers as well as static processes, and a variable declaration
@@ -130,12 +131,12 @@ object lifetime are in place.
   RNG is seeded from, and a `$urandom` call inside one is legal SystemVerilog. Part one has to pick
   a seed source for it and record the choice.
 
-- LRM 18.14 lists what random stability applies to and does not list `$random` among them, while LRM
-  20.14 gives `$random` an optional seed argument rather than a required one, so what an
-  argumentless `$random` draws from is not stated. It draws from whatever generator the call already
-  reads for `$urandom` -- the calling process's, or the static initialization's -- which makes an
-  unseeded draw a signed reading of the same bits and gives it the same locality without introducing
-  a design-wide generator.
+- LRM 20.14 makes the algorithm `$random` generates by part of the standard, with or without its
+  optional seed argument, and states no start for the stream a call with no seed advances; LRM 18.14
+  does not list `$random` among what random stability applies to. Such a call advances one seed the
+  run keeps, starting at zero, by the algorithm of Annex N. A seed per process is what was not
+  chosen: started alike, every process would draw the same values, and started from the process's
+  own generator, the values would be the implementation's and no longer the standard's.
 
 ## Cross-References
 
