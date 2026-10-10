@@ -282,8 +282,8 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           },
           [&](const ConversionExpr& e) { operand(e.operand); },
           [&](const ValueRangeExpr& e) {
-            operand(e.lo);
-            operand(e.hi);
+            optional_operand(e.lo);
+            optional_operand(e.hi);
           },
           [&](const InsideExpr& e) {
             operand(e.lhs);

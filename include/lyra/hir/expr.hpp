@@ -131,10 +131,12 @@ struct CallExpr {
 // membership test, but that is a rule about where it may appear, not a reason
 // to give it a shape outside the expression set. Keeping it here is what lets
 // every membership operand -- an `inside` item, a case-inside label -- be a
-// plain `ExprId`.
+// plain `ExprId`. A bound the source wrote as `$` is absent: it stands for the
+// lowest or the highest value the type of the left operand has, so that side of
+// the range leaves nothing out.
 struct ValueRangeExpr {
-  ExprId lo;
-  ExprId hi;
+  std::optional<ExprId> lo;
+  std::optional<ExprId> hi;
 
   auto operator==(const ValueRangeExpr&) const -> bool = default;
 };

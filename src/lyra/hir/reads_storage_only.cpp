@@ -42,7 +42,9 @@ auto ReadsOnly(
                    reads(e.then_value) && reads(e.else_value);
           },
           [&](const ConversionExpr& e) { return reads(e.operand); },
-          [&](const ValueRangeExpr& e) { return reads(e.lo) && reads(e.hi); },
+          [&](const ValueRangeExpr& e) {
+            return reads_if_present(e.lo) && reads_if_present(e.hi);
+          },
           [&](const InsideExpr& e) {
             return reads(e.lhs) && all_read(e.items);
           },

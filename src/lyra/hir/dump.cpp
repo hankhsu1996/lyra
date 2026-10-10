@@ -1241,9 +1241,12 @@ class HirDumper {
                   FormatConversionKind(cv.kind), cv.operand.value);
             },
             [](const ValueRangeExpr& r) -> std::string {
+              const auto bound = [](const std::optional<ExprId>& b) {
+                return b.has_value() ? std::format("Expr[{}]", b->value)
+                                     : std::string{"$"};
+              };
               return std::format(
-                  "ValueRangeExpr lo=Expr[{}] hi=Expr[{}]", r.lo.value,
-                  r.hi.value);
+                  "ValueRangeExpr lo={} hi={}", bound(r.lo), bound(r.hi));
             },
             [](const InsideExpr& in) -> std::string {
               return FormatInsideExprNode(in);
