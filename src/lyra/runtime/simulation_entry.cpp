@@ -12,6 +12,7 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/interrupt_report.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -55,6 +56,7 @@ auto RunSimulation(Runtime& runtime) -> int {
     // state, since a context import can already be reached from there (LRM
     // 10.5, 35.5.3).
     const AmbientRunContext run_context{&runtime.DesignRoot(), runtime};
+    const InterruptReport interrupt_report{runtime};
     return runtime.Run();
   } catch (const std::exception&) {
     ReportRaisedError(runtime, std::current_exception());

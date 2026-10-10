@@ -33,9 +33,15 @@ enum class Severity : std::uint8_t {
 class DiagnosticDispatcher {
  public:
   using DiagnosticSink = std::function<void(std::string_view)>;
-  // The scope a report is being made in and the simulation time it is made at,
-  // rendered as one phrase; empty where no execution is under way.
-  using ContextSource = std::function<std::string()>;
+  // Where in the design and when a report is being made, as the run answers it.
+  struct Context {
+    // The scope the report is made in and the simulation time, as one phrase.
+    std::string scope_and_time;
+    // Where the procedure the report is made under is written; empty where
+    // none is running or no source text states it.
+    std::string_view procedure;
+  };
+  using ContextSource = std::function<Context()>;
 
   // Per-(origin, severity) suppression after this many emits in one run.
   // Zero disables rate limiting.
@@ -58,7 +64,8 @@ class DiagnosticDispatcher {
       const lyra::value::String& origin, const lyra::value::String& text);
 
   // A report the tool writes for the design, which reaches no severity task and
-  // so names no source location of its own.
+  // so names no source location of its own. What it can name is the procedure
+  // it is made under, and it does.
   void Report(Severity severity, std::string_view body);
 
   // A line about the run rather than about the design: what a simulation

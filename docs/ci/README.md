@@ -119,6 +119,7 @@ On top of the default set, what a change touches selects what else to run:
 - **A shipped example, its declaration, or the command its README gives** -- `examples_tests`,
   already in the gate.
 - **What a repeated construct costs to compile** -- `growth_tests`, already in the gate.
+- **Which units an edit makes again** -- `incremental_tests`, already in the gate.
 - **How long an expression the compiler follows** -- `compile_stack_tests`, already in the gate.
 - **Anything else** -- HIR, MIR, LIR, the execution backend, the runtime value library -- the
   default set is the whole answer.
@@ -151,6 +152,29 @@ What a design exceeds today is recorded per path, in `tests/paths/<path>.growth.
 path's refusal and defect records and by the same rule. A design is held to exactly what is listed
 for it: something new exceeding fails the run, and so does something listed that has stopped, until
 it goes. So the file only shrinks, and what is left in it is what that path still owes.
+
+## What an edit may cost
+
+A build after an edit makes again the units that now mean something else, and no others. The corpus
+cannot say whether that holds, and neither can one build. So each case under `tests/incremental/` is
+one design twice, `before.sv` and `after.sv`, and its first line names the units the edit gives
+another meaning. `incremental_tests` builds the design as it was and then as it is, on both
+backends, and holds the units the second build made to that line. On the execution backend the two
+builds share one store of kept objects and the second build's own statistics say which units it
+made; the C++ backend keeps no object, so there a unit is made again where the text its translation
+units are handed differs.
+
+A case states one kind of edit -- text moved down, a comment added, a name changed, a body changed
+that nothing else reads -- so what the record names is that kind. An edit that is not about where
+text sits keeps every line where it was, because a unit that follows its position would otherwise
+answer for every case. The record is `tests/paths/<path>.incremental.yaml`, held by the same rule as
+the growth record: `made X` is a unit made again that the edit left meaning what it did, and
+`kept X` one kept that it did not.
+
+What is in it today: a unit's code holds the file and line of what a run reports by -- a severity
+task's call, the procedure a stopped run was in -- so a unit holding either is made again when its
+text only moves; and on the C++ backend a unit is made again when a variable of its own is renamed
+or a class it includes gains a member it never reads.
 
 ## What a real design stops on
 

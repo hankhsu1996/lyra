@@ -1,13 +1,14 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <unordered_set>
 #include <variant>
 #include <vector>
@@ -131,6 +132,7 @@ class Runtime final : public RuntimeEffects {
   friend class RuntimeEffects;
   friend class CurrentRuntimeGuard;
   friend class ProcessExecutionGuard;
+  friend class InterruptReport;
 
   // The run has not been asked to end. Leaving the region loop in this state
   // means it ran out of work, which is an end of simulation like any other.
@@ -144,6 +146,20 @@ class Runtime final : public RuntimeEffects {
   // current time never advances, so this bound is what turns a run that would
   // not end into one that reports why.
   static constexpr std::size_t kMaxRegionPassesPerSlot = 10000;
+  // How many of a slot's last passes before that bound say which procedures
+  // they ran. A slot that settles never reaches them, so only a run about to be
+  // stopped pays for what its report needs.
+  static constexpr std::size_t kNotedRegionPasses = 10;
+  // How many procedures the report of an unsettled slot names one by one.
+  static constexpr std::size_t kMaxNamedProcedures = 8;
+
+  // One procedure an unsettled slot was still running: where it is written,
+  // the scope it runs in, and how many of the noted passes ran it.
+  struct StillRunning {
+    const char* written_at;
+    const Scope* scope;
+    std::size_t runs;
+  };
 
   // The slot at `when`, created on first use. LRM 4.4 has the simulator never
   // go backwards in time, so work placed in a slot earlier than the current one
@@ -165,14 +181,20 @@ class Runtime final : public RuntimeEffects {
   // through Re-NBA remains, then Postponed. Work a region produces lands back
   // in the slot, so the middle step repeats until the slot settles.
   void ExecuteTimeSlot(TimeSlot& slot);
-  void RunRegion(TimeSlot& slot, Region region);
+  // Runs what `region` holds, adding each procedure it runs to `noted` where
+  // the pass is one whose procedures are noted.
+  void RunRegion(
+      TimeSlot& slot, Region region, std::vector<StillRunning>* noted);
+  // The fatal report of a slot that met the bound on its passes, and the
+  // procedures its last passes ran.
+  void ReportUnsettledSlot(std::span<const StillRunning> still_running);
   void ExecuteFinalProcesses();
   // LRM 4: variable initialization and process activation are simulation
   // activity at time zero, so a run-time error raised by either is the design's
   // and ends the run the same way one raised later does.
   void RunSimulation();
   // LRM 20.10: where in the design and when a report is being made.
-  [[nodiscard]] auto ReportContext() const -> std::string;
+  [[nodiscard]] auto ReportContext() const -> DiagnosticDispatcher::Context;
   // LRM 16.3 requires a tool to report immediate cover results at the end of
   // simulation where it offers no assertion API to ask for them on demand.
   void ReportCoverage();
@@ -209,7 +231,10 @@ class Runtime final : public RuntimeEffects {
   BoundMembers bound_members_;
   std::unordered_set<const VariableCell*> driven_continuously_;
   std::vector<std::shared_ptr<RuntimeProcess>> processes_;
-  RuntimeProcess* current_process_ = nullptr;
+  // The process running now. Atomic, as the current time is, because a run
+  // stopped from outside is asked where it is from a signal handler, which may
+  // read nothing else.
+  std::atomic<RuntimeProcess*> current_process_ = nullptr;
   // What is running, which is what a randomization call draws from (LRM 18.13,
   // 18.14) and what a DPI-C foreign call reports its scope through (LRM
   // 35.5.3). Whichever is running installs one: a process the state it owns,
@@ -225,7 +250,7 @@ class Runtime final : public RuntimeEffects {
   // orders them is this set plus the calls each one makes, and no party holds
   // the whole graph.
   std::unordered_set<std::string> initialized_namespaces_;
-  SimTime now_ = 0;
+  std::atomic<SimTime> now_ = 0;
   std::int8_t global_precision_power_ = kDefaultTimePrecisionPower;
   value::TimeFormat time_format_;
   RunState state_ = Running{};
@@ -253,10 +278,14 @@ class Runtime final : public RuntimeEffects {
 // declared within, which holds the seeds LRM 18.14.1 starts a static process
 // from. It is the scope itself unless the process is declared inside a generate
 // scope, which has no seeds of its own.
+// `written_at` is where the source writes the procedure, as text that stands
+// for the whole run.
 void RegisterInitialProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine);
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at);
 void RegisterFinalProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine);
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at);
 
 // A static initializer runs before any procedure starts (LRM 10.5, 26.2), so
 // the generator it draws from cannot be a process's. LRM 18.14.1 names the one

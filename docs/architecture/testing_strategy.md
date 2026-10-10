@@ -78,6 +78,16 @@ published standard, and everything below follows from that.
     only ever holds one way is satisfied by a compiler that shares nothing, which is the failure it
     exists to catch. This is not language coverage and never stands in for any.
 
+12. **Every body of tests asks one question of a set of designs that each state one thing, and what
+    a path falls short of on that question is a record held exactly.** The corpus asks what a
+    program does; other bodies ask what compiling a design costs as it grows, which units an edit
+    makes again, how far a design written elsewhere gets. Whatever the question, a subject is held
+    to exactly what its path's record lists: a shortfall not listed fails the run, and so does one
+    listed that has stopped, until its line goes. So a record only shrinks, and what is left in it
+    is what that path still owes on that question. A new question is a new body in this shape, never
+    a second way of excusing a failure -- a skipped test, a tolerance widened to pass, an
+    expectation edited to match.
+
 ## Boundary to Adjacent Layers
 
 - A case exercises the whole pipeline, so a failure in one may point at any layer. Bisecting it is
@@ -131,3 +141,15 @@ where the output channel is the subject, is a sibling file.
 
 Adding a SystemVerilog feature means adding or extending a case first, then implementing until it
 passes.
+
+The bodies of tests that keep a record, each with the question it asks:
+
+| Question                                     | Designs               | Record, per path                     |
+| -------------------------------------------- | --------------------- | ------------------------------------ |
+| What does a program do?                      | `tests/conformance/`  | `<path>.yaml`, `<path>.defects.yaml` |
+| What does compiling cost as a design grows?  | `tests/growth/`       | `<path>.growth.yaml`                 |
+| Which units does an edit make again?         | `tests/incremental/`  | `<path>.incremental.yaml`            |
+| How far does a design written elsewhere get? | the benchmark suite's | `<path>.external_designs.yaml`       |
+
+The second and third are the same kind of question along two axes: a cost no program can observe and
+no single compile shows, measured by compiling twice and holding one run to the other.

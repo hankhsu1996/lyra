@@ -182,8 +182,10 @@ auto lyra_rt_enter_coroutine_owned_environment(
 auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool;
 void lyra_rt_release_coroutine(void* runtime);
 
-void lyra_rt_register_initial(void* self, void* unit_instance, void* coroutine);
-void lyra_rt_register_final(void* self, void* unit_instance, void* coroutine);
+void lyra_rt_register_initial(
+    void* self, void* unit_instance, void* coroutine, const char* written_at);
+void lyra_rt_register_final(
+    void* self, void* unit_instance, void* coroutine, const char* written_at);
 
 void lyra_rt_enter_scope_static_init(void* runtime, void* unit_instance);
 void lyra_rt_enter_namespace_static_init(void* runtime);

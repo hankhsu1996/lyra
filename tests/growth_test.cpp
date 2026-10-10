@@ -29,13 +29,15 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-#include <yaml-cpp/yaml.h>
 
 #include "tests/framework/cli_fixture.hpp"
+#include "tests/framework/held_record.hpp"
 #include "tests/framework/process.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 using bazel::tools::cpp::runfiles::Runfiles;
+using lyra::test::HoldToRecord;
+using lyra::test::LoadByName;
 using lyra::test::MakeScratchDir;
 using lyra::test::ReadJson;
 using lyra::test::RunChildProcess;
@@ -350,18 +352,20 @@ auto CheckGrowth(
   outgrew.insert(spent.begin(), spent.end());
   const std::string spans = SpansThatOutgrew(pair->small, pair->large);
 
-  std::string differs;
+  std::set<std::string> found;
   for (const auto& [name, numbers] : outgrew) {
-    if (!recorded.contains(name)) {
-      differs += std::format("  outgrew its size: {} ({})\n", name, numbers);
-    }
+    found.insert(name);
   }
-  for (const std::string& name : recorded) {
-    if (!outgrew.contains(name)) {
-      differs += std::format(
-          "  recorded as outgrowing and no longer does, so its line goes: {}\n",
-          name);
-    }
+  const lyra::test::Departures departures = HoldToRecord(recorded, found);
+  std::string differs;
+  for (const std::string& name : departures.not_recorded) {
+    differs +=
+        std::format("  outgrew its size: {} ({})\n", name, outgrew.at(name));
+  }
+  for (const std::string& name : departures.no_longer_found) {
+    differs += std::format(
+        "  recorded as outgrowing and no longer does, so its line goes: {}\n",
+        name);
   }
   if (differs.empty()) {
     return std::nullopt;
@@ -373,18 +377,6 @@ auto CheckGrowth(
       growth.name, NameOf(backend), growth.size, 2 * growth.size, differs,
       spans.empty() ? "    none\n" : spans, Joined(small_command),
       Joined(large_command));
-}
-
-// A file mapping a design's name to something said of it, read as `Said`. A
-// file holding only its own explanation parses to nothing and maps nothing.
-template <typename Said>
-auto LoadByDesign(const std::filesystem::path& yaml)
-    -> std::map<std::string, Said> {
-  std::map<std::string, Said> by_design;
-  for (const auto& entry : YAML::LoadFile(yaml.string())) {
-    by_design.emplace(entry.first.as<std::string>(), entry.second.as<Said>());
-  }
-  return by_design;
 }
 
 // Every design under `designs_root`, at the size the file beside them gives
@@ -407,7 +399,7 @@ auto LoadGrowthCases(
     }
   }
 
-  const auto sizes = LoadByDesign<std::uint64_t>(designs_root / "sizes.yaml");
+  const auto sizes = LoadByName<std::uint64_t>(designs_root / "sizes.yaml");
   for (const auto& [name, size] : sizes) {
     if (const auto found = cases.find(name); found != cases.end()) {
       found->second.size = size;
@@ -419,7 +411,7 @@ auto LoadGrowthCases(
   for (const Backend backend : {Backend::kCpp, Backend::kLlvm}) {
     const std::string file = std::format("{}.growth.yaml", NameOf(backend));
     for (const auto& [name, outgrows] :
-         LoadByDesign<std::vector<std::string>>(paths_root / file)) {
+         LoadByName<std::vector<std::string>>(paths_root / file)) {
       if (const auto found = cases.find(name); found != cases.end()) {
         found->second.recorded.at(backend).insert(
             outgrows.begin(), outgrows.end());

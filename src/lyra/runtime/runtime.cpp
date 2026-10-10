@@ -205,22 +205,46 @@ void Runtime::ReportSimulationControl(
     line += origin;
     line += ": ";
   }
-  line += std::format("{} at time {}", task, now_);
+  line += std::format("{} at time {}", task, now_.load());
   if (level >= 2) {
     line += std::format(", {:.3f}s of processor time", ProcessorSeconds());
   }
   diagnostic_.Note(line);
 }
 
-auto Runtime::ReportContext() const -> std::string {
-  const Scope* scope =
-      current_process_ == nullptr ? nullptr : current_process_->OwningScope();
+auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
+  const RuntimeProcess* const process = current_process_;
+  const Scope* scope = process == nullptr ? nullptr : process->OwningScope();
   if (scope == nullptr) {
-    return std::format("time {}", now_);
+    return {
+        .scope_and_time = std::format("time {}", now_.load()), .procedure = {}};
   }
-  return std::format(
-      "{} at time {}", std::string_view{scope->HierarchicalPath().View()},
-      now_);
+  return {
+      .scope_and_time = std::format(
+          "{} at time {}", std::string_view{scope->HierarchicalPath().View()},
+          now_.load()),
+      .procedure = process->WrittenAt()};
+}
+
+void Runtime::ReportUnsettledSlot(std::span<const StillRunning> still_running) {
+  ReportDesignError("the design keeps scheduling work and time never advances");
+  const std::span<const StillRunning> named =
+      still_running.first(std::min(still_running.size(), kMaxNamedProcedures));
+  for (const StillRunning& procedure : named) {
+    const std::string_view written_at = procedure.written_at;
+    diagnostic_.Note(
+        std::format(
+            "note: {}{}this procedure in {} ran {} times in the last {} passes",
+            written_at, written_at.empty() ? "" : ": ",
+            std::string_view{procedure.scope->HierarchicalPath().View()},
+            procedure.runs, kNotedRegionPasses));
+  }
+  if (named.size() < still_running.size()) {
+    diagnostic_.Note(
+        std::format(
+            "note: and {} more procedures",
+            still_running.size() - named.size()));
+  }
 }
 
 void Runtime::ReportCoverage() {
@@ -293,8 +317,9 @@ auto Runtime::SlotAt(SimTime when) -> TimeSlot& {
 }
 
 void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
-  RunRegion(slot, Region::kPreponed);
+  RunRegion(slot, Region::kPreponed, nullptr);
   std::size_t passes = 0;
+  std::vector<StillRunning> still_running;
   // LRM 4.5: take the earliest region that has anything, run it, and look
   // again -- what it produced lands back in the slot. The reactive group comes
   // after Observed in the order, so it is reached only once the active group is
@@ -303,14 +328,13 @@ void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
   while (std::optional<Region> region =
              slot.FirstPending(Region::kActive, Region::kReNba)) {
     if (++passes > kMaxRegionPassesPerSlot) {
-      ReportDesignError(
-          "the current time slot did not settle: the design keeps "
-          "scheduling work without advancing time");
+      ReportUnsettledSlot(still_running);
       return;
     }
-    RunRegion(slot, *region);
+    const bool noted = passes > kMaxRegionPassesPerSlot - kNotedRegionPasses;
+    RunRegion(slot, *region, noted ? &still_running : nullptr);
   }
-  RunRegion(slot, Region::kPostponed);
+  RunRegion(slot, Region::kPostponed, nullptr);
   if (std::holds_alternative<Running>(state_) && !slot.Empty()) {
     ReportDesignError(
         "the postponed region scheduled work back into the time slot that "
@@ -318,7 +342,8 @@ void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
   }
 }
 
-void Runtime::RunRegion(TimeSlot& slot, Region region) {
+void Runtime::RunRegion(
+    TimeSlot& slot, Region region, std::vector<StillRunning>* noted) {
   RegionQueue& queue = slot[region];
   // LRM 9.3.2: work arriving while this pass runs belongs to the next pass, so
   // both snapshots move out of the region and new arrivals accumulate behind
@@ -332,6 +357,24 @@ void Runtime::RunRegion(TimeSlot& slot, Region region) {
   while (QueuePlace* queued = draining_.PopFront()) {
     Activation* activation = queued->activation;
     ConsumeWait(activation);
+    if (noted != nullptr) {
+      // Taken before the process runs, which may be the run that ends it.
+      const RuntimeProcess& process = activation->Process();
+      const auto same =
+          std::ranges::find_if(*noted, [&](const StillRunning& procedure) {
+            return procedure.written_at == process.WrittenAt() &&
+                   procedure.scope == process.OwningScope();
+          });
+      if (same == noted->end()) {
+        noted->push_back(
+            StillRunning{
+                .written_at = process.WrittenAt(),
+                .scope = process.OwningScope(),
+                .runs = 1});
+      } else {
+        ++same->runs;
+      }
+    }
     RunProcess(activation);
   }
 }
@@ -385,22 +428,24 @@ void Runtime::RunProcess(Activation* activation) {
 }
 
 void RegisterInitialProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine) {
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
   auto process = std::make_shared<RuntimeProcess>(
       owning_scope, std::move(coroutine),
-      unit_instance->InitializationSeeds().NextSeed());
+      unit_instance->InitializationSeeds().NextSeed(), written_at);
   // LRM 9.2: an `initial` or `always` starts on the Active queue at time 0.
   rt.Schedule(rt.Now(), Region::kActive, process->TopActivation());
   rt.RegisterProcessInRegistry(std::move(process));
 }
 
 void RegisterFinalProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine) {
+    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
+    const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
   auto process = std::make_shared<RuntimeProcess>(
       owning_scope, std::move(coroutine),
-      unit_instance->InitializationSeeds().NextSeed());
+      unit_instance->InitializationSeeds().NextSeed(), written_at);
   rt.QueueFinal(process->TopActivation());
   rt.RegisterProcessInRegistry(std::move(process));
 }

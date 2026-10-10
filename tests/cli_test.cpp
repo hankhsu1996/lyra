@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <array>
+#include <csignal>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
@@ -21,7 +23,6 @@
 #include <iterator>
 #include <map>
 #include <nlohmann/json.hpp>
-#include <regex>
 #include <set>
 #include <string>
 #include <string_view>
@@ -215,106 +216,6 @@ TEST(LyraEmit, TheSignatureCarriesWhatTheUnitDeclaresAndNothingElse) {
   EXPECT_NE(
       declared,
       EmitChildSignature(lyra, *tmp_or, "reordered", ChildEdit::kPortOrder));
-}
-
-// One package holding two classes with nothing to do with each other, and two
-// modules using one apiece. A flag gives one class a property nobody reads,
-// which is a change to what that class declares rather than to a body of it.
-auto WriteTwoClassPackage(
-    const std::filesystem::path& path, bool counter_grows, bool logger_grows)
-    -> void {
-  std::ofstream out(path);
-  out << "package pkg;\n"
-      << "  class Counter;\n"
-      << "    int n = 1;\n"
-      << (counter_grows ? "    int spare;\n" : "") << "  endclass\n"
-      << "  class Logger;\n"
-      << "    int m = 2;\n"
-      << (logger_grows ? "    int spare;\n" : "") << "  endclass\n"
-      << "endpackage\n"
-      << "module UsesCounter;\n"
-      << "  int seen;\n"
-      << "  initial begin\n"
-      << "    pkg::Counter c;\n"
-      << "    c = new();\n"
-      << "    seen = c.n;\n"
-      << "  end\n"
-      << "endmodule\n"
-      << "module UsesLogger;\n"
-      << "  int seen;\n"
-      << "  initial begin\n"
-      << "    pkg::Logger l;\n"
-      << "    l = new();\n"
-      << "    seen = l.m;\n"
-      << "  end\n"
-      << "endmodule\n"
-      << "module Test;\n"
-      << "  UsesCounter a ();\n"
-      << "  UsesLogger b ();\n"
-      << "endmodule\n";
-}
-
-// Every line of text one translation unit is handed: its own, and that of every
-// file it reaches through an include of the project's own. A referrer's
-// dependency is this and not the set of units it named, so this is what a claim
-// about what it compiles against has to be made against.
-auto ReadCompileInput(
-    const std::filesystem::path& dir, const std::filesystem::path& entry,
-    std::set<std::filesystem::path>& seen) -> std::string {
-  if (!seen.insert(entry).second) {
-    return {};
-  }
-  const std::string own = ReadWholeFile(dir / entry);
-  std::string out = own;
-  const std::regex include{"#include \"([^\"/]+)\""};
-  for (auto it = std::sregex_iterator(own.begin(), own.end(), include);
-       it != std::sregex_iterator(); ++it) {
-    const std::filesystem::path named = (*it)[1].str();
-    if (std::filesystem::exists(dir / named)) {
-      out += ReadCompileInput(dir, named, seen);
-    }
-  }
-  return out;
-}
-
-// Emits one variant of that design into its own directory and answers with
-// everything `UsesCounter`'s translation unit is handed.
-auto EmitAndReadCounterInput(
-    const std::filesystem::path& lyra, const std::filesystem::path& root,
-    std::string_view variant, bool counter_grows, bool logger_grows)
-    -> std::string {
-  const auto dir = root / variant;
-  std::filesystem::create_directories(dir);
-  const auto src = dir / "test.sv";
-  WriteTwoClassPackage(src, counter_grows, logger_grows);
-  const auto out_dir = dir / "out";
-  const std::vector<std::string> args = {
-      "emit", "cpp", "--top", "Test", "-o", out_dir.string(), src.string()};
-  const auto emit = RunChildProcess(lyra, args, 60s);
-  EXPECT_EQ(emit.exit_code, 0) << variant << ": " << emit.stderr_text;
-  std::set<std::filesystem::path> seen;
-  return ReadCompileInput(out_dir, "UsesCounter.cpp", seen);
-}
-
-// What a referrer depends on is the part of a signature it read, never the unit
-// holding it. One package holds two unrelated classes and two modules use one
-// apiece, so editing the class this module never named must move nothing it
-// compiles -- while editing the one it did must.
-TEST(LyraEmit, AReferrerCompilesAgainstThePartItRead) {
-  const auto lyra = ResolveLyra();
-  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-
-  auto tmp_or = MakeScratchDir();
-  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-
-  const std::string base =
-      EmitAndReadCounterInput(lyra, *tmp_or, "base", false, false);
-  ASSERT_FALSE(base.empty());
-
-  EXPECT_EQ(
-      base, EmitAndReadCounterInput(lyra, *tmp_or, "other_class", false, true));
-  EXPECT_NE(
-      base, EmitAndReadCounterInput(lyra, *tmp_or, "own_class", true, false));
 }
 
 // A library spread over a directory with a testbench beside it, declared by a
@@ -1107,6 +1008,12 @@ TEST(LyraRun, ADesignErrorEndsTheRunThroughItsFinalProcedures) {
       << run.stdout_text << run.stderr_text;
   EXPECT_NE(run.stderr_text.find("size operand is negative"), std::string::npos)
       << run.stderr_text;
+  // The error has no call site to name, so it names the procedure it was
+  // raised under: the `initial` that called the task.
+  EXPECT_NE(
+      run.stderr_text.find("in the procedure at test.sv:7:3"),
+      std::string::npos)
+      << run.stderr_text;
   EXPECT_NE(run.stdout_text.find("reached the end"), std::string::npos)
       << "stdout: " << run.stdout_text;
   EXPECT_EQ(
@@ -1149,6 +1056,98 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
       << "stdout: " << run.stdout_text;
   EXPECT_EQ(run.stdout_text.find("v="), std::string::npos)
       << "stdout: " << run.stdout_text;
+}
+
+// Procedures that keep waking each other with no delay between them are legal
+// text the standard only warns of (LRM 9.2.2, 12.7.6), and a tool that stops
+// such a run owes its reader the one thing they cannot find alone: which
+// procedures. The corpus cannot state this, since the run has to fail.
+//
+// The procedure that set the pair going ran once and is not among those still
+// running when the run is stopped, so it is not named.
+TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  bit a, b;\n"
+                     << "  always @* a = ~b;\n"
+                     << "  always @* b = a;\n"
+                     << "  initial a = 1;\n"
+                     << "  initial #1 $display(\"reached time 1\");\n"
+                     << "endmodule\n";
+
+  const std::vector<std::string> args = {"run",   "--backend", "llvm",
+                                         "--top", "Test",      src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(run.termination, TerminationKind::kExitedNonZero)
+      << run.stdout_text << run.stderr_text;
+  EXPECT_NE(run.stderr_text.find("time never advances"), std::string::npos)
+      << run.stderr_text;
+  EXPECT_NE(
+      run.stderr_text.find("test.sv:3:3: this procedure in Test ran"),
+      std::string::npos)
+      << run.stderr_text;
+  EXPECT_NE(
+      run.stderr_text.find("test.sv:4:3: this procedure in Test ran"),
+      std::string::npos)
+      << run.stderr_text;
+  EXPECT_EQ(run.stderr_text.find("test.sv:5:3"), std::string::npos)
+      << run.stderr_text;
+  EXPECT_EQ(run.stdout_text.find("reached time 1"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+}
+
+// A procedure that never stops to wait cannot be told from one that is only
+// taking long, so nothing ends such a run but whoever is waiting on it. What
+// that reader is owed when they do is where the run was. The program is ended
+// here as a job scheduler would end it, since a shell starts a background job
+// with the keyboard's interrupt ignored.
+TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  bit toggled, gate;\n"
+                     << "  initial begin\n"
+                     << "    #7;\n"
+                     << "    forever begin\n"
+                     << "      if (gate) #1;\n"
+                     << "      toggled = ~toggled;\n"
+                     << "    end\n"
+                     << "  end\n"
+                     << "endmodule\n";
+  const auto program = *tmp_or / "program";
+  const auto built = RunLyraFrom(
+      lyra, *tmp_or,
+      std::format(
+          "build --backend llvm --top Test -o '{}' test.sv", program.string()));
+  ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
+  const std::vector<std::string> argv = {
+      "-c", std::format(
+                "'{}' &\n"
+                "run=$!\n"
+                "sleep 2\n"
+                "kill -TERM $run\n"
+                "wait $run\n",
+                program.string())};
+  const auto run = RunChildProcess(*sh_or, argv, 120s);
+  EXPECT_EQ(run.exit_code, 128 + SIGTERM) << run.stderr_text;
+  EXPECT_NE(run.stderr_text.find("interrupted at time 7"), std::string::npos)
+      << run.stderr_text;
+  EXPECT_NE(
+      run.stderr_text.find("test.sv:3:3: this procedure was running"),
+      std::string::npos)
+      << run.stderr_text;
 }
 
 // LRM 8.4 leaves the result of reaching a member through a null object handle
@@ -1211,6 +1210,75 @@ TEST(LyraRun, ReachingThroughANullObjectHandleIsReported) {
   EXPECT_NE(
       through_process.stdout_text.find("reached the access"), std::string::npos)
       << "stdout: " << through_process.stdout_text;
+}
+
+// The largest line number `program` names in `file`, read off the text a report
+// would print: every `file:line:` the program holds.
+auto LargestLineNamed(std::string_view program, std::string_view file)
+    -> std::uint64_t {
+  const std::string prefix = std::format("{}:", file);
+  std::uint64_t largest = 0;
+  for (std::size_t at = program.find(prefix); at != std::string_view::npos;
+       at = program.find(prefix, at + 1)) {
+    std::uint64_t line = 0;
+    for (std::size_t digit = at + prefix.size();
+         digit < program.size() && program[digit] >= '0' &&
+         program[digit] <= '9';
+         ++digit) {
+      line = (line * 10) + static_cast<std::uint64_t>(program[digit] - '0');
+    }
+    largest = std::max(largest, line);
+  }
+  return largest;
+}
+
+// Lowering several units at once asks where text is written from several
+// threads together, and a line worked out wrongly then is a line a run goes on
+// to name in its reports. A design of many small units, each holding one
+// procedure, has several asking from the first moment, where a design of a
+// handful meets it by chance. A build can still miss, so the design is built
+// several times and none may name a line the file does not have.
+TEST(LyraBuild, UnitsLoweredAtOnceNameLinesTheFileHas) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  constexpr int kUnits = 400;
+  constexpr int kBuilds = 4;
+  std::uint64_t lines = 0;
+  {
+    std::ofstream out(*tmp_or / "many_units.sv");
+    for (int i = 0; i < kUnits; ++i) {
+      out << "module M" << i << ";\n"
+          << "  logic [7:0] held;\n"
+          << "  initial held = 8'd" << (i % 200) << ";\n"
+          << "endmodule\n";
+      lines += 4;
+    }
+    out << "module Top;\n";
+    for (int i = 0; i < kUnits; ++i) {
+      out << "  M" << i << " m" << i << " ();\n";
+    }
+    out << "endmodule\n";
+    lines += kUnits + 2;
+  }
+
+  const auto program = *tmp_or / "program";
+  for (int build = 0; build < kBuilds; ++build) {
+    const auto built = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "build --rebuild --backend llvm -j 4 --cache-dir cache --top Top "
+            "-o '{}' many_units.sv",
+            program.string()));
+    ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
+    const std::string text = ReadWholeFile(program);
+    const std::uint64_t largest = LargestLineNamed(text, "many_units.sv");
+    ASSERT_GT(largest, 0U) << "the program names no line of its source";
+    EXPECT_LE(largest, lines) << "build " << build << " names line " << largest
+                              << " of a file of " << lines;
+  }
 }
 
 // What `build` produces on the backend that writes no C++ is a program in its

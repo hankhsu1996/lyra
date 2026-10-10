@@ -83,13 +83,16 @@ ProcessExecutionGuard::ProcessExecutionGuard(
     RuntimeEffects& effects, RuntimeProcess& process)
     : effects_(&effects),
       previous_process_(
-          std::exchange(AsRuntime(effects).current_process_, &process)),
+          AsRuntime(effects).current_process_.load(std::memory_order_relaxed)),
       previous_running_(
           std::exchange(AsRuntime(effects).running_, &process.Running())) {
+  AsRuntime(effects).current_process_.store(
+      &process, std::memory_order_relaxed);
 }
 
 ProcessExecutionGuard::~ProcessExecutionGuard() {
-  AsRuntime(*effects_).current_process_ = previous_process_;
+  AsRuntime(*effects_).current_process_.store(
+      previous_process_, std::memory_order_relaxed);
   AsRuntime(*effects_).running_ = previous_running_;
 }
 
@@ -290,13 +293,13 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
     throw InternalError(
         "RuntimeEffects::Spawn: no ambient process to parent the branch to");
   }
-  RuntimeProcess& parent = *rt.current_process_;
+  RuntimeProcess& parent = *rt.current_process_.load();
   // Hierarchical seeding (LRM 18.14.1): the branch starts from the spawner's
   // next value, so a whole subtree of threads follows from the seed of the one
   // at its root and the order the branches then run in does not move any of it.
   auto child = std::make_shared<RuntimeProcess>(
       parent.OwningScope(), std::move(coroutine),
-      parent.Running().rng.NextSeed());
+      parent.Running().rng.NextSeed(), parent.WrittenAt());
   Activation* const activation = child->TopActivation();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than
@@ -311,7 +314,8 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
 
 void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
   Runtime& rt = AsRuntime(*this);
-  if (rt.current_process_ == nullptr) {
+  const RuntimeProcess* const reached_by = rt.current_process_;
+  if (reached_by == nullptr) {
     throw InternalError(
         "RuntimeEffects::RunDetached: no ambient process to take the owning "
         "scope from");
@@ -321,7 +325,8 @@ void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
   // no random values, and taking a seed from the process that reached the
   // statement would move that process's own stream (LRM 18.14.1).
   auto carrier = std::make_shared<RuntimeProcess>(
-      rt.current_process_->OwningScope(), std::move(coroutine), RandomSeed{0});
+      reached_by->OwningScope(), std::move(coroutine), RandomSeed{0},
+      reached_by->WrittenAt());
   Activation* const activation = carrier->TopActivation();
   // No lineage and no disable membership: the standard makes no process of the
   // update this carries out, so nothing that names processes may find it. What

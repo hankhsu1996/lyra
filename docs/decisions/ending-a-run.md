@@ -93,7 +93,8 @@ D2. A report carries what LRM 20.10 requires of every severity task: the severit
     line of the call, the hierarchical name of the scope the call is made in, and the simulation
     time. Where in the design and when are properties of the report rather than of the call, so
     they are the reporting surface's to supply and every report carries them, including one Lyra
-    writes for the design, which has no call site of its own to name.
+    writes for the design, which has no call site of its own to name and names the procedure it was
+    made under in its place.
 
 D3. A design's run-time error is a report Lyra writes for the design, at a severity Lyra chooses
     per condition. A fatal one is D1's composition -- report, stop, depart -- and is not a failure

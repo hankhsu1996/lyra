@@ -21,8 +21,10 @@
 namespace lyra::runtime {
 
 RuntimeProcess::RuntimeProcess(
-    Scope* owning_scope, Coroutine<void> coroutine, RandomSeed seed)
+    Scope* owning_scope, Coroutine<void> coroutine, RandomSeed seed,
+    const char* written_at)
     : owning_scope_(owning_scope),
+      written_at_(written_at),
       coroutine_(std::move(coroutine)),
       running_(RunningState{.rng = DrawRng{seed}, .import_calls = {}}),
       // Before the body runs, the top frame is the active leaf (what the engine
