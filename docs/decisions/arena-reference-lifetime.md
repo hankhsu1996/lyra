@@ -142,6 +142,15 @@ is.
   outlives the statement, which in practice means captured by a lambda or held across a loop.
   Straight-line code is safe for a reason worth knowing: a branch that appends returns from it, and
   a reference read as an argument to the appending call is sequenced before the append.
+- That last reason covers the appending call's own arguments and nothing beside it. Where the
+  appending call is itself one argument of a call, or one operand of an operator, and the reference
+  is read in another, C++ leaves the order to the compiler: GCC evaluates a call's arguments last to
+  first and clang first to last. Such a read is therefore wrong under one compiler only, and a
+  sanitizer run built by the other never reports it. Two stood in the tree on 2026-10-10, found by
+  reading after the nightly reported a third of the plain kind: a count read off an array type
+  beside the argument that built the element's default, and a count read off a library class beside
+  the operand that built its table. The remote image builds with GCC and a checkout is built with
+  clang, so the nightly runs the set under each.
 
 ## Cross-references
 
