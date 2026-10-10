@@ -17,6 +17,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -153,8 +154,7 @@ auto LowerStreamingConcatExpr(
   operand_ids.reserve(sc.streams().size());
   for (const auto& stream : sc.streams()) {
     const slang::ast::Expression& operand = StreamedExpression(stream);
-    const diag::SourceSpan operand_span =
-        unit_lowerer.SourceMapper().SpanOf(operand.sourceRange);
+    const diag::SourceSpan operand_span = frontend::SpanOf(operand.sourceRange);
     if (operand.type->getCanonicalType().isClass()) {
       return diag::Fail(
           operand_span, diag::DiagCode::kUnsupportedExpressionForm,

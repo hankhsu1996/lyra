@@ -13,6 +13,7 @@
 #include <slang/ast/types/Type.h>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
@@ -81,8 +82,7 @@ auto BuildTheLoop(
     -> diag::Result<hir::BlocksRepeat> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const slang::ast::ValueSymbol& loop_variable = *array.loopVariable;
-  const auto span =
-      unit_lowerer.SourceMapper().PointSpanOf(loop_variable.location);
+  const auto span = frontend::PointSpanOf(loop_variable.location);
 
   auto index_type = unit_lowerer.InternType(loop_variable.getType(), span);
   if (!index_type) return std::unexpected(std::move(index_type.error()));
@@ -142,8 +142,7 @@ auto BuildRepeatedGenerate(
     const hir::ExprId index_read = frame.Exprs().Add(
         hir::MakeRefExpr(
             *index_ref, variable.type,
-            unit_lowerer.SourceMapper().PointSpanOf(
-                array.loopVariable->location)));
+            frontend::PointSpanOf(array.loopVariable->location)));
     gen.blocks.Add(
         hir::GenerateBlock{
             .scope = std::move(body), .arguments = {index_read}});
@@ -169,8 +168,7 @@ auto BuildStandAloneGenerate(
     std::vector<hir::ExprId> arguments;
     if (const slang::ast::ParameterSymbol* index =
             LoopIndexParameterOf(entry)) {
-      const auto span =
-          unit_lowerer.SourceMapper().PointSpanOf(index->location);
+      const auto span = frontend::PointSpanOf(index->location);
       auto type = unit_lowerer.InternType(index->getType(), span);
       if (!type) return std::unexpected(std::move(type.error()));
       auto value = MakeConstantValueExpr(

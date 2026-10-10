@@ -7,6 +7,7 @@
 
 #include <fmt/core.h>
 #include <slang/driver/Driver.h>
+#include <slang/text/SourceManager.h>
 
 #include "lyra/cli/command_line.hpp"
 #include "lyra/cli/commands.hpp"
@@ -17,6 +18,7 @@
 #include "lyra/diag/render.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/driver/signals.hpp"
+#include "lyra/frontend/slang_source_manager.hpp"
 #include "lyra/status/status.hpp"
 
 auto main(int argc, char** argv) -> int {
@@ -41,10 +43,12 @@ auto main(int argc, char** argv) -> int {
     auto command = lyra::cli::ParseCommandWords(driver, argv_split.lyra);
 
     const bool use_color = lyra::cli::UseColor(cli_options);
-    const lyra::cli::Reporter report{lyra::diag::RenderOptions{
-        .use_color = use_color,
-        .show_source_snippet = true,
-        .show_remarks = cli_options.remarks.value_or(false)}};
+    const lyra::frontend::SlangSourceManager sources(driver.sourceManager);
+    const lyra::cli::Reporter report{
+        lyra::diag::RenderOptions{
+            .use_color = use_color,
+            .show_remarks = cli_options.remarks.value_or(false)},
+        sources};
 
     if (!command) {
       // An empty message means the parser already printed its own account of
@@ -96,14 +100,19 @@ auto main(int argc, char** argv) -> int {
     }
     return exit_code;
   } catch (const std::exception& failure) {
-    // Nothing a command reads is left to render against here, so the report is
-    // plain and names no place.
+    // Nothing a command read is left here, so the failure is shown against no
+    // source at all: plain, and about no place, since a place it still names
+    // is one of a source that is gone.
+    const slang::SourceManager nothing_read;
+    const lyra::frontend::SlangSourceManager sources(nothing_read);
+    lyra::diag::Diagnostic report = lyra::diag::InternalFailure(failure);
+    report.primary.span = lyra::diag::UnknownSpan{};
     lyra::diag::DiagnosticSink sink;
-    sink.Report(lyra::diag::InternalFailure(failure));
+    sink.Report(std::move(report));
     fmt::print(
         stderr, "{}",
         lyra::diag::RenderDiagnostics(
-            sink, nullptr, lyra::diag::RenderOptions{.use_color = false}));
+            sink, sources, lyra::diag::RenderOptions{.use_color = false}));
     return lyra::cli::kCompilerFailureExit;
   }
 }

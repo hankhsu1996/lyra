@@ -60,7 +60,6 @@ auto Lower(Compilation& compilation, std::size_t width, BodiesRead bodies_read)
   lyra::diag::DiagnosticSink sink;
   auto design = lyra::compiler::DeclareUnits(
       std::move(compilation.front.elaborated->compilation),
-      compilation.front.elaborated->source_mapper,
       lyra::compiler::LoweringPolicy{
           .assertions = lyra::support::AssertionPolicy::kCheck,
           .bodies_read = bodies_read},

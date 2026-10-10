@@ -114,9 +114,11 @@ is prebuilt and always optimized, so it is not on this axis and costs nothing ei
 
 ## SystemVerilog version
 
-Lyra targets **IEEE 1800-2023**, defaulting the front end to `--std 1800-2023` and slang's VCS
-compatibility mode. Both are defaults a caller may override. Testing a 2023 feature against slang
-directly needs `--std 1800-2023`.
+Lyra targets **IEEE 1800-2023**, defaulting the front end to `--std 1800-2023` and to the most
+tolerant of slang's compatibility modes, `--compat all`: text the other simulators accept is
+accepted with a warning, because a design that already runs elsewhere is what a user brings. Both
+are defaults a caller may override, and `--compat default` asks for the standard's own strictness.
+Testing a 2023 feature against slang directly needs `--std 1800-2023`.
 
 ## Architecture
 
@@ -167,6 +169,16 @@ an emitted project is built -- which is not the same as editing `backend/cpp`, s
 a function of MIR and LIR node shapes. A filtered run names only the tests it ran, so reach for
 `--config=full` whenever a result has to stand as evidence. `docs/ci/README.md` holds the whole
 strategy: which moment answers which question, and what a change selects.
+
+One more target is in neither set and is run only by naming it: `external_design_tests` builds and
+runs designs written elsewhere for other simulators -- today those of RTLMeter, Verilator's
+benchmark suite -- and holds each to what `tests/paths/llvm.external_designs.yaml` records of how
+far it gets. A case is minutes and the suite is half a gigabyte to fetch, so it is `manual`, and one
+case is the usual thing to ask for:
+
+```bash
+bazel test //tests:external_design_tests --test_arg=--gtest_filter='*VeeR_EL2*' --test_output=streamed
+```
 
 A run someone is waiting on stops at the first case that fails; a scheduled one reports every
 failure instead. So a red local run names one case and not the list, and

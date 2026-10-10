@@ -9,7 +9,6 @@
 
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/load.hpp"
-#include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/support/assertion_policy.hpp"
 #include "lyra/support/bodies_read.hpp"
@@ -65,8 +64,7 @@ auto RunFrontEnd(slang::driver::Driver& driver) -> FrontEndResult;
 // belongs to whoever consumes it, so it is driven separately over what comes
 // back here.
 auto DeclareUnits(
-    std::unique_ptr<slang::ast::Compilation> elaborated,
-    const frontend::SlangSourceMapper& source_mapper, LoweringPolicy policy,
+    std::unique_ptr<slang::ast::Compilation> elaborated, LoweringPolicy policy,
     diag::DiagnosticSink& sink) -> std::optional<ElaboratedDesign>;
 
 }  // namespace lyra::compiler

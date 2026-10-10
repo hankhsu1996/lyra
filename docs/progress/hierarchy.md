@@ -114,9 +114,8 @@ Unlocks the runtime side of `instantiation/param_slots`.
       name or a port.
 - [ ] B13 -- `%l` and `%L` (LRM 33.7), which print the library and cell an instance is bound to, are
       refused as unknown format specifiers.
-- [ ] B14 -- Two cells of one name mapped to one library stop the build as a duplicate definition,
-      where LRM 33.3.1 has the later one replace the earlier with a warning. The front end binds the
-      later one and reports the error under a warning option a caller may lower.
+- [x] B14 -- Two cells of one name mapped to one library build as LRM 33.3.1 has it: the later one
+      replaces the earlier, with a warning. `--compat default` makes it an error.
 - [x] B15 -- A module carrying an interface that itself carries an interface standing inside that
       module (LRM 25.3, 25.3.3) builds and runs, whether the inner interface is one the module
       declares or one writing a name that lands in the module. It used to end the compiler with no

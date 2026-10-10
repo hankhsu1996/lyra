@@ -1,0 +1,61 @@
+# How far the llvm path gets with each design of the benchmark suite, one entry
+# per case that does not yet build, run and pass the suite's own check: the
+# case's name, the step it stops at (`build`, `run` or `check`), and words that
+# step says there.
+#
+# A case is held to exactly what is listed for it. One that stops elsewhere or
+# says something else fails the run, and so does one listed that has stopped
+# stopping, until its entry says so or goes -- so this file is the record of what
+# stands between Lyra and each design, and an entry leaves it only by the design
+# getting all the way.
+BlackParrot:1x1:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+Caliptra:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+HammerBlade:16x8:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+HammerBlade:2x1:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+HummingbirdV2-E203:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+HummingbirdV2-E203:nodelay:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+NVDLA:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+OpenPiton:1x1:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+OpenTitan:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+VeeR-EH1:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+VeeR-EH2:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+VeeR-EL2:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+Vortex:mini:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+XuanTie-C906:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+XuanTie-C910:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+XuanTie-E902:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target
+XuanTie-E906:default:hello:
+  stops: build
+  says: a concatenation is not yet supported as the target

@@ -20,12 +20,11 @@ namespace lyra::lowering::hir_to_mir {
 
 auto FormatRuntimeOriginString(
     diag::SourceSpan span, const diag::SourceManager& mgr) -> std::string {
-  const diag::FileInfo* file = mgr.GetFile(span.file_id);
-  if (file == nullptr) return {};
-  const auto loc = mgr.OffsetToLineCol(span.file_id, span.begin);
+  const auto at = mgr.PositionOf(span);
+  if (!at) return {};
   return std::format(
-      "{}:{}:{}", std::filesystem::path{file->path}.filename().string(),
-      loc.line, loc.col);
+      "{}:{}:{}", std::filesystem::path{at->file}.filename().string(), at->line,
+      at->column);
 }
 
 auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer) -> mir::Expr {

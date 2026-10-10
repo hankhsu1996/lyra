@@ -1217,6 +1217,12 @@ the detail lives in the entry itself.
 
 ### Diagnostics
 
+- [a-place-in-the-source-is-the-front-ends](a-place-in-the-source-is-the-front-ends.md) -- a place
+  is held past the front end as the front end gave it and never resolved until it is shown; every
+  message about the source is shown by the front end, as its own are, so a refusal names the macro
+  and the include behind the text; a message opens with `error:`, `warning:` or `note:` and says its
+  kind itself. A second account of the source with a converter, a printer of the compiler's own, and
+  a label of the compiler's own are rejected.
 - [diagnostic-construction](diagnostic-construction.md) -- a diagnostic's kind is derived from its
   code at construction; construction is infallible; the `UnsupportedCategory` axis is removed.
 - [qualified-statement-violation-check](qualified-statement-violation-check.md) -- `unique` /
@@ -1232,6 +1238,12 @@ the detail lives in the entry itself.
   who builds it and never an invocation or machine property; material accumulates and selection is
   replaced, a path resolves against its own manifest, and naming sources on the command line uses no
   manifest at all. A project mode, a merged cascade, and a flag to suppress discovery are rejected.
+- [text-other-simulators-accept-is-accepted](text-other-simulators-accept-is-accepted.md) -- the
+  front end is asked for its most tolerant reading by default, so text the standard forbids and
+  other simulators take is accepted with a warning; where the standard states what such text means
+  that is what it means, a failed build shows the warnings it withheld, and what the front end could
+  give no meaning is refused as unsupported. One tool's reading as the default, enabling diagnostics
+  one at a time, and tolerating a mixed time scale are rejected.
 
 ### Conformance testing
 

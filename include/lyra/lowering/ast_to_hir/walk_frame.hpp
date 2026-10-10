@@ -79,9 +79,9 @@ struct OpenProceduralScope {
 // the corresponding pointer pushed and the structural chain extended; the
 // caller's frame is unchanged when the recursion returns.
 //
-// Walk-invariant facts (the unit being built, source mapper, builtins) live
-// on the Lowerer class, not here. WalkFrame holds only state that genuinely
-// changes from one recursion to the next.
+// Walk-invariant facts (the unit being built, builtins) live on the Lowerer
+// class, not here. WalkFrame holds only state that genuinely changes from one
+// recursion to the next.
 //
 // The write target for the current handler is reached through
 // `current_structural_scope` (inside a structural-scope task) or

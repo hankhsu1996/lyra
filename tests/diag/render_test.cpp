@@ -1,8 +1,12 @@
 #include "lyra/diag/render.hpp"
 
-#include <cstdint>
+#include <exception>
+#include <format>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -15,175 +19,161 @@
 
 namespace {
 
-constexpr char kAnsiEsc = '\x1b';
+using lyra::diag::DiagCode;
+using lyra::diag::DiagKind;
+using lyra::diag::RenderOptions;
+using lyra::diag::SourceSpan;
 
-auto Has(const std::string& s, const std::string& needle) -> bool {
-  return s.find(needle) != std::string::npos;
+// Stands for whatever read the source, and shows a message by writing down
+// everything it was asked to show.
+class AsksRecorded final : public lyra::diag::SourceManager {
+ public:
+  [[nodiscard]] auto PositionOf(SourceSpan span) const
+      -> std::optional<lyra::diag::SourcePosition> override {
+    if (span == SourceSpan{}) {
+      return std::nullopt;
+    }
+    return lyra::diag::SourcePosition{
+        .file = "main.sv", .line = 1, .column = 1};
+  }
+
+  [[nodiscard]] auto Show(
+      DiagKind kind, SourceSpan span, std::string_view message,
+      bool use_color) const -> std::string override {
+    return std::format(
+        "{} at {}..{}{}: {}\n", NameOf(kind), span.start, span.end,
+        use_color ? " in color" : "", message);
+  }
+
+ private:
+  static auto NameOf(DiagKind kind) -> std::string_view {
+    switch (kind) {
+      case DiagKind::kError:
+        return "error";
+      case DiagKind::kUnsupported:
+        return "unsupported";
+      case DiagKind::kHostError:
+        return "host error";
+      case DiagKind::kInternalError:
+        return "internal error";
+      case DiagKind::kWarning:
+        return "warning";
+      case DiagKind::kNote:
+        return "note";
+      case DiagKind::kRemark:
+        return "remark";
+    }
+    std::unreachable();
+  }
+};
+
+auto Shown(const lyra::diag::Diagnostic& diag, RenderOptions opts = {})
+    -> std::string {
+  const AsksRecorded sources;
+  opts.use_color = false;
+  return lyra::diag::RenderDiagnostic(diag, sources, opts);
 }
 
-TEST(DiagRender, HostErrorPlain) {
-  const auto out = lyra::diag::RenderDiagnostic(
-      lyra::diag::Make(
-          lyra::diag::DiagCode::kHostNoInputFiles, "no input files"),
-      nullptr, lyra::diag::RenderOptions{.use_color = false});
-  EXPECT_EQ(out, "lyra: error: no input files\n");
+auto Shown(const lyra::diag::DiagnosticSink& sink, RenderOptions opts = {})
+    -> std::string {
+  const AsksRecorded sources;
+  opts.use_color = false;
+  return lyra::diag::RenderDiagnostics(sink, sources, opts);
 }
 
-TEST(DiagRender, HostErrorColored) {
-  const auto out = lyra::diag::RenderDiagnostic(
-      lyra::diag::Make(lyra::diag::DiagCode::kHostIoError, "boom"), nullptr,
-      lyra::diag::RenderOptions{.use_color = true});
-  EXPECT_TRUE(Has(out, "lyra"));
-  EXPECT_TRUE(Has(out, "error:"));
-  EXPECT_TRUE(Has(out, "boom"));
-  EXPECT_NE(out.find(kAnsiEsc), std::string::npos);
+// Every message is handed over whole to whatever read the source: its kind,
+// its place as it was given, and what it says. One about no place is handed
+// over the same way, as one about the place that is none, and a note follows
+// the message it is on.
+TEST(DiagRender, EveryMessageIsShownByWhateverReadTheSource) {
+  const SourceSpan statement{.start = 41, .end = 52};
+  const SourceSpan declaration{.start = 7, .end = 7};
+  EXPECT_EQ(
+      Shown(
+          lyra::diag::Make(
+              statement, DiagCode::kUnsupportedTypeKind,
+              "this type is not yet supported")
+              .WithNote(declaration, "declared here")
+              .WithNote("nothing to point at")),
+      "unsupported at 41..52: this type is not yet supported\n"
+      "note at 7..7: declared here\n"
+      "note at 0..0: nothing to point at\n");
+
+  EXPECT_EQ(
+      Shown(lyra::diag::Make(DiagCode::kHostNoInputFiles, "no input files")),
+      "host error at 0..0: no input files\n");
+}
+
+// Whether color is used is the asker's to say.
+TEST(DiagRender, ColorIsAskedForAndNeverAdded) {
+  const AsksRecorded sources;
+  EXPECT_EQ(
+      lyra::diag::RenderDiagnostic(
+          lyra::diag::Make(DiagCode::kHostIoError, "boom"), sources,
+          RenderOptions{.use_color = true}),
+      "host error at 0..0 in color: boom\n");
 }
 
 // The exception carries the invariant that was violated and the fact that it is
-// a bug; naming it as an internal error belongs to whichever surface reports
-// it. Both would otherwise label it and the reader sees the label twice.
-TEST(DiagRender, InternalErrorLabelIsNotDoubled) {
-  const lyra::InternalError error("llvm codegen: no runtime domain");
+// a bug; saying it is an internal error belongs to whichever surface reports
+// it, once, at a place or at none. The request to report it follows the count.
+TEST(DiagRender, AnInternalErrorSaysSoOnce) {
   lyra::diag::DiagnosticSink sink;
-  sink.Report(lyra::diag::InternalFailure(error));
-  const auto out = lyra::diag::RenderDiagnostics(
-      sink, nullptr, lyra::diag::RenderOptions{.use_color = false});
-  EXPECT_FALSE(Has(out, "internal error: Internal error:")) << out;
-  EXPECT_TRUE(Has(out, "lyra: internal error: llvm codegen: no runtime domain"))
-      << out;
-  EXPECT_TRUE(Has(out, "This is a bug in Lyra")) << out;
-}
-
-TEST(DiagRender, UnsupportedWithUnknownSpan) {
-  const auto diag = lyra::diag::Make(
-      lyra::diag::DiagCode::kUnsupportedStatementForm,
-      "for-generate is not supported yet");
-  const auto out = lyra::diag::RenderDiagnostic(
-      diag, nullptr, lyra::diag::RenderOptions{.use_color = false});
-  EXPECT_EQ(out, "lyra: unsupported: for-generate is not supported yet\n");
-}
-
-TEST(DiagRender, ErrorWithSpanIncludesSnippetAndLocation) {
-  lyra::diag::SourceManager mgr;
-  const std::string content = "module M;\n  bit [7:0] x;\nendmodule\n";
-  const auto fid = mgr.AddFile("main.sv", content);
-
-  const auto begin = static_cast<std::uint32_t>(content.find("bit [7:0] x"));
-  const auto end = begin + 11;
-  const lyra::diag::SourceSpan span{.file_id = fid, .begin = begin, .end = end};
-
-  const auto diag = lyra::diag::Make(
-      span, lyra::diag::DiagCode::kUnsupportedTypeKind,
-      "only `int` and `logic` types are supported");
-  const auto out = lyra::diag::RenderDiagnostic(
-      diag, &mgr, lyra::diag::RenderOptions{.use_color = false});
-
-  EXPECT_TRUE(Has(out, "main.sv:2:3:"));
-  EXPECT_TRUE(Has(out, "unsupported:"));
-  EXPECT_TRUE(Has(out, "only `int` and `logic` types are supported"));
-  EXPECT_TRUE(Has(out, "bit [7:0] x;"));
-  EXPECT_TRUE(Has(out, "^"));
-  EXPECT_EQ(out.find(kAnsiEsc), std::string::npos);
-}
-
-TEST(DiagRender, ColoredOutputContainsAnsi) {
-  lyra::diag::SourceManager mgr;
-  const auto fid = mgr.AddFile("main.sv", "int x;\n");
-  const lyra::diag::SourceSpan span{.file_id = fid, .begin = 0, .end = 3};
-
-  const auto out = lyra::diag::RenderDiagnostic(
-      lyra::diag::Make(span, lyra::diag::DiagCode::kHostIoError, "boom"), &mgr,
-      lyra::diag::RenderOptions{.use_color = true});
-
-  EXPECT_NE(out.find(kAnsiEsc), std::string::npos);
-}
-
-TEST(DiagRender, NoSnippetWhenDisabled) {
-  lyra::diag::SourceManager mgr;
-  const auto fid = mgr.AddFile("main.sv", "int x;\n");
-  const lyra::diag::SourceSpan span{.file_id = fid, .begin = 0, .end = 3};
-  const auto out = lyra::diag::RenderDiagnostic(
-      lyra::diag::Make(span, lyra::diag::DiagCode::kHostIoError, "boom"), &mgr,
-      lyra::diag::RenderOptions{
-          .use_color = false, .show_source_snippet = false});
-  EXPECT_TRUE(Has(out, "main.sv:1:1:"));
-  EXPECT_TRUE(Has(out, "boom"));
-  EXPECT_FALSE(Has(out, "int x;\n  "));
-  EXPECT_FALSE(Has(out, "^"));
+  sink.Report(
+      lyra::diag::InternalFailure(
+          lyra::InternalError("llvm codegen: no runtime domain")));
+  try {
+    const lyra::diag::FailureContext statement(
+        SourceSpan{.start = 3, .end = 9});
+    throw lyra::InternalError("an invariant broke");
+  } catch (const std::exception& failure) {
+    sink.Report(lyra::diag::InternalFailure(failure));
+  }
+  EXPECT_EQ(
+      Shown(sink),
+      "internal error at 0..0: internal error: llvm codegen: no runtime "
+      "domain\n"
+      "internal error at 3..9: internal error: an invariant broke\n"
+      "2 errors generated.\n"
+      "This is a bug in Lyra. Please report at: "
+      "https://github.com/hankhsu1996/lyra/issues\n");
 }
 
 TEST(DiagRender, SinkSummaryAggregatesCounts) {
   lyra::diag::DiagnosticSink sink;
   sink.Report(
       lyra::diag::Make(
-          lyra::diag::DiagCode::kUnsupportedStatementForm,
+          DiagCode::kUnsupportedStatementForm,
           "feature A is not supported yet"));
-  sink.Report(
-      lyra::diag::Make(
-          lyra::diag::DiagCode::kHostIoError, "cannot read 'foo.sv'"));
-  sink.Report(
-      lyra::diag::Make(
-          lyra::diag::SourceSpan{}, lyra::diag::DiagCode::kWarningPedantic,
-          "pedantic"));
+  sink.Report(lyra::diag::Make(DiagCode::kHostIoError, "cannot read 'foo.sv'"));
+  sink.Report(lyra::diag::Make(DiagCode::kWarningPedantic, "pedantic"));
 
-  const auto out = lyra::diag::RenderDiagnostics(
-      sink, nullptr, lyra::diag::RenderOptions{.use_color = false});
-  EXPECT_TRUE(Has(out, "1 warning and 2 errors generated.\n"));
+  EXPECT_TRUE(Shown(sink).ends_with("1 warning and 2 errors generated.\n"));
   EXPECT_TRUE(sink.HasErrors());
 }
 
 TEST(DiagRender, WarningsAndRemarksReachTheReportOnlyWhenShown) {
   lyra::diag::DiagnosticSink sink;
   sink.Report(
-      lyra::diag::Make(
-          lyra::diag::DiagCode::kRemarkLostSharing, "could have shared"));
+      lyra::diag::Make(DiagCode::kRemarkLostSharing, "could have shared"));
   EXPECT_FALSE(sink.HasErrors());
 
+  EXPECT_EQ(Shown(sink), "");
   EXPECT_EQ(
-      lyra::diag::RenderDiagnostics(
-          sink, nullptr, lyra::diag::RenderOptions{.use_color = false}),
-      "");
-  const auto out = lyra::diag::RenderDiagnostics(
-      sink, nullptr,
-      lyra::diag::RenderOptions{.use_color = false, .show_remarks = true});
-  EXPECT_EQ(out, "lyra: remark: could have shared\n");
+      Shown(sink, RenderOptions{.show_remarks = true}),
+      "remark at 0..0: could have shared\n");
 
   // A warning left out is left out of the count as well.
-  sink.Report(
-      lyra::diag::Make(lyra::diag::DiagCode::kWarningPedantic, "pedantic"));
-  EXPECT_EQ(
-      lyra::diag::RenderDiagnostics(
-          sink, nullptr,
-          lyra::diag::RenderOptions{
-              .use_color = false, .show_warnings = false}),
-      "");
+  sink.Report(lyra::diag::Make(DiagCode::kWarningPedantic, "pedantic"));
+  EXPECT_EQ(Shown(sink, RenderOptions{.show_warnings = false}), "");
 }
 
 TEST(DiagRender, SinkEmptyHasNoSummary) {
-  lyra::diag::DiagnosticSink sink;
-  const auto out = lyra::diag::RenderDiagnostics(
-      sink, nullptr, lyra::diag::RenderOptions{.use_color = false});
-  EXPECT_EQ(out, "");
-}
-
-TEST(DiagRender, NoteAttachesAfterPrimary) {
-  auto diag = lyra::diag::Make(
-                  lyra::diag::DiagCode::kUnsupportedStatementForm,
-                  "feature is not supported")
-                  .WithNote("see related design discussion");
-  const auto out = lyra::diag::RenderDiagnostic(
-      diag, nullptr, lyra::diag::RenderOptions{.use_color = false});
-  const auto primary_pos = out.find("unsupported:");
-  const auto note_pos = out.find("note:");
-  ASSERT_NE(primary_pos, std::string::npos);
-  ASSERT_NE(note_pos, std::string::npos);
-  EXPECT_LT(primary_pos, note_pos);
+  EXPECT_EQ(Shown(lyra::diag::DiagnosticSink{}), "");
 }
 
 TEST(DiagRender, KindDerivesFromCode) {
-  using lyra::diag::DiagCode;
   using lyra::diag::DiagCodeKind;
-  using lyra::diag::DiagKind;
   using lyra::diag::Make;
 
   EXPECT_EQ(

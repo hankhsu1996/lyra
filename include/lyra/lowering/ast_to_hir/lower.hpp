@@ -10,7 +10,6 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
-#include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/support/assertion_policy.hpp"
@@ -19,26 +18,18 @@
 namespace lyra::lowering::ast_to_hir {
 
 // Driver-supplied facts threaded into AST-to-HIR lowering. `Compilation&` is
-// the slang elaboration root; `SourceMapper&` translates slang source
-// locations. The assertion policy is what decides whether an assertion
-// construct is elided rather than refused.
+// the slang elaboration root. The assertion policy is what decides whether an
+// assertion construct is elided rather than refused.
 class LowerCompilationFacts {
  public:
   LowerCompilationFacts(
       slang::ast::Compilation& compilation,
-      const frontend::SlangSourceMapper& source_mapper,
       support::AssertionPolicy assertion_policy)
-      : compilation_(&compilation),
-        source_mapper_(&source_mapper),
-        assertion_policy_(assertion_policy) {
+      : compilation_(&compilation), assertion_policy_(assertion_policy) {
   }
 
   [[nodiscard]] auto Compilation() const -> slang::ast::Compilation& {
     return *compilation_;
-  }
-  [[nodiscard]] auto SourceMapper() const
-      -> const frontend::SlangSourceMapper& {
-    return *source_mapper_;
   }
   [[nodiscard]] auto AssertionPolicy() const -> support::AssertionPolicy {
     return assertion_policy_;
@@ -46,7 +37,6 @@ class LowerCompilationFacts {
 
  private:
   slang::ast::Compilation* compilation_;
-  const frontend::SlangSourceMapper* source_mapper_;
   support::AssertionPolicy assertion_policy_;
 };
 
@@ -114,7 +104,6 @@ class DeclaredDesign {
   // is this compiler's defect and is thrown as one.
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
-      const frontend::SlangSourceMapper& source_mapper,
       support::AssertionPolicy assertion_policy,
       support::BodiesRead bodies_read, diag::DiagnosticSink& sink)
       -> std::optional<DeclaredDesign>;

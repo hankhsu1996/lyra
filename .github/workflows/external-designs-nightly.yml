@@ -1,0 +1,89 @@
+name: External Designs (Nightly)
+
+# How far Lyra gets with designs written elsewhere for other simulators --
+# today those of RTLMeter, Verilator's benchmark suite. A design is minutes and
+# gigabytes where a corpus case is neither, so no per-PR budget holds it and it
+# runs on its own schedule.
+#
+# It gates its own run: each case is held to what
+# `tests/paths/llvm.external_designs.yaml` records of it, so red means a design
+# stopped somewhere new -- further along, which is an entry to update, or
+# sooner, which is a regression.
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  # The cases are whatever the suite marks as each design's quick check, so the
+  # test is asked for them rather than a list being kept here in step with it.
+  cases:
+    name: List the cases
+    runs-on: ubuntu-latest
+    outputs:
+      cases: ${{ steps.list.outputs.cases }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: List
+        id: list
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_download_toplevel --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel run -c opt //tests:external_design_tests $RBE_FLAGS -- --gtest_list_tests > listed.txt
+          cases=$(sed -n 's|^  GetsAsFarAsIsRecordedOfIt/\([^ ]*\).*|\1|p' listed.txt | jq -R . | jq -sc .)
+          test "$cases" != "[]"
+          echo "cases=$cases" >> "$GITHUB_OUTPUT"
+
+  design:
+    name: ${{ matrix.case }}
+    needs: cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      # Every case reports: what this run produces is where each design stops,
+      # and a list that ends at its first entry is not one.
+      fail-fast: false
+      matrix:
+        case: ${{ fromJson(needs.cases.outputs.cases) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+
+      # The compiler is built optimized, as a user's is, so a step that outlives
+      # its limit is a statement about Lyra and not about how it was built. The
+      # test itself runs here on the runner: it links each program with the host
+      # C++ compiler, which is the one installed above.
+      - name: Test
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel test -c opt //tests:external_design_tests $RBE_FLAGS \
+            --test_arg=--gtest_filter='DesignRecord.*:Suite/Design.*/${{ matrix.case }}' \
+            --test_output=streamed --verbose_failures

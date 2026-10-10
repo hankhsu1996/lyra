@@ -12,15 +12,11 @@
 #include <future>
 #include <gtest/gtest.h>
 #include <string>
-#include <string_view>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/kind.hpp"
-#include "lyra/diag/render.hpp"
-#include "lyra/diag/sink.hpp"
-#include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
 
 namespace {
@@ -28,9 +24,8 @@ namespace {
 using lyra::diag::FailureContext;
 using lyra::diag::SourceSpan;
 
-auto At(std::uint32_t begin, std::uint32_t end) -> SourceSpan {
-  return SourceSpan{
-      .file_id = lyra::diag::FileId{.value = 1}, .begin = begin, .end = end};
+auto At(std::uint64_t start, std::uint64_t end) -> SourceSpan {
+  return SourceSpan{.start = start, .end = end};
 }
 
 void Break() {
@@ -141,38 +136,6 @@ TEST(FailureContext, EachThreadCollectsItsOwnWork) {
     return std::string{};
   });
   EXPECT_EQ(other.get(), "an invariant broke (in unit 'OnTheOther')");
-}
-
-// What a reader sees for two failures in one run: one line and the source for
-// each, and the request to report them once, after the count.
-TEST(FailureContext, TheRunAsksForTheReportOnce) {
-  lyra::diag::SourceManager sources;
-  const std::string content = "module M;\n  initial x = 1;\nendmodule\n";
-  const auto file = sources.AddFile("main.sv", content);
-  const auto begin = static_cast<std::uint32_t>(content.find("x = 1"));
-  lyra::diag::DiagnosticSink sink;
-  for (const std::string_view name : {"M", "N"}) {
-    try {
-      const auto unit = FailureContext::InUnit(name);
-      const FailureContext statement(
-          SourceSpan{.file_id = file, .begin = begin, .end = begin + 5});
-      Break();
-    } catch (const std::exception& failure) {
-      sink.Report(lyra::diag::InternalFailure(failure));
-    }
-  }
-  EXPECT_EQ(
-      lyra::diag::RenderDiagnostics(
-          sink, &sources, lyra::diag::RenderOptions{.use_color = false}),
-      "main.sv:2:11: internal error: an invariant broke (in unit 'M')\n"
-      "    2 |   initial x = 1;\n"
-      "      |           ^~~~~\n"
-      "main.sv:2:11: internal error: an invariant broke (in unit 'N')\n"
-      "    2 |   initial x = 1;\n"
-      "      |           ^~~~~\n"
-      "2 errors generated.\n"
-      "This is a bug in Lyra. Please report at: "
-      "https://github.com/hankhsu1996/lyra/issues\n");
 }
 
 }  // namespace

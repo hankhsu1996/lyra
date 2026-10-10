@@ -8,6 +8,7 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -24,7 +25,7 @@ auto ProcessLowerer::LowerForeachStmt(
     const slang::ast::ForeachLoopStatement& fs, WalkFrame frame)
     -> diag::Result<hir::Stmt> {
   auto& body = *frame.current_procedural_body;
-  const auto span = Owner().SourceMapper().SpanOf(fs.sourceRange);
+  const auto span = frontend::SpanOf(fs.sourceRange);
 
   auto array = LowerExpr(fs.arrayRef, frame);
   if (!array) return std::unexpected(std::move(array.error()));

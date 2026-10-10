@@ -7,18 +7,16 @@
 #include <slang/ast/Compilation.h>
 #include <slang/driver/Driver.h>
 
-#include "lyra/diag/source_manager.hpp"
-#include "lyra/frontend/slang_source_mapper.hpp"
+#include "lyra/frontend/slang_source_manager.hpp"
 
 namespace lyra::frontend {
 
 // What the rest of the compiler reads once the front end has run. The driver
-// that produced it owns the text every span here points into, so it has to
+// that produced it owns the text every span names a piece of, so it has to
 // outlive this.
 struct ParseResult {
   std::unique_ptr<slang::ast::Compilation> compilation;
-  diag::SourceManager diag_sources;
-  SlangSourceMapper source_mapper;
+  SlangSourceManager diag_sources;
 };
 
 // Applies the driver's options, reads everything it was pointed at, and

@@ -10,6 +10,7 @@
 
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/strength.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
@@ -45,8 +46,7 @@ auto BuildContinuousAssign(
 auto StructuralScopeLowerer::LowerContinuousAssign(
     const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
     -> diag::Result<hir::ContinuousAssign> {
-  const auto& mapper = owner_->SourceMapper();
-  const auto span = mapper.PointSpanOf(sym.location);
+  const auto span = frontend::PointSpanOf(sym.location);
 
   if (sym.getDelay() != nullptr) {
     return diag::Fail(
@@ -76,7 +76,7 @@ auto StructuralScopeLowerer::LowerContinuousAssign(
   // run, which sizing an array once cannot be.
   if (assign.right().kind == slang::ast::ExpressionKind::NewArray) {
     return diag::Fail(
-        mapper.SpanOf(assign.right().sourceRange),
+        frontend::SpanOf(assign.right().sourceRange),
         diag::DiagCode::kUnsupportedContinuousAssignForm,
         "sizing a dynamic array with new[] is not legal in a continuous "
         "assignment (LRM 7.5.1); size it where the array is declared or in a "

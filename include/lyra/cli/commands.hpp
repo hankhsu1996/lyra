@@ -26,30 +26,31 @@ namespace lyra::cli {
 // re-decides how rendering works.
 class Reporter {
  public:
-  explicit Reporter(diag::RenderOptions opts) : opts_(opts) {
+  // `sources` shows every message and has to outlive this.
+  Reporter(diag::RenderOptions opts, const diag::SourceManager& sources)
+      : opts_(opts), sources_(&sources) {
   }
 
-  void operator()(
-      diag::Diagnostic diag, const diag::SourceManager* mgr = nullptr) const {
+  void operator()(const diag::Diagnostic& diag) const {
     status::Clear();
-    fmt::print(stderr, "{}", diag::RenderDiagnostic(diag, mgr, opts_));
+    fmt::print(stderr, "{}", diag::RenderDiagnostic(diag, *sources_, opts_));
   }
 
-  void operator()(
-      const diag::DiagnosticSink& sink, const diag::SourceManager* mgr) const {
+  void operator()(const diag::DiagnosticSink& sink) const {
     status::Clear();
-    fmt::print(stderr, "{}", diag::RenderDiagnostics(sink, mgr, opts_));
+    fmt::print(stderr, "{}", diag::RenderDiagnostics(sink, *sources_, opts_));
   }
 
   // The same rendering with warnings left out.
   [[nodiscard]] auto WithoutWarnings() const -> Reporter {
     diag::RenderOptions opts = opts_;
     opts.show_warnings = false;
-    return Reporter{opts};
+    return Reporter{opts, *sources_};
   }
 
  private:
   diag::RenderOptions opts_;
+  const diag::SourceManager* sources_;
 };
 
 // A command line whose command is known and whose options that command acts

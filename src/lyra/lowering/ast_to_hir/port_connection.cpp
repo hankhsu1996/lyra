@@ -26,6 +26,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/published_target.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
@@ -605,7 +606,7 @@ auto ConnectElementPorts(
           unit_lowerer.ExternalScopeClassOf(child_signature.unit_name),
       .step = std::move(step),
       .home_frame = home_frame,
-      .span = unit_lowerer.SourceMapper().PointSpanOf(inst.location)};
+      .span = frontend::PointSpanOf(inst.location)};
 
   // A connection reaches one part of one port, and the child states its parts
   // in the order connections arrive at them, so the two are walked in step

@@ -790,15 +790,157 @@ TEST(LyraCommandLine, ATextCanTellItIsReadByLyra) {
   }
 }
 
+// Text that departs from the standard in a way simulators accept is accepted
+// when nothing asks otherwise, and runs: a design is written against the tools
+// its authors had, and one they all run is not helped by being refused. Each
+// form here is one the front end holds to the standard unless told to be
+// tolerant, and each was met in a design other simulators run.
+//
+// A module defined twice in one library is among them, and there the standard
+// itself says what happens: the last one met is the one the library holds, with
+// a warning (LRM 33.3.1).
+//
+// What the tolerance does not reach is text the front end could give no
+// meaning: that is refused at its place in Lyra's own words, beside what the
+// front end said of it, rather than ending the compile as a defect of the
+// compiler.
+TEST(
+    LyraCommandLine,
+    TextOtherSimulatorsAcceptIsAcceptedUnlessStrictnessIsAsked) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "tolerated.sv",
+      "interface Bus;\n"
+      "  logic valid;\n"
+      "  task automatic raise();\n"
+      "    valid = 1;\n"
+      "  endtask\n"
+      "endinterface\n"
+      "module Test;\n"
+      "  function automatic int add(\n"
+      "    input int a,\n"
+      "    input int b,\n"
+      "  );\n"
+      "    return a + b;\n"
+      "  endfunction\n"
+      "  Bus b ();\n"
+      "  logic source;\n"
+      "  assign b.valid = source;\n"
+      "  if (1) begin\n"
+      "    logic [3:0] held = 4'd6;\n"
+      "  end\n"
+      "  initial begin\n"
+      "    source = 1;\n"
+      "    #1;\n"
+      "    $display(\"sum %0d valid %b held %0d\", add(2, 3), b.valid,\n"
+      "             genblk1.held);\n"
+      "  end\n"
+      "endmodule\n");
+  const auto tolerated =
+      RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top Test tolerated.sv");
+  ASSERT_EQ(tolerated.exit_code, 0) << tolerated.stderr_text;
+  EXPECT_NE(
+      tolerated.stdout_text.find("sum 5 valid 1 held 6"), std::string::npos)
+      << tolerated.stdout_text;
+
+  const auto strict = RunLyraFrom(
+      lyra, *tmp_or, "check --compat default --top Test tolerated.sv");
+  EXPECT_NE(strict.exit_code, 0) << "the strict reading accepted it";
+  EXPECT_NE(strict.stderr_text.find("misplaced trailing"), std::string::npos)
+      << strict.stderr_text;
+
+  WriteFile(
+      *tmp_or / "twice.sv",
+      "module Leaf;\n"
+      "  initial $display(\"the first definition\");\n"
+      "endmodule\n"
+      "module Leaf;\n"
+      "  initial $display(\"the last definition\");\n"
+      "endmodule\n"
+      "module Test;\n"
+      "  Leaf u ();\n"
+      "endmodule\n");
+  const auto twice =
+      RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top Test twice.sv");
+  ASSERT_EQ(twice.exit_code, 0) << twice.stderr_text;
+  EXPECT_EQ(twice.stdout_text, "the last definition\n");
+  const auto warned = RunLyraFrom(lyra, *tmp_or, "check --top Test twice.sv");
+  EXPECT_EQ(warned.exit_code, 0) << warned.stderr_text;
+  EXPECT_NE(
+      warned.stderr_text.find("warning: duplicate definition"),
+      std::string::npos)
+      << warned.stderr_text;
+
+  // The second and third write the statement through a macro, where the text
+  // has no place in any file. Each is shown as the front end shows its own
+  // warning about the same text: at a macro's body where the macro was used
+  // and with the macro named, at an argument where the argument was written.
+  struct Meaningless {
+    std::string_view name;
+    std::string_view statement;
+    int column;
+    std::string_view history;
+  };
+  static constexpr std::array<Meaningless, 3> kMeaningless = {
+      {{.name = "written",
+        .statement = "$no_such_task(x);",
+        .column = 5,
+        .history = ""},
+       {.name = "expanded",
+        .statement = "`CALL",
+        .column = 5,
+        .history = "note: expanded from macro 'CALL'"},
+       {.name = "argument",
+        .statement = "`APPLY($no_such_task)",
+        .column = 12,
+        .history = ""}}};
+  for (const auto& meaningless : kMeaningless) {
+    const std::string source = std::format("{}.sv", meaningless.name);
+    WriteFile(
+        *tmp_or / source, std::format(
+                              "`define CALL $no_such_task(x);\n"
+                              "`define APPLY(t) t(x);\n"
+                              "module Test;\n"
+                              "  int x;\n"
+                              "  initial begin\n"
+                              "    {}\n"
+                              "  end\n"
+                              "endmodule\n",
+                              meaningless.statement));
+    const auto refused = RunLyraFrom(
+        lyra, *tmp_or, std::format("run --backend llvm --top Test {}", source));
+    EXPECT_NE(refused.exit_code, 0) << source << ": " << refused.stdout_text;
+    EXPECT_EQ(refused.stderr_text.find("internal error"), std::string::npos)
+        << source << ": " << refused.stderr_text;
+    const std::string place =
+        std::format("{}:6:{}: ", source, meaningless.column);
+    const std::size_t refusal = refused.stderr_text.find(
+        place + "error: this expression cannot be simulated");
+    ASSERT_NE(refusal, std::string::npos)
+        << source << ": " << refused.stderr_text;
+    EXPECT_NE(
+        refused.stderr_text.find(meaningless.history, refusal),
+        std::string::npos)
+        << source << ": the refusal does not say how the text came to be "
+        << "there: " << refused.stderr_text;
+    EXPECT_NE(
+        refused.stderr_text.find(
+            place + "warning: unknown system name '$no_such_task'"),
+        std::string::npos)
+        << source << ": the front end's account of the same text was withheld: "
+        << refused.stderr_text;
+  }
+}
+
 // An interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) may not be
 // left unconnected, and a top's ports are connected to nothing, so a module
 // declaring either is a design element and not a design. Every name inside such
 // a module still resolves, which is why analysis answers and building a design
 // does not.
-//
-// Both forms are here because one front-end option admits both, and that option
-// is what the shape needs to elaborate at all -- so no source file alone
-// reaches it and the corpus cannot state it.
 TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -828,8 +970,7 @@ TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
   for (const auto& refusal : kRefusals) {
     const auto source = *tmp_or / refusal.name;
     std::ofstream(source) << refusal.body;
-    const auto args =
-        std::format("--allow-toplevel-iface-ports '{}'", source.string());
+    const auto args = std::format("'{}'", source.string());
 
     const auto checked = RunLyraFrom(lyra, *tmp_or, "check " + args);
     EXPECT_EQ(checked.exit_code, 0)

@@ -290,6 +290,31 @@ layer directly.
       of one module compiled for different parameters are shown under one name, and the C++
       backend's compile does not say what was up to date.
 
+- [x] D27 -- A design that runs on another simulator is not refused for text that simulator takes.
+      The front end is asked for its most tolerant reading by default, so a trailing comma in a port
+      list, a variable assigned both continuously and from a procedure, a reference into an unnamed
+      generate block and the like are accepted with a warning; `--compat default` asks for the
+      standard's strictness. A statement or expression the front end could give no meaning -- a call
+      to a system task nobody defines -- is refused where it was written, and a build that fails
+      shows the warnings `run` otherwise withholds.
+      `decisions/text-other-simulators-accept-is-accepted.md` settles it.
+
+- [x] D29 -- One run tells its reader about every place in the source the same way. A message the
+      compiler raises about a place is shown as the front end shows its own: the same form, the line
+      of text, the macro that wrote the text and the file that included it. Every message opens with
+      `error:`, `warning:` or `note:`; a construct not yet carried out says so in its message, and a
+      failure of the compiler's own opens with `internal error:` after the first word. A design's
+      sources are held once. `decisions/a-place-in-the-source-is-the-front-ends.md` settles it. Not
+      built: what the later forms refuse is still reported with no place.
+
+- [ ] D28 -- How far the designs of Verilator's benchmark suite get is measured every night and held
+      to a record: for each design the case the suite marks as its quick check is built on the
+      execution backend, run, and checked by the suite's own script. Of seventeen cases none builds
+      yet: every one stops on a concatenation as the target of a continuous assignment or an output
+      port connection. The largest takes nine minutes to be refused with the compiler built
+      optimized. Not built: a case past its build has not been seen, so what running and checking
+      one needs is unmeasured.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language

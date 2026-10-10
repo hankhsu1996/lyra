@@ -94,7 +94,7 @@ be cleared, because the answer it called wrong is one the standard permits.
 - `real r = a * a` over `shortreal` operands gives the wider result, as Xcelium does and VCS does
   not. A design that needs the narrower product in a `real` writes the intermediate into a
   `shortreal` first, which every reading rounds.
-- The front end's VCS compatibility mode, which Lyra turns on by default, does not change this: the
+- The front end's compatibility mode, which Lyra turns on by default, does not change this: the
   wider value is what a default run produces.
 - Should the standard or the front end settle the question the other way, the lowering changes
   nothing and the case gains the `direct` check.

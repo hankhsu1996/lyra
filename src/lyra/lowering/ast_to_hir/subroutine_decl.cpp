@@ -21,6 +21,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/subroutine.hpp"
@@ -296,10 +297,8 @@ auto LowerSubroutineDeclImpl(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     WalkFrame frame, const slang::ast::Expression* base_call_ast)
     -> diag::Result<SubroutineLoweringResult> {
-  const auto& mapper = unit_lowerer.SourceMapper();
-
   auto return_type_or = unit_lowerer.InternType(
-      sym.getReturnType(), mapper.PointSpanOf(sym.location));
+      sym.getReturnType(), frontend::PointSpanOf(sym.location));
   if (!return_type_or) {
     return std::unexpected(std::move(return_type_or.error()));
   }
@@ -323,7 +322,7 @@ auto LowerSubroutineDeclImpl(
   params.reserve(sym.getArguments().size());
   for (const auto* formal : sym.getArguments()) {
     auto formal_type_or = unit_lowerer.InternType(
-        formal->getType(), mapper.PointSpanOf(formal->location));
+        formal->getType(), frontend::PointSpanOf(formal->location));
     if (!formal_type_or) {
       return std::unexpected(std::move(formal_type_or.error()));
     }
@@ -372,7 +371,7 @@ auto LowerSubroutineDeclImpl(
   if (sym.subroutineKind == slang::ast::SubroutineKind::Function &&
       !sym.flags.has(slang::ast::MethodFlags::Constructor)) {
     auto reads_or = ReadsOfFunctionBody(
-        lowerer, body_frame, sym, mapper.PointSpanOf(sym.location));
+        lowerer, body_frame, sym, frontend::PointSpanOf(sym.location));
     if (!reads_or) return std::unexpected(std::move(reads_or.error()));
     reads = *std::move(reads_or);
   }
@@ -435,10 +434,8 @@ auto LowerConstructorDecl(
 auto LowerMethodPrototypeDecl(
     UnitLowerer& unit_lowerer, const slang::ast::MethodPrototypeSymbol& proto,
     WalkFrame class_frame) -> diag::Result<hir::SubroutineDecl> {
-  const auto& mapper = unit_lowerer.SourceMapper();
-
   auto return_type_or = unit_lowerer.InternType(
-      proto.getReturnType(), mapper.PointSpanOf(proto.location));
+      proto.getReturnType(), frontend::PointSpanOf(proto.location));
   if (!return_type_or) {
     return std::unexpected(std::move(return_type_or.error()));
   }
@@ -461,7 +458,7 @@ auto LowerMethodPrototypeDecl(
   params.reserve(proto.getArguments().size());
   for (const auto* formal : proto.getArguments()) {
     auto formal_type_or = unit_lowerer.InternType(
-        formal->getType(), mapper.PointSpanOf(formal->location));
+        formal->getType(), frontend::PointSpanOf(formal->location));
     if (!formal_type_or) {
       return std::unexpected(std::move(formal_type_or.error()));
     }
@@ -497,11 +494,10 @@ auto LowerMethodPrototypeDecl(
 auto ClassifyDpiParams(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<std::vector<hir::DpiParamAbi>> {
-  const auto& mapper = unit_lowerer.SourceMapper();
   std::vector<hir::DpiParamAbi> abi_params;
   abi_params.reserve(sym.getArguments().size());
   for (const auto* formal : sym.getArguments()) {
-    const auto floc = mapper.PointSpanOf(formal->location);
+    const auto floc = frontend::PointSpanOf(formal->location);
     const support::DpiDirection direction = ClassifyDpiDirection(*formal);
     auto abi = ClassifyDpiType(formal->getType(), floc);
     if (!abi) return std::unexpected(std::move(abi.error()));
@@ -530,8 +526,7 @@ auto ClassifyDpiParams(
 auto LowerForeignImport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym)
     -> diag::Result<hir::ForeignImportDecl> {
-  const auto& mapper = unit_lowerer.SourceMapper();
-  const auto loc = mapper.PointSpanOf(sym.location);
+  const auto loc = frontend::PointSpanOf(sym.location);
   const bool is_task = sym.subroutineKind == slang::ast::SubroutineKind::Task;
   auto ret_abi = ClassifyDpiScalarResult(sym.getReturnType(), loc);
   if (!ret_abi) return std::unexpected(std::move(ret_abi.error()));
@@ -556,8 +551,7 @@ auto LowerForeignExport(
     UnitLowerer& unit_lowerer, const slang::ast::SubroutineSymbol& sym,
     hir::StructuralSubroutineId subroutine, std::string_view foreign_name)
     -> diag::Result<hir::ForeignExportDecl> {
-  const auto& mapper = unit_lowerer.SourceMapper();
-  const auto loc = mapper.PointSpanOf(sym.location);
+  const auto loc = frontend::PointSpanOf(sym.location);
   auto ret_abi = ClassifyDpiScalarResult(sym.getReturnType(), loc);
   if (!ret_abi) return std::unexpected(std::move(ret_abi.error()));
   auto ret_type = unit_lowerer.InternType(sym.getReturnType(), loc);

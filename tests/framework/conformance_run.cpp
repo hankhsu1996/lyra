@@ -29,7 +29,7 @@ constexpr std::string_view kInternalErrorReport = "internal error:";
 // How lyra remarks on a definition it compiled once per parameter value because
 // instances handed different values lowered apart. The program is right, so the
 // run's own outcome says nothing; the remark is the only sign of the defect.
-constexpr std::string_view kLostSharingReport = "remark: sharing lost:";
+constexpr std::string_view kLostSharingReport = "note: sharing lost:";
 
 // How long one case may take before it is called stuck. It is a guard against a
 // run that never ends, not a budget for how fast a case builds: a case builds

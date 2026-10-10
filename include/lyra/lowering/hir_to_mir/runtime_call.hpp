@@ -23,9 +23,7 @@ namespace lyra::lowering::hir_to_mir {
 // Formats `span` as "basename:line:col" for the runtime diagnostic origin tag.
 // SV simulators print diagnostics with the source file name, not its absolute
 // path (LRM 20.10 examples and the Verilator / VCS / Modelsim convention), so
-// the runtime origin uses the basename rather than
-// `diag::FormatSourceLocation`'s full path. Empty when the span has no
-// resolvable file.
+// the runtime origin uses the basename. Empty when the span is no place.
 [[nodiscard]] auto FormatRuntimeOriginString(
     diag::SourceSpan span, const diag::SourceManager& mgr) -> std::string;
 

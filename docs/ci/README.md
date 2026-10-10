@@ -84,6 +84,7 @@ Five moments, each answering a different question, and the answers are not inter
 | merge gate | is `main` still correct         | `bazel test //...`                           |
 | nightly    | is the C++ path still correct   | `bazel test //... --config=nightly`          |
 | nightly    | is any of it reading freed bits | `bazel test //... --config=asan`             |
+| nightly    | how far does a real design get  | `bazel test //tests:external_design_tests`   |
 
 Pre-commit and the merge gate are the same command, and that is the whole point: a green run before
 committing means "this lands green" only while the two sets are identical. Any change that makes the
@@ -147,6 +148,33 @@ What a design exceeds today is recorded per path, in `tests/paths/<path>.growth.
 path's refusal and defect records and by the same rule. A design is held to exactly what is listed
 for it: something new exceeding fails the run, and so does something listed that has stopped, until
 it goes. So the file only shrinks, and what is left in it is what that path still owes.
+
+## What a real design stops on
+
+The corpus states the standard a clause at a time, and each case is one small unit. What stops a
+design someone wants to simulate is a hierarchy, a size, or a way of writing that no case thinks to
+write, so `external_design_tests` builds and runs the designs of Verilator's benchmark suite: for
+each, the case the suite itself marks as its quick check, built on the execution backend, run with
+the suite's arguments, and held to the suite's own check of the output.
+
+The suite is read as it publishes it and nothing of Lyra's is kept in it. `MODULE.bazel` names one
+commit of it, and the test writes each design's declaration from the descriptor the suite gives
+every simulator. Three things are said of every design that its descriptor does not say, because
+they are how the simulator the sources were prepared for reads them: the macros that simulator
+predefines, every file as one compilation unit, and, where the sources state one time scale and
+leave other elements without, that time scale for all of them.
+
+A step that takes more than half an hour, or asks for more memory than the smallest machine these
+run on holds, stops the case there. The first is set well past the slowest build measured, so that a
+design does not fall on one side of it on one machine and the other on the next; what it catches is
+a step that will not end. How long each case took is printed beside where it stopped.
+
+Where each case stops is recorded in `tests/paths/llvm.external_designs.yaml`, and a case is held to
+exactly what is listed for it, so the file is the account of what stands between Lyra and each
+design. Two things keep the target out of every run that does not name it. The suite is half a
+gigabyte to fetch, and a target that a tag filter leaves out is still analyzed, which is what
+fetches; `manual` is the tag that prevents that. And one case is minutes, so the nightly gives each
+its own job.
 
 ## The corpus runs the program a user builds
 
@@ -227,6 +255,11 @@ square of its count there, and a bound on what a compile costs would be measurin
 instrumentation. `compile_stack_tests` is left out for the same reason on another axis: how long an
 expression the compiler follows is set by the size of its frames, which the instrumentation
 multiplies.
+
+`external-designs-nightly.yml` runs `external_design_tests`, one job per case, with the compiler
+built optimized. It **gates its own run**: a case that stops somewhere other than where it is
+recorded as stopping is either further along, which is an entry to update, or a regression. The jobs
+are the cases the test itself lists, so a design the suite gains is run without this file changing.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` and times it beside Verilator on
 the same sources, giving each tool the amount of work it needs to reach the same duration. It gates

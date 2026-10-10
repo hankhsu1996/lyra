@@ -23,7 +23,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/frontend/slang_source_mapper.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
@@ -508,24 +507,22 @@ struct ScopeDeclarations {
 using PlacedSpecializations = std::unordered_map<
     const slang::ast::Symbol*, std::vector<const slang::ast::ClassType*>>;
 
-// What every unit's lowering reads and none of them changes: where a
-// construct was written, the shared sensitivity analysis (one cache across the
-// design), whether assertions are elided rather than rejected, what decides
-// the name of every unit, which every party naming one reads, and the
-// specializations placed in a unit from a generic declared elsewhere, which
-// only the design as a whole lists. The slang compilation itself is
-// deliberately absent: walking top instances is the driver's job, and a unit
-// lowering that could reach it would be able to read another unit.
+// What every unit's lowering reads and none of them changes: the shared
+// sensitivity analysis (one cache across the design), whether assertions are
+// elided rather than rejected, what decides the name of every unit, which
+// every party naming one reads, and the specializations placed in a unit from
+// a generic declared elsewhere, which only the design as a whole lists. The
+// slang compilation itself is deliberately absent: walking top instances is
+// the driver's job, and a unit lowering that could reach it would be able to
+// read another unit.
 class LoweringFacts {
  public:
   LoweringFacts(
-      const frontend::SlangSourceMapper& source_mapper,
       SensitivityAnalyzer& sensitivity_analyzer,
       support::AssertionPolicy assertion_policy,
       const SpecializationPolicy& specialization,
       const PlacedSpecializations& placed)
-      : source_mapper_(&source_mapper),
-        sensitivity_analyzer_(&sensitivity_analyzer),
+      : sensitivity_analyzer_(&sensitivity_analyzer),
         assertion_policy_(assertion_policy),
         specialization_(&specialization),
         placed_(&placed) {
@@ -537,11 +534,6 @@ class LoweringFacts {
     const auto it = placed_->find(&home);
     if (it == placed_->end()) return {};
     return it->second;
-  }
-
-  [[nodiscard]] auto SourceMapper() const
-      -> const frontend::SlangSourceMapper& {
-    return *source_mapper_;
   }
 
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
@@ -557,7 +549,6 @@ class LoweringFacts {
   }
 
  private:
-  const frontend::SlangSourceMapper* source_mapper_;
   SensitivityAnalyzer* sensitivity_analyzer_;
   support::AssertionPolicy assertion_policy_;
   const SpecializationPolicy* specialization_;
@@ -994,10 +985,6 @@ class UnitLowerer {
         "recorded id; the owning class was not interned before this lookup");
   }
 
-  [[nodiscard]] auto SourceMapper() const
-      -> const frontend::SlangSourceMapper& {
-    return facts_.SourceMapper();
-  }
   [[nodiscard]] auto Sensitivity() const -> SensitivityAnalyzer& {
     return facts_.Sensitivity();
   }

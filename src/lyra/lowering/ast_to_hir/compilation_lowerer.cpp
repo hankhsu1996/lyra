@@ -30,6 +30,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
+#include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/dump.hpp"
 #include "lyra/hir/unit_signatures.hpp"
@@ -389,7 +390,7 @@ auto TopLevelUnits(
     if (const auto required = FindPortRequiringConnection(inst->body)) {
       return std::unexpected(
           diag::Make(
-              facts.SourceMapper().PointSpanOf(required->port->location),
+              frontend::PointSpanOf(required->port->location),
               diag::DiagCode::kErrorTopLevelPortMustBeConnected,
               std::format(
                   "'{}' cannot be a simulation top because nothing "
@@ -522,7 +523,7 @@ auto DefinitionsLoweredApart(
       if (apart.insert(&definition).second) {
         sink.Report(
             diag::Make(
-                facts.SourceMapper().PointSpanOf(definition.location),
+                frontend::PointSpanOf(definition.location),
                 diag::DiagCode::kRemarkLostSharing,
                 std::format(
                     "sharing lost: '{}' is compiled once per parameter value, "
@@ -542,7 +543,6 @@ auto DefinitionsLoweredApart(
 // the program is the one each block describes and only the sharing is lost,
 // which is said as a remark against the definition.
 auto DefinitionsPublishedApart(
-    const LoweringFacts& facts,
     std::span<const std::unique_ptr<UnitLowerer>> lowerers,
     diag::DiagnosticSink& sink) -> Definitions {
   Definitions apart;
@@ -555,7 +555,7 @@ auto DefinitionsPublishedApart(
     if (apart.insert(&definition).second) {
       sink.Report(
           diag::Make(
-              facts.SourceMapper().PointSpanOf(definition.location),
+              frontend::PointSpanOf(definition.location),
               diag::DiagCode::kRemarkLostSharing,
               std::format(
                   "sharing lost: every generate block of '{}' is compiled "
@@ -589,11 +589,10 @@ struct DeclaredDesign::Units {
 
   Units(
       std::unique_ptr<slang::ast::Compilation> elaborated,
-      const frontend::SlangSourceMapper& source_mapper,
       support::AssertionPolicy assertion_policy)
       : front_end(std::move(elaborated)),
         facts(
-            source_mapper, sensitivity, assertion_policy, specialization,
+            sensitivity, assertion_policy, specialization,
             specialization_homes.placed) {
   }
 
@@ -657,13 +656,10 @@ struct DeclaredDesign::Units {
 // it without taking turns.
 auto DeclaredDesign::Declare(
     std::unique_ptr<slang::ast::Compilation> front_end,
-    const frontend::SlangSourceMapper& source_mapper,
     support::AssertionPolicy assertion_policy, support::BodiesRead bodies_read,
     diag::DiagnosticSink& sink) -> std::optional<DeclaredDesign> {
-  auto units = std::make_unique<Units>(
-      std::move(front_end), source_mapper, assertion_policy);
-  const LowerCompilationFacts facts(
-      *units->front_end, source_mapper, assertion_policy);
+  auto units = std::make_unique<Units>(std::move(front_end), assertion_policy);
+  const LowerCompilationFacts facts(*units->front_end, assertion_policy);
 
   Definitions kept_whole;
   for (;;) {
@@ -682,8 +678,7 @@ auto DeclaredDesign::Declare(
     }
     // What the signatures already show is settled before any body is lowered
     // against them.
-    Definitions apart =
-        DefinitionsPublishedApart(units->facts, units->lowerers, sink);
+    Definitions apart = DefinitionsPublishedApart(units->lowerers, sink);
     if (apart.empty()) {
       apart = DefinitionsLoweredApart(
           units->facts, collected, units->signatures, sink);

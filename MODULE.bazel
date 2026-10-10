@@ -14,7 +14,7 @@ bazel_dep(name = "rules_cc", version = "0.2.8")
 bazel_dep(name = "slang", version = "11.0")
 git_override(
     module_name = "slang",
-    commit = "4efcf48f64a6c948ca694ae1e48a7d855b2e334c",
+    commit = "fe93ae7fe123020eaa3ce96b2983cfdd236c1e19",
     remote = "https://github.com/hankhsu1996/slang.git",
 )
 
@@ -54,6 +54,30 @@ buildbuddy.platform(buildbuddy_container_image = "UBUNTU24_04_IMAGE")
 use_repo(buildbuddy, "buildbuddy_toolchain")
 
 register_toolchains("@buildbuddy_toolchain//:all")
+
+# The designs Verilator's benchmark suite builds and runs, each with the tests
+# and the checks its authors gave it. Nothing here is Lyra's: the suite is read
+# as it is published, at one commit, so that a design that stops doing what it
+# did is a change of Lyra's and not of the suite's. It is fetched only when a
+# target that reads it is built, and those are named outright and never part of
+# `//...`.
+git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+git_repository(
+    name = "rtlmeter",
+    build_file_content = """
+filegroup(
+    name = "suite",
+    srcs = glob([
+        "designs/**",
+        "rtl/**",
+    ]),
+    visibility = ["//visibility:public"],
+)
+""",
+    commit = "5e38c1db13244990ef7a60071c430f2c0519f709",
+    remote = "https://github.com/verilator/rtlmeter.git",
+)
 
 # Development tools
 bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
