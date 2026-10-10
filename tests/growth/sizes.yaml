@@ -7,6 +7,7 @@ instance_array: 512
 loop_choosing_by_outer_index: 64
 loop_declaring_a_type: 512
 loop_of_instances: 512
+loop_of_instances_holding_instances: 512
 loop_of_instances_reading_their_block: 512
 loop_of_instances_reading_upward: 512
 loop_of_one_body: 512

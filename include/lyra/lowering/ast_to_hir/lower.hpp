@@ -14,6 +14,7 @@
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/support/assertion_policy.hpp"
+#include "lyra/support/bodies_read.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -103,8 +104,9 @@ class DeclaredDesign {
   // reported.
   //
   // Instances share one unit only where each lowers to what the unit lowers
-  // to, which is checked here for every instance, one beside its unit at a
-  // time. Where instances handed different values of a parameter do not, the
+  // to, which is checked here for every instance whose body is read, one
+  // beside its unit at a time; `bodies_read` says which those are. Where
+  // instances handed different values of a parameter do not, the
   // definition is declared again with every parameter deciding its unit, and
   // a remark says so; what comes back is always the design each instance
   // describes. Where instances handed the same values do not, nothing a unit
@@ -113,7 +115,8 @@ class DeclaredDesign {
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
       const frontend::SlangSourceMapper& source_mapper,
-      support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
+      support::AssertionPolicy assertion_policy,
+      support::BodiesRead bodies_read, diag::DiagnosticSink& sink)
       -> std::optional<DeclaredDesign>;
 
   DeclaredDesign(DeclaredDesign&&) noexcept;

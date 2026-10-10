@@ -7,3 +7,6 @@
 # so this file only ever shrinks, which makes it the record of what a design's
 # size still costs on this path that it should not.
 instance_array: [bytes]
+loop_of_instances: [bodies lowered]
+loop_of_instances_reading_their_block: [bodies lowered]
+loop_of_instances_reading_upward: [bodies lowered]

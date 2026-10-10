@@ -9,6 +9,13 @@
 //
 // What is compared is each unit's own form, by the equality sharing is decided
 // with, in the order the design lists its units.
+//
+// The two lowerings also differ in which instances they read. The first reads
+// the bodies the front end elaborated and names every other instance where it
+// is written, as a build does. The second reads every instance's body and
+// holds each to the unit it shares, so a design where an instance left unread
+// would have lowered apart from its unit stops there, and the two are then
+// held to having found the same units stating the same things.
 
 #include <cstddef>
 #include <gtest/gtest.h>
@@ -30,6 +37,7 @@
 
 namespace {
 
+using lyra::support::BodiesRead;
 using lyra::test::Compilation;
 using lyra::test::ConformanceCase;
 using lyra::test::Elaborate;
@@ -39,10 +47,11 @@ using lyra::test::ScratchDirectory;
 
 using LoweredUnits = std::vector<lyra::hir::CompilationUnit>;
 
-// Every unit of this compilation's design, lowering `width` units at once.
-// Nothing where the design did not lower, which is what a design this path
-// refuses comes to and is not this test's subject.
-auto Lower(Compilation& compilation, std::size_t width)
+// Every unit of this compilation's design, reading the instances `bodies_read`
+// says and lowering `width` units at once. Nothing where the design did not
+// lower, which is what a design this path refuses comes to and is not this
+// test's subject.
+auto Lower(Compilation& compilation, std::size_t width, BodiesRead bodies_read)
     -> std::optional<LoweredUnits> {
   if (!compilation.front.elaborated.has_value()) {
     return std::nullopt;
@@ -52,7 +61,10 @@ auto Lower(Compilation& compilation, std::size_t width)
   auto design = lyra::compiler::DeclareUnits(
       std::move(compilation.front.elaborated->compilation),
       compilation.front.elaborated->source_mapper,
-      lyra::compiler::LoweringPolicy{}, sink);
+      lyra::compiler::LoweringPolicy{
+          .assertions = lyra::support::AssertionPolicy::kCheck,
+          .bodies_read = bodies_read},
+      sink);
   if (!design.has_value()) {
     return std::nullopt;
   }
@@ -100,8 +112,10 @@ class RepeatableLoweringTest : public testing::Test {
     Compilation first = Elaborate(*case_);
     Compilation second = Elaborate(*case_);
 
-    const std::optional<LoweredUnits> first_units = Lower(first, 1);
-    const std::optional<LoweredUnits> second_units = Lower(second, kWide);
+    const std::optional<LoweredUnits> first_units =
+        Lower(first, 1, BodiesRead::kElaborated);
+    const std::optional<LoweredUnits> second_units =
+        Lower(second, kWide, BodiesRead::kEveryInstance);
     if (!first_units.has_value() && !second_units.has_value()) {
       GTEST_SKIP() << "this path does not lower '" << case_->id << "'";
     }
@@ -131,8 +145,10 @@ TEST(RepeatableLowering, ADesignWrittenToShowAnOrderingStatesOneThing) {
   Compilation first = Elaborate(design);
   Compilation second = Elaborate(design);
 
-  const std::optional<LoweredUnits> first_units = Lower(first, 1);
-  const std::optional<LoweredUnits> second_units = Lower(second, kWide);
+  const std::optional<LoweredUnits> first_units =
+      Lower(first, 1, BodiesRead::kElaborated);
+  const std::optional<LoweredUnits> second_units =
+      Lower(second, kWide, BodiesRead::kEveryInstance);
   ASSERT_TRUE(first_units.has_value() && second_units.has_value())
       << "the design written to exercise this check no longer lowers";
 
