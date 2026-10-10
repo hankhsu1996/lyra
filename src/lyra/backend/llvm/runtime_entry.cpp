@@ -251,7 +251,8 @@ constexpr std::array kForAggregateNets{RealizedFor{.domains = kAggregateNets}};
 
 constexpr std::array kTakeovers{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kIntegral},
-    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues}};
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
+    ThroughWrapper{.wrapper = WrapperKind::kRef, .domains = kIntegral}};
 // A variable's cell is installed with its declaration's value, which fixes how
 // wide a cell of words is.
 constexpr std::array kInstalls{
@@ -1706,13 +1707,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kReferenceReportsTo:
     // Binding a member and forcing one act on the reference alone.
     case support::BuiltinFn::kBindMember:
-    case support::BuiltinFn::kBeginForce:
-    case support::BuiltinFn::kRetargetMember:
-    case support::BuiltinFn::kStillForcing:
-    case support::BuiltinFn::kForceEnded:
-    case support::BuiltinFn::kDriverOfMember:
-    case support::BuiltinFn::kReleaseMember:
-    case support::BuiltinFn::kReestablishedOf:
+    case support::BuiltinFn::kDrivesContinuously:
     // What an enumeration's member list answers about a value. One routine
     // serves every enumeration, because the list is the receiver and every
     // member is an integral value.

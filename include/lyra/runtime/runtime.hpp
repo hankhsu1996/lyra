@@ -207,10 +207,7 @@ class Runtime final : public RuntimeEffects {
   // narrower covers.
   Observable every_object_;
   BoundMembers bound_members_;
-  // Each held apart, so the waits enrolled on one keep their place while the
-  // table grows.
-  std::unordered_map<const VariableCell*, std::unique_ptr<Observable>>
-      reestablished_;
+  std::unordered_set<const VariableCell*> driven_continuously_;
   std::vector<std::shared_ptr<RuntimeProcess>> processes_;
   RuntimeProcess* current_process_ = nullptr;
   // What is running, which is what a randomization call draws from (LRM 18.13,

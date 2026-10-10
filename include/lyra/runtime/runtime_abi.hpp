@@ -690,17 +690,10 @@ auto lyra_rt_reference_reports_to(const void* reference) -> void*;
 // A member that owns no storage bound to what drives it, and a force on one
 // (LRM 23.3.3, 10.6.2). Each names the member by a reference to it.
 void lyra_rt_bind_member(void* member, const void* bound);
-auto lyra_rt_begin_force(const void* member) -> std::int64_t;
-void lyra_rt_retarget_member(
-    const void* member, const void* forced, std::int64_t generation);
-auto lyra_rt_still_forcing(const void* member, std::int64_t generation) -> bool;
-auto lyra_rt_force_ended(const void* member) -> void*;
-auto lyra_rt_driver_of_member(const void* member, void* out) -> void*;
-void lyra_rt_release_member(const void* member);
 
-// The place a continuous driver of the storage `reference` names is reached at
-// when the last procedural continuous assignment on it ends (LRM 10.6.2).
-auto lyra_rt_reestablished_of(const void* reference) -> void*;
+// States that a continuous assignment drives the storage `reference` names
+// (LRM 10.3).
+void lyra_rt_drives_continuously(const void* reference);
 auto lyra_rt_string_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_real_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_shortreal_cell_refer(void* cell, void* out) -> void*;
@@ -2426,6 +2419,12 @@ auto lyra_rt_bit8_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_bit8_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_bit8_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_bit8_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_bit8_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_bit8_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_bit8_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_bit8_shared_cell_make(void* out) -> void*;
@@ -2460,6 +2459,12 @@ auto lyra_rt_bit16_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_bit16_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_bit16_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_bit16_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_bit16_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_bit16_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_bit16_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_bit16_shared_cell_make(void* out) -> void*;
@@ -2494,6 +2499,12 @@ auto lyra_rt_bit32_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_bit32_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_bit32_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_bit32_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_bit32_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_bit32_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_bit32_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_bit32_shared_cell_make(void* out) -> void*;
@@ -2528,6 +2539,12 @@ auto lyra_rt_bit64_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_bit64_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_bit64_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_bit64_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_bit64_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_bit64_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_bit64_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_bit64_shared_cell_make(void* out) -> void*;
@@ -2562,6 +2579,12 @@ auto lyra_rt_logic8_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic8_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_logic8_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_logic8_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_logic8_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_logic8_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_logic8_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_logic8_shared_cell_make(void* out) -> void*;
@@ -2620,6 +2643,12 @@ auto lyra_rt_logic16_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic16_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_logic16_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_logic16_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_logic16_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_logic16_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_logic16_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_logic16_shared_cell_make(void* out) -> void*;
@@ -2678,6 +2707,12 @@ auto lyra_rt_logic32_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic32_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_logic32_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_logic32_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_logic32_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_logic32_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_logic32_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_logic32_shared_cell_make(void* out) -> void*;
@@ -2736,6 +2771,12 @@ auto lyra_rt_logic64_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic64_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_logic64_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_logic64_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_logic64_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_logic64_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_logic64_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_logic64_shared_cell_make(void* out) -> void*;
@@ -2817,6 +2858,12 @@ auto lyra_rt_bit_wide_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_bit_wide_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_bit_wide_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_bit_wide_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_bit_wide_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_bit_wide_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_bit_wide_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_bit_wide_shared_cell_make(void* out) -> void*;
@@ -2861,6 +2908,12 @@ auto lyra_rt_logic_wide_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic_wide_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_logic_wide_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_logic_wide_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_logic_wide_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_logic_wide_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_logic_wide_cell_open_for_write(void* cell, void* out) -> void*;
 auto lyra_rt_logic_wide_shared_cell_make(void* out) -> void*;

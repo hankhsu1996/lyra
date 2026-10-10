@@ -6,7 +6,9 @@
 // value, and omitted it takes the default the port declares (LRM 23.2.2.4).
 // The data type may be any that crosses a port: an unpacked structure, a vector
 // wider than a machine word, an unpacked array. A change to the source is a
-// change to the port, which an event control on the port sees once.
+// change to the port, which an event control on the port sees once. What a
+// port is connected to may itself be a port of another instance, wherever in
+// the module that instance is written.
 module Probe (
     input logic [7:0] in
 );
@@ -76,6 +78,15 @@ module Top (
     Probe probe (.in(src));
   end
   Probe at_top (.in(from_nothing));
+  Probe before_its_source (.in(written_later.below.in));
+  Handed written_later (.in(src));
+  Handed written_earlier (.in(src));
+  Probe after_its_source (.in(written_earlier.below.in));
+  Shapes through_another (
+      .record(shapes.record),
+      .wide(shapes.wide),
+      .list(shapes.list)
+  );
 
   initial begin
     src = 8'd9;
@@ -109,8 +120,22 @@ module Top (
       $fatal(1, "lane[1].probe.in was %0d, expected 9", lane[1].probe.in);
     if (at_top.in !== 8'bx)
       $fatal(1, "an input of the top was %b, expected all x", at_top.in);
+    if (before_its_source.in !== 8'd9)
+      $fatal(1, "a port of a port written later was %0d, expected 9",
+             before_its_source.in);
+    if (after_its_source.in !== 8'd9)
+      $fatal(1, "a port of a port written earlier was %0d, expected 9",
+             after_its_source.in);
+    if (through_another.record.count !== 100 ||
+        through_another.wide !== {4'hA, 96'd3} ||
+        through_another.list[2] !== 3)
+      $fatal(1, "a port of another instance's port was %0d / %h / %0d",
+             through_another.record.count, through_another.wide,
+             through_another.list[2]);
 
     handed.below.changes = 0;
+    before_its_source.changes = 0;
+    after_its_source.changes = 0;
     each[1].changes = 0;
     lane[1].probe.changes = 0;
     src = 8'd20;
@@ -133,6 +158,16 @@ module Top (
       $fatal(1, "list[2] was %0d, expected 30", shapes.list[2]);
     if (handed.below.in !== 8'd20)
       $fatal(1, "a handed-on input was %0d, expected 20", handed.below.in);
+    if (before_its_source.in !== 8'd20 || before_its_source.changes !== 1)
+      $fatal(1, "a port of a port written later was %0d after %0d changes",
+             before_its_source.in, before_its_source.changes);
+    if (after_its_source.in !== 8'd20 || after_its_source.changes !== 1)
+      $fatal(1, "a port of a port written earlier was %0d after %0d changes",
+             after_its_source.in, after_its_source.changes);
+    if (through_another.record.count !== 101 ||
+        through_another.list[2] !== 30)
+      $fatal(1, "a port of another instance's port was %0d / %0d after a write",
+             through_another.record.count, through_another.list[2]);
     if (handed.below.changes !== 1)
       $fatal(1, "a handed-on input saw %0d changes, expected 1",
              handed.below.changes);

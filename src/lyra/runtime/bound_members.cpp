@@ -4,15 +4,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/support/takeover_level.hpp"
 
 namespace lyra::runtime {
 
@@ -20,14 +23,27 @@ BoundMembers::BoundMembers() = default;
 BoundMembers::~BoundMembers() = default;
 
 void BoundMembers::Bind(ErasedReference& member, const ErasedReference& bound) {
-  member = bound;
   member.member = &member;
-  if (bound.member != nullptr) {
-    members_[bound.member].bound_from_it.push_back(&member);
+  // A reference that names nothing yet is itself a member whose own binding
+  // has not run: the order scopes bind in is the hierarchy's, and a connection
+  // may name a member of a scope bound later. What is bound from it follows
+  // when it is.
+  const bool bound_later = bound.storage == nullptr;
+  if (const ErasedReference* from = bound_later ? &bound : bound.member) {
+    members_[from].bound_from_it.push_back(&member);
   }
+  if (bound_later) {
+    return;
+  }
+  Move(Following(member), nullptr, bound);
 }
 
-auto BoundMembers::BeginForce(ErasedReference& member) -> std::int64_t {
+auto BoundMembers::Forced(const ErasedReference& member) const -> bool {
+  const auto at = members_.find(&member);
+  return at != members_.end() && at->second.driver != nullptr;
+}
+
+auto BoundMembers::NextGeneration(ErasedReference& member) -> std::int64_t {
   return ++members_[&member].generation;
 }
 
@@ -83,22 +99,13 @@ void BoundMembers::Move(
   }
 }
 
-void BoundMembers::Retarget(
+void BoundMembers::Force(
     ErasedReference& member, const ErasedReference& forced,
-    std::int64_t generation) {
+    std::shared_ptr<void> storage) {
   Member& state = members_[&member];
-  if (state.generation != generation) {
-    return;
-  }
-  if (state.driver == nullptr) {
-    state.driver = std::make_unique<ErasedReference>(member);
-  }
+  state.driver = std::make_unique<ErasedReference>(member);
+  state.forced = std::move(storage);
   Move(Following(member), member.ReportsTo(), forced);
-  // An earlier force's evaluation learns here that it is superseded: nothing
-  // names its storage any longer.
-  if (state.ended != nullptr) {
-    current_runtime().WakeParkedOn(state.ended->Members(), Change::Whole());
-  }
 }
 
 auto BoundMembers::StillForcing(
@@ -106,14 +113,6 @@ auto BoundMembers::StillForcing(
   const auto at = members_.find(&member);
   return at != members_.end() && at->second.driver != nullptr &&
          at->second.generation == generation;
-}
-
-auto BoundMembers::ForceEnded(ErasedReference& member) -> Observable& {
-  Member& state = members_[&member];
-  if (state.ended == nullptr) {
-    state.ended = std::make_unique<Observable>();
-  }
-  return *state.ended;
 }
 
 auto BoundMembers::DriverOf(const ErasedReference& member) const
@@ -128,26 +127,27 @@ auto BoundMembers::DriverOf(const ErasedReference& member) const
 void BoundMembers::Release(ErasedReference& member) {
   const auto at = members_.find(&member);
   // Releasing what nothing ever forced has no effect (LRM 10.6.2).
-  if (at == members_.end()) {
+  if (at == members_.end() || at->second.driver == nullptr) {
     return;
   }
   Member& state = at->second;
-  // A force begun and not yet evaluated is ended here too.
   ++state.generation;
-  if (state.driver == nullptr) {
-    return;
-  }
   Move(Following(member), member.ReportsTo(), *state.driver);
   state.driver.reset();
-  if (state.ended != nullptr) {
-    current_runtime().WakeParkedOn(state.ended->Members(), Change::Whole());
-  }
+  state.forced.reset();
 }
 
-auto BoundMember(const ErasedReference& reference) -> ErasedReference& {
+auto ForcedMember(const ErasedReference& reference, std::int64_t level)
+    -> ErasedReference& {
+  if (TakeoverLevelOf(level) != support::TakeoverLevel::kForce) {
+    throw InternalError(
+        "ForcedMember: an `assign` names a member that owns no storage, which "
+        "the front end refuses");
+  }
   if (reference.member == nullptr) {
     throw InternalError(
-        "BoundMember: a force names a reference that was bound into no member");
+        "ForcedMember: a force names a reference that was bound into no "
+        "member");
   }
   return *reference.member;
 }

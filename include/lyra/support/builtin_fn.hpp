@@ -371,24 +371,10 @@ enum class BuiltinFn : std::uint16_t {
   // with (LRM 23.3.3): the member names that storage from then on, and is
   // recorded as bound from whatever member the bound reference came from.
   kBindMember,
-  // What a force on such a member is stated with (LRM 10.6.2), each naming the
-  // member by a reference to it and reading no value: beginning one, which
-  // answers the generation its evaluation carries; making the member and what
-  // follows it name the storage the force evaluates into; whether that
-  // generation is still the one in effect; what the evaluation waits on to
-  // learn the force ended; what drives the member, as a reference; and ending
-  // the force.
-  kBeginForce,
-  kRetargetMember,
-  kStillForcing,
-  kForceEnded,
-  kDriverOfMember,
-  kReleaseMember,
-  // What a continuous driver waits on beside what its source reads, asked of
-  // the storage it writes through a reference to it: the place reached when
-  // the last procedural continuous assignment on the variable holding that
-  // storage ends, which reestablishes the driver (LRM 10.6.2).
-  kReestablishedOf,
+  // Stating, as the design is built, that a continuous assignment drives the
+  // storage a reference names (LRM 10.3), which decides what a variable shows
+  // once nothing overrides it (LRM 10.6.2).
+  kDrivesContinuously,
   // Attaching a driver to a net (LRM 6.5), at the strength its source drives at
   // (LRM 28.11): a `ResolvedNet` method returning the driver handle the drive
   // capability is reached through. The strength is fixed when the driver

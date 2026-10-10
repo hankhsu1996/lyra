@@ -1,8 +1,6 @@
 #pragma once
 
-#include <functional>
 #include <span>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/arena.hpp"
@@ -22,18 +20,11 @@ namespace lyra::lowering::hir_to_mir {
 class ProcessLowerer;
 class UnitLowerer;
 
-// A place a wait is reached at that no source text names -- where a force
-// ends, where a continuous driver is reestablished (LRM 10.6.2) -- stated as an
-// expression built in the block of the frame it is handed, since only the wait
-// knows which block it is built in.
-using StatedPlace = std::function<diag::Result<mir::ExprId>(const WalkFrame&)>;
-
-// One leaf of a wait: what is watched -- storage the source names, or a place
-// the lowering states -- and what decides whether reaching it is an event for
-// the wait. The leaves watching for one event name one observation between
-// them, since what is being watched for is one thing.
+// One leaf of a wait: the storage watched, and what decides whether reaching it
+// is an event for the wait. The leaves watching for one event name one
+// observation between them, since what is being watched for is one thing.
 struct ObservedLeaf {
-  std::variant<hir::SensitivityEntry, StatedPlace> watched;
+  hir::SensitivityEntry entry;
   mir::LocalId observation;
 };
 
@@ -140,14 +131,12 @@ auto BuildWaitOnStmt(
 // The wait of a construct the standard makes sensitive to the variables it
 // reads, where a change to any of them is the event (LRM 9.4.2.2, 10.3, 10.6).
 // Being reached is the whole condition, so its leaves share the one
-// observation that says so. It is reached at each of `also` in the same way:
-// what ends a force for the force's own evaluation, and what reestablishes a
-// continuous driver for that driver (LRM 10.6.2). The stop is for `stop_block`.
+// observation that says so. The stop is for `stop_block`.
 template <typename Lowerer>
 auto BuildValueChangeWaitStmt(
     mir::Block& stop_block, const WalkFrame& frame, Lowerer& lowerer,
-    std::span<const hir::SensitivityEntry> sensitivity_list,
-    std::span<const StatedPlace> also) -> diag::Result<mir::Stmt>;
+    std::span<const hir::SensitivityEntry> sensitivity_list)
+    -> diag::Result<mir::Stmt>;
 
 // The wait on an implicit list, collected once into a report ahead of the
 // procedure's first run (LRM 9.2.2.2.1): everything `reads` names and writes

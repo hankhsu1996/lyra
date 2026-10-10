@@ -94,14 +94,14 @@ auto ErasedReference::ReportsTo() const -> Observable* {
       holder);
 }
 
-auto ErasedReference::Reestablished() const -> WatchedPlace {
-  return std::visit(
+void ErasedReference::DriveContinuously() const {
+  std::visit(
       Overloaded{
-          [](std::monostate) { return WatchedPlace{}; },
+          [](std::monostate) {},
           [](VariableCell* variable) {
-            return WatchedPlace{&current_runtime().ReestablishedOf(*variable)};
+            current_runtime().DriveContinuously(*variable);
           },
-          [](GcObject*) { return WatchedPlace{}; }},
+          [](GcObject*) {}},
       holder);
 }
 

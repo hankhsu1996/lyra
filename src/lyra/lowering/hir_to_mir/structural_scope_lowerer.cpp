@@ -1284,11 +1284,6 @@ auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
 // is the source's own storage is one of the schedules the standard admits. A
 // net shows a resolution rather than holding what it is given (LRM 6.5), and
 // any other expression has no storage to stand for.
-//
-// The variable is one this scope or a scope enclosing it declares. Those hold
-// their values by the time this scope binds its children, since a scope is
-// initialized after every scope enclosing it; a variable reached through
-// another instance may not yet.
 auto NamesSharedStorage(
     const hir::StructuralScope& scope, const hir::Expr& peer,
     hir::TypeId port_type) -> bool {
@@ -1297,12 +1292,8 @@ auto NamesSharedStorage(
                           ? nullptr
                           : std::get_if<hir::RoutedValueRef>(&primary->data);
   if (named == nullptr || peer.type != port_type) return false;
-  const hir::ValueRoute& route = scope.routes.values.Get(named->id);
-  if (!std::holds_alternative<hir::InUnitBase>(route.base) ||
-      !route.steps.empty()) {
-    return false;
-  }
-  const hir::DataCell source = hir::CellOf(route.leaf);
+  const hir::DataCell source =
+      hir::CellOf(scope.routes.values.Get(named->id).leaf);
   return std::visit(
       Overloaded{
           [](const hir::VariableStorage&) { return true; },
@@ -1312,17 +1303,12 @@ auto NamesSharedStorage(
       source.storage);
 }
 
-// Binds an input whose member owns no cell (LRM 23.3.3.2). Where the connection
-// names storage the input can stand for, the member is bound to it and nothing
-// runs afterwards. Every other input is bound to a cell this scope keeps, which
-// the implied continuous assignment drives where there is a connection, and
-// which otherwise holds the data type's default initial value.
-//
-// The member is bound while this scope is initialized, once what it is bound
-// to holds a value: a reference names where a value lies, and a variable whose
-// value is represented at run time has nowhere for it to lie before its
-// declaration installs one. The child is initialized after this scope, so it
-// reads its input through a member that is already bound.
+// Binds an input whose member owns no cell (LRM 23.3.3.2), while the design's
+// references are resolved. Where the connection names storage the input can
+// stand for, the member is bound to it and nothing runs afterwards. Every
+// other input is bound to a cell this scope keeps, which the implied
+// continuous assignment drives where there is a connection, and which
+// otherwise holds the data type's default initial value.
 auto BindInputPort(
     StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
@@ -1332,32 +1318,32 @@ auto BindInputPort(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   mir::Class& mir_class = *frame.current_class;
-  mir::Block& init_block = *init_frame.current_block;
+  mir::Block& resolve_block = *resolve_frame.current_block;
 
   const hir::DataCell member = hir::CellOf(route.leaf);
   const mir::TypeId value_type = unit_lowerer.TranslateType(member.type);
   const mir::TypeId ref_type =
       unit_lowerer.MemberCellType(value_type, member.storage);
   const auto bind_to = [&](const AccessPath& storage) {
-    const mir::ExprId target = init_block.exprs.Add(
+    const mir::ExprId target = resolve_block.exprs.Add(
         mir::Expr{
             .data =
                 mir::DerefExpr{
-                    .pointer = BuildRouteValue(lowerer, init_frame, route)},
+                    .pointer = BuildRouteValue(lowerer, resolve_frame, route)},
             .type = ref_type});
-    init_block.AppendStmt(
+    resolve_block.AppendStmt(
         mir::ExprStmt{
-            .expr = init_block.exprs.Add(
+            .expr = resolve_block.exprs.Add(
                 mir::MakeCallExpr(
                     mir::Direct{.target = support::BuiltinFn::kBindMember},
-                    {target, PathReference(unit, init_block, storage)},
+                    {target, PathReference(unit, resolve_block, storage)},
                     unit.builtins.void_type))});
   };
 
   if (data.peer.has_value()) {
     const hir::Expr& peer = hir_scope.exprs.Get(*data.peer);
     if (NamesSharedStorage(hir_scope, peer, member.type)) {
-      auto named = lowerer.LowerLhsExpr(peer, init_frame);
+      auto named = lowerer.LowerLhsExpr(peer, resolve_frame);
       if (!named) return std::unexpected(std::move(named.error()));
       bind_to(*named);
       return {};
@@ -1382,15 +1368,16 @@ auto BindInputPort(
         .descent = {}};
   };
 
-  const mir::ExprId prototype = init_block.exprs.Add(
-      BuildDefaultValueFromHir(unit_lowerer, init_block, member.type));
-  init_block.AppendStmt(
+  mir::Block& ctor_block = *frame.current_block;
+  const mir::ExprId prototype = ctor_block.exprs.Add(
+      BuildDefaultValueFromHir(unit_lowerer, ctor_block, member.type));
+  ctor_block.AppendStmt(
       mir::ExprStmt{
-          .expr = init_block.exprs.Add(
+          .expr = ctor_block.exprs.Add(
               mir::MakeCapabilityInstallCallExpr(
-                  OwnerPlace(*kept_cell(init_frame)), prototype,
+                  OwnerPlace(*kept_cell(frame)), prototype,
                   support::BuiltinFn::kInitialize, unit.builtins.void_type))});
-  bind_to(*kept_cell(init_frame));
+  bind_to(*kept_cell(resolve_frame));
   if (!data.peer.has_value()) return {};
 
   const hir::Expr& source = hir_scope.exprs.Get(*data.peer);
@@ -1477,8 +1464,9 @@ auto InstallPortConnections(
                 .data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
 
         // The peer is lent as a `ref` actual is. A part of a variable is not
-        // yet: the member is bound before the variable's declaration installs
-        // what it holds, which moves the part the reference would name.
+        // yet: the member is bound before the variable takes its declared
+        // initial value, and storing a whole value may move the parts of the
+        // one it replaces, which the reference would go on naming.
         auto peer_or = lowerer.LowerLhsExpr(
             hir_scope.exprs.Get(*data.peer), resolve_frame);
         if (!peer_or) return std::unexpected(std::move(peer_or.error()));
@@ -2692,11 +2680,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         initialize_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type)));
   };
 
-  // What elaboration settles is read while the object is still being built -- a
-  // block's own declarations and connections are written in terms of the index
-  // it stands at, and the loop advances that index as it builds (LRM 27.4) --
-  // so these cells exist from the constructor rather than from the initialize
-  // phase every other declared value waits for.
+  // A cell takes its declared representation and default as the object is
+  // built. What elaboration settles is read that early -- a block's own
+  // declarations and connections are written in terms of the index it stands
+  // at, and the loop advances that index as it builds (LRM 27.4) -- and
+  // whatever names a variable from elsewhere is bound before any value is
+  // assigned.
   const auto install_in_constructor =
       [&](hir::StructuralDataObjectId id) -> mir::ExprId {
     const auto& d = hir_scope.structural_data_objects.Get(id);
@@ -2799,29 +2788,15 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             AccessPath{.owner = init_target, .descent = {}}, value_id));
       };
 
-      // Every observable value cell installs its declared representation and
-      // default ahead of every initializer (LRM 10.5), so a later store --
-      // including a user initializer -- is held to that representation rather
-      // than fixing it by running first. A non-observable value member carries
-      // no cell wrapper, so an ordinary store of its initializer, or of the
-      // default where it has none, is what gives it its value.
+      // Every observable value cell takes its declared representation and
+      // default with the object, so a reference bound to it while the design is
+      // resolved names storage that exists, and a later store -- a user
+      // initializer included (LRM 10.5) -- is held to that representation
+      // rather than fixing it by running first. A non-observable value member
+      // carries no cell wrapper, so an ordinary store of its initializer, or of
+      // the default where it has none, is what gives it its value.
       if (unit_lowerer.Unit().types.Get(mir_field_type).IsCapabilityWrapper()) {
-        const mir::ExprId install_target = install_block.exprs.Add(
-            mir::MakeFieldAccessExpr(
-                BuildObjectDeref(
-                    unit_lowerer.Unit(), install_block,
-                    install_block.exprs.Add(
-                        MakeSelfRefExpr(install_frame, self_ptr_type))),
-                cell, mir_field_type));
-        const mir::ExprId prototype = install_block.exprs.Add(
-            BuildDefaultValueFromHir(unit_lowerer, install_block, d.type));
-        install_block.AppendStmt(
-            mir::ExprStmt{
-                .expr = install_block.exprs.Add(
-                    mir::MakeCapabilityInstallCallExpr(
-                        install_target, prototype,
-                        support::BuiltinFn::kInitialize,
-                        unit_lowerer.Unit().builtins.void_type))});
+        install_in_constructor(hir_id);
         if (var->initializer.has_value()) {
           auto value_or =
               LowerExpr(hir_scope.exprs.Get(*var->initializer), init_frame);

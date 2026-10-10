@@ -2940,6 +2940,16 @@ enough to warrant its own focused review.
       closes with the open boxes on what the library is told of an element's type in the value
       representation file. Not blocked.
 
+- [ ] R215 -- The lifecycle states a Seal phase between resolving references and initializing: a
+      barrier over the whole design that validates each candidate endpoint, collapses forwarding
+      chains to their final cell and commits them at once. The runtime has no such phase. A
+      reference is committed where its scope resolves, a chain reaches its end because a scope
+      resolves before the scopes it holds, and a port bound from a port not yet bound follows when
+      that one is. What the lifecycle promises of Initialize holds, by a different mechanism than
+      the one it describes, and nothing validates an endpoint against its protocol at run time.
+      Target: either the phase exists and a reference names nothing until it has run, or the
+      lifecycle states the ordering that actually commits a reference and what follows from it.
+
 - [ ] R193 -- A net whose data type is an unpacked aggregate cannot be joined to another net. An
       `inout` port connected to one, whole or by element, and an `alias` naming one, are refused
       where the design is compiled, as "a net whose data type is an unpacked aggregate is not yet

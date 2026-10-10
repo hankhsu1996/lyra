@@ -59,27 +59,31 @@ auto DriverAccess(
           driver.type));
 }
 
-// Where a continuous driver of place `place` of what `destination` names is
-// reached when a force on that variable ends, so that it evaluates again
-// (LRM 10.6.2). Which storage a write lands in is known only where it lands, so
-// the storage is asked, through a reference to it; storage nothing can force
-// answers with nowhere.
-auto ReestablishedPlace(
-    mir::CompilationUnit& unit, const WalkFrame& frame,
-    const DriveDestination& destination, std::size_t place)
-    -> diag::Result<mir::ExprId> {
-  auto driven = destination(frame);
-  if (!driven) return std::unexpected(std::move(driven.error()));
-  std::vector<PathOwner> owners;
+// Each place `lvalue` is made of, in the order the source wrote them.
+auto PlacesOf(const Lvalue& lvalue) -> std::vector<AccessPath> {
+  std::vector<AccessPath> places;
   ForEachPlace(
-      *driven, [&](const AccessPath& path) { owners.push_back(path.owner); });
-  mir::Block& block = *frame.current_block;
-  return block.exprs.Add(
-      mir::MakeCallExpr(
-          mir::Direct{.target = support::BuiltinFn::kReestablishedOf},
-          {PathReference(
-              unit, block, AccessPath{.owner = owners[place], .descent = {}})},
-          mir::ErasedPointer(unit.types)));
+      lvalue, [&](const AccessPath& place) { places.push_back(place); });
+  return places;
+}
+
+// States to the variable `place` lies in that a continuous assignment drives
+// it (LRM 10.3). Which storage a write lands in is known only where it lands,
+// so the variable is named by a reference to the whole of it; storage no
+// variable holds takes the statement and has nothing to be told.
+auto StateContinuousDriver(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& place)
+    -> mir::Stmt {
+  const mir::ExprId whole = PathReference(
+      unit, block, AccessPath{.owner = place.owner, .descent = {}});
+  return mir::Stmt{
+      .label = std::nullopt,
+      .data = mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kDrivesContinuously},
+                  {whole}, unit.builtins.void_type))}};
 }
 
 }  // namespace
@@ -212,6 +216,22 @@ auto LowerContinuousDrive(
     }
   }
 
+  // A variable shows, once nothing overrides it, what its continuous driver
+  // last produced (LRM 10.6.2), so the variable each place lies in is told it
+  // has one. It is told while the scope initializes, by when every reference a
+  // place may be reached through is bound. A net keeps each driver's
+  // contribution by itself.
+  {
+    mir::Block& init_block = *init_frame.current_block;
+    auto named = destination(init_frame);
+    if (!named) return std::unexpected(std::move(named.error()));
+    const std::vector<AccessPath> places = PlacesOf(*named);
+    for (std::size_t i = 0; i < places.size(); ++i) {
+      if (drivers[i].has_value()) continue;
+      init_block.AppendStmt(StateContinuousDriver(unit, init_block, places[i]));
+    }
+  }
+
   mir::CallableCode code = mir::CallableCode::Defined();
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id =
@@ -225,17 +245,8 @@ auto LowerContinuousDrive(
     return std::unexpected(std::move(stored.error()));
   }
 
-  // A net keeps each driver's contribution while it is forced and resolves
-  // them again at the release, so only a variable's driver has to be told.
-  std::vector<StatedPlace> reestablished;
-  for (std::size_t i = 0; i < drivers.size(); ++i) {
-    if (drivers[i].has_value()) continue;
-    reestablished.emplace_back([&, i](const WalkFrame& in) {
-      return ReestablishedPlace(unit, in, destination, i);
-    });
-  }
-  auto waited = BuildValueChangeWaitStmt(
-      body_block, body_frame, lowerer, sensitivity, reestablished);
+  auto waited =
+      BuildValueChangeWaitStmt(body_block, body_frame, lowerer, sensitivity);
   if (!waited) return std::unexpected(std::move(waited.error()));
   body_block.AppendStmt(*std::move(waited));
 

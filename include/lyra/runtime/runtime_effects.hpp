@@ -87,14 +87,13 @@ class RuntimeEffects {
   // one acts through (LRM 10.6.2).
   [[nodiscard]] auto Bound() -> BoundMembers&;
 
-  // The place reached when the last procedural continuous assignment on
-  // `variable` ends, which is what reestablishes whatever drives the variable
-  // continuously (LRM 10.6.2). Only a variable something drives that way has
-  // one, made when its driver first asks.
-  [[nodiscard]] auto ReestablishedOf(const VariableCell& variable)
-      -> Observable&;
-  // Reaches that place, where `variable` has one.
-  void Reestablish(const VariableCell& variable);
+  // States that a continuous assignment drives `variable` (LRM 10.3). A
+  // variable does not say so itself: the fact is asked only as a procedural
+  // continuous assignment comes to cover one (LRM 10.6.2), so it is kept here
+  // and a write to a variable costs nothing for it.
+  void DriveContinuously(const VariableCell& variable);
+  [[nodiscard]] auto DrivenContinuously(const VariableCell& variable) const
+      -> bool;
 
   // LRM 4.4: place `effect` in `region` of the time slot at `when`. A deferred
   // effect runs where it is placed and never suspends whoever submitted it.

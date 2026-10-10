@@ -962,6 +962,9 @@ class Driver {
   [[nodiscard]] static auto AdmitsWrite() -> bool {
     return true;
   }
+  [[nodiscard]] static auto DisplacedStorage() -> T* {
+    return nullptr;
+  }
   [[nodiscard]] auto MutationStorage() const -> T& {
     return Net().ContributionOf(contribution_).value;
   }

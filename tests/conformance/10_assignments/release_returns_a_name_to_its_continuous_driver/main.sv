@@ -7,7 +7,11 @@
 // drives and leaves the source alone, and while it is in effect a change of
 // the source is no change of the sink. A continuous assignment inside a module
 // to a variable the module reaches through a ref port (LRM 23.3.3.2) drives
-// that variable like any other, so releasing the variable reestablishes it.
+// that variable like any other, so releasing the variable reestablishes it,
+// and so does one assignment per part of a variable. An `assign` procedural
+// continuous assignment beneath a force is reestablished by the same sentence.
+// A variable only procedural assignments write keeps the forced value when
+// released, a write made while it was forced never showing.
 module Leaf(input logic [7:0] in);
   int changes;
   always @(in) changes++;
@@ -33,6 +37,11 @@ module Top;
   assign sum = src + 8'd1;
   Middle mid(.in(src), .out(res));
   logic [7:0] lent;
+  logic [7:0] parts;
+  logic [7:0] held;
+  logic [7:0] plain;
+  assign parts[3:0] = src[3:0];
+  assign parts[7:4] = 4'd0;
   Through through(.target(lent), .in(src));
 
   initial begin
@@ -45,7 +54,13 @@ module Top;
     force copy = 8'd55;
     force sum = 8'd66;
     force lent = 8'd77;
+    force parts = 8'd88;
+    assign held = src + 8'd4;
+    force held = 8'd99;
+    plain = 8'd1;
+    force plain = 8'd44;
     #1;
+    plain = 8'd2;
     if (lent !== 8'd77) $fatal(1, "a forced lent was %0d, expected 77", lent);
     if (copy !== 8'd55) $fatal(1, "a forced copy was %0d, expected 55", copy);
     if (sum !== 8'd66) $fatal(1, "a forced sum was %0d, expected 66", sum);
@@ -59,7 +74,18 @@ module Top;
     release copy;
     release sum;
     release lent;
+    release parts;
+    release held;
+    release plain;
     #1;
+    if (parts !== 8'd9)
+      $fatal(1, "a variable driven part by part was %0d once released", parts);
+    if (held !== 8'd13)
+      $fatal(1, "an assign beneath a released force was %0d, expected 13", held);
+    if (plain !== 8'd44)
+      $fatal(1, "a released variable nothing drives was %0d, expected 44",
+             plain);
+    deassign held;
     if (lent !== 8'd11)
       $fatal(1, "a variable driven through a ref port was %0d once released",
              lent);

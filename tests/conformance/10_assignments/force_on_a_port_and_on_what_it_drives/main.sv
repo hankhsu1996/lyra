@@ -8,7 +8,8 @@
 // a force on a port left unconnected gives way on release to the default
 // initial value the port holds (LRM 23.3.3.2). A force is no part of the
 // process that made it, so it stays in effect, still following its expression,
-// when that process is ended.
+// when that process is ended. A port is forced like any variable: as one
+// member of a concatenation, and whatever its width.
 module Leaf (
     input logic [7:0] in
 );
@@ -20,8 +21,16 @@ module Mid (
   Leaf leaf (.in(in));
 endmodule
 
+module WideLeaf (
+    input logic [99:0] in
+);
+endmodule
+
 module Top;
   logic [7:0] src;
+  logic [7:0] own;
+  logic [99:0] wide_src;
+  WideLeaf wide_leaf (.in(wide_src));
   Mid mid (.in(src));
   Mid open (.in());
 
@@ -101,6 +110,34 @@ module Top;
     #1;
     if (mid.leaf.in !== 8'd5)
       $fatal(1, "the port released last was %0d, expected 5", mid.leaf.in);
+
+    force {mid.in, own} = 16'h0A0B;
+    #1;
+    if (mid.in !== 8'h0A || own !== 8'h0B)
+      $fatal(1, "a forced concatenation left a port at %h and a variable at %h",
+             mid.in, own);
+    if (mid.leaf.in !== 8'h0A)
+      $fatal(1, "the port below one forced in a concatenation was %h",
+             mid.leaf.in);
+    release {mid.in, own};
+    #1;
+    if (mid.in !== 8'd5 || own !== 8'h0B)
+      $fatal(1, "a released concatenation left a port at %0d and a variable at %h",
+             mid.in, own);
+
+    wide_src = {4'hC, 96'd1};
+    #1;
+    force wide_leaf.in = 100'd7;
+    #1;
+    if (wide_leaf.in !== 100'd7)
+      $fatal(1, "a forced wide port was %h, expected 7", wide_leaf.in);
+    if (wide_src !== {4'hC, 96'd1})
+      $fatal(1, "forcing a wide port moved its source to %h", wide_src);
+    wide_src = {4'hD, 96'd2};
+    release wide_leaf.in;
+    #1;
+    if (wide_leaf.in !== {4'hD, 96'd2})
+      $fatal(1, "a released wide port was %h", wide_leaf.in);
 
     fork
       begin

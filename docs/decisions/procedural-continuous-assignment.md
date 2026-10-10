@@ -165,17 +165,26 @@ read to choose between.
    write capability is what separates them; neither borrows the other's ending.
 
    **A variable a continuous assignment drives is the one case removal owes more** (revised
-   2026-10-09). 10.6.2 says releasing it "shall reestablish that assignment and schedule a
-   reevaluation", and F4's "nothing to preserve" was derived from 10.6.1, which speaks of procedural
-   writes. The driver's writes are turned away while the takeover holds, and it is parked on what
-   its source reads, so the end of the last takeover wakes it: a variable something drives
-   continuously has a place its driver waits on beside its source, kept by the engine for only those
-   variables. No value is shadowed; the driver evaluates again, which is the standard's own wording.
+   2026-10-10). 10.6.2 says releasing it "shall reestablish that assignment and schedule a
+   reevaluation", in the same sentence that covers an `assign` beneath a `force`, and F4's "nothing
+   to preserve" was derived from 10.6.1, which speaks of procedural writes. So the continuous driver
+   is the level beneath both: while a takeover covers the variable, what its driver writes is kept
+   beneath rather than discarded, starting from what the variable held when it was first covered,
+   and the end of the last takeover shows it. Nothing is recomputed and nobody is woken, as under
+   D4. The value beneath is part of the takeover's own state, so it exists only while something
+   covers the variable and no read consults it.
 
-6. **A target that owns no storage is forced by being bound elsewhere.** A port that stands for what
+   Whether a variable is driven continuously is not a fact of its declaration: the driver may be in
+   another unit, behind an output or a `ref` port. Each continuous driver states it to the storage
+   it writes, once, as the design is built, and the engine keeps that apart from the variables, to
+   be asked only as a takeover first covers one.
+
+6. **A target that owns no storage answers the same three operations.** A port that stands for what
    its connection drives it with holds nothing a takeover could be state on, and a takeover on the
-   storage it names would force its source as well. Its force is
-   [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) D3.
+   storage it names would force its source as well. Beginning one gives it storage of the takeover's
+   own to name, driving writes that storage, and ending it names what drives it again:
+   [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) D3. So the statement is
+   lowered one way whatever its target is, and its evaluation ends the one way D3 gives.
 
 ## Consequences
 
