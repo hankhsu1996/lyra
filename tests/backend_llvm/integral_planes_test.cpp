@@ -1,4 +1,4 @@
-#include "lyra/backend/llvm/integral_one_word.hpp"
+#include "lyra/backend/llvm/integral_planes.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +15,7 @@
 #include <variant>
 #include <vector>
 
+#include <llvm/ADT/APInt.h>
 #include <llvm/Analysis/TargetFolder.h>
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
@@ -42,14 +43,34 @@ using value::IntegralShape;
 using value::Signedness;
 using value::StateDomain;
 
-// One operand as an application hands it over: the two plane words of an
-// integral value, or a machine value in `value`.
+// The words of one plane, least significant first.
+using Words = std::vector<std::uint64_t>;
+
+auto WordsOf(const llvm::APInt& bits) -> Words {
+  return {bits.getRawData(), bits.getRawData() + bits.getNumWords()};
+}
+
+// One operand as an application hands it over: the two planes of an integral
+// value, or a machine value as the one word of `value`.
 struct Sample {
-  std::uint64_t value = 0;
-  std::uint64_t unknown = 0;
+  Words value;
+  Words unknown;
 
   auto operator==(const Sample&) const -> bool = default;
 };
+
+auto MachineSample(std::uint64_t value) -> Sample {
+  return Sample{.value = {value}, .unknown = {0}};
+}
+
+// The planes spelled most significant word first.
+auto Spelled(const Words& words) -> std::string {
+  std::string spelled = "0x";
+  for (auto word = words.rbegin(); word != words.rend(); ++word) {
+    spelled += std::format("{:016x}", *word);
+  }
+  return spelled;
+}
 
 auto ShapesOver(
     std::span<const std::uint64_t> widths,
@@ -68,39 +89,49 @@ auto ShapesOver(
   return shapes;
 }
 
-constexpr std::array<std::uint64_t, 6> kWidths{1, 7, 8, 33, 63, 64};
+constexpr std::array<std::uint64_t, 8> kWidths{1, 7, 8, 33, 63, 64, 65, 130};
 constexpr std::array kBothSignednesses{
     Signedness::kUnsigned, Signedness::kSigned};
 constexpr std::array kUnsignedOnly{Signedness::kUnsigned};
 constexpr std::array kBothDomains{
     StateDomain::kTwoState, StateDomain::kFourState};
 
+// Alternating runs of set and clear bits over `bits` positions.
+auto MixedPattern(unsigned bits) -> llvm::APInt {
+  return llvm::APInt::getSplat(std::max(bits, 8U), llvm::APInt(8, 0xA5))
+      .trunc(bits);
+}
+
 // The values an operand of type `shape` is tried at: 0, 1, every bit set, the
 // top bit alone and beside others, the largest number below it, a mixed
 // pattern, and -- where the type holds them -- an x and a z in the lowest, the
 // highest and a middle position of that pattern, all x, and all z.
 auto SamplesOf(const IntegralShape& shape) -> std::vector<Sample> {
-  const std::uint64_t mask = value::LowBits(shape.width);
-  const std::uint64_t top = std::uint64_t{1} << (shape.width - 1U);
-  const std::uint64_t middle = std::uint64_t{1} << (shape.width / 2U);
-  const std::uint64_t pattern = 0xA5A5'A5A5'A5A5'A5A5U & mask;
+  const auto bits = static_cast<unsigned>(shape.width);
+  const llvm::APInt zero(bits, 0);
+  const llvm::APInt one(bits, 1);
+  const llvm::APInt mask = llvm::APInt::getAllOnes(bits);
+  const llvm::APInt top = llvm::APInt::getOneBitSet(bits, bits - 1U);
+  const llvm::APInt middle = llvm::APInt::getOneBitSet(bits, bits / 2U);
+  const llvm::APInt pattern = MixedPattern(bits);
   std::vector<Sample> samples;
-  const auto add = [&](Sample sample) {
+  const auto add = [&](const llvm::APInt& value, const llvm::APInt& unknown) {
+    Sample sample{.value = WordsOf(value), .unknown = WordsOf(unknown)};
     if (std::ranges::find(samples, sample) == samples.end()) {
-      samples.push_back(sample);
+      samples.push_back(std::move(sample));
     }
   };
-  for (const std::uint64_t known : std::array<std::uint64_t, 7>{
-           0, 1, mask, top, top | 1U, mask ^ top, pattern}) {
-    add(Sample{.value = known & mask});
+  for (const llvm::APInt& known :
+       {zero, one, mask, top, top | one, mask ^ top, pattern}) {
+    add(known, zero);
   }
   if (shape.IsFourState()) {
-    for (const std::uint64_t bit : {std::uint64_t{1}, top, middle}) {
-      add(Sample{.value = pattern | bit, .unknown = bit});
-      add(Sample{.value = pattern & ~bit, .unknown = bit});
+    for (const llvm::APInt& bit : {one, top, middle}) {
+      add(pattern | bit, bit);
+      add(pattern & ~bit, bit);
     }
-    add(Sample{.value = mask, .unknown = mask});
-    add(Sample{.value = 0, .unknown = mask});
+    add(mask, mask);
+    add(zero, mask);
   }
   return samples;
 }
@@ -108,14 +139,20 @@ auto SamplesOf(const IntegralShape& shape) -> std::vector<Sample> {
 // A thinner set for the last operand of an operation taking three, whose
 // applications otherwise multiply past what a test can run.
 auto FewSamplesOf(const IntegralShape& shape) -> std::vector<Sample> {
-  const std::uint64_t mask = value::LowBits(shape.width);
-  const std::uint64_t top = std::uint64_t{1} << (shape.width - 1U);
-  const std::uint64_t pattern = 0xA5A5'A5A5'A5A5'A5A5U & mask;
+  const auto bits = static_cast<unsigned>(shape.width);
+  const llvm::APInt zero(bits, 0);
+  const llvm::APInt one(bits, 1);
+  const llvm::APInt top = llvm::APInt::getOneBitSet(bits, bits - 1U);
+  const llvm::APInt pattern = MixedPattern(bits);
+  const auto sample = [](const llvm::APInt& value, const llvm::APInt& unknown) {
+    return Sample{.value = WordsOf(value), .unknown = WordsOf(unknown)};
+  };
   std::vector<Sample> samples{
-      Sample{.value = 0}, Sample{.value = mask}, Sample{.value = pattern}};
+      sample(zero, zero), sample(llvm::APInt::getAllOnes(bits), zero),
+      sample(pattern, zero)};
   if (shape.IsFourState()) {
-    samples.push_back(Sample{.value = pattern | 1U, .unknown = 1});
-    samples.push_back(Sample{.value = pattern & ~top, .unknown = top});
+    samples.push_back(sample(pattern | one, one));
+    samples.push_back(sample(pattern & ~top, top));
   }
   return samples;
 }
@@ -128,8 +165,8 @@ auto TypesOf(
     IntegralOperandKind kind, std::size_t index,
     std::span<const std::optional<IntegralShape>> before)
     -> std::vector<std::optional<IntegralShape>> {
-  constexpr std::array<std::uint64_t, 3> kPositionWidths{7, 33, 64};
-  constexpr std::array<std::uint64_t, 3> kLastWidths{1, 7, 33};
+  constexpr std::array<std::uint64_t, 4> kPositionWidths{7, 33, 64, 100};
+  constexpr std::array<std::uint64_t, 4> kLastWidths{1, 7, 33, 70};
   const auto each = [](const std::vector<IntegralShape>& shapes) {
     return std::vector<std::optional<IntegralShape>>(
         shapes.begin(), shapes.end());
@@ -173,7 +210,7 @@ auto TypesOf(
 }
 
 // Whether this test can make an operand of `kind`. Text and the buffers of a
-// foreign call are no values on one word.
+// foreign call are no planes.
 auto CanMake(IntegralOperandKind kind) -> bool {
   switch (kind) {
     case IntegralOperandKind::kBits:
@@ -201,15 +238,15 @@ auto ValuesOf(
       return index < 2 ? SamplesOf(*shape) : FewSamplesOf(*shape);
     case IntegralOperandKind::kMachineInt:
       return {
-          Sample{.value = 0},
-          Sample{.value = 1},
-          Sample{.value = ~std::uint64_t{0}},
-          Sample{.value = std::uint64_t{1} << 63U},
-          Sample{.value = ~std::uint64_t{0} >> 1U},
-          Sample{.value = std::uint64_t{1} << 32U},
-          Sample{.value = 0xA5A5'A5A5'A5A5'A5A5U}};
+          MachineSample(0),
+          MachineSample(1),
+          MachineSample(~std::uint64_t{0}),
+          MachineSample(std::uint64_t{1} << 63U),
+          MachineSample(~std::uint64_t{0} >> 1U),
+          MachineSample(std::uint64_t{1} << 32U),
+          MachineSample(0xA5A5'A5A5'A5A5'A5A5U)};
     case IntegralOperandKind::kMachineBool:
-      return {Sample{.value = 0}, Sample{.value = 1}};
+      return {MachineSample(0), MachineSample(1)};
     case IntegralOperandKind::kSvLogic:
     case IntegralOperandKind::kText:
     case IntegralOperandKind::kCanonicalBits:
@@ -223,7 +260,7 @@ auto ValuesOf(
 // over constants as it is asked for it, an intrinsic included.
 struct Folding {
   llvm::LLVMContext context;
-  llvm::Module module{"one_word", context};
+  llvm::Module module{"planes", context};
   llvm::BasicBlock* block = llvm::BasicBlock::Create(
       context, "entry",
       llvm::Function::Create(
@@ -233,9 +270,18 @@ struct Folding {
       block, llvm::TargetFolder(module.getDataLayout())};
 };
 
-// The word a folded plane or machine answer came out as, or nothing where
-// what was built is no constant.
-auto WordOf(const llvm::Value* folded) -> std::optional<std::uint64_t> {
+// The words a folded plane came out as, or nothing where what was built is no
+// constant.
+auto FoldedWords(const llvm::Value* folded) -> std::optional<Words> {
+  const auto* constant = llvm::dyn_cast<llvm::ConstantInt>(folded);
+  if (constant == nullptr) {
+    return std::nullopt;
+  }
+  return WordsOf(constant->getValue());
+}
+
+// The word a folded machine answer came out as, likewise.
+auto FoldedWord(const llvm::Value* folded) -> std::optional<std::uint64_t> {
   const auto* constant = llvm::dyn_cast<llvm::ConstantInt>(folded);
   if (constant == nullptr) {
     return std::nullopt;
@@ -244,8 +290,8 @@ auto WordOf(const llvm::Value* folded) -> std::optional<std::uint64_t> {
 }
 
 struct Answer {
-  std::uint64_t value = 0;
-  std::uint64_t unknown = 0;
+  Words value;
+  Words unknown;
 
   auto operator==(const Answer&) const -> bool = default;
 };
@@ -253,13 +299,12 @@ struct Answer {
 auto Spelled(const std::optional<IntegralShape>& shape, const Sample& sample)
     -> std::string {
   if (!shape.has_value()) {
-    return std::format("machine {:#x}", sample.value);
+    return std::format("machine {:#x}", sample.value.front());
   }
   return std::format(
-      "{}{}{} value {:#x} unknown {:#x}",
-      shape->IsFourState() ? "logic" : "bit",
+      "{}{}{} value {} unknown {}", shape->IsFourState() ? "logic" : "bit",
       shape->signedness == Signedness::kSigned ? " signed " : " ", shape->width,
-      sample.value, sample.unknown);
+      Spelled(sample.value), Spelled(sample.unknown));
 }
 
 // One operation at one set of operand and answer types, over every
@@ -314,16 +359,16 @@ class Application {
       case IntegralOperandKind::kNumber:
       case IntegralOperandKind::kSameType:
         return value::ConstIntegralView{
-            .value = {&sample.value, 1},
+            .value = sample.value,
             .unknown = shapes_.operands[index]->IsFourState()
-                           ? std::span<const std::uint64_t>{&sample.unknown, 1}
+                           ? std::span<const std::uint64_t>{sample.unknown}
                            : std::span<const std::uint64_t>{},
             .width = shapes_.operands[index]->width,
             .signedness = shapes_.operands[index]->signedness};
       case IntegralOperandKind::kMachineInt:
-        return static_cast<std::int64_t>(sample.value);
+        return static_cast<std::int64_t>(sample.value.front());
       case IntegralOperandKind::kMachineBool:
-        return sample.value != 0;
+        return sample.value.front() != 0;
       case IntegralOperandKind::kSvLogic:
       case IntegralOperandKind::kText:
       case IntegralOperandKind::kCanonicalBits:
@@ -336,16 +381,19 @@ class Application {
   void CompareChosen() {
     llvm::IRBuilderBase& builder = folding_->builder;
     const auto planes = [&](std::size_t index) {
-      llvm::IntegerType* const exact = builder.getIntNTy(
-          static_cast<unsigned>(shapes_.operands[index]->width));
-      return OneWord{
-          .value = llvm::ConstantInt::get(exact, chosen_[index].value),
-          .unknown = llvm::ConstantInt::get(exact, chosen_[index].unknown)};
+      const auto bits = static_cast<unsigned>(shapes_.operands[index]->width);
+      llvm::IntegerType* const exact = builder.getIntNTy(bits);
+      const auto plane = [&](const Words& words) {
+        return llvm::ConstantInt::get(exact, llvm::APInt(bits, words));
+      };
+      return Planes{
+          .value = plane(chosen_[index].value),
+          .unknown = plane(chosen_[index].unknown)};
     };
     const auto machine = [&](std::size_t index) -> llvm::Value* {
       switch (operation_->operands.Kinds()[index]) {
         case IntegralOperandKind::kMachineBool:
-          return builder.getInt1(chosen_[index].value != 0);
+          return builder.getInt1(chosen_[index].value.front() != 0);
         case IntegralOperandKind::kMachineInt:
         case IntegralOperandKind::kBits:
         case IntegralOperandKind::kNumber:
@@ -356,11 +404,11 @@ class Application {
         case IntegralOperandKind::kCanonicalLogic:
           break;
       }
-      return builder.getInt64(chosen_[index].value);
+      return builder.getInt64(chosen_[index].value.front());
     };
-    const std::optional<OneWordAnswer> built = LowerOnOneWord(
+    const std::optional<PlaneAnswer> built = LowerOnPlanes(
         builder, operation_->op, shapes_,
-        OneWordOperands{.planes = planes, .machine = machine});
+        PlaneOperands{.planes = planes, .machine = machine});
     if (!built.has_value()) {
       has_arm_ = false;
       return;
@@ -371,17 +419,22 @@ class Application {
     for (std::size_t index = 0; index < chosen_.size(); ++index) {
       operands.push_back(LibraryOperand(index));
     }
-    Answer stated;
     const bool answers_unknown =
         shapes_.answer.has_value() && shapes_.answer->IsFourState();
+    const std::uint64_t answer_width =
+        shapes_.answer.has_value() ? shapes_.answer->width : 0;
+    const std::size_t answer_words =
+        std::max<std::size_t>(value::WordCountForBits(answer_width), 1);
+    Answer stated{
+        .value = Words(answer_words, 0), .unknown = Words(answer_words, 0)};
     const value::MachineAnswer stated_machine = value::ApplyIntegralOperation(
         operation_->op, operands,
         value::IntegralView{
-            .value = {&stated.value, 1},
+            .value = stated.value,
             .unknown = answers_unknown
-                           ? std::span<std::uint64_t>{&stated.unknown, 1}
+                           ? std::span<std::uint64_t>{stated.unknown}
                            : std::span<std::uint64_t>{},
-            .width = shapes_.answer.has_value() ? shapes_.answer->width : 0});
+            .width = answer_width});
 
     const auto disagrees = [&](const std::string& how) {
       std::string operands_spelled;
@@ -400,10 +453,9 @@ class Application {
     };
     std::visit(
         Overloaded{
-            [&](const OneWord& answer) {
-              const std::optional<std::uint64_t> value = WordOf(answer.value);
-              const std::optional<std::uint64_t> unknown =
-                  WordOf(answer.unknown);
+            [&](const Planes& answer) {
+              const std::optional<Words> value = FoldedWords(answer.value);
+              const std::optional<Words> unknown = FoldedWords(answer.unknown);
               if (!value.has_value() || !unknown.has_value()) {
                 disagrees("builds an answer that does not fold to constants");
                 return;
@@ -420,18 +472,20 @@ class Application {
               // An answer that holds no x or z has no unknown plane to lay
               // out, so only its value plane is what the operation answers.
               const Answer inlined{
-                  .value = *value, .unknown = answers_unknown ? *unknown : 0};
+                  .value = *value,
+                  .unknown =
+                      answers_unknown ? *unknown : Words(answer_words, 0)};
               if (inlined != stated) {
                 disagrees(
                     std::format(
-                        "answers value {:#x} unknown {:#x} on one word where "
-                        "the library answers value {:#x} unknown {:#x}",
-                        inlined.value, inlined.unknown, stated.value,
-                        stated.unknown));
+                        "answers value {} unknown {} on planes where the "
+                        "library answers value {} unknown {}",
+                        Spelled(inlined.value), Spelled(inlined.unknown),
+                        Spelled(stated.value), Spelled(stated.unknown)));
               }
             },
             [&](llvm::Value* answer) {
-              const std::optional<std::uint64_t> word = WordOf(answer);
+              const std::optional<std::uint64_t> word = FoldedWord(answer);
               if (!word.has_value()) {
                 disagrees("builds an answer that does not fold to a constant");
                 return;
@@ -451,7 +505,7 @@ class Application {
               if (word != stated_word) {
                 disagrees(
                     std::format(
-                        "answers the machine value {:#x} on one word where "
+                        "answers the machine value {:#x} on planes where "
                         "the library answers {}",
                         *word,
                         stated_word.has_value()
@@ -495,13 +549,11 @@ auto ApplicationsOf(const IntegralOperation& operation)
     std::visit(
         Overloaded{
             [&](const value::IntegralExtent& fixed) {
-              if (fixed.width <= 64) {
-                answering(
-                    IntegralShape{
-                        .width = fixed.width,
-                        .signedness = Signedness::kUnsigned,
-                        .domain = fixed.domain});
-              }
+              answering(
+                  IntegralShape{
+                      .width = fixed.width,
+                      .signedness = Signedness::kUnsigned,
+                      .domain = fixed.domain});
             },
             [&](const value::AnswerOfTheCall&) {
               for (const IntegralShape& answer :
@@ -534,27 +586,38 @@ auto ApplicationsOf(const IntegralOperation& operation)
   return applications;
 }
 
-// The two statements of an operation on one word -- the instructions the code
-// generator builds for it and the library's function over views -- answer
-// alike, bit for bit in both planes, for every operation the code generator
-// builds instructions for.
-TEST(IntegralOneWordTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
+// The operations whose work grows with the square of the width, which are
+// instructions up to one machine word and calls past it.
+constexpr std::array<std::string_view, 3> kOnOneWordOnly{"mul", "div", "mod"};
+
+auto PastOneWord(const IntegralShapes& shapes) -> bool {
+  const auto past = [](const std::optional<IntegralShape>& shape) {
+    return shape.has_value() && !IsSingleWord(*shape);
+  };
+  return std::ranges::any_of(shapes.operands, past) || past(shapes.answer);
+}
+
+// The two statements of an operation -- the instructions the code generator
+// builds for it on planes and the library's function over views -- answer
+// alike, bit for bit in both planes, at widths on both sides of a machine
+// word, for every operation the code generator builds instructions for.
+TEST(IntegralPlanesTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
   std::set<std::string_view> without_arm;
   std::size_t compared = 0;
   for (const IntegralOperation& operation : support::IntegralOperations()) {
     Folding folding;
     if (!std::ranges::all_of(operation.operands.Kinds(), CanMake)) {
       // No operand is read before the operation is found to have no arm.
-      const auto unread = [](std::size_t) -> OneWord {
+      const auto unread = [](std::size_t) -> Planes {
         ADD_FAILURE() << "an operand this test cannot make was read";
-        return OneWord{.value = nullptr, .unknown = nullptr};
+        return Planes{.value = nullptr, .unknown = nullptr};
       };
       const auto unread_machine = [](std::size_t) -> llvm::Value* {
         ADD_FAILURE() << "an operand this test cannot make was read";
         return nullptr;
       };
       EXPECT_FALSE(
-          LowerOnOneWord(
+          LowerOnPlanes(
               folding.builder, operation.op,
               IntegralShapes{
                   .operands = {std::nullopt},
@@ -563,7 +626,7 @@ TEST(IntegralOneWordTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
                           .width = 8,
                           .signedness = Signedness::kUnsigned,
                           .domain = StateDomain::kFourState}},
-              OneWordOperands{.planes = unread, .machine = unread_machine})
+              PlaneOperands{.planes = unread, .machine = unread_machine})
               .has_value())
           << operation.name;
       without_arm.insert(operation.name);
@@ -571,9 +634,18 @@ TEST(IntegralOneWordTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
     }
     std::size_t compared_here = 0;
     bool has_arm = true;
+    const bool one_word_only =
+        std::ranges::find(kOnOneWordOnly, operation.name) !=
+        kOnOneWordOnly.end();
     for (IntegralShapes& shapes : ApplicationsOf(operation)) {
+      const bool past_one_word = PastOneWord(shapes);
       const std::optional<std::size_t> count =
           Application(folding, operation, std::move(shapes)).Compare();
+      if (one_word_only && past_one_word) {
+        EXPECT_FALSE(count.has_value())
+            << operation.name << " is built on planes past one machine word";
+        continue;
+      }
       if (!count.has_value()) {
         has_arm = false;
         continue;
@@ -586,7 +658,7 @@ TEST(IntegralOneWordTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
     if (!has_arm) {
       EXPECT_EQ(compared_here, 0U)
           << operation.name
-          << " is built on one word for some types no wider and not others";
+          << " is built on planes for some types and not others";
       without_arm.insert(operation.name);
       continue;
     }

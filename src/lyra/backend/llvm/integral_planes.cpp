@@ -1,4 +1,4 @@
-#include "lyra/backend/llvm/integral_one_word.hpp"
+#include "lyra/backend/llvm/integral_planes.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -66,17 +66,17 @@ auto Full(llvm::Type* type) -> llvm::Value* {
 }
 
 // A value with no x or z in it.
-auto Known(llvm::Value* value) -> OneWord {
-  return OneWord{.value = value, .unknown = Clear(value->getType())};
+auto Known(llvm::Value* value) -> Planes {
+  return Planes{.value = value, .unknown = Clear(value->getType())};
 }
 
-// Each operation over integral values as instructions on one word per plane:
-// what the value layer states for the operation over planes of any width,
-// written for planes of a single word, where it is a handful of instructions
-// and no call.
-class OneWordArithmetic {
+// Each operation over integral values as instructions on planes held as
+// integers of the values' own widths: what the value layer states for the
+// operation over planes of any width, written where the width is known, so it
+// is instructions over the words that width has and no call.
+class PlaneArithmetic {
  public:
-  explicit OneWordArithmetic(llvm::IRBuilderBase& builder) : b_(&builder) {
+  explicit PlaneArithmetic(llvm::IRBuilderBase& builder) : b_(&builder) {
   }
 
   [[nodiscard]] auto AnySet(llvm::Value* plane) const -> llvm::Value* {
@@ -89,7 +89,7 @@ class OneWordArithmetic {
 
   // A predicate's answer held by a type that has no x: x is 0 there (LRM
   // 6.11.2).
-  [[nodiscard]] auto Settled(OneWord bit, bool holds_unknown) const -> OneWord {
+  [[nodiscard]] auto Settled(Planes bit, bool holds_unknown) const -> Planes {
     if (holds_unknown) {
       return bit;
     }
@@ -99,25 +99,25 @@ class OneWordArithmetic {
   // `answer`, or x in every position where `when` holds -- which a type with
   // no x holds as 0.
   [[nodiscard]] auto AllXWhere(
-      llvm::Value* when, OneWord answer, bool holds_unknown) const -> OneWord {
+      llvm::Value* when, Planes answer, bool holds_unknown) const -> Planes {
     llvm::Value* const every = b_->CreateSExt(when, answer.value->getType());
     if (!holds_unknown) {
       return Known(And(answer.value, Not(every)));
     }
-    return OneWord{
+    return Planes{
         .value = Or(answer.value, every), .unknown = Or(answer.unknown, every)};
   }
 
   // LRM 11.4.3: x or z anywhere in either operand makes the whole result x.
   [[nodiscard]] auto Arithmetic(
-      llvm::Instruction::BinaryOps op, OneWord a, OneWord b,
-      bool holds_unknown) const -> OneWord {
+      llvm::Instruction::BinaryOps op, Planes a, Planes b,
+      bool holds_unknown) const -> Planes {
     return AllXWhere(
         AnySet(Or(a.unknown, b.unknown)),
         Known(b_->CreateBinOp(op, a.value, b.value)), holds_unknown);
   }
 
-  [[nodiscard]] auto Negated(OneWord a, bool holds_unknown) const -> OneWord {
+  [[nodiscard]] auto Negated(Planes a, bool holds_unknown) const -> Planes {
     return AllXWhere(
         AnySet(a.unknown), Known(b_->CreateNeg(a.value)), holds_unknown);
   }
@@ -127,8 +127,8 @@ class OneWordArithmetic {
   // divide unsigned, so the most negative value over -1 is the wrapped
   // quotient the language gives it and no machine division overflows.
   [[nodiscard]] auto Divided(
-      OneWord a, OneWord b, bool is_signed, bool remainder,
-      bool holds_unknown) const -> OneWord {
+      Planes a, Planes b, bool is_signed, bool remainder,
+      bool holds_unknown) const -> Planes {
     llvm::Type* const type = a.value->getType();
     llvm::Value* const no_answer =
         Or(AnySet(Or(a.unknown, b.unknown)), b_->CreateIsNull(b.value));
@@ -163,14 +163,14 @@ class OneWordArithmetic {
   // LRM 11.4.8 Tables 11-11 to 11-15, per position, z reading as x. A
   // position of an `&` is 0 where either operand is known 0, and otherwise x
   // where either is unknown; an `|` likewise around a known 1.
-  [[nodiscard]] auto BitwiseAnd(OneWord a, OneWord b) const -> OneWord {
+  [[nodiscard]] auto BitwiseAnd(Planes a, Planes b) const -> Planes {
     llvm::Value* const value =
         And(Or(a.value, a.unknown), Or(b.value, b.unknown));
-    return OneWord{
+    return Planes{
         .value = value, .unknown = And(value, Or(a.unknown, b.unknown))};
   }
 
-  [[nodiscard]] auto BitwiseOr(OneWord a, OneWord b) const -> OneWord {
+  [[nodiscard]] auto BitwiseOr(Planes a, Planes b) const -> Planes {
     llvm::Value* const either = Or(a.unknown, b.unknown);
     llvm::Value* unknown = either;
     if (!IsClear(either)) {
@@ -178,53 +178,53 @@ class OneWordArithmetic {
           either,
           Not(Or(And(a.value, Not(a.unknown)), And(b.value, Not(b.unknown)))));
     }
-    return OneWord{
+    return Planes{
         .value = Or(Or(a.value, b.value), either), .unknown = unknown};
   }
 
-  [[nodiscard]] auto BitwiseXor(OneWord a, OneWord b) const -> OneWord {
+  [[nodiscard]] auto BitwiseXor(Planes a, Planes b) const -> Planes {
     llvm::Value* const unknown = Or(a.unknown, b.unknown);
-    return OneWord{
+    return Planes{
         .value = Or(unknown, Xor(a.value, b.value)), .unknown = unknown};
   }
 
-  [[nodiscard]] auto BitwiseXnor(OneWord a, OneWord b) const -> OneWord {
+  [[nodiscard]] auto BitwiseXnor(Planes a, Planes b) const -> Planes {
     llvm::Value* const unknown = Or(a.unknown, b.unknown);
-    return OneWord{
+    return Planes{
         .value = Or(unknown, Not(Xor(a.value, b.value))), .unknown = unknown};
   }
 
-  [[nodiscard]] auto BitwiseNot(OneWord a) const -> OneWord {
-    return OneWord{.value = Or(Not(a.value), a.unknown), .unknown = a.unknown};
+  [[nodiscard]] auto BitwiseNot(Planes a) const -> Planes {
+    return Planes{.value = Or(Not(a.value), a.unknown), .unknown = a.unknown};
   }
 
   // LRM 11.4.7 logical negation of one scalar: an x stays x.
-  [[nodiscard]] auto Inverted(OneWord bit) const -> OneWord {
-    return OneWord{
+  [[nodiscard]] auto Inverted(Planes bit) const -> Planes {
+    return Planes{
         .value = Or(Not(bit.value), bit.unknown), .unknown = bit.unknown};
   }
 
   // LRM 11.4.5 logical equality: a position both operands know and disagree on
   // settles them unequal, and only agreement everywhere both are known leaves
   // the answer to the unknown bits.
-  [[nodiscard]] auto Equality(OneWord a, OneWord b) const -> OneWord {
+  [[nodiscard]] auto Equality(Planes a, Planes b) const -> Planes {
     llvm::Value* const unknown = Or(a.unknown, b.unknown);
     llvm::Value* const agree =
         b_->CreateIsNull(And(Xor(a.value, b.value), Not(unknown)));
-    return OneWord{.value = agree, .unknown = And(agree, AnySet(unknown))};
+    return Planes{.value = agree, .unknown = And(agree, AnySet(unknown))};
   }
 
   // LRM 11.4.4: a relation with an x or z anywhere in either operand is x.
   [[nodiscard]] auto Relation(
-      llvm::CmpInst::Predicate holds, OneWord a, OneWord b) const -> OneWord {
+      llvm::CmpInst::Predicate holds, Planes a, Planes b) const -> Planes {
     llvm::Value* const unknown = AnySet(Or(a.unknown, b.unknown));
-    return OneWord{
+    return Planes{
         .value = Or(b_->CreateICmp(holds, a.value, b.value), unknown),
         .unknown = unknown};
   }
 
   // LRM 11.4.5 case equality: both planes identical.
-  [[nodiscard]] auto CaseEquality(OneWord a, OneWord b) const -> llvm::Value* {
+  [[nodiscard]] auto CaseEquality(Planes a, Planes b) const -> llvm::Value* {
     return And(
         b_->CreateICmpEQ(a.value, b.value),
         b_->CreateICmpEQ(a.unknown, b.unknown));
@@ -232,18 +232,18 @@ class OneWordArithmetic {
 
   // LRM 11.4.6: an x or z in `b` is a wildcard; one in `a` where `b` compares
   // leaves the answer unknown unless a known position already disagrees.
-  [[nodiscard]] auto WildcardEquality(OneWord a, OneWord b) const -> OneWord {
+  [[nodiscard]] auto WildcardEquality(Planes a, Planes b) const -> Planes {
     llvm::Value* const compared = Not(b.unknown);
     llvm::Value* const agree = b_->CreateIsNull(
         And(And(Xor(a.value, b.value), Not(a.unknown)), compared));
-    return OneWord{
+    return Planes{
         .value = agree,
         .unknown = And(agree, AnySet(And(a.unknown, compared)))};
   }
 
   // LRM 12.5.1 `casez`: z on either side is a wildcard, and every other
   // position matches exactly on both planes.
-  [[nodiscard]] auto CasezMatch(OneWord a, OneWord b) const -> llvm::Value* {
+  [[nodiscard]] auto CasezMatch(Planes a, Planes b) const -> llvm::Value* {
     llvm::Value* const wildcard =
         Or(And(a.unknown, Not(a.value)), And(b.unknown, Not(b.value)));
     return b_->CreateIsNull(And(
@@ -251,14 +251,14 @@ class OneWordArithmetic {
   }
 
   // LRM 12.5.1 `casex`: x or z on either side is a wildcard.
-  [[nodiscard]] auto CasexMatch(OneWord a, OneWord b) const -> llvm::Value* {
+  [[nodiscard]] auto CasexMatch(Planes a, Planes b) const -> llvm::Value* {
     return b_->CreateIsNull(
         And(Xor(a.value, b.value), Not(Or(a.unknown, b.unknown))));
   }
 
   // LRM 11.4.7: a definitively-one bit settles the value as nonzero however
   // many unknown bits sit beside it.
-  [[nodiscard]] auto TruthOf(OneWord a) const -> Truth {
+  [[nodiscard]] auto TruthOf(Planes a) const -> Truth {
     llvm::Value* const nonzero = AnySet(And(a.value, Not(a.unknown)));
     return Truth{
         .nonzero = nonzero, .unknown = And(Not(nonzero), AnySet(a.unknown))};
@@ -266,27 +266,27 @@ class OneWordArithmetic {
 
   // LRM 11.4.7: the answer is unknown only where an operand's truth is and
   // the other operand does not settle it.
-  [[nodiscard]] auto LogicalAnd(Truth a, Truth b) const -> OneWord {
+  [[nodiscard]] auto LogicalAnd(Truth a, Truth b) const -> Planes {
     llvm::Value* const one = And(a.nonzero, b.nonzero);
     llvm::Value* const not_zero =
         And(Or(a.nonzero, a.unknown), Or(b.nonzero, b.unknown));
-    return OneWord{.value = not_zero, .unknown = And(not_zero, Not(one))};
+    return Planes{.value = not_zero, .unknown = And(not_zero, Not(one))};
   }
 
-  [[nodiscard]] auto LogicalOr(Truth a, Truth b) const -> OneWord {
+  [[nodiscard]] auto LogicalOr(Truth a, Truth b) const -> Planes {
     llvm::Value* const one = Or(a.nonzero, b.nonzero);
     llvm::Value* const not_zero =
         Or(Or(a.nonzero, a.unknown), Or(b.nonzero, b.unknown));
-    return OneWord{.value = not_zero, .unknown = And(not_zero, Not(one))};
+    return Planes{.value = not_zero, .unknown = And(not_zero, Not(one))};
   }
 
-  [[nodiscard]] auto LogicalNot(Truth a) const -> OneWord {
-    return OneWord{.value = Not(a.nonzero), .unknown = a.unknown};
+  [[nodiscard]] auto LogicalNot(Truth a) const -> Planes {
+    return Planes{.value = Not(a.nonzero), .unknown = a.unknown};
   }
 
-  [[nodiscard]] auto LogicalEquivalence(Truth a, Truth b) const -> OneWord {
+  [[nodiscard]] auto LogicalEquivalence(Truth a, Truth b) const -> Planes {
     llvm::Value* const unknown = Or(a.unknown, b.unknown);
-    return OneWord{
+    return Planes{
         .value = Or(unknown, b_->CreateICmpEQ(a.nonzero, b.nonzero)),
         .unknown = unknown};
   }
@@ -294,17 +294,16 @@ class OneWordArithmetic {
   // LRM 11.4.9: a known 0 settles an and-reduction and a known 1 an
   // or-reduction whatever else the operand holds; an x or z anywhere makes an
   // xor-reduction x.
-  [[nodiscard]] auto Reduced(OneWord a, value::ReductionOp op) const
-      -> OneWord {
+  [[nodiscard]] auto Reduced(Planes a, value::ReductionOp op) const -> Planes {
     llvm::Value* const known = Not(a.unknown);
     llvm::Value* const any_unknown = AnySet(a.unknown);
     const auto and_bit = [&] {
       llvm::Value* const no_zero = b_->CreateIsNull(And(Not(a.value), known));
-      return OneWord{.value = no_zero, .unknown = And(no_zero, any_unknown)};
+      return Planes{.value = no_zero, .unknown = And(no_zero, any_unknown)};
     };
     const auto or_bit = [&] {
       llvm::Value* const any_one = AnySet(And(a.value, known));
-      return OneWord{
+      return Planes{
           .value = Or(any_one, any_unknown),
           .unknown = And(Not(any_one), any_unknown)};
     };
@@ -312,7 +311,7 @@ class OneWordArithmetic {
       llvm::Value* const parity = b_->CreateTrunc(
           b_->CreateUnaryIntrinsic(llvm::Intrinsic::ctpop, And(a.value, known)),
           b_->getInt1Ty());
-      return OneWord{.value = Or(any_unknown, parity), .unknown = any_unknown};
+      return Planes{.value = Or(any_unknown, parity), .unknown = any_unknown};
     };
     switch (op) {
       case value::ReductionOp::kAnd:
@@ -335,14 +334,21 @@ class OneWordArithmetic {
   // arithmetic shift fills each plane from its own top position, and an x or
   // z in the amount makes the whole result x. The amount is read unsigned.
   [[nodiscard]] auto Shifted(
-      OneWord a, std::uint64_t width, OneWord amount, ShiftKind kind,
-      bool holds_unknown) const -> OneWord {
+      Planes a, std::uint64_t width, Planes amount, ShiftKind kind,
+      bool holds_unknown) const -> Planes {
     llvm::Type* const type = a.value->getType();
-    llvm::Value* const by = b_->CreateZExt(amount.value, b_->getInt64Ty());
-    llvm::Value* const past = b_->CreateICmpUGE(by, b_->getInt64(width));
+    // The amount is compared at a width that holds both it and the operand's
+    // own width.
+    llvm::Type* const counted = b_->getIntNTy(
+        std::max(amount.value->getType()->getIntegerBitWidth(), 64U));
+    llvm::Value* const by = b_->CreateZExt(amount.value, counted);
+    llvm::Value* const past =
+        b_->CreateICmpUGE(by, llvm::ConstantInt::get(counted, width));
     const auto within = [&](std::uint64_t saturated) {
       return b_->CreateZExtOrTrunc(
-          b_->CreateSelect(past, b_->getInt64(saturated), by), type);
+          b_->CreateSelect(
+              past, llvm::ConstantInt::get(counted, saturated), by),
+          type);
     };
     const auto moved_out = [&](llvm::Instruction::BinaryOps op) {
       llvm::Value* const amount_within = within(0);
@@ -358,7 +364,7 @@ class OneWordArithmetic {
     const auto shifted = [&](auto plane) {
       return AllXWhere(
           AnySet(amount.unknown),
-          OneWord{.value = plane(a.value), .unknown = plane(a.unknown)},
+          Planes{.value = plane(a.value), .unknown = plane(a.unknown)},
           holds_unknown);
     };
     switch (kind) {
@@ -378,8 +384,8 @@ class OneWordArithmetic {
 
   // LRM 11.4.12: `high` in the most significant positions and `low` below it.
   [[nodiscard]] auto Concat(
-      OneWord high, OneWord low, std::uint64_t low_width,
-      std::uint64_t answer_width) const -> OneWord {
+      Planes high, Planes low, std::uint64_t low_width,
+      std::uint64_t answer_width) const -> Planes {
     llvm::Type* const type = b_->getIntNTy(Bits(answer_width));
     const auto joined = [&](llvm::Value* high_plane, llvm::Value* low_plane) {
       llvm::Value* const raised = b_->CreateZExt(high_plane, type);
@@ -389,44 +395,56 @@ class OneWordArithmetic {
               : b_->CreateShl(raised, llvm::ConstantInt::get(type, low_width)),
           b_->CreateZExt(low_plane, type));
     };
-    return OneWord{
+    return Planes{
         .value = joined(high.value, low.value),
         .unknown = joined(high.unknown, low.unknown)};
   }
 
   // LRM 11.4.12.1: as many copies of the operand as fill the answer, laid end
-  // to end. Copies of a value narrower than their spacing never overlap, so one
-  // multiplication lays them all down. A two-state answer takes every x or z
-  // as 0.
+  // to end. What is laid so far is laid again above itself until it fills the
+  // answer, so the steps follow the logarithm of the count, and a copy past
+  // the answer's width is moved out. A two-state answer takes every x or z as
+  // 0.
   [[nodiscard]] auto Replicated(
-      OneWord a, std::uint64_t width, std::uint64_t answer_width,
-      bool holds_unknown) const -> OneWord {
+      Planes a, std::uint64_t width, std::uint64_t answer_width,
+      bool holds_unknown) const -> Planes {
     llvm::Type* const type = b_->getIntNTy(Bits(answer_width));
-    llvm::APInt copies(Bits(answer_width), 0);
-    for (std::uint64_t at = 0; at < answer_width; at += width) {
-      copies.setBit(Bits(at));
-    }
     const auto laid = [&](llvm::Value* plane) {
-      llvm::Value* const one = b_->CreateZExtOrTrunc(plane, type);
-      if (IsClear(one) || copies.isOne()) {
-        return one;
+      llvm::Value* filled = b_->CreateZExtOrTrunc(plane, type);
+      if (IsClear(filled)) {
+        return filled;
       }
-      return b_->CreateMul(one, llvm::ConstantInt::get(type, copies));
+      for (std::uint64_t have = width; have < answer_width; have *= 2) {
+        filled = b_->CreateOr(
+            filled, b_->CreateShl(filled, llvm::ConstantInt::get(type, have)));
+      }
+      return filled;
     };
     if (!holds_unknown) {
       return Known(laid(KnownBits(a)));
     }
-    return OneWord{.value = laid(a.value), .unknown = laid(a.unknown)};
+    return Planes{.value = laid(a.value), .unknown = laid(a.unknown)};
   }
 
   [[nodiscard]] auto PositionNamed(
-      OneWord index, const value::IntegralShape& shape) const -> NamedPosition {
+      Planes index, const value::IntegralShape& shape) const -> NamedPosition {
     const bool is_signed = shape.signedness == value::Signedness::kSigned;
     llvm::Type* const word = b_->getInt64Ty();
-    llvm::Value* const at = is_signed ? b_->CreateSExt(index.value, word)
-                                      : b_->CreateZExt(index.value, word);
+    llvm::Type* const held = index.value->getType();
+    llvm::Value* const at = is_signed
+                                ? b_->CreateSExtOrTrunc(index.value, word)
+                                : b_->CreateZExtOrTrunc(index.value, word);
     llvm::Value* named = b_->CreateIsNull(index.unknown);
-    if (!is_signed && shape.width == 64) {
+    // An index wider than the number names a position only where the number
+    // holds all of it.
+    if (shape.width > 64) {
+      named = And(
+          named,
+          b_->CreateICmpEQ(
+              is_signed ? b_->CreateSExt(at, held) : b_->CreateZExt(at, held),
+              index.value));
+    }
+    if (!is_signed && shape.width >= 64) {
       named = And(named, b_->CreateICmpSGE(at, Clear(word)));
     }
     // An index no wider than this cannot hold a magnitude past the limit.
@@ -448,10 +466,13 @@ class OneWordArithmetic {
   // reads x, or 0 in a two-state answer, and so does every bit where the
   // position names none or the part lies wholly outside.
   [[nodiscard]] auto Slice(
-      OneWord source, std::uint64_t source_width, const NamedPosition& position,
-      std::uint64_t answer_width, bool holds_unknown) const -> OneWord {
+      Planes source, std::uint64_t source_width, const NamedPosition& position,
+      std::uint64_t answer_width, bool holds_unknown) const -> Planes {
     llvm::Type* const word = b_->getInt64Ty();
     llvm::Type* const type = b_->getIntNTy(Bits(answer_width));
+    // A plane is moved at a width that holds the source and the answer both.
+    llvm::Type* const wide =
+        b_->getIntNTy(Bits(std::max(source_width, answer_width)));
     const auto taken = [&](llvm::Value* plane) {
       return b_->CreateTrunc(
           Moved(
@@ -471,16 +492,16 @@ class OneWordArithmetic {
     }
     if (!holds_unknown) {
       return Known(Select(
-          reaches, taken(b_->CreateZExt(KnownBits(source), word)),
+          reaches, taken(b_->CreateZExt(KnownBits(source), wide)),
           Clear(type)));
     }
-    llvm::Value* const outside = Not(taken(LowBits(source_width)));
-    return OneWord{
+    llvm::Value* const outside = Not(taken(LowBits(wide, source_width)));
+    return Planes{
         .value = Select(
-            reaches, Or(taken(b_->CreateZExt(source.value, word)), outside),
+            reaches, Or(taken(b_->CreateZExt(source.value, wide)), outside),
             Full(type)),
         .unknown = Select(
-            reaches, Or(taken(b_->CreateZExt(source.unknown, word)), outside),
+            reaches, Or(taken(b_->CreateZExt(source.unknown, wide)), outside),
             Full(type))};
   }
 
@@ -490,11 +511,14 @@ class OneWordArithmetic {
   // settle the positions they land on, and an x or z lands in a two-state
   // target as 0.
   [[nodiscard]] auto WithSlice(
-      OneWord target, std::uint64_t target_width, const NamedPosition& position,
-      OneWord bits, std::uint64_t bits_width, bool holds_unknown) const
-      -> OneWord {
+      Planes target, std::uint64_t target_width, const NamedPosition& position,
+      Planes bits, std::uint64_t bits_width, bool holds_unknown) const
+      -> Planes {
     llvm::Type* const word = b_->getInt64Ty();
     llvm::Type* const type = target.value->getType();
+    // A plane is moved at a width that holds the target and the bits both.
+    llvm::Type* const wide =
+        b_->getIntNTy(Bits(std::max(target_width, bits_width)));
     const auto placed = [&](llvm::Value* plane) {
       return Moved(
           plane, position, llvm::Instruction::Shl, llvm::Instruction::LShr);
@@ -513,18 +537,19 @@ class OneWordArithmetic {
     llvm::Value* const written = Select(
         reaches,
         b_->CreateTrunc(
-            And(placed(LowBits(bits_width)), LowBits(target_width)), type),
+            And(placed(LowBits(wide, bits_width)), LowBits(wide, target_width)),
+            type),
         Clear(type));
     const auto replaced = [&](llvm::Value* kept, llvm::Value* plane) {
       return Or(
           And(kept, Not(written)),
-          And(b_->CreateTrunc(placed(b_->CreateZExt(plane, word)), type),
+          And(b_->CreateTrunc(placed(b_->CreateZExt(plane, wide)), type),
               written));
     };
     if (!holds_unknown) {
       return Known(replaced(target.value, KnownBits(bits)));
     }
-    return OneWord{
+    return Planes{
         .value = replaced(target.value, bits.value),
         .unknown = replaced(target.unknown, bits.unknown)};
   }
@@ -533,45 +558,45 @@ class OneWordArithmetic {
   // sign where a signed source widens -- an x or z sign filling with itself.
   // A two-state answer takes every x or z as 0.
   [[nodiscard]] auto Converted(
-      OneWord source, bool is_signed, std::uint64_t answer_width,
-      bool holds_unknown) const -> OneWord {
+      Planes source, bool is_signed, std::uint64_t answer_width,
+      bool holds_unknown) const -> Planes {
     llvm::Type* const type = b_->getIntNTy(Bits(answer_width));
     const auto resized = [&](llvm::Value* plane) {
       return is_signed ? b_->CreateSExtOrTrunc(plane, type)
                        : b_->CreateZExtOrTrunc(plane, type);
     };
     return Settled(
-        OneWord{
+        Planes{
             .value = resized(source.value), .unknown = resized(source.unknown)},
         holds_unknown);
   }
 
-  // The value as a 64-bit number, sign-extended from its width when signed.
-  // An x or z bit reads as 0 (LRM 6.12.1).
-  [[nodiscard]] auto ToInt64(OneWord a, bool is_signed) const -> llvm::Value* {
+  // The value's low 64 bits as a number, sign-extended from its width when
+  // signed and narrower. An x or z bit reads as 0 (LRM 6.12.1).
+  [[nodiscard]] auto ToInt64(Planes a, bool is_signed) const -> llvm::Value* {
     llvm::Value* const known = KnownBits(a);
-    return is_signed ? b_->CreateSExt(known, b_->getInt64Ty())
-                     : b_->CreateZExt(known, b_->getInt64Ty());
+    return is_signed ? b_->CreateSExtOrTrunc(known, b_->getInt64Ty())
+                     : b_->CreateZExtOrTrunc(known, b_->getInt64Ty());
   }
 
   // LRM 11.4.11 Table 11-20: a position both arms know and agree on survives,
   // and every other position is x -- 0 in a type that holds none.
   [[nodiscard]] auto MergeConditional(
-      OneWord a, OneWord b, bool holds_unknown) const -> OneWord {
+      Planes a, Planes b, bool holds_unknown) const -> Planes {
     llvm::Value* const agreed =
         And(Not(Xor(a.value, b.value)), Not(Or(a.unknown, b.unknown)));
     llvm::Value* const kept = And(a.value, agreed);
     if (!holds_unknown) {
       return Known(kept);
     }
-    return OneWord{.value = Or(kept, Not(agreed)), .unknown = Not(agreed)};
+    return Planes{.value = Or(kept, Not(agreed)), .unknown = Not(agreed)};
   }
 
   // LRM 6.6.1 Table 6-2, 6.6.3 Tables 6-3 and 6-4: z defers to the other
   // driver; where both drive, tri-state passes agreement and makes a conflict
   // x, wired-and lets any 0 win, wired-or any 1.
   [[nodiscard]] auto Resolved(
-      OneWord a, OneWord b, value::NetResolution fold) const -> OneWord {
+      Planes a, Planes b, value::NetResolution fold) const -> Planes {
     llvm::Value* const a_z = And(Not(a.value), a.unknown);
     llvm::Value* const b_z = And(Not(b.value), b.unknown);
     llvm::Value* const take_a = And(Not(a_z), b_z);
@@ -588,7 +613,7 @@ class OneWordArithmetic {
             both,
             And(Not(Xor(a.value, b.value)), Not(Xor(a.unknown, b.unknown))));
         llvm::Value* const conflict = And(both, Not(same));
-        return OneWord{
+        return Planes{
             .value = Or(value, Or(And(same, a.value), conflict)),
             .unknown = Or(unknown, Or(And(same, a.unknown), conflict))};
       }
@@ -597,7 +622,7 @@ class OneWordArithmetic {
             Or(And(Not(a.value), Not(a.unknown)),
                And(Not(b.value), Not(b.unknown)));
         llvm::Value* const no_zero = And(both, Not(any_zero));
-        return OneWord{
+        return Planes{
             .value = Or(value, no_zero),
             .unknown = Or(unknown, And(no_zero, any_x()))};
       }
@@ -605,7 +630,7 @@ class OneWordArithmetic {
         llvm::Value* const any_one =
             Or(And(a.value, Not(a.unknown)), And(b.value, Not(b.unknown)));
         llvm::Value* const x_bits = And(And(both, Not(any_one)), any_x());
-        return OneWord{
+        return Planes{
             .value = Or(value, Or(And(both, any_one), x_bits)),
             .unknown = Or(unknown, x_bits)};
       }
@@ -616,10 +641,10 @@ class OneWordArithmetic {
   // LRM 28.12.1: the stronger contribution determines every position it
   // drives, which is every position where it is not z, and the weaker one the
   // rest.
-  [[nodiscard]] auto Dominating(OneWord stronger, OneWord weaker) const
-      -> OneWord {
+  [[nodiscard]] auto Dominating(Planes stronger, Planes weaker) const
+      -> Planes {
     llvm::Value* const undriven = And(Not(stronger.value), stronger.unknown);
-    return OneWord{
+    return Planes{
         .value =
             Or(And(stronger.value, Not(undriven)), And(weaker.value, undriven)),
         .unknown =
@@ -632,13 +657,16 @@ class OneWordArithmetic {
     return static_cast<unsigned>(count);
   }
 
-  [[nodiscard]] auto LowBits(std::uint64_t count) const -> llvm::Value* {
-    return b_->getInt64(value::LowBits(count));
+  [[nodiscard]] static auto LowBits(llvm::Type* type, std::uint64_t count)
+      -> llvm::Value* {
+    return llvm::ConstantInt::get(
+        type,
+        llvm::APInt::getLowBitsSet(type->getIntegerBitWidth(), Bits(count)));
   }
 
   // The value plane as a type with no x holds it: every x or z as 0 (LRM
   // 6.11.2).
-  [[nodiscard]] auto KnownBits(OneWord a) const -> llvm::Value* {
+  [[nodiscard]] auto KnownBits(Planes a) const -> llvm::Value* {
     return And(a.value, Not(a.unknown));
   }
 
@@ -684,10 +712,10 @@ class OneWordArithmetic {
     return b_->CreateSelect(when, then, otherwise);
   }
 
-  // A 64-bit plane moved by the position: by `toward` where the position is
-  // not negative and by `back` its magnitude where it is. A position that
-  // reaches nothing moves by an amount the caller's own test discards, so the
-  // amount is only kept inside the word.
+  // A plane moved by the position: by `toward` where the position is not
+  // negative and by `back` its magnitude where it is. A position that reaches
+  // nothing moves by an amount the caller's own test discards, so the amount
+  // is only kept inside the plane.
   [[nodiscard]] auto Moved(
       llvm::Value* plane, const NamedPosition& position,
       llvm::Instruction::BinaryOps toward,
@@ -695,16 +723,22 @@ class OneWordArithmetic {
     if (IsClear(plane)) {
       return plane;
     }
-    llvm::Value* const within = b_->getInt64(63);
+    llvm::Type* const type = plane->getType();
+    const auto within = [&](llvm::Value* by) {
+      return b_->CreateZExtOrTrunc(
+          b_->CreateSelect(
+              b_->CreateICmpULT(by, b_->getInt64(type->getIntegerBitWidth())),
+              by, b_->getInt64(0)),
+          type);
+    };
     llvm::Value* const forward =
-        b_->CreateBinOp(toward, plane, b_->CreateAnd(position.at, within));
+        b_->CreateBinOp(toward, plane, within(position.at));
     if (!position.can_be_negative) {
       return forward;
     }
     return b_->CreateSelect(
         b_->CreateICmpSGE(position.at, b_->getInt64(0)), forward,
-        b_->CreateBinOp(
-            back, plane, b_->CreateAnd(b_->CreateNeg(position.at), within)));
+        b_->CreateBinOp(back, plane, within(b_->CreateNeg(position.at))));
   }
 
   llvm::IRBuilderBase* b_;
@@ -768,18 +802,19 @@ void StoreComparisonAnswer(
       plane_bit(value::kScalarUnknownBit), UnknownPlaneOfOneBit(builder, at));
 }
 
-auto LowerOnOneWord(
+auto LowerOnPlanes(
     llvm::IRBuilderBase& builder, IntegralOp op, const IntegralShapes& shapes,
-    const OneWordOperands& operands) -> std::optional<OneWordAnswer> {
-  const auto fits_one_word =
-      [](const std::optional<value::IntegralShape>& shape) {
-        return !shape.has_value() || IsSingleWord(*shape);
-      };
-  if (!std::ranges::all_of(shapes.operands, fits_one_word) ||
-      !fits_one_word(shapes.answer)) {
+    const PlaneOperands& operands) -> std::optional<PlaneAnswer> {
+  const auto every_value = [&](auto holds) {
+    const auto held = [&](const std::optional<value::IntegralShape>& shape) {
+      return !shape.has_value() || holds(*shape);
+    };
+    return std::ranges::all_of(shapes.operands, held) && held(shapes.answer);
+  };
+  if (!every_value(LiesInPlace)) {
     return std::nullopt;
   }
-  const OneWordArithmetic words(builder);
+  const PlaneArithmetic words(builder);
 
   const auto shape = [&](std::size_t index) -> const value::IntegralShape& {
     return *shapes.operands.at(index);
@@ -792,7 +827,7 @@ auto LowerOnOneWord(
   const auto answers_unknown = [&] { return shapes.answer->IsFourState(); };
   const auto answer_width = [&] { return shapes.answer->width; };
   // A predicate's one-bit answer, held as the answer's type holds it.
-  const auto answer_bit = [&](OneWord bit) {
+  const auto answer_bit = [&](Planes bit) {
     return words.Settled(bit, answers_unknown());
   };
   const auto machine = [&](unsigned bits) {
@@ -836,12 +871,20 @@ auto LowerOnOneWord(
       return arithmetic(llvm::Instruction::Add);
     case IntegralOp::kSubtract:
       return arithmetic(llvm::Instruction::Sub);
+    // A product, a quotient and a remainder take work that grows with the
+    // square of the width, so past one machine word each is the library's.
     case IntegralOp::kMultiply:
-      return arithmetic(llvm::Instruction::Mul);
+      return every_value(IsSingleWord) ? std::optional<PlaneAnswer>(
+                                             arithmetic(llvm::Instruction::Mul))
+                                       : std::nullopt;
     case IntegralOp::kDivide:
-      return divided(false);
+      return every_value(IsSingleWord)
+                 ? std::optional<PlaneAnswer>(divided(false))
+                 : std::nullopt;
     case IntegralOp::kModulo:
-      return divided(true);
+      return every_value(IsSingleWord)
+                 ? std::optional<PlaneAnswer>(divided(true))
+                 : std::nullopt;
     case IntegralOp::kNegate:
       return words.Negated(load(0), answers_unknown());
     case IntegralOp::kBitwiseAnd:
@@ -927,9 +970,10 @@ auto LowerOnOneWord(
     case IntegralOp::kConvert:
       return words.Converted(
           load(0), reads_signed(0), answer_width(), answers_unknown());
-    // LRM 11.6.1: a number carried into the answer's type keeps its low bits.
+    // LRM 11.6.1: a number carried into the answer's type keeps its low bits,
+    // and its sign above them where the type is wider.
     case IntegralOp::kFromInt:
-      return Known(builder.CreateTrunc(machine(64), exact()));
+      return Known(builder.CreateSExtOrTrunc(machine(64), exact()));
     case IntegralOp::kFromBool:
       return Known(builder.CreateZExt(machine(1), exact()));
     case IntegralOp::kToInt64:

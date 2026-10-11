@@ -372,6 +372,21 @@ closed below.
       Undecided: what `--release` asks for, and whether an invoker names the level. Not measured: a
       benchmark design's build time and rate at each level under clang and under gcc.
 
+- [x] On the execution backend an operation on a value within the in-place size is instructions at
+      the value's own width, where past 64 bits it was a call into the library at a width the
+      library learned from its arguments. A concatenation of 32 bytes into 256 bits runs
+      **22,000,000 times a second optimized and 8,900,000 unoptimized**; through the library it ran
+      411,000 times a second, and the C++ backend runs it 20,000,000 times a second optimized.
+
+- [ ] What is still a call on the execution backend past 64 bits: a product, a quotient, a remainder
+      and a power, whose work grows with the square of the width, and every operation over a value
+      past the in-place size. Each call lays its operands and its answer out around the work. Not
+      measured on a design that spends its time there.
+
+- [ ] A concatenation of several operands is carried out two at a time on both backends. An
+      optimized build folds the steps together; an unoptimized one makes a value as wide as
+      everything joined so far at each step. Not measured apart from the figure above.
+
 - [ ] An array's `unique` and `unique_index` (LRM 7.12.1) compare each element against every
       distinct one seen before it, so they cost the square of the element count. Two elements are
       the same where they are bit-identical (`===`), and the relational order that `sort` uses is no

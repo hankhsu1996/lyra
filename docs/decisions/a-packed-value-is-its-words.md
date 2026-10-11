@@ -62,14 +62,16 @@ What the answer rests on:
 | --------------- | -------------------- | --------------------------------------------------- | ------------------------ | ---------------------------------------------------- |
 | clang `_BitInt` | Sema                 | CodeGen (`iN`, a storage unit in memory)            | native                   | the type legalizer per word; an IR pass for division |
 | Verilator       | `V3Width`            | emit, from the width                                | C operators              | `V3Expand` per word; calls for add, multiply, divide |
-| Lyra            | HIR-to-MIR           | the library header (C++); the code generator (LLVM) | native or plane formulas | header loops (C++); a call taking the words (LLVM)   |
+| Lyra            | HIR-to-MIR           | the library header (C++); the code generator (LLVM) | native or plane formulas | header loops (C++); plane formulas in place (LLVM)   |
 
 Sources, read in each project's tree: clang `lib/CodeGen/CodeGenTypes.cpp` (`ConvertTypeForMem`) and
 LLVM `lib/CodeGen/SelectionDAG/LegalizeIntegerTypes.cpp`, `lib/CodeGen/ExpandIRInsts.cpp`;
-Verilator's `V3AstNodes.cpp` (`cTypeRecurse`), `V3Expand.cpp` and `verilated_funcs.h`. NVC (two
-planes for four-state, inline up to 64 bits, a call above) and CXXRTL (`value<Bits>` with
-always-inline templates) were consulted from summaries only, their sources not opened, and nothing
-below rests on either.
+Verilator's `V3AstNodes.cpp` (`cTypeRecurse`), `V3Expand.cpp` and `verilated_funcs.h`. Verilator
+states an operation per word only up to a size: `V3Expand.cpp` (`doExpandWide`) against
+`--expand-limit`, 256 words of 32 bits by default, which is 1024 bytes and also the default of its
+`--localize-max-size`. NVC (two planes for four-state, inline up to 64 bits, a call above) and
+CXXRTL (`value<Bits>` with always-inline templates) were consulted from summaries only, their
+sources not opened, and nothing below rests on either.
 
 ### What code compiled once is told of a type it was compiled without
 
@@ -192,8 +194,9 @@ this, and both backends write the same operations.
 it takes, and that one statement is used three ways.** Each settles what the operator does with an x
 or a z and answers as the language says the operator answers. The C++ value type of a packed type
 applies them to its own words. Applied to values whose width is given at run time they are the
-prebuilt entries the execution backend calls above 64 bits. And they are the compiler's own constant
-folding. A folded operation, an inlined one and a called one therefore cannot disagree.
+prebuilt entries the execution backend calls where it does not state the operation itself (D5). And
+they are the compiler's own constant folding. A folded operation, an inlined one and a called one
+therefore cannot disagree.
 
 An operation takes a value in one of two ways. A value read is the words of its planes where they
 lie, how many bits it is, and the signedness its bits are read as. A value written is the words of
@@ -257,21 +260,43 @@ the count open, so it is one body for every type and nothing reduces it per widt
 
 **D4. On the execution backend the four-state formula lives in the code generator, as a fixed
 function of the operand type.** The layer below MIR keeps the integral type MIR states and names the
-operator; the code generator translates each operator on it to inline arithmetic on one or two words
-up to 64 bits and to a call above. An operator's semantics come from its operand type: rustc's MIR
-states `BinOp::Div` once and `codegen_scalar_binop` picks `sdiv` or `udiv` from the type. The
-translation decides nothing beyond the type, so it stays mechanical, and no intermediate level of
-exact-width integers and pairs exists for one consumer to read. The single-word formulas are thus
-written twice in total -- the functions of D3 and the code generator -- which is how both backends
-already realize every primitive operator. What holds the second statement to the first is a test
-that evaluates each single-word form and the function of D3 on the same operands and compares both
-planes of their answers. The conformance corpus, which runs every case on both backends, stands
-beside it.
+operator; the code generator translates each operator on it to arithmetic on the value's planes,
+each held as an integer of the value's own width, or to a call (D5). An operator's semantics come
+from its operand type: rustc's MIR states `BinOp::Div` once and `codegen_scalar_binop` picks `sdiv`
+or `udiv` from the type. The translation decides nothing beyond the type, so it stays mechanical,
+and no intermediate level of exact-width integers and pairs exists for one consumer to read. The
+formulas are thus written twice in total -- the functions of D3 and the code generator -- which is
+how both backends already realize every primitive operator. What holds the second statement to the
+first is a test that evaluates each generated form and the function of D3 on the same operands, at
+widths on both sides of a machine word, and compares both planes of their answers. The conformance
+corpus, which runs every case on both backends, stands beside it.
 
-**D5. The line is 64 bits.** Up to a word an operation is a handful of instructions and inlines;
-above it the execution backend calls. LLVM's own legalization of a wide `iN` is not used: it emits
-straight-line code proportional to the word count at every site, and code size per operation would
-follow the width instead of being constant.
+**D5. The execution backend states an operation itself wherever every value it takes and answers is
+within the in-place size and its work is linear in the width, and calls otherwise.** A value's
+planes are bytes an integer of its width is loaded from, so each formula of D4 is written once for
+every width, on two such integers, and LLVM's type legalization turns it into operations on the
+words that width has. A product, a quotient and a remainder are stated that way up to 64 bits and
+are calls past it, because their work grows with the square of the width. A power, a count of bits,
+a logarithm, and whatever reads text or a foreign buffer are calls at every width. An operation over
+a value past the in-place size (D1) is a call.
+
+The line is drawn by two requirements together. An operation costs the bits it touches: measured on
+a concatenation of 32 bytes into 256 bits, optimized, a call into the library for each step ran
+411,000 times a second and the operation stated in place 22,000,000, against 20,000,000 on the C++
+backend. And what a unit's code holds for one operation is bounded: a formula stated in place is
+straight-line code that follows the width, about a byte a bit a plane unoptimized, so it is stated
+only up to a fixed size. That size is the in-place size, so one figure bounds both things a declared
+width could otherwise be followed by, a frame and the code of one site; Verilator uses one figure
+for the same two questions, whether a wide operation is expanded per word and whether a value may be
+a function's local. Measured with clang 20 on one plane at 8,192 bits, unoptimized: an and, an add
+and an equality are each about 8.5 KB and compile in under 40 ms, where a product is 717 KB and
+takes 7.4 s and a quotient is 145 KB. A dozen operations on a four-state value of 4,096 bits add
+about 130 KB to an unoptimized program and a quarter of a second to its build.
+
+This entry first drew the line at 64 bits, on the ground that legalization's code follows the width
+at every site. The premise holds and is the bound above; the line it drew left every operation
+between 65 bits and the in-place size paying a call of some hundreds of instructions for work of a
+few words.
 
 **D6. What holds a packed value reads only its layout.** A cell, a net, a sampled history, a
 reference and a shared cell copy, compare and store a value's bytes and never interpret them. Up to
@@ -376,7 +401,10 @@ And beside them:
 - **Extending a value per its signedness in storage**, as clang does. Fails the requirement that a
   write is a change exactly where storage differs: two encodings of one bit pattern make a byte
   comparison answer wrongly and make a reinterpreting conversion do work.
-- **Leaving wide integers to LLVM's legalization.** Fails constant code size per operation; see D5.
+- **Leaving wide integers to LLVM's legalization at every width and for every operation.** Fails the
+  bound on what a unit's code holds for one operation; see D5.
+- **A call for every operation past 64 bits.** Fails the requirement that an operation costs the
+  bits it touches; see D5.
 - **Keeping packed dimensions on the MIR type.** Fails MIR's rule that a source language's
   coordinate system does not reach it. Their readers were a position computation, a memory-image
   range and a cast deciding it was a no-op, and each reads the source type where it is lowered.

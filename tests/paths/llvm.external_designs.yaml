@@ -16,7 +16,7 @@ HammerBlade:16x8:hello:
   says: did not end within
 NVDLA:default:hello:
   stops: run
-  says: out of memory
+  says: did not end within
 OpenPiton:1x1:hello:
   stops: build
   says: the front end could give it no meaning

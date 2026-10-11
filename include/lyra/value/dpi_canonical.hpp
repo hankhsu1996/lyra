@@ -78,13 +78,14 @@ constexpr void ReadCanonicalBitVec(
   ClearAboveWidth(out.value, out.width);
 }
 
+// The groups of a four-state canonical vector read into a value, which reads
+// 0 where it is wider than the groups given.
 template <
     PlaneWord WrittenWord, std::size_t kWrittenValueWords,
     std::size_t kWrittenUnknownWords>
-constexpr void ReadCanonicalLogicVec(
-    const svLogicVecVal* src,
+constexpr void ReadCanonicalLogicGroups(
+    std::span<const svLogicVecVal> groups,
     IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out) {
-  const std::span<const svLogicVecVal> groups{src, CanonicalGroups(out.width)};
   for (std::size_t i = 0; i < out.value.size(); ++i) {
     std::uint64_t value = 0;
     std::uint64_t unknown = 0;
@@ -104,6 +105,16 @@ constexpr void ReadCanonicalLogicVec(
       SetWord(out.unknown, i, unknown & valid);
     }
   }
+}
+
+template <
+    PlaneWord WrittenWord, std::size_t kWrittenValueWords,
+    std::size_t kWrittenUnknownWords>
+constexpr void ReadCanonicalLogicVec(
+    const svLogicVecVal* src,
+    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out) {
+  ReadCanonicalLogicGroups(
+      std::span<const svLogicVecVal>{src, CanonicalGroups(out.width)}, out);
 }
 
 template <IntegralValue R>
@@ -131,7 +142,7 @@ constexpr void FromSvLogic(
   const svLogicVecVal group{
       .aval = (encoded >> kScalarValueBit) & 1U,
       .bval = (encoded >> kScalarUnknownBit) & 1U};
-  ReadCanonicalLogicVec(&group, out);
+  ReadCanonicalLogicGroups(std::span<const svLogicVecVal>{&group, 1U}, out);
 }
 template <IntegralValue R>
 [[nodiscard]] constexpr auto FromSvLogic(unsigned char encoded) -> R {

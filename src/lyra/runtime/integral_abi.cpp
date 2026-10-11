@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -24,22 +25,6 @@ namespace {
 
 using support::IntegralOp;
 using support::IntegralOperandKind;
-using support::IntegralOperation;
-using support::IntegralOperationOf;
-
-// One argument as an entry received it.
-using Word = std::variant<const void*, void*, std::int64_t, bool, std::uint8_t>;
-
-template <typename T>
-auto As(const Word& word) -> T {
-  const T* held = std::get_if<T>(&word);
-  if (held == nullptr) {
-    throw InternalError(
-        "an integral operation's entry is handed an argument of another "
-        "machine type than its declaration gives it");
-  }
-  return *held;
-}
 
 // An integral type as far as an entry is told it. An entry is told the
 // signedness only of an operand its operation reads as a number.
@@ -48,145 +33,127 @@ struct ToldType {
   value::Signedness signedness = value::Signedness::kUnsigned;
 };
 
-void Take(ToldType& type, IntegralTypeFact fact, const Word& word) {
+// One operand as an entry received it, in the member of the machine type the
+// operation's declaration has it cross as.
+struct HandedOperand {
+  const void* address = nullptr;
+  std::int64_t number = 0;
+  bool predicate = false;
+  std::uint8_t scalar = 0;
+};
+
+inline constexpr std::size_t kMostOperands = support::IntegralOperands::kMost;
+
+// Everything one call of an entry was handed, each argument where the
+// operation's declaration says it belongs.
+struct Handed {
+  std::array<HandedOperand, kMostOperands> operands{};
+  std::array<ToldType, kMostOperands> told{};
+  void* answer_storage = nullptr;
+  ToldType answer_told;
+};
+
+void Hand(HandedOperand& operand, const void* address) {
+  operand.address = address;
+}
+void Hand(HandedOperand& operand, std::int64_t number) {
+  operand.number = number;
+}
+void Hand(HandedOperand& operand, bool predicate) {
+  operand.predicate = predicate;
+}
+void Hand(HandedOperand& operand, std::uint8_t scalar) {
+  operand.scalar = scalar;
+}
+
+[[noreturn]] void ToldAsAnotherMachineType() {
+  throw InternalError(
+      "an integral operation's entry is told a fact of a type as another "
+      "machine type than its declaration gives it");
+}
+
+void Tell(ToldType& type, IntegralTypeFact fact, std::int64_t told) {
   switch (fact) {
     case IntegralTypeFact::kWidth:
-      type.extent.width = static_cast<std::uint64_t>(As<std::int64_t>(word));
+      type.extent.width = static_cast<std::uint64_t>(told);
       return;
     case IntegralTypeFact::kIsSigned:
-      type.signedness = As<bool>(word) ? value::Signedness::kSigned
-                                       : value::Signedness::kUnsigned;
+    case IntegralTypeFact::kIsFourState:
+      break;
+  }
+  ToldAsAnotherMachineType();
+}
+
+void Tell(ToldType& type, IntegralTypeFact fact, bool told) {
+  switch (fact) {
+    case IntegralTypeFact::kIsSigned:
+      type.signedness =
+          told ? value::Signedness::kSigned : value::Signedness::kUnsigned;
       return;
     case IntegralTypeFact::kIsFourState:
-      type.extent.domain = As<bool>(word) ? value::StateDomain::kFourState
-                                          : value::StateDomain::kTwoState;
+      type.extent.domain =
+          told ? value::StateDomain::kFourState : value::StateDomain::kTwoState;
       return;
+    case IntegralTypeFact::kWidth:
+      break;
   }
-  throw InternalError("unknown integral type fact");
+  ToldAsAnotherMachineType();
 }
 
-auto Loaded(const void* bytes, const ToldType& type) -> value::LoadedWords {
-  return value::LoadedWords::Load(
-      bytes, value::IntegralShape{
-                 .width = type.extent.width,
-                 .signedness = type.signedness,
-                 .domain = type.extent.domain});
-}
-
-// Carries `op` out over the arguments its entry was handed: reads each as the
-// operation's declaration says what it is, loads the planes the integral
-// operands' bytes hold, applies the operation, and lays an integral answer out
-// in the storage given for it.
-auto CarryOut(IntegralOp op, std::span<const Word> words)
-    -> value::MachineAnswer {
-  constexpr std::size_t kMostOperands = 3;
-  const IntegralOperation& operation = IntegralOperationOf(op);
-  const std::span<const IntegralOperandKind> kinds = operation.operands.Kinds();
-  const IntegralEntryArguments arguments = IntegralEntryArgumentsOf(op);
-  if (words.size() != arguments.All().size()) {
-    throw InternalError(
-        "an integral operation's entry is handed a number of arguments its "
-        "declaration does not give it");
+// The operands of one call as the operation's statement reads them.
+class EntryOperands {
+ public:
+  explicit EntryOperands(const Handed& handed) : handed_(&handed) {
   }
 
-  std::array<Word, kMostOperands> handed{};
-  std::array<ToldType, kMostOperands> told{};
-  ToldType answer_told;
-  void* answer_storage = nullptr;
-  for (std::size_t i = 0; i < words.size(); ++i) {
-    std::visit(
-        Overloaded{
-            [&](const OperandArgument& argument) {
-              handed.at(argument.operand) = words[i];
-            },
-            [&](const AnswerStorageArgument&) {
-              answer_storage = As<void*>(words[i]);
-            },
-            [&](const OperandTypeArgument& argument) {
-              Take(told.at(argument.operand), argument.fact, words[i]);
-            },
-            [&](const AnswerTypeArgument& argument) {
-              Take(answer_told, argument.fact, words[i]);
-            }},
-        arguments.All()[i]);
+  void View(std::size_t at, value::ConstIntegralView view) {
+    views_.at(at) = view;
   }
 
-  std::array<std::optional<value::LoadedWords>, kMostOperands> loaded{};
-  std::array<value::IntegralOperand, kMostOperands> operands{};
-  std::array<value::IntegralExtent, kMostOperands> extents{};
-  std::size_t integral_count = 0;
-  const auto integral = [&](std::size_t i, const ToldType& type) {
-    extents.at(integral_count++) = type.extent;
-    loaded.at(i) = Loaded(As<const void*>(handed.at(i)), type);
-    return loaded.at(i)->View();
-  };
-  for (std::size_t i = 0; i < kinds.size(); ++i) {
-    switch (kinds[i]) {
-      case IntegralOperandKind::kBits:
-      case IntegralOperandKind::kNumber:
-        operands.at(i) = integral(i, told.at(i));
-        break;
-      case IntegralOperandKind::kSameType:
-        operands.at(i) = integral(i, told.front());
-        break;
-      case IntegralOperandKind::kMachineInt:
-        operands.at(i) = As<std::int64_t>(handed.at(i));
-        break;
-      case IntegralOperandKind::kMachineBool:
-        operands.at(i) = As<bool>(handed.at(i));
-        break;
-      case IntegralOperandKind::kSvLogic:
-        operands.at(i) = As<std::uint8_t>(handed.at(i));
-        break;
-      case IntegralOperandKind::kText:
-        operands.at(i) =
-            static_cast<const value::String*>(As<const void*>(handed.at(i)))
-                ->View();
-        break;
-      case IntegralOperandKind::kCanonicalBits:
-        operands.at(i) =
-            static_cast<const svBitVecVal*>(As<const void*>(handed.at(i)));
-        break;
-      case IntegralOperandKind::kCanonicalLogic:
-        operands.at(i) =
-            static_cast<const svLogicVecVal*>(As<const void*>(handed.at(i)));
-        break;
-    }
+  [[nodiscard]] auto At(std::size_t at) const
+      -> const value::ConstIntegralView& {
+    return views_.at(at);
   }
 
-  const std::span<const value::IntegralOperand> applied =
-      std::span<const value::IntegralOperand>(operands).first(kinds.size());
-  const auto answered_at =
-      [&](value::IntegralExtent extent) -> value::MachineAnswer {
-    value::WrittenWords answer = value::WrittenWords::ZeroedAt(
-        answer_storage,
-        value::IntegralShape{.width = extent.width, .domain = extent.domain});
-    value::MachineAnswer machine =
-        value::ApplyIntegralOperation(op, applied, answer.MutableView());
-    answer.StoreTo(answer_storage);
-    return machine;
-  };
-  const auto answered_as_a_machine_value = [&]() -> value::MachineAnswer {
-    return value::ApplyIntegralOperation(op, applied, value::IntegralView{});
-  };
-  return std::visit(
-      Overloaded{
-          [&](const value::IntegralExtent& extent) {
-            return answered_at(extent);
-          },
-          [&](const value::AnswerOfTheCall&) {
-            return answered_at(answer_told.extent);
-          },
-          [&](const value::MachineBoolAnswer&) {
-            return answered_as_a_machine_value();
-          },
-          [&](const value::MachineIntAnswer&) {
-            return answered_as_a_machine_value();
-          }},
-      value::AnswerTypeOf(
-          op, std::span<const value::IntegralExtent>(extents).first(
-                  integral_count)));
-}
+  template <typename T>
+  [[nodiscard]] auto MachineAt(std::size_t at) const -> T {
+    return Machine(handed_->operands.at(at), std::type_identity<T>{});
+  }
+
+ private:
+  static auto Machine(
+      const HandedOperand& operand, std::type_identity<std::int64_t>)
+      -> std::int64_t {
+    return operand.number;
+  }
+  static auto Machine(const HandedOperand& operand, std::type_identity<bool>)
+      -> bool {
+    return operand.predicate;
+  }
+  static auto Machine(
+      const HandedOperand& operand, std::type_identity<std::uint8_t>)
+      -> std::uint8_t {
+    return operand.scalar;
+  }
+  static auto Machine(
+      const HandedOperand& operand, std::type_identity<std::string_view>)
+      -> std::string_view {
+    return static_cast<const value::String*>(operand.address)->View();
+  }
+  static auto Machine(
+      const HandedOperand& operand, std::type_identity<const svBitVecVal*>)
+      -> const svBitVecVal* {
+    return static_cast<const svBitVecVal*>(operand.address);
+  }
+  static auto Machine(
+      const HandedOperand& operand, std::type_identity<const svLogicVecVal*>)
+      -> const svLogicVecVal* {
+    return static_cast<const svLogicVecVal*>(operand.address);
+  }
+
+  const Handed* handed_;
+  std::array<value::ConstIntegralView, kMostOperands> views_{};
+};
 
 template <IntegralEntryMachineType type>
 struct CppTypeOf;
@@ -276,9 +243,129 @@ template <std::size_t row>
 using ReturnCppType =
     typename ReturnCppTypeOf<support::IntegralOperations()[row].answer>::Type;
 
+template <std::size_t row, std::size_t at>
+inline constexpr IntegralEntryArgument kArgumentAt =
+    kArgumentsAt<row>.All()[at];
+
+// Puts argument `at` of the entry at `row` where the operation's declaration
+// says it belongs.
+template <std::size_t row, std::size_t at>
+void Take(Handed& handed, ArgumentCppType<row, at> argument) {
+  if constexpr (constexpr const auto* operand =
+                    std::get_if<OperandArgument>(&kArgumentAt<row, at>);
+                operand != nullptr) {
+    Hand(handed.operands.at(operand->operand), argument);
+  } else if constexpr (constexpr const auto* operand_type =
+                           std::get_if<OperandTypeArgument>(
+                               &kArgumentAt<row, at>);
+                       operand_type != nullptr) {
+    Tell(handed.told.at(operand_type->operand), operand_type->fact, argument);
+  } else if constexpr (constexpr const auto* answer_type =
+                           std::get_if<AnswerTypeArgument>(
+                               &kArgumentAt<row, at>);
+                       answer_type != nullptr) {
+    Tell(handed.answer_told, answer_type->fact, argument);
+  } else {
+    static_assert(
+        std::holds_alternative<AnswerStorageArgument>(kArgumentAt<row, at>));
+    handed.answer_storage = argument;
+  }
+}
+
+template <std::size_t row, std::size_t at>
+inline constexpr IntegralOperandKind kOperandKindAt =
+    support::IntegralOperations()[row].operands.Kinds()[at];
+
+// What laying the integral operands of one call out leaves: the words each
+// one's bytes hold, and their extents in operand order.
+struct LoadedOperands {
+  std::array<std::optional<value::LoadedWords>, kMostOperands> words{};
+  std::array<value::IntegralExtent, kMostOperands> extents{};
+  std::size_t count = 0;
+};
+
+// Loads operand `at` of the entry at `row` where it is an integral value, at
+// the type the entry was told for it.
+template <std::size_t row, std::size_t at>
+void Load(
+    const Handed& handed, LoadedOperands& loaded, EntryOperands& operands) {
+  const auto load = [&](const ToldType& type) {
+    loaded.extents.at(loaded.count++) = type.extent;
+    loaded.words.at(at) = value::LoadedWords::Load(
+        handed.operands.at(at).address, value::IntegralShape{
+                                            .width = type.extent.width,
+                                            .signedness = type.signedness,
+                                            .domain = type.extent.domain});
+    operands.View(at, loaded.words.at(at)->View());
+  };
+  switch (kOperandKindAt<row, at>) {
+    case IntegralOperandKind::kBits:
+    case IntegralOperandKind::kNumber:
+      load(handed.told.at(at));
+      return;
+    case IntegralOperandKind::kSameType:
+      load(handed.told.front());
+      return;
+    case IntegralOperandKind::kMachineInt:
+    case IntegralOperandKind::kMachineBool:
+    case IntegralOperandKind::kSvLogic:
+    case IntegralOperandKind::kText:
+    case IntegralOperandKind::kCanonicalBits:
+    case IntegralOperandKind::kCanonicalLogic:
+      return;
+  }
+}
+
+// Carries the operation at `row` out over what its entry was handed: loads the
+// words the integral operands' bytes hold, applies the operation, and lays an
+// integral answer out in the storage given for it.
+template <std::size_t row, std::size_t... operand>
+auto CarryOut(const Handed& handed, std::index_sequence<operand...>)
+    -> value::MachineAnswer {
+  LoadedOperands loaded;
+  EntryOperands operands(handed);
+  (Load<row, operand>(handed, loaded, operands), ...);
+
+  // The extent an integral answer is laid out at, or none where the operation
+  // answers a machine value.
+  using Extent = std::optional<value::IntegralExtent>;
+  const Extent extent = std::visit(
+      Overloaded{
+          [](const value::IntegralExtent& fixed) -> Extent { return fixed; },
+          [&](const value::AnswerOfTheCall&) -> Extent {
+            return handed.answer_told.extent;
+          },
+          [](const value::MachineBoolAnswer&) -> Extent {
+            return std::nullopt;
+          },
+          [](const value::MachineIntAnswer&) -> Extent {
+            return std::nullopt;
+          }},
+      value::AnswerTypeOf<kOperationAt<row>>(
+          std::span<const value::IntegralExtent>(loaded.extents)
+              .first(loaded.count)));
+  if (!extent) {
+    return value::ApplyIntegralOperation<kOperationAt<row>>(
+        operands, value::IntegralView{});
+  }
+  value::WrittenWords answer = value::WrittenWords::ZeroedAt(
+      handed.answer_storage,
+      value::IntegralShape{.width = extent->width, .domain = extent->domain});
+  value::MachineAnswer machine =
+      value::ApplyIntegralOperation<kOperationAt<row>>(
+          operands, answer.MutableView());
+  answer.StoreTo(handed.answer_storage);
+  return machine;
+}
+
+template <std::size_t row>
+using OperandsAt = std::make_index_sequence<
+    support::IntegralOperations()[row].operands.Kinds().size()>;
+
 // The entry carrying out the operation at `row`, whose parameters are the
 // arguments the operation's declaration gives it, each of the machine type it
-// crosses as.
+// crosses as. Which argument is which, and what each operand is, are settled
+// where the library is compiled; a call works out neither.
 template <
     std::size_t row,
     typename = std::make_index_sequence<kArgumentsAt<row>.All().size()>>
@@ -288,12 +375,13 @@ template <std::size_t row, std::size_t... at>
 struct Entry<row, std::index_sequence<at...>> {
   static auto Call(ArgumentCppType<row, at>... arguments)
       -> ReturnCppType<row> {
-    const std::array<Word, sizeof...(at)> words{
-        Word{std::in_place_type<ArgumentCppType<row, at>>, arguments}...};
+    Handed handed;
+    (Take<row, at>(handed, arguments), ...);
     if constexpr (std::is_void_v<ReturnCppType<row>>) {
-      CarryOut(kOperationAt<row>, words);
+      CarryOut<row>(handed, OperandsAt<row>{});
     } else {
-      const value::MachineAnswer answer = CarryOut(kOperationAt<row>, words);
+      const value::MachineAnswer answer =
+          CarryOut<row>(handed, OperandsAt<row>{});
       const auto* machine = std::get_if<ReturnCppType<row>>(&answer);
       if (machine == nullptr) {
         throw InternalError(
