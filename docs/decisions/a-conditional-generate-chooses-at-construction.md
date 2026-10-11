@@ -73,10 +73,12 @@ alternative before it also carries: an n-alternative construct then states on th
 conditions where the source wrote n. Measured on an 8-item `case` inside a loop, that is 35 label
 comparisons against 7; on a 32-item one, 239,407 bytes of bodies against 181,418.
 
-A construct outside any loop is stated the same way. Its conditions read only what a specialization
-fixes, so the construction always reaches the alternative elaboration did -- but what selects a
-block is a fact about the source either way, and a layer that states it for one position and not the
-other has two shapes for one rule.
+A construct outside any loop is stated the same way. Its conditions read what the instance was built
+with, so two instances of one unit may select different alternatives exactly as two blocks of one
+loop do, and the unit holds every alternative any of them selected
+([a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
+D2). What selects a block is a fact about the source in either position, and a layer that states it
+for one and not the other has two shapes for one rule.
 
 ### D2. The alternatives come from the source; only the bodies are collected across indices
 

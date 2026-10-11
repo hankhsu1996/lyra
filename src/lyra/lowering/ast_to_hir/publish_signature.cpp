@@ -517,131 +517,148 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
       signature_.types, published);
 
-  const auto member_of = [&](const slang::ast::Symbol& declared) {
-    const std::optional<hir::PublishedMemberId> id = root.MemberOf(declared);
-    if (!id.has_value()) {
-      throw InternalError(
-          std::format(
-              "PublishSignature: a port of '{}' reaches '{}', which its unit "
-              "publishes no member for",
-              unit_.name, declared.name));
-    }
-    return *id;
-  };
+  // The ports are read off every application the unit is lowered from, since
+  // a port's direction decides what the declaration it reaches holds in each
+  // of them. What they state is the text's, so the unit publishes the list of
+  // the application it is named for, and a port whose type differs between two
+  // of them is a member of the unit's own class that does.
+  for (const slang::ast::Scope* application : applications_) {
+    const auto& built_by =
+        application->asSymbol().as<slang::ast::InstanceBodySymbol>();
+    const ScopePublicationRecord& its_root = PublicationOf(*application);
+    std::vector<hir::PortDecl> ports;
 
-  const auto publish_part =
-      [&](const slang::ast::PortSymbol& port) -> diag::Result<hir::PortPart> {
-    const auto span = frontend::PointSpanOf(port.location);
-    auto interned = InternType(port.getType(), span);
-    if (!interned) return std::unexpected(std::move(interned.error()));
-    const hir::PortDirection direction =
-        TranslateDirection(port.direction, port.internalSymbol);
-    // A port expression names the part of a declaration the port stands for
-    // (LRM 23.2.2.2); a port written as a plain name has none, and the whole of
-    // the declaration behind it is the same descent with no steps. A port with
-    // neither reaches nothing inside the unit, which the same clause admits.
-    const auto* written = port.getInternalExpr();
-    std::optional<PeeledPortExpression> peeled;
-    if (written != nullptr) {
-      peeled = PeelPortExpression(*written);
-    } else if (const auto* internal =
-                   port.internalSymbol == nullptr
-                       ? nullptr
-                       : port.internalSymbol->as_if<slang::ast::ValueSymbol>();
-               internal != nullptr) {
-      peeled = PeeledPortExpression{.base = internal, .steps = {}};
-    } else {
+    const auto member_of = [&](const slang::ast::Symbol& declared) {
+      const std::optional<hir::PublishedMemberId> id =
+          its_root.MemberOf(declared);
+      if (!id.has_value()) {
+        throw InternalError(
+            std::format(
+                "PublishSignature: a port of '{}' reaches '{}', which its unit "
+                "publishes no member for",
+                unit_.name, declared.name));
+      }
+      return *id;
+    };
+
+    const auto publish_part =
+        [&](const slang::ast::PortSymbol& port) -> diag::Result<hir::PortPart> {
+      const auto span = frontend::PointSpanOf(port.location);
+      auto interned = InternType(port.getType(), span);
+      if (!interned) return std::unexpected(std::move(interned.error()));
+      const hir::PortDirection direction =
+          TranslateDirection(port.direction, port.internalSymbol);
+      // A port expression names the part of a declaration the port stands for
+      // (LRM 23.2.2.2); a port written as a plain name has none, and the whole
+      // of the declaration behind it is the same descent with no steps. A port
+      // with neither reaches nothing inside the unit, which the same clause
+      // admits.
+      const auto* written = port.getInternalExpr();
+      std::optional<PeeledPortExpression> peeled;
+      if (written != nullptr) {
+        peeled = PeelPortExpression(*written);
+      } else if (const auto* internal =
+                     port.internalSymbol == nullptr
+                         ? nullptr
+                         : port.internalSymbol
+                               ->as_if<slang::ast::ValueSymbol>();
+                 internal != nullptr) {
+        peeled = PeeledPortExpression{.base = internal, .steps = {}};
+      } else {
+        return hir::PortPart{hir::DataPortPart{
+            .direction = direction,
+            .type = importer.Import(*interned),
+            .target = hir::NoInternalTarget{}}};
+      }
+      if (!peeled.has_value()) {
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedStructuralMember,
+            "a port naming this part of an internal name is not yet supported");
+      }
+
+      // A port's direction is what makes its declaration a reference, so the
+      // answer is taken here and read back wherever that declaration is asked
+      // what it holds. A `ref` port's stands for the connected variable (LRM
+      // 23.3.3.2). An input port's variable is assigned by its connection and
+      // by nothing else (LRM 23.3.3.2), so it stands for what the connection
+      // drives it with; that holds of the whole of one variable, which is what
+      // a port written as a plain name is, and a net is driven rather than
+      // assigned (LRM 6.5).
+      switch (direction) {
+        case hir::PortDirection::kRef:
+          ref_port_internals_.emplace(
+              peeled->base, hir::ReferenceBinding::kRef);
+          break;
+        case hir::PortDirection::kConstRef:
+          ref_port_internals_.emplace(
+              peeled->base, hir::ReferenceBinding::kConstRef);
+          break;
+        case hir::PortDirection::kInput:
+          if (written == nullptr &&
+              peeled->base->kind == slang::ast::SymbolKind::Variable) {
+            ref_port_internals_.emplace(
+                peeled->base, hir::ReferenceBinding::kInput);
+          }
+          break;
+        case hir::PortDirection::kOutput:
+        case hir::PortDirection::kInOut:
+          break;
+      }
+      auto path = PublishPath(*this, peeled->steps, span);
+      if (!path) return std::unexpected(std::move(path.error()));
       return hir::PortPart{hir::DataPortPart{
           .direction = direction,
           .type = importer.Import(*interned),
-          .target = hir::NoInternalTarget{}}};
-    }
-    if (!peeled.has_value()) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedStructuralMember,
-          "a port naming this part of an internal name is not yet supported");
-    }
+          .target = hir::ImportProjection(
+              importer, hir::MemberProjection{
+                            .member = member_of(*peeled->base),
+                            .path = *std::move(path),
+                            .positions = PositionsOfPortExpression(
+                                *peeled->base, written)})}};
+    };
 
-    // A port's direction is what makes its declaration a reference, so the
-    // answer is taken here and read back wherever that declaration is asked
-    // what it holds. A `ref` port's stands for the connected variable (LRM
-    // 23.3.3.2). An input port's variable is assigned by its connection and by
-    // nothing else (LRM 23.3.3.2), so it stands for what the connection drives
-    // it with; that holds of the whole of one variable, which is what a port
-    // written as a plain name is, and a net is driven rather than assigned
-    // (LRM 6.5).
-    switch (direction) {
-      case hir::PortDirection::kRef:
-        ref_port_internals_.emplace(peeled->base, hir::ReferenceBinding::kRef);
-        break;
-      case hir::PortDirection::kConstRef:
-        ref_port_internals_.emplace(
-            peeled->base, hir::ReferenceBinding::kConstRef);
-        break;
-      case hir::PortDirection::kInput:
-        if (written == nullptr &&
-            peeled->base->kind == slang::ast::SymbolKind::Variable) {
-          ref_port_internals_.emplace(
-              peeled->base, hir::ReferenceBinding::kInput);
-        }
-        break;
-      case hir::PortDirection::kOutput:
-      case hir::PortDirection::kInOut:
-        break;
-    }
-    auto path = PublishPath(*this, peeled->steps, span);
-    if (!path) return std::unexpected(std::move(path.error()));
-    return hir::PortPart{hir::DataPortPart{
-        .direction = direction,
-        .type = importer.Import(*interned),
-        .target = hir::ImportProjection(
-            importer, hir::MemberProjection{
-                          .member = member_of(*peeled->base),
-                          .path = *std::move(path),
-                          .positions = PositionsOfPortExpression(
-                              *peeled->base, written)})}};
-  };
-
-  // The ports are read before the members are given their storage, because a
-  // `ref` port is what makes the declaration it reaches a reference.
-  for (const auto* member : body->getPortList()) {
-    if (const auto* port = member->as_if<slang::ast::PortSymbol>()) {
-      auto part = publish_part(*port);
-      if (!part) return std::unexpected(std::move(part.error()));
-      element.ports.push_back(
-          hir::PortDecl{
-              .name = std::string{port->name},
-              .parts = {*std::move(part)},
-              .default_value = root.CallableOf(*port)});
-      continue;
-    }
-    if (const auto* multi = member->as_if<slang::ast::MultiPortSymbol>()) {
-      // One external name over several bundled ones, each carrying data in its
-      // own direction, so the port has a part per bundled name. LRM 23.2.2.1
-      // gives the first name written the most significant bits, so a connection
-      // reaches them least significant first.
-      std::vector<hir::PortPart> parts;
-      parts.reserve(multi->ports.size());
-      for (const auto* bundled : std::views::reverse(multi->ports)) {
-        auto part = publish_part(*bundled);
+    // The ports are read before the members are given their storage, because a
+    // `ref` port is what makes the declaration it reaches a reference.
+    for (const auto* member : built_by.getPortList()) {
+      if (const auto* port = member->as_if<slang::ast::PortSymbol>()) {
+        auto part = publish_part(*port);
         if (!part) return std::unexpected(std::move(part.error()));
-        parts.push_back(*std::move(part));
+        ports.push_back(
+            hir::PortDecl{
+                .name = std::string{port->name},
+                .parts = {*std::move(part)},
+                .default_value = its_root.CallableOf(*port)});
+        continue;
       }
-      element.ports.push_back(
+      if (const auto* multi = member->as_if<slang::ast::MultiPortSymbol>()) {
+        // One external name over several bundled ones, each carrying data in
+        // its own direction, so the port has a part per bundled name.
+        // LRM 23.2.2.1 gives the first name written the most significant bits,
+        // so a connection reaches them least significant first.
+        std::vector<hir::PortPart> parts;
+        parts.reserve(multi->ports.size());
+        for (const auto* bundled : std::views::reverse(multi->ports)) {
+          auto part = publish_part(*bundled);
+          if (!part) return std::unexpected(std::move(part.error()));
+          parts.push_back(*std::move(part));
+        }
+        ports.push_back(
+            hir::PortDecl{
+                .name = std::string{multi->name},
+                .parts = std::move(parts),
+                .default_value = std::nullopt});
+        continue;
+      }
+      // A connection reaches an interface port as one point like any other, so
+      // it has one part.
+      ports.push_back(
           hir::PortDecl{
-              .name = std::string{multi->name},
-              .parts = std::move(parts),
+              .name = std::string{member->name},
+              .parts = {hir::PortPart{
+                  hir::InterfacePortPart{.member = member_of(*member)}}},
               .default_value = std::nullopt});
-      continue;
     }
-    // A connection reaches an interface port as one point like any other, so it
-    // has one part.
-    element.ports.push_back(
-        hir::PortDecl{
-            .name = std::string{member->name},
-            .parts = {hir::PortPart{
-                hir::InterfacePortPart{.member = member_of(*member)}}},
-            .default_value = std::nullopt});
+    if (application == scope_) element.ports = std::move(ports);
   }
 
   // A hierarchical name reaches any named declaration of the element from
@@ -662,7 +679,11 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     if (first) {
       classes.push_back(*std::move(own));
     } else if (!AddWhatWasBuilt(classes[known->second], *own)) {
-      blocks_published_apart_ = true;
+      if (own->class_path == root.class_path) {
+        applications_published_apart_ = true;
+      } else {
+        blocks_published_apart_ = true;
+      }
     }
   }
   for (hir::ScopeClassSignature& cls : classes) StateLoopsOfOneClass(cls);

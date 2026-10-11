@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
@@ -79,6 +80,15 @@ struct TopLevelUnit {
 // synchronized its own first-read computation could be read by every unit at
 // once. What follows a unit's HIR reads no frontend, so it runs as wide as its
 // caller allows.
+// Whether declaring a design looks for definitions compiled into more units
+// than their instances need. It is a check on this compiler and costs a
+// lowering per unit of every definition compiled more than once, so a build
+// runs it only where its remarks are asked for.
+enum class MissedSharing : std::uint8_t {
+  kNotLookedFor,
+  kLookedFor,
+};
+
 class DeclaredDesign {
  public:
   // Declares every unit of `front_end`. A unit whose declarations fail is
@@ -93,20 +103,30 @@ class DeclaredDesign {
   // module declaring either is a design element and not a design, and is
   // reported.
   //
-  // Instances share one unit only where each lowers to what the unit lowers
-  // to, which is checked here for every instance whose body is read, one
-  // beside its unit at a time; `bodies_read` says which those are. Where
-  // instances handed different values of a parameter do not, the
-  // definition is declared again with every parameter deciding its unit, and
-  // a remark says so; what comes back is always the design each instance
-  // describes. Where instances handed the same values do not, nothing a unit
-  // is told apart by separates them, so no unit could be named for each: that
-  // is this compiler's defect and is thrown as one.
+  // Instances share one unit only where each is one body with it, which is
+  // checked here for every instance whose body is read, one beside its unit at
+  // a time; `bodies_read` says which those are. Instances handed different
+  // values of a parameter may build different blocks, since those values
+  // decide which alternative of a conditional generate stands and how many
+  // blocks a loop counts out (LRM 27.4, 27.5), and the unit then holds what
+  // each built. Where they differ in anything else, the definition is declared
+  // again with every parameter deciding its unit, and a remark says so; what
+  // comes back is always the design each instance describes. Where instances
+  // handed the same values differ, nothing a unit is told apart by separates
+  // them, so no unit could be named for each: that is this compiler's defect
+  // and is thrown as one.
+  //
+  // That finds a value taken for one an instance is built with where what is
+  // compiled holds it. `missed_sharing` says whether to look for the opposite,
+  // a value kept in a unit's identity that decides nothing, which costs a unit
+  // per value and changes no program. Looking lowers the units of each
+  // definition compiled more than once as one unit handed every value, and a
+  // remark names a definition whose units are then one body.
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
       support::AssertionPolicy assertion_policy,
-      support::BodiesRead bodies_read, diag::DiagnosticSink& sink)
-      -> std::optional<DeclaredDesign>;
+      support::BodiesRead bodies_read, MissedSharing missed_sharing,
+      diag::DiagnosticSink& sink) -> std::optional<DeclaredDesign>;
 
   DeclaredDesign(DeclaredDesign&&) noexcept;
   auto operator=(DeclaredDesign&&) noexcept -> DeclaredDesign&;

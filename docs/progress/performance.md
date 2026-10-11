@@ -414,27 +414,35 @@ specializations, not with instance count.
       [../decisions/a-parameter-read-as-a-value-is-supplied-at-construction.md](../decisions/a-parameter-read-as-a-value-is-supplied-at-construction.md)
       holds how a parameter qualifies and why a miss costs sharing and never correctness.
 
-- [ ] What stays in the key although it might not. A parameter read by a conditional generate's
-      condition, because the alternatives an instance did not select have no body in its
-      elaboration; a parameter choosing which element a hierarchical name reaches, or read through
-      its own hierarchical name, because either is settled when the unit is lowered rather than when
-      the instance is built; a parameter an instantiation may override declared with no type, whose
-      type is the type of the value it is given. Each still compiles once per value, as every
-      parameter did before.
+- [x] A parameter that only says what an instance builds is one unit for every value: one read by a
+      conditional generate's condition, a case generate's selector, or a loop generate's bound,
+      directly or through a parameter the module writes from it (LRM 27.4, 27.5). Instances
+      selecting different alternatives are one unit holding each alternative any of them built.
 
-- [ ] Where the prediction misses, sharing is lost and said so. The lowering compares every instance
-      handed a new value with the unit it shares and keeps the definition whole where they differ,
-      with a remark, so the program stays right and only compiles once per value. The front end
-      keeps the expression behind every constant it settles while binding that can decide what a
-      module compiles to, found by going through each place it evaluates one. The misses known: a
-      parent that reads a value it handed its child back through the child's name folds it, and
-      nothing the parent wrote refers to its own parameter there; a constant a method of a class
-      declared in the module writes from the module's parameter is folded, since a class's methods
-      are not bodies of the unit's objects; and an elaboration-time message (`$info`, LRM 20.11)
-      naming a parameter is formatted once by the front end, which keeps the text and not the
-      arguments, so its text differs per value. An instantiation a `bind` directive inserts states
-      its connections in the directive and is told apart by the directive that inserted it, which a
-      case exercises.
+- [x] A unit per value that decides nothing is said as a remark, where a run asks for remarks, and
+      fails a conformance case as lost sharing does.
+
+- [ ] What stays in the key although it might not. A parameter choosing which element a hierarchical
+      name reaches, or read through its own hierarchical name, because either is settled when the
+      unit is lowered rather than when the instance is built; a parameter an instantiation may
+      override declared with no type, whose type is the type of the value it is given; a parameter
+      in a declared range, which is told apart by its value where two values that size the same
+      range compile alike; and a parameter saying what an instance builds, in a module holding a
+      class, where two instances build differently. Each still compiles once per value.
+
+- [ ] Where the prediction misses, sharing is lost and said so. The lowering holds every instance
+      handed a new value against the unit it shares, which may hold what either built, and keeps the
+      definition whole where they differ in anything else, with a remark, so the program stays right
+      and only compiles once per value. The front end keeps the expression behind every constant it
+      settles while binding that can decide what a module compiles to, found by going through each
+      place it evaluates one. The misses known: a parent that reads a value it handed its child back
+      through the child's name folds it, and nothing the parent wrote refers to its own parameter
+      there; a constant a method of a class declared in the module writes from the module's
+      parameter is folded, since a class's methods are not bodies of the unit's objects; and an
+      elaboration-time message (`$info`, LRM 20.11) naming a parameter is formatted once by the
+      front end, which keeps the text and not the arguments, so its text differs per value. An
+      instantiation a `bind` directive inserts states its connections in the directive and is told
+      apart by the directive that inserted it, which a case exercises.
 
 - [x] The generate axis of that same sharing. A `generate for` used to lower concretely: N
       iterations became N scope classes and N construction statements, so the artifact grew

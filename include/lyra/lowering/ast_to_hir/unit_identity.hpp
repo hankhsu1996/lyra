@@ -70,6 +70,10 @@ enum class ParameterValueSource {
 [[nodiscard]] auto InstanceHolding(const slang::ast::Scope& scope)
     -> const slang::ast::InstanceSymbol&;
 
+// Whether `scope` declares a class (LRM 8.3), itself or in a generate block
+// inside it.
+[[nodiscard]] auto DeclaresAClass(const slang::ast::Scope& scope) -> bool;
+
 // A value as an identity: every bit of it, unknowns included, so two values
 // that differ anywhere never answer alike. The front end's own rendering is
 // for reading -- it shortens a value wider than it cares to print and folds
@@ -196,10 +200,10 @@ struct SpecializationKey {
 // Which value parameters of each instance reach its unit when the instance is
 // built rather than as part of what is compiled. A parameter's value is fixed
 // before the run (LRM 23.10), and nothing requires the compiled unit to hold
-// it: one whose value decides what is compiled -- a type, which blocks exist,
-// which child is built -- makes two values two units; one only ever read as a
-// value makes every value one unit, and the instance is handed it when it is
-// built.
+// it: one whose value what is compiled holds -- in a type, in which child is
+// built -- makes two values two units; one read as the source wrote it,
+// including where a construction decides which blocks it builds, makes every
+// value one unit, and the instance is handed it when it is built.
 //
 // A definition kept whole supplies nothing, and every index of its loops
 // decides by its own value: an earlier lowering found two of its instances
@@ -214,10 +218,37 @@ struct SpecializationKey {
 // answer.
 class SpecializationPolicy {
  public:
+  // A definition in `built_by_one_instance` is one whose unit holds the blocks
+  // one instance built and no other's, because its instances could not be
+  // lowered into one unit. What an instance's construction reads to decide
+  // what it builds names such a unit.
   explicit SpecializationPolicy(
       std::unordered_set<const slang::ast::DefinitionSymbol*> kept_whole = {},
-      support::BodiesRead bodies_read = support::BodiesRead::kElaborated)
-      : kept_whole_(std::move(kept_whole)), bodies_read_(bodies_read) {
+      support::BodiesRead bodies_read = support::BodiesRead::kElaborated,
+      std::unordered_set<const slang::ast::DefinitionSymbol*>
+          built_by_one_instance = {})
+      : kept_whole_(std::move(kept_whole)),
+        built_by_one_instance_(std::move(built_by_one_instance)),
+        bodies_read_(bodies_read) {
+  }
+
+  // This policy with `definition` handed every value: nothing its unit
+  // declares decides, so every value an instance of it is given is one it is
+  // built with. Units of it lowered under that are held against each other to
+  // learn whether what told them apart decided anything, and nothing built is
+  // named under it.
+  [[nodiscard]] auto HandingEveryValueTo(
+      const slang::ast::DefinitionSymbol& definition) const
+      -> SpecializationPolicy {
+    SpecializationPolicy trial(
+        kept_whole_, bodies_read_, built_by_one_instance_);
+    trial.handed_every_value_.insert(&definition);
+    return trial;
+  }
+
+  [[nodiscard]] auto KeepsWhole(
+      const slang::ast::DefinitionSymbol& definition) const -> bool {
+    return kept_whole_.contains(&definition);
   }
 
   // Whether `inst` is read through a body of its own: one the front end
@@ -372,6 +403,9 @@ class SpecializationPolicy {
   auto AnswersNow(const KeptName& kept) const -> bool;
 
   std::unordered_set<const slang::ast::DefinitionSymbol*> kept_whole_;
+  std::unordered_set<const slang::ast::DefinitionSymbol*>
+      built_by_one_instance_;
+  std::unordered_set<const slang::ast::DefinitionSymbol*> handed_every_value_;
   support::BodiesRead bodies_read_;
   mutable std::unordered_set<const slang::ast::InstanceSymbol*> read_anyway_;
   mutable std::unordered_map<const slang::ast::InstanceBodySymbol*, PerBody>

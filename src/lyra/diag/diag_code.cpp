@@ -179,6 +179,10 @@ constexpr std::array kEntries{
     std::pair{
         DiagCode::kRemarkLostSharing,
         DiagCodeInfo{.kind = DiagKind::kRemark, .name = "lost_sharing"}},
+
+    std::pair{
+        DiagCode::kRemarkMissedSharing,
+        DiagCodeInfo{.kind = DiagKind::kRemark, .name = "missed_sharing"}},
 };
 
 }  // namespace

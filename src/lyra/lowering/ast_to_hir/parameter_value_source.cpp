@@ -1,32 +1,30 @@
 // Which of an instance's value parameters are supplied at construction, which
 // its declarations compute from those, and which decide what is compiled.
 //
-// The answer is read off the source and never guessed from a list of what
-// decides a class: a list of that kind belongs to SystemVerilog and has no end.
-// Instead every reference to a parameter is found, and a parameter is supplied
-// only where every one of them sits somewhere this compiler lowers as an
-// expression the run evaluates -- a statement, a continuous assignment, a
-// variable's initializer -- and never as one whose value fixes a type. Anything
-// else denies, including a position nobody thought of, which costs sharing and
-// nothing else.
+// A parameter read where the source wrote an expression is lowered as that
+// expression, and the object reads the value it was built with. So a parameter
+// is supplied unless one of its references sits where the front end settled a
+// constant while binding, since what is compiled then holds the constant and
+// not the expression: a declared range, including one on a named type, a
+// struct or union member, an enum's base, or a type written as an operand; an
+// instance or port array's range; the bounds a part select's width comes from
+// and a replication's count; a size cast's width, a hierarchical name's index
+// or range, a stream's slice size, a sequence's delay or repetition, a queue's
+// bound; the values a class specialization or a virtual interface is handed,
+// which pick one shared with every other site handing the same; the operand a
+// type is taken from (LRM 6.23); the type a cast or an assignment pattern
+// writes, and a pattern's type key; the path a defparam names its target
+// through; and what a child is handed for a parameter that decides there.
+// Beside each the front end keeps the expression it settled the constant from,
+// and the walk reads the parameters that expression names.
 //
-// Some positions hold a constant the front end settled while binding, so a
-// parameter's value sits there with no reference left in the expression: a
-// declared range, including one on a named type, a struct or union member, an
-// enum's base, or a type written as an operand; an instance or port array's
-// range; a size cast's width, a hierarchical name's index or range, a stream's
-// slice size, a sequence's delay or repetition, a queue's bound; the values a
-// class specialization or a virtual interface is handed, which pick one shared
-// with every other site handing the same; the operand a type is taken from
-// (LRM 6.23); the type a cast or an assignment pattern writes, and a pattern's
-// type key; the path a defparam names its target through.
-// Beside each the front end keeps the expression it settled it from, and the
-// walk reads that like any other reference. Anything still unseen is caught
-// where it matters: the lowering compares every instance handed a different
-// value against the unit it shares, and the classes the block instances of
-// one generate block published against each other, and a difference keeps the
-// definition whole. So this answers how much is shared and never whether the
-// program is right.
+// What is listed is where the front end folds, which is a fact about the front
+// end and moves only with it. A place it folds that the walk does not know is
+// caught where it matters: the lowering holds every instance handed a
+// different value against the unit it shares, and the classes the block
+// instances of one generate block published against each other, and a
+// difference keeps the definition whole. So this answers how much is shared
+// and never whether the program is right.
 
 #include <algorithm>
 #include <span>
@@ -59,6 +57,7 @@
 #include <slang/ast/types/DeclaredType.h>
 #include <slang/syntax/AllSyntax.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
@@ -88,26 +87,24 @@ auto ValueParametersOf(const slang::ast::Scope& scope) -> ParameterSet {
   return out;
 }
 
-// Records a reference to one of `own` parameters.
-void Record(
-    const slang::ast::ValueExpressionBase& e, const ParameterSet& own,
-    References& into) {
-  const auto* param = e.symbol.as_if<slang::ast::ParameterSymbol>();
-  if (param != nullptr && own.contains(param)) {
-    into[param].insert(&e);
-  }
-}
-
-// Every reference to the body's own parameters, wherever it is. A child
-// instance's body names its own parameters, so what is collected of a child is
-// what it is handed, which is an expression of this body.
+// Every reference to the body's own parameters, wherever it is, and which of
+// them sit where the value decides what is compiled. A child instance's body
+// names its own parameters, so what is collected of a child is what it is
+// handed, which is an expression of this body.
 struct EveryReference
     : slang::ast::ASTVisitor<EveryReference, slang::ast::VisitFlags::AllGood> {
-  explicit EveryReference(const ParameterSet& own) : own(&own) {
+  EveryReference(const ParameterSet& own, const SpecializationPolicy& policy)
+      : own(&own), policy(&policy) {
   }
 
   const ParameterSet* own;
+  const SpecializationPolicy* policy;
   References found;
+  // The references whose value what is compiled holds: one inside an
+  // expression the front end settled a constant from, one a design element
+  // declared inside this one writes, and one written through a hierarchical
+  // name.
+  std::unordered_set<const slang::ast::Expression*> deciding;
   // Each reference in the order the walk met it, with the expression the front
   // end settled a constant from that it sits in, or nothing where it sits in
   // none. That expression is the whole of what the reference decides there:
@@ -118,64 +115,120 @@ struct EveryReference
     const slang::ast::Expression* settled_from;
   };
   std::vector<Use> uses;
+  // The references in a generate construct's header, which a construction
+  // evaluates to decide what it builds: what selects an alternative of a
+  // conditional generate, and what counts a loop generate's blocks out.
+  std::unordered_set<const slang::ast::Expression*> in_generate_headers;
   const slang::ast::Expression* settling = nullptr;
+  bool in_a_nested_element = false;
+  bool in_a_generate_header = false;
 
-  void Note(const slang::ast::ValueExpressionBase& e) {
+  void Note(const slang::ast::ValueExpressionBase& e, bool through_a_path) {
     const auto* param = e.symbol.as_if<slang::ast::ParameterSymbol>();
     if (param == nullptr || !own->contains(param)) return;
-    if (found[param].insert(&e).second) {
+    if (in_a_generate_header) in_generate_headers.insert(&e);
+    const bool decides =
+        settling != nullptr || in_a_nested_element || through_a_path;
+    const bool first_met = found[param].insert(&e).second;
+    const bool first_deciding = decides && deciding.insert(&e).second;
+    if (first_met || first_deciding) {
       uses.push_back(
           Use{.param = param, .reference = &e, .settled_from = settling});
     }
   }
 
   void handle(const slang::ast::NamedValueExpression& e) {
-    Note(e);
+    Note(e, false);
     VisitSpecializationParameters(e.specializationParameters);
     visitDefault(e);
   }
 
-  // Its declared type and its initializer are both places a value may reach.
+  // Its declared type is settled; its initializer is an expression the object
+  // computes when it is built, where what it is written from varies.
   void handle(const slang::ast::ParameterSymbol& param) {
     VisitFoldedDimensions(param);
-    VisitSettledFrom(param.getInitializer());
+    if (const slang::ast::Expression* init = param.getInitializer()) {
+      init->visit(*this);
+    }
   }
 
   // What this body hands the child, and not what a child's body reads of its
-  // own parameters. A design element declared inside another reads the
-  // enclosing one's parameters by name (LRM 23.4, 23.9), and its instance is
-  // handed none of them when it is built, so what its body reads of them is
-  // read here, outside every place this body evaluates.
+  // own parameters. A value handed for a parameter the child is supplied is an
+  // expression this body evaluates when it builds the child, and one handed
+  // for any other is settled into which unit the child is. A design element
+  // declared inside another reads the enclosing one's parameters by name (LRM
+  // 23.4, 23.9), and its instance is handed none of them when it is built, so
+  // what its body reads of them is the value this elaboration gave.
   void handle(const slang::ast::InstanceSymbol& child) {
     child.visitExprs(*this);
+    const auto supplied = policy->SuppliedParametersOf(child);
     for (const auto* param : child.body.getParameters()) {
       const auto* value = param->symbol.as_if<slang::ast::ParameterSymbol>();
       if (value == nullptr) continue;
-      if (const slang::ast::Expression* given =
-              ValueWrittenAtInstantiation(child, *value)) {
+      const slang::ast::Expression* given =
+          ValueWrittenAtInstantiation(child, *value);
+      if (given == nullptr) continue;
+      if (std::ranges::contains(supplied, value)) {
         given->visit(*this);
+      } else {
+        VisitSettledFrom(given);
       }
     }
-    if (!IsLibraryCell(child.getDefinition())) child.body.visit(*this);
+    if (!IsLibraryCell(child.getDefinition())) {
+      const bool outer = in_a_nested_element;
+      in_a_nested_element = true;
+      child.body.visit(*this);
+      in_a_nested_element = outer;
+    }
   }
 
+  // A part select's width is the type of what it yields: both bounds of a
+  // constant range, and the width of an indexed one, whose base is a position
+  // the run computes (LRM 11.5.1).
+  void handle(const slang::ast::RangeSelectExpression& e) {
+    e.value().visit(*this);
+    if (e.getSelectionKind() == slang::ast::RangeSelectionKind::Simple) {
+      VisitSettledFrom(&e.left());
+    } else {
+      e.left().visit(*this);
+    }
+    VisitSettledFrom(&e.right());
+  }
+
+  // A replication's count is the width of what it yields (LRM 11.4.12.1).
+  void handle(const slang::ast::ReplicationExpression& e) {
+    VisitSettledFrom(&e.count());
+    e.concat().visit(*this);
+  }
+
+  // The condition or the case items an alternative stands under (LRM 27.5).
   void handle(const slang::ast::GenerateBlockSymbol& block) {
     for (const slang::ast::GenerateSelection& level : block.selectionPath) {
-      if (level.condition != nullptr) level.condition->visit(*this);
+      VisitGenerateHeader(level.condition);
       for (const slang::ast::Expression* item : level.caseItems) {
-        if (item != nullptr) item->visit(*this);
+        VisitGenerateHeader(item);
       }
     }
     visitDefault(block);
   }
 
+  // Where a loop's index starts, whether a block stands at it, and how it
+  // reaches the next one (LRM 27.4).
   void handle(const slang::ast::GenerateBlockArraySymbol& array) {
     for (const slang::ast::Expression* header :
          {array.initialExpression, array.stopExpression,
           array.iterExpression}) {
-      if (header != nullptr) header->visit(*this);
+      VisitGenerateHeader(header);
     }
     visitDefault(array);
+  }
+
+  void VisitGenerateHeader(const slang::ast::Expression* expr) {
+    if (expr == nullptr) return;
+    const bool outer = in_a_generate_header;
+    in_a_generate_header = true;
+    expr->visit(*this);
+    in_a_generate_header = outer;
   }
 
   template <typename T>
@@ -227,10 +280,9 @@ struct EveryReference
   }
 
   // A parameter reached through a hierarchical name is lowered to the value
-  // one elaboration gave it rather than to what its instance is handed, so
-  // such a reference is one no evaluated place accepts.
+  // one elaboration gave it rather than to what its instance is handed.
   void handle(const slang::ast::HierarchicalValueExpression& e) {
-    Note(e);
+    Note(e, true);
     VisitSelectors(e.ref);
     VisitSpecializationParameters(e.specializationParameters);
     visitDefault(e);
@@ -408,161 +460,42 @@ struct EveryReference
   }
 };
 
-// The references that sit where this compiler lowers the expression the source
-// wrote and the run evaluates it, and where no type depends on the value: an
-// operand of a statement, of a continuous assignment, of a variable's, a net's
-// or a parameter's initializer, of a port's default, or of what a child is
-// handed. Inside those, an operand whose value fixes the width of what its
-// expression produces is left out, because the type the front end gave the
-// expression already holds that value.
-struct ValueReference
-    : slang::ast::ASTVisitor<ValueReference, slang::ast::VisitFlags::AllGood> {
-  explicit ValueReference(const ParameterSet& own) : own(&own) {
-  }
-
-  const ParameterSet* own;
-  References found;
-
-  void handle(const slang::ast::NamedValueExpression& e) {
-    Record(e, *own, found);
-  }
-
-  void handle(const slang::ast::RangeSelectExpression& e) {
-    e.value().visit(*this);
-    if (e.getSelectionKind() != slang::ast::RangeSelectionKind::Simple) {
-      e.left().visit(*this);
+// Collects into `code` every reference in the code of a process, a continuous
+// assignment or a subroutine `scope` holds, wherever in it the reference sits.
+// A variable of automatic lifetime exists only while its body runs (LRM 6.21),
+// so what it is declared as is part of that body's code. A child instance is
+// no scope of this one, so its body, which is none of this body's code, is not
+// reached.
+void CollectCodeOf(const slang::ast::Scope& scope, EveryReference& code) {
+  for (const auto& member : scope.members()) {
+    if (const auto* process =
+            member.as_if<slang::ast::ProceduralBlockSymbol>()) {
+      process->getBody().visit(code);
+    } else if (
+        const auto* assign =
+            member.as_if<slang::ast::ContinuousAssignSymbol>()) {
+      assign->getAssignment().visit(code);
+    } else if (const auto* variable =
+                   member.as_if<slang::ast::VariableSymbol>();
+               variable != nullptr &&
+               variable->kind == slang::ast::SymbolKind::Variable &&
+               variable->lifetime == slang::ast::VariableLifetime::Automatic) {
+      variable->visit(code);
+    }
+    if (const auto* subroutine = member.as_if<slang::ast::SubroutineSymbol>()) {
+      subroutine->getBody().visit(code);
+    }
+    if (const auto* inner = member.as_if<slang::ast::Scope>()) {
+      CollectCodeOf(*inner, code);
     }
   }
-
-  void handle(const slang::ast::ReplicationExpression& e) {
-    e.concat().visit(*this);
-  }
-};
-
-// Collects the value references in the places a run evaluates, walking the
-// body's members and skipping everything that is not one of those places.
-// Two more sets are collected apart, because what each means depends on which
-// parameter is read there: the references in what a construction evaluates to
-// say which blocks it builds -- what selects an alternative of a conditional
-// generate, and what counts a loop generate's blocks out -- and every
-// reference in the code of a process, a continuous assignment or a subroutine,
-// wherever in it the reference sits.
-struct EvaluatedPlaces
-    : slang::ast::ASTVisitor<EvaluatedPlaces, slang::ast::VisitFlags::Symbols> {
-  EvaluatedPlaces(
-      ValueReference& values, ValueReference& built_blocks,
-      EveryReference& code, const SpecializationPolicy& policy)
-      : values(&values),
-        built_blocks(&built_blocks),
-        code(&code),
-        policy(&policy) {
-  }
-
-  ValueReference* values;
-  ValueReference* built_blocks;
-  EveryReference* code;
-  const SpecializationPolicy* policy;
-
-  // The condition or the case items an alternative stands under (LRM 27.5).
-  void handle(const slang::ast::GenerateBlockSymbol& block) {
-    for (const slang::ast::GenerateSelection& level : block.selectionPath) {
-      if (level.condition != nullptr) level.condition->visit(*built_blocks);
-      for (const slang::ast::Expression* item : level.caseItems) {
-        if (item != nullptr) item->visit(*built_blocks);
-      }
-    }
-    visitDefault(block);
-  }
-
-  // Where a loop's index starts, whether a block stands at it, and how it
-  // reaches the next one (LRM 27.4).
-  void handle(const slang::ast::GenerateBlockArraySymbol& array) {
-    for (const slang::ast::Expression* header :
-         {array.initialExpression, array.stopExpression,
-          array.iterExpression}) {
-      if (header != nullptr) header->visit(*built_blocks);
-    }
-    visitDefault(array);
-  }
-
-  void handle(const slang::ast::ProceduralBlockSymbol& b) const {
-    b.getBody().visit(*values);
-    b.getBody().visit(*code);
-  }
-
-  void handle(const slang::ast::ContinuousAssignSymbol& a) const {
-    a.getAssignment().visit(*values);
-    a.getAssignment().visit(*code);
-  }
-
-  void handle(const slang::ast::SubroutineSymbol& s) {
-    s.getBody().visit(*values);
-    s.getBody().visit(*code);
-    visitDefault(s);
-  }
-
-  // A parameter written from a value that varies is computed when the object
-  // holding it is built, wherever it is declared; one that does not vary is
-  // folded, and then nothing it reads is supplied to the instance.
-  void handle(const slang::ast::ParameterSymbol& p) const {
-    if (const slang::ast::Expression* init = p.getInitializer()) {
-      init->visit(*values);
-    }
-  }
-
-  // A variable of automatic lifetime exists only while its body runs (LRM
-  // 6.21), so what it is declared as is part of that body's code.
-  void handle(const slang::ast::VariableSymbol& v) const {
-    if (const slang::ast::Expression* init = v.getInitializer()) {
-      init->visit(*values);
-    }
-    if (v.kind == slang::ast::SymbolKind::Variable &&
-        v.lifetime == slang::ast::VariableLifetime::Automatic) {
-      v.visit(*code);
-    }
-  }
-
-  void handle(const slang::ast::NetSymbol& n) const {
-    if (const slang::ast::Expression* init = n.getInitializer()) {
-      init->visit(*values);
-    }
-  }
-
-  // A port's default is evaluated in this unit when an instance leaves the
-  // port unconnected (LRM 23.2.2.4).
-  void handle(const slang::ast::PortSymbol& p) const {
-    if (const slang::ast::Expression* init = p.getInitializer()) {
-      init->visit(*values);
-    }
-  }
-
-  // What a child is handed is a value this body states, and whether that is a
-  // place the run evaluates is the child's own answer about that parameter.
-  // What a port is connected to is one end of the continuous assignment the
-  // connection implies (LRM 23.3.3), which the run evaluates. The child's body
-  // is no place this body evaluates and is not walked.
-  void handle(const slang::ast::InstanceSymbol& child) const {
-    for (const slang::ast::ParameterSymbol* param :
-         policy->SuppliedParametersOf(child)) {
-      if (const slang::ast::Expression* given =
-              ValueWrittenAtInstantiation(child, *param)) {
-        given->visit(*values);
-      }
-    }
-    for (const slang::ast::PortConnection* connection :
-         child.getPortConnections()) {
-      if (const slang::ast::Expression* actual = connection->getExpression()) {
-        actual->visit(*values);
-      }
-    }
-  }
-};
+}
 
 // The parameters `param`'s own initializer names.
 auto DependenciesOf(
-    const slang::ast::ParameterSymbol& param, const ParameterSet& own)
-    -> ParameterSet {
-  EveryReference refs(own);
+    const slang::ast::ParameterSymbol& param, const ParameterSet& own,
+    const SpecializationPolicy& policy) -> ParameterSet {
+  EveryReference refs(own, policy);
   if (const slang::ast::Expression* init = param.getInitializer()) {
     init->visit(refs);
   }
@@ -635,60 +568,91 @@ struct Deciding {
       folded_to;
 };
 
-// What decides for `body`: a parameter read outside the places the run
-// evaluates, or whose type is the type of its value; and what a deciding
-// parameter is written from decides with it.
+// Which of a body's parameters are asked what they decide. Where only those a
+// generate block declares are, nothing the unit declares decides, which is what
+// a unit handed every value is lowered under.
+enum class AskedWhatTheyDecide : std::uint8_t {
+  kEveryParameter,
+  kOnlyWhatBlocksDeclare,
+};
+
+// What a unit holds of the blocks its instances build. One lowered from every
+// instance that builds something of it holds what each built. One that could
+// only be lowered from a single instance -- a class a design element holds is
+// declared once per unit, from one body -- holds what that instance built.
+enum class UnitHolds : std::uint8_t {
+  kWhatEveryInstanceBuilt,
+  kWhatOneInstanceBuilt,
+};
+
+// What decides for `body`: a parameter one of whose references sits where the
+// value is held by what is compiled, or whose type is the type of its value;
+// and what a deciding parameter is written from decides with it.
 //
-// A parameter a generate block declares decides less, because a block is
+// So what selects an alternative of a conditional generate decides nothing:
+// the construction chooses it (LRM 27.5), and what is compiled holds every
+// alternative any object selected. Nor does what counts a loop generate's
+// blocks out: the construction runs the loop (LRM 27.4), and how many blocks an
+// object holds is no part of what it is an object of.
+//
+// A parameter a generate block declares decides less still, because a block is
 // built once per object of its scope, each with its own value, and the blocks
-// of one text are objects of one class whose code may still be compiled once
-// per block. So for such a parameter three more places decide nothing. What
-// selects an alternative of a conditional generate: the construction building
-// the block chooses it (LRM 27.5), and the class holds every alternative any
-// of its objects selected. What counts a loop generate's blocks out: the
-// construction runs the loop (LRM 27.4), and how many blocks an object holds
-// is no part of its class. And the code of a process, a continuous assignment
-// or a subroutine, wherever in it the parameter is read: it is no part of what
-// the class declares, and blocks whose code comes out different are that class
-// realized more than once. A parameter of the unit has one value for the whole
-// of an instance, which elaborated one alternative and one code, and those are
-// all the unit holds.
+// of one text are objects of one class whose code may be compiled once per
+// block. So for such a parameter the code of a process, a continuous assignment
+// or a subroutine decides nothing wherever in it the parameter is read: it is
+// no part of what the class declares, and blocks whose code comes out different
+// are that class realized more than once.
 auto DecidingParametersOf(
     const slang::ast::InstanceBodySymbol& body, const ParameterSet& own,
-    const ParameterEdges& written_from, const SpecializationPolicy& policy)
-    -> Deciding {
-  EveryReference every(own);
+    const ParameterEdges& written_from, const SpecializationPolicy& policy,
+    AskedWhatTheyDecide asked, UnitHolds holds) -> Deciding {
+  EveryReference every(own, policy);
   body.visit(every);
 
-  ValueReference values(own);
-  ValueReference built_blocks(own);
-  EveryReference code(own);
-  EvaluatedPlaces places(values, built_blocks, code, policy);
-  body.visit(places);
+  EveryReference code(own, policy);
+  CollectCodeOf(body, code);
 
-  const auto found_in = [](const References& in,
-                           const slang::ast::ParameterSymbol* param,
+  const auto in_code = [&](const slang::ast::ParameterSymbol* param,
                            const slang::ast::Expression* use) {
-    const auto uses = in.find(param);
-    return uses != in.end() && uses->second.contains(use);
+    const auto uses = code.found.find(param);
+    return uses != code.found.end() && uses->second.contains(use);
   };
+  // A unit holding what one instance built and no other is named by what that
+  // instance's construction read to decide it.
   const auto decides_there = [&](const slang::ast::ParameterSymbol* param,
                                  const slang::ast::Expression* use) {
-    return !found_in(values.found, param, use) &&
-           !(DeclaredByAGenerateBlock(*param) &&
-             (found_in(built_blocks.found, param, use) ||
-              found_in(code.found, param, use)));
+    if (DeclaredByAGenerateBlock(*param)) {
+      return every.deciding.contains(use) && !in_code(param, use);
+    }
+    switch (holds) {
+      case UnitHolds::kWhatEveryInstanceBuilt:
+        return every.deciding.contains(use);
+      case UnitHolds::kWhatOneInstanceBuilt:
+        return every.deciding.contains(use) ||
+               every.in_generate_headers.contains(use);
+    }
+    throw InternalError("DecidingParametersOf: unknown UnitHolds");
   };
-  const auto read_elsewhere = [&](const slang::ast::ParameterSymbol* param) {
+  const auto decides_somewhere = [&](const slang::ast::ParameterSymbol* param) {
     const auto all = every.found.find(param);
     if (all == every.found.end()) return false;
     return std::ranges::any_of(all->second, [&](const auto* use) {
       return decides_there(param, use);
     });
   };
+  const auto is_asked = [&](const slang::ast::ParameterSymbol& param) {
+    switch (asked) {
+      case AskedWhatTheyDecide::kEveryParameter:
+        return true;
+      case AskedWhatTheyDecide::kOnlyWhatBlocksDeclare:
+        return DeclaredByAGenerateBlock(param);
+    }
+    throw InternalError("DecidingParametersOf: unknown AskedWhatTheyDecide");
+  };
   ParameterSet roots;
   for (const slang::ast::ParameterSymbol* param : own) {
-    if (read_elsewhere(param) || TypeFollowsValue(*param)) {
+    if (!is_asked(*param)) continue;
+    if (decides_somewhere(param) || TypeFollowsValue(*param)) {
       roots.insert(param);
     }
   }
@@ -752,7 +716,7 @@ auto SpecializationPolicy::OfBody(
       .folded_to = {}};
   ParameterEdges written_from;
   for (const slang::ast::ParameterSymbol* param : out.own) {
-    written_from.emplace(param, DependenciesOf(*param, out.own));
+    written_from.emplace(param, DependenciesOf(*param, out.own, *this));
     out.written_into.emplace(param, ParameterSet{});
   }
   for (const auto& [param, sources] : written_from) {
@@ -770,8 +734,14 @@ auto SpecializationPolicy::OfBody(
       }
     }
   } else {
-    Deciding deciding =
-        DecidingParametersOf(body, out.own, written_from, *this);
+    Deciding deciding = DecidingParametersOf(
+        body, out.own, written_from, *this,
+        handed_every_value_.contains(&body.getDefinition())
+            ? AskedWhatTheyDecide::kOnlyWhatBlocksDeclare
+            : AskedWhatTheyDecide::kEveryParameter,
+        built_by_one_instance_.contains(&body.getDefinition())
+            ? UnitHolds::kWhatOneInstanceBuilt
+            : UnitHolds::kWhatEveryInstanceBuilt);
     out.deciding = std::move(deciding.parameters);
     out.folded_to = std::move(deciding.folded_to);
   }

@@ -1,6 +1,6 @@
 # A parameter read only as a value is supplied at construction
 
-Date: 2026-09-24 Status: accepted
+Date: 2026-09-24 Status: accepted; D1 and D2 revised 2026-10-11, D7 added
 
 ## Context
 
@@ -50,19 +50,33 @@ it is kept from deciding correctness.
 
 ## Decision
 
-### D1. The classification asks where the value reaches, and denies by default
+### D1. A parameter is read as the source wrote it, except where the front end settled a constant
 
-A value parameter is supplied at construction when every reference to it sits where this compiler
-lowers the expression the source wrote and the run evaluates it -- an operand of a statement, a
-continuous assignment, a variable's initializer, an input port's default, or the initializer of a
-parameter the unit declares -- in its body, a generate block, a subroutine or a procedural block --
-which is computed when the object is built -- and never where its value fixes a type: a declared
-range, a replication count, a range select's width. A reference anywhere else keeps it in the key: a
-generate condition or loop header, a port connection, an instance array's range, a place nobody
-listed. So does a parameter an instantiation may override written with no type (LRM 6.20.2: its type
-is the type of the value it is given), one handed on to a child parameter that decides something
-there, and one another deciding parameter is written from -- including one the module's blocks or
-subroutines declare.
+A reference to a parameter is an expression the source wrote, and this compiler lowers it as that
+expression: the object reads the value it was built with. So a value parameter is supplied at
+construction unless one of its references sits where what is compiled holds a constant the front end
+settled from it instead of the expression -- a declared range, a replication count, a range select's
+width, and the positions listed below. A reference anywhere else keeps the parameter out of the key,
+and that includes what a construction evaluates to decide what it builds: a conditional generate's
+condition, a `case` generate's selector and labels, and a loop generate's header (LRM 27.4, 27.5). A
+unit holds every alternative and every loop body any of its instances built (D2), so which one an
+instance selects is that instance's own. A parameter stays in the key as well where an instantiation
+may override it and it is written with no type (LRM 6.20.2: its type is the type of the value it is
+given), where it is handed on to a child parameter that decides something there, where a design
+element declared inside this one reads it, where it is read through a hierarchical name, and where
+another deciding parameter is written from it -- including one the module's blocks or subroutines
+declare.
+
+**What is listed is where the front end folds, and that is a fact about the front end.** This record
+first listed the opposite: the positions this compiler lowers as an expression, with every other
+reference keeping the parameter in the key. That list restated what the lowering does, in a walk
+made before the lowering ran, and nothing tied the two together. It went stale twice --
+[a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
+made a construction run its conditions, and
+[one-body-built-at-every-index](one-body-built-at-every-index.md) D2 made it run its loops -- and
+each time a parameter read only there went on naming a unit per value, which no test could see
+because a unit per value runs the same program. A list of where the front end folds moves only when
+the front end does, and each fold this compiler undoes takes a line out of it.
 
 A value given elsewhere -- by a `defparam` (LRM 23.10.1) or a configuration (LRM 33.4.3) -- is
 classified the same way as the instantiation's own, since LRM 23.10 makes the three ways of altering
@@ -93,20 +107,41 @@ wrote -- in a declared type, a name scoped through the class, a class-scoped `ne
 the same way.
 
 **This is a question asked of the source, so it is not a proof, and it is not meant to be one.** The
-positions SystemVerilog lets a value reach are an open set, which is why it denies by default, and a
-constant the front end settles at a site nobody has found yet leaves nothing for the walk to read.
-What makes it safe is D2. What it is for is making D2's fallback rare, and each site found is closed
-the same way: the front end keeps the expression beside the constant, as
+positions the front end settles a constant at are an open set, and one nobody has found yet leaves
+nothing for the walk to read, so a parameter folded there is taken for a supplied one. What makes
+that safe is D2, which finds it and says so. Each site found is closed the same way: the front end
+keeps the expression beside the constant, as
 [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) D1 asks of every
-place this compiler takes an answer the front end settled.
+place this compiler takes an answer the front end settled. A place where this compiler itself reads
+the front end's constant for an expression the source wrote is found the same way, and is a fold of
+ours to undo.
 
 ### D2. The comparison decides correctness, not the classification
 
-Every instance handed values no earlier instance of its unit was handed is lowered as a unit of its
-own would be, and compared with the unit it shares, through the equality the node definitions
-derive. Where one differs, the definition is kept whole, with every parameter in the key -- where it
-was before this record -- and the design is declared again with that answer. So an incomplete
-classification costs sharing, and the program is the one each instance's own body describes.
+Every instance handed values no earlier instance of its unit was handed is lowered with the unit and
+held against it, through the equality the node definitions derive. **An instance is one body with
+its unit where the two differ in nothing but what their constructions decide**: which alternative of
+a conditional generate stood, and how many blocks a loop counted out. That is the relation
+[a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
+D2 gives two blocks of one loop, asked of two instances of one unit, and the unit is what it gives a
+body: everything the instances agree on, with every alternative and every loop body any of them
+built. So a unit is lowered from the instance it is named for and from each other instance that
+built something it did not yet hold, into one unit, and what the unit publishes is declared from all
+of them, so a name reaching into an alternative finds it whichever instance selected it. Where an
+instance is not one body with its unit, the definition is kept whole, with every parameter in the
+key -- where it was before this record -- and the design is declared again with that answer. So an
+incomplete classification costs sharing, and the program is the one each instance's own body
+describes.
+
+Two units' scopes can be held against each other only when both name one unit's types, so the
+instances are lowered into one unit for it. A class a design element holds is declared once per
+unit, from one body, so a unit holding one -- declared in the module, or a specialization of a
+generic placed in it -- holds what one instance built and no other. Its instances are held to it the
+earlier way, each lowered as a unit of its own and compared whole, which admits instances that build
+alike. Where one differs, the definition is first declared again with what a construction reads to
+decide what it builds keeping the parameter in the key, as it did for every definition before, and
+nothing is remarked on: that is the limit just stated and no defect of the classification. Only a
+definition whose instances still differ after that is kept whole.
 
 An instance handed the same values as an earlier one is compared too, where it is read through a
 body of its own. One the front end left sharing an earlier instance's body is not read: it is one
@@ -197,6 +232,28 @@ view offers only for reading is the same case (LRM 25.5.4) and crosses the same 
 A subroutine a unit makes up for this is named with a space, which no SystemVerilog identifier can
 hold, escaped ones included (LRM 5.6.1), so it cannot collide with anything the unit declares.
 
+### D7. A unit per value that decides nothing is said as a remark too
+
+D2 finds a parameter taken for a supplied one that something compiled holds. Nothing found the
+opposite, a parameter kept in the key that decides nothing: it costs a unit per value and changes no
+program, so no run shows it and only a measurement of a real design ever did. Where a run asks for
+remarks, the units of each definition compiled more than once are lowered into one unit under a
+classification that hands that definition every value it is given, and held against each other as D2
+holds instances. Where they are one body, a remark names the definition, of the same kind as D3's
+and failing a conformance case the same way.
+
+It is a check and never the answer. Naming a unit by how the design's other instances of it lowered
+is the alternative rejected below, for the same reason: a parent's name for its child would depend
+on instances the parent does not hold. **That reason holds while a unit's name is also what decides
+which instances share an artifact.** `../architecture/incremental_build.md` makes those two values,
+a key and a fingerprint, and under it this comparison is the answer: a parent names a child by what
+its instantiation states, and keys that lower alike share what follows, with nothing classified
+beforehand. This record's prediction, and the fall backs around it, are what one value doing both
+jobs costs. And it is all or nothing for a definition, since it hands over every value at once: a
+definition with one parameter that sizes a type and another kept for nothing comes out apart and is
+not named. Left out, because the trial cannot be run on them, are a definition already kept whole,
+one holding a class, and one holding an instance whose unit is named through its own.
+
 ## How others do it
 
 - **Verilator** clones a module once per distinct parameter tuple before optimizing, and constant
@@ -229,8 +286,16 @@ hold, escaped ones included (LRM 5.6.1), so it cannot collide with anything the 
 - The reduction above emits one `Leaf` and a parent of 21 KB at 256 iterations: 33.7 KB of design
   C++ against about 4.4 MB, measured at `16709334` plus this change. Both backends print each
   instance's own value.
-- A parameter a conditional generate reads stays in the key: the alternatives an instance did not
-  select have no body in its elaboration, so instances selecting differently lower apart.
+- A parameter read only to decide what an instance builds is supplied. Measured on one module given
+  three values, a unit each before and one after: read in a module-level loop's bound, in an `if`,
+  in the same `if` inside a loop, in a `case`, and through a `localparam` the module writes from it.
+  Instances selecting different alternatives are one unit holding both. A loop of instances each
+  handed its index, where the index selects an alternative, a case item and a loop count in the
+  child, is one of the designs held to its size: at 512 instances and at 1024 its units, files and
+  bytes do not follow the count.
+- A parameter in a declared range is told apart by its value, so two values that size the same range
+  are two units that are one body. D7 says so; telling such a unit apart by what the value sizes, as
+  a loop's index already is, is not done.
 - A parameter reaching a constant the front end settled -- the positions D1 lists -- stays in the
   key, and the classification rather than the comparison finds it, since the expression each
   constant was settled from is kept beside it. The front end is ours, so that is where each was

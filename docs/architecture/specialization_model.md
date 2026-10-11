@@ -216,17 +216,20 @@ what the frontend happened to do.
 7. **Specialization keys are stable and deterministic.** Given a compilation unit and its
    code-shape-affecting inputs, the specialization key is fully determined. Keys do not depend on
    traversal order, instance enumeration, or the order in which instances are encountered.
-8. **A specialization is computed from occurrences, and the artifact compiles a body elaborated for
-   one of them.** Every argument is read off the occurrence -- what its parent wrote, what was
-   written elsewhere that reaches it or an occurrence below it (LRM 23.10.1, 23.11, 33.4), and where
-   each hierarchical name written in it or below it lands once it leaves the occurrence (LRM 23.8).
+8. **A specialization is computed from occurrences, and the artifact compiles bodies elaborated for
+   them.** Every argument is read off the occurrence -- what its parent wrote, what was written
+   elsewhere that reaches it or an occurrence below it (LRM 23.10.1, 23.11, 33.4), and where each
+   hierarchical name written in it or below it lands once it leaves the occurrence (LRM 23.8).
    Together they settle which specialization every occurrence below is, since a unit's code names
-   the class of each one it builds. The body an artifact compiles is one elaborated under those same
+   the class of each one it builds. A body an artifact compiles is one elaborated under those same
    arguments, so what it was named for and what it compiles against are one application; a body
-   elaborated for a different application states different types at the same positions. The
-   frontend's record that two bodies duplicate each other decides neither half: an occurrence it
-   marks is still the specialization its own arguments say, read off the body it duplicates only
-   where those arguments make the two one application.
+   elaborated for a different application states different types at the same positions. Occurrences
+   of one application handed different constructor inputs may build different blocks, since those
+   inputs decide which alternative of a conditional generate stands and how many blocks a loop
+   counts out, so the artifact compiles the body of each occurrence that built something another did
+   not and holds what any of them built. The frontend's record that two bodies duplicate each other
+   decides neither half: an occurrence it marks is still the specialization its own arguments say,
+   read off the body it duplicates only where those arguments make the two one application.
 9. **Producer and consumer derive the identity independently and agree.** A unit's own identity and
    the identity a parent means when it instantiates that unit are computed from the same inputs by
    the same function, with no table between them -- which is what lets units compile in any order
