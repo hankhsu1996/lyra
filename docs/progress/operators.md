@@ -52,9 +52,8 @@ The numeric IDs (W1..W18) imply execution order; where a cut is independent the 
         expressions are evaluated and compared, and equal ones are returned whatever their type.
         Differing integral values combine bit by bit, differing fixed-size arrays, dynamic arrays
         and queues of one size element by element, and anything else, an associative array or two
-        arrays of different sizes included, takes the value Table 7-1 gives its type.
-  - [ ] Where that value is a structure's, a member whose declaration assigns an initial value takes
-        its type's default and not the assigned one.
+        arrays of different sizes included, takes the value Table 7-1 gives its type, which for a
+        structure holds what each member's declaration assigns it.
   - [ ] Where the whole conditional is a constant expression the front end evaluates it, and answers
         the type's default for two equal expressions that are not integral or arrays, so
         `1'bx ? 1.5 : 1.5` is 0.0 as a constant and 1.5 over variables.

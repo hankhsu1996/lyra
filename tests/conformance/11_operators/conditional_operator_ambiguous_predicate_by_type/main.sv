@@ -16,6 +16,11 @@ module Top;
     real ratio;
   } pair_t;
 
+  typedef struct {
+    int    count = 7;
+    string label = "initial";
+  } labelled_t;
+
   typedef union {
     int  whole;
     real ratio;
@@ -26,6 +31,7 @@ module Top;
   string string_equal, string_differing;
   Item first_item, second_item, handle_equal, handle_differing;
   pair_t struct_equal, struct_differing;
+  labelled_t labelled_differing;
   either_t union_equal, union_differing;
   int queue_equal[$], queue_differing[$], queue_of_other_size[$];
   int dynamic_equal[], dynamic_differing[], dynamic_of_other_size[];
@@ -85,6 +91,15 @@ module Top;
     struct_equal = ambiguous ? one_pair : one_pair;
     struct_differing = '{9, 9.5};
     struct_differing = ambiguous ? one_pair : other_pair;
+
+    // The value a nonexistent entry of a structure reads as holds what each
+    // member's declaration assigns it.
+    begin
+      labelled_t one_labelled, other_labelled;
+      one_labelled = '{1, "a"};
+      other_labelled = '{2, "a"};
+      labelled_differing = ambiguous ? one_labelled : other_labelled;
+    end
 
     one_either.whole = 5;
     other_either.whole = 6;
@@ -160,6 +175,9 @@ module Top;
     if (struct_differing.count !== 0 || struct_differing.ratio != 0.0)
       $fatal(1, "struct_differing was %0d %f, expected 0 0.0",
              struct_differing.count, struct_differing.ratio);
+    if (labelled_differing.count !== 7 || labelled_differing.label != "initial")
+      $fatal(1, "labelled_differing was %0d '%s', expected 7 'initial'",
+             labelled_differing.count, labelled_differing.label);
     if (union_equal.whole !== 5)
       $fatal(1, "union_equal.whole was %0d, expected 5", union_equal.whole);
     if (union_differing.whole !== 0)
