@@ -193,49 +193,77 @@ auto BuildObservablePtrExpr(
       entry.cell);
 }
 
-// Which bits of a place's packed encoding a leaf reads, as the `(lsb, width)` a
-// wait's trigger takes (LRM 9.4.2 / 9.4.2.2 / 9.4.3). A read of the whole of it
-// is width 0, which is also what a named event and an object carry, having no
-// bits at all.
-struct WatchedBitPositions {
+// Which part of a place a leaf watches, as a wait's trigger and a report take
+// it (LRM 9.4.2 / 9.4.2.2 / 9.4.3, 9.2.2.2.1): the steps from the place to the
+// part, and which bits of the part where it is a packed value or which
+// elements where it is an array. A
+// read of the whole of the part is a width of zero, which is also what a named
+// event and an object carry, having no bits at all.
+struct LeafPart {
+  // One array of machine integers, empty for the whole place.
+  mir::ExprId steps;
   mir::ExprId first;
   mir::ExprId width;
+  // Whether that is the part itself, and not a larger part that holds it.
+  bool exact = true;
 };
 
-auto AllBits(const mir::CompilationUnit& unit, mir::Block& block)
-    -> WatchedBitPositions {
-  return WatchedBitPositions{
+// `steps` as the one array a leaf or a report is handed.
+auto StepArray(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    std::vector<mir::ExprId> steps) -> mir::ExprId {
+  const mir::TypeId array = mir::MachineArrayOf(
+      unit.types, unit.builtins.machine_int64, steps.size());
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::CompositeExpr{.parts = std::move(steps)},
+          .type = array});
+}
+
+auto WholePlace(const mir::CompilationUnit& unit, mir::Block& block)
+    -> LeafPart {
+  return LeafPart{
+      .steps = StepArray(unit, block, {}),
       .first = BuildMachineIntLiteral(unit, block, 0),
       .width = BuildMachineIntLiteral(unit, block, 0)};
 }
 
 template <typename Lowerer>
-auto WatchedBitPositionsOf(
+auto LeafPartOf(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
-    Lowerer& lowerer, const hir::WatchedPart& part)
-    -> diag::Result<WatchedBitPositions> {
+    Lowerer& lowerer, const hir::WatchedPart& part) -> diag::Result<LeafPart> {
   const auto int_literal = [&](std::uint64_t value) {
     return BuildMachineIntLiteral(
         unit, block, static_cast<std::int64_t>(value));
   };
   return std::visit(
       Overloaded{
-          [&](const hir::WatchedWhole&) -> diag::Result<WatchedBitPositions> {
-            return AllBits(unit, block);
+          [&](const hir::WatchedWhole&) -> diag::Result<LeafPart> {
+            return WholePlace(unit, block);
           },
-          [&](const hir::WatchedSelect& select)
-              -> diag::Result<WatchedBitPositions> {
+          [&](const hir::WatchedSelect& select) -> diag::Result<LeafPart> {
             auto part = lowerer.LowerAccessPath(
                 lowerer.HirExprs().Get(select.prefix), frame.WithBlock(&block));
             if (!part) return std::unexpected(std::move(part.error()));
-            const PathBits named = BitsWithinOwner(unit, block, *part);
-            return WatchedBitPositions{
-                .first = BuildToInt64Call(unit, block, named.first),
-                .width = int_literal(named.width)};
+            NamedPart named = PartNamedBy(unit, block, *part);
+            const mir::ExprId steps =
+                StepArray(unit, block, std::move(named.steps));
+            if (!named.positions.has_value()) {
+              return LeafPart{
+                  .steps = steps,
+                  .first = int_literal(0),
+                  .width = int_literal(0),
+                  .exact = named.exact};
+            }
+            return LeafPart{
+                .steps = steps,
+                .first = BuildToInt64Call(unit, block, named.positions->first),
+                .width = int_literal(named.positions->width),
+                .exact = named.exact};
           },
-          [&](const hir::WatchedBits& bits)
-              -> diag::Result<WatchedBitPositions> {
-            return WatchedBitPositions{
+          [&](const hir::WatchedBits& bits) -> diag::Result<LeafPart> {
+            return LeafPart{
+                .steps = StepArray(unit, block, {}),
                 .first = int_literal(bits.first),
                 .width = int_literal(bits.last - bits.first + 1)};
           },
@@ -252,7 +280,7 @@ auto BuildTriggerExpr(
     mir::LocalId observation) -> diag::Result<mir::ExprId> {
   const mir::ExprId observable_ptr =
       BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
-  auto watched = WatchedBitPositionsOf(block, frame, unit, lowerer, entry.part);
+  auto watched = LeafPartOf(block, frame, unit, lowerer, entry.part);
   if (!watched) return std::unexpected(std::move(watched.error()));
   return block.exprs.Add(
       mir::Expr{
@@ -264,7 +292,7 @@ auto BuildTriggerExpr(
                        block.exprs.Add(
                            mir::MakeLocalRefExpr(
                                observation, unit.builtins.observation)),
-                       watched->first, watched->width}},
+                       watched->steps, watched->first, watched->width}},
           .type = unit.builtins.trigger});
 }
 
@@ -279,22 +307,33 @@ void ActOnReport(
               unit.builtins.void_type)});
 }
 
-// Records the cell `cell` names and which bits of it, read or written as
-// `entry` says.
+// The cell `cell` names as a report is told of it: what a write there reports
+// to, and which part of it.
+struct ReportedCell {
+  mir::ExprId place;
+  LeafPart part;
+};
+
 template <typename Lowerer>
-auto ReportCell(
-    Lowerer& lowerer, const WalkFrame& frame, mir::LocalId report,
-    const hir::SensitivityEntry& cell, support::BuiltinFn entry)
-    -> diag::Result<void> {
+auto ReportedCellOf(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::SensitivityEntry& cell)
+    -> diag::Result<ReportedCell> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *frame.current_block;
   const mir::ExprId place =
       BuildObservablePtrExpr(block, frame, unit, lowerer, cell);
-  auto watched = WatchedBitPositionsOf(block, frame, unit, lowerer, cell.part);
-  if (!watched) return std::unexpected(std::move(watched.error()));
+  auto part = LeafPartOf(block, frame, unit, lowerer, cell.part);
+  if (!part) return std::unexpected(std::move(part.error()));
+  return ReportedCell{.place = place, .part = *part};
+}
+
+// Tells the report of `cell`, read or written as `entry` says.
+void ReportCell(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
+    support::BuiltinFn entry, const ReportedCell& cell) {
   ActOnReport(
-      unit, block, report, entry, {place, watched->first, watched->width});
-  return {};
+      unit, block, report, entry,
+      {cell.place, cell.part.steps, cell.part.first, cell.part.width});
 }
 
 // Records a place reached through a handle -- an object a chain passes
@@ -302,10 +341,10 @@ auto ReportCell(
 // interface holds -- and which bits of it are read.
 void ReportThroughHandle(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
-    mir::ExprId place, WatchedBitPositions watched) {
+    mir::ExprId place, LeafPart watched) {
   ActOnReport(
       unit, block, report, support::BuiltinFn::kReadReportAddThroughHandle,
-      {place, watched.first, watched.width});
+      {place, watched.steps, watched.first, watched.width});
 }
 
 // Appends `if (holds(local)) { fill(inner) }` to `frame`'s block: what reaches
@@ -348,7 +387,7 @@ auto ReportObjectThenHops(
   mir::Block& block = *frame.current_block;
   ReportThroughHandle(
       unit, block, report, ObjectEventSourceOf(unit, block, object()),
-      AllBits(unit, block));
+      WholePlace(unit, block));
   if (hops.empty()) return {};
   const hir::ObjectChain::Hop& hop = hops.front();
   const mir::TypeId next_type = lowerer.Owner().TranslateType(hop.handle_type);
@@ -388,9 +427,11 @@ auto ReportLeaf(
   return std::visit(
       Overloaded{
           [&](const hir::SensitivityEntry& cell) -> diag::Result<void> {
-            return ReportCell(
-                lowerer, frame, report, cell,
-                support::BuiltinFn::kReadReportAdd);
+            auto read = ReportedCellOf(lowerer, frame, cell);
+            if (!read) return std::unexpected(std::move(read.error()));
+            ReportCell(
+                unit, block, report, support::BuiltinFn::kReadReportAdd, *read);
+            return {};
           },
           // A variable of the instance a virtual interface holds (LRM 25.9),
           // whose address the instance answers with.
@@ -409,7 +450,7 @@ auto ReportLeaf(
                   if (!place) return std::unexpected(std::move(place.error()));
                   ReportThroughHandle(
                       unit, *inner.current_block, report, *place,
-                      AllBits(unit, *inner.current_block));
+                      WholePlace(unit, *inner.current_block));
                   return {};
                 });
           },
@@ -465,7 +506,7 @@ auto Reported(
   const mir::ExprId held = EvaluatedOnce(frame, value);
   ReportThroughHandle(
       unit, block, *frame.reports_reached_to, place_of(held),
-      AllBits(unit, block));
+      WholePlace(unit, block));
   return held;
 }
 
@@ -505,9 +546,15 @@ auto ReportReads(
     if (!reported) return std::unexpected(std::move(reported.error()));
   }
   for (const hir::SensitivityEntry& write : reads.writes) {
-    auto reported = ReportCell(
-        lowerer, frame, report, write, support::BuiltinFn::kReadReportAddWrite);
-    if (!reported) return std::unexpected(std::move(reported.error()));
+    auto written = ReportedCellOf(lowerer, frame, write);
+    if (!written) return std::unexpected(std::move(written.error()));
+    // A write is taken out of what the list reads (LRM 9.2.2.2.1), so one
+    // named by a larger part than the one it reaches is left out: it would
+    // take out what the procedure did not write.
+    if (!written->part.exact) continue;
+    ReportCell(
+        lowerer.Owner().Unit(), *frame.current_block, report,
+        support::BuiltinFn::kReadReportAddWrite, *written);
   }
   for (const hir::ReportingCall& call : reads.calls) {
     auto made = EmitReportingCall(lowerer, frame, call, report);

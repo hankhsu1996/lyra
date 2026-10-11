@@ -69,6 +69,23 @@ auto EntryToElementRun(StepUse use) -> support::BuiltinFn {
   throw InternalError("access path: unknown step use");
 }
 
+// What a step to a run of elements states beside its operands. A read answers
+// a fixed-size array of the run's own count, which is a type of its own and so
+// is named on the callee; a write lands in the elements where they lie, and
+// names no type.
+auto ElementRunTypeArgument(StepUse use, mir::TypeId run_type)
+    -> std::optional<mir::TypeId> {
+  switch (use) {
+    case StepUse::kRead:
+      return run_type;
+    case StepUse::kWrite:
+    case StepUse::kDesignate:
+    case StepUse::kLend:
+      return std::nullopt;
+  }
+  throw InternalError("access path: unknown step use");
+}
+
 auto EntryToElement(StepUse use) -> support::BuiltinFn {
   switch (use) {
     case StepUse::kRead:
@@ -156,6 +173,7 @@ auto StepCallFor(
           [&](const StepToElementRun& run) {
             return StepCall{
                 .entry = EntryToElementRun(use),
+                .type_argument = ElementRunTypeArgument(use, step.part_type),
                 .arguments = {
                     run.start,
                     BuildMachineIntLiteral(
@@ -687,7 +705,7 @@ auto ReadThenWrite(
 
 auto BitsWithinOwner(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
-    -> PathBits {
+    -> PathPositions {
   mir::ExprId first = BuildConstantPosition(unit, block, 0);
   for (const DescentStep& step : path.descent) {
     const auto* bits = std::get_if<StepToBits>(&step.to);
@@ -699,8 +717,69 @@ auto BitsWithinOwner(
     first = BuildPositionSum(unit, block, first, bits->start);
   }
   const mir::TypeId part = PathValueType(unit, block, path);
-  return PathBits{
+  return PathPositions{
       .first = first, .width = unit.types.Get(part).Integral().bit_width};
+}
+
+auto PartNamedBy(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> NamedPart {
+  NamedPart named;
+  auto step = path.descent.begin();
+  for (; step != path.descent.end(); ++step) {
+    const std::optional<mir::ExprId> key = std::visit(
+        Overloaded{
+            [&](const StepToElement& element) -> std::optional<mir::ExprId> {
+              return BuildToInt64Call(unit, block, element.position);
+            },
+            [&](const StepToComponent& component)
+                -> std::optional<mir::ExprId> {
+              return BuildMachineIntLiteral(
+                  unit, block, component.position.value);
+            },
+            [](const StepToBits&) -> std::optional<mir::ExprId> {
+              return std::nullopt;
+            },
+            [](const StepToElementRun&) -> std::optional<mir::ExprId> {
+              return std::nullopt;
+            },
+            [](const StepToAssocElement&) -> std::optional<mir::ExprId> {
+              return std::nullopt;
+            },
+            [](const StepToQueueRun&) -> std::optional<mir::ExprId> {
+              return std::nullopt;
+            }},
+        step->to);
+    if (!key.has_value()) {
+      break;
+    }
+    named.steps.push_back(*key);
+  }
+  if (step == path.descent.end()) {
+    return named;
+  }
+  // A run of elements ending the path is those elements of the array the steps
+  // reach (LRM 7.4.6).
+  if (const auto* run = std::get_if<StepToElementRun>(&step->to);
+      run != nullptr && std::next(step) == path.descent.end()) {
+    named.positions = PathPositions{.first = run->start, .width = run->count};
+    return named;
+  }
+  // What is left names bits of the packed value reached, each step from the
+  // start of the one before it, or goes on in a way no name follows.
+  mir::ExprId first = BuildConstantPosition(unit, block, 0);
+  for (; step != path.descent.end(); ++step) {
+    const auto* bits = std::get_if<StepToBits>(&step->to);
+    if (bits == nullptr) {
+      named.exact = false;
+      return named;
+    }
+    first = BuildPositionSum(unit, block, first, bits->start);
+  }
+  const mir::TypeId part = PathValueType(unit, block, path);
+  named.positions = PathPositions{
+      .first = first, .width = unit.types.Get(part).Integral().bit_width};
+  return named;
 }
 
 auto BuildStoreExpr(

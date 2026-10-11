@@ -329,7 +329,7 @@ void TupleRefSet(void* reference, const void* value) {
     return;
   }
   value::RuntimeTuple::AssignAt(lent.storage, value);
-  lent.Report(Change::Whole());
+  lent.Report(PartPath{}, Change::Whole());
 }
 
 void TupleRefArmSampling(void* reference) {
@@ -422,8 +422,8 @@ class TupleReference {
   [[nodiscard]] auto Watched() const -> bool {
     return lent_.Watched();
   }
-  void PublishTransition(const Change& change) const {
-    lent_.Report(change);
+  void PublishTransition(const PartPath& reached, const Change& change) const {
+    lent_.Report(reached, change);
   }
 
  private:
@@ -567,7 +567,7 @@ void WideRefSet(void* reference, std::int64_t width, const void* value) {
   if (std::memcmp(held.bytes, value, held.ByteSize()) == 0) {
     return;
   }
-  lent.Report(ReplaceWhole(held, assign));
+  lent.Report(PartPath{}, ReplaceWhole(held, assign));
 }
 
 template <value::HeldAsWords T>
@@ -676,8 +676,8 @@ class WideReference {
   [[nodiscard]] auto Watched() const -> bool {
     return lent_.Watched();
   }
-  void PublishTransition(const Change& change) const {
-    lent_.Report(change);
+  void PublishTransition(const PartPath& reached, const Change& change) const {
+    lent_.Report(reached, change);
   }
 
  private:
@@ -771,6 +771,9 @@ auto DesignateElement(const void* designation, const Index& index, void* out)
   void* element =
       static_cast<Container*>(within.part)->ElementRef(index, formed);
   within.write->Formed(formed);
+  if (within.write->Undecided()) {
+    within.write->Stepped(StepTo(index));
+  }
   return std::construct_at(
       static_cast<ErasedDesignation*>(out),
       ErasedDesignation{.write = within.write, .part = element});
@@ -781,9 +784,11 @@ void AssignDesignatedSlice(
     const void* designation, std::optional<std::int64_t> start,
     std::int64_t count, const Replacement& replacement) {
   const ErasedDesignation& within = DesignationAt(designation);
+  // A start that names no position assigns nothing, so one that moved an
+  // element names one.
   if (static_cast<Container*>(within.part)
           ->AssignSlice(start, count, replacement)) {
-    within.write->Moved();
+    within.write->Moved(*start, count);
   }
 }
 
@@ -842,7 +847,8 @@ auto ReferElement(const void* reference, const Index& index, void* out)
   value::Formation formed{};
   void* element =
       static_cast<Container*>(from.storage)->ElementRef(index, formed);
-  return BuildReference(out, from.Part(element, formed));
+  return BuildReference(
+      out, from.Part(element, formed, RetainedStepTo<Container>(index)));
 }
 
 // Builds a copy of one element of `type`, in the storage the call handed over.
@@ -1521,6 +1527,11 @@ void ReadImageBack(
         image, parts.RefAt(level, image.OrdinalAt(dimension, p)), part,
         dimension + 1, dimensions, position);
   }
+}
+
+// The steps of a part's path cross as a run of machine integers.
+auto StepsAt(LyraSpan steps) -> std::span<const std::int64_t> {
+  return {static_cast<const std::int64_t*>(steps.data), steps.count};
 }
 
 // An event control's leaves cross as a span of pointers to values this call
@@ -2386,12 +2397,13 @@ auto lyra_rt_delay_real(
 // through a reference bound into a member it is the word that reference
 // answered, which says so itself.
 auto lyra_rt_make_trigger(
-    void* observable, const void* observation, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width, void* out) -> void* {
+    void* observable, const void* observation, LyraSpan steps,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void* {
   return Emplace(
-      out, Trigger(
-               WatchedPlace::FromWord(observable),
-               Read<Observation>(observation), lsb_bit_offset, bit_width));
+      out,
+      Trigger(
+          WatchedPlace::FromWord(observable), Read<Observation>(observation),
+          lyra::runtime::StepsAt(steps), lsb_bit_offset, bit_width));
 }
 
 auto lyra_rt_observation_on_reaching(void* out) -> void* {
@@ -2459,17 +2471,19 @@ auto lyra_rt_read_report_for_implicit_list(void* out) -> void* {
 }
 
 void lyra_rt_read_report_add(
-    void* report, void* place, std::int64_t lsb_bit_offset,
+    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->Add(
-      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lyra::runtime::StepsAt(steps),
+      lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_add_through_handle(
-    void* report, void* place, std::int64_t lsb_bit_offset,
+    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->AddThroughHandle(
-      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lyra::runtime::StepsAt(steps),
+      lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_enter_call_on_handle(void* report) {
@@ -2485,10 +2499,11 @@ void lyra_rt_read_report_add_every_object(void* report) {
 }
 
 void lyra_rt_read_report_add_write(
-    void* report, void* place, std::int64_t lsb_bit_offset,
+    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
     std::int64_t bit_width) {
   static_cast<ReadReport*>(report)->AddWrite(
-      WatchedPlace::FromWord(place), lsb_bit_offset, bit_width);
+      WatchedPlace::FromWord(place), lyra::runtime::StepsAt(steps),
+      lsb_bit_offset, bit_width);
 }
 
 void lyra_rt_read_report_settle_as_implicit_list(void* report) {
@@ -3079,10 +3094,12 @@ auto lyra_rt_tuple_refer_component(
     const void* reference, std::int64_t index, void* out) -> void* {
   const ErasedReference& from = ErasedAt(reference);
   return BuildReference(
-      out, from.Part(
-               RuntimeTuple::ComponentAt(
-                   from.storage, static_cast<std::size_t>(index)),
-               lyra::value::Formation::kExisting));
+      out,
+      from.Part(
+          RuntimeTuple::ComponentAt(
+              from.storage, static_cast<std::size_t>(index)),
+          lyra::value::Formation::kExisting,
+          lyra::runtime::PartPath::Child(static_cast<std::uint64_t>(index))));
 }
 
 auto lyra_rt_string_ref_get(void* reference) -> const void* {
@@ -6845,6 +6862,10 @@ auto lyra_rt_assocarray_designate_element(
 auto lyra_rt_tuple_designate_component(
     const void* designation, std::int64_t index, void* out) -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
+  if (within.write->Undecided()) {
+    within.write->Stepped(
+        lyra::runtime::PartPath::Child(static_cast<std::uint64_t>(index)));
+  }
   return std::construct_at(
       static_cast<ErasedDesignation*>(out),
       ErasedDesignation{

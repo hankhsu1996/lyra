@@ -147,16 +147,16 @@ namespace detail {
 // the same traversal, so it needs no form of its own.
 template <typename T>
 struct IsMemoryLevel : std::bool_constant<value::IntegralValue<T>> {};
-template <typename U>
-struct IsMemoryLevel<value::UnpackedArray<U>> : std::true_type {};
+template <typename U, std::size_t N>
+struct IsMemoryLevel<value::UnpackedArray<U, N>> : std::true_type {};
 
 // The packed word a memory level of type `T` bottoms out at.
 template <typename T>
 struct MemoryWordOf {
   using Type = T;
 };
-template <typename U>
-struct MemoryWordOf<value::UnpackedArray<U>> {
+template <typename U, std::size_t N>
+struct MemoryWordOf<value::UnpackedArray<U, N>> {
   using Type = typename MemoryWordOf<U>::Type;
 };
 
@@ -291,9 +291,9 @@ void WriteMemAssociative(
   WriteMemKeyedCore(runtime, filename, base, start, finish, entries);
 }
 
-template <typename Inner>
+template <typename Inner, std::size_t N>
 void ReadMemMultidim(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner>& dest,
+    RuntimeEffects& runtime, value::UnpackedArray<Inner, N>& dest,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
     unsigned base, std::optional<std::int64_t> start,
     std::optional<std::int64_t> finish) {
@@ -310,9 +310,9 @@ void ReadMemMultidim(
       });
 }
 
-template <typename Inner>
+template <typename Inner, std::size_t N>
 void WriteMemMultidim(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
+    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& src,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
     unsigned base, std::optional<std::int64_t> start,
     std::optional<std::int64_t> finish) {
@@ -448,36 +448,36 @@ void WriteMemWithin(
 // dimension, the first being the addressed dimension and the rest describing
 // the leaves each address expands to, so a one-dimensional memory is the
 // one-element case of the same traversal.
-template <typename Inner>
+template <typename Inner, std::size_t N>
   requires detail::IsMemoryLevel<Inner>::value
 auto ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner> dest,
+    RuntimeEffects& runtime, value::UnpackedArray<Inner, N> dest,
     const value::String& filename, std::span<const std::int64_t> bounds,
     std::int64_t base, std::int64_t start)
-    -> MemoryLoad<value::UnpackedArray<Inner>> {
+    -> MemoryLoad<value::UnpackedArray<Inner, N>> {
   detail::ReadMemMultidim(
       runtime, dest, filename, value::UnpackedRangesOf(bounds),
       static_cast<unsigned>(base), start, std::nullopt);
-  return MemoryLoad<value::UnpackedArray<Inner>>{std::move(dest)};
+  return MemoryLoad<value::UnpackedArray<Inner, N>>{std::move(dest)};
 }
 
-template <typename Inner>
+template <typename Inner, std::size_t N>
   requires detail::IsMemoryLevel<Inner>::value
 auto ReadMemWithin(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner> dest,
+    RuntimeEffects& runtime, value::UnpackedArray<Inner, N> dest,
     const value::String& filename, std::span<const std::int64_t> bounds,
     std::int64_t base, std::int64_t start, std::int64_t finish)
-    -> MemoryLoad<value::UnpackedArray<Inner>> {
+    -> MemoryLoad<value::UnpackedArray<Inner, N>> {
   detail::ReadMemMultidim(
       runtime, dest, filename, value::UnpackedRangesOf(bounds),
       static_cast<unsigned>(base), start, finish);
-  return MemoryLoad<value::UnpackedArray<Inner>>{std::move(dest)};
+  return MemoryLoad<value::UnpackedArray<Inner, N>>{std::move(dest)};
 }
 
-template <typename Inner>
+template <typename Inner, std::size_t N>
   requires detail::IsMemoryLevel<Inner>::value
 void WriteMem(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
+    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& src,
     const value::String& filename, std::span<const std::int64_t> bounds,
     std::int64_t base, std::int64_t start) {
   detail::WriteMemMultidim(
@@ -485,10 +485,10 @@ void WriteMem(
       static_cast<unsigned>(base), start, std::nullopt);
 }
 
-template <typename Inner>
+template <typename Inner, std::size_t N>
   requires detail::IsMemoryLevel<Inner>::value
 void WriteMemWithin(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner>& src,
+    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& src,
     const value::String& filename, std::span<const std::int64_t> bounds,
     std::int64_t base, std::int64_t start, std::int64_t finish) {
   detail::WriteMemMultidim(

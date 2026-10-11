@@ -9,6 +9,7 @@
 
 #include "lyra/base/fixed_array.hpp"
 #include "lyra/runtime/observation.hpp"
+#include "lyra/runtime/part_path.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
@@ -22,8 +23,10 @@ Trigger::~Trigger() = default;
 
 Trigger::Trigger(
     Observable* observable, Observation observation,
-    std::int64_t lsb_bit_offset, std::int64_t bit_width)
+    std::span<const std::int64_t> steps, std::int64_t lsb_bit_offset,
+    std::int64_t bit_width)
     : observable(observable),
+      part(steps),
       observation(std::move(observation)),
       reads{
           .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
@@ -31,10 +34,12 @@ Trigger::Trigger(
 }
 
 Trigger::Trigger(
-    WatchedPlace place, Observation observation, std::int64_t lsb_bit_offset,
+    WatchedPlace place, Observation observation,
+    std::span<const std::int64_t> steps, std::int64_t lsb_bit_offset,
     std::int64_t bit_width)
     : observable(place.ReportedTo()),
       through(place.Member()),
+      part(place.PathOf(steps)),
       observation(std::move(observation)),
       reads{
           .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
@@ -50,6 +55,12 @@ Change::~Change() = default;
 
 auto Change::Whole() -> Change {
   return Change{};
+}
+
+auto Change::Elements(value::BitPositions reached) -> Change {
+  Change change;
+  change.reached_ = reached;
+  return change;
 }
 
 auto Change::WordsOf(std::size_t run) -> std::span<std::uint64_t> {
@@ -136,7 +147,7 @@ auto Change::BitsUnmoved(value::BitPositions at) const -> bool {
 }
 
 auto Change::Unmoved() const -> bool {
-  return reached_.width != 0 && BitsUnmoved(reached_);
+  return count_ != 0 && BitsUnmoved(reached_);
 }
 
 auto Change::KnownUnchanged(value::BitPositions reads) const -> bool {
@@ -152,7 +163,8 @@ auto Change::KnownUnchanged(value::BitPositions reads) const -> bool {
   if (from >= to) {
     return true;
   }
-  if (from == reached_.lsb && to == reached_end) {
+  // Where no words are kept nothing shows a position reached as it was.
+  if (count_ == 0 || (from == reached_.lsb && to == reached_end)) {
     return false;
   }
   return BitsUnmoved({.lsb = from, .width = to - from});

@@ -35,16 +35,18 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
     -> mir::Expr;
 
-// Default-construct a value from its source (HIR) type, honoring
-// unpacked-struct member declaration initializers (LRM 7.2.2). Use this at
-// every site that materializes the SV default initial value of a declared
-// variable, member, or element. The MIR-type-keyed default builder above cannot
-// honor member initializers -- the canonicalized MIR type drops them -- so it
-// serves only placeholder and transient-product defaults, where the source
-// initializer does not apply.
+// The same for a type named as the source layer names it.
 [[nodiscard]] auto BuildDefaultValueFromHir(
     const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_type)
     -> mir::Expr;
+
+// LRM Table 7-1's unpacked-struct row, as a value of `structure`: each member
+// at the initial value its declaration assigns (LRM 7.2.2), and at the value
+// the table gives its own type where it assigns none. This is the body of what
+// a structure answers its declared default with, and nothing else states it.
+[[nodiscard]] auto BuildDeclaredStructValue(
+    const UnitLowerer& unit_lowerer, mir::Block& block,
+    const hir::UnpackedStructType& source, mir::TypeId structure) -> mir::Expr;
 
 // Whether an assignment between the two types crosses from one array container
 // kind to another -- unpacked, dynamic, or queue. Two containers of one kind

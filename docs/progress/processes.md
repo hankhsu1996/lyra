@@ -100,11 +100,25 @@ under each item, and the conformance gaps at the end.
       quietly left out, because a process that does not wake gives a wrong answer with nothing to
       see.
 
-  - [ ] Sensitivity narrowed below whole-variable granularity for a read that is not a range of
-        bits: a process reading one element or one field wakes on any write to the variable
-        containing it, where one reading a bit range of a packed value already wakes only on a write
-        reaching that range. Correctness is unaffected -- the process re-evaluates and reaches the
-        same answer -- so this is what separates a correct wake set from a minimal one.
+  - [x] A read of one element of an unpacked array of fixed size, or one member of an unpacked
+        structure, to any depth and down to bits of a packed element, waits on that part alone, as a
+        read of a bit range of a packed value does: a write to a sibling part does not wake it, and
+        a part the block also writes is left out of its list (LRM 9.2.2.2.1 b). Two `always_comb`
+        procedures may therefore each give a different element of one array a default and then
+        override it (LRM 9.2.2.2).
+  - [ ] Two reads still wait on more than the standard's list holds, each running a procedure that
+        then reaches the same answer: an element of a queue, a dynamic array or an associative array
+        at a constant index waits on its whole container; and a part of an unpacked variable read
+        only in a way no single select spells -- what is left of a read once part of it is written
+        -- waits on the whole variable.
+  - [ ] A whole assignment that changed one element of an unpacked variable wakes every wait on a
+        part of it, and a slice assignment every wait on an element inside the slice, changed or
+        not.
+  - [ ] A part more than six selects down is waited on as the part six selects down that holds it,
+        so a write to a sibling beside it wakes its reader.
+  - [ ] A write to some bits of a packed value asks every wait on that value whether it reads them,
+        so its cost follows how many procedures wait on the value and not how many read the bits
+        written. Not measured on a wide vector with many readers.
   - [x] An `always_comb` or `always_latch` calling a function declared outside its own instance --
         reached through an interface port, by a name climbing out of the instance, down into a
         child, or in a package -- wakes on what that function reads, and on what the functions it

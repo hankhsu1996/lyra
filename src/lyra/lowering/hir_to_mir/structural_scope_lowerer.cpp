@@ -1170,7 +1170,7 @@ auto JoinedSideOf(
 auto PositionWithinNet(
     mir::CompilationUnit& unit, mir::Block& block,
     const JoinedPositions& operand, std::uint32_t offset) -> mir::ExprId {
-  const PathBits within = BitsWithinOwner(unit, block, operand.part);
+  const PathPositions within = BitsWithinOwner(unit, block, operand.part);
   return BuildToInt64Call(
       unit, block,
       BuildPositionSum(

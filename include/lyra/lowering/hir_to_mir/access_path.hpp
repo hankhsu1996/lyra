@@ -308,10 +308,10 @@ struct ReadThenWritten {
     UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath place)
     -> ReadThenWritten;
 
-// Which bits of the owner's packed value a path names: the lowest bit, counted
-// from the value's least significant bit in the position type, and how many
-// bits the part spans.
-struct PathBits {
+// Positions in a row within a value, in the position type: where they start
+// and how many there are. They are bits of a packed value, counted from its
+// least significant bit, or elements of an array, counted from its first.
+struct PathPositions {
   mir::ExprId first;
   std::uint64_t width = 0;
 };
@@ -322,7 +322,29 @@ struct PathBits {
 // may be a value the program or a construction supplies.
 [[nodiscard]] auto BitsWithinOwner(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
-    -> PathBits;
+    -> PathPositions;
+
+// Which part of its owner a path names, as a wait or a report is told of it.
+// A part of an unpacked value is named by the steps that reach it: an element
+// by its ordinal and a component by its index (LRM 7.4, 7.2). Where the path
+// goes on into a packed value, the part is bits of the value those steps
+// reach; where it ends in a run of elements (LRM 7.4.6), it is those elements
+// of the array they reach.
+struct NamedPart {
+  // One machine integer for each step to an element or a component, in order.
+  std::vector<mir::ExprId> steps;
+  // The bits or the elements named within the value the steps reach, none
+  // where the part is the whole of it.
+  std::optional<PathPositions> positions;
+  // Whether that is the part itself. Where the path goes on in a way no step
+  // stands for, as by an associative index, it is the last part the steps
+  // name, which holds the path's part and more.
+  bool exact = true;
+};
+
+[[nodiscard]] auto PartNamedBy(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> NamedPart;
 
 // Builds `lhs = rhs` against the part `path` names. Two shapes come out of it,
 // each an ordinary MIR node with nothing left to decide: replacing the whole of

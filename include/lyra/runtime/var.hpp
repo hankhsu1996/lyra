@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -26,7 +27,26 @@
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/wide.hpp"
 
+namespace lyra::value {
+
+template <typename T>
+class Queue;
+class RuntimeQueue;
+
+}  // namespace lyra::value
+
 namespace lyra::runtime {
+
+namespace detail {
+
+template <typename Container>
+inline constexpr bool kIsQueue = false;
+template <typename T>
+inline constexpr bool kIsQueue<value::Queue<T>> = true;
+template <>
+inline constexpr bool kIsQueue<value::RuntimeQueue> = true;
+
+}  // namespace detail
 
 // A value a wait reads by bit position (LRM 9.4.2): an integral value, of a
 // type known where it is compiled or one held as its words at a width it was
@@ -94,8 +114,9 @@ void KeepAfter(Change& change, const T& storage) {
 // before it; a net driver always has its net, which resolves again only where
 // the driver's own contribution moved (LRM 6.5).
 //
-// `PublishTransition` tells the owner the write changed it, with what can be
-// said about which of its bits moved.
+// `PublishTransition` tells the owner the write changed it: which part of the
+// owner's storage the write reached, and what can be said about which bits of
+// that part moved.
 //
 // Each sink claims the contract with a `static_assert(MutationSink<...>)`
 // beside its own definition, the way a value type claims its `lyra::value`
@@ -103,14 +124,43 @@ void KeepAfter(Change& change, const T& storage) {
 // names the handle in its own partial-write entry's return type and checking
 // the constraint there would depend on the sink being complete.
 template <class S>
-concept MutationSink = requires(S sink, const Change& change) {
-  typename S::ValueType;
-  { sink.AdmitsWrite() } -> std::same_as<bool>;
-  { sink.DisplacedStorage() } -> std::same_as<typename S::ValueType*>;
-  { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
-  { sink.Watched() } -> std::same_as<bool>;
-  sink.PublishTransition(change);
-};
+concept MutationSink =
+    requires(S sink, const PartPath& reached, const Change& change) {
+      typename S::ValueType;
+      { sink.AdmitsWrite() } -> std::same_as<bool>;
+      { sink.DisplacedStorage() } -> std::same_as<typename S::ValueType*>;
+      { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
+      { sink.Watched() } -> std::same_as<bool>;
+      sink.PublishTransition(reached, change);
+    };
+
+// The path of the one step to what `key` selects in a container. A position
+// names an element by its ordinal (LRM 7.4.5), which is that step, whether it
+// arrives as the position or as the ordinal read out of one; an index of any
+// other type has none (LRM 7.8), so the path stops there, inexact.
+template <typename Key>
+[[nodiscard]] auto StepTo(const Key& key) -> PartPath {
+  if constexpr (std::same_as<Key, value::Position>) {
+    return PartPath::Element(value::ReadPosition(key));
+  } else if constexpr (std::same_as<Key, std::optional<std::int64_t>>) {
+    return PartPath::Element(key);
+  } else {
+    return PartPath::Inexact();
+  }
+}
+
+// The same step as a reference keeps it (LRM 13.5.2). A reference to an
+// element of a queue stays good while other elements are added and removed
+// around it (LRM 7.10), so the ordinal it was taken at says nothing of where
+// the element is later: its path stops at the queue, inexact.
+template <typename Container, typename Key>
+[[nodiscard]] auto RetainedStepTo(const Key& key) -> PartPath {
+  if constexpr (detail::kIsQueue<Container>) {
+    return PartPath::Inexact();
+  } else {
+    return StepTo(key);
+  }
+}
 
 template <class Sink>
 class ScopedMutation;
@@ -397,10 +447,12 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     return this->Get();
   }
 
-  // Tells whoever waits here that a write changed the cell (LRM 4.3), passing
-  // over a wait whose bits `change` shows the write left alone.
-  void PublishTransition(const Change& change) {
-    current_runtime().WakeParkedOn(this->Members(), change);
+  // Tells whoever waits on the part of the cell at `reached`, on what that
+  // part lies in or on what lies in it that a write changed it (LRM 4.3),
+  // passing over a wait on the part whose bits `change` shows the write left
+  // alone.
+  void PublishTransition(const PartPath& reached, const Change& change) {
+    current_runtime().WakeParkedOn(*this, reached, change);
   }
 
   // Opens a write into the cell for the full-expression that writes. The cell's
@@ -443,7 +495,7 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     if (already_held()) {
       return;
     }
-    PublishTransition(ReplaceWhole(this->Get(), overwrite));
+    PublishTransition(PartPath{}, ReplaceWhole(this->Get(), overwrite));
   }
 
   // Whether a procedural continuous assignment shows through the cell (LRM
@@ -577,6 +629,9 @@ struct ErasedReference {
   // to a child's port, one a wait was built from -- still says which member it
   // is a copy of. None for a reference bound into no member.
   ErasedReference* member = nullptr;
+  // Which part of what holds it the storage is: the path the reference was
+  // formed by, from the whole.
+  PartPath part{};
 
   // Written here rather than in the library's own source because every write
   // through a reference asks them, and for storage whose variable nothing
@@ -601,10 +656,11 @@ struct ErasedReference {
   // of the value the reference names, and none is on every write's path.
 
   // Tells whoever waits on what holds the storage that a write through the
-  // reference changed it (LRM 4.3). A wait on an object reevaluates the
-  // expression that reached it, which decides whether the write was an event,
-  // so it is told nothing about which bits moved.
-  void Report(const Change& change) const;
+  // reference changed the part at `within` of what the reference names
+  // (LRM 4.3), `change` saying what it did to that part. A wait on an object
+  // reevaluates the expression that reached it, which decides whether the
+  // write was an event, so it is told nothing about what moved.
+  void Report(const PartPath& within, const Change& change) const;
 
   // A step can form what it reaches, which is a write into the variable, so
   // the variable admits it first.
@@ -621,12 +677,13 @@ struct ErasedReference {
   // an object's, have nothing to be told.
   void DriveContinuously() const;
 
-  // The reference to a part of what this one names, at `part`, which forming
-  // did `formed` to. The part has the same holder, which is told at once where
-  // forming it changed the storage -- an associative entry made by being bound
-  // (LRM 7.8.7). An index naming no element names storage that belongs to
-  // nothing (LRM 7.4.6).
-  [[nodiscard]] auto Part(void* part, value::Formation formed) const
+  // The reference to a part of what this one names, at `storage`, reached by
+  // the further steps `within` and which forming did `formed` to. The part has
+  // the same holder, which is told at once where forming it changed the
+  // storage -- an associative entry made by being bound (LRM 7.8.7). An index
+  // naming no element names storage that belongs to nothing (LRM 7.4.6).
+  [[nodiscard]] auto Part(
+      void* storage, value::Formation formed, const PartPath& within) const
       -> ErasedReference;
 };
 
@@ -692,8 +749,9 @@ class Ref {
     if (Storage().IsBitIdentical(new_val)) {
       return;
     }
-    erased_.Report(
-        ReplaceWhole(Storage(), [&] { StoreInto(Storage(), new_val); }));
+    PublishTransition(PartPath{}, ReplaceWhole(Storage(), [&] {
+                        StoreInto(Storage(), new_val);
+                      }));
   }
 
   // Opens a write into the referenced storage, as an observable cell itself
@@ -719,14 +777,14 @@ class Ref {
     value::Formation formed{};
     auto& element = Storage().ElementRef(key, formed);
     return Ref<std::remove_reference_t<decltype(element)>>{
-        erased_.Part(&element, formed)};
+        erased_.Part(&element, formed, RetainedStepTo<T>(key))};
   }
 
   template <std::size_t I>
   [[nodiscard]] auto ReferComponent() const {
     auto& component = Storage().template ComponentRef<I>();
-    return Ref<std::remove_reference_t<decltype(component)>>{
-        erased_.Part(&component, value::Formation::kExisting)};
+    return Ref<std::remove_reference_t<decltype(component)>>{erased_.Part(
+        &component, value::Formation::kExisting, PartPath::Child(I))};
   }
 
   // The `MutationSink` surface. Storage that belongs to no variable has no
@@ -779,8 +837,10 @@ class Ref {
         erased_.holder);
   }
 
-  void PublishTransition(const Change& change) const {
-    erased_.Report(change);
+  // A write through the reference changed the part at `within` of what it
+  // names, which lies where the reference's own steps led.
+  void PublishTransition(const PartPath& within, const Change& change) const {
+    erased_.Report(within, change);
   }
 
  private:
@@ -1014,27 +1074,33 @@ class WriteBracket {
     throw InternalError("WriteBracket: unknown formation");
   }
 
-  // A slice write moved at least one element.
-  void Moved() {
-    if (Open()) {
-      outcome_ = Outcome::kChanged;
+  // A write of the `count` elements from `start` of the part reached (LRM 7.6)
+  // moved at least one of them. Those lying before the first element are no
+  // elements of it.
+  void Moved(std::int64_t start, std::int64_t count) {
+    if (!Open()) {
+      return;
     }
+    outcome_ = Outcome::kChanged;
+    const std::int64_t first = std::max<std::int64_t>(start, 0);
+    moved_ = {
+        .lsb = static_cast<std::uint64_t>(first),
+        .width = static_cast<std::uint64_t>(start + count - first)};
+  }
+
+  // The write went on to a part of the one it had reached, by `step`.
+  void Stepped(const PartPath& step) {
+    reached_ = reached_.Join(step);
   }
 
   // The part landed on is not what it was, and `change` says which of its bits
-  // moved. A write into a bit-addressed value lands on the whole or on some of
-  // its bits, and either way `change` names bits of the whole by their
-  // position; the waits on any other value are not bit-addressed.
+  // moved where it is a value with bits to speak of.
   void Landed(const Change& change) {
     if (!Open()) {
       return;
     }
     outcome_ = Outcome::kSettled;
-    if constexpr (BitAddressed<ValueType>) {
-      sink_.PublishTransition(change);
-    } else {
-      sink_.PublishTransition(Change::Whole());
-    }
+    sink_.PublishTransition(reached_, change);
   }
 
   // The end of the write, with the full-expression that opened it.
@@ -1045,7 +1111,7 @@ class WriteBracket {
         return;
       case Outcome::kChanged:
         if (watched_) {
-          sink_.PublishTransition(Change::Whole());
+          sink_.PublishTransition(reached_, Change::Elements(moved_));
         }
         return;
     }
@@ -1071,6 +1137,11 @@ class WriteBracket {
   ValueType* storage_ = nullptr;
   bool watched_ = false;
   Outcome outcome_ = Outcome::kUndecided;
+  // The part of the storage the steps taken so far reached.
+  PartPath reached_;
+  // The elements of that part a slice write moved, none in particular where
+  // the write changed the part by forming one.
+  value::BitPositions moved_{};
   std::optional<ValueType> discarded_;
 };
 
@@ -1113,6 +1184,9 @@ class Designation {
     value::Formation formed{};
     auto& element = part_->ElementRef(key, formed);
     write_->Formed(formed);
+    if (write_->Undecided()) {
+      write_->Stepped(StepTo(key));
+    }
     return Designation<Sink, std::remove_reference_t<decltype(element)>>{
         *write_, element};
   }
@@ -1120,6 +1194,9 @@ class Designation {
   template <std::size_t I>
   auto ComponentRef() {
     auto& component = part_->template ComponentRef<I>();
+    if (write_->Undecided()) {
+      write_->Stepped(PartPath::Child(I));
+    }
     return Designation<Sink, std::remove_reference_t<decltype(component)>>{
         *write_, component};
   }
@@ -1137,7 +1214,8 @@ class Designation {
   template <typename Position>
   auto SliceRef(const Position& start, std::int64_t count) {
     auto slice = part_->SliceRef(start, count);
-    return DesignatedSlice<Sink, decltype(slice)>{*write_, std::move(slice)};
+    return DesignatedSlice<Sink, decltype(slice)>{
+        *write_, std::move(slice), value::ReadPosition(start), count};
   }
 
   auto operator*() -> Part& {
@@ -1165,8 +1243,10 @@ class Designation {
 template <class Sink, class Slice>
 class DesignatedSlice {
  public:
-  DesignatedSlice(WriteBracket<Sink>& write, Slice slice)
-      : write_(&write), slice_(std::move(slice)) {
+  DesignatedSlice(
+      WriteBracket<Sink>& write, Slice slice, std::optional<std::int64_t> start,
+      std::int64_t count)
+      : write_(&write), slice_(std::move(slice)), start_(start), count_(count) {
   }
 
   DesignatedSlice(const DesignatedSlice&) = delete;
@@ -1181,8 +1261,10 @@ class DesignatedSlice {
 
   template <typename Value>
   auto operator=(const Value& value) -> DesignatedSlice& {
+    // A start that names no position assigns nothing, so one that moved an
+    // element names one.
     if (slice_.Assign(value)) {
-      write_->Moved();
+      write_->Moved(*start_, count_);
     }
     return *this;
   }
@@ -1190,6 +1272,8 @@ class DesignatedSlice {
  private:
   WriteBracket<Sink>* write_;
   Slice slice_;
+  std::optional<std::int64_t> start_;
+  std::int64_t count_;
 };
 
 // Bits of a bit-addressed value designated within a write (LRM 11.5.1), named

@@ -159,15 +159,17 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   // LRM 7.4.5 / 7.4.6 contiguous-range selector: a fixed-size unpacked array of
   // `count` elements from `start`. An element outside the array, and every
   // element of a start that names no position, reads the canonical default.
+  template <typename Result>
   [[nodiscard]] auto Slice(const Position& start, std::int64_t count) const
-      -> UnpackedArray<T> {
-    return UnpackedArray<T>::SliceOf(
-        core_, ReadPosition(start), SliceCount(count));
+      -> Result {
+    Result::RequireDeclared(count);
+    return Result::SliceOf(Elements(), ReadPosition(start));
   }
 
   [[nodiscard]] auto SliceRef(const Position& start, std::int64_t count)
       -> ArraySliceRef<T> {
-    return ArraySliceRef<T>{core_, ReadPosition(start), SliceCount(count)};
+    return ArraySliceRef<T>{
+        MutableElements(), ReadPosition(start), SliceCount(count)};
   }
 
   [[nodiscard]] auto operator==(const DynamicArray& other) const ->
@@ -235,6 +237,19 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
     return static_cast<std::size_t>(count);
   }
 
+  // Puts the value that was at `order[k]` at index `k` (LRM 7.12.2).
+  void Permute(std::span<const std::size_t> order) {
+    core_.Permute(order);
+  }
+
+  // The elements, in index order, where this generation holds them.
+  [[nodiscard]] auto Elements() const -> std::span<const T> {
+    return {static_cast<const T*>(core_.At(0)), core_.Count()};
+  }
+  [[nodiscard]] auto MutableElements() -> std::span<T> {
+    return {static_cast<T*>(core_.At(0)), core_.Count()};
+  }
+
   BasicDynamicArray<StaticElem<T>> core_;
 };
 
@@ -242,7 +257,6 @@ static_assert(LyraValue<DynamicArray<LogicVector<4>>>);
 static_assert(Sized<DynamicArray<LogicVector<4>>>);
 static_assert(BitstreamSizable<DynamicArray<LogicVector<4>>>);
 static_assert(Indexable<DynamicArray<LogicVector<4>>>);
-static_assert(Sliceable<DynamicArray<LogicVector<4>>>);
 static_assert(SliceableRef<DynamicArray<LogicVector<4>>>);
 static_assert(Sortable<DynamicArray<LogicVector<4>>>);
 static_assert(OrdinalElements<DynamicArray<LogicVector<4>>>);

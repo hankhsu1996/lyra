@@ -97,8 +97,17 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
 - [ ] A fill or an extension of a type that owns its words is carried out each time it is evaluated,
       a pass over the value, where naming a constant was a copy of the same length. What that costs
       a design evaluating one often is not measured.
-- [ ] A wait on part of an unpacked aggregate is passed over by a write that reached another part of
-      it.
+- [x] A wait on part of an unpacked aggregate is passed over by a write that reached another part of
+      it, and a write visits only the waits on what it reached: 4,096 `always_comb` stages chained
+      through one array and driven 200 times run in 0.12 s on the execution backend, `--release`.
+- [x] On the C++ backend a fixed-size unpacked array is its elements in place, the count part of its
+      type, and one past 1,024 bytes owns its elements apart from whatever holds it. An element
+      keeps its address across every assignment on both backends, so a reference to one (LRM 13.5.2)
+      goes on naming it.
+- [ ] On the execution backend a fixed-size unpacked array is laid out in place from its type. It is
+      still an object of the library's holding its elements apart, and an element read is a call.
+      Until it is, building a fixed-size array is handed a count and an element default on both
+      backends, which its type already states and the C++ backend only checks.
 - [x] Constants are compile-time constants on both backends, and the execution backend lays out a
       value, a cell and a frame slot of an integral up to 64 bits from the type. The one exception
       is a constant of a type that owns its words on the C++ backend, which the host compiler is not

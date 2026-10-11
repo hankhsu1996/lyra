@@ -78,6 +78,13 @@ class RuntimeEffects {
   void WakeParkedOn(
       IntrusiveList<WaitMembership>& members, const Change& change);
 
+  // The same for a write to the part of `place` at `written`, `change` being
+  // what the write did to that part: the waits on the part, on each part
+  // holding it and on each part inside it are asked, and no other wait of the
+  // place is visited.
+  void WakeParkedOn(
+      Observable& place, const PartPath& written, const Change& change);
+
   // What every object's change also reaches: a wait whose expression reads an
   // object no report could follow is reevaluated whenever a property of any
   // object is written, which LRM 9.4.2 permits.

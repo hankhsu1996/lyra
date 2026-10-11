@@ -12,6 +12,22 @@ reference to a shield slot -- is settled by
 reached by an entry the lowering names, and what a target does behind that entry, proxy included, is
 its own realization. The representation this entry settles is unchanged.
 
+**Amended 2026-10-10: on the C++ backend the wrapper holds its elements in place and its type states
+the count**, `lyra::value::UnpackedArray<T, N>`. Decision 2's private `std::vector<T>`, and the
+rejection of `std::array<T, N>` below, are superseded for these reasons. An element of an unpacked
+array may be passed by reference, and only an element of a variable-size array stops naming what it
+named (LRM 13.5.2); a wrapper that replaced its storage on whole assignment left such a reference on
+freed storage. The reasons given for the rejection no longer hold: the count is one more template
+argument where the type is spelled, every container still answers one method surface so nothing
+dispatches on container kind, and an element's default is its type's own default construction since
+a value's width became part of its type, so no prototype is needed to size one (finding F4). Three
+rules a later change meets: an array of at most 1,024 bytes lies in whatever holds it, and a larger
+one owns one run of elements apart from itself, the type deciding, so a frame's size never follows a
+declared size; assignment writes each element where it lies and never takes another array's run; and
+a structure states its declared default once, so an element's default is its type's. The execution
+backend still holds the array as an object of the library's, which assigns its elements in place for
+the same reason.
+
 ## Why this decision matters
 
 SystemVerilog has multiple array families. The packed family is handled by

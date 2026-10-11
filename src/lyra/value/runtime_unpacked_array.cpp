@@ -79,10 +79,42 @@ RuntimeUnpackedArray::RuntimeUnpackedArray(const RuntimeUnpackedArray&) =
     default;
 RuntimeUnpackedArray::RuntimeUnpackedArray(RuntimeUnpackedArray&&) noexcept =
     default;
-auto RuntimeUnpackedArray::operator=(const RuntimeUnpackedArray&)
-    -> RuntimeUnpackedArray& = default;
-auto RuntimeUnpackedArray::operator=(RuntimeUnpackedArray&&) noexcept
-    -> RuntimeUnpackedArray& = default;
+// An array that holds elements keeps them where they are: an assignment gives
+// each element the value of the one in the same place, so whatever names an
+// element goes on naming it (LRM 13.5.2). Only an array holding none yet takes
+// the other's elements whole.
+auto RuntimeUnpackedArray::operator=(const RuntimeUnpackedArray& other)
+    -> RuntimeUnpackedArray& {
+  if (this == &other) {
+    return *this;
+  }
+  if (!AssignInPlace(other)) {
+    core_ = other.core_;
+  }
+  return *this;
+}
+auto RuntimeUnpackedArray::operator=(RuntimeUnpackedArray&& other) noexcept
+    -> RuntimeUnpackedArray& {
+  if (this == &other) {
+    return *this;
+  }
+  if (!AssignInPlace(other)) {
+    core_ = std::move(other.core_);
+  }
+  return *this;
+}
+
+auto RuntimeUnpackedArray::AssignInPlace(const RuntimeUnpackedArray& other)
+    -> bool {
+  if (!core_.has_value() || !other.core_.has_value() ||
+      core_->Count() != other.core_->Count()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < core_->Count(); ++i) {
+    core_->Element().Assign(core_->At(i), other.core_->At(i));
+  }
+  return true;
+}
 RuntimeUnpackedArray::~RuntimeUnpackedArray() = default;
 
 // An array whose declaration has not installed its element type has no

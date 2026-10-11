@@ -546,7 +546,7 @@ class ResolvedNet<T> : public ConnectableNet {
           value::BitPositions{.lsb = offset, .width = positions.Count()});
       WritePositions(net_->resolved_, offset, positions);
       if (const std::optional<Change> change = kept.ChangeTo(net_->resolved_)) {
-        runtime.WakeParkedOn(net_->Members(), *change);
+        runtime.WakeParkedOn(*net_, PartPath{}, *change);
       }
     }
 
@@ -841,7 +841,7 @@ class ResolvedNet<T> : public Observable {
       return;
     }
     resolved_ = next;
-    runtime.WakeParkedOn(this->Members(), Change::Whole());
+    runtime.WakeParkedOn(*this, PartPath{}, Change::Whole());
   }
 
   T resolved_{};
@@ -949,8 +949,12 @@ class Driver {
   [[nodiscard]] static auto Watched() -> bool {
     return true;
   }
-  void PublishTransition(const Change& change) const {
-    Net().ReresolveJoint(current_runtime(), change);
+  // What the change says of the contribution's bits holds only where the
+  // write landed on the whole of it; a write into part of it says only that
+  // the contribution moved.
+  void PublishTransition(const PartPath& reached, const Change& change) const {
+    Net().ReresolveJoint(
+        current_runtime(), reached.IsWhole() ? change : Change::Whole());
   }
 
  private:

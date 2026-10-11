@@ -416,13 +416,16 @@ auto lyra_rt_delay_real(
 
 // Builds one leaf of a wait: the place it watches, what decides whether what
 // happens there is an event -- which the leaves watching for one event share --
-// and which bits of that place's packed encoding it reads, as a
-// `(lsb_bit_offset, bit_width)` pair, a width of zero being the whole of it and
-// what a named event's leaf carries. The pair crosses as machine integers, like
-// every runtime scalar. The leaf is built in storage the caller gives.
+// which part of the place it watches, as the steps that reach the part (an
+// element's ordinal, a member's index; none for the whole place), and which
+// positions of that part it reads -- bits of a packed value, elements of an
+// array -- as a `(lsb_bit_offset, bit_width)` pair, a width of zero being the
+// whole of it and what a named event's leaf carries. The steps and the pair
+// cross as machine integers, like every runtime scalar. The leaf is built in
+// storage the caller gives.
 auto lyra_rt_make_trigger(
-    void* observable, const void* observation, std::int64_t lsb_bit_offset,
-    std::int64_t bit_width, void* out) -> void*;
+    void* observable, const void* observation, LyraSpan steps,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width, void* out) -> void*;
 
 // What decides whether reaching a wait is an event for it (LRM 9.4.2). Two
 // halves, and one entry per combination of them, so the call states which form
@@ -474,7 +477,8 @@ auto lyra_rt_park_at(void* runtime, void* wait) -> bool;
 
 // What an evaluation states the places it reached in: an empty report; a place
 // read and the bits of it read; a place reached through a handle; every object
-// at once; the bracket around a call made on a handle; a place written;
+// at once; the bracket around a call made on a handle; a place written; each
+// place with the part of it meant, as a leaf names one;
 // settling it as a procedure's implicit list once all is reported; the bracket
 // a function reporting into it takes, which answers one or zero for whether it
 // goes on; and one or zero for whether the function then runs. A function
@@ -483,16 +487,16 @@ auto lyra_rt_park_at(void* runtime, void* wait) -> bool;
 auto lyra_rt_read_report_empty(void* out) -> void*;
 auto lyra_rt_read_report_for_implicit_list(void* out) -> void*;
 void lyra_rt_read_report_add(
-    void* report, void* place, std::int64_t lsb_bit_offset,
+    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
     std::int64_t bit_width);
 void lyra_rt_read_report_add_through_handle(
-    void* report, void* place, std::int64_t lsb_bit_offset,
+    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
     std::int64_t bit_width);
 void lyra_rt_read_report_enter_call_on_handle(void* report);
 void lyra_rt_read_report_leave_call_on_handle(void* report);
 void lyra_rt_read_report_add_every_object(void* report);
 void lyra_rt_read_report_add_write(
-    void* report, void* place, std::int64_t lsb_bit_offset,
+    void* report, void* place, LyraSpan steps, std::int64_t lsb_bit_offset,
     std::int64_t bit_width);
 void lyra_rt_read_report_settle_as_implicit_list(void* report);
 auto lyra_rt_read_report_enter(void* report) -> std::int64_t;

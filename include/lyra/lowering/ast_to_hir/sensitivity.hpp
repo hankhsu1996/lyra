@@ -18,13 +18,25 @@ class Statement;
 class SubroutineSymbol;
 class Symbol;
 class TimingControl;
+class Type;
 class ValueSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
 
-// All of the symbol, the form a non-bit-addressed observation (e.g. a port
-// connection) produces.
+// How a part of a value of some type can be stated to a wait or taken out of
+// one: as bits of a packed vector, in the numbering every layer shares; as the
+// select the source wrote, where the value is an unpacked array of fixed size
+// or an unpacked structure, whose elements and members lie one after another;
+// or not at all, the value being read and written whole -- an enumeration, a
+// string, a real, a container sized while the program runs.
+enum class PartAddressing : std::uint8_t { kBits, kSelects, kWholeOnly };
+
+[[nodiscard]] auto PartAddressingOf(const slang::ast::Type& type)
+    -> PartAddressing;
+
+// All of the symbol: what an access to a value with no statable parts is, and
+// what an access is taken for where the part it reached cannot be stated.
 struct WholePart {};
 
 // The bits the source's own selects name: the longest static prefixes (LRM
@@ -36,12 +48,14 @@ struct SelectedParts {
   std::vector<const slang::ast::Expression*> prefixes;
 };
 
-// Bits of the symbol's flat-bit encoding, first and last bit, that no select in
-// the analyzed node names.
+// Bits of a packed vector, first and last bit, that no select in the analyzed
+// node names.
 struct UnselectedBits {
   std::uint64_t first = 0;
   std::uint64_t last = 0;
 };
+
+using StatedPart = std::variant<WholePart, SelectedParts, UnselectedBits>;
 
 // One part of a declaration a text reads or writes: which symbol, which part
 // of it, and the names the analyzed text reaches it by.
@@ -55,7 +69,7 @@ struct UnselectedBits {
 // the access was put together without a text to take them from.
 struct AccessedPart {
   const slang::ast::ValueSymbol* symbol = nullptr;
-  std::variant<WholePart, SelectedParts, UnselectedBits> part;
+  StatedPart part;
   std::vector<const slang::ast::Expression*> reached_by;
 };
 

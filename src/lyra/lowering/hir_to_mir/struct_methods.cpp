@@ -13,9 +13,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/bit_vector.hpp"
@@ -186,9 +188,11 @@ constexpr std::array<support::BuiltinFn, 4> kNetFolds{
 class Synthesizer {
  public:
   Synthesizer(
-      UnitLowerer& lowerer, mir::TypeDeclarationRef declaration,
-      mir::TypeId structure, std::vector<mir::TypeId> members)
+      UnitLowerer& lowerer, const hir::UnpackedStructType& source,
+      mir::TypeDeclarationRef declaration, mir::TypeId structure,
+      std::vector<mir::TypeId> members)
       : lowerer_(&lowerer),
+        source_(&source),
         structure_(structure),
         declaration_(std::move(declaration)),
         members_(std::move(members)) {
@@ -206,6 +210,7 @@ class Synthesizer {
   auto FromBitstream() -> mir::StructMethod;
   auto Fold(support::BuiltinFn fold) -> mir::StructMethod;
   auto FilledLike() -> mir::StructMethod;
+  auto DeclaredDefault() -> mir::StructMethod;
 
  private:
   auto FilledMember(
@@ -280,6 +285,7 @@ class Synthesizer {
   }
 
   UnitLowerer* lowerer_;
+  const hir::UnpackedStructType* source_;
   mir::TypeId structure_;
   mir::TypeDeclarationRef declaration_;
   std::vector<mir::TypeId> members_;
@@ -518,6 +524,15 @@ auto Synthesizer::FilledLike() -> mir::StructMethod {
       });
 }
 
+auto Synthesizer::DeclaredDefault() -> mir::StructMethod {
+  return Method(
+      support::BuiltinFn::kDeclaredDefault, {}, structure_,
+      [&](mir::Block& block, const std::vector<mir::LocalId>&) {
+        return block.exprs.Add(
+            BuildDeclaredStructValue(*lowerer_, block, *source_, structure_));
+      });
+}
+
 // Member `i` with every bit the fill: a packed member is the fill repeated
 // across its width (LRM 11.4.12.1), at the signedness it declares, and any
 // other member answers for itself.
@@ -542,13 +557,15 @@ auto Synthesizer::FilledMember(
 }  // namespace
 
 auto StructMethodsOf(
-    UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
-    mir::TypeId structure, std::span<const mir::TypeId> members)
-    -> std::vector<mir::StructMethod> {
+    UnitLowerer& lowerer, const hir::UnpackedStructType& source,
+    const mir::TypeDeclarationRef& declaration, mir::TypeId structure,
+    std::span<const mir::TypeId> members) -> std::vector<mir::StructMethod> {
   const mir::CompilationUnit& unit = lowerer.Unit();
   Synthesizer synthesize(
-      lowerer, declaration, structure, {members.begin(), members.end()});
+      lowerer, source, declaration, structure,
+      {members.begin(), members.end()});
   std::vector<mir::StructMethod> methods;
+  methods.push_back(synthesize.DeclaredDefault());
   methods.push_back(synthesize.Equality());
   methods.push_back(synthesize.Inequality());
   if (EveryPart(unit, members, HasCaseEquality)) {

@@ -235,11 +235,11 @@ class FileTable {
   // caller always supplies `sv_start` and `count`, materializing the lowest
   // declared index and the whole remaining range where the SV call leaves them
   // out, so one entry serves every form the source may write.
-  template <value::IntegralValue T>
+  template <value::IntegralValue T, std::size_t N>
   auto ReadMemory(
-      value::UnpackedArray<T> dest, std::int64_t fd,
+      value::UnpackedArray<T, N> dest, std::int64_t fd,
       std::span<const std::int64_t> bounds, std::int64_t sv_start,
-      std::int64_t count) -> BinaryRead<value::UnpackedArray<T>>;
+      std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>>;
 
   // LRM 21.3.5 $fseek. `operation` is 0/1/2 for SEEK_SET / SEEK_CUR /
   // SEEK_END. Returns 0 on success or -1 on error. Per LRM, any pending
@@ -315,11 +315,11 @@ auto FileTable::Read(T dest, std::int64_t fd) -> BinaryRead<T> {
   return BinaryRead<T>{read, std::move(dest)};
 }
 
-template <value::IntegralValue T>
+template <value::IntegralValue T, std::size_t N>
 auto FileTable::ReadMemory(
-    value::UnpackedArray<T> dest, std::int64_t fd,
+    value::UnpackedArray<T, N> dest, std::int64_t fd,
     std::span<const std::int64_t> bounds, std::int64_t sv_start,
-    std::int64_t count) -> BinaryRead<value::UnpackedArray<T>> {
+    std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>> {
   const value::UnpackedRange declared = value::UnpackedRangesOf(bounds).front();
   const std::int32_t read = ReadMemoryWords(
       *this, fd, T::kWidth, declared, sv_start, count,
@@ -329,7 +329,7 @@ auto FileTable::ReadMemory(
         dest.ElementRef(
             value::Position::FromInt(declared.ToOrdinal(sv_index))) = word;
       });
-  return BinaryRead<value::UnpackedArray<T>>{
+  return BinaryRead<value::UnpackedArray<T, N>>{
       value::Int::FromInt(read), std::move(dest)};
 }
 

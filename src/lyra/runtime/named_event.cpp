@@ -1,5 +1,6 @@
 #include "lyra/runtime/named_event.hpp"
 
+#include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/integral.hpp"
 
@@ -10,7 +11,7 @@ NamedEvent::~NamedEvent() = default;
 
 void NamedEvent::Trigger(RuntimeEffects& runtime) {
   last_triggered_at_ = runtime.Now();
-  runtime.WakeParkedOn(Members(), Change::Whole());
+  runtime.WakeParkedOn(*this, PartPath{}, Change::Whole());
 }
 
 auto NamedEvent::Triggered(RuntimeEffects& runtime) const -> value::Bit {

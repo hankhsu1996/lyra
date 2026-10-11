@@ -1456,6 +1456,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByValue{.realized = kForWhatAnAggregateNetResolves};
     case support::BuiltinFn::kMergeConditional:
       return NamedByValue{.realized = kForUnpackedArrays};
+    // What a structure's declaration states, which the structure's own
+    // generated body answers and nothing the library holds does.
+    case support::BuiltinFn::kDeclaredDefault:
+      return NamedByResult{.realized = {}};
 
     // The factories. Each builds a value out of operands that are the material
     // of one -- a machine integer, a byte array, the member a union is to hold

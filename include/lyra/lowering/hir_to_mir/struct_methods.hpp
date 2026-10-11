@@ -4,6 +4,7 @@
 #include <span>
 #include <vector>
 
+#include "lyra/hir/type.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -19,13 +20,14 @@ class UnitLowerer;
 
 // A method for every operation on a whole value the struct `declaration`
 // names has (LRM 7.2), over values of `structure` whose members are of
-// `members`. Asked while the declaration is being made, so what the struct
+// `members`, and the value its declaration `source` gives a variable of it to
+// start as. Asked while the declaration is being made, so what the struct
 // itself answers is read off its members; a member that is itself a struct
 // is reached by the declaration naming it, which is settled before this one.
 [[nodiscard]] auto StructMethodsOf(
-    UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
-    mir::TypeId structure, std::span<const mir::TypeId> members)
-    -> std::vector<mir::StructMethod>;
+    UnitLowerer& lowerer, const hir::UnpackedStructType& source,
+    const mir::TypeDeclarationRef& declaration, mir::TypeId structure,
+    std::span<const mir::TypeId> members) -> std::vector<mir::StructMethod>;
 
 // `entry`'s question asked of a value, with `operands` after the value it is
 // asked of: the method of the struct's declaration where the type deciding it

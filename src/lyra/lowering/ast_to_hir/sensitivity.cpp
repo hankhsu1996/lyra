@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <iterator>
+#include <optional>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -29,6 +31,9 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/Type.h>
+
+#include "lyra/base/internal_error.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -142,16 +147,17 @@ auto IsStateOutside(
          !variable.flags.has(slang::ast::VariableFlags::CompilerGenerated);
 }
 
-// The bits `[lo, hi]` of `symbol` as the source names them: the prefixes among
-// `paths` rooted at it whose bits lie inside the range, one per distinct set of
-// bits, where together they leave none of it out -- and the bits themselves
-// where they do not.
+// The run `[first, last]` of `symbol` as an access states it, none where it
+// cannot be stated. The prefixes among `paths` rooted at the symbol that lie
+// inside the run, one per distinct stretch of it, name it where together they
+// leave none of it out. A run they do not make up is, for a packed vector,
+// those bits; for any other value the front end counts it in a numbering of
+// its own, which no later layer shares.
 auto PartReached(
     const slang::ast::ValueSymbol& symbol,
     std::pair<std::uint64_t, std::uint64_t> range,
-    std::span<const slang::ast::ValuePath> paths)
-    -> std::variant<WholePart, SelectedParts, UnselectedBits> {
-  const UnselectedBits unnamed{.first = range.first, .last = range.second};
+    std::span<const slang::ast::ValuePath> paths) -> std::optional<StatedPart> {
+  const PartAddressing addressing = PartAddressingOf(symbol.getType());
   std::vector<const slang::ast::ValuePath*> inside;
   for (const slang::ast::ValuePath& path : paths) {
     if (path.lsp == nullptr || path.rootSymbol() != &symbol) continue;
@@ -169,10 +175,22 @@ auto PartReached(
   });
   std::uint64_t next = range.first;
   for (const slang::ast::ValuePath* path : by_first) {
-    if (path->lspBounds.first > next) return unnamed;
+    if (path->lspBounds.first > next) break;
     next = std::max(next, path->lspBounds.second + 1);
   }
-  if (next <= range.second) return unnamed;
+  const bool made_up = next > range.second;
+  switch (addressing) {
+    case PartAddressing::kWholeOnly:
+      return std::nullopt;
+    case PartAddressing::kSelects:
+      if (!made_up) return std::nullopt;
+      break;
+    case PartAddressing::kBits:
+      if (!made_up) {
+        return UnselectedBits{.first = range.first, .last = range.second};
+      }
+      break;
+  }
   SelectedParts named;
   named.prefixes.reserve(inside.size());
   for (const slang::ast::ValuePath* path : inside) {
@@ -214,39 +232,65 @@ auto FlattenReadSet(
     const std::vector<const slang::ast::Expression*> names =
         NamesReaching(*symbol, paths);
     for (auto it = bitmap.begin(); it != bitmap.end(); ++it) {
+      // A read whose part cannot be stated is a read of the whole, which is
+      // every part it could have been.
       out.push_back(
           {.symbol = symbol,
-           .part = PartReached(*symbol, it.bounds(), paths),
+           .part =
+               PartReached(*symbol, it.bounds(), paths).value_or(WholePart{}),
            .reached_by = names});
     }
   }
   return out;
 }
 
-// What `lvalues` write, one write per run of a symbol's bits assigned, each
-// named by the prefixes in `paths` that make it up, as a read is.
+// What `lvalues` write, one write per run of a symbol assigned, each named by
+// the prefixes in `paths` that make it up, as a read is. A write is taken out
+// of a read only where the two compare exactly, so a write whose part cannot
+// be stated is stated only where it is the whole of the symbol, and is
+// otherwise left out rather than taking the whole away.
+//
+// A prefix names what is written only where the path it heads stops at it. A
+// path that goes on past its prefix -- into an entry of an associative array,
+// an element at an index the program computes -- writes some of what the
+// prefix names, and for a value whose parts are stated by selects that prefix
+// would say all of it was written.
 auto FlattenWrites(
     std::span<const slang::analysis::DFAResults::LValueSymbol> lvalues,
     std::span<const slang::ast::ValuePath> paths) -> std::vector<AccessedPart> {
+  std::vector<slang::ast::ValuePath> ending_at_their_prefix;
+  std::ranges::copy_if(
+      paths, std::back_inserter(ending_at_their_prefix),
+      [](const slang::ast::ValuePath& path) { return path.isFullyStatic(); });
   std::vector<AccessedPart> out;
   for (const auto& lvalue : lvalues) {
     const slang::ast::ValueSymbol& symbol = *lvalue.symbol;
-    const slang::ast::Type& type = symbol.getType();
-    // A write is taken out of a read only where the two compare exactly. A
-    // packed value's bits do, so the bits written are stated; anything else is
-    // watched whole, so only a write of the whole of it is stated, and a write
-    // of part of one is left out rather than taking the whole away.
-    const bool bit_addressed = type.isIntegral() && !type.isEnum();
-    const std::uint64_t width = type.getSelectableWidth();
+    const std::uint64_t width = symbol.getType().getSelectableWidth();
     const std::vector<const slang::ast::Expression*> names =
         NamesReaching(symbol, paths);
+    const auto naming = [&]() -> std::span<const slang::ast::ValuePath> {
+      switch (PartAddressingOf(symbol.getType())) {
+        case PartAddressing::kSelects:
+          return ending_at_their_prefix;
+        case PartAddressing::kBits:
+        case PartAddressing::kWholeOnly:
+          return paths;
+      }
+      throw InternalError("FlattenWrites: unknown part addressing");
+    }();
     for (auto it = lvalue.assigned.begin(); it != lvalue.assigned.end(); ++it) {
       const auto [first, last] = it.bounds();
-      if (!bit_addressed && (first != 0 || last + 1 < width)) continue;
-      out.push_back(
-          {.symbol = &symbol,
-           .part = PartReached(symbol, it.bounds(), paths),
-           .reached_by = names});
+      std::optional<StatedPart> reached =
+          PartReached(symbol, it.bounds(), naming);
+      if (reached.has_value()) {
+        out.push_back(
+            {.symbol = &symbol,
+             .part = *std::move(reached),
+             .reached_by = names});
+      } else if (first == 0 && last + 1 >= width) {
+        out.push_back(
+            {.symbol = &symbol, .part = WholePart{}, .reached_by = names});
+      }
     }
   }
   return out;
@@ -365,6 +409,18 @@ class LoopControlCollector
 };
 
 }  // namespace
+
+auto PartAddressingOf(const slang::ast::Type& type) -> PartAddressing {
+  const slang::ast::Type& canonical = type.getCanonicalType();
+  if (canonical.isIntegral() && !canonical.isEnum()) {
+    return PartAddressing::kBits;
+  }
+  if (canonical.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType ||
+      canonical.isUnpackedStruct()) {
+    return PartAddressing::kSelects;
+  }
+  return PartAddressing::kWholeOnly;
+}
 
 SensitivityAnalyzer::SensitivityAnalyzer()
     : manager_(

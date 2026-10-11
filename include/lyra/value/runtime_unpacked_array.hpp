@@ -185,6 +185,10 @@ class RuntimeUnpackedArray {
 
   explicit RuntimeUnpackedArray(Core core);
 
+  // Gives each element the value of `other`'s in the same place, answering
+  // whether both hold the same number of elements to do it over.
+  auto AssignInPlace(const RuntimeUnpackedArray& other) -> bool;
+
   void RequireInstalled() const;
   [[nodiscard]] auto Installed() const -> const Core&;
   [[nodiscard]] auto Installed() -> Core&;
