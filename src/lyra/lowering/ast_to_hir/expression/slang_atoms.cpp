@@ -4,6 +4,7 @@
 
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Scope.h>
+#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
@@ -355,6 +356,19 @@ auto LowerRealConversionName(slang::parsing::KnownSystemName name)
     default:
       return std::nullopt;
   }
+}
+
+auto ArgLValue(const slang::ast::Expression& expr)
+    -> const slang::ast::Expression* {
+  if (expr.kind != slang::ast::ExpressionKind::Assignment) return nullptr;
+  const auto& assignment = expr.as<slang::ast::AssignmentExpression>();
+  const slang::ast::Expression* filler = &assignment.right();
+  while (filler->kind == slang::ast::ExpressionKind::Conversion) {
+    filler = &filler->as<slang::ast::ConversionExpression>().operand();
+  }
+  return filler->kind == slang::ast::ExpressionKind::EmptyArgument
+             ? &assignment.left()
+             : nullptr;
 }
 
 auto CompoundExpansionOf(const slang::ast::Expression& slang_expanded_rhs)

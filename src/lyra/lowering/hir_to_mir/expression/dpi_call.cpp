@@ -17,7 +17,6 @@
 #include "lyra/hir/foreign_export.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
-#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
@@ -635,21 +634,28 @@ auto PopulateForeignImportBoundary(
     // An actual the foreign side writes back to is read to seed its boundary
     // object and written once the call returns, and the source writes it once.
     std::optional<Lvalue> written_place;
-    mir::TypeId actual_type{};
+    mir::TypeId crossing_type{};
     mir::ExprId seed_sv{};
     if (support::DpiDirectionWritesBack(param.direction)) {
       const hir::Expr& actual_hir = hir_exprs.Get(actual);
       auto place_or = LowerLvalue(lowerer, actual_hir, cframe);
       if (!place_or) return std::unexpected(std::move(place_or.error()));
-      actual_type = unit_lowerer.TranslateType(actual_hir.type);
       auto taken = ReadThenWrite(unit_lowerer, cframe, *std::move(place_or));
       if (!taken) return std::unexpected(std::move(taken.error()));
-      seed_sv = taken->incoming;
+      // What crosses is a value of the formal's type, which the actual's is
+      // brought to as an assignment to the formal would bring it (LRM 13.5).
+      // An open array has no type of its own to bring it to: its shape is the
+      // actual's, fixed only at the call (LRM 35.6.1.1). The read-back is into
+      // the same type.
+      crossing_type = std::holds_alternative<support::OpenArrayCarrier>(carrier)
+                          ? unit_lowerer.TranslateType(actual_hir.type)
+                          : unit_lowerer.TranslateType(param.sv_type);
+      seed_sv = ConvertToType(unit, body, taken->incoming, crossing_type);
       written_place = std::move(taken->lvalue);
     } else {
       auto sv_or = lowerer.LowerExpr(hir_exprs.Get(actual), cframe);
       if (!sv_or) return std::unexpected(std::move(sv_or.error()));
-      actual_type = sv_or->type;
+      crossing_type = sv_or->type;
       seed_sv = body.exprs.Add(*std::move(sv_or));
     }
 
@@ -667,7 +673,7 @@ auto PopulateForeignImportBoundary(
     const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
     const mir::LocalId temp = cframe.bindings->DeclareAnonymous(carrier_type);
     auto init_or = BuildBoundaryInit(
-        unit, body, carrier, seed_sv, actual_type, carrier_type);
+        unit, body, carrier, seed_sv, crossing_type, carrier_type);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     body.AppendStmt(mir::LocalDeclStmt{.target = temp, .init = *init_or});
     call_args.push_back(
@@ -680,13 +686,7 @@ auto PopulateForeignImportBoundary(
               .carrier_type = carrier_type,
               .actual = *std::move(written_place),
               .carrier = carrier,
-              // An open array's shape is the actual's, fixed only at the call
-              // (LRM 35.6.1.1), where every other carrier reads back into the
-              // shape the declaration fixed.
-              .sv_type =
-                  std::holds_alternative<support::OpenArrayCarrier>(carrier)
-                      ? actual_type
-                      : unit_lowerer.TranslateType(param.sv_type)});
+              .sv_type = crossing_type});
     }
   }
 

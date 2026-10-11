@@ -21,6 +21,7 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -540,15 +541,17 @@ auto EmitSubroutineCall(
         break;
       }
 
-      // An `inout` passes its incoming value and is written back the same way,
-      // and the source writes the actual once (LRM 13.5).
+      // An `inout` passes its incoming value, brought to the formal's type as
+      // an assignment to the formal would bring it, and is written back the
+      // same way; the source writes the actual once (LRM 13.5).
       case hir::ParamDirection::kInOut: {
         auto place_or = LowerLvalue(lowerer, hir_arg, frame);
         if (!place_or) return std::unexpected(std::move(place_or.error()));
         auto actual =
             ReadThenWrite(lowerer.Owner(), frame, *std::move(place_or));
         if (!actual) return std::unexpected(std::move(actual.error()));
-        call_args.push_back(actual->incoming);
+        call_args.push_back(
+            ConvertToType(unit, block, actual->incoming, formal.type));
         writebacks.push_back(
             {.target = std::move(actual->lvalue),
              .component = *formal.component,
@@ -857,14 +860,20 @@ auto EmitReportingCall(
         break;
       case hir::ParamDirection::kInput:
       case hir::ParamDirection::kInOut: {
+        // An `inout` actual is of its own type, and the function takes the
+        // formal's.
         if (!evaluated) {
-          call_args.push_back(block.exprs.Add(
-              BuildDefaultValueFromHir(lowerer.Owner(), block, hir_arg.type)));
+          call_args.push_back(ConvertToType(
+              unit, block,
+              block.exprs.Add(BuildDefaultValueFromHir(
+                  lowerer.Owner(), block, hir_arg.type)),
+              formal.type));
           break;
         }
         auto value = lowerer.LowerExpr(hir_arg, at);
         if (!value) return std::unexpected(std::move(value.error()));
-        call_args.push_back(block.exprs.Add(*std::move(value)));
+        call_args.push_back(ConvertToType(
+            unit, block, block.exprs.Add(*std::move(value)), formal.type));
         break;
       }
       case hir::ParamDirection::kRef:

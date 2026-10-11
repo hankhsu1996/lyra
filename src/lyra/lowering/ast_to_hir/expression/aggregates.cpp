@@ -10,7 +10,6 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
-#include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/LiteralExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/symbols/ClassSymbols.h>
@@ -20,6 +19,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -198,20 +198,10 @@ auto LowerAssignmentPatternFromElements(
   std::vector<hir::ExprId> element_ids;
   element_ids.reserve(ap.elements().size());
   for (const auto* elem : ap.elements()) {
-    // Where the pattern is a target, slang models each destination as an
-    // assignment whose right side is a placeholder for the member it takes;
-    // the destination is the left side, and HIR carries just that. The
-    // placeholder sits under as many conversions as take the member's type to
-    // the destination's.
-    if (elem->kind == slang::ast::ExpressionKind::Assignment) {
-      const auto& taking = elem->as<slang::ast::AssignmentExpression>();
-      const slang::ast::Expression* taken = &taking.right();
-      while (taken->kind == slang::ast::ExpressionKind::Conversion) {
-        taken = &taken->as<slang::ast::ConversionExpression>().operand();
-      }
-      if (taken->kind == slang::ast::ExpressionKind::EmptyArgument) {
-        elem = &taking.left();
-      }
+    // Where the pattern is a target, each member is the lvalue that takes its
+    // share, and HIR carries just that.
+    if (const slang::ast::Expression* lvalue = ArgLValue(*elem)) {
+      elem = lvalue;
     }
     auto lowered = lowerer.LowerExpr(*elem, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));

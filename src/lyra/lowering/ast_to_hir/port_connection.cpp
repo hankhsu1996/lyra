@@ -14,7 +14,6 @@
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/ValuePath.h>
-#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
@@ -31,6 +30,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/lowering/ast_to_hir/connected_interface.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 #include "lyra/lowering/ast_to_hir/published_projection.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
@@ -513,11 +513,10 @@ auto ConnectDataPort(
     }
     case hir::PortDirection::kOutput: {
       endpoint = cell_endpoint();
-      // slang models an output connection as `parent_target = <port>`, the port
-      // value standing in as an EmptyArgument; the parent target is the
-      // assignment's left side. The connection observes the child's whole
-      // internal signal on any change.
-      if (expr->kind != slang::ast::ExpressionKind::Assignment) {
+      // The connection observes the child's whole internal signal on any
+      // change, and writes the parent-side target.
+      const slang::ast::Expression* target = ArgLValue(*expr);
+      if (target == nullptr) {
         throw InternalError(
             "ConnectDataPort: an output port connection is stated as an "
             "assignment to the parent-side target");
@@ -528,8 +527,7 @@ auto ConnectDataPort(
             "an output port whose name reaches no single declaration of the "
             "child is not yet supported");
       }
-      auto peer_or = scope.LowerExpr(
-          expr->as<slang::ast::AssignmentExpression>().left(), frame);
+      auto peer_or = scope.LowerExpr(*target, frame);
       if (!peer_or) return std::unexpected(std::move(peer_or.error()));
       peer = frame.Exprs().Add(*std::move(peer_or));
       auto entries = unit_lowerer.SensitivityEntriesOf(
@@ -580,17 +578,14 @@ auto ConnectDataPort(
             "ConnectDataPort: a variable data type is not permitted on either "
             "side of an inout port, so the front end rejects one");
       }
-      // slang states an inout connection as an assignment to the parent-side
-      // target, the way it states an output one; the actual is that
-      // assignment's left side.
-      if (expr->kind != slang::ast::ExpressionKind::Assignment) {
+      const slang::ast::Expression* target = ArgLValue(*expr);
+      if (target == nullptr) {
         throw InternalError(
             "ConnectDataPort: an inout port connection is stated as an "
             "assignment to the parent-side target");
       }
       auto join = ConnectBidirectionalPort(
-          scope, *child.instance,
-          expr->as<slang::ast::AssignmentExpression>().left(),
+          scope, *child.instance, *target,
           unit_lowerer.MakeRoutedMemberRef(child.home_frame, port_route, span),
           *projection->positions, span, frame);
       if (!join) return std::unexpected(std::move(join.error()));
