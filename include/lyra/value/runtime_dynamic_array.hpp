@@ -94,6 +94,10 @@ class RuntimeDynamicArray {
   [[nodiscard]] auto operator!=(const RuntimeDynamicArray& other) const
       -> FourStateBit;
   [[nodiscard]] auto CaseEqual(const RuntimeDynamicArray& other) const -> Bit;
+  // LRM 11.4.11: this array and `other` as the two arms of a conditional
+  // operator whose condition is ambiguous, combined element by element.
+  [[nodiscard]] auto MergeConditional(const RuntimeDynamicArray& other) const
+      -> RuntimeDynamicArray;
   [[nodiscard]] auto IsBitIdentical(const RuntimeDynamicArray& other) const
       -> bool;
   [[nodiscard]] auto HasUnknown() const -> bool;
@@ -114,6 +118,7 @@ class RuntimeDynamicArray {
 
 static_assert(LyraValue<RuntimeDynamicArray>);
 static_assert(CaseEqualComparable<RuntimeDynamicArray>);
+static_assert(ConditionallyMergeable<RuntimeDynamicArray>);
 static_assert(Sized<RuntimeDynamicArray>);
 static_assert(BitstreamSizable<RuntimeDynamicArray, ConstIntegralView>);
 

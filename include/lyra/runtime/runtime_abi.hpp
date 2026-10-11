@@ -1329,6 +1329,8 @@ auto lyra_rt_dynarray_eq(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_dynarray_ne(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
+auto lyra_rt_dynarray_merge_conditional(
+    const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_dynarray_cell_get(void* cell) -> const void*;
 void lyra_rt_dynarray_cell_initialize(
     void* cell, const void* prototype) noexcept;
@@ -1370,9 +1372,9 @@ auto lyra_rt_unpackedarray_ne(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_unpackedarray_case_equal(
     const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_unpackedarray_is_unknown(const void* value, void* out) -> void*;
-// The value a conditional whose arms disagree yields (LRM 11.4.11): each
-// element takes the two arms' merge, so an element the arms agree on survives
-// and one they differ on becomes unknown.
+// The value a conditional whose arms disagree yields (LRM 11.4.11): an element
+// the arms agree on survives and one they differ on takes the element default
+// (Table 7-1).
 auto lyra_rt_unpackedarray_merge_conditional(
     const void* lhs, const void* rhs, void* out) -> void*;
 // LRM 5.9: a string literal's bytes assigned to an unpacked array of `count`
@@ -1532,6 +1534,8 @@ auto lyra_rt_queue_eq(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_queue_ne(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_queue_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
+auto lyra_rt_queue_merge_conditional(
+    const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_queue_bitstream_width(const void* queue, void* out) -> void*;
 auto lyra_rt_queue_count_bits(
     const void* queue, const void* control_bits, std::int64_t control_width,

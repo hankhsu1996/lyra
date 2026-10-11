@@ -4695,6 +4695,13 @@ auto lyra_rt_dynarray_case_equal(const void* lhs, const void* rhs, void* out)
       Read<RuntimeDynamicArray>(lhs).CaseEqual(Read<RuntimeDynamicArray>(rhs)));
 }
 
+auto lyra_rt_dynarray_merge_conditional(
+    const void* lhs, const void* rhs, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeDynamicArray>(lhs).MergeConditional(
+               Read<RuntimeDynamicArray>(rhs)));
+}
+
 auto lyra_rt_dynarray_cell_get(void* cell) -> const void* {
   return &static_cast<Var<RuntimeDynamicArray>*>(cell)->Get();
 }
@@ -5536,6 +5543,12 @@ auto lyra_rt_queue_case_equal(const void* lhs, const void* rhs, void* out)
     -> void* {
   return Emplace(
       out, Read<RuntimeQueue>(lhs).CaseEqual(Read<RuntimeQueue>(rhs)));
+}
+
+auto lyra_rt_queue_merge_conditional(
+    const void* lhs, const void* rhs, void* out) -> void* {
+  return Emplace(
+      out, Read<RuntimeQueue>(lhs).MergeConditional(Read<RuntimeQueue>(rhs)));
 }
 
 auto lyra_rt_queue_bitstream_width(const void* queue, void* out) -> void* {

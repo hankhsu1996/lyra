@@ -111,6 +111,10 @@ class RuntimeQueue {
   [[nodiscard]] auto operator!=(const RuntimeQueue& other) const
       -> FourStateBit;
   [[nodiscard]] auto CaseEqual(const RuntimeQueue& other) const -> Bit;
+  // LRM 11.4.11: this queue and `other` as the two arms of a conditional
+  // operator whose condition is ambiguous, combined element by element.
+  [[nodiscard]] auto MergeConditional(const RuntimeQueue& other) const
+      -> RuntimeQueue;
   [[nodiscard]] auto IsBitIdentical(const RuntimeQueue& other) const -> bool;
   [[nodiscard]] auto HasUnknown() const -> bool;
   [[nodiscard]] auto IsUnknown() const -> Bit;
@@ -130,6 +134,7 @@ class RuntimeQueue {
 
 static_assert(LyraValue<RuntimeQueue>);
 static_assert(CaseEqualComparable<RuntimeQueue>);
+static_assert(ConditionallyMergeable<RuntimeQueue>);
 static_assert(Sized<RuntimeQueue>);
 static_assert(BitstreamSizable<RuntimeQueue, ConstIntegralView>);
 

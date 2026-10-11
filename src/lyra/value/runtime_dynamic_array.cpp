@@ -160,6 +160,11 @@ auto RuntimeDynamicArray::CaseEqual(const RuntimeDynamicArray& other) const
   return detail::SequenceCaseEqual(*core_, *other.core_);
 }
 
+auto RuntimeDynamicArray::MergeConditional(
+    const RuntimeDynamicArray& other) const -> RuntimeDynamicArray {
+  return RuntimeDynamicArray(Core().MergeConditional(other.Core()));
+}
+
 auto RuntimeDynamicArray::IsBitIdentical(const RuntimeDynamicArray& other) const
     -> bool {
   if (!core_.has_value() || !other.core_.has_value()) {

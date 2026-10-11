@@ -188,9 +188,11 @@ template <NetResolvable T>
 
 // LRM 11.4.11: where a conditional operator's condition is ambiguous it selects
 // neither arm, evaluates both, and combines them. A type made of parts that can
-// agree defines how -- an integral bit by bit (Table 11-20), an array element
-// by element -- and a type with no such parts does not satisfy this, taking the
-// Table 7-1 default of its own shape instead.
+// agree apart from each other defines how -- an integral bit by bit (Table
+// 11-20), an array other than an associative one element by element -- and a
+// type with no such parts does not satisfy this: its two arms are compared
+// whole, and it takes the Table 7-1 default of its own shape where they
+// differ.
 template <typename T>
 concept ConditionallyMergeable =
     LyraValue<T> && requires(const T& a, const T& b) {

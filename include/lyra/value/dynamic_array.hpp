@@ -200,6 +200,12 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   [[nodiscard]] auto CountBits(const Control& control_bits) const -> Int {
     return Int::FromInt(detail::SequenceCountBits(core_, control_bits));
   }
+  [[nodiscard]] auto MergeConditional(const DynamicArray& other) const
+      -> DynamicArray {
+    DynamicArray out;
+    out.core_ = core_.MergeConditional(other.core_);
+    return out;
+  }
 
   // LRM 7.5.3: empties the array, resulting in a zero-sized array.
   auto Delete() -> void {
@@ -256,6 +262,7 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
 static_assert(LyraValue<DynamicArray<LogicVector<4>>>);
 static_assert(Sized<DynamicArray<LogicVector<4>>>);
 static_assert(BitstreamSizable<DynamicArray<LogicVector<4>>>);
+static_assert(ConditionallyMergeable<DynamicArray<LogicVector<4>>>);
 static_assert(Indexable<DynamicArray<LogicVector<4>>>);
 static_assert(SliceableRef<DynamicArray<LogicVector<4>>>);
 static_assert(Sortable<DynamicArray<LogicVector<4>>>);

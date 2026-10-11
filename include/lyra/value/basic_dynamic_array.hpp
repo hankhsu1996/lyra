@@ -146,13 +146,14 @@ class BasicDynamicArray {
   // ambiguous, combined element by element -- an element the arms agree on
   // survives, and one they disagree on, or cannot know, takes the element
   // default (Table 7-1). Arms of unequal size put no elements in
-  // correspondence, so every element takes that default.
+  // correspondence, so the result is the array of no elements that is such an
+  // array's own default.
   [[nodiscard]] auto MergeConditional(const BasicDynamicArray& other) const
       -> BasicDynamicArray {
-    const bool paired = count_ == other.count_;
-    return Built(elem_, count_, [&](std::size_t i, void* out) {
-      const bool agree = paired && elem_.Agree(At(i), other.At(i));
-      elem_.Copy(agree ? At(i) : elem_.Default(), out);
+    const std::size_t paired = count_ == other.count_ ? count_ : 0;
+    return Built(elem_, paired, [&](std::size_t i, void* out) {
+      elem_.Copy(
+          elem_.Agree(At(i), other.At(i)) ? At(i) : elem_.Default(), out);
     });
   }
 
