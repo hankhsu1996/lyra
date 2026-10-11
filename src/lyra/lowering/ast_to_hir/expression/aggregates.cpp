@@ -20,7 +20,6 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/type.hpp"
-#include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -28,35 +27,6 @@
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
-
-// LRM 5.7.1: an unbased unsized literal sets every bit of what it is assigned
-// to, so what it carries is a bit pattern to repeat rather than a number to
-// widen. Slang sizes one at its target wherever the LRM makes the context
-// assignment-like, which is why this is spelled out nowhere else.
-auto RepeatBitPattern(
-    const hir::IntegralConstant& bit, std::uint32_t width, bool four_state,
-    bool is_signed) -> hir::IntegralConstant {
-  const bool value_bit = (bit.value_words[0] & 1U) != 0;
-  const bool state_bit =
-      !bit.state_words.empty() && (bit.state_words[0] & 1U) != 0;
-  const std::size_t words = (static_cast<std::size_t>(width) + 63U) / 64U;
-  const std::uint64_t top_mask = width % 64U == 0
-                                     ? ~std::uint64_t{0}
-                                     : (std::uint64_t{1} << (width % 64U)) - 1U;
-
-  hir::IntegralConstant filled;
-  filled.width = width;
-  filled.signedness =
-      is_signed ? hir::Signedness::kSigned : hir::Signedness::kUnsigned;
-  filled.value_words.assign(words, value_bit ? ~std::uint64_t{0} : 0U);
-  filled.value_words.back() &= top_mask;
-  if (four_state) {
-    filled.state_kind = hir::IntegralStateKind::kFourState;
-    filled.state_words.assign(words, state_bit ? ~std::uint64_t{0} : 0U);
-    filled.state_words.back() &= top_mask;
-  }
-  return filled;
-}
 
 // What a stream element actually carries: the operand, or -- where
 // LRM 11.4.14.4 names a range with `with` -- the selection over it, which the
@@ -289,64 +259,76 @@ auto LowerAssociativeAssignmentPattern(
   };
 }
 
+// Whether a pattern's target is an array whose elements a key or a position
+// names, packed or not.
+auto TargetsAFixedArray(const slang::ast::AssignmentPatternExpressionBase& ap)
+    -> bool {
+  const auto kind = ap.type->getCanonicalType().kind;
+  return kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType ||
+         kind == slang::ast::SymbolKind::PackedArrayType;
+}
+
+// An array every element of which takes `value`: the keyed form with no key,
+// which stays one expression however many elements there are.
+template <ExprLowerer Lowerer>
+auto LowerArrayOfOneValue(
+    Lowerer& lowerer, WalkFrame frame,
+    const slang::ast::AssignmentPatternExpressionBase& ap,
+    const slang::ast::Expression& value, diag::SourceSpan span)
+    -> diag::Result<hir::Expr> {
+  auto type_id = lowerer.Owner().InternType(*ap.type, span);
+  if (!type_id) return std::unexpected(std::move(type_id.error()));
+  auto lowered = lowerer.LowerExpr(value, frame);
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  return hir::Expr{
+      .type = *type_id,
+      .data =
+          hir::AssignmentPatternKeyedExpr{
+              .entries = {},
+              .default_value = frame.Exprs().Add(*std::move(lowered))},
+      .span = span,
+  };
+}
+
 template <ExprLowerer Lowerer>
 auto LowerSimpleAssignmentPattern(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::SimpleAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
+  // LRM 10.9.1: a `default` or type key reaching a subarray descends into it,
+  // and the front end states the outcome as a positional pattern holding the
+  // one value it matched at every position. A pattern the source wrote binds
+  // each of its elements apart, so one expression at every position is that
+  // descent.
+  const auto elements = ap.elements();
+  if (TargetsAFixedArray(ap) && elements.size() > 1 &&
+      std::ranges::all_of(elements, [&](const slang::ast::Expression* each) {
+        return each == elements.front();
+      })) {
+    return LowerArrayOfOneValue(lowerer, frame, ap, *elements.front(), span);
+  }
   // LRM 10.9.1 positional assignment pattern `'{a, b, ...}`. It is the same
   // list of elements on either side of an assignment: values that build the
   // aggregate, or the destinations one is taken apart into (LRM 10.9).
   return LowerAssignmentPatternFromElements(lowerer, frame, ap, span);
 }
 
-// LRM 10.8 excludes a default correspondence from the assignment-like
-// contexts, so the expression is self-determined and arrives at whatever width
-// it was written -- an unsized literal at its own. LRM 10.9.1 still has it
-// reach every unmatched element as an assignment to that element, so the
-// sizing the frontend performed for each keyed value has to be stated here for
-// the one value that stands for all the rest.
-template <ExprLowerer Lowerer>
-auto LowerDefaultKeyValue(
-    Lowerer& lowerer, WalkFrame frame,
-    const slang::ast::StructuredAssignmentPatternExpression& ap,
-    diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  const slang::ast::Type& element_type =
-      *ap.type->getCanonicalType().getArrayElementType();
-  auto element_type_id = lowerer.Owner().InternType(element_type, span);
-  if (!element_type_id) {
-    return std::unexpected(std::move(element_type_id.error()));
+// The value every element no index key names takes (LRM 10.9.1), or none where
+// the keys name them all. The front end has matched it already -- a type key,
+// the default sized to the element, or the descent into a subarray or a
+// structure -- and states it once, at each of those positions.
+auto ValueOfUnkeyedElements(
+    const slang::ast::StructuredAssignmentPatternExpression& ap)
+    -> const slang::ast::Expression* {
+  for (const slang::ast::Expression* element : ap.elements()) {
+    const bool keyed = std::ranges::any_of(
+        ap.indexSetters,
+        [&](const auto& setter) { return setter.expr == element; });
+    if (!keyed) {
+      return element;
+    }
   }
-  // LRM 5.7.1: an unbased unsized literal fills every bit of what it reaches,
-  // and here it reaches an element rather than the pattern, so the fill is to
-  // the element's width.
-  const auto* unbased =
-      ap.defaultSetter->as_if<slang::ast::UnbasedUnsizedIntegerLiteral>();
-  if (unbased != nullptr && element_type.isIntegral()) {
-    return hir::Expr{
-        .type = *element_type_id,
-        .data =
-            hir::PrimaryExpr{
-                .data =
-                    hir::IntegerLiteral{
-                        .value = RepeatBitPattern(
-                            LowerSVIntToIntegralConstant(unbased->getValue()),
-                            element_type.getBitWidth(),
-                            element_type.isFourState(),
-                            element_type.isSigned())}},
-        .span = span};
-  }
-
-  auto lowered = lowerer.LowerExpr(*ap.defaultSetter, frame);
-  if (!lowered) return std::unexpected(std::move(lowered.error()));
-  hir::Expr value = *std::move(lowered);
-  return hir::Expr{
-      .type = *element_type_id,
-      .data =
-          hir::ConversionExpr{
-              .kind = hir::ConversionKind::kImplicit,
-              .operand = frame.Exprs().Add(std::move(value))},
-      .span = span};
+  return nullptr;
 }
 
 template <ExprLowerer Lowerer>
@@ -373,19 +355,14 @@ auto LowerStructuredAssignmentPattern(
   // Whether the array is packed decides how a key resolves to a position and
   // how the repeat is spelled, neither of which is what the pattern says, so
   // that question belongs to HIR-to-MIR.
-  const bool keyed_array =
-      (target_kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType ||
-       target_kind == slang::ast::SymbolKind::PackedArrayType) &&
-      ap.memberSetters.empty() && ap.typeSetters.empty() &&
-      (ap.defaultSetter != nullptr || !ap.indexSetters.empty());
-  if (keyed_array) {
+  if (TargetsAFixedArray(ap)) {
     auto type_id = lowerer.Owner().InternType(*ap.type, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     std::optional<hir::ExprId> default_id;
-    if (ap.defaultSetter != nullptr) {
-      auto sized = LowerDefaultKeyValue(lowerer, frame, ap, span);
-      if (!sized) return std::unexpected(std::move(sized.error()));
-      default_id = frame.Exprs().Add(*std::move(sized));
+    if (const slang::ast::Expression* unkeyed = ValueOfUnkeyedElements(ap)) {
+      auto value = lowerer.LowerExpr(*unkeyed, frame);
+      if (!value) return std::unexpected(std::move(value.error()));
+      default_id = frame.Exprs().Add(*std::move(value));
     }
     std::vector<hir::AssignmentPatternKeyedExpr::Entry> entries;
     entries.reserve(ap.indexSetters.size());

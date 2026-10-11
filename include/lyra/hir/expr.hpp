@@ -402,7 +402,10 @@ struct AssociativeAssignmentPatternExpr {
 // LRM 10.9.1 `'{index: value, ..., default: value}` over an array. An
 // `array_pattern_key` is either an index naming one element or the `default`
 // key standing for every element no index named; the source may write either
-// kind, and LRM 10.9.1 admits at most one `default`.
+// kind, and LRM 10.9.1 admits at most one `default`. What an unnamed element
+// takes is stated as the value of that element's own type: where the source's
+// `default` or type key reached a subarray or a structure, it is the pattern
+// that key makes of one.
 //
 // The elements the default stands for are not written out. How many there are
 // belongs to the target's type and appears nowhere in the source, so no count

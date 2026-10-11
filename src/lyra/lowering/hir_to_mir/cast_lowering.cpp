@@ -1,12 +1,16 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/expr.hpp"
@@ -106,6 +110,221 @@ auto MakeStringFromFactory(
       .type = unit.builtins.string};
 }
 
+// Whether `array` is what a string literal may be assigned to (LRM 5.9): an
+// array whose elements are `byte`, eight bits, signed and two-state (LRM 6.11).
+auto IsArrayOfBytes(
+    const mir::CompilationUnit& unit, const mir::UnpackedArrayType& array)
+    -> bool {
+  const mir::Type& element = unit.types.Get(array.element_type);
+  return element.IsIntegral() &&
+         element.Integral() ==
+             mir::IntegralType{
+                 .bit_width = 8,
+                 .signedness = mir::Signedness::kSigned,
+                 .state_kind = mir::IntegralStateKind::kTwoState};
+}
+
+// The language defines no conversion between the two types, so the front end
+// refuses a program asking for one, and whatever asked here stated a
+// conversion no program wrote.
+[[noreturn]] void RefuseConversion(std::string_view into) {
+  throw InternalError(
+      std::format(
+          "BuildValueConversion: the operand's type has no conversion into {}",
+          into));
+}
+
+auto ToReal(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  // LRM 6.12.1: crossing precisions is the destination type's own conversion.
+  if (source.IsRealFamily()) {
+    return MakeRealConversionCall(
+        support::BuiltinFn::kConvertFrom, operand, destination);
+  }
+  if (source.IsIntegral()) {
+    return MakeRealConversionCall(
+        support::BuiltinFn::kFromInt, BuildToInt64Call(unit, block, operand),
+        destination);
+  }
+  RefuseConversion("a real");
+}
+
+auto ToIntegral(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  if (source.IsRealFamily()) {
+    const mir::ExprId rounded = block.exprs.Add(MakeRoundCall(unit, operand));
+    return MakeBuiltinCall(
+        unit, block, support::BuiltinFn::kIntegralFromInt, std::nullopt,
+        {rounded}, destination);
+  }
+  // An enumeration (LRM 6.19.3) shares its representation with its base while
+  // being a type of its own, and a representation is all an integral type says
+  // -- width, signedness and state domain. Two types that differ in it are a
+  // reshape of the bits; two that agree hold the same bits, and only the type
+  // the program holds the value to be changes.
+  if (source.IsIntegral()) {
+    if (source.Integral() != unit.types.Get(destination).Integral()) {
+      return MakeBuiltinCall(
+          unit, block, support::BuiltinFn::kIntegralConvert, std::nullopt,
+          {operand}, destination);
+    }
+    return MakeSameRepresentationCast(unit, block, operand, destination);
+  }
+  // LRM 5.9: right-justified into the destination type.
+  if (source.Is<mir::StringType>()) {
+    return MakeBuiltinCall(
+        unit, block, support::BuiltinFn::kIntegralFromString, std::nullopt,
+        {operand}, destination);
+  }
+  RefuseConversion("an integral type");
+}
+
+auto ToString(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  // LRM 21.3.4.3: an unpacked array of bytes read as a string.
+  if (source.Is<mir::UnpackedArrayType>()) {
+    return MakeStringFromFactory(
+        unit, operand, support::BuiltinFn::kFromByteArray);
+  }
+  // LRM 6.16: a bit pattern read as a string. A constant's bytes are fixed
+  // before the program runs, so its string is stated as the string it is.
+  if (source.IsIntegral()) {
+    if (std::optional<std::string> text =
+            mir::FoldStringFromBits(unit, block.exprs.Get(operand))) {
+      return mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee = mir::Construct{},
+                  .arguments = {block.exprs.Add(
+                      mir::MakeStringLiteral(destination, *std::move(text)))}},
+          .type = destination};
+    }
+    return MakeStringFromFactory(
+        unit, operand, support::BuiltinFn::kStringFromBits);
+  }
+  RefuseConversion("a string");
+}
+
+// LRM 5.9: text left-justified from an array of bytes' left bound, an element
+// past its end left at the element type's default. `entry` is the one taking
+// the form the text arrives in.
+auto MakeBytesFromTextCall(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination, support::BuiltinFn entry, std::uint64_t count)
+    -> mir::Expr {
+  const mir::ExprId count_id =
+      BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(count));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{.target = entry, .type_argument = destination},
+              .arguments = {operand, count_id}},
+      .type = destination};
+}
+
+auto ToFixedSizeArray(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  const auto& array = unit.types.Get(destination).Get<mir::UnpackedArrayType>();
+  // LRM 7.6: two arrays of one kind are assigned where their element types
+  // are equivalent, and a fixed-size one where the counts agree too. What can
+  // then differ between the two types is how a range is declared, which is
+  // read where an element is selected and never held by the value.
+  if (source.Is<mir::UnpackedArrayType>()) {
+    return block.exprs.Get(operand);
+  }
+  if (source.Is<mir::DynamicArrayType>() || source.Is<mir::QueueType>()) {
+    return BuildArrayFromArrayCall(unit, block, operand, destination);
+  }
+  if (IsArrayOfBytes(unit, array)) {
+    if (source.Is<mir::StringType>()) {
+      return MakeBytesFromTextCall(
+          unit, block, operand, destination,
+          support::BuiltinFn::kByteArrayFromString, array.Size());
+    }
+    // A string literal is a packed constant, and its bytes arrive whole: a
+    // NUL among them is a byte like any other, where a string value would
+    // have dropped it (LRM 6.16).
+    if (source.IsIntegral()) {
+      return MakeBytesFromTextCall(
+          unit, block, operand, destination,
+          support::BuiltinFn::kByteArrayFromBits, array.Size());
+    }
+  }
+  RefuseConversion("a fixed-size unpacked array");
+}
+
+auto ToDynamicArray(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  if (source.Is<mir::DynamicArrayType>()) {
+    return block.exprs.Get(operand);
+  }
+  if (source.Is<mir::UnpackedArrayType>() || source.Is<mir::QueueType>()) {
+    return BuildArrayFromArrayCall(unit, block, operand, destination);
+  }
+  RefuseConversion("a dynamic array");
+}
+
+auto ToQueue(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
+  if (source.Is<mir::UnpackedArrayType>() ||
+      source.Is<mir::DynamicArrayType>()) {
+    return BuildArrayFromArrayCall(unit, block, operand, destination);
+  }
+  // LRM 7.10.5: the bound is a declared property of the destination variable,
+  // so a queue assigned another's contents keeps only what its own bound
+  // admits.
+  if (source.Is<mir::QueueType>()) {
+    const mir::ExprId bound = BuildQueueBoundOperand(
+        unit, block, unit.types.Get(destination).Get<mir::QueueType>());
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kConformBound,
+                        .receiver = operand},
+                .arguments = {bound}},
+        .type = destination};
+  }
+  RefuseConversion("a queue");
+}
+
+// LRM 7.9.9: an associative array is assigned only another of a compatible
+// type and the same index type, which leaves nothing of the value to change.
+auto ToAssociativeArray(
+    const mir::CompilationUnit& unit, const mir::Expr& operand) -> mir::Expr {
+  if (unit.types.Get(operand.type).Is<mir::AssociativeArrayType>()) {
+    return operand;
+  }
+  RefuseConversion("an associative array");
+}
+
+// LRM 8.14: an object of a subclass is also an object of its base class, so a
+// handle to one is a value of a variable declared with the base class. The
+// object is unchanged and only the handle's declared class differs.
+auto ToClassHandle(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  if (unit.types.Get(block.exprs.Get(operand).type).Is<mir::ManagedRefType>()) {
+    return mir::Expr{
+        .data = mir::CastExpr{.operand = operand}, .type = destination};
+  }
+  RefuseConversion("a class handle");
+}
+
 }  // namespace
 
 auto BuildToInt64Call(
@@ -120,8 +339,7 @@ auto BuildValueConversion(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::Expr {
   const mir::Expr& operand_expr = block.exprs.Get(operand_id);
-  const mir::TypeId src_type = operand_expr.type;
-  if (src_type == dst_type) {
+  if (operand_expr.type == dst_type) {
     return operand_expr;
   }
   // LRM 8.4: `null` is a value of every class-handle type, so what a null
@@ -132,175 +350,78 @@ auto BuildValueConversion(
     return mir::Expr{.data = mir::NullLiteral{}, .type = dst_type};
   }
 
-  const auto& src_ty = unit.types.Get(src_type);
-  const auto& dst_ty = unit.types.Get(dst_type);
-
-  // Real-family reshape (LRM 6.12.1): crossing precisions is the destination
-  // type's own conversion. Staying at one precision cannot reach here, since
-  // two real-family types that are the same type are the same id.
-  if (src_ty.IsRealFamily() && dst_ty.IsRealFamily()) {
-    return MakeRealConversionCall(
-        support::BuiltinFn::kConvertFrom, operand_id, dst_type);
-  }
-
-  // Integral -> real: read out the host int64, build the real from it.
-  if (src_ty.IsIntegral() && dst_ty.IsRealFamily()) {
-    const mir::ExprId int_id = BuildToInt64Call(unit, block, operand_id);
-    return MakeRealConversionCall(
-        support::BuiltinFn::kFromInt, int_id, dst_type);
-  }
-
-  // Real -> integral: round to int64, then land the rounded value in the
-  // destination type.
-  if (src_ty.IsRealFamily() && dst_ty.IsIntegral()) {
-    const mir::ExprId rounded_id =
-        block.exprs.Add(MakeRoundCall(unit, operand_id));
-    return MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kIntegralFromInt, std::nullopt,
-        {rounded_id}, dst_type);
-  }
-
-  // Integral -> integral: a reshape into the destination's declared
-  // representation. An enumeration (LRM 6.19.3) shares that representation
-  // with its base while being a type of its own, so crossing into or out of
-  // one changes the type a value is held to and not the bits it carries, which
-  // is what the cast below says and all it says.
-  if (src_ty.IsIntegral() && dst_ty.IsIntegral()) {
-    // A value's representation is all its integral type says -- width,
-    // signedness and state domain -- so two that agree on all three hold the
-    // same bits. A reshape lands the bits at the destination type outright.
-    // What is left is the same representation under another type, which is
-    // the cast: the bits already fit, and only what the program holds the
-    // value to be changes.
-    if (src_ty.Integral() != dst_ty.Integral()) {
-      return MakeBuiltinCall(
-          unit, block, support::BuiltinFn::kIntegralConvert, std::nullopt,
-          {operand_id}, dst_type);
-    }
-    return MakeSameRepresentationCast(unit, block, operand_id, dst_type);
-  }
-
-  // Unpacked-array-of-byte -> string (LRM 21.3.4.3 $sscanf source lift).
-  if (src_ty.Is<mir::UnpackedArrayType>() && dst_ty.Is<mir::StringType>()) {
-    return MakeStringFromFactory(
-        unit, operand_id, support::BuiltinFn::kFromByteArray);
-  }
-
-  // Integral -> string (LRM 6.16 bit pattern -> string value). A constant's
-  // bytes are fixed before the program runs, so its string is stated as the
-  // string it is.
-  if (src_ty.IsIntegral() && dst_ty.Is<mir::StringType>()) {
-    if (std::optional<std::string> text =
-            mir::FoldStringFromBits(unit, operand_expr)) {
-      return mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = {block.exprs.Add(
-                      mir::MakeStringLiteral(dst_type, *std::move(text)))}},
-          .type = dst_type};
-    }
-    return MakeStringFromFactory(
-        unit, operand_id, support::BuiltinFn::kStringFromBits);
-  }
-
-  // String -> integral (LRM 5.9): right-justified into the destination type,
-  // which the call answers with.
-  if (src_ty.Is<mir::StringType>() && dst_ty.IsIntegral()) {
-    return MakeBuiltinCall(
-        unit, block, support::BuiltinFn::kIntegralFromString, std::nullopt,
-        {operand_id}, dst_type);
-  }
-
-  // String -> unpacked array of byte (LRM 5.9): left-justified from the array's
-  // left bound. The array's element type is the representation each element
-  // takes, which is also what an element past the end of the text is left
-  // holding. LRM 5.9 defines the conversion only for a byte element, so an
-  // array of anything else is not a destination this reshapes into.
-  if (const auto* dst_arr = dst_ty.As<mir::UnpackedArrayType>();
-      dst_arr != nullptr && src_ty.Is<mir::StringType>() &&
-      unit.types.Get(dst_arr->element_type).IsIntegral()) {
-    const mir::ExprId count = BuildMachineIntLiteral(
-        unit, block, static_cast<std::int64_t>(dst_arr->dim.ElementCount()));
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kByteArrayFromString,
-                        .type_argument = dst_type},
-                .arguments = {operand_id, count}},
-        .type = dst_type};
-  }
-
-  // Integral -> unpacked array of byte (LRM 5.9): a string literal is a packed
-  // bit-vector constant, so an assignment of one to a byte array arrives here
-  // rather than through the string path. Its bytes left-justify the same way,
-  // and they arrive whole: a NUL among them is a byte like any other, where
-  // routing through a string value would have removed it (LRM 6.16).
-  if (const auto* dst_arr = dst_ty.As<mir::UnpackedArrayType>();
-      dst_arr != nullptr && src_ty.IsIntegral() &&
-      unit.types.Get(dst_arr->element_type).IsIntegral()) {
-    const mir::ExprId count = BuildMachineIntLiteral(
-        unit, block, static_cast<std::int64_t>(dst_arr->dim.ElementCount()));
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kByteArrayFromBits,
-                        .type_argument = dst_type},
-                .arguments = {operand_id, count}},
-        .type = dst_type};
-  }
-
-  // Between two of the three array container kinds (LRM 7.6): the kinds hold
-  // their elements differently, so the destination is built out of the source's
-  // elements rather than taking its value whole. The clause admits the
-  // assignment only where the element types are equivalent, so the elements
-  // themselves cross as they stand.
-  if (CrossesArrayContainerKinds(src_ty, dst_ty)) {
-    return BuildArrayFromArrayCall(unit, block, operand_id, dst_type);
-  }
-
-  // Unpacked -> unpacked: assignment requires equivalent element types and the
-  // same element count (LRM 7.6), so the element representation already matches
-  // and a whole-array store is a plain ordinal-payload copy. The declared range
-  // is a fact of the destination's static type consulted only at selection, not
-  // payload that a store must conform -- so this falls through to the identity
-  // path, no conversion node.
-
-  // Queue -> queue: assignment requires equivalent element types (LRM 7.10), so
-  // the element representation already matches and only the LRM 7.10.5 bound
-  // can differ. Conform the source's contents to the destination's bound, which
-  // a pure whole-value adopt would otherwise drop -- the bound is a declared
-  // property of the destination variable.
-  if (const auto* dst_q = dst_ty.As<mir::QueueType>();
-      dst_q != nullptr && src_ty.Is<mir::QueueType>()) {
-    const mir::ExprId bound_id = BuildQueueBoundOperand(unit, block, *dst_q);
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kConformBound,
-                        .receiver = operand_id},
-                .arguments = {bound_id}},
-        .type = dst_type};
-  }
-
-  // LRM 8.14: an object of a subclass is also an object of its base class, so a
-  // handle to one is a legal value of a variable declared with the base class.
-  // The object is unchanged; only the handle's declared class differs, which is
-  // what re-typing the reference states.
-  if (src_ty.Is<mir::ManagedRefType>() && dst_ty.Is<mir::ManagedRefType>()) {
-    return mir::Expr{
-        .data = mir::CastExpr{.operand = operand_id}, .type = dst_type};
-  }
-
-  // Identity fallback: the lowering inserted a conversion the type system
-  // already satisfies (e.g. string -> string lift).
-  return operand_expr;
+  // A type no conversion answers a value of: the source language converts
+  // nothing into it, or no declaration of the source language names it.
+  const auto none = [](const auto&) -> mir::Expr {
+    RefuseConversion("the destination's type");
+  };
+  return unit.types.Get(dst_type).Visit(
+      Overloaded{
+          [&](const mir::RealType&) {
+            return ToReal(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::ShortRealType&) {
+            return ToReal(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::IntegralType&) {
+            return ToIntegral(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::EnumType&) {
+            return ToIntegral(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::StringType&) {
+            return ToString(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::UnpackedArrayType&) {
+            return ToFixedSizeArray(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::DynamicArrayType&) {
+            return ToDynamicArray(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::QueueType&) {
+            return ToQueue(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::ManagedRefType&) {
+            return ToClassHandle(unit, block, operand_id, dst_type);
+          },
+          [&](const mir::AssociativeArrayType&) {
+            return ToAssociativeArray(unit, operand_expr);
+          },
+          [&](const mir::WildcardIndexType& t) { return none(t); },
+          [&](const mir::MachineCStringType& t) { return none(t); },
+          [&](const mir::MachineBoolType& t) { return none(t); },
+          [&](const mir::MachineIntType& t) { return none(t); },
+          [&](const mir::MachineFloatType& t) { return none(t); },
+          [&](const mir::MachineArrayType& t) { return none(t); },
+          [&](const mir::MachineFunctionType& t) { return none(t); },
+          [&](const mir::EventType& t) { return none(t); },
+          [&](const mir::ChandleType& t) { return none(t); },
+          [&](const mir::VoidType& t) { return none(t); },
+          [&](const mir::ObjectType& t) { return none(t); },
+          [&](const mir::RuntimeClassType& t) { return none(t); },
+          [&](const mir::RuntimeEffectsType& t) { return none(t); },
+          [&](const mir::FilesType& t) { return none(t); },
+          [&](const mir::DiagnosticType& t) { return none(t); },
+          [&](const mir::RuntimeLibraryType& t) { return none(t); },
+          [&](const mir::CoroutineType& t) { return none(t); },
+          [&](const mir::RefType& t) { return none(t); },
+          [&](const mir::PointerType& t) { return none(t); },
+          [&](const mir::VectorType& t) { return none(t); },
+          [&](const mir::TupleType& t) { return none(t); },
+          [&](const mir::UnionType& t) { return none(t); },
+          [&](const mir::TaggedUnionType& t) { return none(t); },
+          [&](const mir::EmptyType& t) { return none(t); },
+          [&](const mir::ObservableType& t) { return none(t); },
+          [&](const mir::ResolvedType& t) { return none(t); },
+          [&](const mir::DriverType& t) { return none(t); },
+          [&](const mir::OpenWriteType& t) { return none(t); },
+          [&](const mir::DesignationType& t) { return none(t); },
+          [&](const mir::ObjectWriteType& t) { return none(t); },
+          [&](const mir::SampledHistoryType& t) { return none(t); },
+          [&](const mir::EvaluationAttemptsType& t) { return none(t); },
+          [&](const mir::StructType& t) { return none(t); },
+          [&](const mir::ClosureType& t) { return none(t); },
+      });
 }
 
 auto BuildPropagatedConversion(

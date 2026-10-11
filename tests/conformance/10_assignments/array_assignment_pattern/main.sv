@@ -7,9 +7,31 @@
 // that element being taken from source order, so the keys may be written in
 // any order. The default key covers the elements no index or type key
 // matched, and every element of the array has to be covered by one of these
-// rules -- including the elements of an array that already held a value
-// (LRM 10.9, 10.9.1).
+// rules -- including the elements of an array that already held a value. A
+// default or a type key that reaches a subarray is applied to each of its
+// elements in turn, and one that reaches a structure is applied to its
+// members, down to the elements whose type takes the value (LRM 10.9, 10.9.1).
 module Top;
+  typedef struct {
+    int count;
+    byte tag;
+  } pair_t;
+
+  typedef struct {
+    int head;
+    int body [3];
+  } holder_t;
+
+  int descends_two [3][4] = '{default: 7};
+  int descends_three [2][2][3] = '{default: 3};
+  logic [3:0] descends_unsized [2][2] = '{default: '1};
+  string descends_strings [2][2] = '{default: "hi"};
+  pair_t descends_into_structures [2] = '{default: 4};
+  pair_t descends_into_rows_of_structures [2][2] = '{default: 5};
+  holder_t descends_into_a_member_array [2] = '{default: 2};
+  int keyed_row_among_defaulted [3][4] = '{1: '{default: 8}, default: 1};
+  int type_key_descends [2][3] = '{int: 11};
+  int assigned_later [3][4];
   int positional [3] = '{10, 20, 30};
   int from_narrow_literals [2] = '{1'b1, 1'b0};
   logic [7:0] four_state_elements [3] = '{8'hAA, 8'hBB, 8'hCC};
@@ -31,9 +53,58 @@ module Top;
 
   int refilled [3] = '{1, 2, 3};
 
-  initial refilled = '{default: 99};
+  initial begin
+    refilled = '{default: 99};
+    assigned_later = '{default: 6};
+  end
 
   final begin
+    foreach (descends_two[i, j])
+      if (descends_two[i][j] !== 7)
+        $fatal(1, "descends_two[%0d][%0d] was %0d, expected 7", i, j,
+               descends_two[i][j]);
+    foreach (descends_three[i, j, k])
+      if (descends_three[i][j][k] !== 3)
+        $fatal(1, "descends_three[%0d][%0d][%0d] was %0d, expected 3", i, j, k,
+               descends_three[i][j][k]);
+    foreach (descends_unsized[i, j])
+      if (descends_unsized[i][j] !== 4'hF)
+        $fatal(1, "descends_unsized[%0d][%0d] was %0h, expected f", i, j,
+               descends_unsized[i][j]);
+    foreach (descends_strings[i, j])
+      if (descends_strings[i][j] != "hi")
+        $fatal(1, "descends_strings[%0d][%0d] was \"%s\", expected \"hi\"", i,
+               j, descends_strings[i][j]);
+    foreach (descends_into_structures[i])
+      if (descends_into_structures[i].count !== 4 ||
+          descends_into_structures[i].tag !== 8'sd4)
+        $fatal(1, "descends_into_structures[%0d] was %p, expected 4 and 4", i,
+               descends_into_structures[i]);
+    foreach (descends_into_rows_of_structures[i, j])
+      if (descends_into_rows_of_structures[i][j].count !== 5 ||
+          descends_into_rows_of_structures[i][j].tag !== 8'sd5)
+        $fatal(1,
+               "descends_into_rows_of_structures[%0d][%0d] was %p, expected 5 and 5",
+               i, j, descends_into_rows_of_structures[i][j]);
+    foreach (descends_into_a_member_array[i])
+      if (descends_into_a_member_array[i].head !== 2 ||
+          descends_into_a_member_array[i].body[0] !== 2 ||
+          descends_into_a_member_array[i].body[2] !== 2)
+        $fatal(1, "descends_into_a_member_array[%0d] was %p, expected all 2",
+               i, descends_into_a_member_array[i]);
+    foreach (keyed_row_among_defaulted[i, j])
+      if (keyed_row_among_defaulted[i][j] !== (i == 1 ? 8 : 1))
+        $fatal(1, "keyed_row_among_defaulted[%0d][%0d] was %0d", i, j,
+               keyed_row_among_defaulted[i][j]);
+    foreach (type_key_descends[i, j])
+      if (type_key_descends[i][j] !== 11)
+        $fatal(1, "type_key_descends[%0d][%0d] was %0d, expected 11", i, j,
+               type_key_descends[i][j]);
+    foreach (assigned_later[i, j])
+      if (assigned_later[i][j] !== 6)
+        $fatal(1, "assigned_later[%0d][%0d] was %0d, expected 6", i, j,
+               assigned_later[i][j]);
+
     if (positional[0] !== 10)
       $fatal(1, "positional[0] was %0d, expected 10", positional[0]);
     if (positional[2] !== 30)

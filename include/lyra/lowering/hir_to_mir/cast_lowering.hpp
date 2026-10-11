@@ -13,12 +13,13 @@ namespace lyra::lowering::hir_to_mir {
 // cross-precision real reshape is a conversion into the destination type; the
 // real-integral bridge reads the source out as a machine integer and lands it
 // in the destination type; an integral value's bytes and an unpacked byte
-// array lift to a string; identical / same-shape inputs return the operand
-// expression unchanged. The (source, destination) type pair fully drives the
-// choice; this helper is the one place that makes it. Reinterpreting a
-// reference, and converting a machine integer's width, are structurally
-// different operations -- each has its own primitive and is materialized
-// directly at its producer, not through this helper.
+// array lift to a string; an operand whose representation already is the
+// destination's is returned unchanged. The (source, destination) type pair
+// fully drives the choice; this helper is the one place that makes it, and a
+// pair the language defines no conversion for is an internal error.
+// Reinterpreting a reference, and converting a machine integer's width, are
+// structurally different operations -- each has its own primitive and is
+// materialized directly at its producer, not through this helper.
 //
 // `block` is the destination scope for any intermediate `ExprId` the helper
 // interns when a conversion nests another call.
