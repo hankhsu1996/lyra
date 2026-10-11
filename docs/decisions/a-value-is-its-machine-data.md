@@ -7,9 +7,10 @@ rule of [packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md),
 [jit-value-realization](jit-value-realization.md), and the one-runtime-type-per-domain rule of
 [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md).
 [a-packed-value-is-its-words](a-packed-value-is-its-words.md) carries D1 to D5 out for packed
-values, revises D2 above 64 bits -- an operation there is a call taking the words, never a loop
-generated per site -- and narrows D5 for them: code compiled once is told a packed value's size and
-width as numbers and is handed no function for one.
+values, revises D2 above 64 bits -- on the execution backend an operation there is stated on the
+words up to a fixed size where its work is linear in the width, and is a call taking the words
+otherwise -- and narrows D5 for them: code compiled once is told a packed value's size and width as
+numbers and is handed no function for one.
 
 ## Context
 

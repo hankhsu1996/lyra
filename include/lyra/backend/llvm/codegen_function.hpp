@@ -160,9 +160,9 @@ class CodeGenFunction {
   // its own built over this one, as clang keeps scalar expressions apart from
   // the function they are emitted into.
   class IntegralEmitter;
-  // `op` applied to `operands`, answering at `answer_type`: the few
-  // instructions it is where every integral value it is handed and answers
-  // with fits one word per plane, and a call on the library's entry otherwise.
+  // `op` applied to `operands`, answering at `answer_type`: the instructions
+  // it is on planes where the operation is stated that way, and a call on the
+  // library's entry otherwise.
   // An integral answer is laid out in `out`, which is what this answers with;
   // a machine answer is the value itself. `out` may be an operand's own
   // storage, every operand being read before anything is written.
@@ -176,10 +176,10 @@ class CodeGenFunction {
     lir::TypeId type;
   };
   // `bits` written over the bits `parts` name, outermost first, in the value
-  // of type `whole` lying at `at`, as instructions on one word per plane.
-  // Emits nothing and answers false where the value, a part or the bits is
-  // wider than a word.
-  auto StoreBitsOnOneWord(
+  // of type `whole` lying at `at`, as instructions on planes. Emits nothing
+  // and answers false where the value, a part or the bits does not lie in
+  // place.
+  auto StoreBitsOnPlanes(
       llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
       OperandRef bits) -> bool;
   // Each operand a call states, with the type it is a value of.
@@ -241,7 +241,7 @@ class CodeGenFunction {
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   // Bits written into the integral value at a place, where it lies: the
   // insertion as instructions where the value, every part and the bits each
-  // fit one word per plane, and a call on the library's insertion otherwise.
+  // lie in place, and a call on the library's insertion otherwise.
   auto LowerBitsStore(const lir::BitsStoreInstr& store)
       -> diag::Result<llvm::Value*>;
   // Bits written into the integral value a write in progress designates, by

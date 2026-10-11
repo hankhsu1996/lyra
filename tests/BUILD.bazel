@@ -279,8 +279,8 @@ cc_test(
 # word to the library's statement of that operation, by folding the first over
 # constants.
 cc_test(
-    name = "backend_llvm_integral_one_word_test",
-    srcs = ["backend_llvm/integral_one_word_test.cpp"],
+    name = "backend_llvm_integral_planes_test",
+    srcs = ["backend_llvm/integral_planes_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
         "//:backend_llvm",

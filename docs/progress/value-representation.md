@@ -38,8 +38,10 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
 - [x] A packed value is its value words, followed by its unknown words when four-state, in one
       contiguous sequence of bits; a type is identified by its exact width, signedness and state
       domain, on both backends.
-- [x] Every operation on a packed value is generated for its type: inline up to 64 bits, and a call
-      taking the words above.
+- [x] Every operation on a packed value is generated for its type. On the execution backend it is
+      instructions at the value's own width wherever every value it takes and answers is within the
+      in-place size; a product, a quotient and a remainder past 64 bits, and any operation over a
+      larger value, are calls taking the words.
 - [x] An element or a member at a run-time index is reached by bit addressing at the cost of the
       element. Measured on a packed array of 8-bit elements held in a variable, `--release`, 20,000
       writes of one element at 1,024, 16,384 and 262,144 elements: 3, 3 and 4 ms on the execution
@@ -125,8 +127,9 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
       declared at two types is refused. An operand an entry reads as a machine integer is still
       converted by hand where each call is built, and a count a result type fixes is still an
       operand of a run of array elements and of the conversions to an array of bytes.
-- [x] The instructions the execution backend writes for an operation on one word are held to the
-      library's statement of the same operation by a test that evaluates both on the same operands.
+- [x] The instructions the execution backend writes for an operation are held to the library's
+      statement of the same operation by a test that evaluates both on the same operands, at widths
+      on both sides of 64 bits.
 - [x] A net of an integral type has one install, told how many positions its declared type has, on
       both backends.
 - [x] An enumeration's member table states the base type it is laid out at, and the library reads

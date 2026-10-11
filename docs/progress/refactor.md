@@ -2781,9 +2781,9 @@ enough to warrant its own focused review.
       operation on one a call into the runtime. It is now the bits its type declares: a 32-bit
       two-state integer is four bytes, a four-state one eight, and a wider one a fixed number of
       words. An operation on a value up to 64 bits is instructions where it is written on both
-      backends, a wider one is a call taking the words, a temporary has nothing to end, and a
-      literal is a constant of the program. One value type per width, signedness and state domain
-      keeps the C++ backend's text in one shape.
+      backends, a wider one is a call taking the words wherever the code generator does not state
+      it, a temporary has nothing to end, and a literal is a constant of the program. One value type
+      per width, signedness and state domain keeps the C++ backend's text in one shape.
 
       The one reason to keep a width at run time is to compile one unit for several widths, which
       sharing a specialization across parameter values would need. That stays a choice per type: a
@@ -2911,17 +2911,17 @@ enough to warrant its own focused review.
       ships is gathered by directory and the directory holds both. Nothing emitted includes them.
       Target: the shipped set stated by what the runtime's own headers include. Not blocked.
 
-- [ ] R213 -- On the execution backend an operation on an integral wider than 64 bits reaches the
-      library through a table of code addresses the generated module reads while the program runs,
-      so every such operation is a load and an indirect call. The field names a runtime routine by
-      its symbol and calls it directly, as clang does for every compiler-rt entry, and nothing about
-      our conditions differs. The table exists because the operations are one list, read by the
-      folder, the library and the code generator alike, and a symbol per row of that list needs the
-      list expanded into one definition per row by a build step, which this build does not have.
-      Target: each operation's entry is a symbol that is a function of its row, defined once per row
-      from the one list, and called directly. Measured on Ibex under callgrind, `--release`, the
-      calls through the table are below the report's threshold, so this is shape and not a cost
-      found. Blocked on the build gaining a step that expands the list.
+- [ ] R213 -- On the execution backend an integral operation the code generator leaves to the
+      library reaches it through a table of code addresses the generated module reads while the
+      program runs, so every such operation is a load and an indirect call. The field names a
+      runtime routine by its symbol and calls it directly, as clang does for every compiler-rt
+      entry, and nothing about our conditions differs. The table exists because the operations are
+      one list, read by the folder, the library and the code generator alike, and a symbol per row
+      of that list needs the list expanded into one definition per row by a build step, which this
+      build does not have. Target: each operation's entry is a symbol that is a function of its row,
+      defined once per row from the one list, and called directly. Measured on Ibex under callgrind,
+      `--release`, the calls through the table are below the report's threshold, so this is shape
+      and not a cost found. Blocked on the build gaining a step that expands the list.
 
 - [ ] R214 -- Seven places in the library ask a type whether it is integral and how wide, each to
       read an element, a component or a key through the one constant its type is known by: the two
@@ -3046,19 +3046,16 @@ enough to warrant its own focused review.
       switch ends two different ways, one in the library's compiled sources and another in the
       operations over words; a handful of comparisons against one member of a two-member set remain
       in the value library where a switch belongs; an element update that assumes the element's
-      domain; a table slot that carries how an integral crosses whatever fills it; a completion of a
-      value and an integral's planes that checks its first component's type and not its second; and
-      an operation over more than a word that is handed its own identity while the program runs, and
-      reads its arguments back out of a list it just built, under a template that already has both.
+      domain; a table slot that carries how an integral crosses whatever fills it; and a completion
+      of a value and an integral's planes that checks its first component's type and not its second.
       Found by reading. Target: each is brought to the form its siblings have. Not blocked.
 
-- [ ] R216 -- Three places in the value library do by hand what the library already does once. Text
+- [ ] R216 -- Two places in the value library do by hand what the library already does once. Text
       read into an integral value has its digits classified twice, by the scan that finds the run
       and again by the conversion that reads it, the second with an arm that refuses what the first
-      let through. The formatter negates a value and takes its low word with code of its own. And
-      one function carries out an integral operation for two different shapes of caller. Found by
-      reading. Target: a run of digits is classified where it is found, the formatter asks the
-      library, and each shape of caller has its own entry. Not blocked.
+      let through. And the formatter negates a value and takes its low word with code of its own.
+      Found by reading. Target: a run of digits is classified where it is found, and the formatter
+      asks the library. Not blocked.
 
 - [ ] R217 -- A structure answers its stream of bits as a value, where every other kind writes its
       bits into a stream it is handed. A structure inside a structure therefore copies the inner
@@ -3072,9 +3069,10 @@ enough to warrant its own focused review.
 - [ ] R218 -- A concatenation of several operands is carried out two at a time, each step making a
       value as wide as everything joined so far, so joining N operands of W bits in all costs about
       N times W where it should cost W. That holds of a concatenation a design writes and of a
-      structure's stream, which is the concatenation of its members' streams. Found by reading.
-      Target: a concatenation states all its operands and writes each into its answer once. Not
-      blocked.
+      structure's stream, which is the concatenation of its members' streams. It is paid on the
+      execution backend, where each step is a call; on the C++ backend the same concatenation runs
+      about fifty times faster. Target: a concatenation states all its operands and writes each into
+      its answer once. Not blocked.
 
 ## Out of Scope
 

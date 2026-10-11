@@ -21,7 +21,7 @@
 #include "lyra/backend/llvm/codegen_function.hpp"
 #include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
-#include "lyra/backend/llvm/integral_one_word.hpp"
+#include "lyra/backend/llvm/integral_planes.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -1131,8 +1131,8 @@ auto CodeGenFunction::LowerCall(
   const auto called = [&](const auto&) -> Lowered { return called_into(out); };
   return std::visit(
       Overloaded{
-          // An operation over integral values is the few instructions it is
-          // on one word per plane, or a call on the library's entry.
+          // An operation over integral values is the instructions it is on
+          // planes, or a call on the library's entry.
           [&](const lir::BuiltinTarget& builtin) -> Lowered {
             const std::optional<support::IntegralOp> integral =
                 support::RuntimeEntryOf(builtin.fn).integral;
@@ -1339,7 +1339,7 @@ auto CodeGenFunction::LowerBitsStore(const lir::BitsStoreInstr& store)
     return std::unexpected(std::move(written.error()));
   }
   const lir::TypeId written_type = OperandType(store.bits);
-  if (StoreBitsOnOneWord(
+  if (StoreBitsOnPlanes(
           at, whole, *parts,
           OperandRef{.value = *written, .type = written_type})) {
     return nullptr;

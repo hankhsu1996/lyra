@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
-#include <tuple>
 #include <utility>
 #include <variant>
 
@@ -84,14 +83,14 @@ auto ScanInto(
     const String& input, const String& format, NullByte null_byte,
     Tuple<Targets...> prototypes) -> Tuple<Integer, Int, Targets...> {
   return [&]<std::size_t... I>(std::index_sequence<I...>) {
-    std::tuple<ScanSlot<Targets>...> slots{
+    Tuple<ScanSlot<Targets>...> slots{
         ScanSlot<Targets>(std::move(prototypes).template Component<I>())...};
     const std::array<ScanTarget, sizeof...(Targets)> targets{
-        std::get<I>(slots).Target()...};
+        slots.template ComponentRef<I>().Target()...};
     const ScanCount count = ScanImpl(input, format, null_byte, targets);
     return Tuple<Integer, Int, Targets...>{
         Integer::FromInt(count.items), Int::FromInt(count.consumed),
-        std::get<I>(slots).Value()...};
+        slots.template Component<I>().Value()...};
   }(std::index_sequence_for<Targets...>{});
 }
 

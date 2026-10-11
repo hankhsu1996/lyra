@@ -193,6 +193,9 @@ enum class IntegralAnswer : std::uint8_t {
 // The operands an operation takes, in order.
 class IntegralOperands {
  public:
+  // The most operands any operation takes.
+  static constexpr std::size_t kMost = 3;
+
   constexpr IntegralOperands(std::initializer_list<IntegralOperandKind> kinds)
       : count_(kinds.size()) {
     std::ranges::copy(kinds, kinds_.begin());
@@ -204,7 +207,6 @@ class IntegralOperands {
   }
 
  private:
-  static constexpr std::size_t kMost = 3;
   std::array<IntegralOperandKind, kMost> kinds_{};
   std::size_t count_ = 0;
 };

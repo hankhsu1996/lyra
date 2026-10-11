@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/support/integral_operation.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/integral.hpp"
@@ -45,6 +47,61 @@ struct MachineIntAnswer {};
 using IntegralAnswerType = std::variant<
     IntegralExtent, AnswerOfTheCall, MachineBoolAnswer, MachineIntAnswer>;
 
+// Ends the compiler or the run over an application of `op` that whatever built
+// it put together against another operation's declaration.
+[[noreturn]] void MisappliedIntegralOperation(
+    support::IntegralOp op, std::string_view what);
+
+// The answer type of `op`, with the operation known where the caller is
+// compiled, so only its own rule is compiled in.
+template <support::IntegralOp op>
+[[nodiscard]] auto AnswerTypeOf(std::span<const IntegralExtent> operands)
+    -> IntegralAnswerType {
+  const auto any_four_state = [&] {
+    StateDomain domain = StateDomain::kTwoState;
+    for (const IntegralExtent& operand : operands) {
+      domain = detail::CombinedDomain(domain, operand.domain);
+    }
+    return domain;
+  };
+  const auto first = [&]() -> const IntegralExtent& {
+    if (operands.empty()) {
+      MisappliedIntegralOperation(
+          op, "answers at its first operand's type and is handed none");
+    }
+    return operands.front();
+  };
+  switch (support::IntegralOperationOf(op).answer) {
+    case support::IntegralAnswer::kOfFirstOperand:
+      return first();
+    case support::IntegralAnswer::kOneBit:
+      return IntegralExtent{.width = 1, .domain = any_four_state()};
+    case support::IntegralAnswer::kTwoStateBit:
+      return ExtentOf(kShapeOf<Bit>);
+    case support::IntegralAnswer::kJoined: {
+      std::uint64_t width = 0;
+      for (const IntegralExtent& operand : operands) {
+        width += operand.width;
+      }
+      return IntegralExtent{.width = width, .domain = any_four_state()};
+    }
+    case support::IntegralAnswer::kInt:
+      return ExtentOf(kShapeOf<Int>);
+    case support::IntegralAnswer::kInteger:
+      return ExtentOf(kShapeOf<Integer>);
+    case support::IntegralAnswer::kPosition:
+      return ExtentOf(kShapeOf<Position>);
+    case support::IntegralAnswer::kOfTheCall:
+      return AnswerOfTheCall{};
+    case support::IntegralAnswer::kMachineBool:
+      return MachineBoolAnswer{};
+    case support::IntegralAnswer::kMachineInt:
+      return MachineIntAnswer{};
+  }
+  throw InternalError("unknown integral answer");
+}
+
+// The same answer with the operation a value of the run.
 [[nodiscard]] auto AnswerTypeOf(
     support::IntegralOp op, std::span<const IntegralExtent> integral_operands)
     -> IntegralAnswerType;
@@ -71,11 +128,200 @@ void RequireOperandTypes(
 // What an operation answers with where its answer is a machine value.
 using MachineAnswer = std::variant<std::monostate, bool, std::int64_t>;
 
-// Applies `op` to `operands`. An integral answer is written through `answer`;
-// a machine one is what the call answers. This is every operation's one
-// statement over values of any width: the compiler evaluating an operation
-// over constants and the library carrying one out for a type it was compiled
-// without both arrive here.
+// Applies `op` to the operands `to` holds. An integral answer is written
+// through `answer`; a machine one is what the call answers. This is every
+// operation's one statement over values of any width, entered with the
+// operation known where the caller is compiled, so only that operation's arm
+// is compiled in. `to.At(i)` answers the integral value handed as operand `i`,
+// and `to.MachineAt<T>(i)` the machine value, text or foreign buffer handed
+// there.
+template <support::IntegralOp op, typename Operands>
+auto ApplyIntegralOperation(const Operands& to, const IntegralView& answer)
+    -> MachineAnswer {
+  using support::IntegralOp;
+  const auto one_bit = [&](FourStateBit bit) -> MachineAnswer {
+    FillScalar(answer, bit);
+    return {};
+  };
+  const auto number = [&](std::int64_t value) -> MachineAnswer {
+    FromInt(answer, value);
+    return {};
+  };
+  const auto reduced = [&](ReductionOp reduction) {
+    return one_bit(Reduce(to.At(0), reduction));
+  };
+  const auto resolved = [&](NetResolution fold) -> MachineAnswer {
+    Resolve(answer, to.At(0), to.At(1), fold);
+    return {};
+  };
+  switch (op) {
+    case IntegralOp::kAdd:
+      Add(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kSubtract:
+      Subtract(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kMultiply:
+      Multiply(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kDivide:
+      Divide(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kModulo:
+      Modulo(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kNegate:
+      Negate(answer, to.At(0));
+      return {};
+    case IntegralOp::kPower:
+      Power(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kBitwiseAnd:
+      BitwiseAnd(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kBitwiseOr:
+      BitwiseOr(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kBitwiseXor:
+      BitwiseXor(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kBitwiseXnor:
+      BitwiseXnor(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kBitwiseNot:
+      BitwiseNot(answer, to.At(0));
+      return {};
+    case IntegralOp::kEqual:
+      return one_bit(Equal(to.At(0), to.At(1)));
+    case IntegralOp::kNotEqual:
+      return one_bit(NotEqual(to.At(0), to.At(1)));
+    case IntegralOp::kLess:
+      return one_bit(Less(to.At(0), to.At(1)));
+    case IntegralOp::kLessEqual:
+      return one_bit(LessEqual(to.At(0), to.At(1)));
+    case IntegralOp::kGreater:
+      return one_bit(Greater(to.At(0), to.At(1)));
+    case IntegralOp::kGreaterEqual:
+      return one_bit(GreaterEqual(to.At(0), to.At(1)));
+    case IntegralOp::kCaseEqual:
+      return one_bit(detail::ScalarOf(CaseEqual(to.At(0), to.At(1))));
+    case IntegralOp::kWildcardEqual:
+      return one_bit(WildcardEqual(to.At(0), to.At(1)));
+    case IntegralOp::kCasezMatch:
+      return one_bit(detail::ScalarOf(CasezMatch(to.At(0), to.At(1))));
+    case IntegralOp::kCasexMatch:
+      return one_bit(detail::ScalarOf(CasexMatch(to.At(0), to.At(1))));
+    case IntegralOp::kLogicalAnd:
+      return one_bit(LogicalAnd(to.At(0), to.At(1)));
+    case IntegralOp::kLogicalOr:
+      return one_bit(LogicalOr(to.At(0), to.At(1)));
+    case IntegralOp::kLogicalNot:
+      return one_bit(LogicalNot(to.At(0)));
+    case IntegralOp::kLogicalEquivalence:
+      return one_bit(LogicalEquivalence(to.At(0), to.At(1)));
+    case IntegralOp::kIsTrue:
+      return Truth(to.At(0)) == Truthiness::kKnownNonzero;
+    case IntegralOp::kReductionAnd:
+      return reduced(ReductionOp::kAnd);
+    case IntegralOp::kReductionOr:
+      return reduced(ReductionOp::kOr);
+    case IntegralOp::kReductionXor:
+      return reduced(ReductionOp::kXor);
+    case IntegralOp::kReductionNand:
+      return reduced(ReductionOp::kNand);
+    case IntegralOp::kReductionNor:
+      return reduced(ReductionOp::kNor);
+    case IntegralOp::kReductionXnor:
+      return reduced(ReductionOp::kXnor);
+    case IntegralOp::kShiftLeft:
+      ShiftLeft(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kLogicalShiftRight:
+      LogicalShiftRight(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kArithmeticShiftRight:
+      ArithmeticShiftRight(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kConcat:
+      Concat(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kReplicate:
+      Replicate(answer, to.At(0));
+      return {};
+    case IntegralOp::kSlice:
+      Slice(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kWithSlice:
+      detail::Copy(to.At(0).value, answer.value);
+      detail::Copy(to.At(0).unknown, answer.unknown);
+      WithSlice(answer, to.At(1), to.At(2));
+      return {};
+    case IntegralOp::kConvert:
+      Convert(answer, to.At(0));
+      return {};
+    case IntegralOp::kFromInt:
+      return number(to.template MachineAt<std::int64_t>(0));
+    case IntegralOp::kFromBool:
+      return number(to.template MachineAt<bool>(0) ? 1 : 0);
+    case IntegralOp::kToInt64:
+      return ToInt64(to.At(0));
+    case IntegralOp::kToPosition:
+      ToPosition(answer, to.At(0));
+      return {};
+    case IntegralOp::kIsUnknown:
+      return one_bit(detail::ScalarOf(HasUnknown(to.At(0))));
+    case IntegralOp::kHasUnknown:
+      return HasUnknown(to.At(0));
+    case IntegralOp::kBitIdentical:
+      return CaseEqual(to.At(0), to.At(1));
+    case IntegralOp::kCountBits:
+      return number(CountBits(to.At(0), to.At(1)));
+    case IntegralOp::kCeilLog2:
+      return number(CeilLog2(to.At(0)));
+    case IntegralOp::kMergeConditional:
+      MergeConditional(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kResolveTriState:
+      return resolved(NetResolution::kTriState);
+    case IntegralOp::kResolveWiredAnd:
+      return resolved(NetResolution::kWiredAnd);
+    case IntegralOp::kResolveWiredOr:
+      return resolved(NetResolution::kWiredOr);
+    case IntegralOp::kDominate:
+      Dominate(answer, to.At(0), to.At(1));
+      return {};
+    case IntegralOp::kReverseBlocks: {
+      const auto block = to.template MachineAt<std::int64_t>(1);
+      if (block <= 0) {
+        MisappliedIntegralOperation(
+            op,
+            "is handed a block size that is not positive, which the front "
+            "end has already refused");
+      }
+      ReverseBlocks(answer, to.At(0), static_cast<std::uint64_t>(block));
+      return {};
+    }
+    case IntegralOp::kFromText: {
+      const auto text = to.template MachineAt<std::string_view>(0);
+      FromBytes(answer, std::span<const char>{text.data(), text.size()});
+      return {};
+    }
+    case IntegralOp::kReadCanonicalBits:
+      ReadCanonicalBitVec(to.template MachineAt<const svBitVecVal*>(0), answer);
+      return {};
+    case IntegralOp::kReadCanonicalLogic:
+      ReadCanonicalLogicVec(
+          to.template MachineAt<const svLogicVecVal*>(0), answer);
+      return {};
+    case IntegralOp::kFromSvLogic:
+      FromSvLogic(to.template MachineAt<std::uint8_t>(0), answer);
+      return {};
+  }
+  throw InternalError("unknown integral operation");
+}
+
+// The same statement entered with the operation a value of the run, which is
+// how the compiler evaluating an operation over constants arrives.
 auto ApplyIntegralOperation(
     support::IntegralOp op, std::span<const IntegralOperand> operands,
     const IntegralView& answer) -> MachineAnswer;

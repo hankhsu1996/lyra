@@ -17,12 +17,12 @@ class Value;
 
 namespace lyra::backend::llvm_backend {
 
-// The planes of one integral value no wider than a machine word, each an
-// integer of exactly the value's width, so nothing above the width exists to
-// be kept clear. A value that cannot hold x or z has a constant clear unknown
+// The planes of one integral value that lies in place, each an integer of
+// exactly the value's width, so nothing above the width exists to be kept
+// clear. A value that cannot hold x or z has a constant clear unknown
 // plane, which is what makes one statement of an operation serve both: every
 // term reading that plane folds away as it is built.
-struct OneWord {
+struct Planes {
   llvm::Value* value;
   llvm::Value* unknown;
 };
@@ -35,36 +35,45 @@ struct IntegralShapes {
   std::optional<value::IntegralShape> answer;
 };
 
-// Where an operation on one word takes its operands from, each by its
+// Where an operation on planes takes its operands from, each by its
 // position among them: the planes of one that is an integral value, and the
 // machine value of one that is not. Planes are asked for where the operation
 // reads them, so whatever reading them emits lands there.
-struct OneWordOperands {
-  llvm::function_ref<OneWord(std::size_t)> planes;
+struct PlaneOperands {
+  llvm::function_ref<Planes(std::size_t)> planes;
   llvm::function_ref<llvm::Value*(std::size_t)> machine;
 };
 
-// What an operation on one word answers with: the planes of an integral
+// What an operation on planes answers with: the planes of an integral
 // answer, at exactly the answer's width, or the machine value of an operation
 // answering one.
-using OneWordAnswer = std::variant<OneWord, llvm::Value*>;
+using PlaneAnswer = std::variant<Planes, llvm::Value*>;
 
-// Whether a value of `shape` is one machine word per plane, which is what the
-// instructions below are over.
+// Whether a value of `shape` lies in whatever holds it. Up to that size an
+// operation is stated on the value's planes where it is compiled, so the code
+// of one site follows a declared width only as far as a frame does.
+[[nodiscard]] constexpr auto LiesInPlace(const value::IntegralShape& shape)
+    -> bool {
+  return !value::UsesHeapWords(shape.width, shape.domain);
+}
+
+// Whether a value of `shape` is one machine word per plane.
 [[nodiscard]] constexpr auto IsSingleWord(const value::IntegralShape& shape)
     -> bool {
   return shape.width <= 64;
 }
 
-// `op` as the few instructions it is on planes of one machine word (LRM 11.4),
-// where every integral value it is handed and answers with fits one word per
-// plane. Nothing for an operation whose work is long at every width, or over a
-// wider value. It builds only arithmetic on the planes it is handed, so over
-// constant planes a folding builder answers with constants.
-auto LowerOnOneWord(
+// `op` as the instructions it is on planes (LRM 11.4), where every integral
+// value it is handed and answers with lies in place, so the operation costs
+// the words it touches. Nothing for an operation whose work is long at every
+// width, for a product, a quotient or a remainder past one machine word, whose
+// work grows with the square of the width, or over a larger value. It builds
+// only arithmetic on the planes it is handed, so over constant planes a folding
+// builder answers with constants.
+auto LowerOnPlanes(
     llvm::IRBuilderBase& builder, support::IntegralOp op,
-    const IntegralShapes& shapes, const OneWordOperands& operands)
-    -> std::optional<OneWordAnswer>;
+    const IntegralShapes& shapes, const PlaneOperands& operands)
+    -> std::optional<PlaneAnswer>;
 
 // The 0, 1 or x a comparison answers (LRM 11.4.4, 11.4.5) as the byte a runtime
 // entry answers it in -- the value bit, and above it whether it is unknown --
