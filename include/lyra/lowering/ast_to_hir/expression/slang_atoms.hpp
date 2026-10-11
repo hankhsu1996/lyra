@@ -90,6 +90,16 @@ auto LowerRealMathName(slang::parsing::KnownSystemName name)
 auto LowerRealConversionName(slang::parsing::KnownSystemName name)
     -> std::optional<support::BuiltinFn>;
 
+// The lvalue the source wrote where what `expr` stands at is written from
+// outside the expression -- an `output` or `inout` actual, the parent's side of
+// an output or inout port connection, a member of a pattern being assigned to
+// -- and nothing where `expr` is a value. Slang binds such a position as an
+// assignment to that lvalue from a placeholder for whatever fills it, under as
+// many conversions as take the filler's type to the lvalue's (LRM 13.5, 10.7);
+// the placeholder appears nowhere else.
+auto ArgLValue(const slang::ast::Expression& expr)
+    -> const slang::ast::Expression*;
+
 // What slang's expansion of `lhs op= e` into `Conv(lhs.type) { BinaryOp(op) {
 // Conv(common, LValueRef), Conv(common, e) } }` states: the type the binary
 // operator is applied at (LRM 11.6.1 Table 11-21, 11.8.1), and the operand

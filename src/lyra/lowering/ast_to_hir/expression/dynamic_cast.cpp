@@ -5,12 +5,12 @@
 
 #include <slang/ast/Expression.h>
 #include <slang/ast/SystemSubroutine.h>
-#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/types/AllTypes.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr_id.hpp"
+#include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
@@ -27,11 +27,8 @@ namespace {
 // itself rather than a spelling to fall back for.
 auto DestinationOf(const slang::ast::Expression* actual)
     -> const slang::ast::Expression* {
-  if (actual->kind == slang::ast::ExpressionKind::Assignment) {
-    const auto& assignment = actual->as<slang::ast::AssignmentExpression>();
-    if (assignment.right().kind == slang::ast::ExpressionKind::EmptyArgument) {
-      return &assignment.left();
-    }
+  if (const slang::ast::Expression* lvalue = ArgLValue(*actual)) {
+    return lvalue;
   }
   throw InternalError(
       "a dynamic cast's destination did not arrive bound as the storage it "

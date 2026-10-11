@@ -117,6 +117,9 @@ merged node.
       rejected per LRM 11.4.12.1. An assignment pattern as a target (LRM 10.9) takes a value apart
       by member in the same positions, and a member of it may itself be a pattern or a
       concatenation. The LRM 11.4.14.3 streaming-unpack target is W15 below.
+  - [x] An `output` or `inout` actual of another type than its formal (LRM 13.5): the value passes
+        each way as an assignment between the two types carries it, for a function, a task, a
+        method, a subroutine of another unit and a DPI import.
 - [x] W15 -- Streaming operators `{>> {...}}` / `{<< n {...}}` in both directions (LRM 11.4.14).
       Packing lays each operand's bits end to end with the first operand most significant, an
       unpacked array contributing its elements in `foreach` order and a structure its members in

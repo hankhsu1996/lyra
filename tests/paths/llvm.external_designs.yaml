@@ -23,9 +23,6 @@ OpenPiton:1x1:hello:
 OpenTitan:default:hello:
   stops: run
   says: did not end within
-Vortex:mini:hello:
-  stops: build
-  says: an omitted subroutine argument is not yet supported
 XuanTie-C910:default:hello:
   stops: build
   says: delay on continuous assignment is not yet supported

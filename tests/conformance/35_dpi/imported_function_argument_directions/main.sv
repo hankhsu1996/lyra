@@ -6,7 +6,9 @@
 // 35.6.1, 35.6.2). A string formal follows the same three directions, but what
 // the direction applies to is the pointer rather than the characters, so an
 // output or inout string is reached through one more level of indirection
-// (LRM Annex H.8.10).
+// (LRM Annex H.8.10). An actual of another type than its formal takes the
+// formal's value, and gives the formal its own, as an assignment between the
+// two would (LRM 13.5).
 module Top;
   import "DPI-C" function int mix(input int high, input int low);
   import "DPI-C" function void split(
@@ -30,6 +32,10 @@ module Top;
   string chosen;
   string wrapped;
   real halved;
+  logic [3:0] narrow_high;
+  real real_low;
+  logic [7:0] unknown_acc;
+  int halved_and_rounded;
 
   initial begin
     // Each actual an argument writes into starts at a value the foreign side
@@ -58,6 +64,16 @@ module Top;
 
     halved = 25.25;
     halve(halved);
+
+    narrow_high = 4'hx;
+    real_low = -2.0;
+    split(2834, narrow_high, real_low);
+
+    unknown_acc = 8'b0000_01x1;
+    fold_in(unknown_acc, 3);
+
+    halved_and_rounded = 25;
+    halve(halved_and_rounded);
   end
 
   final begin
@@ -77,6 +93,14 @@ module Top;
       $fatal(1, "wrapped was '%s', expected '[core]'", wrapped);
     if (halved != 12.625)
       $fatal(1, "halved was %f, expected 12.625", halved);
+    if (narrow_high !== 4'hC)
+      $fatal(1, "narrow_high was %h, expected c", narrow_high);
+    if (real_low != 34.0)
+      $fatal(1, "real_low was %f, expected 34.0", real_low);
+    if (unknown_acc !== 8'd53)
+      $fatal(1, "unknown_acc was %0d, expected 53", unknown_acc);
+    if (halved_and_rounded !== 13)
+      $fatal(1, "halved_and_rounded was %0d, expected 13", halved_and_rounded);
     $display("All checks passed");
   end
 endmodule

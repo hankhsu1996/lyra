@@ -15,7 +15,6 @@
 #include <slang/ast/Scope.h>
 #include <slang/ast/SystemSubroutine.h>
 #include <slang/ast/TimingControl.h>
-#include <slang/ast/expressions/AssignmentExpressions.h>
 #include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/symbols/BlockSymbols.h>
@@ -1258,17 +1257,12 @@ auto LowerCallExpr(
   arg_ids.reserve(call.arguments().size());
   std::optional<hir::TypeId> receiver_type;
   for (std::size_t i = 0; i < call.arguments().size(); ++i) {
-    // LRM 13.5: slang models an `output` / `inout` actual as an
-    // AssignmentExpression whose right side is an EmptyArgument placeholder;
-    // the actual lvalue is the left side. HIR carries just that lvalue -- the
-    // copy-in / copy-out is synthesized at HIR-to-MIR from the formal's
-    // direction.
+    // LRM 13.5: HIR carries an `output` / `inout` actual as the lvalue it is.
+    // What passes between it and the formal follows from the formal's
+    // direction and the two types, where MIR is built.
     const slang::ast::Expression* arg = call.arguments()[i];
-    if (arg->kind == slang::ast::ExpressionKind::Assignment) {
-      const auto& as = arg->as<slang::ast::AssignmentExpression>();
-      if (as.right().kind == slang::ast::ExpressionKind::EmptyArgument) {
-        arg = &as.left();
-      }
+    if (const slang::ast::Expression* lvalue = ArgLValue(*arg)) {
+      arg = lvalue;
     }
     // LRM 21.3.4.4 form 2d: a standalone EmptyArgument marks a positional
     // elision (`$fread(mem, fd, , count)`). Surface as `std::nullopt` so the
