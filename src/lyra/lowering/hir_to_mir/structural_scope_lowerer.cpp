@@ -1656,16 +1656,14 @@ void AppendOwnedChildConstruction(
                   unit_lowerer.Unit().builtins, member, typed_handle))});
 }
 
-// A repeated generate builds, at every index the loop counts out (LRM 27.4),
-// the body the block at that index is. The index is a declaration of this
-// scope, so the loop's own expressions read and write it the way any name
-// reaches a declaration, and each block is built with the index it stands at.
-// Which body a block is follows the order the loop counts its blocks out, so
-// the loop counts them as it builds them. What the member receives is the
-// sequence of what the loop built, complete: the one that grows is a local
-// these steps own and nothing else can name.
+// A repeated generate builds its one body at every index the loop counts out
+// (LRM 27.4). The index is a declaration of this scope, so the loop's own
+// expressions read and write it the way any name reaches a declaration, and
+// each block is built with the index it stands at. What the member receives
+// is the sequence of what the loop built, complete: the one that grows is a
+// local these steps own and nothing else can name.
 auto LowerRepeatedGenerate(
-    StructuralScopeLowerer& lowerer, WalkFrame frame,
+    StructuralScopeLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
     const hir::BlocksRepeat& repeat, const GenerateBinding& gen_binding)
     -> diag::Result<mir::Stmt> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -1716,79 +1714,55 @@ auto LowerRepeatedGenerate(
             .type = index_type});
   };
 
-  // Where the loop starts is a value it is given: LRM 27.4 spells the
-  // initialization as an assignment of one and admits no other form there, so
-  // the write belongs to the loop rather than to anything the source wrote.
-  auto initial_or =
-      lowerer.LowerExpr(hir_scope.exprs.Get(repeat.initial), body_frame);
-  if (!initial_or) return std::unexpected(std::move(initial_or.error()));
-  body.AppendStmt(
-      mir::ExprStmt{
-          .expr = body.exprs.Add(BuildStoreExpr(
-              unit_lowerer.Unit(), body,
-              AccessPath{.owner = index_place(body), .descent = {}},
-              body.exprs.Add(*std::move(initial_or))))});
+  // A loop no object of this class counted a block out of states no body, and
+  // the loop is then run by nothing: the same expressions read against the
+  // same inputs count none here either.
+  for (const hir::StructuralScopeId only_body : gen.blocks.Ids()) {
+    const auto& binding = gen_binding.blocks.Get(only_body);
 
-  const mir::LocalId counted =
-      steps.Bindings().DeclareAnonymous(unit.builtins.int_type);
-  body.AppendStmt(
-      mir::LocalDeclStmt{
-          .target = counted, .init = BuildIntLiteral(unit, body, 0)});
+    // Where the loop starts is a value it is given: LRM 27.4 spells the
+    // initialization as an assignment of one and admits no other form there,
+    // so the write belongs to the loop rather than to anything the source
+    // wrote.
+    auto initial_or =
+        lowerer.LowerExpr(hir_scope.exprs.Get(repeat.initial), body_frame);
+    if (!initial_or) return std::unexpected(std::move(initial_or.error()));
+    body.AppendStmt(
+        mir::ExprStmt{
+            .expr = body.exprs.Add(BuildStoreExpr(
+                unit_lowerer.Unit(), body,
+                AccessPath{.owner = index_place(body), .descent = {}},
+                body.exprs.Add(*std::move(initial_or))))});
 
-  mir::Block loop_body;
-  const WalkFrame loop_frame = body_frame.WithBlock(&loop_body);
-  // Every body is held by the base each of them extends, so which body a block
-  // is changes what is built and not how the sequence holds it.
-  auto built = ChooseByPosition(
-      unit, loop_body, repeat.taken,
-      [&] {
-        return loop_body.exprs.Add(
-            mir::MakeLocalRefExpr(counted, unit.builtins.int_type));
-      },
-      [&](std::uint32_t which) -> diag::Result<mir::ExprId> {
-        const auto& binding =
-            gen_binding.blocks.Get(hir::StructuralScopeId{which});
-        auto arguments =
-            LowerConstructorArguments(lowerer, loop_frame, binding.arguments);
-        if (!arguments) return std::unexpected(std::move(arguments.error()));
-        const std::array index{index_read(loop_body)};
-        return BuildOwnedChildHandle(
-            unit_lowerer, loop_frame, std::nullopt, binding.label,
-            binding.lowerer->ClassId(), index, handle_type,
-            *std::move(arguments));
-      },
-      handle_type);
-  if (!built) return std::unexpected(std::move(built.error()));
-  AppendToSequence(unit, loop_body, sequence, sequence_type, *built);
-  const auto read_counted = [&] {
-    return loop_body.exprs.Add(
-        mir::MakeLocalRefExpr(counted, unit.builtins.int_type));
-  };
-  const mir::ExprId one_more = loop_body.exprs.Add(MakeBinary(
-      unit, loop_body, mir::BinaryOp::kAdd, read_counted(),
-      BuildIntLiteral(unit, loop_body, 1), unit.builtins.int_type));
-  loop_body.AppendStmt(
-      mir::ExprStmt{
-          .expr = loop_body.exprs.Add(
-              mir::MakeAssignExpr(unit.builtins, read_counted(), one_more))});
-  // The step is the expression the source wrote, and it reaches the next index
-  // by writing the loop's own, so it is placed for its effect and its value is
-  // dropped -- every form LRM 27.4 admits for it says where the index goes in
-  // exactly that way.
-  auto step_or =
-      lowerer.LowerIgnoredExpr(hir_scope.exprs.Get(repeat.step), loop_frame);
-  if (!step_or) return std::unexpected(std::move(step_or.error()));
-  loop_body.AppendStmt(
-      mir::ExprStmt{.expr = loop_body.exprs.Add(*std::move(step_or))});
+    mir::Block loop_body;
+    const WalkFrame loop_frame = body_frame.WithBlock(&loop_body);
+    auto arguments =
+        LowerConstructorArguments(lowerer, loop_frame, repeat.arguments);
+    if (!arguments) return std::unexpected(std::move(arguments.error()));
+    const std::array index{index_read(loop_body)};
+    const mir::ExprId built = BuildOwnedChildHandle(
+        unit_lowerer, loop_frame, std::nullopt, binding.label,
+        binding.lowerer->ClassId(), index, handle_type, *std::move(arguments));
+    AppendToSequence(unit, loop_body, sequence, sequence_type, built);
+    // The step is the expression the source wrote, and it reaches the next
+    // index by writing the loop's own, so it is placed for its effect and its
+    // value is dropped -- every form LRM 27.4 admits for it says where the
+    // index goes in exactly that way.
+    auto step_or =
+        lowerer.LowerIgnoredExpr(hir_scope.exprs.Get(repeat.step), loop_frame);
+    if (!step_or) return std::unexpected(std::move(step_or.error()));
+    loop_body.AppendStmt(
+        mir::ExprStmt{.expr = loop_body.exprs.Add(*std::move(step_or))});
 
-  auto condition =
-      lowerer.LowerExpr(hir_scope.exprs.Get(repeat.condition), body_frame);
-  if (!condition) return std::unexpected(std::move(condition.error()));
-  const mir::ExprId condition_id = ReduceToCondition(
-      unit_lowerer.Unit(), body, body.exprs.Add(*std::move(condition)));
-  const mir::BlockId loop_scope = body.child_scopes.Add(std::move(loop_body));
-  body.AppendStmt(
-      mir::WhileStmt{.condition = condition_id, .scope = loop_scope});
+    auto condition =
+        lowerer.LowerExpr(hir_scope.exprs.Get(repeat.condition), body_frame);
+    if (!condition) return std::unexpected(std::move(condition.error()));
+    const mir::ExprId condition_id = ReduceToCondition(
+        unit_lowerer.Unit(), body, body.exprs.Add(*std::move(condition)));
+    const mir::BlockId loop_scope = body.child_scopes.Add(std::move(loop_body));
+    body.AppendStmt(
+        mir::WhileStmt{.condition = condition_id, .scope = loop_scope});
+  }
 
   const mir::ExprId member = body.exprs.Add(
       mir::MakeFieldAccessExpr(
@@ -1830,14 +1804,9 @@ auto LowerSelectionBranchInto(
                 chosen.alternatives[stands.position];
             if (!block.has_value()) return {};
             const auto& binding = gen_binding.blocks.Get(*block);
-            auto arguments =
-                LowerConstructorArguments(lowerer, frame, binding.arguments);
-            if (!arguments)
-              return std::unexpected(std::move(arguments.error()));
             AppendOwnedChildConstruction(
                 lowerer.Owner(), frame, std::nullopt, binding.label,
-                binding.lowerer->ClassId(), gen_binding.handle,
-                *std::move(arguments));
+                binding.lowerer->ClassId(), gen_binding.handle, {});
             return {};
           },
           [&](hir::SelectionChoiceId nested) -> diag::Result<void> {
@@ -1982,14 +1951,14 @@ auto LowerChosenGenerate(
       .data = mir::BlockStmt{.scope = block.child_scopes.Add(std::move(body))}};
 }
 
-// A loop whose blocks are each a scope of their own builds every one of them
-// directly, with no loop at run time, each carrying the constant index it
-// stands at and passed the constructor arguments the generate states for it.
-// What the member receives is the sequence of them in the order the loop
-// counted them out, complete: the one that grows is a local these steps own and
-// nothing else can name.
+// A loop whose blocks are built on their own builds every one of them
+// directly, with no loop at run time, each as the body it is, carrying the
+// constant index it stands at and passed the constructor arguments the
+// generate states for it. What the member receives is the sequence of them in
+// the order the loop counted them out, complete: the one that grows is a local
+// these steps own and nothing else can name.
 auto LowerStandAloneGenerate(
-    StructuralScopeLowerer& lowerer, WalkFrame frame, const hir::Generate& gen,
+    StructuralScopeLowerer& lowerer, WalkFrame frame,
     const hir::BlocksStandAlone& stand_alone,
     const GenerateBinding& gen_binding) -> diag::Result<mir::Stmt> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
@@ -2009,12 +1978,11 @@ auto LowerStandAloneGenerate(
           .target = sequence,
           .init = body.exprs.Add(
               BuildSequenceConstructionCall(unit, body, sequence_type, {}))});
-  for (const hir::StructuralScopeId scope_id : gen.blocks.Ids()) {
-    const auto& binding = gen_binding.blocks.Get(scope_id);
-    const std::array index{BuildMachineIntLiteral(
-        unit, body, stand_alone.indices[scope_id.value])};
+  for (const hir::StandAloneBlock& counted : stand_alone.counted) {
+    const auto& binding = gen_binding.blocks.Get(counted.body);
+    const std::array index{BuildIntLiteral(unit, body, counted.index)};
     auto arguments =
-        LowerConstructorArguments(lowerer, body_frame, binding.arguments);
+        LowerConstructorArguments(lowerer, body_frame, counted.arguments);
     if (!arguments) return std::unexpected(std::move(arguments.error()));
     const mir::ExprId child = BuildOwnedChildHandle(
         unit_lowerer, body_frame, std::nullopt, binding.label,
@@ -2046,12 +2014,9 @@ auto LowerSingleBlockGenerate(
   mir::Block body;
   const WalkFrame body_frame = frame.WithBlock(&body);
   const auto& binding = gen_binding.blocks.Get(hir::StructuralScopeId{0});
-  auto arguments =
-      LowerConstructorArguments(lowerer, body_frame, binding.arguments);
-  if (!arguments) return std::unexpected(std::move(arguments.error()));
   AppendOwnedChildConstruction(
       lowerer.Owner(), body_frame, std::nullopt, binding.label,
-      binding.lowerer->ClassId(), gen_binding.handle, *std::move(arguments));
+      binding.lowerer->ClassId(), gen_binding.handle, {});
   return mir::Stmt{
       .label = std::nullopt,
       .data = mir::BlockStmt{.scope = block.child_scopes.Add(std::move(body))}};
@@ -2068,10 +2033,11 @@ auto LowerGenerateAsStmt(
           },
           [&](const hir::BlocksStandAlone& stand_alone) {
             return LowerStandAloneGenerate(
-                lowerer, frame, gen, stand_alone, gen_binding);
+                lowerer, frame, stand_alone, gen_binding);
           },
           [&](const hir::BlocksRepeat& repeat) {
-            return LowerRepeatedGenerate(lowerer, frame, repeat, gen_binding);
+            return LowerRepeatedGenerate(
+                lowerer, frame, gen, repeat, gen_binding);
           },
           [&](const hir::BlocksChoose& chosen) {
             return LowerChosenGenerate(lowerer, frame, chosen, gen_binding);
@@ -2395,9 +2361,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       shape.contained.push_back(*child_r);
       blocks.push_back(
           ChildStructuralScopeBinding{
-              .label = block.scope.source_name,
-              .lowerer = &child,
-              .arguments = block.arguments});
+              .label = block.scope.source_name, .lowerer = &child});
     }
     generates.push_back(
         GenerateBinding{

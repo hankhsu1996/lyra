@@ -233,16 +233,17 @@ layer directly.
       declares something, is refused at the merge gate. Designs that each state one thing at a size
       N -- a loop of one body, a loop selecting by its index, a loop of instances, a loop of
       instances each reading a variable of their parent, an instance array, a loop choosing by an
-      outer index, an unread parameter's width, the width of one packed value among them -- are
-      compiled at N and at twice N on both backends: the larger run may leave behind no more units
-      or files and no more than a quarter more bytes, and each stage may take under three times the
-      time and the peak memory. What `main` exceeds today is recorded per path and has to go on
-      being exceeded, so the record only shrinks. Two are left in it: the C++ backend writes files
-      and bytes per generate block, and an instance array's emitted bytes follow its element count
-      on both backends. A third went: a unit an override written elsewhere could reach worked its
-      own name out again for every block it declared and for every instance naming it, so declaring
-      a loop cost the square of its count (0.3 s at 512 blocks, 1.2 s at 1024), and so did a loop of
-      instances reading upward (1.7 s and 6.3 s). A name is now worked out once.
+      outer index, a loop counting its blocks out by an outer index, an unread parameter's width,
+      the width of one packed value among them -- are compiled at N and at twice N on both backends:
+      the larger run may leave behind no more units or files and no more than a quarter more bytes,
+      and each stage may take under three times the time and the peak memory. What `main` exceeds
+      today is recorded per path and has to go on being exceeded, so the record only shrinks. Two
+      are left in it: the C++ backend writes files and bytes per generate block, and an instance
+      array's emitted bytes follow its element count on both backends. A third went: a unit an
+      override written elsewhere could reach worked its own name out again for every block it
+      declared and for every instance naming it, so declaring a loop cost the square of its count
+      (0.3 s at 512 blocks, 1.2 s at 1024), and so did a loop of instances reading upward (1.7 s and
+      6.3 s). A name is now worked out once.
 
 - [x] D22 -- The address sanitizer run reaches the cases it was added to watch. It had built since
       D19 and still reported nothing: the runtime library a built program links was instrumented

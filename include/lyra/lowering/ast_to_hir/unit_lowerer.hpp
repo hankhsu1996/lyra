@@ -217,7 +217,7 @@ struct ScopePublicationRecord {
   };
   using Callable = std::variant<Subroutine, PortDefault, ViewRead>;
 
-  // A loop generate that counted out at least one block (LRM 27.4).
+  // A loop generate, with whatever blocks it counted out (LRM 27.4).
   struct Loop {
     hir::GenerateId id;
     const slang::ast::GenerateBlockArraySymbol* loop = nullptr;
@@ -403,8 +403,10 @@ struct InUnitReach {
 
 // A hop of a descent this unit declares nothing about, as the front end says
 // the name reached it: an instance, with the coordinates the name wrote for
-// it; a block of a loop generate, by the label of the loop and the value its
-// index stood at (LRM 27.4); a block that stands alone or that a conditional
+// it; a block of a loop generate, by the label of the loop, the value its
+// index stood at, and its place among the blocks the loop counted out where
+// the name reached it (LRM 27.4); a block that stands alone or that a
+// conditional
 // chose, by where the source wrote its construct among those of its scope and
 // the block among that construct's alternatives, since a label does not tell
 // the alternatives of a conditional apart (LRM 27.5); or a named block or
@@ -418,6 +420,7 @@ struct InstanceHop {
 struct LoopBlockHop {
   std::string loop;
   std::int64_t index;
+  std::uint32_t position;
 };
 struct ChosenBlockHop {
   std::uint32_t construct;
@@ -1091,6 +1094,11 @@ class UnitLowerer {
   // instance, of this unit; that pass gives one to every such child.
   [[nodiscard]] auto GenerateIdOf(const slang::ast::Symbol& construct) const
       -> hir::GenerateId;
+  // The same for a loop generate, which is one construct however many blocks
+  // it counted out, none included.
+  [[nodiscard]] auto GenerateIdOf(
+      const slang::ast::GenerateBlockArraySymbol& loop) const
+      -> hir::GenerateId;
   [[nodiscard]] auto InstanceMemberIdOf(
       const slang::ast::Symbol& instance) const -> hir::InstanceMemberId;
 
@@ -1738,6 +1746,9 @@ class UnitLowerer {
   ForeignImportBindings foreign_import_bindings_;
   ForeignImportScopes foreign_import_scopes_;
   OwnedChildBindings owned_child_bindings_;
+  std::unordered_map<
+      const slang::ast::GenerateBlockArraySymbol*, hir::GenerateId>
+      loop_generates_;
   std::unordered_map<const slang::ast::ProceduralBlockSymbol*, hir::ProcessId>
       process_bindings_;
   ProceduralStaticBindings procedural_static_bindings_;

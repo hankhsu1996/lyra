@@ -442,31 +442,47 @@ struct ValueReference
 // Collects the value references in the places a run evaluates, walking the
 // body's members and skipping everything that is not one of those places.
 // Two more sets are collected apart, because what each means depends on which
-// parameter is read there: the references in what selects an alternative of a
-// conditional generate, and every reference in the code of a process, a
-// continuous assignment or a subroutine, wherever in it the reference sits.
+// parameter is read there: the references in what a construction evaluates to
+// say which blocks it builds -- what selects an alternative of a conditional
+// generate, and what counts a loop generate's blocks out -- and every
+// reference in the code of a process, a continuous assignment or a subroutine,
+// wherever in it the reference sits.
 struct EvaluatedPlaces
     : slang::ast::ASTVisitor<EvaluatedPlaces, slang::ast::VisitFlags::Symbols> {
   EvaluatedPlaces(
-      ValueReference& values, ValueReference& selections, EveryReference& code,
-      const SpecializationPolicy& policy)
-      : values(&values), selections(&selections), code(&code), policy(&policy) {
+      ValueReference& values, ValueReference& built_blocks,
+      EveryReference& code, const SpecializationPolicy& policy)
+      : values(&values),
+        built_blocks(&built_blocks),
+        code(&code),
+        policy(&policy) {
   }
 
   ValueReference* values;
-  ValueReference* selections;
+  ValueReference* built_blocks;
   EveryReference* code;
   const SpecializationPolicy* policy;
 
   // The condition or the case items an alternative stands under (LRM 27.5).
   void handle(const slang::ast::GenerateBlockSymbol& block) {
     for (const slang::ast::GenerateSelection& level : block.selectionPath) {
-      if (level.condition != nullptr) level.condition->visit(*selections);
+      if (level.condition != nullptr) level.condition->visit(*built_blocks);
       for (const slang::ast::Expression* item : level.caseItems) {
-        if (item != nullptr) item->visit(*selections);
+        if (item != nullptr) item->visit(*built_blocks);
       }
     }
     visitDefault(block);
+  }
+
+  // Where a loop's index starts, whether a block stands at it, and how it
+  // reaches the next one (LRM 27.4).
+  void handle(const slang::ast::GenerateBlockArraySymbol& array) {
+    for (const slang::ast::Expression* header :
+         {array.initialExpression, array.stopExpression,
+          array.iterExpression}) {
+      if (header != nullptr) header->visit(*built_blocks);
+    }
+    visitDefault(array);
   }
 
   void handle(const slang::ast::ProceduralBlockSymbol& b) const {
@@ -626,10 +642,12 @@ struct Deciding {
 // A parameter a generate block declares decides less, because a block is
 // built once per object of its scope, each with its own value, and the blocks
 // of one text are objects of one class whose code may still be compiled once
-// per block. So for such a parameter two more places decide nothing. What
+// per block. So for such a parameter three more places decide nothing. What
 // selects an alternative of a conditional generate: the construction building
 // the block chooses it (LRM 27.5), and the class holds every alternative any
-// of its objects selected. And the code of a process, a continuous assignment
+// of its objects selected. What counts a loop generate's blocks out: the
+// construction runs the loop (LRM 27.4), and how many blocks an object holds
+// is no part of its class. And the code of a process, a continuous assignment
 // or a subroutine, wherever in it the parameter is read: it is no part of what
 // the class declares, and blocks whose code comes out different are that class
 // realized more than once. A parameter of the unit has one value for the whole
@@ -643,9 +661,9 @@ auto DecidingParametersOf(
   body.visit(every);
 
   ValueReference values(own);
-  ValueReference selections(own);
+  ValueReference built_blocks(own);
   EveryReference code(own);
-  EvaluatedPlaces places(values, selections, code, policy);
+  EvaluatedPlaces places(values, built_blocks, code, policy);
   body.visit(places);
 
   const auto found_in = [](const References& in,
@@ -658,7 +676,7 @@ auto DecidingParametersOf(
                                  const slang::ast::Expression* use) {
     return !found_in(values.found, param, use) &&
            !(DeclaredByAGenerateBlock(*param) &&
-             (found_in(selections.found, param, use) ||
+             (found_in(built_blocks.found, param, use) ||
               found_in(code.found, param, use)));
   };
   const auto read_elsewhere = [&](const slang::ast::ParameterSymbol* param) {

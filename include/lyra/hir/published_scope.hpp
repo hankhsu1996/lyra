@@ -17,9 +17,24 @@
 
 namespace lyra::hir {
 
-// One block a loop generate counted out (LRM 27.4): the value its index stood
-// at, which is how a name selects it, and which of the loop's classes it is an
-// object of, by position among them.
+// A loop generate whose blocks are all one application of its text: an array
+// of block instances of one class (LRM 27.4), which is the case where the
+// index is only ever read as a value. How many blocks there are and which
+// indices they stand at is what each construction of the holding scope counts
+// out, so the class says neither, and two objects of it may hold different
+// numbers of them. `class_path` is absent where no object of the holding class
+// counted a block. Its member holds one object per block, in the order the
+// loop counted them out.
+struct PublishedLoopOfOneClass {
+  std::string name;
+  std::optional<support::DefPath> class_path;
+
+  auto operator==(const PublishedLoopOfOneClass&) const -> bool = default;
+};
+
+// One block of a loop whose blocks are of several classes: the value its index
+// stood at, which is how a name finds its class, and which of the loop's
+// classes it is an object of, by position among them.
 struct PublishedLoopBlock {
   std::int64_t index = 0;
   std::uint32_t class_at = 0;
@@ -27,18 +42,18 @@ struct PublishedLoopBlock {
   auto operator==(const PublishedLoopBlock&) const -> bool = default;
 };
 
-// A loop generate: an array of block instances (LRM 27.4). The loop's text is
-// one definition and each block applies it, so the blocks are objects of as
-// many classes as the loop has distinct applications -- one where the index is
-// only ever read as a value -- which are `classes`, in the order the loop
-// first counted one out. Its member holds one object per block, in the order
-// the blocks are listed here, which is the order the loop counted them out.
-struct PublishedLoop {
+// A loop generate whose blocks are several applications of its text, so which
+// class stands at each index is part of what the holding class declares.
+// `blocks` lists every index any object of the holding class counted out, in
+// ascending order, and `classes` the applications in the order that list first
+// names them. Its member holds one object per block the object's own
+// construction counted out, in that order.
+struct PublishedLoopByIndex {
   std::string name;
   std::vector<support::DefPath> classes;
   std::vector<PublishedLoopBlock> blocks;
 
-  auto operator==(const PublishedLoop&) const -> bool = default;
+  auto operator==(const PublishedLoopByIndex&) const -> bool = default;
 };
 
 // One block of a construct that builds at most one: where the source wrote it
@@ -69,7 +84,8 @@ struct PublishedChoice {
 
 // One generate construct a scope publishes, which a name steps through into
 // one of its blocks (LRM 23.6).
-using PublishedGenerate = std::variant<PublishedLoop, PublishedChoice>;
+using PublishedGenerate = std::variant<
+    PublishedLoopOfOneClass, PublishedLoopByIndex, PublishedChoice>;
 
 // Which of the generate constructs a scope published, by its position among
 // them.

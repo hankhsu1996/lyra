@@ -113,13 +113,16 @@ comparable: two that differ in nothing else then lower to the same scope. Each f
 stops folding the index admits more bodies, and a place that goes on folding costs sharing and
 nothing else.
 
-**So every block is lowered, and the scopes are compared with each other.** The construct keeps the
-distinct bodies they make, and the loop builds, at every index, the body that index's block is: all
-alike is one body, and blocks of two shapes are two bodies however many indices take each. There is
-nothing to choose between beforehand, so nothing has to be right about the source in advance. This
-sentence used to end "otherwise each is a child in its own right", which kept a distinct class and
-member per index wherever any two blocks differed, so a loop whose widths alternated between two
-compiled one class per index.
+**So every block is lowered, and the scopes are compared with each other.** Blocks all alike are one
+body the loop builds at every index it counts out, and the construct then states the loop and that
+body and nothing that follows how many blocks there were -- so a loop whose header reads the index
+of a loop around it is the same construct in every block of that outer loop, a block that counts
+none out included, which states the loop with no body and is one with any block that has one. Blocks
+of two shapes are two bodies however many indices take each, and such a loop is stated block by
+block: the index each stood at and which body it is. There is nothing to choose between beforehand,
+so nothing has to be right about the source in advance. This sentence used to end "otherwise each is
+a child in its own right", which kept a distinct class and member per index wherever any two blocks
+differed, so a loop whose widths alternated between two compiled one class per index.
 
 The requirement that selects this is that correctness does not depend on the sharing decision: a
 correct program is never refused because it could not be shared. A shape that has to predict the
