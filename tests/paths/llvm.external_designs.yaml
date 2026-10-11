@@ -8,9 +8,6 @@
 # stopping, until its entry says so or goes -- so this file is the record of what
 # stands between Lyra and each design, and an entry leaves it only by the design
 # getting all the way.
-BlackParrot:1x1:hello:
-  stops: run
-  says: did not end within
 Caliptra:default:hello:
   stops: build
   says: taking over part of a target is not yet supported
