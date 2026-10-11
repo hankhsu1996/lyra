@@ -869,15 +869,10 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
 auto StructuralScopeLowerer::PopulateGenerateArrayMember(
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
     -> diag::Result<void> {
-  // A loop generate whose range is empty elaborates no iteration, so it has no
-  // runtime object and takes no generate id.
-  if (array.entries.empty()) {
-    return {};
-  }
   auto g = BuildGenerateFromArray(array, frame);
   if (!g) return std::unexpected(std::move(g.error()));
   frame.current_structural_scope->generates.Define(
-      owner_->GenerateIdOf(*array.entries.front()), *std::move(g));
+      owner_->GenerateIdOf(array), *std::move(g));
   return {};
 }
 

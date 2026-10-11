@@ -199,13 +199,16 @@ a child like any other and contributes no segment to the paths beneath it, so a 
 own scope without lengthening any hierarchical name.
 
 **Each scope a name can step into publishes a class.** `mid`'s class publishes its members, the
-`bank` array, and one entry per generate construct: `g`'s entry lists the classes its blocks are
-objects of and which of them stands at each index, and `genblk2`'s names its one block by where the
-source wrote it. So `mid.g[1].leaf` is a typed step into the entry at index 1, viewed as that
-block's class, and then a published member. `g[0]` and `g[1]` are two applications of one block, and
-objects of one class unless the index decides what the block declares. `bank` is published the same
-way as a set: its range, and which kind of object stands at each position, so `mid.bank[1]` reaches
-the kind its own elaboration made it even where a `defparam` made it differ from `bank[0]`.
+`bank` array, and one entry per generate construct: `g`'s entry names the class its blocks are
+objects of, and `genblk2`'s names its one block by where the source wrote it. So `mid.g[1].leaf` is
+a typed step into the entry at the place `g[1]` has among the blocks `mid` counted out, viewed as
+that block's class, and then a published member. `g[0]` and `g[1]` are two applications of one
+block, and objects of one class unless the index decides what the block declares; where it does, the
+entry lists the classes and which of them stands at each index. How many blocks a loop counts out is
+no part of the entry: each construction of the holding scope runs the loop, so two objects of one
+class may hold different numbers of them, none included. `bank` is published the same way as a set:
+its range, and which kind of object stands at each position, so `mid.bank[1]` reaches the kind its
+own elaboration made it even where a `defparam` made it differ from `bank[0]`.
 
 If resolving a hierarchical reference requires a lookup through a table that mirrors the object
 tree, the table is redundant: the tree itself is the authority.

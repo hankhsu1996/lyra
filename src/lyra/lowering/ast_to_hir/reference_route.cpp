@@ -113,9 +113,15 @@ auto NamedHopInto(const slang::ast::Symbol& symbol) -> std::optional<NamedHop> {
     // A loop's block is named by its construct, and the value its index stood
     // at picks it out (LRM 27.4).
     if (block->getArrayIndex() != nullptr) {
+      const auto& loop = block->getParentScope()
+                             ->asSymbol()
+                             .as<slang::ast::GenerateBlockArraySymbol>();
+      const auto counted = std::ranges::find(loop.entries, block);
       return LoopBlockHop{
-          .loop = std::string{block->getParentScope()->asSymbol().name},
-          .index = LoopIndexOf(*block)};
+          .loop = std::string{loop.name},
+          .index = LoopIndexOf(*block),
+          .position = static_cast<std::uint32_t>(
+              std::ranges::distance(loop.entries.begin(), counted))};
     }
     return ChosenBlockHop{
         .construct = block->constructIndex,
@@ -218,36 +224,42 @@ struct PublishedBlockAt {
   support::DefPath class_path;
 };
 
-// A loop's block is found by the value its index stood at, and selected by its
-// position among the blocks the loop published (LRM 27.4). Nothing where the
-// scope published no such block.
+// A loop's block is selected by its place among the blocks the object holding
+// it counted out, and its class is the loop's one class or, where the loop has
+// several, the one standing at the value its index stood at (LRM 27.4).
+// Nothing where the scope published no such block.
 auto FindPublishedBlock(
     const base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId>&
         generates,
     const LoopBlockHop& hop) -> std::optional<PublishedBlockAt> {
   for (const hir::PublishedGenerateId at : generates.Ids()) {
-    auto found = std::visit(
+    auto class_path = std::visit(
         Overloaded{
-            [&](const hir::PublishedLoop& loop)
-                -> std::optional<PublishedBlockAt> {
+            [&](const hir::PublishedLoopOfOneClass& loop)
+                -> std::optional<support::DefPath> {
               if (loop.name != hop.loop) return std::nullopt;
-              for (std::uint32_t block = 0; block < loop.blocks.size();
-                   ++block) {
-                if (loop.blocks[block].index == hop.index) {
-                  return PublishedBlockAt{
-                      .generate = at,
-                      .selects = {block},
-                      .class_path =
-                          loop.classes.at(loop.blocks[block].class_at)};
+              return loop.class_path;
+            },
+            [&](const hir::PublishedLoopByIndex& counted)
+                -> std::optional<support::DefPath> {
+              if (counted.name != hop.loop) return std::nullopt;
+              for (const hir::PublishedLoopBlock& block : counted.blocks) {
+                if (block.index == hop.index) {
+                  return counted.classes.at(block.class_at);
                 }
               }
               return std::nullopt;
             },
-            [](const hir::PublishedChoice&) -> std::optional<PublishedBlockAt> {
+            [](const hir::PublishedChoice&) -> std::optional<support::DefPath> {
               return std::nullopt;
             }},
         generates.Get(at));
-    if (found.has_value()) return found;
+    if (class_path.has_value()) {
+      return PublishedBlockAt{
+          .generate = at,
+          .selects = {hop.position},
+          .class_path = *std::move(class_path)};
+    }
   }
   return std::nullopt;
 }
@@ -262,9 +274,10 @@ auto FindPublishedBlock(
   for (const hir::PublishedGenerateId at : generates.Ids()) {
     auto found = std::visit(
         Overloaded{
-            [](const hir::PublishedLoop&) -> std::optional<PublishedBlockAt> {
-              return std::nullopt;
-            },
+            [](const hir::PublishedLoopOfOneClass&)
+                -> std::optional<PublishedBlockAt> { return std::nullopt; },
+            [](const hir::PublishedLoopByIndex&)
+                -> std::optional<PublishedBlockAt> { return std::nullopt; },
             [&](const hir::PublishedChoice& choice)
                 -> std::optional<PublishedBlockAt> {
               if (choice.construct != hop.construct) return std::nullopt;

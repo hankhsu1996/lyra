@@ -76,8 +76,12 @@ that change what is compiled: what the index decides, and what is written elsewh
 instance the block holds (LRM 23.10.1, 23.11, 33.4). An index only ever read as a value is handed
 over when the block is built, as a parameter read as a value is.
 
-**D2. An application is one published class, and a loop is an array of them.** A loop publishes its
-distinct classes once each, and which of them stands at each index.
+**D2. An application is one published class, and a loop is an array of them.** A loop whose blocks
+are one application publishes that class and nothing of how many blocks there are or where they
+stand: each construction of the holding scope runs the loop, so that count is a value of the
+construction, and two objects of the holding class may count differently. A loop whose blocks are
+several applications publishes its distinct classes once each, and which of them stands at each
+index any object of the holding class counted out.
 
 **D3. Which application a block instance is, is computed from the front end by the function that
 names a unit.** The declaring unit, a referrer stepping into the block, and a child whose name lands
@@ -87,14 +91,16 @@ comparison of lowered bodies finds is told to another unit.
 **D4. An index enters an application through the constants the front end settled from it.** Where
 the index sits in a place that decides what is declared, the expression the front end folded there
 keeps a constant, and that constant is what the index decides: two indices that fold alike in every
-such place are one application. Where no constant is kept, the index's own value stands in. Three
+such place are one application. Where no constant is kept, the index's own value stands in. Four
 places decide nothing for an index. What a run evaluates. What selects an alternative of a
 conditional, since the construction chooses it and the class holds every alternative any of its
-objects selected. And the code of a process, a continuous assignment or a subroutine, since it is no
-part of what the class declares. A place this reading misses is caught where the unit declares
-itself: block instances taken for one application that publish different classes have their
-definition declared again with every index deciding by its own value, and a remark says the sharing
-was lost.
+objects selected. What counts a loop's blocks out -- where its index starts, whether a block stands
+at it, how it reaches the next -- since the construction runs the loop (LRM 27.4) and how many
+blocks an object holds is no part of its class. And the code of a process, a continuous assignment
+or a subroutine, since it is no part of what the class declares. A place this reading misses is
+caught where the unit declares itself: block instances taken for one application that publish
+different classes have their definition declared again with every index deciding by its own value,
+and a remark says the sharing was lost.
 
 **D5. Block instances of one application that lower apart are that class realized more than once.**
 Each such scope is a realizing class extending the one published class. A published subroutine is

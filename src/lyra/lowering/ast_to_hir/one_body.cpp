@@ -65,8 +65,7 @@ auto MergeChoices(
     }
     std::optional<hir::StructuralScopeId> block;
     if (body.has_value()) {
-      block = merged.blocks.Add(
-          hir::GenerateBlock{.scope = *std::move(body), .arguments = {}});
+      block = merged.blocks.Add(hir::GenerateBlock{.scope = *std::move(body)});
     }
     chosen.alternatives.push_back(block);
   }
@@ -74,8 +73,32 @@ auto MergeChoices(
   return merged;
 }
 
-// One construct that selects nothing, as two blocks left it: a loop, blocks
-// standing on their own, or a single block. Both state the same scopes in the
+// One loop a construction runs, as two blocks left it. The loop is the
+// source's, so both state the same one; what differs is how many blocks each
+// of them counted out of it, which is no part of what either states. One that
+// counted none has no body, and the loop keeps the body the other has; where
+// both have one, the two have to be one body in their turn.
+auto MergeLoops(const hir::Generate& a, const hir::Generate& b)
+    -> std::optional<hir::Generate> {
+  if (a.counting != b.counting) return std::nullopt;
+
+  hir::Generate merged{};
+  merged.counting = a.counting;
+  std::optional<hir::StructuralScope> body;
+  for (const hir::GenerateBlock& ours : a.blocks) body = ours.scope;
+  for (const hir::GenerateBlock& theirs : b.blocks) {
+    body = body.has_value() ? MergeBlocks(*body, theirs.scope)
+                            : std::optional{theirs.scope};
+    if (!body.has_value()) return std::nullopt;
+  }
+  if (body.has_value()) {
+    merged.blocks.Add(hir::GenerateBlock{.scope = *std::move(body)});
+  }
+  return merged;
+}
+
+// One construct that neither selects nor runs, as two blocks left it: blocks
+// built on their own, or a single block. Both state the same scopes in the
 // same positions, counted out and supplied the same way, so each scope is
 // merged with the one standing where it does. A selection can sit at any depth
 // beneath them, which is why agreeing here is asked of what the scopes hold
@@ -89,14 +112,9 @@ auto MergeBlockForBlock(const hir::Generate& a, const hir::Generate& b)
   hir::Generate merged{};
   merged.counting = a.counting;
   for (const hir::StructuralScopeId id : a.blocks.Ids()) {
-    const hir::GenerateBlock& ours = a.blocks.Get(id);
-    const hir::GenerateBlock& theirs = b.blocks.Get(id);
-    if (ours.arguments != theirs.arguments) return std::nullopt;
-    auto body = MergeBlocks(ours.scope, theirs.scope);
+    auto body = MergeBlocks(a.blocks.Get(id).scope, b.blocks.Get(id).scope);
     if (!body.has_value()) return std::nullopt;
-    merged.blocks.Add(
-        hir::GenerateBlock{
-            .scope = *std::move(body), .arguments = ours.arguments});
+    merged.blocks.Add(hir::GenerateBlock{.scope = *std::move(body)});
   }
   return merged;
 }
@@ -112,7 +130,7 @@ auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
             return MergeChoices(a, chosen_a, b, *chosen_b);
           },
           [&](const hir::BlocksRepeat&) -> std::optional<hir::Generate> {
-            return MergeBlockForBlock(a, b);
+            return MergeLoops(a, b);
           },
           [&](const hir::BlocksStandAlone&) -> std::optional<hir::Generate> {
             return MergeBlockForBlock(a, b);

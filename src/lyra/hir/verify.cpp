@@ -1053,13 +1053,25 @@ void ReachFromGenerate(ArenaReaches& reaches, const Generate& generate) {
   const auto from_loop = ReachFrom(reaches, std::nullopt, "a loop generate");
   const auto from_choice =
       ReachFrom(reaches, std::nullopt, "a conditional generate");
+  const auto from_block =
+      ReachFrom(reaches, std::nullopt, "a generate block's construction");
   std::visit(
       Overloaded{
-          [](const SingleBlock&) {}, [](const BlocksStandAlone&) {},
+          [](const SingleBlock&) {},
+          [&](const BlocksStandAlone& stand_alone) {
+            for (const StandAloneBlock& block : stand_alone.counted) {
+              for (const ExprId argument : block.arguments) {
+                from_block(argument, Slot::kOperand);
+              }
+            }
+          },
           [&](const BlocksRepeat& loop) {
             from_loop(loop.initial, Slot::kOperand);
             from_loop(loop.condition, Slot::kOperand);
             from_loop(loop.step, Slot::kOperand);
+            for (const ExprId argument : loop.arguments) {
+              from_block(argument, Slot::kOperand);
+            }
           },
           [&](const BlocksChoose& chosen) {
             for (const SelectionChoice& choice : chosen.choices) {
@@ -1080,13 +1092,6 @@ void ReachFromGenerate(ArenaReaches& reaches, const Generate& generate) {
             }
           }},
       generate.counting);
-  const auto from_block =
-      ReachFrom(reaches, std::nullopt, "a generate block's construction");
-  for (const GenerateBlock& block : generate.blocks) {
-    for (const ExprId argument : block.arguments) {
-      from_block(argument, Slot::kOperand);
-    }
-  }
 }
 
 void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
@@ -1157,26 +1162,40 @@ void VerifyInstanceMembers(
   }
 }
 
-// Every block a repeated generate builds is one of the bodies the construct
-// holds.
-void VerifyRepeatedGenerates(
+// A loop a construction runs holds the one body it builds, or none where it
+// counted no block; every block built on its own is one of the bodies its
+// construct holds.
+void VerifyLoopGenerates(
     const StructuralScope& scope, const std::string& label,
     std::vector<std::string>& lines) {
   for (const Generate& generate : scope.generates) {
-    const auto* repeat = std::get_if<BlocksRepeat>(&generate.counting);
-    if (repeat == nullptr) continue;
-    const bool every_one_built =
-        !repeat->taken.empty() &&
-        std::ranges::all_of(repeat->taken, [&](std::uint32_t body) {
-          return body < generate.blocks.size();
-        });
-    if (!every_one_built) {
-      lines.push_back(
-          std::format(
-              "hir verify: a loop generate of {} says which of its {} bodies "
-              "{} blocks are",
-              label, generate.blocks.size(), repeat->taken.size()));
-    }
+    const std::size_t bodies = generate.blocks.size();
+    std::visit(
+        Overloaded{
+            [](const SingleBlock&) {}, [](const BlocksChoose&) {},
+            [&](const BlocksRepeat&) {
+              if (bodies > 1) {
+                lines.push_back(
+                    std::format(
+                        "hir verify: a loop generate of {} that a "
+                        "construction runs holds {} bodies",
+                        label, bodies));
+              }
+            },
+            [&](const BlocksStandAlone& stand_alone) {
+              const bool every_one_built = std::ranges::all_of(
+                  stand_alone.counted, [&](const StandAloneBlock& block) {
+                    return block.body.value < bodies;
+                  });
+              if (!every_one_built) {
+                lines.push_back(
+                    std::format(
+                        "hir verify: a loop generate of {} names a body "
+                        "outside the {} it holds",
+                        label, bodies));
+              }
+            }},
+        generate.counting);
   }
 }
 
@@ -1207,7 +1226,7 @@ void VerifyScope(
   }
   Report(reaches, [&] { return label; }, lines);
   VerifyInstanceMembers(scope, label, lines);
-  VerifyRepeatedGenerates(scope, label, lines);
+  VerifyLoopGenerates(scope, label, lines);
 
   for (const ProcessId id : scope.processes.Ids()) {
     const Process& process = scope.processes.Get(id);

@@ -6,6 +6,7 @@
 # wide.
 instance_array: 512
 loop_choosing_by_outer_index: 64
+loop_counted_by_outer_index: 64
 loop_declaring_a_type: 512
 loop_of_instances: 512
 loop_of_instances_calling_the_top: 512

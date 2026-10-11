@@ -2799,13 +2799,15 @@ class HirDumper {
         s.data);
   }
 
-  // The values a loop's index stood at, in the order it counted them out.
-  static auto FormatIndexValues(std::span<const std::int64_t> values)
+  // The blocks a loop counted out that are built on their own, in that order:
+  // the value the index stood at, the body the block is, and what it is passed.
+  static auto FormatStandAloneBlocks(std::span<const StandAloneBlock> counted)
       -> std::string {
     std::string out;
-    for (const std::int64_t value : values) {
-      out += out.empty() ? "" : ",";
-      out += std::to_string(value);
+    for (const StandAloneBlock& block : counted) {
+      out += std::format(
+          "{}{}:body{}{}", out.empty() ? "" : " ", block.index,
+          block.body.value, FormatArguments(block.arguments));
     }
     return out;
   }
@@ -2816,22 +2818,14 @@ class HirDumper {
             [](const SingleBlock&) { return std::string{"single"}; },
             [](const BlocksStandAlone& s) {
               return std::format(
-                  "each indices=[{}]", FormatIndexValues(s.indices));
+                  "each [{}]", FormatStandAloneBlocks(s.counted));
             },
-            [&](const BlocksRepeat& r) {
-              std::string taken;
-              if (g.blocks.size() > 1) {
-                for (const std::uint32_t body : r.taken) {
-                  taken += std::format(
-                      "{}{}", taken.empty() ? " taken(" : ",", body);
-                }
-                taken += ')';
-              }
+            [](const BlocksRepeat& r) {
               return std::format(
                   "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
-                  "condition=Expr[{}] step=Expr[{}]{}",
+                  "condition=Expr[{}] step=Expr[{}] {}",
                   r.variable.value, r.initial.value, r.condition.value,
-                  r.step.value, taken);
+                  r.step.value, FormatArguments(r.arguments));
             },
             [](const BlocksChoose& c) {
               std::string chosen =
@@ -2848,10 +2842,10 @@ class HirDumper {
         g.counting);
     Line(std::format("Generate blocks={} {}", g.blocks.size(), form));
     Indent();
-    for (const auto& block : g.blocks) {
-      Line(std::format("{}:", FormatArguments(block.arguments)));
+    for (const StructuralScopeId id : g.blocks.Ids()) {
+      Line(std::format("body{}:", id.value));
       Indent();
-      DumpScope(block.scope);
+      DumpScope(g.blocks.Get(id).scope);
       Dedent();
     }
     Dedent();

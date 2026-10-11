@@ -270,12 +270,71 @@ auto EitherBuilt(
   return either;
 }
 
+// The blocks of one loop, as the class at each index a block stood at: the
+// indices in ascending order, and the classes in the order that names them.
+auto BlocksCounted(
+    std::string name, const std::map<std::int64_t, support::DefPath>& at)
+    -> hir::PublishedLoopByIndex {
+  hir::PublishedLoopByIndex counted{
+      .name = std::move(name), .classes = {}, .blocks = {}};
+  std::map<support::DefPath, std::uint32_t> class_at;
+  for (const auto& [index, class_path] : at) {
+    const auto [known, first] = class_at.try_emplace(
+        class_path, static_cast<std::uint32_t>(counted.classes.size()));
+    if (first) counted.classes.push_back(class_path);
+    counted.blocks.push_back(
+        hir::PublishedLoopBlock{.index = index, .class_at = known->second});
+  }
+  return counted;
+}
+
+// One loop as two block instances of one application left it: every block
+// either of them counted out. How many blocks a loop counts is each
+// construction's own, so the two may have counted different indices. Nothing
+// where the two are not the same loop, or name different classes at one index.
+auto EitherCounted(
+    const hir::PublishedLoopByIndex& ours,
+    const hir::PublishedLoopByIndex& theirs)
+    -> std::optional<hir::PublishedLoopByIndex> {
+  if (ours.name != theirs.name) return std::nullopt;
+  std::map<std::int64_t, support::DefPath> at;
+  for (const hir::PublishedLoopByIndex* counted : {&ours, &theirs}) {
+    for (const hir::PublishedLoopBlock& block : counted->blocks) {
+      const support::DefPath& class_path = counted->classes.at(block.class_at);
+      const auto [known, first] = at.try_emplace(block.index, class_path);
+      if (!first && known->second != class_path) return std::nullopt;
+    }
+  }
+  return BlocksCounted(ours.name, at);
+}
+
+// What a class says of each loop once every block instance of its application
+// has been heard: a loop whose blocks are all one class says that class and
+// nothing of where they stand.
+void StateLoopsOfOneClass(hir::ScopeClassSignature& cls) {
+  base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId> generates;
+  for (const hir::PublishedGenerate& generate : cls.generates) {
+    const auto* counted = std::get_if<hir::PublishedLoopByIndex>(&generate);
+    if (counted == nullptr || counted->classes.size() > 1) {
+      generates.Add(generate);
+      continue;
+    }
+    std::optional<support::DefPath> class_path;
+    for (const support::DefPath& only : counted->classes) class_path = only;
+    generates.Add(
+        hir::PublishedLoopOfOneClass{
+            .name = counted->name, .class_path = std::move(class_path)});
+  }
+  cls.generates = std::move(generates);
+}
+
 // Adds to `into`, the class the block instances of one application published
 // so far, what one more of them built. They are built from one text, so they
-// state the same class, and differ only in which alternative of a conditional
-// each one's construction chose (LRM 27.5); the class publishes every
-// alternative any of them built. False where they differ in anything else,
-// which leaves `into` as it was.
+// state the same class, and differ only in what each one's construction
+// decided: which alternative of a conditional it chose (LRM 27.5), and how
+// many blocks of a loop it counted out (LRM 27.4). The class publishes every
+// alternative and every block any of them built. False where they differ in
+// anything else, which leaves `into` as it was.
 auto AddWhatWasBuilt(
     hir::ScopeClassSignature& into, const hir::ScopeClassSignature& built)
     -> bool {
@@ -285,11 +344,18 @@ auto AddWhatWasBuilt(
     const hir::PublishedGenerate& theirs = built.generates.Get(id);
     auto one = std::visit(
         Overloaded{
-            [&](const hir::PublishedLoop& loop)
+            [](const hir::PublishedLoopOfOneClass&)
                 -> std::optional<hir::PublishedGenerate> {
-              const auto* other = std::get_if<hir::PublishedLoop>(&theirs);
-              if (other == nullptr || !(*other == loop)) return std::nullopt;
-              return loop;
+              throw InternalError(
+                  "PublishSignature: a loop was stated as one class before "
+                  "every block instance of its application was heard");
+            },
+            [&](const hir::PublishedLoopByIndex& counted)
+                -> std::optional<hir::PublishedGenerate> {
+              const auto* other =
+                  std::get_if<hir::PublishedLoopByIndex>(&theirs);
+              if (other == nullptr) return std::nullopt;
+              return EitherCounted(counted, *other);
             },
             [&](const hir::PublishedChoice& choice)
                 -> std::optional<hir::PublishedGenerate> {
@@ -599,6 +665,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       blocks_published_apart_ = true;
     }
   }
+  for (hir::ScopeClassSignature& cls : classes) StateLoopsOfOneClass(cls);
   for (const slang::ast::Scope* scope : publishing_scopes_) {
     scope_classes_.emplace(
         scope, classes[class_at.at(PublicationOf(*scope).class_path)]);
@@ -766,24 +833,12 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
             Overloaded{
                 [&](const ScopePublicationRecord::Loop& loop)
                     -> hir::PublishedGenerate {
-                  hir::PublishedLoop counted{
-                      .name = std::string{loop.loop->name},
-                      .classes = {},
-                      .blocks = {}};
-                  std::map<support::DefPath, std::uint32_t> class_at;
+                  std::map<std::int64_t, support::DefPath> at;
                   for (const auto* entry : loop.loop->entries) {
-                    const support::DefPath& class_path =
-                        PublicationOf(*entry).class_path;
-                    const auto [known, first] = class_at.try_emplace(
-                        class_path,
-                        static_cast<std::uint32_t>(counted.classes.size()));
-                    if (first) counted.classes.push_back(class_path);
-                    counted.blocks.push_back(
-                        hir::PublishedLoopBlock{
-                            .index = LoopIndexOf(*entry),
-                            .class_at = known->second});
+                    at.emplace(
+                        LoopIndexOf(*entry), PublicationOf(*entry).class_path);
                   }
-                  return counted;
+                  return BlocksCounted(std::string{loop.loop->name}, at);
                 },
                 [&](const ScopePublicationRecord::Choice& choice)
                     -> hir::PublishedGenerate {

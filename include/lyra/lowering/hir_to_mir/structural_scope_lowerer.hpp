@@ -46,9 +46,6 @@ struct ChildStructuralScopeBinding {
   // The child's own lowerer, which carries the class it lowers to and resolves
   // the identities a route step past this child names.
   const StructuralScopeLowerer* lowerer = nullptr;
-  // The arguments building the child passes its constructor, as expressions of
-  // the scope building it.
-  std::span<const hir::ExprId> arguments;
 };
 
 // What one generate construct settled: the member holding what it built, and

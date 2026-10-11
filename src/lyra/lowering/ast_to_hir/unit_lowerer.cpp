@@ -459,13 +459,14 @@ void UnitLowerer::DeclareConditionalGenerate(
 // A loop generate elaborates each iteration into a block of its own
 // (LRM 27.4), and a name reaching one means that block. How many scopes the
 // construct compiles to belongs to where its bodies are built, so a name
-// resolves here without it. A loop that ran no iteration constructs nothing
-// and takes no id.
+// resolves here without it. The loop is one construct however many blocks it
+// counted out: how many is a value of the construction that runs it, so a loop
+// that counted none is declared like any other.
 void UnitLowerer::DeclareLoopGenerate(
     const slang::ast::GenerateBlockArraySymbol& array, ScopeDeclarations& decls,
     ScopePublicationRecord& published, ScopeFrameId frame) {
-  if (array.entries.empty()) return;
   const hir::GenerateId generate = decls.generates.Declare();
+  loop_generates_.emplace(&array, generate);
   published.generates.emplace_back(
       ScopePublicationRecord::Loop{.id = generate, .loop = &array});
   std::uint32_t block = 0;
@@ -1096,6 +1097,17 @@ auto UnitLowerer::GenerateIdOf(const slang::ast::Symbol& construct) const
           [](hir::GenerateLoopRef loop) { return loop.generate; },
           [](hir::GenerateBlockRef block) { return block.generate; }},
       it->second.step.names);
+}
+
+auto UnitLowerer::GenerateIdOf(
+    const slang::ast::GenerateBlockArraySymbol& loop) const -> hir::GenerateId {
+  const auto it = loop_generates_.find(&loop);
+  if (it == loop_generates_.end()) {
+    throw InternalError(
+        "UnitLowerer::GenerateIdOf: a loop generate was given no identity by "
+        "the declaration pass");
+  }
+  return it->second;
 }
 
 auto UnitLowerer::InstanceMemberIdOf(const slang::ast::Symbol& instance) const

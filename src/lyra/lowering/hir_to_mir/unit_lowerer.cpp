@@ -1131,7 +1131,8 @@ auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
   for (const hir::PublishedGenerate& generate : signature.generates) {
     const bool loop = std::visit(
         Overloaded{
-            [](const hir::PublishedLoop&) { return true; },
+            [](const hir::PublishedLoopOfOneClass&) { return true; },
+            [](const hir::PublishedLoopByIndex&) { return true; },
             [](const hir::PublishedChoice&) { return false; }},
         generate);
     fields.push_back(
