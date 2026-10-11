@@ -6,6 +6,7 @@
 
 #include "lyra/base/fixed_array.hpp"
 #include "lyra/runtime/observation.hpp"
+#include "lyra/runtime/part_path.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
@@ -34,16 +35,21 @@ class WatchedPlace {
   // The member the place was reached through, none where it was reached by
   // itself.
   [[nodiscard]] auto Member() const -> const ErasedReference*;
+  // The part of what occurrences are reported to that `steps` reach from the
+  // place: from the part a member names, where it was reached through one.
+  [[nodiscard]] auto PathOf(std::span<const std::int64_t> steps) const
+      -> PartPath;
 
  private:
   std::uintptr_t word_ = 0;
 };
 
-// One leaf of a wait: a place it watches, which bits of that place's flat-bit
-// encoding it reads, and what decides whether what happens there is an event.
-// A width of zero reads the whole of it, which is what a place with no
-// bit-addressed parts produces -- a named event among them, since the event
-// itself carries no bits.
+// One leaf of a wait: a place it watches, which part of the place, which
+// positions of that part it reads -- bits where the part is a packed value,
+// elements where it is an array read as a slice (LRM 7.4.6) -- and what
+// decides whether what happens there is an event. A width of zero reads the
+// whole of the part, which is what a part with no bits to address produces -- a
+// named event among them, since the event itself carries no bits.
 //
 // Several leaves in one wait are an event list `@(a or posedge b[3])` or one
 // expression over several variables `@({clk_a, clk_b})`; the wait resumes when
@@ -58,7 +64,12 @@ struct Trigger {
   Observable* observable = nullptr;
   // The member the place was reached through, which is only ever compared.
   const ErasedReference* through = nullptr;
+  // Which part of the place it watches, the whole of it where the path is
+  // empty.
+  PartPath part;
   Observation observation;
+  // Which bits of that part it reads where the part is a packed value, which
+  // elements where it is an array.
   value::BitPositions reads;
 
   Trigger();
@@ -68,21 +79,26 @@ struct Trigger {
   auto operator=(Trigger&&) noexcept -> Trigger&;
   ~Trigger();
 
+  // `steps` lead from the place to the part watched, in order: an element's
+  // ordinal, a member's index.
   Trigger(
       Observable* observable, Observation observation,
-      std::int64_t lsb_bit_offset, std::int64_t bit_width);
+      std::span<const std::int64_t> steps, std::int64_t lsb_bit_offset,
+      std::int64_t bit_width);
   Trigger(
-      WatchedPlace place, Observation observation, std::int64_t lsb_bit_offset,
+      WatchedPlace place, Observation observation,
+      std::span<const std::int64_t> steps, std::int64_t lsb_bit_offset,
       std::int64_t bit_width);
 };
 
-// What a write that changed an observable did to it, as far as a wait on some
-// of its bits can be told. Where the observable is a packed value, the change
-// is which bits the write reached and the words they lie in before and after
-// it: a leaf reading none of those bits is passed over without a comparison,
-// and a leaf reading some compares only the bits it shares with the write.
-// Where the observable is not a packed value, nothing about its bits can be
-// shown unchanged and every wait is asked.
+// What a write that changed a part of an observable did to that part, as far
+// as a wait on some of the part's bits can be told. Where the part is a packed
+// value, the change is which bits the write reached and the words they lie in
+// before and after it: a leaf reading none of those bits is passed over
+// without a comparison, and a leaf reading some compares only the bits it
+// shares with the write. Where the part is not a packed value, nothing about
+// its bits can be shown unchanged and every wait on it is asked. Which part it
+// was is told beside the change, by the part's path.
 //
 // It is only ever told for a write that changed the bits it reached, so a leaf
 // reading all of them is moved without being compared.
@@ -98,6 +114,12 @@ class Change {
 
   // A change whose parts are not bits.
   [[nodiscard]] static auto Whole() -> Change;
+
+  // A change of the elements `reached` of an array, by their ordinals (LRM
+  // 7.6 has a slice assigned as one), which says nothing of what became of any
+  // one of them: a wait on other elements is passed over, and one on any of
+  // these is asked. Of no elements in particular where the run is empty.
+  [[nodiscard]] static auto Elements(value::BitPositions reached) -> Change;
 
   // The bits of `storage` at `reached`, kept as they stand before a write that
   // reaches them. The words kept are the storage's own words those bits lie

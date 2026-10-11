@@ -128,10 +128,11 @@ auto IsTheDesignsOwn(
 
 // What the runtime writes in its headers on purpose: the write path asks it on
 // every store, and the library's own writes fold it. A unit writing a cell of a
-// type its design shaped therefore carries these; each is a single comparison.
+// type its design shaped therefore carries these; each is a single comparison
+// or a few stores.
 // The list is what makes that a decision rather than a drift: an entry is added
 // only with the reason it has to be read where it is used.
-constexpr std::array<std::string_view, 7> kFoldedByTheWritePath = {
+constexpr std::array<std::string_view, 8> kFoldedByTheWritePath = {
     "lyra::runtime::Observable::HasMembers() const",
     "lyra::runtime::IntrusiveList<lyra::runtime::WaitMembership>::Empty() "
     "const",
@@ -139,7 +140,8 @@ constexpr std::array<std::string_view, 7> kFoldedByTheWritePath = {
     "lyra::runtime::VariableCell::Watched() const",
     "lyra::runtime::VariableCell::Rare() const",
     "lyra::runtime::ErasedReference::Admits() const",
-    "lyra::runtime::ErasedReference::Watched() const"};
+    "lyra::runtime::ErasedReference::Watched() const",
+    "lyra::runtime::PartPath::PartPath()"};
 
 // Whether a symbol is an entity of the runtime namespace itself, or something
 // local to one, rather than a standard-library template that merely names a

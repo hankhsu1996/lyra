@@ -349,8 +349,9 @@ enough to warrant its own focused review.
       `ElementRef` / `SliceRef` for write. Lowering carries the read-vs-write choice as one
       access-side parameter at the slice-builder boundary; the runtime concepts pin the
       bare-and-`Ref` pair as part of `Indexable` (write-side present on every keyed container) and
-      split `Sliceable` from `SliceableRef` because LRM 7.10 defines no write-side queue slice. No
-      separate `Writable` concept: the pair belongs with the read-side concept it shadows.
+      state the write side of a slice as `SliceableRef` alone, a slice read answering a type of its
+      own that the caller names. No separate `Writable` concept: the pair belongs with the read-side
+      concept it shadows.
 
 - [x] R29 -- Built-in method calls and runtime entries carry one flat closed-namespace identifier
       shared between HIR and MIR, replacing the per-family variant. The receiver's MIR type drives

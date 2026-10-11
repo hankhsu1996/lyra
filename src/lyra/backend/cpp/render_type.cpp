@@ -211,7 +211,8 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::ShortRealType&) { out += "lyra::value::ShortReal"; },
           [&](const mir::UnpackedArrayType& ua) {
             Write(
-                out, "lyra::value::UnpackedArray<", type(ua.element_type), ">");
+                out, "lyra::value::UnpackedArray<", type(ua.element_type), ", ",
+                ua.Size(), ">");
           },
           [&](const mir::DynamicArrayType& da) {
             Write(

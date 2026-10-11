@@ -1,7 +1,9 @@
 #include "lyra/runtime/read_report.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -9,6 +11,7 @@
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/observation.hpp"
+#include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -49,24 +52,30 @@ void ReadReport::Reach(Trigger trigger) {
 // evaluation, so nothing is asked where the change happens, and an implicit
 // list wakes on any change to what it lists.
 void ReadReport::Add(
-    Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  Add(WatchedPlace{place}, lsb_bit_offset, bit_width);
+    Observable* place, std::span<const std::int64_t> steps,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+  Add(WatchedPlace{place}, steps, lsb_bit_offset, bit_width);
 }
 
 void ReadReport::Add(
-    WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  Reach(Trigger{place, Observation::OnReaching(), lsb_bit_offset, bit_width});
+    WatchedPlace place, std::span<const std::int64_t> steps,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+  Reach(
+      Trigger{
+          place, Observation::OnReaching(), steps, lsb_bit_offset, bit_width});
 }
 
 void ReadReport::AddThroughHandle(
-    Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  AddThroughHandle(WatchedPlace{place}, lsb_bit_offset, bit_width);
+    Observable* place, std::span<const std::int64_t> steps,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+  AddThroughHandle(WatchedPlace{place}, steps, lsb_bit_offset, bit_width);
 }
 
 void ReadReport::AddThroughHandle(
-    WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+    WatchedPlace place, std::span<const std::int64_t> steps,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   through_handles_.emplace_back(
-      place, Observation::OnReaching(), lsb_bit_offset, bit_width);
+      place, Observation::OnReaching(), steps, lsb_bit_offset, bit_width);
 }
 
 void ReadReport::EnterCallOnHandle() {
@@ -78,29 +87,34 @@ void ReadReport::LeaveCallOnHandle() {
 }
 
 void ReadReport::AddWrite(
-    Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
-  AddWrite(WatchedPlace{place}, lsb_bit_offset, bit_width);
+    Observable* place, std::span<const std::int64_t> steps,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+  AddWrite(WatchedPlace{place}, steps, lsb_bit_offset, bit_width);
 }
 
 void ReadReport::AddWrite(
-    WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width) {
+    WatchedPlace place, std::span<const std::int64_t> steps,
+    std::int64_t lsb_bit_offset, std::int64_t bit_width) {
   writes_.push_back(
       Written{
           .place = place.ReportedTo(),
+          .part = place.PathOf(steps),
           .bits = {
               .lsb = static_cast<std::uint64_t>(lsb_bit_offset),
               .width = static_cast<std::uint64_t>(bit_width)}});
 }
 
 void ReadReport::SettleAsImplicitList() {
-  // Bits `[first, end)` of a place.
+  // Positions `[first, end)` of a part: bits of a packed value, elements of
+  // an array.
   using Interval = std::pair<std::uint64_t, std::uint64_t>;
-  // What the list watches at one place: all of it, or these intervals of its
-  // bits. A place is listed once however many reads reached it, since a write
-  // there is tested once per leaf.
+  // What the list watches of one part of a place: all of it, or these
+  // intervals of its positions. A part is listed once however many reads
+  // reached it, since a write there is tested once per leaf.
   struct Watched {
     Observable* place = nullptr;
     const ErasedReference* through = nullptr;
+    PartPath part;
     bool whole = false;
     std::vector<Interval> intervals;
   };
@@ -110,14 +124,42 @@ void ReadReport::SettleAsImplicitList() {
         {read.reads.lsb, read.reads.lsb + read.reads.width}};
     bool taken_whole = false;
     for (const Written& write : writes_) {
-      if (write.place != read.observable) continue;
-      if (write.bits.width == 0) {
-        taken_whole = true;
-        break;
+      // An inexact path says only that the write was somewhere in a part, so
+      // it takes out nothing.
+      if (write.place != read.observable || write.part.IsInexact()) {
+        continue;
+      }
+      const std::size_t read_depth = read.part.Steps().size();
+      const std::size_t write_depth = write.part.Steps().size();
+      const bool write_whole = write.bits.width == 0;
+      // The positions of the read's part the write covers.
+      std::uint64_t first = 0;
+      std::uint64_t end = 0;
+      if (write.part.IsPrefixOf(read.part)) {
+        // The write is of the read's part or of one holding it: all of that
+        // part, or the positions it names, which one level up are the element
+        // the read's part lies in.
+        const bool holds_read =
+            write_depth < read_depth &&
+            write.bits.lsb <= read.part.Steps()[write_depth] &&
+            read.part.Steps()[write_depth] - write.bits.lsb < write.bits.width;
+        if (write_whole || holds_read) {
+          taken_whole = true;
+          break;
+        }
+        if (write_depth != read_depth) continue;
+        first = write.bits.lsb;
+        end = write.bits.lsb + write.bits.width;
+      } else if (
+          write_whole && write_depth == read_depth + 1 &&
+          read.part.IsPrefixOf(write.part)) {
+        // The write is of one element of the array the read names some of.
+        first = write.part.Steps()[read_depth];
+        end = first + 1;
+      } else {
+        continue;
       }
       if (read.reads.width == 0) continue;
-      const std::uint64_t first = write.bits.lsb;
-      const std::uint64_t end = write.bits.lsb + write.bits.width;
       std::vector<Interval> kept;
       for (const auto& [lo, hi] : intervals) {
         if (end <= lo || hi <= first) {
@@ -131,13 +173,15 @@ void ReadReport::SettleAsImplicitList() {
     }
     if (taken_whole) continue;
     auto at = std::ranges::find_if(watched, [&](const Watched& listed) {
-      return listed.place == read.observable && listed.through == read.through;
+      return listed.place == read.observable &&
+             listed.through == read.through && listed.part == read.part;
     });
     if (at == watched.end()) {
       at = watched.insert(
           watched.end(), Watched{
                              .place = read.observable,
                              .through = read.through,
+                             .part = read.part,
                              .whole = false,
                              .intervals = {}});
     }
@@ -154,6 +198,7 @@ void ReadReport::SettleAsImplicitList() {
     Trigger trigger;
     trigger.observable = place.place;
     trigger.through = place.through;
+    trigger.part = place.part;
     trigger.observation = Observation::OnReaching();
     trigger.reads = reads;
     left.push_back(std::move(trigger));

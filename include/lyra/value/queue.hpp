@@ -12,7 +12,6 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
-#include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/reduction.hpp"
@@ -121,15 +120,15 @@ class OrdinalArrayMethods {
   // with the ordinal position as index for `sort` / `rsort`; `reverse` takes no
   // closure. How the elements move under it is the container's own.
   auto Reverse() -> void {
-    MutableThis().core_.Permute(detail::ReversedPositions(Count()));
+    MutableThis().Permute(detail::ReversedPositions(Count()));
   }
   template <typename F>
   auto Sort(F key) -> void {
-    MutableThis().core_.Permute(SortOrder(key, false));
+    MutableThis().Permute(SortOrder(key, false));
   }
   template <typename F>
   auto Rsort(F key) -> void {
-    MutableThis().core_.Permute(SortOrder(key, true));
+    MutableThis().Permute(SortOrder(key, true));
   }
 
  private:
@@ -398,6 +397,11 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   explicit Queue(BasicQueue<StaticElem<T>> core) : core_(std::move(core)) {
   }
 
+  // Puts the value that was at `order[k]` at position `k` (LRM 7.12.2).
+  void Permute(std::span<const std::size_t> order) {
+    core_.Permute(order);
+  }
+
   BasicQueue<StaticElem<T>> core_;
 };
 
@@ -406,9 +410,8 @@ static_assert(Sized<Queue<LogicVector<4>>>);
 static_assert(BitstreamSizable<Queue<LogicVector<4>>>);
 static_assert(Indexable<Queue<LogicVector<4>>>);
 // A queue's `Slice(lo, hi)` takes its element count from two bounds the
-// running program can move (LRM 7.10.1), not the fixed count `Sliceable` names,
-// so despite the matching arity it carries its own `Slice` rather than claiming
-// that concept.
+// running program can move (LRM 7.10.1), not the fixed count an array's slice
+// has, so it answers a queue.
 static_assert(ConditionallyMergeable<Queue<LogicVector<4>>>);
 static_assert(Sortable<Queue<LogicVector<4>>>);
 static_assert(OrdinalElements<Queue<LogicVector<4>>>);

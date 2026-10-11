@@ -240,6 +240,11 @@ void RuntimeEffects::WakeParkedOn(
   });
 }
 
+void RuntimeEffects::WakeParkedOn(
+    Observable& place, const PartPath& written, const Change& change) {
+  place.WakeAffectedBy(*this, written, change);
+}
+
 auto RuntimeEffects::EveryObject() -> Observable& {
   return AsRuntime(*this).every_object_;
 }

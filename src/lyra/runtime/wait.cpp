@@ -28,8 +28,8 @@ void Awaiter::EnrolOnLeaf(const Trigger& trigger) {
     return;
   }
   Enrol(
-      trigger.observable->Members(), trigger.through, trigger.reads,
-      trigger.observation);
+      trigger.observable->MembersAt(trigger.part), trigger.through,
+      trigger.reads, trigger.observation);
 }
 
 void Awaiter::EnrolOn(IntrusiveList<WaitMembership>& target) {

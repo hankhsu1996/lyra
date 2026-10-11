@@ -120,8 +120,9 @@ storage identity and the identity a write or a wait uses?
   does not have, and adding one makes a program's storage outlive what the language says it may.
 - **A subscriber list on a component's storage.** The event a process waits on is a change in an
   expression's result, which storage cannot answer, so observers held per component make observation
-  a property of storage without deciding anything. Notifying at a finer grain than the entity above
-  is an optimization over which waiters are reconsidered and is not this shape.
+  a property of storage without deciding anything. Telling a wait which part of the entity a write
+  reached is not this shape: the waits stay with the entity, kept by the part each one watches, and
+  an implicit sensitivity is owed that grain, its list being stated part by part (LRM 9.2.2.2.1).
 - **A storage hierarchy derived from a value hierarchy.** They descend to different depths, so the
   derived one either invents identities the language withholds or drops ones it requires.
 

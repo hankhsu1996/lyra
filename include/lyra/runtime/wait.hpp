@@ -62,9 +62,10 @@ struct WaitMembership : IntrusiveListNode<WaitMembership> {
   // is then enrolled there.
   const ErasedReference* through = nullptr;
 
-  // Which bits of the place the wait reads. It bounds what a change there could
-  // do to the wait, so a change confined outside it needs no further question
-  // asked; a width of zero is "the whole of it", which bounds nothing.
+  // Which bits the wait reads of the part of the place it is enrolled on. It
+  // bounds what a change to that part could do to the wait, so a change
+  // confined outside it needs no further question asked; a width of zero is
+  // "the whole of it", which bounds nothing.
   value::BitPositions reads;
 
   // What decides whether reaching this membership is an event for the wait

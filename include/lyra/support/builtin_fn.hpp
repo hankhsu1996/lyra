@@ -239,6 +239,11 @@ enum class BuiltinFn : std::uint16_t {
   kResolveWiredOr,
   kDominating,
   kFilledLike,
+  // The value a variable of a structure starts as (LRM Table 7-1): each member
+  // at the initial value its declaration assigns (LRM 7.2.2), and at its own
+  // type's default where it assigns none. A structure alone answers it, its
+  // declaration being where those values are written.
+  kDeclaredDefault,
   // LRM 20.8.1. ceil(log2) of the operand read as unsigned; $clog2(0) is 0.
   // A constant argument is folded downstream, never in lowering.
   kClog2,

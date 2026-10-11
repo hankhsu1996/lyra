@@ -67,8 +67,8 @@ auto IntegralOfPackedAggregate(
 
 // The types of an unpacked aggregate's members, in declaration order, which is
 // the position an access reaches each by. A member's own declaration
-// initializer (LRM 7.2.2) is not part of what the type is: it is the value a
-// default construction composes at the site that needs one.
+// initializer (LRM 7.2.2) is no part of the member's type: a structure states
+// it in the default it answers for itself.
 template <typename Field>
 auto TranslateMemberTypes(
     UnitLowerer& unit_lowerer, const std::vector<Field>& fields)
@@ -107,7 +107,7 @@ void UnitLowerer::DefineOwnStruct(
     mir::TypeId structure) {
   std::vector<mir::TypeId> elements = TranslateMemberTypes(*this, src.fields);
   std::vector<mir::StructMethod> methods = StructMethodsOf(
-      *this,
+      *this, src,
       mir::TypeDeclarationRef{
           .unit_name = unit_.name, .path = src.declaration.path},
       structure, elements);

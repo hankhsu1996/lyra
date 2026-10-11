@@ -92,9 +92,12 @@ compiler (base plus index times element size) without a call. A fixed-size unpac
 container: its size is a constant, so the compiler lays it out in place.
 
 **D7. A write reports the range it reached, and a wait decided at the write tests that range against
-the bits it watches in place**, on the words, without materializing either side. A wait's watched
-part stays the contiguous bit range it is today, because under D4 a bit's position is its place in
-storage. Which waits are decided at the write is unchanged
+the bits it watches in place**, on the words, without materializing either side. Inside a packed
+value a wait's watched part stays the contiguous bit range it is today, because under D4 a bit's
+position is its place in storage; which part of an unpacked variable a wait watches and a write
+reached is named apart from that range
+([a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md)). Which
+waits are decided at the write is unchanged
 ([the-waiting-process-evaluates-its-wait](the-waiting-process-evaluates-its-wait.md)).
 
 ## Rejected

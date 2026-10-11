@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -51,21 +52,25 @@ class ReadReport {
   auto operator=(ReadReport&&) noexcept -> ReadReport&;
   ~ReadReport();
 
-  // A place the expression reads, and which bits of its flat-bit encoding, as
-  // a trigger reads them; reached through a handle where a call made on one
-  // is reporting.
+  // A place the expression reads: which part of it, by the steps that reach
+  // the part, and which positions of that part, as a trigger reads them;
+  // reached through a handle where a call made on one is reporting.
   void Add(
-      Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+      Observable* place, std::span<const std::int64_t> steps,
+      std::int64_t lsb_bit_offset, std::int64_t bit_width);
   void Add(
-      WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+      WatchedPlace place, std::span<const std::int64_t> steps,
+      std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // A place reached through a handle: an object a chain of reads passes
   // through, whose event source `place` is, or a variable of the instance a
   // virtual interface holds.
   void AddThroughHandle(
-      Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+      Observable* place, std::span<const std::int64_t> steps,
+      std::int64_t lsb_bit_offset, std::int64_t bit_width);
   void AddThroughHandle(
-      WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+      WatchedPlace place, std::span<const std::int64_t> steps,
+      std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // Every object at once, for a read that reaches one along no chain a report
   // could follow.
@@ -76,20 +81,25 @@ class ReadReport {
   void EnterCallOnHandle();
   void LeaveCallOnHandle();
 
-  // A place the evaluation writes, and which bits of it, as a read names them.
-  // Only an implicit list reads these, and it leaves them out.
+  // A place the evaluation writes: which part of it and which bits of that
+  // part, as a read names them. Only an implicit list reads these, and it
+  // leaves them out.
   void AddWrite(
-      Observable* place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+      Observable* place, std::span<const std::int64_t> steps,
+      std::int64_t lsb_bit_offset, std::int64_t bit_width);
   void AddWrite(
-      WatchedPlace place, std::int64_t lsb_bit_offset, std::int64_t bit_width);
+      WatchedPlace place, std::span<const std::int64_t> steps,
+      std::int64_t lsb_bit_offset, std::int64_t bit_width);
 
   // Makes what was reported a procedure's implicit list (LRM 9.2.2.2.1), once
   // everything is reported: nothing reached through a handle is in it, what
-  // was written is taken out of what was read, and each place is listed once.
-  // A write of a whole place takes every read of it; a write of some bits
-  // takes those bits out of a read naming its bits, and leaves a read of the
-  // whole place alone, since what is left of a whole is not known here -- a
-  // wake more, never one fewer.
+  // was written is taken out of what was read, and each part of a place is
+  // listed once. A write of the whole of a part takes every read of that part
+  // and of anything in it; a write of some bits of a part takes those bits out
+  // of a read naming bits of it, and leaves a read of the whole part alone,
+  // since what is left of a whole is not known here -- a wake more, never one
+  // fewer. A write of part of what was read leaves that read alone the same
+  // way.
   void SettleAsImplicitList();
 
   // Whether a function handed this report goes on to report into it: one or
@@ -118,9 +128,10 @@ class ReadReport {
   }
 
  private:
-  // Bits of a place the evaluation writes, which no wait watches.
+  // Bits of a part of a place the evaluation writes, which no wait watches.
   struct Written {
     Observable* place = nullptr;
+    PartPath part;
     value::BitPositions bits;
   };
 

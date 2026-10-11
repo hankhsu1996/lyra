@@ -93,12 +93,12 @@ identifiers for one LRM concept. The IR cannot represent "the same method, share
 kinds" in a single entry, which is the load-bearing structural fact for LRM 7.12.
 
 **D2: method-as-concept-member.** `(ConceptId, MethodInConcept)`. Methods grouped by runtime concept
-(Indexable, Sliceable, Sortable, Reducible, Searchable, ...) -- the structure that the runtime
-container types already implement via `lyra::value::concepts`. SV-faithful in the trait sense but
-adds an indirection (name -> concept -> method) the AST-to-HIR receiver-type dispatch does not
-naturally walk, and a single method may participate in multiple concepts (`kSize` is Sized;
-`kReverse` is Sortable; `kElement` is Indexable). The concept axis is cross-cutting; making it the
-identity axis forces choosing one concept per method, and the choice is artificial.
+(Indexable, Sortable, Reducible, Searchable, ...) -- the structure that the runtime container types
+already implement via `lyra::value::concepts`. SV-faithful in the trait sense but adds an
+indirection (name -> concept -> method) the AST-to-HIR receiver-type dispatch does not naturally
+walk, and a single method may participate in multiple concepts (`kSize` is Sized; `kReverse` is
+Sortable; `kElement` is Indexable). The concept axis is cross-cutting; making it the identity axis
+forces choosing one concept per method, and the choice is artificial.
 
 **D3: flat closed-namespace.** One enum, one entry per runtime function. Receiver type carries the
 container/element shape; the enum carries the function identity. The LRM 7.12 family is one entry

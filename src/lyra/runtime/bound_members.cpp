@@ -71,18 +71,20 @@ void BoundMembers::Move(
   // same storage by any other way stays, which is what keeps a force on a sink
   // from being an occurrence for whoever watches its source.
   if (from != nullptr) {
-    std::vector<WaitMembership*> through;
-    from->Members().ForEach([&](WaitMembership& membership) {
-      if (std::ranges::find(followers.naming, membership.through) !=
-          followers.naming.end()) {
-        through.push_back(&membership);
-      }
-    });
+    // Each goes on watching, of what the member names now, the part it
+    // watched of what the member named.
     Observable* to = names.ReportsTo();
-    for (WaitMembership* membership : through) {
-      membership->Unlink();
+    for (const Observable::Enrolled& enrolled : from->EveryEnrolled()) {
+      WaitMembership& membership = *enrolled.membership;
+      if (std::ranges::find(followers.naming, membership.through) ==
+          followers.naming.end()) {
+        continue;
+      }
+      const PartPath watched =
+          enrolled.path.StripPrefix(membership.through->part);
+      membership.Unlink();
       if (to != nullptr) {
-        to->Members().PushBack(*membership);
+        to->MembersAt(names.part.Join(watched)).PushBack(membership);
       }
     }
   }
@@ -90,6 +92,7 @@ void BoundMembers::Move(
     reference.holder = names.holder;
     reference.storage = names.storage;
     reference.whole = names.whole;
+    reference.part = names.part;
   };
   for (ErasedReference* each : followers.naming) {
     name(*each);

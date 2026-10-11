@@ -77,6 +77,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "element_slice",
           .declaration = Method{"Slice"},
+          .takes_a_type_argument = true,
           .selects = PartSelection::kSlice,
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kQueueSlice:
@@ -561,6 +562,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .over_integral_values = BuiltinFn::kIntegralDominating};
     case BuiltinFn::kIntegralDominating:
       return IntegralEntry(IntegralOp::kDominate, Method{"Dominating"});
+    case BuiltinFn::kDeclaredDefault:
+      return {
+          .name = "declared_default",
+          .declaration = StaticFactory{"DeclaredDefault"}};
     case BuiltinFn::kFilledLike:
       return {
           .name = "filled_like",

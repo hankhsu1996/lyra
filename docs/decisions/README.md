@@ -769,6 +769,12 @@ the detail lives in the entry itself.
   forming it did (an element made, an index naming none, an element moved), and a whole-value store
   compares before writing. Observers keeping their own copies, and notifying without comparing, are
   rejected, because an implicit sensitivity has nothing of its own to compare with.
+- [a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md) -- a
+  part of a variable is named by the steps that reach it, a member's index or an element's ordinal,
+  and by a range of bits inside a packed value; a wait, a write, a reference and a procedure's
+  report all name a part that way, no layer states where a part lies, and a variable keeps its waits
+  by the part each names, so a write visits the waits on what it reached and no others. Numbering
+  parts on a line is rejected, because the line would be a coordinate beside storage.
 - [a-part-is-named-by-how-it-is-selected](a-part-is-named-by-how-it-is-selected.md) -- an element, a
   component and a slice are each named for how they are selected, and every operation on one is that
   name plus a fixed suffix in every layer (`component` / `component_ref` / `designate_component` /

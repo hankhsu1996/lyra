@@ -1398,18 +1398,21 @@ auto UnitLowerer::WatchedEntriesOf(
     -> diag::Result<std::vector<hir::SensitivityEntry>> {
   std::vector<hir::SensitivityEntry> out;
   out.reserve(reads.size());
-  // A part is meaningful only for a signal the runtime bit-addresses: a packed
-  // bit vector, which renders to one observable cell whose change set is read
-  // per bit. For an enum, unpacked aggregate, string, or real the runtime
-  // observes the whole signal on any change, so the read watches the whole of
-  // it regardless of the flat-bit view the DFA computed over its own encoding.
+  // The part was read off the symbol the analyzed text names, and what is
+  // watched is the storage that name reaches, which for a name through a port
+  // or a view may be of another type. Where that storage has no statable
+  // parts, the whole of it is watched.
   const auto observe =
       [&](const AccessedPart& read, const hir::WatchedStorage& cell,
           const slang::ast::Type& read_type) -> diag::Result<void> {
-    if (!read_type.isIntegral() || read_type.isEnum()) {
-      out.push_back(
-          hir::SensitivityEntry{.cell = cell, .part = hir::WatchedWhole{}});
-      return {};
+    switch (PartAddressingOf(read_type)) {
+      case PartAddressing::kWholeOnly:
+        out.push_back(
+            hir::SensitivityEntry{.cell = cell, .part = hir::WatchedWhole{}});
+        return {};
+      case PartAddressing::kBits:
+      case PartAddressing::kSelects:
+        break;
     }
     auto parts = parts_of(read);
     if (!parts) return std::unexpected(std::move(parts.error()));

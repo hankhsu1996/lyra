@@ -41,6 +41,9 @@ landed at. Which variables a write updates is known at compile time and emitted 
 
 **D1. The update is per declared variable, not per component.** A write anywhere inside a variable
 is one update of that variable. No event is raised for the intermediate components on the path.
+Revised 2026-10-10: the update is still raised at the variable, and it now says which part of the
+variable the write reached
+([a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md)).
 
 **D2. A wait is an expression, and its filter belongs to the subscription.** A subscription holds
 the variables it depends on and the previous result of its expression; an update of a dependency
@@ -51,10 +54,14 @@ value of any storage, so it is held by the subscription and nowhere else.
 containing observable, no ancestor link and no event metadata of any kind. The compiler knows the
 source-level place a write targets and emits the notification the place implies.
 
-**D4. Finer granularity is an optimization, never a requirement.** 9.4.2 permits reevaluating more
-often than the members are referenced, so a narrower notification -- per element, per component --
-is admissible where it pays and is never owed. Nothing may report an event without a result change;
-that is the only hard bound.
+**D4. For an event expression, finer granularity is an optimization, never a requirement.** 9.4.2
+permits reevaluating more often than the members are referenced, so a narrower notification -- per
+element, per component -- is admissible where it pays and is never owed. Nothing may report an event
+without a result change; that is the only hard bound. Revised 2026-10-10: this was stated for every
+wait, and it does not hold for an implicit sensitivity, which has no result to compare and whose
+list the standard states part by part (LRM 9.2.2.2.1).
+[a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md) holds
+what such a wait is owed, and what an update raised at the variable says of the part it reached.
 
 **D5. The storage operation and the publish operation are two operations.** A write stores, and a
 publish raises an update on a variable. That they are fused today in one cell's store is a property

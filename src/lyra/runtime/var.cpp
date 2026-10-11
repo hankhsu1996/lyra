@@ -65,6 +65,15 @@ auto WatchedPlace::Member() const -> const ErasedReference* {
   return std::bit_cast<const ErasedReference*>(word_ & ~kThroughAMember);
 }
 
+auto WatchedPlace::PathOf(std::span<const std::int64_t> steps) const
+    -> PartPath {
+  const PartPath within{steps};
+  if (const ErasedReference* member = Member()) {
+    return member->part.Join(within);
+  }
+  return within;
+}
+
 auto WatchedPlace::ReportedTo() const -> Observable* {
   if (const ErasedReference* member = Member()) {
     return member->ReportsTo();
@@ -72,12 +81,14 @@ auto WatchedPlace::ReportedTo() const -> Observable* {
   return std::bit_cast<Observable*>(word_);
 }
 
-void ErasedReference::Report(const Change& change) const {
+void ErasedReference::Report(
+    const PartPath& within, const Change& change) const {
   std::visit(
       Overloaded{
           [](std::monostate) {},
           [&](VariableCell* variable) {
-            current_runtime().WakeParkedOn(variable->Members(), change);
+            current_runtime().WakeParkedOn(
+                *variable, part.Join(within), change);
           },
           [](GcObject* object) { object->PublishChange(); }},
       holder);
@@ -113,18 +124,19 @@ void ErasedReference::AdmitStep() const {
   }
 }
 
-auto ErasedReference::Part(void* part, value::Formation formed) const
+auto ErasedReference::Part(
+    void* storage, value::Formation formed, const PartPath& within) const
     -> ErasedReference {
   switch (formed) {
     case value::Formation::kExisting:
-      return {.holder = holder, .storage = part};
+      return {.holder = holder, .storage = storage, .part = part.Join(within)};
     case value::Formation::kMade:
       if (Watched()) {
-        Report(Change::Whole());
+        Report(PartPath{}, Change::Whole());
       }
-      return {.holder = holder, .storage = part};
+      return {.holder = holder, .storage = storage, .part = part.Join(within)};
     case value::Formation::kNowhere:
-      return {.holder = std::monostate{}, .storage = part};
+      return {.holder = std::monostate{}, .storage = storage};
   }
   throw InternalError("ErasedReference::Part: unknown formation");
 }

@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 
 namespace lyra::runtime {
@@ -42,10 +43,10 @@ auto GcObject::Watched() const -> bool {
 void GcObject::PublishChange() {
   RuntimeEffects& runtime = current_runtime();
   if (event_source_ != nullptr && event_source_->HasMembers()) {
-    runtime.WakeParkedOn(event_source_->Members(), Change::Whole());
+    runtime.WakeParkedOn(*event_source_, PartPath{}, Change::Whole());
   }
   if (Observable& every = runtime.EveryObject(); every.HasMembers()) {
-    runtime.WakeParkedOn(every.Members(), Change::Whole());
+    runtime.WakeParkedOn(every, PartPath{}, Change::Whole());
   }
 }
 

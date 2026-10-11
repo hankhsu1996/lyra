@@ -65,9 +65,14 @@ class OpenWrite {
     bracket_of_->formed(bracket_.data(), formed);
   }
 
-  // A slice write moved at least one element.
-  void Moved() {
-    bracket_of_->moved(bracket_.data());
+  // The write went on to a part of the one it had reached, by `step`.
+  void Stepped(const PartPath& step) {
+    bracket_of_->stepped(bracket_.data(), step);
+  }
+
+  // A write of the `count` elements from `start` moved at least one of them.
+  void Moved(std::int64_t start, std::int64_t count) {
+    bracket_of_->moved(bracket_.data(), start, count);
   }
 
   // Whether what a write lands on is worth keeping from before it; and the
@@ -118,7 +123,7 @@ class OpenWrite {
   // Room for the largest bracket any wrapper opens: the wrapper, a reference
   // to its storage, what the write has learned, and a copy of the storage for
   // a write the wrapper turns away to land in.
-  static constexpr std::size_t kBracketCapacity = 192;
+  static constexpr std::size_t kBracketCapacity = 256;
   // Room for what a write keeps of the largest part it lands on, beside where
   // the part lies.
   static constexpr std::size_t kLandingCapacity = 176;
@@ -128,7 +133,8 @@ class OpenWrite {
     void* (*storage)(void* room);
     bool (*undecided)(void* room);
     void (*formed)(void* room, value::Formation formed);
-    void (*moved)(void* room);
+    void (*stepped)(void* room, const PartPath& step);
+    void (*moved)(void* room, std::int64_t start, std::int64_t count);
     void (*landed)(void* room, const Change& change);
     void (*end)(void* room);
   };
@@ -152,7 +158,14 @@ class OpenWrite {
           [](void* room, value::Formation formed) {
             Bracket<Sink>(room)->Formed(formed);
           },
-      .moved = [](void* room) { Bracket<Sink>(room)->Moved(); },
+      .stepped =
+          [](void* room, const PartPath& step) {
+            Bracket<Sink>(room)->Stepped(step);
+          },
+      .moved =
+          [](void* room, std::int64_t start, std::int64_t count) {
+            Bracket<Sink>(room)->Moved(start, count);
+          },
       .landed =
           [](void* room, const Change& change) {
             Bracket<Sink>(room)->Landed(change);
