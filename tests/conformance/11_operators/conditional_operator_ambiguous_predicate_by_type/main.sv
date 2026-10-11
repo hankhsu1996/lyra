@@ -26,7 +26,14 @@ module Top;
     real ratio;
   } either_t;
 
-  real real_equal, real_differing;
+  // A conditional that is a constant expression answers as one evaluated at
+  // run time does.
+  localparam real kRealEqual = 1'bx ? 1.5 : 1.5;
+  localparam real kRealDiffering = 1'bx ? 1.5 : 2.5;
+  localparam string kStringEqual = 1'bx ? "abc" : "abc";
+  localparam string kStringDiffering = 1'bx ? "abc" : "xyz";
+
+  real real_equal, real_differing, real_not_a_number;
   shortreal shortreal_equal, shortreal_differing;
   string string_equal, string_differing;
   Item first_item, second_item, handle_equal, handle_differing;
@@ -70,6 +77,14 @@ module Top;
     other_real = 2.5;
     real_equal = ambiguous ? one_real : same_real;
     real_differing = ambiguous ? one_real : other_real;
+
+    // A value that is not a number is not equal to itself, so two of them
+    // differ.
+    begin
+      real not_a_number;
+      not_a_number = $sqrt(-1.0);
+      real_not_a_number = ambiguous ? not_a_number : not_a_number;
+    end
 
     one_shortreal = 1.5;
     other_shortreal = 2.5;
@@ -156,6 +171,16 @@ module Top;
       $fatal(1, "real_equal was %f, expected 1.5", real_equal);
     if (real_differing != 0.0)
       $fatal(1, "real_differing was %f, expected 0.0", real_differing);
+    if (real_not_a_number != 0.0)
+      $fatal(1, "real_not_a_number was %f, expected 0.0", real_not_a_number);
+    if (kRealEqual != 1.5)
+      $fatal(1, "kRealEqual was %f, expected 1.5", kRealEqual);
+    if (kRealDiffering != 0.0)
+      $fatal(1, "kRealDiffering was %f, expected 0.0", kRealDiffering);
+    if (kStringEqual != "abc")
+      $fatal(1, "kStringEqual was '%s', expected 'abc'", kStringEqual);
+    if (kStringDiffering != "")
+      $fatal(1, "kStringDiffering was '%s', expected ''", kStringDiffering);
     if (shortreal_equal != 1.5)
       $fatal(1, "shortreal_equal was %f, expected 1.5", shortreal_equal);
     if (shortreal_differing != 0.0)

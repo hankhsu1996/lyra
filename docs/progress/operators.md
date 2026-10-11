@@ -53,10 +53,8 @@ The numeric IDs (W1..W18) imply execution order; where a cut is independent the 
         Differing integral values combine bit by bit, differing fixed-size arrays, dynamic arrays
         and queues of one size element by element, and anything else, an associative array or two
         arrays of different sizes included, takes the value Table 7-1 gives its type, which for a
-        structure holds what each member's declaration assigns it.
-  - [ ] Where the whole conditional is a constant expression the front end evaluates it, and answers
-        the type's default for two equal expressions that are not integral or arrays, so
-        `1'bx ? 1.5 : 1.5` is 0.0 as a constant and 1.5 over variables.
+        structure holds what each member's declaration assigns it. A conditional that is a constant
+        expression answers the same.
   - [ ] An array query (`$size` / `$left` / `$right` / `$low` / `$high`, LRM 20.7) whose dimension
         index is a run-time value over an array with a run-time dimension is rejected; a constant
         dimension index over a fixed-size operand folds at elaboration.
