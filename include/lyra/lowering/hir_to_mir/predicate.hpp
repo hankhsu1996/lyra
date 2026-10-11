@@ -125,8 +125,9 @@ struct SelectionArm {
 // predicate selects its arm and ends the selection; a false one passes it on,
 // so a predicate and a value are evaluated only where the selection reaches
 // them. An unknown one selects neither its arm nor what follows: the selection
-// goes on, and its arm's value is combined bit by bit with whatever the rest
-// answers. Only a predicate whose type can hold an unknown has that outcome.
+// goes on, and its arm's value is combined with whatever the rest answers, the
+// way two values of the result type combine. Only a predicate whose type can
+// hold an unknown has that outcome.
 // A selection of any number of arms is as deep as one of a single arm. At
 // least one arm.
 [[nodiscard]] auto BuildSelection(

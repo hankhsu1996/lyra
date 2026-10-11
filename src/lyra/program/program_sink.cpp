@@ -970,6 +970,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dynarray_eq", &lyra_rt_dynarray_eq);
   add("lyra_rt_dynarray_ne", &lyra_rt_dynarray_ne);
   add("lyra_rt_dynarray_case_equal", &lyra_rt_dynarray_case_equal);
+  add("lyra_rt_dynarray_merge_conditional",
+      &lyra_rt_dynarray_merge_conditional);
   add("lyra_rt_dynarray_cell_get", &lyra_rt_dynarray_cell_get);
   add("lyra_rt_dynarray_cell_initialize", &lyra_rt_dynarray_cell_initialize);
   add("lyra_rt_dynarray_cell_set", &lyra_rt_dynarray_cell_set);
@@ -1013,6 +1015,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_eq", &lyra_rt_queue_eq);
   add("lyra_rt_queue_ne", &lyra_rt_queue_ne);
   add("lyra_rt_queue_case_equal", &lyra_rt_queue_case_equal);
+  add("lyra_rt_queue_merge_conditional", &lyra_rt_queue_merge_conditional);
   add("lyra_rt_queue_bitstream_width", &lyra_rt_queue_bitstream_width);
   add("lyra_rt_queue_count_bits", &lyra_rt_queue_count_bits);
   add("lyra_rt_queue_cell_get", &lyra_rt_queue_cell_get);

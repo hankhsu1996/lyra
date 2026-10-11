@@ -1455,7 +1455,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFilledLike:
       return NamedByValue{.realized = kForWhatAnAggregateNetResolves};
     case support::BuiltinFn::kMergeConditional:
-      return NamedByValue{.realized = kForUnpackedArrays};
+      return NamedByValue{.realized = kForSequences};
     // What a structure's declaration states, which the structure's own
     // generated body answers and nothing the library holds does.
     case support::BuiltinFn::kDeclaredDefault:

@@ -180,6 +180,11 @@ auto RuntimeQueue::CaseEqual(const RuntimeQueue& other) const -> Bit {
   return detail::SequenceCaseEqual(*core_, *other.core_);
 }
 
+auto RuntimeQueue::MergeConditional(const RuntimeQueue& other) const
+    -> RuntimeQueue {
+  return RuntimeQueue(Core().MergeConditional(other.Core()));
+}
+
 auto RuntimeQueue::IsBitIdentical(const RuntimeQueue& other) const -> bool {
   if (!core_.has_value() || !other.core_.has_value()) {
     return Count() == other.Count();

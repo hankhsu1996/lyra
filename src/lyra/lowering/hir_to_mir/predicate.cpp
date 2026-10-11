@@ -9,6 +9,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -39,22 +40,40 @@ auto ReadLocal(mir::Block& block, mir::LocalId local, mir::TypeId type)
   return block.exprs.Add(mir::MakeLocalRefExpr(local, type));
 }
 
-// LRM 11.4.11 combines the results of two arms neither of which was selected
-// bit by bit: a bit both know and agree on survives and every other becomes x
-// (Table 11-20). A value with no parts that can agree that way answers with the
-// Table 7-1 default of its own type instead, and which of the two it is follows
-// from the result type, so it is settled here rather than left for a backend to
-// work out.
+// LRM 11.4.11 compares the results of two arms neither of which was selected
+// and answers the value they share where they are equal. Where they differ, a
+// value made of parts that can agree apart from each other is combined part by
+// part: an integral bit by bit, a bit both know and agree on surviving and
+// every other becoming x (Table 11-20), and an array other than an associative
+// one element by element. That combination of two equal values is the value
+// itself, so it is the whole answer for those types. Any other value has no
+// such parts, and answers the value the two share or else the Table 7-1 value
+// of its type. Which of the two a type is follows from the type, so it is
+// settled here rather than left for a backend to work out.
 auto BuildCombinedArms(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId then_value,
-    mir::ExprId else_value, mir::TypeId result_type) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId one,
+    mir::LocalId other, mir::TypeId result_type) -> mir::ExprId {
   const mir::Type& type = unit.types.Get(result_type);
-  if (!type.IsIntegral() && !type.Is<mir::UnpackedArrayType>()) {
-    return block.exprs.Add(BuildDefaultValueExpr(unit, block, result_type));
+  const bool combines_by_part =
+      type.IsIntegral() || type.Is<mir::UnpackedArrayType>() ||
+      type.Is<mir::DynamicArrayType>() || type.Is<mir::QueueType>();
+  if (combines_by_part) {
+    return block.exprs.Add(MakeBuiltinCall(
+        unit, block, support::BuiltinFn::kMergeConditional,
+        ReadLocal(block, one, result_type),
+        {ReadLocal(block, other, result_type)}, result_type));
   }
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kMergeConditional, then_value,
-      {else_value}, result_type));
+  const std::array compared{result_type, result_type};
+  const mir::ExprId equal = block.exprs.Add(BuildMirBinaryExpr(
+      unit, block, hir::BinaryOp::kEquality, ReadLocal(block, one, result_type),
+      ReadLocal(block, other, result_type), OneBitAnswerType(unit, compared)));
+  return BuildSelectionChain(
+      block,
+      std::array{SelectedValue{
+          .selected = ReduceToCondition(unit, block, equal),
+          .value = ReadLocal(block, one, result_type)}},
+      block.exprs.Add(BuildDefaultValueExpr(unit, block, result_type)),
+      result_type);
 }
 
 // Whether the truth `value` is known to be true, and whether it is known to be
@@ -153,9 +172,8 @@ auto BuildMergingSelection(
     auto value_or = value(at);
     if (!value_or) return std::unexpected(std::move(value_or.error()));
     const mir::LocalId held = DeclareLocal(at, *value_or);
-    const mir::ExprId combined = BuildCombinedArms(
-        unit, block, ReadLocal(block, answer, result_type),
-        ReadLocal(block, held, result_type), result_type);
+    const mir::ExprId combined =
+        BuildCombinedArms(unit, block, answer, held, result_type);
     AppendAssign(
         unit, block, answer,
         BuildSelectionChain(

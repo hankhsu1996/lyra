@@ -131,8 +131,7 @@ class RuntimeUnpackedArray {
   // LRM 11.4.11: the two arms of a conditional operator whose condition is
   // ambiguous, combined element by element -- an element the arms agree on
   // survives, and one they disagree on, or cannot know, takes the element
-  // default (Table 7-1). Arms of unequal size put no elements in
-  // correspondence, so every element takes that default.
+  // default (Table 7-1).
   [[nodiscard]] auto MergeConditional(const RuntimeUnpackedArray& other) const
       -> RuntimeUnpackedArray;
 
