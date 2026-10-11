@@ -364,6 +364,12 @@ Four checks, all cheap:
   unique. Somebody does; it is not the compiler. What the shape costs before anyone calls it a
   design problem is a memory peak proportional to the design rather than to its largest unit, which
   is measured and not hypothetical.
+- **What does one of these cost where it cannot be shared with another?** Sharing is found by
+  showing two things alike, and there is always one more way for two to differ, so some will not be
+  shown. What such a one costs should be about what its own statements cost. Count what it adds -- a
+  class, a constructor, a table, a body that waits -- beside what the source wrote for it, and
+  compile it at two sizes: a shape that costs a fixed apparatus per occurrence turns every sharing
+  missed into a multiple of that apparatus, and no test of behaviour sees it.
 - **How much machinery does this shape need, next to its neighbors?** A memo, a recursion, an extra
   "unknown" state threaded through several returns -- each is evidence about the shape, not about
   the problem. The mechanical form of the check is to try placing the work inside a contract some

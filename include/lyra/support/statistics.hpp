@@ -12,13 +12,16 @@
 namespace lyra::support {
 
 // The numbers a run records about itself when asked, for whoever compares two
-// runs or reads one: each stage's peak memory, what each unit left behind, and
-// how long each tool the build ran took. Where the compiler's own time went is
-// the trace's to say, so none of it is here.
+// runs or reads one: each stage's peak memory, what each unit holds and what it
+// left behind, and how long each tool the build ran took. Where the compiler's
+// own time went is the trace's to say, so none of it is here.
 //
 // Nothing is recorded unless the run enables it, and every recording call is
 // then a single check. Units are recorded from whichever thread worked on them.
 void EnableStatistics();
+
+// Whether the run records, for a caller whose record takes working out.
+[[nodiscard]] auto RecordsStatistics() -> bool;
 
 // How many units the run lowers and compiles at once, which is what the time a
 // stage of several units took has to be read against.
@@ -64,6 +67,19 @@ struct Artifact {
 };
 
 void RecordUnit(std::string_view unit, std::vector<Artifact> artifacts);
+
+// How many of one kind of thing a unit holds.
+struct Count {
+  std::string kind;
+  std::uint64_t held = 0;
+};
+
+// What a unit holds in one of the forms it passes through, by kind. A file's
+// size says how much a unit left behind and not what of: a unit that holds
+// twice the classes and one that holds twice the statements leave the same
+// bytes, and only one of them was written twice by the design.
+void RecordCounts(
+    std::string_view unit, std::string_view form, std::vector<Count> counts);
 
 // How long one tool the build ran took: on the clock, and of processor time as
 // the system charges it once the child has been reaped.

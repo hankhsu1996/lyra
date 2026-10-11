@@ -1,6 +1,5 @@
 #include "lyra/support/statistics.hpp"
 
-#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <cstddef>
@@ -9,6 +8,9 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
+#include <iterator>
+#include <map>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -29,9 +31,15 @@ struct StagePeak {
   std::optional<std::uint64_t> peak_rss_bytes;
 };
 
+struct FormCounts {
+  std::string form;
+  std::vector<Count> counts;
+};
+
 struct UnitRecord {
-  std::string name;
   std::vector<Artifact> artifacts;
+  // In the order the unit passed through its forms.
+  std::vector<FormCounts> forms;
 };
 
 struct ChildRecord {
@@ -44,7 +52,11 @@ struct Statistics {
   std::mutex lock;
   std::size_t width = 0;
   std::vector<StagePeak> stages;
-  std::vector<UnitRecord> units;
+  // By name: a unit is recorded once per form and once for what it left, from
+  // whichever thread reached each, and units finish in whatever order the
+  // threads took them, so the name is both what joins a unit's records and
+  // what makes two runs of one design list their units alike.
+  std::map<std::string, UnitRecord, std::less<>> units;
   std::vector<ChildRecord> children;
 };
 
@@ -97,8 +109,12 @@ auto KindName(ArtifactKind kind) -> std::string_view {
   throw InternalError("an artifact kind has no name");
 }
 
-auto Enabled() -> bool {
-  return TheStatistics().enabled;
+auto UnitNamed(Statistics& statistics, std::string_view unit) -> UnitRecord& {
+  const auto found = statistics.units.find(unit);
+  return found != statistics.units.end()
+             ? found->second
+             : statistics.units.emplace(std::string(unit), UnitRecord{})
+                   .first->second;
 }
 
 }  // namespace
@@ -107,8 +123,12 @@ void EnableStatistics() {
   TheStatistics().enabled = true;
 }
 
+auto RecordsStatistics() -> bool {
+  return TheStatistics().enabled;
+}
+
 void RecordWidth(std::size_t width) {
-  if (!Enabled()) {
+  if (!RecordsStatistics()) {
     return;
   }
   Statistics& statistics = TheStatistics();
@@ -117,7 +137,7 @@ void RecordWidth(std::size_t width) {
 }
 
 StageMemory::StageMemory(std::string_view stage) {
-  if (!Enabled()) {
+  if (!RecordsStatistics()) {
     return;
   }
   recording_.emplace(
@@ -140,17 +160,31 @@ StageMemory::~StageMemory() {
 }
 
 void RecordUnit(std::string_view unit, std::vector<Artifact> artifacts) {
-  if (!Enabled()) {
+  if (!RecordsStatistics()) {
     return;
   }
   Statistics& statistics = TheStatistics();
   const std::scoped_lock lock(statistics.lock);
-  statistics.units.push_back(
-      UnitRecord{.name = std::string(unit), .artifacts = std::move(artifacts)});
+  std::vector<Artifact>& left = UnitNamed(statistics, unit).artifacts;
+  left.insert(
+      left.end(), std::make_move_iterator(artifacts.begin()),
+      std::make_move_iterator(artifacts.end()));
+}
+
+void RecordCounts(
+    std::string_view unit, std::string_view form, std::vector<Count> counts) {
+  if (!RecordsStatistics()) {
+    return;
+  }
+  Statistics& statistics = TheStatistics();
+  const std::scoped_lock lock(statistics.lock);
+  UnitNamed(statistics, unit)
+      .forms.push_back(
+          FormCounts{.form = std::string(form), .counts = std::move(counts)});
 }
 
 void RecordChild(std::string command, ChildUsage usage) {
-  if (!Enabled()) {
+  if (!RecordsStatistics()) {
     return;
   }
   Statistics& statistics = TheStatistics();
@@ -164,10 +198,6 @@ auto WriteStatistics(const std::filesystem::path& path)
   Statistics& statistics = TheStatistics();
   const std::scoped_lock lock(statistics.lock);
 
-  // Units finish in whatever order the threads took them, so the file lists
-  // them by name and two runs of one design read the same.
-  std::ranges::sort(statistics.units, {}, &UnitRecord::name);
-
   nlohmann::ordered_json stages = nlohmann::ordered_json::array();
   for (const StagePeak& stage : statistics.stages) {
     nlohmann::ordered_json entry = {{"name", stage.name}};
@@ -177,7 +207,7 @@ auto WriteStatistics(const std::filesystem::path& path)
     stages.push_back(std::move(entry));
   }
   nlohmann::ordered_json units = nlohmann::ordered_json::array();
-  for (const UnitRecord& unit : statistics.units) {
+  for (const auto& [name, unit] : statistics.units) {
     nlohmann::ordered_json artifacts = nlohmann::ordered_json::array();
     for (const Artifact& artifact : unit.artifacts) {
       artifacts.push_back(
@@ -186,7 +216,18 @@ auto WriteStatistics(const std::filesystem::path& path)
            {"bytes", artifact.bytes},
            {"made", artifact.made}});
     }
-    units.push_back({{"name", unit.name}, {"artifacts", std::move(artifacts)}});
+    nlohmann::ordered_json counts = nlohmann::ordered_json::object();
+    for (const FormCounts& form : unit.forms) {
+      nlohmann::ordered_json held = nlohmann::ordered_json::object();
+      for (const Count& count : form.counts) {
+        held[count.kind] = count.held;
+      }
+      counts[form.form] = std::move(held);
+    }
+    units.push_back(
+        {{"name", name},
+         {"artifacts", std::move(artifacts)},
+         {"counts", std::move(counts)}});
   }
   nlohmann::ordered_json children = nlohmann::ordered_json::array();
   for (const ChildRecord& child : statistics.children) {

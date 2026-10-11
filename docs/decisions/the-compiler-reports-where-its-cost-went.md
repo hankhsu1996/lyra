@@ -67,8 +67,16 @@ out, 500 when not given, which is clang's default.
 
 `--stats-file <file>` writes JSON holding what a span cannot: how many units ran at once, each stage
 that runs alone with its peak resident memory, each unit with every file it left behind and whether
-this run made it or took it from the store, and each tool the build ran with its wall time and CPU
-time.
+this run made it or took it from the store, each unit with how many of each kind of thing it holds
+in each form it passed through, and each tool the build ran with its wall time and CPU time.
+
+A unit's counts are one per pool of the form, taken by a function that names every member of the
+unit, so a member added to a form does not build until it is said what kind of thing it is. What a
+body is made of is not counted. clang's `-print-stats` and Verilator's `--stats` count nodes by kind
+from the node list their sources are generated from; with no such list here, naming every member is
+what rustc's `-Zinput-stats` does with a match that has no wildcard. A file's size cannot tell a
+unit holding twice the classes from one holding twice the statements, and only the first is
+something a design can be held to.
 
 Nothing is recorded unless asked, and then each record is a single check.
 

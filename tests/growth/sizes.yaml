@@ -8,6 +8,9 @@ instance_array: 512
 loop_choosing_by_outer_index: 64
 loop_counted_by_outer_index: 64
 loop_declaring_a_type: 512
+loop_holding_a_sized_block: 64
+loop_of_children_sized_by_index: 32
+loop_of_clocked_procedures_sized_by_index: 64
 loop_of_instances: 512
 loop_of_instances_built_by_parameter: 512
 loop_of_instances_calling_the_top: 512
@@ -15,6 +18,9 @@ loop_of_instances_holding_instances: 512
 loop_of_instances_reading_their_block: 512
 loop_of_instances_reading_upward: 512
 loop_of_one_body: 512
+loop_reaching_its_neighbour: 256
 loop_selecting_by_index: 512
+loop_sized_from_a_table: 64
+loop_sizing_by_index: 64
 packed_value_width: 4194304
 unread_parameter_width: 16384

@@ -562,6 +562,29 @@ specializations, not with instance count.
       concrete form stays the baseline and the shared form is what a program gets when a proof
       exists for it.
 
+- [x] What a generate block costs where it is not shared is held, kind by kind. The growth designs
+      used to state only repetitions of one thing, so the check asked whether what should share does
+      and never what a block unlike its neighbours adds. A run now reports how many of each kind of
+      thing every unit holds in each form it passes through, a design says what one more step of its
+      size adds, and every kind reported is held to that at two sizes.
+
+- [ ] A generate block that is not shared costs a fixed apparatus, where it should cost about its
+      own statements. One continuous assignment in such a block adds a class, a construction, a body
+      that waits, three start-up bodies and the constants describing them: about four thousand bytes
+      of machine code on the execution backend, against about fifty for a simulator that writes the
+      block's statements into its module. So every way two blocks can differ that sharing does not
+      see costs a multiple of that, and a loop of a thousand such blocks is where a design stops
+      building. The growth record names what follows the block count on each path.
+
+- [ ] Blocks that are one text are still told apart by what selects them. A declaration sized by a
+      block parameter set from the loop index is one class per block where the sizes are few; a
+      block holding nothing sized is one class per block where a block it holds is; and every block
+      under a block told apart is written once per such block. Same growth record.
+
+- [ ] A block reaching its neighbour by a name indexed from its own index is compiled once per
+      block, and lowering such a loop takes more than proportional time: twice the blocks is over
+      three times the time, held in the C++ path's growth record.
+
 - [ ] What remains of the instance array on that same axis. The member and the construction
       statement no longer scale: `Child c[0:N-1]` is one member whose type carries the multiplicity
       and one statement composing the whole sequence, so widening an array changes neither. Two

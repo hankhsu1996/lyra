@@ -11,8 +11,9 @@ unit, the units by what they left behind, and how long each tool the build ran
 took.
 
 `compare` holds a run against a base and exits with the number of regressions,
-so a check can be built on it. Counts -- units, and files per unit -- are exact
-and any growth is a regression. A size or a peak regresses only past both a
+so a check can be built on it. Counts -- units, files per unit, and how many
+of each kind of thing a unit holds in each of its forms -- are exact and any
+growth is a regression. A size or a peak regresses only past both a
 percentage and an absolute floor, so noise on a small number is not reported.
 Time is not compared: it moves with the machine, and a regression in it is
 found by measuring instructions outside the run.
@@ -146,22 +147,33 @@ def compare(args):
     now = load(args.stats)
     regressions = []
 
-    base_units = {u["name"]: u["artifacts"] for u in base["units"]}
-    now_units = {u["name"]: u["artifacts"] for u in now["units"]}
+    base_units = {u["name"]: u for u in base["units"]}
+    now_units = {u["name"]: u for u in now["units"]}
     if len(now_units) > len(base_units):
         regressions.append(f"units: {len(base_units)} -> {len(now_units)}")
-    for name, artifacts in now_units.items():
+    for name, unit in now_units.items():
         before = base_units.get(name)
         if before is None:
             continue
-        if len(artifacts) > len(before):
+        artifacts = unit["artifacts"]
+        if len(artifacts) > len(before["artifacts"]):
             regressions.append(
-                f"{name}: files {len(before)} -> {len(artifacts)}"
+                f"{name}: files {len(before['artifacts'])} -> {len(artifacts)}"
             )
-        size_before = sum(a["bytes"] for a in before)
+        size_before = sum(a["bytes"] for a in before["artifacts"])
         size_now = sum(a["bytes"] for a in artifacts)
         if grew(size_before, size_now, args.percent, args.floor_bytes):
             regressions.append(f"{name}: bytes {size_before} -> {size_now}")
+        # A form or a kind only one side reports is nothing to compare, and a
+        # base written before runs reported any has none.
+        counts_before = before.get("counts", {})
+        for form, held in unit.get("counts", {}).items():
+            for kind, count in held.items():
+                held_before = counts_before.get(form, {}).get(kind)
+                if held_before is not None and count > held_before:
+                    regressions.append(
+                        f"{name}: {form} {kind} {held_before} -> {count}"
+                    )
 
     # A stage carries no peak on a platform that offers no reading of one, and
     # a peak only one side has is nothing to compare.

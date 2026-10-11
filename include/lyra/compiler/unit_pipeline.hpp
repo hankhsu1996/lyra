@@ -17,6 +17,12 @@ auto LowerUnitToSemantic(
     const hir::CompilationUnit& unit, const diag::SourceManager& source_manager)
     -> diag::Result<mir::CompilationUnit>;
 
+// Tells a run that records itself what `unit` holds as a semantic model. A
+// unit modelled from its HIR is told of where it is modelled; the one composed
+// for the whole design is modelled from no unit of the design, so whoever
+// composes it tells of it.
+void RecordSemanticForm(const mir::CompilationUnit& unit);
+
 // Takes one unit from its semantic model into the form a session loads or a
 // target compiles. Every unit has one, a namespace included: a package's
 // variable initializers and its subroutines are code like any other.
