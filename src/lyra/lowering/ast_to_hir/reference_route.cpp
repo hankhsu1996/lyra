@@ -505,7 +505,7 @@ auto UnitLowerer::DisableTargetOf(
 
 auto UnitLowerer::ReaderInstance() const -> std::optional<ReaderClimbs> {
   const auto* body =
-      SourceScope().asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+      lowering_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
   if (body == nullptr) return std::nullopt;
   return ReaderClimbs{
       .body = body,

@@ -43,6 +43,7 @@
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
+#include "lyra/lowering/ast_to_hir/one_body.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -89,19 +90,26 @@ auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Symbol& home,
-    std::string name, hir::UnitRole role)
+    std::string name, hir::UnitRole role,
+    std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from)
     : facts_(facts),
       home_(&home),
       scope_(&ScopeLoweredFor(home)),
+      lowering_(scope_),
       unit_{std::move(name)} {
   unit_.role = role;
   unit_.source_name = SourceNameOf(home);
   unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
   signature_.unit_name = unit_.name;
+  applications_.push_back(scope_);
+  applications_.insert(
+      applications_.end(), also_lowered_from.begin(), also_lowered_from.end());
+  also_lowered_from_.insert(also_lowered_from.begin(), also_lowered_from.end());
 }
 
 auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
-  return &UnitHomeOf(decl) == home_;
+  const slang::ast::Symbol& home = UnitHomeOf(decl);
+  return &home == home_ || also_lowered_from_.contains(&home);
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
@@ -110,7 +118,9 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
       "declare unit", [&] { return unit_.name; });
   {
     const profiling::TimeTraceScope step("declare structural identities");
-    DeclareStructuralIdentities(*scope_, support::DefPath{});
+    for (const slang::ast::Scope* application : applications_) {
+      DeclareStructuralIdentities(*application, support::DefPath{});
+    }
   }
   {
     const profiling::TimeTraceScope step("declare classes");
@@ -161,19 +171,54 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     -> diag::Result<hir::CompilationUnit> {
   signatures_ = &signatures;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
-  const profiling::TimeTraceScope span(
-      "lower to HIR", [&] { return unit_.name; });
-  WalkFrame frame;
-  StructuralScopeLowerer root(*this, *scope_);
-  auto root_scope_or = root.Run(frame);
-  if (!root_scope_or) {
-    return std::unexpected(std::move(root_scope_or.error()));
+  std::optional<hir::StructuralScope> one_body;
+  for (const slang::ast::Scope* application : applications_) {
+    auto built = LowerScopeOf(*application);
+    if (!built) return std::unexpected(std::move(built.error()));
+    one_body = one_body.has_value() ? OneBodyOf(*one_body, *built)
+                                    : std::optional{*std::move(built)};
+    if (!one_body.has_value()) {
+      throw InternalError(
+          std::format(
+              "UnitLowerer::LowerBodies: unit '{}' is lowered from "
+              "applications that were found to be one body, and '{}' is not "
+              "one with those before it",
+              unit_.name, application->asSymbol().getHierarchicalPath()));
+    }
   }
-  unit_.root_scope = *std::move(root_scope_or);
+  unit_.root_scope = *std::move(one_body);
   RequireEveryClassBodyLowered();
   ReadSignaturesOfNamedClasses();
   hir::Verify(unit_);
   return std::move(unit_);
+}
+
+auto UnitLowerer::LowerScopeBuiltBy(
+    const slang::ast::InstanceBodySymbol& application,
+    const hir::UnitSignatures& signatures)
+    -> diag::Result<hir::StructuralScope> {
+  signatures_ = &signatures;
+  const auto in_unit = diag::FailureContext::InUnit(unit_.name);
+  return LowerScopeOf(application);
+}
+
+auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
+    -> diag::Result<hir::StructuralScope> {
+  const profiling::TimeTraceScope span(
+      "lower to HIR", [&] { return unit_.name; });
+  lowering_ = &application;
+  WalkFrame frame;
+  StructuralScopeLowerer root(*this, application);
+  return root.Run(frame);
+}
+
+auto UnitLowerer::ApplicationDeclaring(const slang::ast::ParameterSymbol& param)
+    const -> const slang::ast::Scope& {
+  for (const slang::ast::Scope* level = param.getParentScope();
+       level != nullptr; level = level->asSymbol().getParentScope()) {
+    if (also_lowered_from_.contains(&level->asSymbol())) return *level;
+  }
+  return *scope_;
 }
 
 auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
@@ -645,7 +690,9 @@ void UnitLowerer::DeclareClassStatics(
 
 auto UnitLowerer::ValueSourceOf(const slang::ast::ParameterSymbol& param) const
     -> ParameterValueSource {
-  const auto* body = scope_->asSymbol().as_if<slang::ast::InstanceBodySymbol>();
+  const auto* body = ApplicationDeclaring(param)
+                         .asSymbol()
+                         .as_if<slang::ast::InstanceBodySymbol>();
   if (body == nullptr) return ParameterValueSource::kFixedBySpecialization;
   return Specialization().ValueSourceOf(InstantiationOf(*body), param);
 }

@@ -167,7 +167,11 @@ auto DesignOf(const CommandContext& ctx)
       std::move(ctx.elaborated->compilation),
       compiler::LoweringPolicy{
           .assertions = ctx.args->assertions,
-          .bodies_read = support::BodiesRead::kElaborated},
+          .bodies_read = support::BodiesRead::kElaborated,
+          .missed_sharing =
+              ctx.args->remarks
+                  ? lowering::ast_to_hir::MissedSharing::kLookedFor
+                  : lowering::ast_to_hir::MissedSharing::kNotLookedFor},
       *ctx.sink);
 }
 

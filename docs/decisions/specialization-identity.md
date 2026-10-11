@@ -284,10 +284,11 @@ configuration, and not only for one a rule selected.
    about its own work and not about which artifact any of them belongs to. Compiling one of the
    separated sets for all of them is the merging error F4 names.
 
-   Instances handed different values of a supplied parameter share one key, so one of their bodies
-   is compiled for all of them. What admits that is not the frontend's grouping but this compiler's
-   own: each of the others is lowered and compared with the unit, and one that differs keeps its
-   definition out of the sharing.
+   Instances handed different values of a supplied parameter share one key, so one unit is compiled
+   for all of them. What admits that is not the frontend's grouping but this compiler's own: each of
+   the others is lowered and held against the unit, which holds what any of them built where they
+   differ only in that, and one that differs in anything else keeps its definition out of the
+   sharing.
 
 7. **An instance's name is worked out once and kept, and keeping it changes no answer.** A key is
    built from every part fixed for its instance and folded, and every scope the instance holds and

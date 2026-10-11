@@ -8,6 +8,7 @@
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -575,9 +576,17 @@ class UnitLowerer {
   // element's body, a package, a `$unit` scope, or a specialization that is a
   // unit of its own, which is lowered from the scope declaring its generic and
   // holds nothing of that scope but itself.
+  //
+  // A design element's unit is one text every application of it shares, and
+  // `home` is the body of one of them. `also_lowered_from` holds the bodies of
+  // the others the unit is lowered from as well: what each of them built is
+  // part of what the unit holds, since which alternative of a conditional
+  // generate stands and how many blocks a loop counts out are decided when an
+  // object is built (LRM 27.4, 27.5) and differ between applications.
   UnitLowerer(
       const LoweringFacts& facts, const slang::ast::Symbol& home,
-      std::string name, hir::UnitRole role);
+      std::string name, hir::UnitRole role,
+      std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from);
 
   // The declaration phase: everything this unit states about itself, including
   // the signature it publishes. Reads no other unit, so a body that later
@@ -598,11 +607,31 @@ class UnitLowerer {
     return blocks_published_apart_;
   }
 
+  // Whether two applications this unit is lowered from published a different
+  // class for the unit's own scope, which its declaration phase finds.
+  // Something they declare held a value one of them was handed where the value
+  // was taken to be only read, so the unit's definition has to be declared
+  // again with every parameter deciding.
+  [[nodiscard]] auto ApplicationsPublishedApart() const -> bool {
+    return applications_published_apart_;
+  }
+
   // The body phase: everything this unit executes, resolved against what the
   // design's units published. Which of those publications this unit ends up
   // depending on is the set it reads, so nothing decides that set in advance.
+  // The unit's own scope is the one body of what every application it is
+  // lowered from built.
   auto LowerBodies(const hir::UnitSignatures& signatures)
       -> diag::Result<hir::CompilationUnit>;
+
+  // The unit's own scope as the application whose body is `application` built
+  // it, lowered into this unit and held by nothing. Whoever asks holds the
+  // scopes of several applications against each other, which only scopes
+  // lowered into one unit allow, since each names the unit's types.
+  auto LowerScopeBuiltBy(
+      const slang::ast::InstanceBodySymbol& application,
+      const hir::UnitSignatures& signatures)
+      -> diag::Result<hir::StructuralScope>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
   // and builtins through this accessor; downstream consumers post-Run use the
@@ -1668,9 +1697,28 @@ class UnitLowerer {
   auto WalkOwnDeclarations(Visit& visit)
       -> std::invoke_result_t<Visit&, const slang::ast::Symbol&>;
 
+  // The application of this unit that declares `param`, or the one the unit is
+  // named for where none of them does.
+  [[nodiscard]] auto ApplicationDeclaring(
+      const slang::ast::ParameterSymbol& param) const
+      -> const slang::ast::Scope&;
+
+  // The unit's own scope as `application` built it.
+  auto LowerScopeOf(const slang::ast::Scope& application)
+      -> diag::Result<hir::StructuralScope>;
+
   LoweringFacts facts_;
   const slang::ast::Symbol* home_;
   const slang::ast::Scope* scope_;
+  // The scope of every application the unit is lowered from, the one it is
+  // named for first.
+  std::vector<const slang::ast::Scope*> applications_;
+  // The bodies of those beyond the first, which is what a declaration is asked
+  // against to learn whether this unit holds it.
+  std::unordered_set<const slang::ast::Symbol*> also_lowered_from_;
+  // The application being read, which is what a name leaving the instance is
+  // resolved from.
+  const slang::ast::Scope* lowering_;
 
   hir::CompilationUnit unit_;
 
@@ -1719,6 +1767,7 @@ class UnitLowerer {
   std::unordered_map<const slang::ast::Scope*, hir::ScopeClassSignature>
       scope_classes_;
   bool blocks_published_apart_ = false;
+  bool applications_published_apart_ = false;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the

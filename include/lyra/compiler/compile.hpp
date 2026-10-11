@@ -38,6 +38,8 @@ struct FrontEndResult {
 struct LoweringPolicy {
   support::AssertionPolicy assertions = support::AssertionPolicy::kCheck;
   support::BodiesRead bodies_read = support::BodiesRead::kElaborated;
+  lowering::ast_to_hir::MissedSharing missed_sharing =
+      lowering::ast_to_hir::MissedSharing::kNotLookedFor;
 };
 
 // Reads everything the driver was pointed at and elaborates it, rendering

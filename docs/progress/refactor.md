@@ -3074,6 +3074,21 @@ enough to warrant its own focused review.
       about fifty times faster. Target: a concatenation states all its operands and writes each into
       its answer once. Not blocked.
 
+- [ ] R219 -- One value, a unit's name, both says which unit a parent means and decides which
+      instances share one compiled artifact, where the incremental-build contract makes those two
+      values: a key for what is computed and a fingerprint for whether it came out the same. The
+      name has to exist before any unit is lowered, since a parent writes it, so which instances
+      will come out alike is predicted from the source before lowering and then checked by lowering
+      them. Everything built around the prediction follows from that: the list of where the front
+      end folds a parameter, the fall back that keeps a definition whole when the prediction misses,
+      the second fall back for a unit holding a class, and the remark on a unit per value that
+      decides nothing, which runs the right comparison and may only report it. High priority.
+      Target: a parent names a child by what its instantiation states, every value included, which
+      needs no reading of the child's body; each distinct such key is lowered with every parameter a
+      value its object is built with; and keys whose lowered forms are the same share everything
+      after. No parameter is classified beforehand. First to find out: where emitted code and what a
+      unit publishes take the name for the artifact. Not blocked.
+
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

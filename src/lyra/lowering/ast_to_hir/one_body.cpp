@@ -16,9 +16,6 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-auto MergeBlocks(const hir::StructuralScope& a, const hir::StructuralScope& b)
-    -> std::optional<hir::StructuralScope>;
-
 // One conditional construct as two blocks left it. The alternatives and what
 // selects each are the source's, so both blocks state the same ones in the
 // same order; what differs is which of them each index selected a body for.
@@ -59,7 +56,7 @@ auto MergeChoices(
       if (!body.has_value()) {
         body = theirs;
       } else {
-        body = MergeBlocks(*body, theirs);
+        body = OneBodyOf(*body, theirs);
         if (!body.has_value()) return std::nullopt;
       }
     }
@@ -87,7 +84,7 @@ auto MergeLoops(const hir::Generate& a, const hir::Generate& b)
   std::optional<hir::StructuralScope> body;
   for (const hir::GenerateBlock& ours : a.blocks) body = ours.scope;
   for (const hir::GenerateBlock& theirs : b.blocks) {
-    body = body.has_value() ? MergeBlocks(*body, theirs.scope)
+    body = body.has_value() ? OneBodyOf(*body, theirs.scope)
                             : std::optional{theirs.scope};
     if (!body.has_value()) return std::nullopt;
   }
@@ -112,7 +109,7 @@ auto MergeBlockForBlock(const hir::Generate& a, const hir::Generate& b)
   hir::Generate merged{};
   merged.counting = a.counting;
   for (const hir::StructuralScopeId id : a.blocks.Ids()) {
-    auto body = MergeBlocks(a.blocks.Get(id).scope, b.blocks.Get(id).scope);
+    auto body = OneBodyOf(a.blocks.Get(id).scope, b.blocks.Get(id).scope);
     if (!body.has_value()) return std::nullopt;
     merged.blocks.Add(hir::GenerateBlock{.scope = *std::move(body)});
   }
@@ -141,7 +138,9 @@ auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
       a.counting);
 }
 
-auto MergeBlocks(const hir::StructuralScope& a, const hir::StructuralScope& b)
+}  // namespace
+
+auto OneBodyOf(const hir::StructuralScope& a, const hir::StructuralScope& b)
     -> std::optional<hir::StructuralScope> {
   if (a.published.signature.class_path != b.published.signature.class_path ||
       a.generates.size() != b.generates.size()) {
@@ -168,15 +167,13 @@ auto MergeBlocks(const hir::StructuralScope& a, const hir::StructuralScope& b)
   return merged;
 }
 
-}  // namespace
-
 auto BodiesOf(std::span<const hir::StructuralScope> blocks) -> LoopBodies {
   LoopBodies out;
   out.taken.reserve(blocks.size());
   for (const hir::StructuralScope& block : blocks) {
     bool merged = false;
     for (std::size_t at = 0; at < out.bodies.size() && !merged; ++at) {
-      if (auto body = MergeBlocks(out.bodies[at], block)) {
+      if (auto body = OneBodyOf(out.bodies[at], block)) {
         out.bodies[at] = *std::move(body);
         out.taken.push_back(static_cast<std::uint32_t>(at));
         merged = true;

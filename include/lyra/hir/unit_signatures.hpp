@@ -38,6 +38,19 @@ class UnitSignatures {
     }
   }
 
+  // Records what a unit that has published now publishes instead: its
+  // declarations read again from fewer of the instances it is lowered from,
+  // once those that built nothing of it are known.
+  void Replace(UnitSignature signature) {
+    const auto it = by_name_.find(signature.unit_name);
+    if (it == by_name_.end()) {
+      throw InternalError(
+          "UnitSignatures::Replace: a unit publishes again only what it "
+          "published before");
+    }
+    it->second = std::move(signature);
+  }
+
   // What the unit named `unit_name` publishes, or nullptr when the design
   // compiles no such unit. An absent answer means there is nothing to compile
   // against, which is the same answer a name the unit never published gets.

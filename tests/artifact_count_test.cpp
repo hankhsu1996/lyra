@@ -65,7 +65,10 @@ auto LowerDesignInto(std::string_view source, lyra::diag::DiagnosticSink& sink)
 
   auto design = lyra::compiler::DeclareUnits(
       std::move(front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{}, sink);
+      lyra::compiler::LoweringPolicy{
+          .missed_sharing =
+              lyra::lowering::ast_to_hir::MissedSharing::kLookedFor},
+      sink);
   EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
   if (!design.has_value()) return std::nullopt;
 
@@ -82,26 +85,41 @@ auto LowerDesignInto(std::string_view source, lyra::diag::DiagnosticSink& sink)
   return units;
 }
 
-// How many times the lowering said it lost sharing.
-auto LostSharingRemarks(const lyra::diag::DiagnosticSink& sink) -> std::size_t {
+// How many times the lowering made the remark `code`.
+auto RemarksOf(
+    const lyra::diag::DiagnosticSink& sink, lyra::diag::DiagCode code)
+    -> std::size_t {
   std::size_t count = 0;
   for (const lyra::diag::Diagnostic& reported : sink.Diagnostics()) {
-    if (reported.primary.code == lyra::diag::DiagCode::kRemarkLostSharing) {
-      ++count;
-    }
+    if (reported.primary.code == code) ++count;
   }
   return count;
 }
 
-// The design `source` states, held to lowering with nothing lost. A count can
-// come out right because the lowering caught a parameter taken for a value that
-// something read as more, and kept its definition whole. That costs only
-// sharing, and is still a defect in how parameters are classified, so every
-// probe here is held to needing none of it.
+// How many times the lowering said it lost sharing.
+auto LostSharingRemarks(const lyra::diag::DiagnosticSink& sink) -> std::size_t {
+  return RemarksOf(sink, lyra::diag::DiagCode::kRemarkLostSharing);
+}
+
+// How many definitions the lowering said it compiled more often than their
+// instances need.
+auto MissedSharingRemarks(const lyra::diag::DiagnosticSink& sink)
+    -> std::size_t {
+  return RemarksOf(sink, lyra::diag::DiagCode::kRemarkMissedSharing);
+}
+
+// The design `source` states, held to lowering with nothing lost and nothing
+// missed. A count can come out right because the lowering caught a parameter
+// taken for a value that something read as more, and kept its definition
+// whole. That costs only sharing, and is still a defect in how parameters are
+// classified, so every probe here is held to needing none of it. A count of
+// units per value can come out as stated because a parameter was kept in a
+// unit's identity that decides nothing, and every probe is held to that too.
 auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
   lyra::diag::DiagnosticSink sink;
   auto design = LowerDesignInto(source, sink);
   EXPECT_EQ(LostSharingRemarks(sink), 0U);
+  EXPECT_EQ(MissedSharingRemarks(sink), 0U);
   return design;
 }
 
@@ -1161,12 +1179,184 @@ endmodule
   }
 }
 
-TEST(ArtifactCount, StringValuesThatSpellAlikeWhenJoinedAreKeptApart) {
+TEST(ArtifactCount, AValueSayingWhatIsBuiltIsCompiledOnce) {
+  // A parameter read where a construction decides what it builds (LRM 27.4,
+  // 27.5) -- a conditional's condition, a case's selector, a loop's bound, and
+  // any of them through a parameter the module writes from it -- is a value
+  // each instance is built with. So a module handed three values is one unit,
+  // whichever alternative each of them selects.
+  const auto design = LowerDesign(R"(
+module ByCondition #(parameter int P = 0) (output int o);
+  if (P != 0) begin : on
+    initial o = P;
+  end else begin : off
+    initial o = -1;
+  end
+endmodule
+
+module ByCase #(parameter int P = 0) (output int o);
+  case (P)
+    0: begin : zero
+      initial o = 10;
+    end
+    default: begin : other
+      initial o = 20;
+    end
+  endcase
+endmodule
+
+module ByBound #(parameter int P = 0) (output int o);
+  for (genvar i = 0; i < P; i++) begin : g
+    initial o = i;
+  end
+endmodule
+
+module ThroughADeclaredParameter #(parameter int P = 0) (output int o);
+  localparam bit ENABLED = P > 1;
+  if (ENABLED) begin : on
+    initial o = 1;
+  end
+endmodule
+
+module Top;
+  int c [3];
+  int k [3];
+  int b [3];
+  int d [3];
+  for (genvar i = 0; i < 3; i++) begin : g
+    ByCondition #(.P(i)) by_condition (.o(c[i]));
+    ByCase #(.P(i)) by_case (.o(k[i]));
+    ByBound #(.P(i)) by_bound (.o(b[i]));
+    ThroughADeclaredParameter #(.P(i)) through (.o(d[i]));
+  end
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  for (const std::string_view definition :
+       {"ByCondition", "ByCase", "ByBound", "ThroughADeclaredParameter"}) {
+    EXPECT_EQ(UnitsOf(*design, definition), 1U) << definition;
+  }
+}
+
+TEST(ArtifactCount, AValueSayingWhatIsBuiltStillDecidesWhereItSizesAType) {
+  // The same parameter read in a declared range as well is held by the type,
+  // so each value is a unit of its own whatever else reads it.
+  const auto design = LowerDesign(R"(
+module Sized #(parameter int P = 1) (output int o);
+  logic [P-1:0] held;
+  if (P != 1) begin : on
+    initial o = P;
+  end
+endmodule
+
+module Top;
+  int x, y;
+  Sized #(.P(1)) narrow (.o(x));
+  Sized #(.P(2)) wide (.o(y));
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Sized"), 2U);
+}
+
+TEST(ArtifactCount, AModuleHoldingAClassIsToldApartByWhatItBuilds) {
+  // A class a module holds -- one it declares, or a specialization of a
+  // generic placed in it because it is specialized on a type of the module --
+  // is declared once per unit, from one instance's body, so such a unit holds
+  // what that instance built and no other. Where two instances build
+  // differently, what decides it names the unit, and nothing is lost or missed
+  // in saying so. Instances that build alike are still one unit.
+  const auto design = LowerDesign(R"(
+package p;
+  class Box #(type T = int);
+    T v;
+  endclass
+endpackage
+
+module Declares #(parameter int P = 0) (output int o);
+  class Counter;
+    int n;
+  endclass
+  Counter c = new;
+  if (P != 0) begin : on
+    initial o = 1;
+  end else begin : off
+    initial o = 2;
+  end
+endmodule
+
+module Placed #(parameter int P = 0) (output int o);
+  typedef struct { int a; } own_t;
+  p::Box #(own_t) b = new;
+  if (P != 0) begin : on
+    initial o = 1;
+  end else begin : off
+    initial o = 2;
+  end
+endmodule
+
+module BuildsAlike #(parameter int P = 1) (output int o);
+  class Counter;
+    int n;
+  endclass
+  Counter c = new;
+  if (P != 0) begin : on
+    initial o = P;
+  end
+endmodule
+
+module Top;
+  int d [2];
+  int q [2];
+  int a [2];
+  Declares #(.P(0)) declares_none (.o(d[0]));
+  Declares #(.P(1)) declares_one (.o(d[1]));
+  Placed #(.P(0)) placed_none (.o(q[0]));
+  Placed #(.P(1)) placed_one (.o(q[1]));
+  BuildsAlike #(.P(1)) alike_one (.o(a[0]));
+  BuildsAlike #(.P(2)) alike_two (.o(a[1]));
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Declares"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Placed"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "BuildsAlike"), 1U);
+}
+
+TEST(ArtifactCount, AUnitPerValueThatDecidesNothingIsRemarkedOn) {
+  // A parameter in a declared range is held by the type, so each value is a
+  // unit of its own. Two values that size the same range leave two units that
+  // are one body, which changes no program and is said as a remark: the unit
+  // is told apart by the value where it differs by what the value sizes.
+  lyra::diag::DiagnosticSink sink;
+  const auto design = LowerDesignInto(
+      R"(
+module Halved #(parameter int P = 2) (output int o);
+  logic [P/2:0] held;
+  initial o = $bits(held);
+endmodule
+
+module Top;
+  int x, y;
+  Halved #(.P(2)) even (.o(x));
+  Halved #(.P(3)) odd (.o(y));
+endmodule
+)",
+      sink);
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Halved"), 2U);
+  EXPECT_EQ(LostSharingRemarks(sink), 0U);
+  EXPECT_EQ(MissedSharingRemarks(sink), 1U);
+}
+
+TEST(ArtifactCount, StringValuesThatSpellAlikeWhenJoinedAreToldApart) {
   // Two arrays of strings whose elements, joined with commas and quoted, read
   // the same: a quote and a comma are ordinary characters in a string (LRM
-  // 5.9). The generate condition makes the array decide the unit, so the two
-  // are two units, and nothing about how their elements happen to join may make
-  // them one.
+  // 5.9). The generate condition reads the array when an instance is built, so
+  // the two are one unit handed two values, each selecting its own
+  // alternative. The unit holds both only because the two values are told
+  // apart, and nothing about how their elements happen to join may make them
+  // one.
   const auto design = LowerDesign(R"(
 module Leaf #(parameter string S[2] = '{"", ""}) (output int o);
   if (S[0] == "a") begin : g
@@ -1183,7 +1373,8 @@ module Top;
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(UnitsOf(*design, "Leaf"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
+  EXPECT_EQ(BlocksOfGenerate(*design, 0), 2U);
 }
 
 TEST(ArtifactCount, AValueHandedOnToBeReadIsCompiledOnce) {

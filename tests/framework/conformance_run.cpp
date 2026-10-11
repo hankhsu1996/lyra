@@ -31,6 +31,11 @@ constexpr std::string_view kInternalErrorReport = "internal error:";
 // run's own outcome says nothing; the remark is the only sign of the defect.
 constexpr std::string_view kLostSharingReport = "note: sharing lost:";
 
+// How lyra remarks on a definition it compiled more often than its instances
+// need, because something told its units apart that decided nothing compiled.
+// The program is right here too, and the remark is again the only sign.
+constexpr std::string_view kMissedSharingReport = "note: sharing missed:";
+
 // How long one case may take before it is called stuck. It is a guard against a
 // run that never ends, not a budget for how fast a case builds: a case builds
 // its program with whatever compiler the executing machine has, and one with no
@@ -307,6 +312,11 @@ auto RunConformanceCase(
     return report(
         "the run compiled a definition once per parameter value because its "
         "instances lowered apart after they were predicted to share one unit");
+  }
+  if (mentions(kMissedSharingReport)) {
+    return report(
+        "the run compiled a definition more often than its instances need, "
+        "because what told its units apart decided nothing that was compiled");
   }
 
   // A program IEEE 1800 requires a tool to reject makes no checks, so what it

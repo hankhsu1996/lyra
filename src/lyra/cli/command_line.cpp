@@ -988,6 +988,7 @@ auto ResolveCliOptions(
     }
     out.assertions = *policy;
   }
+  out.remarks = opts.remarks.value_or(false);
 
   if (opts.backend) {
     auto backend = ParseBackend(*opts.backend);

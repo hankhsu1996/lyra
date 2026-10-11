@@ -479,8 +479,8 @@ auto OverrideInput(
       effect);
 }
 
-// Whether `scope` declares a class (LRM 8.3), itself or in a generate block
-// inside it.
+}  // namespace
+
 auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
   return std::ranges::any_of(
       scope.members(), [](const slang::ast::Symbol& member) {
@@ -496,8 +496,6 @@ auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
         return loop != nullptr && DeclaresAClass(*loop);
       });
 }
-
-}  // namespace
 
 auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
     -> const slang::ast::InstanceSymbol& {
