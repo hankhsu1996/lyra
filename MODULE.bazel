@@ -14,7 +14,7 @@ bazel_dep(name = "rules_cc", version = "0.2.8")
 bazel_dep(name = "slang", version = "11.0")
 git_override(
     module_name = "slang",
-    commit = "030e833d623d5d79f13aac5fa9e3399938bb1990",
+    commit = "c1dbd06b997961bf98750e373792d193bdae3faf",
     remote = "https://github.com/hankhsu1996/slang.git",
 )
 
