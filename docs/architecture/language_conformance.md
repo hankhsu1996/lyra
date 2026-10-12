@@ -20,11 +20,14 @@ Four consequences, each of which has been argued the other way and lost:
 2. **A text the standard does not settle is read the stricter way.** A design refused can be
    rewritten in a form every reading accepts. A design accepted under one reading of an unclear
    clause means something else under the other.
-3. **Lyra keeps no list of its own.** The front end's default reading is the reading Lyra ships.
-   Where that default is wrong in either direction -- it takes a forbidden text, or refuses an
-   allowed one -- the front end is corrected, upstream, and Lyra follows. A table in Lyra of
-   diagnostics to raise and lower would be a second statement of the standard, and every entry in it
-   a disagreement that was never argued where it could be settled.
+3. **What is legal is the front end's to answer, and Lyra keeps no list of its own.** The front
+   end's default reading is the reading Lyra ships. Where that default is wrong in either direction
+   -- it takes a forbidden text, or refuses an allowed one -- the front end is corrected, upstream,
+   and Lyra follows. A table in Lyra of diagnostics to raise and lower would be a second statement
+   of the standard, and every entry in it a disagreement that was never argued where it could be
+   settled. **A choice the standard leaves to the tool is different**: there the front end is not
+   wrong whichever way it went, so nothing can be corrected upstream, and Lyra makes the choice
+   itself (see _Given a meaning, but a tool may refuse it_ below).
 4. **A caller may ask for another tool's reading by name** (`--compat`). What the design then means
    is that tool's answer, not one Lyra stands behind.
 
@@ -192,35 +195,34 @@ bit-select or a part-select of a variable".
 The sentence lists what a target can be and names neither a member nor an array element. Whether a
 member of an element is "a singular variable" is a reading, and the list is read as complete.
 
-### Given a meaning, but a tool may refuse it, so refused
+### Given a meaning, but a tool may refuse it, so run with a warning
 
-#### A constant index or part-select outside its vector
+#### A constant index or part-select outside its vector or array
 
 ```systemverilog
 logic [7:0] v = 8'ha5;
 logic [7:0] w = 8'h00;
+int a [4];
 
-$display("%b %b", v[9], v[11:6]);
+$display("%b %b %0d", v[9], v[11:6], a[5]);
 w[0 +: 70] = {70{1'b1}};
 ```
 
-11.5.1 says what such a select does: one completely out of bounds "shall yield the value x when read
-and shall have no effect on the data stored when written. Part-selects that are partially out of
-range shall, when read, return x for the bits that are out of range and shall, when written, only
-affect the bits that are in range." The same clause ends: "Bit-select or part-select indices that
-are outside the declared range may be flagged as a compile-time error."
+11.5.1 says what such a select of a vector does: one completely out of bounds "shall yield the value
+x when read and shall have no effect on the data stored when written. Part-selects that are
+partially out of range shall, when read, return x for the bits that are out of range and shall, when
+written, only affect the bits that are in range." The same clause ends: "Bit-select or part-select
+indices that are outside the declared range may be flagged as a compile-time error." 7.4.5 says the
+same of an unpacked array: a read with an invalid index returns the value of Table 7-1, a write
+"shall perform no operation", and "Implementations may issue a warning".
 
-So the standard lets a tool refuse a select whose position is constant and outside the vector, and
-the front end refuses it. A part-select wider than its vector, such as `w[i +: 70]`, is refused the
-same way: wherever `i` is, part of it lies outside. An index known only at run time cannot be
-refused this way, and does what 11.5.1 says:
-
-```systemverilog
-for (int i = 0; i < 16; i++) $display("%b", v[i]);   // x once i passes 7
-```
-
-Where a select falls outside the vector only for some parameter values, test the width before
-selecting, so the select is written only where it is in range.
+So both answers conform: refusing the select while compiling, and running it with the value the
+standard gives. The front end refuses. Lyra runs it and warns, because the text is common in designs
+that are correct: code written for a larger configuration selects past the end of a vector when it
+is built with a smaller one, at a position that is constant only once the parameters are known. A
+part-select wider than its vector, such as `w[i +: 70]`, is the same case, since part of it lies
+outside wherever `i` is. A caller who wants the refusal asks for it by name, `-Werror=index-oob`,
+`-Werror=range-oob` and `-Werror=range-width-oob`.
 
 ### Allowed
 

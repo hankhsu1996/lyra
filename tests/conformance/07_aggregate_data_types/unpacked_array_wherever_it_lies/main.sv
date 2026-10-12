@@ -2,7 +2,8 @@
 // many it is (LRM 7.4.2): a variable, a member of a structure, an element of
 // another array or of a queue, a subroutine's argument, local and result, and
 // a net. An element is read and written where it lies, an index naming no
-// element reads the element type's default and writes nothing (LRM 7.4.5), a
+// element, constant or not, reads the element type's default and writes
+// nothing (LRM 7.4.5), a
 // whole assignment copies every element (LRM 7.6), and a reference to an
 // element or to a row goes on naming it across a whole assignment (LRM
 // 13.5.2). An element may itself be an array (LRM 7.4.4), however large, and
@@ -40,6 +41,7 @@ module Top;
   wire [7:0] wired[2];
 
   int bad_read;
+  int bad_constant_read;
   logic [3:0] bad_read_four_state;
   string bad_read_word;
   int bad_row_read;
@@ -153,6 +155,9 @@ module Top;
 
     index = 4;
     bad_read = few[index];
+    bad_constant_read = 5;
+    bad_constant_read = few[4];
+    many[600] = 77;
     index = -1;
     few[index] = 77;
     many[index] = 77;
@@ -241,6 +246,9 @@ module Top;
       $fatal(1, "wired was %p", wired);
     if (bad_read !== 0)
       $fatal(1, "an index past the end read %0d, expected 0", bad_read);
+    if (bad_constant_read !== 0)
+      $fatal(1, "a constant index past the end read %0d, expected 0",
+             bad_constant_read);
     if (bad_read_four_state !== 4'bx)
       $fatal(1, "an index past the end read %b, expected x",
              bad_read_four_state);

@@ -40,21 +40,28 @@ for.
 
 The default is the front end's own reading, which is meant to be the standard's. Where that reading
 is wrong it is corrected in the front end and not in Lyra's settings, so Lyra passes no
-compatibility mode and keeps no list of diagnostics. A caller can still ask for a tolerant reading
-by name.
+compatibility mode and keeps no list of diagnostics deciding what is legal. A caller can still ask
+for a tolerant reading by name.
 
 Two texts the standard allows are refused by the front end's default today -- an `always_comb`
 writing one constant key of an associative array, and `$bits` of a member reached through an
-interface port -- and each is reported upstream to be corrected there. A constant select outside its
-vector is refused too, and stays refused, because 11.5.1 lets a tool refuse it while compiling.
+interface port -- and each is reported upstream to be corrected there.
+
+A constant select outside its vector or array is a third kind: the standard gives it a value
+(11.5.1, 7.4.5) and also lets a tool refuse it while compiling, so the front end's refusal is a
+choice and not a defect, and there is nothing to correct upstream. Lyra makes the other choice and
+runs it with a warning. Refusing it stopped designs whose code, written for a larger configuration,
+selects past the end of a vector in a smaller one, while every reading of the standard gives that
+code a meaning.
 
 ## Rejected
 
 - **Keeping the tolerant default and refusing only what the front end gives no meaning.** It keeps a
   design meaning one tool's choice wherever the front end does produce a meaning, which is most of
   the time, and the author is still not told.
-- **A list in Lyra of single diagnostics to raise or lower.** A second statement of the standard
-  beside the front end's, which nobody argues where it could be settled.
+- **A list in Lyra of single diagnostics to raise or lower where the front end judges what is
+  legal.** A second statement of the standard beside the front end's, which nobody argues where it
+  could be settled. A choice the standard leaves to the tool is not such a judgement.
 - **Accepting a forbidden text that every tool takes and gives one meaning.** The assignment of a
   non-enumerated value to an enumerated variable with no cast is the strongest such case, and it is
   refused: an exception for agreement has no boundary anyone can state in advance.
