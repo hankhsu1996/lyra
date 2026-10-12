@@ -692,23 +692,21 @@ TEST(LyraCommandLine, ATextCanTellItIsReadByLyra) {
   }
 }
 
-// Text that departs from the standard in a way simulators accept is accepted
-// when nothing asks otherwise, and runs: a design is written against the tools
-// its authors had, and one they all run is not helped by being refused. Each
-// form here is one the front end holds to the standard unless told to be
-// tolerant, and each was met in a design other simulators run.
+// Text the standard does not allow is an error when nothing asks otherwise,
+// whichever simulators take it: what a design means is what the standard says
+// of it, and a text it forbids has no meaning there to build from. A caller
+// who knows the design was written against a more tolerant tool asks for that
+// reading by name, and the same text then runs with a warning.
 //
-// A module defined twice in one library is among them, and there the standard
-// itself says what happens: the last one met is the one the library holds, with
-// a warning (LRM 33.3.1).
+// A module defined twice in one library is among the tolerated forms, and
+// there the standard itself says what happens: the last one met is the one the
+// library holds, with a warning (LRM 33.3.1).
 //
 // What the tolerance does not reach is text the front end could give no
 // meaning: that is refused at its place in Lyra's own words, beside what the
 // front end said of it, rather than ending the compile as a defect of the
 // compiler.
-TEST(
-    LyraCommandLine,
-    TextOtherSimulatorsAcceptIsAcceptedUnlessStrictnessIsAsked) {
+TEST(LyraCommandLine, TextTheStandardForbidsIsRefusedUnlessToleranceIsAsked) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -742,18 +740,19 @@ TEST(
       "             genblk1.held);\n"
       "  end\n"
       "endmodule\n");
-  const auto tolerated =
-      RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top Test tolerated.sv");
+  const auto strict =
+      RunLyraFrom(lyra, *tmp_or, "check --top Test tolerated.sv");
+  EXPECT_NE(strict.exit_code, 0) << "the standard's reading accepted it";
+  EXPECT_NE(
+      strict.stderr_text.find("error: misplaced trailing"), std::string::npos)
+      << strict.stderr_text;
+
+  const auto tolerated = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --compat all --top Test tolerated.sv");
   ASSERT_EQ(tolerated.exit_code, 0) << tolerated.stderr_text;
   EXPECT_NE(
       tolerated.stdout_text.find("sum 5 valid 1 held 6"), std::string::npos)
       << tolerated.stdout_text;
-
-  const auto strict = RunLyraFrom(
-      lyra, *tmp_or, "check --compat default --top Test tolerated.sv");
-  EXPECT_NE(strict.exit_code, 0) << "the strict reading accepted it";
-  EXPECT_NE(strict.stderr_text.find("misplaced trailing"), std::string::npos)
-      << strict.stderr_text;
 
   WriteFile(
       *tmp_or / "twice.sv",
@@ -766,11 +765,12 @@ TEST(
       "module Test;\n"
       "  Leaf u ();\n"
       "endmodule\n");
-  const auto twice =
-      RunLyraFrom(lyra, *tmp_or, "run --backend llvm --top Test twice.sv");
+  const auto twice = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --compat all --top Test twice.sv");
   ASSERT_EQ(twice.exit_code, 0) << twice.stderr_text;
   EXPECT_EQ(twice.stdout_text, "the last definition\n");
-  const auto warned = RunLyraFrom(lyra, *tmp_or, "check --top Test twice.sv");
+  const auto warned =
+      RunLyraFrom(lyra, *tmp_or, "check --compat all --top Test twice.sv");
   EXPECT_EQ(warned.exit_code, 0) << warned.stderr_text;
   EXPECT_NE(
       warned.stderr_text.find("warning: duplicate definition"),
@@ -814,7 +814,8 @@ TEST(
                               "endmodule\n",
                               meaningless.statement));
     const auto refused = RunLyraFrom(
-        lyra, *tmp_or, std::format("run --backend llvm --top Test {}", source));
+        lyra, *tmp_or,
+        std::format("run --backend llvm --compat all --top Test {}", source));
     EXPECT_NE(refused.exit_code, 0) << source << ": " << refused.stdout_text;
     EXPECT_EQ(refused.stderr_text.find("internal error"), std::string::npos)
         << source << ": " << refused.stderr_text;
@@ -840,9 +841,9 @@ TEST(
 
 // An interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) may not be
 // left unconnected, and a top's ports are connected to nothing, so a module
-// declaring either is a design element and not a design. Every name inside such
-// a module still resolves, which is why analysis answers and building a design
-// does not.
+// declaring either is a design element and not a design. The front end refuses
+// such a top. A tolerant reading lets analysis answer, since every name inside
+// still resolves, but a design still cannot be built from it.
 TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -852,7 +853,8 @@ TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
   struct Refusal {
     std::string_view name;
     std::string_view body;
-    std::string_view expected;
+    std::string_view refused_by_the_front_end;
+    std::string_view refused_by_the_lowering;
   };
   static constexpr std::array<Refusal, 2> kRefusals = {
       {{.name = "iface.sv",
@@ -862,26 +864,43 @@ TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
                 "module Dut(Bus b);\n"
                 "  initial $display(\"%0d\", b.data);\n"
                 "endmodule\n",
-        .expected = "an interface port cannot be left unconnected"},
+        .refused_by_the_front_end =
+            "error: top-level module 'Dut' has unconnected interface port 'b'",
+        .refused_by_the_lowering =
+            "an interface port cannot be left unconnected"},
        {.name = "ref.sv",
         .body = "module Dut(ref int x);\n"
                 "  initial x = 7;\n"
                 "endmodule\n",
-        .expected = "a 'ref' port cannot be left unconnected"}}};
+        .refused_by_the_front_end =
+            "error: top-level module 'Dut' has unconnected 'ref' port 'x'",
+        .refused_by_the_lowering = "a 'ref' port cannot be left unconnected"}}};
 
   for (const auto& refusal : kRefusals) {
     const auto source = *tmp_or / refusal.name;
     std::ofstream(source) << refusal.body;
     const auto args = std::format("'{}'", source.string());
 
-    const auto checked = RunLyraFrom(lyra, *tmp_or, "check " + args);
+    const auto strict = RunLyraFrom(lyra, *tmp_or, "check " + args);
+    EXPECT_EQ(strict.exit_code, 1)
+        << refusal.name << ": " << strict.stderr_text;
+    EXPECT_NE(
+        strict.stderr_text.find(refusal.refused_by_the_front_end),
+        std::string::npos)
+        << refusal.name << ": " << strict.stderr_text;
+
+    const auto checked =
+        RunLyraFrom(lyra, *tmp_or, "check --compat all " + args);
     EXPECT_EQ(checked.exit_code, 0)
         << refusal.name << ": " << checked.stderr_text;
 
-    const auto lowered = RunLyraFrom(lyra, *tmp_or, "dump hir " + args);
+    const auto lowered =
+        RunLyraFrom(lyra, *tmp_or, "dump hir --compat all " + args);
     EXPECT_EQ(lowered.exit_code, 1)
         << refusal.name << ": " << lowered.stderr_text;
-    EXPECT_NE(lowered.stderr_text.find(refusal.expected), std::string::npos)
+    EXPECT_NE(
+        lowered.stderr_text.find(refusal.refused_by_the_lowering),
+        std::string::npos)
         << refusal.name << ": " << lowered.stderr_text;
   }
 }

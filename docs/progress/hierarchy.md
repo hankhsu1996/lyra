@@ -119,8 +119,9 @@ Unlocks the runtime side of `instantiation/param_slots`.
       text is the same for every instance of a cell. A module declared inside another prints the
       enclosing cell, a package's text prints `library.package`, and text in the compilation-unit
       scope, which the standard gives no cell, prints `library.$unit`.
-- [x] B14 -- Two cells of one name mapped to one library build as LRM 33.3.1 has it: the later one
-      replaces the earlier, with a warning. `--compat default` makes it an error.
+- [x] B14 -- Two descriptions of one module in one compilation are an error, since LRM 3.13 forbids
+      reusing the name and 33.3.1 gives the later one meaning only in a library. Under
+      `--compat all` the later one replaces the earlier, with a warning.
 - [x] B15 -- A module carrying an interface that itself carries an interface standing inside that
       module (LRM 25.3, 25.3.3) builds and runs, whether the inner interface is one the module
       declares or one writing a name that lands in the module. It used to end the compiler with no

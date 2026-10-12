@@ -144,20 +144,6 @@ module Top;
     held_runs = held_runs + 1;
   end
 
-  // An entry of a container held in a structure is written beside another
-  // entry the block reads. The entry written is the only thing left out of the
-  // list, so a change to the entry read still runs the procedure.
-  typedef struct {
-    int tag;
-    int by_name [string];
-  } bag_t;
-  bag_t bag;
-  int bag_seen = -1;
-  always_comb begin
-    bag.by_name["out"] = bag.by_name["in"] + 1;
-    bag_seen = bag.by_name["in"];
-  end
-
   // A write that reaches a part by another way than naming it runs the
   // procedures reading what it reached: through an argument passed by
   // reference (LRM 13.5.2), as a slice, which is one assignment to all of it
@@ -311,7 +297,6 @@ module Top;
     stage2_after_in1 = stage_runs2;
     held_after_sibling = held_runs;
     held[6] = 4'h7;
-    bag.by_name["in"] = 5;
     #1;
     held_after_own = held_runs;
   end
@@ -443,9 +428,6 @@ module Top;
     if (held_after_own !== held_after_sibling + 1)
       $fatal(1, "a write the function reads ran it %0d times, expected 1",
              held_after_own - held_after_sibling);
-    if (bag_seen !== 5 || bag.by_name["out"] !== 6)
-      $fatal(1, "the entry read was %0d and the one written %0d, expected 5, 6",
-             bag_seen, bag.by_name["out"]);
     if (lent_out1 !== 4'h3)
       $fatal(1, "a write through a reference left the reader at %h, expected 3",
              lent_out1);

@@ -1268,12 +1268,11 @@ the detail lives in the entry itself.
   who builds it and never an invocation or machine property; material accumulates and selection is
   replaced, a path resolves against its own manifest, and naming sources on the command line uses no
   manifest at all. A project mode, a merged cascade, and a flag to suppress discovery are rejected.
-- [text-other-simulators-accept-is-accepted](text-other-simulators-accept-is-accepted.md) -- the
-  front end is asked for its most tolerant reading by default, so text the standard forbids and
-  other simulators take is accepted with a warning; where the standard states what such text means
-  that is what it means, a failed build shows the warnings it withheld, and what the front end could
-  give no meaning is refused as unsupported. One tool's reading as the default, enabling diagnostics
-  one at a time, and tolerating a mixed time scale are rejected.
+- [the-standard-decides-what-text-is-legal](the-standard-decides-what-text-is-legal.md) -- the front
+  end's own reading is the default, replacing the most tolerant one, because the evidence that
+  forbidden text "works everywhere else" was one simulator and a forbidden text has no meaning to
+  adopt; the front end is corrected where its reading is wrong, never Lyra's settings. A list of
+  diagnostics in Lyra and an exception for text every tool takes are rejected.
 
 ### Conformance testing
 

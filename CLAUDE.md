@@ -114,11 +114,12 @@ is prebuilt and always optimized, so it is not on this axis and costs nothing ei
 
 ## SystemVerilog version
 
-Lyra targets **IEEE 1800-2023**, defaulting the front end to `--std 1800-2023` and to the most
-tolerant of slang's compatibility modes, `--compat all`: text the other simulators accept is
-accepted with a warning, because a design that already runs elsewhere is what a user brings. Both
-are defaults a caller may override, and `--compat default` asks for the standard's own strictness.
-Testing a 2023 feature against slang directly needs `--std 1800-2023`.
+Lyra targets **IEEE 1800-2023**, defaulting the front end to `--std 1800-2023` and to its own
+reading of the standard. Text the standard forbids is an error whichever simulator takes it, and
+where the front end's reading is wrong the front end is corrected, never Lyra's settings; a caller
+may ask for a tolerant reading by name (`--compat all`). `docs/architecture/language_conformance.md`
+holds the rule and every disputed text ruled on so far. Testing a 2023 feature against slang
+directly needs `--std 1800-2023`.
 
 ## Architecture
 
