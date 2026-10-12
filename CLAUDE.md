@@ -81,7 +81,7 @@ it was building. `docs/decisions/a-build-answers-for-what-it-starts.md` holds wh
 **Where a run's cost went is read off the run, never found by comparing builds.**
 `--time-trace <file>` writes a Chrome trace (open it in ui.perfetto.dev) with a span per stage,
 unit, scope and function; `--stats-file <file>` writes each stage's peak memory, what each unit
-holds and left behind, and how long each tool the build ran took.
+holds and left behind, each unit's fingerprints, and how long each tool the build ran took.
 `docs/decisions/the-compiler-reports-where-its-cost-went.md` holds why.
 
 Command words are positional, and everything after them is one command line shared with the slang

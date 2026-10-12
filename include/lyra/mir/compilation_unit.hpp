@@ -269,7 +269,8 @@ struct CompilationUnit {
   // The identifier the source declares the unit under, which several units
   // share where one definition is compiled once per specialization, and which
   // a unit the source gave no identifier lacks. It is what a person is told
-  // the compiler is working on; nothing is named from it.
+  // the compiler is working on, and the design element name `$printtimescale`
+  // prints (LRM 20.4.2); nothing compiled is named from it.
   std::string source_name;
   TypePool types;
   // The values this unit settles before the program runs, each held once and

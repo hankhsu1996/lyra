@@ -4,12 +4,10 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <functional>
 #include <iterator>
 #include <optional>
 #include <random>
@@ -18,14 +16,12 @@
 #include <system_error>
 #include <vector>
 
-#include "lyra/base/hash.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/stable_hash/fingerprint.hpp"
 
 namespace lyra::driver {
 
 namespace {
-
-constexpr std::uint64_t kStreamPrime = 0x100000001b3ULL;
 
 // How long an entry may go unused before a trim removes it, and how often a
 // trim runs at all. Go's build cache uses the same two figures.
@@ -53,18 +49,9 @@ void MarkUsed(const std::filesystem::path& entry) {
 
 }  // namespace
 
-void ContentNamer::Mix(std::string_view bytes) {
-  for (const char byte : bytes) {
-    stream_digest_ ^= static_cast<unsigned char>(byte);
-    stream_digest_ *= kStreamPrime;
-  }
-  base::HashCombine(piece_digest_, std::hash<std::string_view>{}(bytes));
-}
-
 void ContentNamer::Add(std::string_view label, std::string_view bytes) {
-  Mix(label);
-  Mix(std::format("{}", bytes.size()));
-  Mix(bytes);
+  hasher_.Text(label);
+  hasher_.Text(bytes);
 }
 
 void ContentNamer::AddFile(
@@ -109,8 +96,7 @@ void ContentNamer::AddExecutable(
 }
 
 auto ContentNamer::Finish() const -> ContentName {
-  return ContentName{
-      .hex = std::format("{:016x}{:016x}", stream_digest_, piece_digest_)};
+  return ContentName{.hex = stable_hash::HexOf(hasher_.Finish())};
 }
 
 auto LocateStore(const std::optional<std::filesystem::path>& override)

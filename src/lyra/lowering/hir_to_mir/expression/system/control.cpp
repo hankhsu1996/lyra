@@ -9,6 +9,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/integral_constant.hpp"
 #include "lyra/hir/primary.hpp"
@@ -78,7 +79,7 @@ auto LowerTerminationSystemSubroutineCall(
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId origin_id = BuildStringValueExpr(
       unit, block,
-      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
+      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
   const mir::ExprId level_id =
       BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(level));
   // Ending the run departs from the calling execution rather than returning,

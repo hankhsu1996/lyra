@@ -10,6 +10,7 @@
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/design_root.hpp"
 #include "lyra/compiler/parallel.hpp"
+#include "lyra/compiler/unit_fingerprints.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
@@ -105,9 +106,11 @@ auto LowerToSemantic(
     diag::DiagnosticSink& sink, std::size_t width, Produce produce,
     Consume consume) -> std::optional<SemanticDesign> {
   using Produced = std::invoke_result_t<Produce, mir::CompilationUnit>;
+  const UnitFingerprints fingerprints(design.units.Signatures(), sources);
   LowerToHir(
       design, sink, width,
       [&](const hir::CompilationUnit& hir_unit) -> Produced {
+        fingerprints.Lowered(hir_unit);
         auto unit = LowerUnitToSemantic(hir_unit, sources);
         if (!unit) {
           return std::unexpected(std::move(unit.error()));

@@ -37,9 +37,12 @@ implementation possible -- a design that assumes whole-design recompilation fore
    forbidden. Query results are memoized under their stable keys.
 2. **Stable keys are ownership-based.** A query key is derived from ownership (compilation unit,
    callable, type, etc.). Keys do not depend on traversal order or insertion position.
-3. **Fingerprints capture semantic meaning, not syntax spelling.** A fingerprint excludes
-   non-semantic details such as identifier names, source spans, and source positions. Renaming a
-   variable does not change the fingerprint if the semantics are unchanged.
+3. **Fingerprints capture what a compiled program can tell, not syntax spelling.** A fingerprint
+   excludes every name and every source position the program never reads: renaming a local variable,
+   or moving text no report prints a position of, does not change it. A name or a place the program
+   does read is part of what it means and is included -- in SystemVerilog `%m` prints scope names
+   (LRM 21.2.1.3), `%p` prints member names, and a report prints its file and line (LRM 20.10) -- as
+   is a name another unit links against.
 4. **Identity has two roles: matching and semantic equivalence.** A key answers "what is being
    computed" and matches a current entity to its previous self. A fingerprint answers "has the
    meaning changed" and decides whether the cached result can be reused. The two are distinct values
@@ -154,8 +157,8 @@ before every unit's bodies. The same asymmetry, read at two scopes.
 An automatic variable is renamed inside one callable of one compilation unit:
 
 - The callable's key is unchanged, because ownership is unchanged.
-- The callable's fingerprint is unchanged, because the semantics are unchanged; only the name
-  differs.
+- The callable's fingerprint is unchanged, because no program compiled from it reads the name; only
+  the spelling differs.
 - The cached result for that callable is reused.
 - Every other callable in the unit and every other compilation unit are unaffected.
 

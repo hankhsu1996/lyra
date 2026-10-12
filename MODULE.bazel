@@ -46,6 +46,10 @@ use_repo(llvm, "llvm-project")
 # Stackful fibers for suspending foreign (DPI) calls across simulation time
 bazel_dep(name = "boost.context", version = "1.89.0")
 
+# The fields of an aggregate, walked without naming them, for a fingerprint that
+# covers whatever the aggregate's own equality compares
+bazel_dep(name = "boost.pfr", version = "1.89.0")
+
 # BuildBuddy RBE toolchain (Ubuntu 24.04 has GCC 13)
 bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
 

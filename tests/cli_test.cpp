@@ -1078,6 +1078,48 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
       << "stdout: " << run.stdout_text;
 }
 
+// `$printtimescale` with no argument names the design element it is called in
+// by the name that element was declared under (LRM 20.4.2, whose example
+// prints `a_dat` for module `a_dat`). Two instances whose parameters make them
+// two compiled units are still one design element, so both print one name, and
+// nothing a run prints tells which units the compiler made.
+TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "`timescale 1ns / 1ps\n"
+                     << "module Halved #(parameter int P = 2);\n"
+                     << "  logic [P/2:0] held;\n"
+                     << "  initial $printtimescale;\n"
+                     << "endmodule\n"
+                     << "module Test;\n"
+                     << "  Halved #(.P(2)) narrow ();\n"
+                     << "  Halved #(.P(4)) wide ();\n"
+                     << "endmodule\n";
+
+  const std::vector<std::string> args = {
+      "run",
+      "--backend",
+      "llvm",
+      "--top",
+      "Test",
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(run.termination, TerminationKind::kExitedNormally)
+      << run.stdout_text << run.stderr_text;
+  constexpr std::string_view kNamed = "Time scale of (Halved) is 1ns / 1ps\n";
+  const std::size_t first = run.stdout_text.find(kNamed);
+  ASSERT_NE(first, std::string::npos) << "stdout: " << run.stdout_text;
+  EXPECT_NE(
+      run.stdout_text.find(kNamed, first + kNamed.size()), std::string::npos)
+      << "stdout: " << run.stdout_text;
+}
+
 // Procedures that keep waking each other with no delay between them are legal
 // text the standard only warns of (LRM 9.2.2, 12.7.6), and a tool that stops
 // such a run owes its reader the one thing they cannot find alone: which
@@ -2231,14 +2273,28 @@ TEST(LyraBuild, ARunReportsWhereItsCostWent) {
 
     // Every unit left objects behind, the design root among them, and each
     // was made by the first build and taken from the store by the second.
+    // Each unit of the design is fingerprinted by what it publishes and by
+    // what it lowered to; the design root is composed from those and lowered
+    // from no HIR, so it has neither.
     std::set<std::string> units;
     for (const nlohmann::json& unit : stats.at("units")) {
-      units.insert(unit.at("name").get<std::string>());
-      EXPECT_FALSE(unit.at("artifacts").empty()) << unit.at("name");
+      const std::string name = unit.at("name").get<std::string>();
+      units.insert(name);
+      EXPECT_FALSE(unit.at("artifacts").empty()) << name;
       for (const nlohmann::json& object : unit.at("artifacts")) {
         EXPECT_EQ(object.at("kind"), "object");
         EXPECT_GT(object.at("bytes").get<std::uint64_t>(), 0U);
-        EXPECT_EQ(object.at("made").get<bool>(), first) << unit.at("name");
+        EXPECT_EQ(object.at("made").get<bool>(), first) << name;
+      }
+      const nlohmann::json& fingerprints = unit.at("fingerprints");
+      if (!declared.contains(name)) {
+        EXPECT_TRUE(fingerprints.empty()) << name;
+        continue;
+      }
+      for (const std::string of : {"signature", "body"}) {
+        ASSERT_TRUE(fingerprints.contains(of)) << name << " " << of;
+        EXPECT_EQ(fingerprints.at(of).get<std::string>().size(), 32U)
+            << name << " " << of;
       }
     }
     EXPECT_EQ(units.size(), declared.size() + 1);

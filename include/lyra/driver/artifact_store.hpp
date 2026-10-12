@@ -1,13 +1,13 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/stable_hash/stable_hasher.hpp"
 
 namespace lyra::driver {
 
@@ -20,9 +20,7 @@ struct ContentName {
 
 // Accumulates what an entry's name is computed from. Every piece is framed by
 // its label and its length, so two different sequences of pieces never
-// produce the same stream, and the stream is digested twice, by independent
-// functions, into a name wide enough that two different programs never share
-// one in practice.
+// produce the same stream, and the name is the stream's fingerprint.
 class ContentNamer {
  public:
   void Add(std::string_view label, std::string_view bytes);
@@ -39,10 +37,7 @@ class ContentNamer {
   [[nodiscard]] auto Finish() const -> ContentName;
 
  private:
-  void Mix(std::string_view bytes);
-
-  std::uint64_t stream_digest_ = 0xcbf29ce484222325ULL;
-  std::size_t piece_digest_ = 0;
+  stable_hash::StableHasher hasher_;
 };
 
 // Where the store is: `override` when given, and otherwise `lyra` under the

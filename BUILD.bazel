@@ -76,6 +76,18 @@ cc_library(
     ],
 )
 
+# The fingerprint of what something was built from, kept apart from `support`
+# because it is LLVM's hash and `support` reaches the runtime library.
+cc_library(
+    name = "stable_hash",
+    srcs = glob(["src/lyra/stable_hash/*.cpp"]),
+    hdrs = glob(["include/lyra/stable_hash/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = ["@llvm-project//llvm:Support"],
+)
+
 # What a command says of where it is while it works, kept apart from `support`
 # because the runtime library a program links says nothing of the kind.
 cc_library(
@@ -180,7 +192,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":diag",
+        ":stable_hash",
         ":support",
+        "@boost.pfr//:boost.pfr",
     ],
 )
 
@@ -407,6 +421,7 @@ cc_library(
         ":dpi",
         ":mir",
         ":profiling",
+        ":stable_hash",
         ":status",
         ":support",
         "@bazel_tools//tools/cpp/runfiles",

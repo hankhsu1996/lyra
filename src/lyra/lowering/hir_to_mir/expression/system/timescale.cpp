@@ -73,15 +73,14 @@ auto LowerPrintTimescaleSystemSubroutineCall(
   auto& body = *frame.current_block;
   const auto resolution = process.Resolution();
 
-  // LRM 20.4.2 fixed format -- the scope name and the two powers are all
-  // compile-time facts of the enclosing scope, so the message string is
-  // assembled here once and the runtime only sees the same sink write that
+  // LRM 20.4.2 fixed format, which names the design element that is the
+  // current scope by the name it was declared under (its example prints
+  // `a_dat` for module `a_dat` itself). The name and the two powers are all
+  // compile-time facts of the enclosing design element, so the message string
+  // is assembled here once and the runtime only sees the same sink write that
   // $display lands on.
-  // TODO(hankhsu): LRM 20.4.2 names the scope by its hierarchical path, which
-  // exists only once the tree is built; the unit's own name is what this layer
-  // has.
   const std::string message = std::format(
-      "Time scale of ({}) is {} / {}", process.Owner().Unit().name,
+      "Time scale of ({}) is {} / {}", process.Owner().Unit().source_name,
       value::TimeUnitText(resolution.unit_power),
       value::TimeUnitText(resolution.precision_power));
   const mir::ExprId text_lit = body.exprs.Add(

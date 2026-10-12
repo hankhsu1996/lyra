@@ -91,6 +91,15 @@ class UnitSignatures {
     return names;
   }
 
+  // Every unit's publication under its name, in no order a caller may rely on.
+  [[nodiscard]] auto begin() const {
+    return by_name_.begin();
+  }
+
+  [[nodiscard]] auto end() const {
+    return by_name_.end();
+  }
+
  private:
   std::unordered_map<std::string, UnitSignature> by_name_;
 };

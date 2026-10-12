@@ -22,6 +22,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/procedural_var.hpp"
@@ -1020,7 +1021,7 @@ void AppendProcessRegistration(
       mir::Expr{
           .data =
               mir::StringLiteral{
-                  .value = FormatRuntimeOriginString(
+                  .value = diag::RuntimeOriginOf(
                       written_at, unit_lowerer.SourceManager())},
           .type = unit_lowerer.Unit().types.Intern(
               mir::Type{mir::MachineCStringType{}})});

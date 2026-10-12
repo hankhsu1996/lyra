@@ -7,6 +7,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_body.hpp"
@@ -68,7 +69,7 @@ auto LowerDiagnosticSystemSubroutineCall(
       block.exprs.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId origin_id = BuildStringValueExpr(
       unit, block,
-      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
+      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
 
   mir::Expr emit_call = BuildReportCallExpr(
       unit, info.builtin_fn, diagnostic_id, origin_id, text_id);
@@ -86,7 +87,7 @@ auto LowerDiagnosticSystemSubroutineCall(
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId finish_origin_id = BuildStringValueExpr(
       unit, block,
-      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
+      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
   const mir::ExprId level_id = BuildMachineIntLiteral(
       unit, block, static_cast<std::int64_t>(finish_level));
   return mir::Expr{

@@ -116,6 +116,20 @@ cc_test(
 )
 
 cc_test(
+    name = "hir_fingerprint_test",
+    srcs = ["hir/fingerprint_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:compiler",
+        "//:diag",
+        "//:hir",
+        "//:stable_hash",
+        "@googletest//:gtest_main",
+        "@slang",
+    ],
+)
+
+cc_test(
     name = "mir_integral_constant_test",
     srcs = ["mir/integral_constant_test.cpp"],
     copts = LYRA_COPTS,
