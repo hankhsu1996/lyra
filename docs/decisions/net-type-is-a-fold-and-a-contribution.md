@@ -114,7 +114,9 @@ resolve(contributions):            # each contribution is a value and one level
 
 Where every contribution sits at one level -- every design that writes no strength specification and
 declares no pull, supply, or charge net -- the loop runs its body once and the result is the fold
-this codebase already performs, so the general form costs the ordinary case nothing.
+this codebase already performs. What a net with one driver costs is not settled by that: resolving
+it at all was measured at a quarter of a large design's run, and
+[net-driver-resolution](net-driver-resolution.md) decision 9 is what such a net does instead.
 
 The check that the model is the standard's own is Table 6-5, which gives `tri0` resolved against two
 `strong` drivers. Running the algorithm against it agrees in every cell, including the two that

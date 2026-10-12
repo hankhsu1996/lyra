@@ -24,6 +24,12 @@ joins its two nets where its route resolves and the barrier has no consumer. Dec
 there as well, and its resolver clause moved: what resolves is the physical net the connectivity
 forms, over the positions it covers, and a net nothing reached is the one-name case of it.
 
+Decision 9 was added on 2026-10-11. Decisions 1, 2 and 6 describe a net that resolves, and decision
+9 says what a net one driver decides does instead. It does not reopen the rejected alternative of a
+single-driver net modelled as a variable: that was a representation chosen where a unit is compiled,
+which F2 rules out, while here a net stays a net with a driver and a contribution, and which kind it
+is, is settled per net once the design is built.
+
 ## Why this decision matters
 
 A SystemVerilog net (`wire`, `tri`, `wand`, `wor`, ...) is not a variable that happens to be written
@@ -138,11 +144,25 @@ the design has attached, which is exactly what a global Seal barrier provides.
    `supply1`) are built-in, never-detached drivers attached at Resolve, preserving one uniform
    driver algebra rather than resolver special cases.
 
+9. **A net one driver decides holds that driver's value as its own.** Every table contributions
+   resolve under leaves a lone one as it stands, its high-impedance positions included (LRM 6.6.1
+   Table 6-2, 6.6.3), and strength decides only between drivers (LRM 28.12.1), so such a net has no
+   value apart from what its driver last produced: the driver's write lands in the value the net
+   shows and wakes whoever waits on what it changed, as a write of a variable does, and while a
+   force covers the net the driver's value is kept beneath it (LRM 10.6.2). One driver decides a net
+   that has exactly one, driving, whose net type contributes at high impedance and keeps nothing,
+   and whose positions no connection made part of a physical net another name reaches. Which it is,
+   is settled once per net, by when a driver first gives a value: decisions 3 and 5 put every
+   attachment and every join before that. Measured on a design of about 1,500 units whose input
+   ports are nets: resolving each one-driver net on every drive was 24.6% of the instructions of a
+   clock.
+
 ## Consequences
 
-- Single-driver `wire` / `tri` is the N=1 case of one model; adding multi-driver resolution, wired
-  logic (`wand` / `wor`), strength, pull / supply, and charge storage (`trireg`) is additive (more
-  resolver policies, a richer contribution, a built-in driver), never a reshape.
+- What a single-driver `wire` / `tri` shows, and when, is the N=1 case of one model, and decision 9
+  is how it is held; adding multi-driver resolution, wired logic (`wand` / `wor`), strength, pull /
+  supply, and charge storage (`trireg`) is additive (more resolver policies, a richer contribution,
+  a built-in driver), never a reshape.
 - Cross-unit drivers attach at runtime, so a module stays independently compilable; the net's value
   depends on a topology assembled at elaboration, not on its own unit's compile-time view.
 - The runtime gains a real Seal phase, which also gives forwarding collapse and future net-collapse

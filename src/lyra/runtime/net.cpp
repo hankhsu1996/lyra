@@ -1,5 +1,6 @@
 #include "lyra/runtime/net.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -89,6 +90,43 @@ void NetName::Occupy(support::StrengthLevel level) {
   occupied_ |= LevelBit(level);
 }
 
+void RequireUnsettled(NetDecision decision) {
+  switch (decision) {
+    case NetDecision::kUnsettled:
+      return;
+    case NetDecision::kOneDriver:
+    case NetDecision::kResolution:
+      break;
+  }
+  throw InternalError(
+      "ResolvedNet: every driver attaches while the design resolves, which is "
+      "before the net settles what decides it");
+}
+
+void NetName::SettleReaches() {
+  for (const NetReach& reach : reaches_) {
+    reach.physical->names_settled_ = true;
+  }
+}
+
+auto NetName::OnlyOwnDriversContribute() const -> bool {
+  if (reaches_.size() != 1) {
+    return false;
+  }
+  const PhysicalNet& physical = *reaches_.front().physical;
+  return physical.placements_.size() == 1 &&
+         physical.own_kind_ == OwnContribution::kFixed &&
+         LevelBit(physical.own_.strength) == 0U;
+}
+
+auto NetName::Overridden() const -> bool {
+  return std::ranges::any_of(reaches_, [](const NetReach& reach) {
+    const PhysicalNet& physical = *reach.physical;
+    return physical.takeovers_ != nullptr &&
+           physical.takeovers_->Highest() != nullptr;
+  });
+}
+
 auto PhysicalNet::Count() const -> std::uint32_t {
   return own_.value.Count();
 }
@@ -105,6 +143,12 @@ PhysicalNet::PhysicalNet(
 PhysicalNet::~PhysicalNet() = default;
 
 void PhysicalNet::Admit(const NetPlacement& placement) {
+  if (names_settled_) {
+    throw InternalError(
+        "PhysicalNet: every connection is stated while the design resolves, "
+        "which is before any net reaching these positions settles what "
+        "decides it");
+  }
   for (const NetPlacement& existing : placements_) {
     if (existing.net == placement.net &&
         existing.net_offset == placement.net_offset) {
@@ -192,11 +236,12 @@ auto PhysicalNet::Split(std::uint32_t at) -> std::shared_ptr<PhysicalNet> {
         "PhysicalNet: a cut falls inside these positions, since a cut at "
         "either end asks for the positions that are already here");
   }
-  if (takeovers_ != nullptr) {
+  if (takeovers_ != nullptr || names_settled_) {
     throw InternalError(
         "PhysicalNet: every connection is stated while the design "
         "resolves, which is before any procedural continuous assignment "
-        "can have taken these positions over");
+        "can have taken these positions over and before any net reaching "
+        "them settles what decides it");
   }
   auto high = std::make_shared<PhysicalNet>(
       DriveContribution<NetPositions>{

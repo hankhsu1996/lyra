@@ -46,8 +46,9 @@ This workstream reasons from these and does not restate them:
       assignment, in either form: an explicit `assign` or a net-declaration assignment
       (`wire w = expr`). The driver attaches at Resolve contributing nothing, and gives its first
       value at time zero once every `always` procedure is waiting, so that value is a change they
-      see (LRM 4.9.1); a read observes the driver's value from then on. Single-driver is the
-      identity case of the resolution model, not a special path.
+      see (LRM 4.9.1); a read observes the driver's value from then on. What such a net shows is the
+      identity case of the resolution model, and the net holds its driver's value without resolving
+      it.
 - [x] N2 -- Net-typed port connections (LRM 23.3.3), single-driver, both directions: a parent net or
       variable drives a child's input net, and a child's output net drives a parent variable or net,
       distributed across an instance array and through multi-level chains. A connection is one

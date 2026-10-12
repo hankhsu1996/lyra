@@ -5,10 +5,12 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/fixed_array.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -56,6 +58,74 @@ struct DriveContribution {
 // net has been driven: hold what the declaration gave it, or take what the
 // drivers last decided, which is how a net stores a value (LRM 6.6.4).
 enum class OwnContribution : std::uint8_t { kFixed, kRetained };
+
+// What decides the value a net shows. It is settled once, by when a driver
+// first gives a value (LRM 4.9.1): every driver has attached and every
+// connection has been stated before any does. A net one driver decides has no
+// value apart from what that driver last produced, because every table
+// contributions resolve under leaves a lone one as it stands, its
+// high-impedance positions included (LRM 6.6.1 Table 6-2, 6.6.3 Tables 6-3 and
+// 6-4), and strength decides only between drivers (LRM 28.12.1). Any other net
+// shows what its contributions resolve to.
+enum class NetDecision : std::uint8_t { kUnsettled, kOneDriver, kResolution };
+
+// Refuses a driver attaching to a net that has settled what decides it: every
+// driver attaches while the design resolves, which is before any gives a value.
+void RequireUnsettled(NetDecision decision);
+
+// Replaces the whole of the value `net` shows, which lies at `shown`, by what
+// the one driver deciding it gives, as a whole write of a variable is taken
+// (LRM 4.3): a net no wait is enrolled on has no one to tell, so nothing is
+// compared; a value it already shows moves nothing; and otherwise whoever
+// waits is told what moved (LRM 9.4.2). `already_shown` answers whether the
+// net shows the same bits, and `overwrite` replaces what it shows.
+template <class T, class AlreadyShown, class Overwrite>
+void ShowDriverValue(
+    RuntimeEffects& runtime, Observable& net, const T& shown,
+    AlreadyShown already_shown, Overwrite overwrite) {
+  if (!net.HasMembers()) {
+    overwrite();
+    return;
+  }
+  if (already_shown()) {
+    return;
+  }
+  runtime.WakeParkedOn(net, PartPath{}, ReplaceWhole(shown, overwrite));
+}
+
+// Where a write of one of a net's drivers lands, which says what follows it.
+// In a net that resolves it lands in that driver's contribution, and the net
+// resolves again. The one driver of a net it decides writes the value the net
+// shows, and whoever waits on what moved is told, where a wait is enrolled at
+// all (LRM 4.3). While a procedural continuous assignment covers such a net
+// the write lands in what is kept beneath it, which the net shows again once
+// nothing covers it (LRM 10.6.2), and nothing follows.
+template <class T>
+struct Contributing {
+  T* contribution;
+};
+template <class T>
+struct Showing {
+  T* shown;
+  bool watched;
+};
+template <class T>
+struct KeptBeneath {
+  T* kept;
+};
+template <class T>
+using DriverLanding = std::variant<Contributing<T>, Showing<T>, KeptBeneath<T>>;
+
+// The driver's value as it stands, wherever its writes land.
+template <class T>
+[[nodiscard]] auto DriverValueAt(const DriverLanding<T>& landing) -> T& {
+  return std::visit(
+      Overloaded{
+          [](const Contributing<T>& to) -> T& { return *to.contribution; },
+          [](const Showing<T>& to) -> T& { return *to.shown; },
+          [](const KeptBeneath<T>& to) -> T& { return *to.kept; }},
+      landing);
+}
 
 // Whether any contribution sits at a given level, one bit per level, so a
 // resolution visits only the levels that exist. A contribution at high
@@ -186,6 +256,20 @@ class NetName {
   // Records that one of this name's own contributions sits at `level`.
   void Occupy(support::StrengthLevel level);
 
+  // Fixes which names reach the positions this name reaches: no connection
+  // joins or cuts them from here on.
+  void SettleReaches();
+
+  // Whether this name's own drivers are all that contributes to its positions:
+  // they are one physical net no other name reaches, whose net type contributes
+  // at high impedance, which takes no part (LRM 28.12.1), and keeps nothing it
+  // was driven with (LRM 6.6.4).
+  [[nodiscard]] auto OnlyOwnDriversContribute() const -> bool;
+
+  // Whether a procedural continuous assignment in force covers the positions
+  // this name reaches (LRM 10.6.2).
+  [[nodiscard]] auto Overridden() const -> bool;
+
  protected:
   NetName();
   ~NetName();
@@ -251,9 +335,10 @@ class NetName {
 // LRM 23.3.3.7's table is read per bit range, because different bits may have
 // different net types.
 //
-// A name keeps its own contributions, its own observers, and a copy of what
-// these positions produced over the ones it reaches, so reading a net reaches
-// its own storage directly and never follows a pointer to get there.
+// A name keeps its own contributions, its own observers, and the value it
+// shows -- a copy of what these positions produced over the ones it reaches, or
+// its one driver's value where that decides it -- so reading a net reaches its
+// own storage directly and never follows a pointer to get there.
 class PhysicalNet {
  public:
   PhysicalNet(
@@ -325,6 +410,9 @@ class PhysicalNet {
   value::NetResolution fold_;
   OwnContribution own_kind_;
   std::vector<NetPlacement> placements_;
+  // Set once a name reaching these positions has settled what decides it,
+  // after which no name joins them and they are not cut.
+  bool names_settled_ = false;
   // The procedural continuous assignments these positions have been put under
   // (LRM 10.6.2), absent until the first one starts, so positions nobody forces
   // carry neither the storage nor the work of maintaining it.
@@ -360,11 +448,11 @@ class ConnectableNet : public Observable {
 
 // A net (LRM 6.5, 6.6): readable and observable like a `Var<T>` (it extends
 // `Observable`, so a process can wait on it), but never written directly. A
-// value reaches it by a driver updating its own contribution, and what it shows
-// is what every contribution reaching it resolves to, published on a real
-// change (LRM 9.4.2). The net owns the contribution storage; a `Driver<T>`
-// names one contribution by an index the net issued, so the storage stays the
-// net's to reorganize.
+// value reaches it through a driver, and what it shows is what its drivers
+// determine -- the value of the one driver that decides it, or what every
+// contribution reaching it resolves to -- published on a real change (LRM
+// 9.4.2). The net owns where each driver's value lies; a `Driver<T>` names one
+// by an index the net issued, so the storage stays the net's to reorganize.
 //
 // LRM 6.7.1 admits two kinds of data type, and a net of each is a class of its
 // own: an integral type, whose positions a connection may name some of, and an
@@ -373,9 +461,9 @@ template <NetValue T>
 class ResolvedNet;
 
 // A net of an integral type: a name for some positions, the contributions the
-// sources in its own unit make to them, and what those positions last resolved
-// to. A procedural continuous assignment may override what the contributions
-// resolve to (LRM 10.6.2).
+// sources in its own unit make to them, and the value it shows -- what those
+// positions last resolved to, or what its one driver last gave. A procedural
+// continuous assignment may override what the drivers determine (LRM 10.6.2).
 //
 // What resolves is not the net. A bidirectional connection and an `alias` each
 // state that positions across several nets are the same physical net
@@ -395,8 +483,8 @@ class ResolvedNet<T> : public ConnectableNet {
   // the net type itself makes, as the scalar it shows where nothing drives it
   // and the strength it holds that scalar at (LRM 6.7.1). The net is therefore
   // a readable observable of its declared count before any driver attaches,
-  // and its value at that point comes from the same resolution every later
-  // value comes from. Installing twice is a lowering defect.
+  // showing what its net type's own contribution resolves to. Installing twice
+  // is a lowering defect.
   //
   // One entry per resolution: tri-state for `wire` / `tri` (LRM 6.6.1 Table
   // 6-2), wired-and for `wand` / `triand` and wired-or for `wor` / `trior` (LRM
@@ -468,8 +556,22 @@ class ResolvedNet<T> : public ConnectableNet {
 
   void EndTakeover(std::int64_t level) {
     PhysicalNet& physical = WholePhysicalNet();
-    if (physical.EndTakeover(TakeoverLevelOf(level))) {
-      physical.Reresolve(current_runtime());
+    if (!physical.EndTakeover(TakeoverLevelOf(level))) {
+      return;
+    }
+    RuntimeEffects& runtime = current_runtime();
+    if (name_.Overridden() || !DecidedByOneDriver()) {
+      physical.Reresolve(runtime);
+      return;
+    }
+    // Nothing covers a net one driver decides any longer, so it shows what
+    // that driver produced meanwhile (LRM 10.6.2), where an override ever
+    // gave a value at all.
+    if (const std::unique_ptr<T> kept = std::move(kept_beneath_)) {
+      ShowDriverValue(
+          runtime, *this, resolved_,
+          [&] { return resolved_.IsBitIdentical(*kept); },
+          [&] { resolved_ = *kept; });
     }
   }
 
@@ -578,6 +680,12 @@ class ResolvedNet<T> : public ConnectableNet {
             TakeoverLevelOf(level), TakeoverGenerationOf(generation), forced)) {
       return false;
     }
+    // The first override to cover a net one driver decides finds in it what
+    // that driver last produced, which is kept beneath for the net to show
+    // again once nothing covers it (LRM 10.6.2).
+    if (DecidedByOneDriver() && kept_beneath_ == nullptr) {
+      kept_beneath_ = std::make_unique<T>(resolved_);
+    }
     physical.Reresolve(current_runtime());
     return true;
   }
@@ -597,25 +705,96 @@ class ResolvedNet<T> : public ConnectableNet {
     return *reaches.front().physical;
   }
 
-  void UpdateContribution(
-      RuntimeEffects& runtime, std::size_t index, const T& value) {
-    ContributionOf(index).value = value;
-    ReresolveJoint(runtime, Change::Whole());
+  // What decides this net, settled the first time it is asked.
+  [[nodiscard]] auto DecidedByOneDriver() -> bool {
+    switch (decision_) {
+      case NetDecision::kOneDriver:
+        return true;
+      case NetDecision::kResolution:
+        return false;
+      case NetDecision::kUnsettled:
+        break;
+    }
+    name_.SettleReaches();
+    const bool one_driver = name_.OnlyOwnDriversContribute() &&
+                            contributions_.size() == 1 &&
+                            LevelBit(contributions_.front().strength) != 0U;
+    decision_ = one_driver ? NetDecision::kOneDriver : NetDecision::kResolution;
+    return one_driver;
   }
 
-  // The same of a value handed as its bytes, as wide as the contribution,
-  // taken into the words the contribution has. Bytes it already holds move no
-  // resolution.
-  void UpdateContributionBytes(
+  // Where a write of the driver `index` names lands.
+  [[nodiscard]] auto LandingOf(std::size_t index) -> DriverLanding<T> {
+    if (!DecidedByOneDriver()) {
+      return Contributing<T>{.contribution = &ContributionOf(index).value};
+    }
+    if (kept_beneath_ != nullptr) {
+      return KeptBeneath<T>{.kept = kept_beneath_.get()};
+    }
+    return Showing<T>{.shown = &resolved_, .watched = this->HasMembers()};
+  }
+
+  // A driver gives its whole value.
+  void SetDriver(RuntimeEffects& runtime, std::size_t index, const T& value) {
+    std::visit(
+        Overloaded{
+            [&](const Contributing<T>& to) {
+              *to.contribution = value;
+              ReresolveJoint(runtime, Change::Whole());
+            },
+            [&](const Showing<T>& to) {
+              ShowDriverValue(
+                  runtime, *this, *to.shown,
+                  [&] { return to.shown->IsBitIdentical(value); },
+                  [&] { *to.shown = value; });
+            },
+            [&](const KeptBeneath<T>& to) { *to.kept = value; }},
+        LandingOf(index));
+  }
+
+  // The same of a value handed as its bytes, as wide as the driver's value,
+  // taken into the words that value has. A contribution already holding them
+  // moves no resolution.
+  void SetDriverBytes(
       RuntimeEffects& runtime, std::size_t index, const void* bytes)
     requires value::TakesBytesInPlace<T>
   {
-    T& contribution = ContributionOf(index).value;
-    if (contribution.HoldsBytes(bytes)) {
-      return;
-    }
-    contribution.TakeBytes(bytes);
-    ReresolveJoint(runtime, Change::Whole());
+    std::visit(
+        Overloaded{
+            [&](const Contributing<T>& to) {
+              if (to.contribution->HoldsBytes(bytes)) {
+                return;
+              }
+              to.contribution->TakeBytes(bytes);
+              ReresolveJoint(runtime, Change::Whole());
+            },
+            [&](const Showing<T>& to) {
+              ShowDriverValue(
+                  runtime, *this, *to.shown,
+                  [&] { return to.shown->HoldsBytes(bytes); },
+                  [&] { to.shown->TakeBytes(bytes); });
+            },
+            [&](const KeptBeneath<T>& to) { to.kept->TakeBytes(bytes); }},
+        LandingOf(index));
+  }
+
+  // A write into part of a driver's value is over, having changed it. What the
+  // change says of a contribution's bits holds only where the write landed on
+  // the whole of it.
+  void DriverWrote(
+      RuntimeEffects& runtime, std::size_t index, const PartPath& reached,
+      const Change& change) {
+    std::visit(
+        Overloaded{
+            [&](const Contributing<T>&) {
+              ReresolveJoint(
+                  runtime, reached.IsWhole() ? change : Change::Whole());
+            },
+            [&](const Showing<T>&) {
+              runtime.WakeParkedOn(*this, reached, change);
+            },
+            [](const KeptBeneath<T>&) {}},
+        LandingOf(index));
   }
 
   // A driver writes wherever this net's own positions are, so every resolution
@@ -635,9 +814,7 @@ class ResolvedNet<T> : public ConnectableNet {
 
   // The contribution a driver names. Every driver reaches its own through the
   // index the net issued it, so an index the net never issued is a lowering
-  // defect rather than a value to answer. A driver reads its contribution back
-  // to write part of it without disturbing the rest (LRM 6.6.1): the positions
-  // it has never driven still hold what it started at.
+  // defect rather than a value to answer.
   [[nodiscard]] auto ContributionOf(std::size_t index)
       -> DriveContribution<T>& {
     if (index >= contributions_.size()) {
@@ -651,6 +828,10 @@ class ResolvedNet<T> : public ConnectableNet {
   // How many positions the declared type has, none until the net is
   // installed.
   std::uint32_t count_ = 0;
+  NetDecision decision_ = NetDecision::kUnsettled;
+  // What the one driver deciding this net produced while a procedural
+  // continuous assignment covers the net (LRM 10.6.2), absent otherwise.
+  std::unique_ptr<T> kept_beneath_;
   Name name_{*this};
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued. They are the net's rather than each
@@ -727,10 +908,19 @@ class ResolvedNet<T> : public Observable {
 
   auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& value) -> bool {
-    if (takeovers_ == nullptr ||
-        !takeovers_->Drive(
+    if (takeovers_ == nullptr) {
+      return false;
+    }
+    const bool was_covered = Overridden();
+    if (!takeovers_->Drive(
             TakeoverLevelOf(level), TakeoverGenerationOf(generation), value)) {
       return false;
+    }
+    // The first override to cover a net one driver decides finds in it what
+    // that driver last produced, which is kept beneath for the net to show
+    // again once nothing covers it (LRM 10.6.2).
+    if (!was_covered && DecidedByOneDriver()) {
+      takeovers_->KeepBeneath(resolved_);
     }
     Reresolve(current_runtime());
     return true;
@@ -741,7 +931,20 @@ class ResolvedNet<T> : public Observable {
       return;
     }
     takeovers_->End(TakeoverLevelOf(level));
-    Reresolve(current_runtime());
+    RuntimeEffects& runtime = current_runtime();
+    if (Overridden() || !DecidedByOneDriver()) {
+      Reresolve(runtime);
+      return;
+    }
+    // Nothing covers a net one driver decides any longer, so it shows what
+    // that driver produced meanwhile (LRM 10.6.2), where an override ever
+    // gave a value at all.
+    if (const std::optional<T> kept = takeovers_->TakeBeneath()) {
+      ShowDriverValue(
+          runtime, *this, resolved_,
+          [&] { return resolved_.IsBitIdentical(*kept); },
+          [&] { resolved_ = *kept; });
+    }
   }
 
   // Attaches a new driver at the strength its source drives at and returns its
@@ -808,24 +1011,84 @@ class ResolvedNet<T> : public Observable {
     PublishIfChanged(runtime, forced == nullptr ? resolved : *forced);
   }
 
-  void UpdateContribution(
-      RuntimeEffects& runtime, std::size_t index, const T& value) {
-    ContributionOf(index).value = value;
-    Reresolve(runtime);
-  }
-
-  // A write into part of a contribution resolves the net again unless it is
-  // known to have moved nothing.
-  void ReresolveJoint(RuntimeEffects& runtime, const Change& change) {
-    if (change.KnownUnchanged({})) {
-      return;
+  // What decides this net, settled the first time it is asked. No connection
+  // reaches part of an aggregate, so it is one driver that decides it wherever
+  // there is exactly one, driving, and the net type contributes at high
+  // impedance, which takes no part (LRM 28.12.1), and keeps nothing it was
+  // driven with (LRM 6.6.4).
+  [[nodiscard]] auto DecidedByOneDriver() -> bool {
+    switch (decision_) {
+      case NetDecision::kOneDriver:
+        return true;
+      case NetDecision::kResolution:
+        return false;
+      case NetDecision::kUnsettled:
+        break;
     }
-    Reresolve(runtime);
+    const bool one_driver = LevelBit(own_.strength) == 0U &&
+                            own_kind_ == OwnContribution::kFixed &&
+                            contributions_.size() == 1 &&
+                            LevelBit(contributions_.front().strength) != 0U;
+    decision_ = one_driver ? NetDecision::kOneDriver : NetDecision::kResolution;
+    return one_driver;
   }
 
-  // The contribution a driver names, through the index the net issued it. A
-  // driver reads its contribution back to write part of it without disturbing
-  // the rest (LRM 6.6.1).
+  // Whether a procedural continuous assignment in force covers the net (LRM
+  // 10.6.2).
+  [[nodiscard]] auto Overridden() const -> bool {
+    return takeovers_ != nullptr && takeovers_->Highest() != nullptr;
+  }
+
+  // Where a write of the driver `index` names lands.
+  [[nodiscard]] auto LandingOf(std::size_t index) -> DriverLanding<T> {
+    if (!DecidedByOneDriver()) {
+      return Contributing<T>{.contribution = &ContributionOf(index).value};
+    }
+    if (T* kept = takeovers_ == nullptr ? nullptr : takeovers_->Beneath()) {
+      return KeptBeneath<T>{.kept = kept};
+    }
+    return Showing<T>{.shown = &resolved_, .watched = this->HasMembers()};
+  }
+
+  // A driver gives its whole value.
+  void SetDriver(RuntimeEffects& runtime, std::size_t index, const T& value) {
+    std::visit(
+        Overloaded{
+            [&](const Contributing<T>& to) {
+              *to.contribution = value;
+              Reresolve(runtime);
+            },
+            [&](const Showing<T>& to) {
+              ShowDriverValue(
+                  runtime, *this, *to.shown,
+                  [&] { return to.shown->IsBitIdentical(value); },
+                  [&] { *to.shown = value; });
+            },
+            [&](const KeptBeneath<T>& to) { *to.kept = value; }},
+        LandingOf(index));
+  }
+
+  // A write into part of a driver's value is over, having changed it. A
+  // contribution resolves again unless the write landed on the whole of it and
+  // is known to have moved nothing.
+  void DriverWrote(
+      RuntimeEffects& runtime, std::size_t index, const PartPath& reached,
+      const Change& change) {
+    std::visit(
+        Overloaded{
+            [&](const Contributing<T>&) {
+              if (!reached.IsWhole() || !change.KnownUnchanged({})) {
+                Reresolve(runtime);
+              }
+            },
+            [&](const Showing<T>&) {
+              runtime.WakeParkedOn(*this, reached, change);
+            },
+            [](const KeptBeneath<T>&) {}},
+        LandingOf(index));
+  }
+
+  // The contribution a driver names, through the index the net issued it.
   [[nodiscard]] auto ContributionOf(std::size_t index)
       -> DriveContribution<T>& {
     if (index >= contributions_.size()) {
@@ -857,6 +1120,7 @@ class ResolvedNet<T> : public Observable {
   std::unique_ptr<Takeovers<T>> takeovers_;
   // Whether any contribution of a driver sits at a given level.
   OccupiedLevels occupied_{};
+  NetDecision decision_ = NetDecision::kUnsettled;
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued, which growth must not move.
   std::deque<Driver<T>> drivers_;
@@ -882,19 +1146,16 @@ template <NetValue T>
   requires(!BitAddressed<T>)
 ResolvedNet<T>::~ResolvedNet() = default;
 
-// The drive capability for a net: a handle to one contribution of a
-// `ResolvedNet`. The net issues it and owns it, so a source may hold it either
-// by value or by address; a source's slot starts unbound and the net binds it
-// when it attaches, during Resolve. Updating a contribution goes only through
-// this handle; the net's contribution storage is never addressed directly, and
-// the net's resolved value is never written at all (LRM 6.5).
+// The drive capability for a net: a handle to one driver of a `ResolvedNet`.
+// The net issues it and owns it, so a source may hold it either by value or by
+// address; a source's slot starts unbound and the net binds it when it
+// attaches, during Resolve. A driver's value is given only through this
+// handle, and where it lies is the net's to say (LRM 6.5).
 //
 // A source that drives only part of the net opens the same partial-write
-// bracket a variable cell offers: the write lands in this driver's
-// own contribution and reaches only the positions it names, so the ones it does
-// not drive keep contributing high-impedance and defer to whoever does drive
-// them. The positions then re-resolve, which is the only place a resolved value
-// is ever written.
+// bracket a variable cell offers: the write lands in this driver's own value
+// and reaches only the positions it names, so the ones it does not drive stay
+// at high impedance, deferring to whoever does drive them.
 template <NetValue T>
 class Driver {
  public:
@@ -905,59 +1166,68 @@ class Driver {
       : net_(&net), contribution_(contribution) {
   }
 
-  // Publishes this driver's whole contribution; the positions then re-resolve
-  // and every name reaching them publishes on a real change. It carries the
-  // capability family's store name because a store through a handle reaches
-  // whatever that handle addresses, and what this one addresses is a
-  // contribution -- never a resolved value.
+  // Gives this driver's whole value, which every name it reaches publishes on a
+  // real change. It carries the capability family's store name because a store
+  // through a handle reaches whatever that handle addresses, and what this one
+  // addresses is a driver's value.
   void Set(const T& value) const {
-    Net().UpdateContribution(current_runtime(), contribution_, value);
+    Net().SetDriver(current_runtime(), contribution_, value);
   }
 
-  // The same of a value handed as its bytes, as wide as the contribution.
+  // The same of a value handed as its bytes, as wide as the driver's value.
   void SetBytes(const void* bytes) const
     requires value::TakesBytesInPlace<T>
   {
-    Net().UpdateContributionBytes(current_runtime(), contribution_, bytes);
+    Net().SetDriverBytes(current_runtime(), contribution_, bytes);
   }
 
-  // This driver's own contribution as it currently stands -- what it publishes
-  // into the resolution, never the resolved value it arrives at.
+  // This driver's own value as it currently stands.
   [[nodiscard]] auto Get() const -> const T& {
-    return Net().ContributionOf(contribution_).value;
+    return DriverValueAt(Landing());
   }
 
   [[nodiscard]] auto Mutate() const -> ScopedMutation<Driver> {
     return ScopedMutation<Driver>{*this};
   }
 
-  // The `MutationSink` surface: this driver's own contribution as storage, and
-  // the re-resolution that follows a write to it. The net always reads what a
-  // write did, but only positions whose contribution moved move the resolution
-  // over them, so those are the ones that resolve again. A contribution goes on
-  // being updated while its net is forced, since the net takes what its drivers
-  // determine the moment it is released (LRM 10.6.2), so a write always lands.
-  [[nodiscard]] static auto AdmitsWrite() -> bool {
-    return true;
+  // The `MutationSink` surface, each answer read off where this driver's
+  // writes land.
+  [[nodiscard]] auto AdmitsWrite() const -> bool {
+    return std::visit(
+        Overloaded{
+            [](const Contributing<T>&) { return true; },
+            [](const Showing<T>&) { return true; },
+            [](const KeptBeneath<T>&) { return false; }},
+        Landing());
   }
-  [[nodiscard]] static auto DisplacedStorage() -> T* {
-    return nullptr;
+  [[nodiscard]] auto DisplacedStorage() const -> T* {
+    return std::visit(
+        Overloaded{
+            [](const Contributing<T>&) -> T* { return nullptr; },
+            [](const Showing<T>&) -> T* { return nullptr; },
+            [](const KeptBeneath<T>& to) -> T* { return to.kept; }},
+        Landing());
   }
   [[nodiscard]] auto MutationStorage() const -> T& {
-    return Net().ContributionOf(contribution_).value;
+    return DriverValueAt(Landing());
   }
-  [[nodiscard]] static auto Watched() -> bool {
-    return true;
+  [[nodiscard]] auto Watched() const -> bool {
+    return std::visit(
+        Overloaded{
+            [](const Contributing<T>&) { return true; },
+            [](const Showing<T>& to) { return to.watched; },
+            [](const KeptBeneath<T>&) { return false; }},
+        Landing());
   }
-  // What the change says of the contribution's bits holds only where the
-  // write landed on the whole of it; a write into part of it says only that
-  // the contribution moved.
   void PublishTransition(const PartPath& reached, const Change& change) const {
-    Net().ReresolveJoint(
-        current_runtime(), reached.IsWhole() ? change : Change::Whole());
+    Net().DriverWrote(current_runtime(), contribution_, reached, change);
   }
 
  private:
+  [[nodiscard]] auto Landing() const -> DriverLanding<T> {
+    return Net().LandingOf(contribution_);
+  }
+
   [[nodiscard]] auto Net() const -> ResolvedNet<T>& {
     if (net_ == nullptr) {
       throw InternalError("Driver: driver is not attached");
@@ -977,6 +1247,7 @@ Driver<T>::Driver() = default;
 template <NetValue T>
   requires BitAddressed<T>
 auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
+  RequireUnsettled(decision_);
   const auto level = static_cast<support::StrengthLevel>(strength);
   contributions_.push_back(
       DriveContribution<T>{.value = nondriving_, .strength = level});
@@ -988,6 +1259,7 @@ auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
 template <NetValue T>
   requires(!BitAddressed<T>)
 auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
+  RequireUnsettled(decision_);
   const auto level = static_cast<support::StrengthLevel>(strength);
   contributions_.push_back(
       DriveContribution<T>{.value = nondriving_, .strength = level});

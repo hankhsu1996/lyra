@@ -111,8 +111,10 @@ void KeepAfter(Change& change, const T& storage) {
 //
 // `Watched` is whether anything reads the answer. A variable cell no wait is
 // enrolled on has no one to tell (LRM 4.3), so the write keeps nothing from
-// before it; a net driver always has its net, which resolves again only where
-// the driver's own contribution moved (LRM 6.5).
+// before it. A driver of a net that resolves always has its net, which
+// resolves again only where the driver's own contribution moved (LRM 6.5); the
+// one driver deciding a net has the waits enrolled on that net, as a variable
+// has its own.
 //
 // `PublishTransition` tells the owner the write changed it: which part of the
 // owner's storage the write reached, and what can be said about which bits of

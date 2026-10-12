@@ -1295,8 +1295,8 @@ auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
 // connection is a continuous assignment into the input (LRM 23.3.3), and when
 // the sink sees a change of the source is not fixed (LRM 4.8), so a sink that
 // is the source's own storage is one of the schedules the standard admits. A
-// net shows a resolution rather than holding what it is given (LRM 6.5), and
-// any other expression has no storage to stand for.
+// net takes no store, since what it shows is what its drivers determine (LRM
+// 6.5), and any other expression has no storage to stand for.
 auto NamesSharedStorage(
     const hir::StructuralScope& scope, const hir::Expr& peer,
     hir::TypeId port_type) -> bool {
