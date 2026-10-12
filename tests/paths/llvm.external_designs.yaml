@@ -13,7 +13,7 @@ BlackParrot:1x1:hello:
   says: cannot be written to by any other process
 Caliptra:default:hello:
   stops: build
-  says: numeric literals must not start with a leading underscore
+  says: lvalue of force/release must be a net, a variable, a constant select of a net
 HammerBlade:16x8:hello:
   stops: run
   says: did not end within

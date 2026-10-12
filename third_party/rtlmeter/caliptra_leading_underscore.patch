@@ -1,0 +1,31 @@
+Caliptra's testbench services start seven hexadecimal literals with an
+underscore after the base, as in 512'h_8FA8... IEEE 1800-2023 5.7.1 says the
+underscore "shall be legal anywhere in a number except as the first character",
+and A.8.7 writes a hex_value as hex_digit { _ | hex_digit }, so its first
+character is a digit. Drop the leading underscore; the value is the same.
+
+The text is Caliptra's own, reported as
+https://github.com/chipsalliance/caliptra-rtl/issues/1438 and fixed there in
+https://github.com/chipsalliance/caliptra-rtl/pull/1439. Sent to the suite as
+https://github.com/verilator/rtlmeter/pull/60
+
+--- a/designs/Caliptra/src/caliptra-rtl/caliptra_top_tb_services.sv
++++ b/designs/Caliptra/src/caliptra-rtl/caliptra_top_tb_services.sv
+@@ -579,3 +579,3 @@
+-    logic [0:15][31:0]   ecc_seed_tb      = 512'h_8FA8541C82A392CA74F23ED1DBFD73541C5966391B97EA73D744B0E34B9DF59ED0158063E39C09A5A055371EDF7A5441_00000000000000000000000000000000;
+-    logic [0:15][31:0]   ecc_privkey_tb   = 512'h_F274F69D163B0C9F1FC3EBF4292AD1C4EB3CEC1C5A7DDE6F80C14292934C2055E087748D0A169C772483ADEE5EE70E17_00000000000000000000000000000000;
+-    logic [0:15][31:0]   hmac384_key_tb   = 512'h_0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b_00000000000000000000000000000000;
++    logic [0:15][31:0]   ecc_seed_tb      = 512'h8FA8541C82A392CA74F23ED1DBFD73541C5966391B97EA73D744B0E34B9DF59ED0158063E39C09A5A055371EDF7A5441_00000000000000000000000000000000;
++    logic [0:15][31:0]   ecc_privkey_tb   = 512'hF274F69D163B0C9F1FC3EBF4292AD1C4EB3CEC1C5A7DDE6F80C14292934C2055E087748D0A169C772483ADEE5EE70E17_00000000000000000000000000000000;
++    logic [0:15][31:0]   hmac384_key_tb   = 512'h0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b_00000000000000000000000000000000;
+@@ -583,2 +583,2 @@
+-    logic [0:15][31:0]   hmac512_block_tb = 512'h_e7f1293c6f23a53289143df1399e784cb71180e3830c3869fd725fe78f0b6480559d6344edc1aaf64b7d0701e78672d2_55555555555555555555555555555555;
+-    logic [0:15][31:0]   mldsa_seed_tb    = 512'h_2d5cf89c46768a850768f0d4a243fe283fcee4d537071d12675fd1279340000a_55555555555555555555555555555555_00000000000000000000000000000000; //fixme padded with junk
++    logic [0:15][31:0]   hmac512_block_tb = 512'he7f1293c6f23a53289143df1399e784cb71180e3830c3869fd725fe78f0b6480559d6344edc1aaf64b7d0701e78672d2_55555555555555555555555555555555;
++    logic [0:15][31:0]   mldsa_seed_tb    = 512'h2d5cf89c46768a850768f0d4a243fe283fcee4d537071d12675fd1279340000a_55555555555555555555555555555555_00000000000000000000000000000000; //fixme padded with junk
+@@ -595 +595 @@
+-    always_comb ecc_privkey_random = {ecc_test_vector.privkey, 128'h_00000000000000000000000000000000};
++    always_comb ecc_privkey_random = {ecc_test_vector.privkey, 128'h00000000000000000000000000000000};
+@@ -2155 +2155 @@
+-    logic [0:15][31:0]   pcr_to_be_signed = 512'h_C8F518D4F3AA1BD46ED56C1C3C9E16FB800AF504DB98843548C5F623EE115F73D4C62ABC06D303B5D90D9A175087290D_16e6009644e2a5f2c41fed22e703fb78;
++    logic [0:15][31:0]   pcr_to_be_signed = 512'hC8F518D4F3AA1BD46ED56C1C3C9E16FB800AF504DB98843548C5F623EE115F73D4C62ABC06D303B5D90D9A175087290D_16e6009644e2a5f2c41fed22e703fb78;
