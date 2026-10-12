@@ -52,6 +52,22 @@ class SampledValue {
   WaitMembership membership_;
 };
 
+// A place read as a value of its own by `kRead`, which a sampled value takes
+// what the place holds through.
+template <class Place, auto kRead>
+class ReadThrough {
+ public:
+  explicit ReadThrough(const Place& place) : place_(&place) {
+  }
+
+  [[nodiscard]] auto Get() const -> decltype(auto) {
+    return (place_->*kRead)();
+  }
+
+ private:
+  const Place* place_;
+};
+
 // The sampled value of a place read from `Source`, whatever holds it, by its
 // `Get()`.
 template <class Source>
@@ -61,10 +77,9 @@ class SampledValueOf final : public SampledValue {
 
   // Answers `default_value` until the end of the first slot the place changes
   // in.
-  SampledValueOf(
-      const Source& source, ValueType default_value, const Trigger& watched)
+  SampledValueOf(Source source, ValueType default_value, const Trigger& watched)
       : SampledValue(watched),
-        source_(&source),
+        source_(std::move(source)),
         taken_(std::move(default_value)) {
   }
   SampledValueOf(const SampledValueOf&) = delete;
@@ -79,10 +94,10 @@ class SampledValueOf final : public SampledValue {
 
  private:
   void Take() override {
-    taken_ = source_->Get();
+    taken_ = source_.Get();
   }
 
-  const Source* source_;
+  Source source_;
   ValueType taken_;
 };
 

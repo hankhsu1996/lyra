@@ -23,10 +23,16 @@ auto LayoutOf(support::LibraryObject object) -> support::ObjectLayout;
 auto LayoutOf(const support::RuntimeObject& object) -> support::ObjectLayout;
 
 // The same for the storage one member of a declaration occupies where the
-// declaration is laid out, for each kind over each domain it is realized for.
-// A pair it is not realized for is a compiler bug, since the kind is chosen
-// from the member's type and a type names only realized pairs.
-auto LayoutOf(support::DeclaredMemberStorage storage) -> support::ObjectLayout;
+// declaration is laid out, for each kind over each domain it is realized for,
+// holding values laid out as `held` is, none for storage holding no value of
+// the program's. Storage that holds a value whose size the library is told lays
+// that value out after itself, so it is as large as the value; every other
+// holds it in the library's own type. A pair it is not realized for is a
+// compiler bug, since the kind is chosen from the member's type and a type
+// names only realized pairs.
+auto LayoutOf(
+    support::DeclaredMemberStorage storage,
+    std::optional<support::ObjectLayout> held) -> support::ObjectLayout;
 
 // Where the value a member's storage holds lies in that storage, for storage
 // that holds an integral value as its own bytes and answers a read with them.
@@ -36,11 +42,14 @@ auto LayoutOf(support::DeclaredMemberStorage storage) -> support::ObjectLayout;
 auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
     -> std::optional<std::uint64_t>;
 
-// Where a net of an integral value of `domain` keeps the address of the value
-// it shows, which is its own or that of the object its one driver carries. A
-// target reads the net's value through the address it finds at this offset.
-// Nothing for a net whose value its own access hands out.
-auto ShownThroughOffsetOf(support::ValueDomain domain)
+// Where storage that answers a read through an address it keeps keeps that
+// address: a net of an integral value, whose value is its own or that of the
+// object its one driver carries, and a variable or a procedural local of an
+// integral value wider than a word, whose words lie at its end or apart by how
+// wide it is. A target reads the value through the address it finds at this
+// offset, which is the same whatever the value's width. Nothing for storage
+// whose contents lie at an offset or are handed out by its own access.
+auto ContentsThroughOffsetOf(support::DeclaredMemberStorage storage)
     -> std::optional<std::uint64_t>;
 
 // The constant that tells the library an integral type's numbers, as a target

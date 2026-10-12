@@ -3159,11 +3159,12 @@ auto lyra_rt_logic64_driver_open_for_write(void* driver, void* out) -> void*;
 // The holders over an integral value wider than a word, which is the words of
 // its planes: `bit_wide` where it has a value plane alone and `logic_wide`
 // where an unknown plane follows it. How many words that is follows from the
-// value's width, which no holder was compiled knowing, so each is told it once,
-// by the entry that installs it: a cell's `initialize` and a history's
-// `install`, each beside what it already takes, a net's install as the count
-// of its positions, and the entries that build a value cell, a procedural
-// local having no declaration to install it. Every entry after that takes the
+// value's width, which no holder was compiled knowing, so each is told it once:
+// a cell where it is built, since it lays the words out after itself and so has
+// their place from then on, a history's `install` beside what it already
+// takes, a net's install as the count of its positions, and the entries that
+// build a value cell, a procedural local having no declaration to install it.
+// Every entry after that takes the
 // bytes of a value that wide and nothing else, compares them with the words
 // the holder has to know whether a write changed anything, and takes them
 // there.
@@ -3178,11 +3179,11 @@ auto lyra_rt_logic64_driver_open_for_write(void* driver, void* out) -> void*;
 // through `get` and `load`, since where the words lie is not a fixed distance
 // into the holder. Each other entry is the one of the same name over a layout
 // no wider than a word.
-void lyra_rt_bit_wide_cell_construct(void* storage);
+void lyra_rt_bit_wide_cell_construct(void* storage, std::int64_t width);
 void lyra_rt_bit_wide_cell_destroy(void* storage);
 auto lyra_rt_bit_wide_cell_get(void* cell) -> const void*;
 void lyra_rt_bit_wide_cell_initialize(
-    void* cell, const void* prototype, std::int64_t width) noexcept;
+    void* cell, const void* prototype) noexcept;
 void lyra_rt_bit_wide_cell_set(void* cell, const void* value);
 void lyra_rt_bit_wide_cell_arm_sampling(void* cell);
 auto lyra_rt_bit_wide_cell_sampled_load(void* cell, void* out) -> void*;
@@ -3200,7 +3201,7 @@ auto lyra_rt_bit_wide_ref_drive_takeover(
 void lyra_rt_bit_wide_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_bit_wide_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_bit_wide_cell_open_for_write(void* cell, void* out) -> void*;
-auto lyra_rt_bit_wide_shared_cell_make(void* out) -> void*;
+auto lyra_rt_bit_wide_shared_cell_make(std::int64_t width, void* out) -> void*;
 auto lyra_rt_bit_wide_ref_get(void* reference) -> const void*;
 void lyra_rt_bit_wide_ref_set(
     void* reference, std::int64_t width, const void* value);
@@ -3229,11 +3230,11 @@ void lyra_rt_bit_wide_insert_designated_bits(
     const void* start, const void* bits, std::int64_t bits_width,
     bool bits_are_four_state);
 
-void lyra_rt_logic_wide_cell_construct(void* storage);
+void lyra_rt_logic_wide_cell_construct(void* storage, std::int64_t width);
 void lyra_rt_logic_wide_cell_destroy(void* storage);
 auto lyra_rt_logic_wide_cell_get(void* cell) -> const void*;
 void lyra_rt_logic_wide_cell_initialize(
-    void* cell, const void* prototype, std::int64_t width) noexcept;
+    void* cell, const void* prototype) noexcept;
 void lyra_rt_logic_wide_cell_set(void* cell, const void* value);
 void lyra_rt_logic_wide_cell_arm_sampling(void* cell);
 auto lyra_rt_logic_wide_cell_sampled_load(void* cell, void* out) -> void*;
@@ -3251,7 +3252,8 @@ auto lyra_rt_logic_wide_ref_drive_takeover(
 void lyra_rt_logic_wide_ref_end_takeover(void* reference, std::int64_t level);
 auto lyra_rt_logic_wide_cell_refer(void* cell, void* out) -> void*;
 auto lyra_rt_logic_wide_cell_open_for_write(void* cell, void* out) -> void*;
-auto lyra_rt_logic_wide_shared_cell_make(void* out) -> void*;
+auto lyra_rt_logic_wide_shared_cell_make(std::int64_t width, void* out)
+    -> void*;
 auto lyra_rt_logic_wide_ref_get(void* reference) -> const void*;
 void lyra_rt_logic_wide_ref_set(
     void* reference, std::int64_t width, const void* value);
@@ -3280,7 +3282,7 @@ void lyra_rt_logic_wide_insert_designated_bits(
     const void* designation, std::int64_t width, LyraSpan outer_parts,
     const void* start, const void* bits, std::int64_t bits_width,
     bool bits_are_four_state);
-void lyra_rt_logic_wide_net_construct(void* storage);
+void lyra_rt_logic_wide_net_construct(void* storage, std::int64_t width);
 void lyra_rt_logic_wide_net_destroy(void* storage);
 auto lyra_rt_logic_wide_net_get(void* net) -> const void*;
 void lyra_rt_logic_wide_net_initialize_tri_state(

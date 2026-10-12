@@ -4,7 +4,9 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/runtime/value_handle.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
 
@@ -25,9 +27,14 @@ concept RepresentedAtRunTime = requires(const T& value, const T& other) {
 // (`Var<T>`, which adds subscriber wakeup) and a non-observable procedural cell
 // (`ActivationValueCell<T>`). Non-copyable and non-movable: a cell is
 // addressed, so its identity is its address.
+//
+// It is how a cell holds a value whose type is known where it is compiled, so
+// what the cell keeps for itself is a value of that type too.
 template <value::LyraValue T>
 class ValueStorageCore {
  public:
+  using Owned = T;
+
   ValueStorageCore() = default;
   ValueStorageCore(const ValueStorageCore&) = delete;
   auto operator=(const ValueStorageCore&) -> ValueStorageCore& = delete;
@@ -82,6 +89,50 @@ class ValueStorageCore {
       }
     }
     value_ = value;
+  }
+
+  // What a cell's protocol asks of how it holds its value: whether it holds
+  // `value`'s bits, taking them, and a copy of its own of what it holds.
+  [[nodiscard]] auto Holds(const T& value) const -> bool {
+    return value_.IsBitIdentical(value);
+  }
+  void Take(const T& value) {
+    Overwrite(value);
+  }
+  [[nodiscard]] auto Holds(const ValueStorageCore& other) const -> bool {
+    return Holds(other.value_);
+  }
+  void Take(const ValueStorageCore& other) {
+    Take(other.value_);
+  }
+  [[nodiscard]] auto Copy() const -> T {
+    return value_;
+  }
+
+  // Where the held value lies as a reference names it.
+  [[nodiscard]] auto Bytes() -> void* {
+    return HandleTo(value_);
+  }
+
+  // The same of a value lying at `bytes` as a reference names one.
+  [[nodiscard]] auto HoldsBytes(const void* bytes) const -> bool {
+    if constexpr (value::TakesBytesInPlace<T>) {
+      return value_.HoldsBytes(bytes);
+    } else {
+      return value_.IsBitIdentical(Read<T>(bytes));
+    }
+  }
+  void TakeBytes(const void* bytes) {
+    if constexpr (value::TakesBytesInPlace<T>) {
+      value_.TakeBytes(bytes);
+    } else {
+      value_ = Read<T>(bytes);
+    }
+  }
+  [[nodiscard]] auto CopyOf(const void* bytes) const -> T
+    requires value::TakesBytesInPlace<T>
+  {
+    return value_.Holding(bytes);
   }
 
  private:

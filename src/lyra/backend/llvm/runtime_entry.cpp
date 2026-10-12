@@ -289,16 +289,10 @@ constexpr std::array kTakeovers{
     ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
     ThroughWrapper{
         .wrapper = WrapperKind::kRef, .domains = kVariableValuesTakenOver}};
-// A variable's cell is installed with its declaration's value, which fixes how
-// wide a cell of words is.
+// A variable's cell is installed with its declaration's value. A cell of words
+// was told its width where it was built.
 constexpr std::array kInstalls{
-    ThroughWrapper{
-        .wrapper = WrapperKind::kCell,
-        .domains = kOneWordIntegral | kVariableObjects},
-    ThroughWrapper{
-        .wrapper = WrapperKind::kCell,
-        .domains = kWideIntegral,
-        .told = ToldHeldWidth{.after = 1}}};
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues}};
 // A cell holds the bytes of a value no wider than a word where generated code
 // reads them, and a net the address of such bytes, so neither has an entry
 // reading one.
@@ -369,6 +363,11 @@ constexpr std::array kForCellsAllocated{
     RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidthAhead{}}};
 constexpr std::array kForCellsReached{
     RealizedFor{.domains = kWideIntegral | kVariableObjects}};
+// A cell a counted hold makes is as large as the value it is to hold, so one of
+// words is made at their width.
+constexpr std::array kForCellsMade{
+    RealizedFor{.domains = kOneWordIntegral | kVariableObjects},
+    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidthAhead{}}};
 
 // A designation of words is told how wide they are where the write lands, and
 // one of any integral value where a write of some of its bits is reported
@@ -742,12 +741,14 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
 
 auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool {
   switch (storage.kind) {
+    // A cell or a net of words lays them out after itself, so it has their
+    // place from the moment it is built.
     case support::MemberStorageKind::kValueCell:
-      return kWideIntegral.Holds(storage.domain);
-    // A variable's cell, a net and a history are each installed by an entry of
-    // their own, and every other storage holds no integral value's words.
     case support::MemberStorageKind::kObservableCell:
     case support::MemberStorageKind::kResolvedNet:
+      return kWideIntegral.Holds(storage.domain);
+    // A history is installed by an entry of its own, and every other storage
+    // holds no integral value's words.
     case support::MemberStorageKind::kSampledHistory:
     case support::MemberStorageKind::kInlineValue:
     case support::MemberStorageKind::kBorrowedHandle:
@@ -1282,8 +1283,9 @@ auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
 auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
   switch (op) {
     case RuntimeOp::kCellRefer:
-    case RuntimeOp::kSharedCellMake:
       return kForVariables;
+    case RuntimeOp::kSharedCellMake:
+      return kForCellsMade;
     case RuntimeOp::kFromEntries:
     case RuntimeOp::kFromEntriesWildcard:
       return kForAssociativeArrays;

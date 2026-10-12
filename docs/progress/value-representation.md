@@ -129,10 +129,12 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
       asked to build while it compiles.
 - [x] Whatever holds an integral wider than 64 bits -- a variable, a net, a sampled history, a
       procedural local -- holds the value's words and is handed no type. A variable, a net and a
-      history are told the width once, where they are installed. A reference to one, and a part
-      designated within a write, are told the width at each access.
-- [x] A procedural local wider than 64 bits is told its width once, where its storage is built, and
-      a store into it is told nothing.
+      procedural local hold the words in their own storage, which the code generator lays out at the
+      size the type gives, and are told the width where they are built, so the value has one address
+      from then on, the one every reference to it names; past 1024 bytes that storage holds the
+      address of words allocated once, where it is built. A history is told the width where it is
+      installed. A reference, and a part designated within a write, are told the width at each
+      access, and a store into a procedural local is told nothing.
 - [x] A whole write of a value wider than 64 bits compares the arriving bytes with the words the
       holder has and takes them there: a store into a variable, a force on a variable or a net, a
       push into a sampled history and a driver's contribution. The first value a forced variable

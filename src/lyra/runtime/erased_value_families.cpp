@@ -47,8 +47,6 @@ static_assert(FamiliesCover(support::ValueDomain::kLogicWide));
 
 }  // namespace
 
-template class ValueStorageCore<value::WideBitVector>;
-template class ValueStorageCore<value::WideLogicVector>;
 template class ValueStorageCore<value::RuntimeTuple>;
 template class ValueStorageCore<value::RuntimeUnion>;
 template class ValueStorageCore<value::RuntimeTaggedUnion>;
@@ -57,8 +55,18 @@ template class ValueStorageCore<value::RuntimeFixedArray>;
 template class ValueStorageCore<value::RuntimeQueue>;
 template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
-template class Var<value::WideBitVector>;
-template class Var<value::WideLogicVector>;
+template class Cell<WordsHolding<value::StateDomain::kTwoState>>;
+template class Cell<WordsHolding<value::StateDomain::kFourState>>;
+template class Cell<ValueStorageCore<value::RuntimeTuple>>;
+template class Cell<ValueStorageCore<value::RuntimeUnion>>;
+template class Cell<ValueStorageCore<value::RuntimeTaggedUnion>>;
+template class Cell<ValueStorageCore<value::RuntimeDynamicArray>>;
+template class Cell<ValueStorageCore<value::RuntimeFixedArray>>;
+template class Cell<ValueStorageCore<value::RuntimeQueue>>;
+template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
+
+template class WordsCell<value::StateDomain::kTwoState>;
+template class WordsCell<value::StateDomain::kFourState>;
 template class Var<value::RuntimeTuple>;
 template class Var<value::RuntimeUnion>;
 template class Var<value::RuntimeTaggedUnion>;
@@ -67,15 +75,15 @@ template class Var<value::RuntimeFixedArray>;
 template class Var<value::RuntimeQueue>;
 template class Var<value::RuntimeAssociativeArray>;
 
-template class CellRareState<value::WideBitVector>;
-template class CellRareState<value::WideLogicVector>;
-template class CellRareState<value::RuntimeTuple>;
-template class CellRareState<value::RuntimeUnion>;
-template class CellRareState<value::RuntimeTaggedUnion>;
-template class CellRareState<value::RuntimeDynamicArray>;
-template class CellRareState<value::RuntimeFixedArray>;
-template class CellRareState<value::RuntimeQueue>;
-template class CellRareState<value::RuntimeAssociativeArray>;
+template class CellRareState<WordsHolding<value::StateDomain::kTwoState>>;
+template class CellRareState<WordsHolding<value::StateDomain::kFourState>>;
+template class CellRareState<ValueStorageCore<value::RuntimeTuple>>;
+template class CellRareState<ValueStorageCore<value::RuntimeUnion>>;
+template class CellRareState<ValueStorageCore<value::RuntimeTaggedUnion>>;
+template class CellRareState<ValueStorageCore<value::RuntimeDynamicArray>>;
+template class CellRareState<ValueStorageCore<value::RuntimeFixedArray>>;
+template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
+template class CellRareState<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 template class Ref<value::WideBitVector>;
 template class Ref<value::WideLogicVector>;
@@ -107,8 +115,6 @@ template class Takeovers<value::RuntimeFixedArray>;
 template class Takeovers<value::RuntimeQueue>;
 template class Takeovers<value::RuntimeAssociativeArray>;
 
-template class ActivationValueCell<value::WideBitVector>;
-template class ActivationValueCell<value::WideLogicVector>;
 template class ActivationValueCell<value::RuntimeTuple>;
 template class ActivationValueCell<value::RuntimeUnion>;
 template class ActivationValueCell<value::RuntimeTaggedUnion>;
@@ -162,6 +168,15 @@ template class ValueStorageCore<value::LogicVector<16>>;
 template class ValueStorageCore<value::LogicVector<32>>;
 template class ValueStorageCore<value::LogicVector<64>>;
 
+template class Cell<ValueStorageCore<value::BitVector<8>>>;
+template class Cell<ValueStorageCore<value::BitVector<16>>>;
+template class Cell<ValueStorageCore<value::BitVector<32>>>;
+template class Cell<ValueStorageCore<value::BitVector<64>>>;
+template class Cell<ValueStorageCore<value::LogicVector<8>>>;
+template class Cell<ValueStorageCore<value::LogicVector<16>>>;
+template class Cell<ValueStorageCore<value::LogicVector<32>>>;
+template class Cell<ValueStorageCore<value::LogicVector<64>>>;
+
 template class Var<value::BitVector<8>>;
 template class Var<value::BitVector<16>>;
 template class Var<value::BitVector<32>>;
@@ -171,14 +186,14 @@ template class Var<value::LogicVector<16>>;
 template class Var<value::LogicVector<32>>;
 template class Var<value::LogicVector<64>>;
 
-template class CellRareState<value::BitVector<8>>;
-template class CellRareState<value::BitVector<16>>;
-template class CellRareState<value::BitVector<32>>;
-template class CellRareState<value::BitVector<64>>;
-template class CellRareState<value::LogicVector<8>>;
-template class CellRareState<value::LogicVector<16>>;
-template class CellRareState<value::LogicVector<32>>;
-template class CellRareState<value::LogicVector<64>>;
+template class CellRareState<ValueStorageCore<value::BitVector<8>>>;
+template class CellRareState<ValueStorageCore<value::BitVector<16>>>;
+template class CellRareState<ValueStorageCore<value::BitVector<32>>>;
+template class CellRareState<ValueStorageCore<value::BitVector<64>>>;
+template class CellRareState<ValueStorageCore<value::LogicVector<8>>>;
+template class CellRareState<ValueStorageCore<value::LogicVector<16>>>;
+template class CellRareState<ValueStorageCore<value::LogicVector<32>>>;
+template class CellRareState<ValueStorageCore<value::LogicVector<64>>>;
 
 template class Ref<value::BitVector<8>>;
 template class Ref<value::BitVector<16>>;

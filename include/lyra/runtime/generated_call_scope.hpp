@@ -1,9 +1,12 @@
 #pragma once
 
+#include <cstddef>
 #include <exception>
 #include <memory>
 #include <utility>
 #include <vector>
+
+#include "lyra/runtime/words_holding.hpp"
 
 namespace lyra::runtime {
 
@@ -18,6 +21,15 @@ class ActivationValueStore {
   template <typename T, typename... Args>
   auto New(Args&&... args) -> T* {
     auto owner = std::make_shared<T>(std::forward<Args>(args)...);
+    T* value = owner.get();
+    objects_.push_back(std::move(owner));
+    return value;
+  }
+
+  // The same of a `T` laying a value `bytes` bytes long out after itself.
+  template <typename T, typename... Args>
+  auto NewWithRoomAfter(std::size_t bytes, Args&&... args) -> T* {
+    auto owner = MakeWithRoomAfter<T>(bytes, std::forward<Args>(args)...);
     T* value = owner.get();
     objects_.push_back(std::move(owner));
     return value;

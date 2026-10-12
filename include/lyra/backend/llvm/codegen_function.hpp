@@ -355,8 +355,8 @@ class CodeGenFunction {
   auto LowerTerminatorInto(const lir::Terminator& terminator)
       -> diag::Result<void>;
 
-  // Where the value `storage` holds lies in it, or nothing where what `held`
-  // states is storage that hands its contents out through its own access.
+  // Where the value `storage` holds lies, or nothing where what `held` states
+  // is storage that hands its contents out through its own access.
   auto HeldAt(llvm::Value* storage, support::DeclaredMemberStorage held)
       -> std::optional<llvm::Value*>;
   // Appends to `args` the arguments `operands` cross as, and to `arranged`

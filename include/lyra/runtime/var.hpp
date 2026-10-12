@@ -21,6 +21,7 @@
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
+#include "lyra/runtime/words_holding.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
@@ -226,13 +227,19 @@ class VariableCell : public Observable {
   std::unique_ptr<RareWriteState> rare_;
 };
 
-// What a sampled or taken-over variable of type `T` keeps: its sampled value
-// (LRM 16.5.1), and the procedural continuous assignments it has been put under
-// (LRM 10.6). Each part is empty until its feature is used.
-template <value::LyraValue T>
+// What a sampled or taken-over variable keeps, over how the variable holds its
+// value: its sampled value (LRM 16.5.1), and the procedural continuous
+// assignments it has been put under (LRM 10.6). Each part is empty until its
+// feature is used.
+template <class Holding>
 class CellRareState final : public RareWriteState {
  public:
-  CellRareState() = default;
+  using Owned = typename Holding::Owned;
+  // The variable's value as its sampled value takes it: a copy of its own.
+  using Copied = ReadThrough<Holding, &Holding::Copy>;
+
+  explicit CellRareState(const Holding& holding) : holding_(&holding) {
+  }
   CellRareState(const CellRareState&) = delete;
   auto operator=(const CellRareState&) -> CellRareState& = delete;
   CellRareState(CellRareState&&) = delete;
@@ -243,36 +250,39 @@ class CellRareState final : public RareWriteState {
     return takeovers_ != nullptr && takeovers_->Highest() != nullptr;
   }
 
-  // Keeps the sampled value of `variable` from now on, its default sampled
-  // value being what it holds now. Keeping one already kept changes nothing.
-  void ArmSampling(Var<T>& variable) {
+  // Keeps the sampled value of `variable`, the cell over this state's holding,
+  // from now on, its default sampled value being what it holds now. Keeping one
+  // already kept changes nothing.
+  void ArmSampling(Observable& variable) {
     if (sampled_ != nullptr) {
       return;
     }
-    sampled_ = std::make_unique<SampledValueOf<Var<T>>>(
-        variable, variable.Get(), Trigger(&variable, Observation{}, {}, 0, 0));
+    sampled_ = std::make_unique<SampledValueOf<Copied>>(
+        Copied(*holding_), holding_->Copy(),
+        Trigger(&variable, Observation{}, {}, 0, 0));
   }
-  [[nodiscard]] auto Sampled() const -> const SampledValueOf<Var<T>>* {
+  [[nodiscard]] auto Sampled() const -> const SampledValueOf<Copied>* {
     return sampled_.get();
   }
 
-  [[nodiscard]] auto Takeovers() -> runtime::Takeovers<T>& {
+  [[nodiscard]] auto Takeovers() -> runtime::Takeovers<Owned>& {
     if (takeovers_ == nullptr) {
-      takeovers_ = std::make_unique<runtime::Takeovers<T>>();
+      takeovers_ = std::make_unique<runtime::Takeovers<Owned>>();
     }
     return *takeovers_;
   }
-  [[nodiscard]] auto ExistingTakeovers() const -> runtime::Takeovers<T>* {
+  [[nodiscard]] auto ExistingTakeovers() const -> runtime::Takeovers<Owned>* {
     return takeovers_.get();
   }
 
  private:
-  std::unique_ptr<SampledValueOf<Var<T>>> sampled_;
-  std::unique_ptr<runtime::Takeovers<T>> takeovers_;
+  const Holding* holding_;
+  std::unique_ptr<SampledValueOf<Copied>> sampled_;
+  std::unique_ptr<runtime::Takeovers<Owned>> takeovers_;
 };
 
-template <value::LyraValue T>
-CellRareState<T>::~CellRareState() = default;
+template <class Holding>
+CellRareState<Holding>::~CellRareState() = default;
 
 // Replaces the whole of `storage` by `overwrite`, a write already known to
 // change it, and answers what its waits are told. Of a bit-addressed value the
@@ -292,32 +302,22 @@ auto ReplaceWhole(const T& storage, Overwrite overwrite) -> Change {
   }
 }
 
-template <value::LyraValue T>
-class Var : public VariableCell, public ValueStorageCore<T> {
+// A variable (LRM 6.8) as the library keeps one: what every variable is,
+// followed by how this one holds its value. The holding is the cell's last
+// part, so a value whose size the library is told lies at the cell's end.
+// Every write a variable takes follows one protocol whatever it holds, which
+// is written here once; what depends on the value is asked of the holding.
+template <class Holding>
+class Cell : public VariableCell {
  public:
-  Var();
-  Var(const Var&) = delete;
-  auto operator=(const Var&) -> Var& = delete;
-  Var(Var&&) = delete;
-  auto operator=(Var&&) -> Var& = delete;
-  ~Var();
+  // A value of the cell's type that the cell keeps for itself: what a write
+  // turned away lands in, what a takeover level holds, what sampling retains.
+  using Owned = typename Holding::Owned;
 
-  // The write a declaration makes, which may run more than once: a declaration
-  // reached again begins a fresh variable in the one storage. A value whose
-  // type states its representation is overwritten every time. A value
-  // represented at run time takes its representation from the first such
-  // write and is overwritten at it by each later one, so what is fixed is the
-  // representation, not the number of times a declaration runs: a value that
-  // does not match the installed one is the lowering defect and is what
-  // refuses, and so is a store into such a cell before any declaration ran,
-  // which the store path refuses.
-  void Initialize(T prototype) {
-    if (!this->IsInstalled()) {
-      this->Install(std::move(prototype));
-      return;
-    }
-    this->Overwrite(prototype);
-  }
+  Cell(const Cell&) = delete;
+  auto operator=(const Cell&) -> Cell& = delete;
+  Cell(Cell&&) = delete;
+  auto operator=(Cell&&) -> Cell& = delete;
 
   // Commits a whole-variable write and, on a real change (LRM 4.3 update
   // event), wakes whoever waits through the engine. The engine is the ambient
@@ -328,22 +328,38 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // here is discarded outright rather than held anywhere: after the takeover
   // ends the cell keeps what the takeover last gave it, and never the write
   // that was overridden.
-  void Set(const T& new_val);
+  void Set(const Owned& new_val);
+
+  // The same write of what another cell of this holding holds.
+  void SetFrom(const Cell& other) {
+    if (TakenOver()) {
+      if (Owned* beneath = DisplacedStorage()) {
+        *beneath = other.holding_.Copy();
+      }
+      return;
+    }
+    StoreBy(
+        [&] { return holding_.Holds(other.holding_); },
+        [&] { holding_.Take(other.holding_); });
+  }
 
   // The same write of a value handed as its bytes, laid out as what the cell
   // holds is, which the cell compares with and takes into the storage it has.
   void SetBytes(const void* bytes)
-    requires value::TakesBytesInPlace<T>
+    requires requires(Holding& held, Owned& owned) {
+      held.TakeBytes(bytes);
+      owned.TakeBytes(bytes);
+    }
   {
     if (TakenOver()) {
-      if (T* beneath = DisplacedStorage()) {
+      if (Owned* beneath = DisplacedStorage()) {
         beneath->TakeBytes(bytes);
       }
       return;
     }
     StoreBy(
-        [&] { return this->Get().HoldsBytes(bytes); },
-        [&] { this->Storage().TakeBytes(bytes); });
+        [&] { return holding_.HoldsBytes(bytes); },
+        [&] { holding_.TakeBytes(bytes); });
   }
 
   // Starts a procedural continuous assignment at `level`, superseding whatever
@@ -358,13 +374,17 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // is how an evaluation superseded by a later takeover, or ended by a
   // `deassign` or `release`, learns to stop.
   auto DriveTakeover(
-      std::int64_t level, std::int64_t generation, const T& new_val) -> bool;
+      std::int64_t level, std::int64_t generation, const Owned& new_val)
+      -> bool;
 
   // The same of a value handed as its bytes, laid out as what the cell holds
   // is, which the level takes into the storage it has once it holds a value.
   auto DriveTakeoverBytes(
       std::int64_t level, std::int64_t generation, const void* bytes) -> bool
-    requires value::TakesBytesInPlace<T>;
+    requires requires(const Holding& held, Owned& owned) {
+      { held.CopyOf(bytes) } -> std::same_as<Owned>;
+      owned.TakeBytes(bytes);
+    };
 
   // Ends the procedural continuous assignment at `level`, handing the cell to
   // the highest level still in effect. Where none is left a cell something
@@ -377,9 +397,9 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // it is kept: what the cell's continuous driver last produced, held beneath
   // the assignment. None where nothing drives the cell continuously, or
   // nothing covers it.
-  [[nodiscard]] auto DisplacedStorage() const -> T* {
-    const CellRareState<T>* rare = ExistingRareState();
-    Takeovers<T>* takeovers =
+  [[nodiscard]] auto DisplacedStorage() const -> Owned* {
+    const CellRareState<Holding>* rare = ExistingRareState();
+    Takeovers<Owned>* takeovers =
         rare == nullptr ? nullptr : rare->ExistingTakeovers();
     return takeovers == nullptr ? nullptr : takeovers->Beneath();
   }
@@ -397,8 +417,8 @@ class Var : public VariableCell, public ValueStorageCore<T> {
 
   // What the cell held in the Preponed region of the current time slot -- its
   // value before anything in that slot ran (LRM 4.4.2.1, 16.5.1).
-  [[nodiscard]] auto SampledGet() const -> const T& {
-    const CellRareState<T>* rare = ExistingRareState();
+  [[nodiscard]] auto SampledGet() const -> const Owned& {
+    const CellRareState<Holding>* rare = ExistingRareState();
     return SampledOf(rare == nullptr ? nullptr : rare->Sampled());
   }
 
@@ -410,26 +430,31 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     current_runtime().WakeParkedOn(*this, reached, change);
   }
 
-  // Opens a write into the cell for the full-expression that writes. The cell's
-  // own storage is designated within it, the steps into parts are taken from
-  // there, and the write lands where they are dereferenced, so a part is
-  // written in the cell as it lies and the cell is told once whether it
-  // changed. The write is non-copyable and non-movable, so keeping it past the
-  // statement is rejected at compile time.
-  auto Mutate() -> ScopedMutation<Ref<T>>;
+ protected:
+  Cell()
+    requires std::default_initializable<Holding>;
+  // A holding told what it holds where it is built.
+  template <class Told>
+  explicit Cell(Told told) : holding_(told) {
+  }
+  ~Cell();
+
+  [[nodiscard]] auto Held() -> Holding& {
+    return holding_;
+  }
+  [[nodiscard]] auto Held() const -> const Holding& {
+    return holding_;
+  }
 
  private:
   // The one path a whole value reaches the cell's storage by, whoever sent it.
-  // What it adds over a partial write is the representation match, which only
-  // a whole value can be checked for -- a partial write lands a part and never
-  // restates the whole. The value arriving is compared with the one it would
-  // replace before anything is written, so telling whoever waits keeps no copy
-  // of the old value, except the old words a packed value's waits are passed
-  // over by.
-  void Store(const T& new_val) {
+  // The value arriving is compared with the one it would replace before
+  // anything is written, so telling whoever waits keeps no copy of the old
+  // value, except the old words a packed value's waits are passed over by.
+  void Store(const Owned& new_val) {
     StoreBy(
-        [&] { return this->Get().IsBitIdentical(new_val); },
-        [&] { this->Overwrite(new_val); });
+        [&] { return holding_.Holds(new_val); },
+        [&] { holding_.Take(new_val); });
   }
 
   // That path over however the arriving value is held: `already_held` answers
@@ -437,7 +462,7 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // holds.
   template <class AlreadyHeld, class Overwrite>
   void StoreBy(AlreadyHeld already_held, Overwrite overwrite) {
-    if (!this->IsInstalled()) {
+    if (!holding_.IsInstalled()) {
       throw InternalError("Var: store into a cell that was never initialized");
     }
     if (!this->HasMembers()) {
@@ -447,13 +472,13 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     if (already_held()) {
       return;
     }
-    PublishTransition(PartPath{}, ReplaceWhole(this->Get(), overwrite));
+    PublishTransition(PartPath{}, ReplaceWhole(holding_.Get(), overwrite));
   }
 
   // Whether a procedural continuous assignment shows through the cell (LRM
   // 10.6).
   [[nodiscard]] auto TakenOver() const -> bool {
-    const CellRareState<T>* rare = ExistingRareState();
+    const CellRareState<Holding>* rare = ExistingRareState();
     return rare != nullptr && rare->TakenOver();
   }
 
@@ -465,17 +490,118 @@ class Var : public VariableCell, public ValueStorageCore<T> {
 
   // What only a sampled or taken-over cell keeps, made the first time either
   // is asked for. This cell is the only thing that makes it, so it is always
-  // of the cell's own type.
-  [[nodiscard]] auto RareState() -> CellRareState<T>& {
+  // over the cell's own holding.
+  [[nodiscard]] auto RareState() -> CellRareState<Holding>& {
     if (Rare() == nullptr) {
-      InstallRare(std::make_unique<CellRareState<T>>());
+      InstallRare(std::make_unique<CellRareState<Holding>>(holding_));
     }
-    return static_cast<CellRareState<T>&>(*Rare());
+    return static_cast<CellRareState<Holding>&>(*Rare());
   }
-  [[nodiscard]] auto ExistingRareState() const -> CellRareState<T>* {
-    return static_cast<CellRareState<T>*>(Rare());
+  [[nodiscard]] auto ExistingRareState() const -> CellRareState<Holding>* {
+    return static_cast<CellRareState<Holding>*>(Rare());
+  }
+
+  // Comes last, so that a value whose size the library is told follows it.
+  Holding holding_;
+};
+
+// A variable of a type known where it is compiled: the cell holding the value
+// itself. What the language's own operations ask of it -- the value, the
+// storage a write descends into, the write a declaration makes -- is typed by
+// the value.
+template <value::LyraValue T>
+class Var final : public Cell<ValueStorageCore<T>> {
+ public:
+  Var();
+  Var(const Var&) = delete;
+  auto operator=(const Var&) -> Var& = delete;
+  Var(Var&&) = delete;
+  auto operator=(Var&&) -> Var& = delete;
+  ~Var();
+
+  [[nodiscard]] auto Get() const noexcept -> const T& {
+    return this->Held().Get();
+  }
+  [[nodiscard]] auto Storage() noexcept -> T& {
+    return this->Held().Storage();
+  }
+  [[nodiscard]] auto IsInstalled() const noexcept -> bool {
+    return this->Held().IsInstalled();
+  }
+
+  // The write a declaration makes, which may run more than once: a declaration
+  // reached again begins a fresh variable in the one storage. A value whose
+  // type states its representation is overwritten every time. A value
+  // represented at run time takes its representation from the first such
+  // write and is overwritten at it by each later one, so what is fixed is the
+  // representation, not the number of times a declaration runs: a value that
+  // does not match the installed one is the lowering defect and is what
+  // refuses, and so is a store into such a cell before any declaration ran,
+  // which the store path refuses.
+  void Initialize(T prototype) {
+    if (!this->Held().IsInstalled()) {
+      this->Held().Install(std::move(prototype));
+      return;
+    }
+    this->Held().Overwrite(prototype);
+  }
+
+  // Opens a write into the cell for the full-expression that writes. The cell's
+  // own storage is designated within it, the steps into parts are taken from
+  // there, and the write lands where they are dereferenced, so a part is
+  // written in the cell as it lies and the cell is told once whether it
+  // changed. The write is non-copyable and non-movable, so keeping it past the
+  // statement is rejected at compile time.
+  auto Mutate() -> ScopedMutation<Ref<T>>;
+};
+
+// A variable of an integral type wider than a word, whose width the library is
+// told where the variable is installed: the cell, then the value's words.
+// Generated code knows the type and reads and writes the value as its words,
+// so that is all this answers with.
+template <value::StateDomain kDomain>
+class WordsCell final : public Cell<WordsHolding<kDomain>> {
+ public:
+  explicit WordsCell(std::uint64_t width);
+  WordsCell(const WordsCell&) = delete;
+  auto operator=(const WordsCell&) -> WordsCell& = delete;
+  WordsCell(WordsCell&&) = delete;
+  auto operator=(WordsCell&&) -> WordsCell& = delete;
+  ~WordsCell();
+
+  // The write a declaration makes, which may run more than once.
+  void Initialize(const void* bytes) {
+    this->Held().TakeBytes(bytes);
+  }
+
+  [[nodiscard]] auto Width() const -> std::uint64_t {
+    return this->Held().Width();
+  }
+  [[nodiscard]] auto Bytes() const -> void* {
+    return this->Held().Bytes();
+  }
+  [[nodiscard]] auto BytesThrough() const -> void* const* {
+    return this->Held().BytesThrough();
+  }
+
+  // What the cell held in the Preponed region of the current time slot (LRM
+  // 4.4.2.1, 16.5.1), where it lies.
+  [[nodiscard]] auto SampledBytes() const -> const void* {
+    return this->SampledGet().Bytes();
+  }
+  [[nodiscard]] auto ByteSize() const -> std::size_t {
+    return this->Held().ByteSize();
   }
 };
+
+// A variable of `width` such words the library makes for itself -- a force's
+// storage, a cell a branch outlives its block for -- in storage of the size a
+// cell of that width takes.
+template <value::StateDomain kDomain>
+auto MakeWordsCell(std::uint64_t width) -> std::shared_ptr<WordsCell<kDomain>> {
+  return MakeWithRoomAfter<WordsCell<kDomain>>(
+      value::IntegralBytesFor(width, kDomain), width);
+}
 
 // What a write keeps of the part it lands on, to tell afterwards what it did
 // to it: a copy, of which nothing but whether it moved can be shown.
@@ -653,11 +779,37 @@ struct ErasedReference {
       -> ErasedReference;
 };
 
-// The variable a reference to the whole of it names, whose value is then of
-// the reference's own type `T`.
+// The variable a reference to the whole of it names, as the cell of class `C`
+// it is, which the reference's own type decides.
+template <class C>
+auto WholeVariable(const ErasedReference& reference) -> C& {
+  if (!reference.whole ||
+      !std::holds_alternative<VariableCell*>(reference.holder)) {
+    throw InternalError(
+        "WholeVariable: a reference names something other than the whole of a "
+        "variable");
+  }
+  return static_cast<C&>(**std::get_if<VariableCell*>(&reference.holder));
+}
+
+// A reference to the whole of a variable, which names its value where every
+// reference to a value of its type names one: the bytes a tuple, an integral
+// value wider than a word and a fixed-size unpacked array lay out, since no
+// object of the runtime's stands for such a value where it lies in another,
+// and the object for every other.
 template <value::LyraValue T>
-auto WholeVariable(const ErasedReference& reference) -> Var<T>& {
-  return static_cast<Var<T>&>(**std::get_if<VariableCell*>(&reference.holder));
+auto WholeReference(Var<T>& variable) -> ErasedReference {
+  return {
+      .holder = static_cast<VariableCell*>(&variable),
+      .storage = HandleTo(variable.Storage()),
+      .whole = true};
+}
+template <value::StateDomain kDomain>
+auto WholeReference(WordsCell<kDomain>& variable) -> ErasedReference {
+  return {
+      .holder = static_cast<VariableCell*>(&variable),
+      .storage = variable.Bytes(),
+      .whole = true};
 }
 
 // A reference, typed by the value it names. A reference to the whole of a
@@ -824,7 +976,7 @@ class Ref {
   }
 
   [[nodiscard]] auto Cell() const -> Var<T>& {
-    return WholeVariable<T>(erased_);
+    return WholeVariable<Var<T>>(erased_);
   }
 
   ErasedReference erased_;
@@ -883,19 +1035,35 @@ void DrivesContinuously(const Ref<T>& reference) {
 // destructor defaulted on its first declaration is not user-provided, so a unit
 // constructing a cell would define it itself with everything it reaches, and a
 // family stated as already compiled would not withhold it.
+template <class Holding>
+Cell<Holding>::Cell()
+  requires std::default_initializable<Holding>
+= default;
+
+template <class Holding>
+Cell<Holding>::~Cell() = default;
+
 template <value::LyraValue T>
 Var<T>::Var() = default;
 
 template <value::LyraValue T>
 Var<T>::~Var() = default;
 
-template <value::LyraValue T>
-void Var<T>::Set(const T& new_val) {
+template <value::StateDomain kDomain>
+WordsCell<kDomain>::WordsCell(std::uint64_t width)
+    : Cell<WordsHolding<kDomain>>(width) {
+}
+
+template <value::StateDomain kDomain>
+WordsCell<kDomain>::~WordsCell() = default;
+
+template <class Holding>
+void Cell<Holding>::Set(const Owned& new_val) {
   // A procedural write is discarded outright while any takeover shows through
   // this cell (LRM 10.6). A cell nobody has ever taken over holds no record at
   // all, so the ordinary write pays one null test.
   if (TakenOver()) {
-    if (T* beneath = DisplacedStorage()) {
+    if (Owned* beneath = DisplacedStorage()) {
       *beneath = new_val;
     }
     return;
@@ -903,38 +1071,41 @@ void Var<T>::Set(const T& new_val) {
   Store(new_val);
 }
 
-template <value::LyraValue T>
-auto Var<T>::BeginTakeover(std::int64_t level) -> std::int64_t {
+template <class Holding>
+auto Cell<Holding>::BeginTakeover(std::int64_t level) -> std::int64_t {
   return std::int64_t{RareState().Takeovers().Begin(TakeoverLevelOf(level))};
 }
 
-template <value::LyraValue T>
-auto Var<T>::DriveTakeover(
-    std::int64_t level, std::int64_t generation, const T& new_val) -> bool {
+template <class Holding>
+auto Cell<Holding>::DriveTakeover(
+    std::int64_t level, std::int64_t generation, const Owned& new_val) -> bool {
   return RecordTakeover(
-      level, generation, [&](std::optional<T>& held) { held = new_val; });
+      level, generation, [&](std::optional<Owned>& held) { held = new_val; });
 }
 
-template <value::LyraValue T>
-auto Var<T>::DriveTakeoverBytes(
+template <class Holding>
+auto Cell<Holding>::DriveTakeoverBytes(
     std::int64_t level, std::int64_t generation, const void* bytes) -> bool
-  requires value::TakesBytesInPlace<T>
+  requires requires(const Holding& held, Owned& owned) {
+    { held.CopyOf(bytes) } -> std::same_as<Owned>;
+    owned.TakeBytes(bytes);
+  }
 {
-  return RecordTakeover(level, generation, [&](std::optional<T>& held) {
+  return RecordTakeover(level, generation, [&](std::optional<Owned>& held) {
     if (held.has_value()) {
       held->TakeBytes(bytes);
     } else {
-      held.emplace(this->Get().Holding(bytes));
+      held.emplace(holding_.CopyOf(bytes));
     }
   });
 }
 
-template <value::LyraValue T>
+template <class Holding>
 template <class Record>
-auto Var<T>::RecordTakeover(
+auto Cell<Holding>::RecordTakeover(
     std::int64_t level, std::int64_t generation, Record record) -> bool {
-  const CellRareState<T>* rare = ExistingRareState();
-  Takeovers<T>* takeovers =
+  const CellRareState<Holding>* rare = ExistingRareState();
+  Takeovers<Owned>* takeovers =
       rare == nullptr ? nullptr : rare->ExistingTakeovers();
   if (takeovers == nullptr) {
     return false;
@@ -948,7 +1119,7 @@ auto Var<T>::RecordTakeover(
   // what that driver last produced, which is what the cell shows again once
   // nothing covers it (LRM 10.6.2).
   if (!was_covered && current_runtime().DrivenContinuously(*this)) {
-    takeovers->KeepBeneath(this->Get());
+    takeovers->KeepBeneath(holding_.Copy());
   }
   // A level that just recorded always leaves something showing, and it is this
   // value only where no higher level covers it. Storing whatever shows needs
@@ -958,12 +1129,12 @@ auto Var<T>::RecordTakeover(
   return true;
 }
 
-template <value::LyraValue T>
-void Var<T>::EndTakeover(std::int64_t level) {
+template <class Holding>
+void Cell<Holding>::EndTakeover(std::int64_t level) {
   // Ending a level nothing occupies is what a `release` on an untaken variable
   // does, and the language gives it no effect (LRM 10.6.2).
-  const CellRareState<T>* rare = ExistingRareState();
-  Takeovers<T>* takeovers =
+  const CellRareState<Holding>* rare = ExistingRareState();
+  Takeovers<Owned>* takeovers =
       rare == nullptr ? nullptr : rare->ExistingTakeovers();
   if (takeovers == nullptr) {
     return;
@@ -972,11 +1143,11 @@ void Var<T>::EndTakeover(std::int64_t level) {
   // Where a level is still in effect underneath, the cell takes what that
   // level already holds. Where none is, the cell keeps what it has, which is
   // the value the ended takeover last gave it.
-  if (const T* showing = takeovers->Highest(); showing != nullptr) {
+  if (const Owned* showing = takeovers->Highest(); showing != nullptr) {
     Store(*showing);
     return;
   }
-  if (const std::optional<T> beneath = takeovers->TakeBeneath()) {
+  if (const std::optional<Owned> beneath = takeovers->TakeBeneath()) {
     Store(*beneath);
   }
 }

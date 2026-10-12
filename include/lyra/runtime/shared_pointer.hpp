@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 #include "lyra/runtime/var.hpp"
@@ -29,6 +30,14 @@ class SharedPointer {
   template <value::LyraValue T>
   [[nodiscard]] static auto MakeCell() -> SharedPointer {
     return SharedPointer(std::make_shared<Var<T>>());
+  }
+
+  // The same of a variable of an integral value wider than a word, whose cell
+  // is as large as the width it is told.
+  template <value::StateDomain kDomain>
+  [[nodiscard]] static auto MakeWordsCell(std::uint64_t width)
+      -> SharedPointer {
+    return SharedPointer(runtime::MakeWordsCell<kDomain>(width));
   }
 
   // Where the held cell lies.

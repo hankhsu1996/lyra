@@ -8,16 +8,22 @@ template class ValueStorageCore<value::ShortReal>;
 template class ValueStorageCore<value::Chandle>;
 template class ValueStorageCore<value::ObjectRef>;
 
+template class Cell<ValueStorageCore<value::String>>;
+template class Cell<ValueStorageCore<value::Real>>;
+template class Cell<ValueStorageCore<value::ShortReal>>;
+template class Cell<ValueStorageCore<value::Chandle>>;
+template class Cell<ValueStorageCore<value::ObjectRef>>;
+
 template class Var<value::String>;
 template class Var<value::Real>;
 template class Var<value::ShortReal>;
 template class Var<value::Chandle>;
 template class Var<value::ObjectRef>;
 
-template class CellRareState<value::String>;
-template class CellRareState<value::Real>;
-template class CellRareState<value::ShortReal>;
-template class CellRareState<value::ObjectRef>;
+template class CellRareState<ValueStorageCore<value::String>>;
+template class CellRareState<ValueStorageCore<value::Real>>;
+template class CellRareState<ValueStorageCore<value::ShortReal>>;
+template class CellRareState<ValueStorageCore<value::ObjectRef>>;
 
 template class Ref<value::String>;
 template class Ref<value::Real>;

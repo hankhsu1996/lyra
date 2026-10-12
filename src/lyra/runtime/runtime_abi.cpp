@@ -267,11 +267,20 @@ auto MakeSharedCell(void* out) -> void* {
       static_cast<SharedPointer*>(out), SharedPointer::MakeCell<T>());
 }
 
+template <value::HeldAsWords T>
+auto WordsCellAt(void* cell) -> WordsCell<T::kDomain>& {
+  return *static_cast<WordsCell<T::kDomain>*>(cell);
+}
+
 // A reference to the whole of a subscribable variable, which a write through it
 // is a write of.
 template <value::LyraValue T>
 auto ReferToCell(void* cell, void* out) -> void* {
-  return BuildReference(out, Ref<T>{*static_cast<Var<T>*>(cell)}.Erased());
+  if constexpr (value::HeldAsWords<T>) {
+    return BuildReference(out, WholeReference(WordsCellAt<T>(cell)));
+  } else {
+    return BuildReference(out, WholeReference(*static_cast<Var<T>*>(cell)));
+  }
 }
 
 // Reading and writing storage a caller lent, which answers through the variable
@@ -348,28 +357,13 @@ void RefEndTakeover(void* reference, std::int64_t level) {
   LentAt<T>(reference).EndTakeover(level);
 }
 
-// A reference to the whole of a variable whose value a reference names as the
-// bytes its type lays out -- a tuple, an integral value wider than a word, a
-// fixed-size unpacked array. No object of the runtime's stands for such a value
-// where it lies in another, so a reference names every one of them by its
-// bytes, the whole of a variable included.
-template <value::LyraValue T>
-auto ReferToCellBytes(void* cell, void* out) -> void* {
-  auto& variable = *static_cast<Var<T>*>(cell);
-  return BuildReference(
-      out, ErasedReference{
-               .holder = static_cast<VariableCell*>(&variable),
-               .storage = HandleTo(variable.Storage()),
-               .whole = true});
-}
-
 // Only a reference to the whole of a variable has a variable of its own type
 // to arm, which is what keeps a sampled value (LRM 16.5.1).
 template <value::LyraValue T>
 void BytesRefArmSampling(void* reference) {
   const ErasedReference& lent = ErasedAt(reference);
   if (lent.whole) {
-    WholeVariable<T>(lent).ArmSampling();
+    WholeVariable<Var<T>>(lent).ArmSampling();
   }
 }
 
@@ -382,7 +376,8 @@ void TupleRefSet(void* reference, const void* value) {
   if (!lent.Admits()) {
     if (lent.whole) {
       if (value::RuntimeTuple* beneath =
-              WholeVariable<value::RuntimeTuple>(lent).DisplacedStorage()) {
+              WholeVariable<Var<value::RuntimeTuple>>(lent)
+                  .DisplacedStorage()) {
         value::RuntimeTuple::AssignAt(beneath->Bytes(), value);
       }
     }
@@ -413,7 +408,8 @@ auto TupleRefSampledLoad(void* reference, void* out) -> void* {
                   "is not yet supported");
             }
             return Emplace(
-                out, WholeVariable<value::RuntimeTuple>(lent).SampledGet());
+                out,
+                WholeVariable<Var<value::RuntimeTuple>>(lent).SampledGet());
           },
           [](GcObject*) -> void* {
             throw SimulationError(
@@ -611,25 +607,28 @@ auto PositionNamedAt(const void* position) -> std::optional<std::int64_t> {
 // storage that is named the same way (LRM 10.6.2).
 template <value::HeldAsWords T>
 auto WideRefBeginTakeover(void* reference, std::int64_t level) -> std::int64_t {
-  return BeginTakeoverThrough<T>(
-      ErasedAt(reference), level, [](Var<T>& forced) {
-        return ErasedReference{
-            .holder = static_cast<VariableCell*>(&forced),
-            .storage = HandleTo(forced.Storage()),
-            .whole = true};
-      });
+  using Words = WordsCell<T::kDomain>;
+  return BeginTakeoverThrough<Words>(
+      ErasedAt(reference), level,
+      [](const Words& showing) {
+        std::shared_ptr<Words> forced =
+            MakeWordsCell<T::kDomain>(showing.Width());
+        forced->Initialize(showing.Bytes());
+        return forced;
+      },
+      [](Words& forced) { return WholeReference(forced); });
 }
 
 template <value::HeldAsWords T>
 auto WideRefDriveTakeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return DriveTakeoverThrough<T>(
+  return DriveTakeoverThrough<WordsCell<T::kDomain>>(
       ErasedAt(reference), level, generation,
-      [&](Var<T>& variable) {
+      [&](WordsCell<T::kDomain>& variable) {
         return variable.DriveTakeoverBytes(level, generation, value);
       },
-      [&](Var<T>& forced) { forced.SetBytes(value); });
+      [&](WordsCell<T::kDomain>& forced) { forced.SetBytes(value); });
 }
 
 // The value of `T` a reference names, where it lies, `width` bits wide.
@@ -644,7 +643,8 @@ void WideRefSet(void* reference, std::int64_t width, const void* value) {
   const ErasedReference& lent = ErasedAt(reference);
   if (!lent.Admits()) {
     if (lent.whole) {
-      if (T* beneath = WholeVariable<T>(lent).DisplacedStorage()) {
+      if (T* beneath =
+              WholeVariable<WordsCell<T::kDomain>>(lent).DisplacedStorage()) {
         beneath->TakeBytes(value);
       }
     }
@@ -679,7 +679,9 @@ auto WideRefSampledLoad(void* reference, std::int64_t width, void* out)
                   "a sampled value of part of a variable lent by reference "
                   "is not yet supported");
             }
-            return Emplace(out, WholeVariable<T>(lent).SampledGet());
+            const auto& cell = WholeVariable<WordsCell<T::kDomain>>(lent);
+            std::memcpy(out, cell.SampledBytes(), cell.ByteSize());
+            return out;
           },
           [](GcObject*) -> void* {
             throw SimulationError(
@@ -784,6 +786,72 @@ auto OpenWideRefWrite(void* reference, std::int64_t width, void* out) -> void* {
       WideReference<T>{ErasedAt(reference), static_cast<std::uint64_t>(width)});
 }
 
+// The sink a write opened on what holds such a value -- a variable, or a
+// driver of a net -- writes into: its words, and what it keeps beneath a
+// procedural continuous assignment, which is where a write it turns away lands
+// (LRM 10.6.2).
+template <value::HeldAsWords T, class Holder>
+class WordsWrite {
+ public:
+  using ValueType = LentWide<T>;
+
+  explicit WordsWrite(Holder& holder)
+      : holder_(&holder), place_(holder.Bytes(), holder.Width()) {
+    if (T* beneath = holder.DisplacedStorage()) {
+      beneath_.emplace(beneath->Bytes(), holder.Width());
+    }
+  }
+  // A copy is the same write's sink, so it names the same places.
+  WordsWrite(const WordsWrite& other) : WordsWrite(*other.holder_) {
+  }
+  WordsWrite(WordsWrite&& other) noexcept : WordsWrite(*other.holder_) {
+  }
+  auto operator=(const WordsWrite&) -> WordsWrite& = delete;
+  auto operator=(WordsWrite&&) -> WordsWrite& = delete;
+  ~WordsWrite() = default;
+
+  [[nodiscard]] auto AdmitsWrite() const -> bool {
+    return holder_->AdmitsWrite();
+  }
+  [[nodiscard]] auto DisplacedStorage() -> LentWide<T>* {
+    return beneath_.has_value() ? &*beneath_ : nullptr;
+  }
+  [[nodiscard]] auto MutationStorage() -> LentWide<T>& {
+    return place_;
+  }
+  [[nodiscard]] auto Watched() const -> bool {
+    return holder_->Watched();
+  }
+  void PublishTransition(const PartPath& reached, const Change& change) const {
+    holder_->PublishTransition(reached, change);
+  }
+
+ private:
+  Holder* holder_;
+  LentWide<T> place_;
+  std::optional<LentWide<T>> beneath_;
+};
+
+static_assert(
+    MutationSink<WordsWrite<
+        value::WideLogicVector, WordsCell<value::StateDomain::kFourState>>>);
+
+template <value::HeldAsWords T>
+auto OpenWordsCellWrite(void* cell, void* out) -> void* {
+  return std::construct_at(
+      static_cast<OpenWrite*>(out),
+      WordsWrite<T, WordsCell<T::kDomain>>{WordsCellAt<T>(cell)});
+}
+
+// A counted hold on a new variable of such a value `width` bits wide.
+template <value::HeldAsWords T>
+auto MakeSharedWordsCell(std::int64_t width, void* out) -> void* {
+  return std::construct_at(
+      static_cast<SharedPointer*>(out),
+      SharedPointer::MakeWordsCell<T::kDomain>(
+          static_cast<std::uint64_t>(width)));
+}
+
 // The same over a fixed-size unpacked array, which a reference names as its
 // elements where they lie for the reason it names a tuple so. Nothing in those
 // elements says what they are, so an access that has to know is told the
@@ -794,7 +862,7 @@ void ArrayRefSet(
   if (!lent.Admits()) {
     if (lent.whole) {
       if (value::RuntimeFixedArray* beneath =
-              WholeVariable<value::RuntimeFixedArray>(lent)
+              WholeVariable<Var<value::RuntimeFixedArray>>(lent)
                   .DisplacedStorage()) {
         type.Assign(beneath->Bytes(), value);
       }
@@ -828,8 +896,8 @@ auto ArrayRefSampledLoad(
                   "is not yet supported");
             }
             return Emplace(
-                out,
-                WholeVariable<value::RuntimeFixedArray>(lent).SampledGet());
+                out, WholeVariable<Var<value::RuntimeFixedArray>>(lent)
+                         .SampledGet());
           },
           [](GcObject*) -> void* {
             throw SimulationError(
@@ -945,11 +1013,22 @@ auto OpenDriverWrite(void* driver, void* out) -> void* {
   return std::construct_at(static_cast<OpenWrite*>(out), DriverOf<T>(driver));
 }
 
+template <value::HeldAsWords T>
+auto OpenWideDriverWrite(void* driver, void* out) -> void* {
+  return std::construct_at(
+      static_cast<OpenWrite*>(out),
+      WordsWrite<T, Driver<T>>{DriverOf<T>(driver)});
+}
+
 // A driver told the object it carries the whole of, and asked at its turn
 // whether its net shows that object.
 template <NetValue T>
 void DriveFromVariable(void* driver, void* cell) {
-  DriverOf<T>(driver).DriveFrom(static_cast<Var<T>*>(cell));
+  if constexpr (value::HeldAsWords<T>) {
+    DriverOf<T>(driver).DriveFrom(&WordsCellAt<T>(cell));
+  } else {
+    DriverOf<T>(driver).DriveFrom(static_cast<Var<T>*>(cell));
+  }
 }
 
 template <NetValue T>
@@ -1939,29 +2018,27 @@ auto WideOf(std::int64_t width, const void* value) -> T {
   return T(static_cast<std::uint64_t>(width), value);
 }
 
-// A procedural local wider than a word, built in `storage` holding the default
-// of a type `width` bits wide (LRM Table 6-7). A local has no declaration to
-// install it, so it is built at its width, and every store into it is the
-// bytes of a value that wide.
+// A procedural local wider than a word, built in `storage` at its width.
 template <value::HeldAsWords T>
 void BuildWideValueCell(void* storage, std::int64_t width) {
-  std::construct_at(static_cast<ActivationValueCell<T>*>(storage))
-      ->Install(
-          T::Filled(
-              static_cast<std::uint64_t>(width),
-              value::FourStateBit::kUnknown));
+  std::construct_at(
+      static_cast<ActivationWordsCell<T::kDomain>*>(storage),
+      static_cast<std::uint64_t>(width));
 }
 
 // The same for one the activation owns, which lives until the activation ends.
 template <value::HeldAsWords T>
 auto AllocateWideValueCell(std::int64_t width) -> void* {
-  auto* cell = GeneratedCallScope::Current()
-                   .ActivationValues()
-                   .New<ActivationValueCell<T>>();
-  cell->Install(
-      T::Filled(
-          static_cast<std::uint64_t>(width), value::FourStateBit::kUnknown));
-  return cell;
+  const auto told = static_cast<std::uint64_t>(width);
+  return GeneratedCallScope::Current()
+      .ActivationValues()
+      .NewWithRoomAfter<ActivationWordsCell<T::kDomain>>(
+          value::IntegralBytesFor(told, T::kDomain), told);
+}
+
+template <value::HeldAsWords T>
+auto WideValueCellAt(void* cell) -> ActivationWordsCell<T::kDomain>& {
+  return *static_cast<ActivationWordsCell<T::kDomain>*>(cell);
 }
 
 // Some positions of one net and of another stated to be one physical net. The
@@ -2217,6 +2294,7 @@ using lyra::runtime::OpenCellWrite;
 using lyra::runtime::OpenDriverWrite;
 using lyra::runtime::OpenRefWrite;
 using lyra::runtime::OpenTupleRefWrite;
+using lyra::runtime::OpenWideDriverWrite;
 using lyra::runtime::OpenWrite;
 using lyra::runtime::OwnedArrayCopy;
 using lyra::runtime::OwnedClosure;
@@ -2243,7 +2321,6 @@ using lyra::runtime::RefEndTakeover;
 using lyra::runtime::ReferArrayElement;
 using lyra::runtime::ReferElement;
 using lyra::runtime::ReferToCell;
-using lyra::runtime::ReferToCellBytes;
 using lyra::runtime::ReferToProperty;
 using lyra::runtime::ReferToStorage;
 using lyra::runtime::RefGet;
@@ -3502,7 +3579,7 @@ auto lyra_rt_managedref_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<ObjectRef>(cell, out);
 }
 auto lyra_rt_tuple_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCellBytes<RuntimeTuple>(cell, out);
+  return ReferToCell<RuntimeTuple>(cell, out);
 }
 auto lyra_rt_union_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<RuntimeUnion>(cell, out);
@@ -3514,7 +3591,7 @@ auto lyra_rt_dynarray_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<RuntimeDynamicArray>(cell, out);
 }
 auto lyra_rt_unpackedarray_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCellBytes<RuntimeFixedArray>(cell, out);
+  return ReferToCell<RuntimeFixedArray>(cell, out);
 }
 auto lyra_rt_queue_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<RuntimeQueue>(cell, out);
@@ -5851,7 +5928,7 @@ auto lyra_rt_unpackedarray_cell_sampled_load(
 }
 
 auto lyra_rt_tuple_net_get(void* net) -> const void* {
-  return HandleTo(NetOf<RuntimeTuple>(net).Get());
+  return NetOf<RuntimeTuple>(net).Shown();
 }
 
 void lyra_rt_tuple_aggregate_net_initialize_tri_state(
@@ -5919,7 +5996,7 @@ void lyra_rt_tuple_driver_set(void* driver, const void* value) {
 }
 
 auto lyra_rt_union_net_get(void* net) -> const void* {
-  return &NetOf<RuntimeUnion>(net).Get();
+  return NetOf<RuntimeUnion>(net).Shown();
 }
 
 void lyra_rt_union_aggregate_net_initialize_tri_state(
@@ -5987,7 +6064,7 @@ void lyra_rt_union_driver_set(void* driver, const void* value) {
 }
 
 auto lyra_rt_unpackedarray_net_get(void* net) -> const void* {
-  return HandleTo(NetOf<RuntimeFixedArray>(net).Get());
+  return NetOf<RuntimeFixedArray>(net).Shown();
 }
 
 void lyra_rt_unpackedarray_aggregate_net_initialize_tri_state(
@@ -9317,40 +9394,44 @@ auto lyra_rt_logic64_driver_open_for_write(void* driver, void* out) -> void* {
   return OpenDriverWrite<Logic64>(driver, out);
 }
 
-void lyra_rt_bit_wide_cell_construct(void* storage) {
-  BuildAt<Var<BitWide>>(storage);
+void lyra_rt_bit_wide_cell_construct(void* storage, std::int64_t width) {
+  std::construct_at(
+      static_cast<lyra::runtime::WordsCell<BitWide::kDomain>*>(storage),
+      static_cast<std::uint64_t>(width));
 }
 void lyra_rt_bit_wide_cell_destroy(void* storage) {
-  std::destroy_at(&CellAt<BitWide>(storage));
+  std::destroy_at(&lyra::runtime::WordsCellAt<BitWide>(storage));
 }
 auto lyra_rt_bit_wide_cell_get(void* cell) -> const void* {
-  return CellAt<BitWide>(cell).Get().Bytes();
+  return lyra::runtime::WordsCellAt<BitWide>(cell).Bytes();
 }
 void lyra_rt_bit_wide_cell_initialize(
-    void* cell, const void* prototype, std::int64_t width) noexcept {
-  CellAt<BitWide>(cell).Initialize(
-      lyra::runtime::WideOf<BitWide>(width, prototype));
+    void* cell, const void* prototype) noexcept {
+  lyra::runtime::WordsCellAt<BitWide>(cell).Initialize(prototype);
 }
 void lyra_rt_bit_wide_cell_set(void* cell, const void* value) {
-  CellAt<BitWide>(cell).SetBytes(value);
+  lyra::runtime::WordsCellAt<BitWide>(cell).SetBytes(value);
 }
 void lyra_rt_bit_wide_cell_arm_sampling(void* cell) {
-  CellAt<BitWide>(cell).ArmSampling();
+  lyra::runtime::WordsCellAt<BitWide>(cell).ArmSampling();
 }
 auto lyra_rt_bit_wide_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, CellAt<BitWide>(cell).SampledGet());
+  const auto& held = lyra::runtime::WordsCellAt<BitWide>(cell);
+  std::memcpy(out, held.SampledBytes(), held.ByteSize());
+  return out;
 }
 auto lyra_rt_bit_wide_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellBeginTakeover<BitWide>(cell, level);
+  return lyra::runtime::WordsCellAt<BitWide>(cell).BeginTakeover(level);
 }
 auto lyra_rt_bit_wide_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<BitWide>(cell).DriveTakeoverBytes(level, generation, value);
+  return lyra::runtime::WordsCellAt<BitWide>(cell).DriveTakeoverBytes(
+      level, generation, value);
 }
 void lyra_rt_bit_wide_cell_end_takeover(void* cell, std::int64_t level) {
-  CellEndTakeover<BitWide>(cell, level);
+  lyra::runtime::WordsCellAt<BitWide>(cell).EndTakeover(level);
 }
 auto lyra_rt_bit_wide_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
@@ -9363,17 +9444,17 @@ auto lyra_rt_bit_wide_ref_drive_takeover(
       reference, level, generation, value);
 }
 void lyra_rt_bit_wide_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::EndTakeoverThrough<BitWide>(
+  lyra::runtime::EndTakeoverThrough<lyra::runtime::WordsCell<BitWide::kDomain>>(
       lyra::runtime::ErasedAt(reference), level);
 }
 auto lyra_rt_bit_wide_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCellBytes<BitWide>(cell, out);
+  return lyra::runtime::ReferToCell<BitWide>(cell, out);
 }
 auto lyra_rt_bit_wide_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<BitWide>(cell, out);
+  return lyra::runtime::OpenWordsCellWrite<BitWide>(cell, out);
 }
-auto lyra_rt_bit_wide_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<BitWide>(out);
+auto lyra_rt_bit_wide_shared_cell_make(std::int64_t width, void* out) -> void* {
+  return lyra::runtime::MakeSharedWordsCell<BitWide>(width, out);
 }
 auto lyra_rt_bit_wide_ref_get(void* reference) -> const void* {
   return ErasedAt(reference).storage;
@@ -9400,13 +9481,13 @@ void lyra_rt_bit_wide_value_cell_construct(void* storage, std::int64_t width) {
   lyra::runtime::BuildWideValueCell<BitWide>(storage, width);
 }
 void lyra_rt_bit_wide_value_cell_destroy(void* storage) {
-  std::destroy_at(&lyra::runtime::ValueCellAt<BitWide>(storage));
+  std::destroy_at(&lyra::runtime::WideValueCellAt<BitWide>(storage));
 }
 void lyra_rt_bit_wide_value_cell_store(void* cell, const void* value) noexcept {
-  lyra::runtime::ValueCellAt<BitWide>(cell).Storage().TakeBytes(value);
+  lyra::runtime::WideValueCellAt<BitWide>(cell).Store(value);
 }
 auto lyra_rt_bit_wide_value_cell_load(void* cell) noexcept -> void* {
-  return lyra::runtime::ValueCellAt<BitWide>(cell).Storage().Bytes();
+  return lyra::runtime::WideValueCellAt<BitWide>(cell).Bytes();
 }
 void lyra_rt_bit_wide_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<BitWide>>(storage);
@@ -9442,40 +9523,44 @@ void lyra_rt_bit_wide_insert_designated_bits(
       bits_are_four_state);
 }
 
-void lyra_rt_logic_wide_cell_construct(void* storage) {
-  BuildAt<Var<LogicWide>>(storage);
+void lyra_rt_logic_wide_cell_construct(void* storage, std::int64_t width) {
+  std::construct_at(
+      static_cast<lyra::runtime::WordsCell<LogicWide::kDomain>*>(storage),
+      static_cast<std::uint64_t>(width));
 }
 void lyra_rt_logic_wide_cell_destroy(void* storage) {
-  std::destroy_at(&CellAt<LogicWide>(storage));
+  std::destroy_at(&lyra::runtime::WordsCellAt<LogicWide>(storage));
 }
 auto lyra_rt_logic_wide_cell_get(void* cell) -> const void* {
-  return CellAt<LogicWide>(cell).Get().Bytes();
+  return lyra::runtime::WordsCellAt<LogicWide>(cell).Bytes();
 }
 void lyra_rt_logic_wide_cell_initialize(
-    void* cell, const void* prototype, std::int64_t width) noexcept {
-  CellAt<LogicWide>(cell).Initialize(
-      lyra::runtime::WideOf<LogicWide>(width, prototype));
+    void* cell, const void* prototype) noexcept {
+  lyra::runtime::WordsCellAt<LogicWide>(cell).Initialize(prototype);
 }
 void lyra_rt_logic_wide_cell_set(void* cell, const void* value) {
-  CellAt<LogicWide>(cell).SetBytes(value);
+  lyra::runtime::WordsCellAt<LogicWide>(cell).SetBytes(value);
 }
 void lyra_rt_logic_wide_cell_arm_sampling(void* cell) {
-  CellAt<LogicWide>(cell).ArmSampling();
+  lyra::runtime::WordsCellAt<LogicWide>(cell).ArmSampling();
 }
 auto lyra_rt_logic_wide_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, CellAt<LogicWide>(cell).SampledGet());
+  const auto& held = lyra::runtime::WordsCellAt<LogicWide>(cell);
+  std::memcpy(out, held.SampledBytes(), held.ByteSize());
+  return out;
 }
 auto lyra_rt_logic_wide_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellBeginTakeover<LogicWide>(cell, level);
+  return lyra::runtime::WordsCellAt<LogicWide>(cell).BeginTakeover(level);
 }
 auto lyra_rt_logic_wide_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<LogicWide>(cell).DriveTakeoverBytes(level, generation, value);
+  return lyra::runtime::WordsCellAt<LogicWide>(cell).DriveTakeoverBytes(
+      level, generation, value);
 }
 void lyra_rt_logic_wide_cell_end_takeover(void* cell, std::int64_t level) {
-  CellEndTakeover<LogicWide>(cell, level);
+  lyra::runtime::WordsCellAt<LogicWide>(cell).EndTakeover(level);
 }
 auto lyra_rt_logic_wide_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
@@ -9488,17 +9573,19 @@ auto lyra_rt_logic_wide_ref_drive_takeover(
       reference, level, generation, value);
 }
 void lyra_rt_logic_wide_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::EndTakeoverThrough<LogicWide>(
+  lyra::runtime::EndTakeoverThrough<
+      lyra::runtime::WordsCell<LogicWide::kDomain>>(
       lyra::runtime::ErasedAt(reference), level);
 }
 auto lyra_rt_logic_wide_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCellBytes<LogicWide>(cell, out);
+  return lyra::runtime::ReferToCell<LogicWide>(cell, out);
 }
 auto lyra_rt_logic_wide_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<LogicWide>(cell, out);
+  return lyra::runtime::OpenWordsCellWrite<LogicWide>(cell, out);
 }
-auto lyra_rt_logic_wide_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<LogicWide>(out);
+auto lyra_rt_logic_wide_shared_cell_make(std::int64_t width, void* out)
+    -> void* {
+  return lyra::runtime::MakeSharedWordsCell<LogicWide>(width, out);
 }
 auto lyra_rt_logic_wide_ref_get(void* reference) -> const void* {
   return ErasedAt(reference).storage;
@@ -9526,14 +9613,14 @@ void lyra_rt_logic_wide_value_cell_construct(
   lyra::runtime::BuildWideValueCell<LogicWide>(storage, width);
 }
 void lyra_rt_logic_wide_value_cell_destroy(void* storage) {
-  std::destroy_at(&lyra::runtime::ValueCellAt<LogicWide>(storage));
+  std::destroy_at(&lyra::runtime::WideValueCellAt<LogicWide>(storage));
 }
 void lyra_rt_logic_wide_value_cell_store(
     void* cell, const void* value) noexcept {
-  lyra::runtime::ValueCellAt<LogicWide>(cell).Storage().TakeBytes(value);
+  lyra::runtime::WideValueCellAt<LogicWide>(cell).Store(value);
 }
 auto lyra_rt_logic_wide_value_cell_load(void* cell) noexcept -> void* {
-  return lyra::runtime::ValueCellAt<LogicWide>(cell).Storage().Bytes();
+  return lyra::runtime::WideValueCellAt<LogicWide>(cell).Bytes();
 }
 void lyra_rt_logic_wide_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<LogicWide>>(storage);
@@ -9568,14 +9655,16 @@ void lyra_rt_logic_wide_insert_designated_bits(
       designation, width, outer_parts, start, bits, bits_width,
       bits_are_four_state);
 }
-void lyra_rt_logic_wide_net_construct(void* storage) {
-  BuildAt<ResolvedNet<LogicWide>>(storage);
+void lyra_rt_logic_wide_net_construct(void* storage, std::int64_t width) {
+  std::construct_at(
+      static_cast<ResolvedNet<LogicWide>*>(storage),
+      static_cast<std::uint64_t>(width));
 }
 void lyra_rt_logic_wide_net_destroy(void* storage) {
   std::destroy_at(&NetOf<LogicWide>(storage));
 }
 auto lyra_rt_logic_wide_net_get(void* net) -> const void* {
-  return NetOf<LogicWide>(net).Get().Bytes();
+  return NetOf<LogicWide>(net).Shown();
 }
 void lyra_rt_logic_wide_net_initialize_tri_state(
     void* net, std::int64_t count, std::int64_t fill, std::int64_t strength) {
@@ -9621,13 +9710,13 @@ void lyra_rt_logic_wide_net_join(
   JoinNets<LogicWide>(net, other, here, there, count);
 }
 auto lyra_rt_logic_wide_driver_get(void* driver) -> const void* {
-  return DriverOf<LogicWide>(driver).Get().Bytes();
+  return DriverOf<LogicWide>(driver).Bytes();
 }
 void lyra_rt_logic_wide_driver_set(void* driver, const void* value) {
   DriverOf<LogicWide>(driver).SetBytes(value);
 }
 auto lyra_rt_logic_wide_driver_open_for_write(void* driver, void* out)
     -> void* {
-  return OpenDriverWrite<LogicWide>(driver, out);
+  return OpenWideDriverWrite<LogicWide>(driver, out);
 }
 }

@@ -1026,8 +1026,33 @@ auto CodeGenModule::HoldsItsBytesInline(
 auto CodeGenModule::MemberLayout(
     lir::TypeId type, support::DeclaredMemberStorage storage)
     -> support::ObjectLayout {
-  return HoldsItsBytesInline(type, storage) ? types_.StorageOf(type)
-                                            : runtime::LayoutOf(storage);
+  if (HoldsItsBytesInline(type, storage)) {
+    return types_.StorageOf(type);
+  }
+  return runtime::LayoutOf(
+      storage, HeldTypeOf(type).transform(
+                   [&](lir::TypeId held) { return types_.StorageOf(held); }));
+}
+
+// The type of the value a member of `type` holds: the value a cell, a net or a
+// history wraps, or the member's own, and none for a member holding no value
+// of the program's.
+auto CodeGenModule::HeldTypeOf(lir::TypeId type) const
+    -> std::optional<lir::TypeId> {
+  const lir::Type& member = unit_->types.Get(type);
+  if (const auto* cell = member.As<lir::ObservableType>()) {
+    return cell->value;
+  }
+  if (const auto* net = member.As<lir::ResolvedType>()) {
+    return net->value;
+  }
+  if (const auto* history = member.As<lir::SampledHistoryType>()) {
+    return history->value;
+  }
+  if (member.IsOwnedValue()) {
+    return type;
+  }
+  return std::nullopt;
 }
 
 // A value held as its bytes has none until one is copied in, which is how the
@@ -1054,9 +1079,15 @@ void CodeGenModule::BuildMemberStorage(
     support::DeclaredMemberStorage storage, llvm::Value* at) {
   std::vector<llvm::Value*> args{at};
   if (BuiltAtTheWidthHeld(storage)) {
+    const std::optional<lir::TypeId> held = HeldTypeOf(type);
+    if (!held.has_value()) {
+      throw InternalError(
+          "llvm codegen: storage built at the width of what it holds holds no "
+          "value -- please report this as a bug");
+    }
     args.push_back(
         llvm::ConstantInt::get(
-            builder.getInt64Ty(), types_.RequiredIntegralShapeOf(type).width));
+            builder.getInt64Ty(), types_.RequiredIntegralShapeOf(*held).width));
   }
   builder.CreateCall(MemberStorageConstructor(storage), args);
 }
@@ -1658,7 +1689,7 @@ auto CodeGenModule::DefineSharedStorage(const lir::StaticStorage& storage)
   // The unit that declares the storage defines the symbol as the storage
   // itself, sized as the library states it; every other unit reaches the same
   // symbol as a declaration.
-  const support::ObjectLayout layout = runtime::LayoutOf(*described);
+  const support::ObjectLayout layout = MemberLayout(storage.type, *described);
   auto* type =
       llvm::ArrayType::get(llvm::Type::getInt8Ty(*context_), layout.size);
   auto* defined = llvm::cast<llvm::GlobalVariable>(
@@ -1686,7 +1717,7 @@ auto CodeGenModule::StateSharedStorage(
   }
   llvm::GlobalVariable* shared = SharedStorage(storage.symbol);
   BuildMemberStorage(builder, storage.type, *described, shared);
-  if (runtime::LayoutOf(*described).ends_with_nothing_to_do) {
+  if (MemberLayout(storage.type, *described).ends_with_nothing_to_do) {
     return {};
   }
   const std::array<llvm::Value*, 3> at_exit{

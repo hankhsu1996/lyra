@@ -610,7 +610,7 @@ auto DeclaredRealizations() -> Realizations {
       const support::DeclaredMemberStorage storage{
           .kind = kind, .domain = domain};
       try {
-        runtime::LayoutOf(storage);
+        runtime::LayoutOf(storage, runtime::LayoutOf(domain));
       } catch (const InternalError&) {
         continue;
       }

@@ -1,7 +1,9 @@
 #include "lyra/runtime/object_layout.hpp"
 
 #include <bit>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -33,6 +35,7 @@
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/runtime/words_holding.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/concepts.hpp"
@@ -182,6 +185,21 @@ auto StorageOver(ValueDomain domain) -> ObjectLayout {
   });
 }
 
+// A holder of an integral value wider than a word lays the value's words out
+// after itself, so it is as large as the value `held` lays out.
+template <typename Holder>
+auto WordsHolderLayout(const std::optional<ObjectLayout>& held)
+    -> ObjectLayout {
+  if (!held.has_value()) {
+    throw InternalError(
+        "object layout: a holder of words is laid out with no value to hold");
+  }
+  return ObjectLayout{
+      .size = static_cast<std::uint32_t>(HolderSizeFor<Holder>(held->size)),
+      .align = static_cast<std::uint32_t>(alignof(Holder)),
+      .ends_with_nothing_to_do = false};
+}
+
 // How far into a `Holder` the value it answers a read with lies.
 template <typename Holder>
 auto ReadAt() -> std::uint64_t {
@@ -263,18 +281,46 @@ auto LayoutOf(const support::RuntimeObject& object) -> ObjectLayout {
       object);
 }
 
-auto LayoutOf(support::DeclaredMemberStorage storage) -> ObjectLayout {
+auto LayoutOf(
+    support::DeclaredMemberStorage storage, std::optional<ObjectLayout> held)
+    -> ObjectLayout {
   switch (storage.kind) {
     case MemberStorageKind::kInlineValue:
       return StorageOver<std::type_identity_t, AdmitsVariable>(storage.domain);
+    // A cell or a net of words holds the value after itself; every other holds
+    // it as part of the library's own type.
     case MemberStorageKind::kValueCell:
-      return StorageOver<ActivationValueCell, AdmitsVariable>(storage.domain);
+      return WithValueClass(storage.domain, [&]<typename T>() -> ObjectLayout {
+        if constexpr (value::HeldAsWords<T>) {
+          return WordsHolderLayout<ActivationWordsCell<T::kDomain>>(held);
+        } else if constexpr (AdmitsVariable<T>::value) {
+          return Of<ActivationValueCell<T>>();
+        } else {
+          return NotRealized<ObjectLayout>();
+        }
+      });
     case MemberStorageKind::kObservableCell:
-      return StorageOver<Var, AdmitsVariable>(storage.domain);
+      return WithValueClass(storage.domain, [&]<typename T>() -> ObjectLayout {
+        if constexpr (value::HeldAsWords<T>) {
+          return WordsHolderLayout<WordsCell<T::kDomain>>(held);
+        } else if constexpr (AdmitsVariable<T>::value) {
+          return Of<Var<T>>();
+        } else {
+          return NotRealized<ObjectLayout>();
+        }
+      });
     case MemberStorageKind::kSampledHistory:
       return StorageOver<SampledHistory, AdmitsHistory>(storage.domain);
     case MemberStorageKind::kResolvedNet:
-      return StorageOver<ResolvedNet, AdmitsNet>(storage.domain);
+      return WithValueClass(storage.domain, [&]<typename T>() -> ObjectLayout {
+        if constexpr (!AdmitsNet<T>::value) {
+          return NotRealized<ObjectLayout>();
+        } else if constexpr (value::HeldAsWords<T>) {
+          return WordsHolderLayout<ResolvedNet<T>>(held);
+        } else {
+          return Of<ResolvedNet<T>>();
+        }
+      });
     case MemberStorageKind::kBorrowedHandle:
       return Of<void*>();
     case MemberStorageKind::kReference:
@@ -329,20 +375,84 @@ auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
   throw InternalError("object layout: unknown member storage kind");
 }
 
-auto ShownThroughOffsetOf(ValueDomain domain) -> std::optional<std::uint64_t> {
-  if (!support::IsIntegralLayout(domain)) {
-    return std::nullopt;
-  }
-  return WithValueClass(domain, []<typename T>() -> std::uint64_t {
-    if constexpr (AdmitsNet<T>::value && BitAddressed<T>) {
-      const ResolvedNet<T> net;
-      return std::uint64_t{
-          std::bit_cast<std::uintptr_t>(net.ShownThrough()) -
-          std::bit_cast<std::uintptr_t>(&net)};
-    } else {
-      return NotRealized<std::uint64_t>();
-    }
-  });
+namespace {
+
+// How far into a `Holder` the address `through` answers with lies, read off one
+// built as the library builds it, with room after it for a value `bytes` long.
+template <class Holder, class Through, class... Args>
+auto ThroughOffset(std::size_t bytes, Through through, Args... args)
+    -> std::uint64_t {
+  const std::shared_ptr<Holder> built =
+      MakeWithRoomAfter<Holder>(bytes, args...);
+  return std::uint64_t{
+      std::bit_cast<std::uintptr_t>(through(*built)) -
+      std::bit_cast<std::uintptr_t>(built.get())};
+}
+
+// The same for a holder of words, built at a width laid out as words: where
+// the address lies does not depend on how wide.
+template <class Holder, class Through, value::StateDomain kDomain>
+auto WordsThroughOffset(Through through) -> std::uint64_t {
+  constexpr std::uint64_t kWidth = 65;
+  return ThroughOffset<Holder>(
+      value::IntegralBytesFor(kWidth, kDomain), through, kWidth);
+}
+
+}  // namespace
+
+auto ContentsThroughOffsetOf(support::DeclaredMemberStorage storage)
+    -> std::optional<std::uint64_t> {
+  return WithValueClass(
+      storage.domain, [&]<typename T>() -> std::optional<std::uint64_t> {
+        if constexpr (!BitAddressed<T>) {
+          return std::nullopt;
+        } else {
+          const auto words = [](const auto& holder) {
+            return holder.BytesThrough();
+          };
+          switch (storage.kind) {
+            case MemberStorageKind::kResolvedNet: {
+              const auto shown = [](const auto& net) {
+                return net.ShownThrough();
+              };
+              if constexpr (!AdmitsNet<T>::value) {
+                return NotRealized<std::uint64_t>();
+              } else if constexpr (value::HeldAsWords<T>) {
+                return WordsThroughOffset<
+                    ResolvedNet<T>, decltype(shown), T::kDomain>(shown);
+              } else {
+                return ThroughOffset<ResolvedNet<T>>(0, shown);
+              }
+            }
+            case MemberStorageKind::kObservableCell:
+              if constexpr (value::HeldAsWords<T>) {
+                return WordsThroughOffset<
+                    WordsCell<T::kDomain>, decltype(words), T::kDomain>(words);
+              } else {
+                return std::nullopt;
+              }
+            case MemberStorageKind::kValueCell:
+              if constexpr (value::HeldAsWords<T>) {
+                return WordsThroughOffset<
+                    ActivationWordsCell<T::kDomain>, decltype(words),
+                    T::kDomain>(words);
+              } else {
+                return std::nullopt;
+              }
+            case MemberStorageKind::kInlineValue:
+            case MemberStorageKind::kSampledHistory:
+            case MemberStorageKind::kBorrowedHandle:
+            case MemberStorageKind::kReference:
+            case MemberStorageKind::kSharedPointer:
+            case MemberStorageKind::kChannelCancellation:
+            case MemberStorageKind::kNamedEvent:
+            case MemberStorageKind::kCancellationTarget:
+            case MemberStorageKind::kEvaluationAttempts:
+              return std::nullopt;
+          }
+          throw InternalError("object layout: unknown member storage kind");
+        }
+      });
 }
 
 // The Itanium ABI names a class's table `_ZTV` followed by the class's mangled

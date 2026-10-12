@@ -192,20 +192,29 @@ auto CodeGenFunction::LowerLoad(
   return builder_.CreateLoad(result, *address);
 }
 
+// A value lies at an offset in what holds it, or is reached through the
+// address what holds it keeps at one.
 auto CodeGenFunction::HeldAt(
     llvm::Value* storage, support::DeclaredMemberStorage held)
     -> std::optional<llvm::Value*> {
-  return runtime::ContentsOffsetOf(held).transform(
-      [&](std::uint64_t at) -> llvm::Value* {
-        return builder_.CreateConstInBoundsGEP1_64(
-            builder_.getInt8Ty(), storage, at);
+  const auto at = [&](std::uint64_t offset) -> llvm::Value* {
+    return builder_.CreateConstInBoundsGEP1_64(
+        builder_.getInt8Ty(), storage, offset);
+  };
+  if (const std::optional<std::uint64_t> offset =
+          runtime::ContentsOffsetOf(held)) {
+    return at(*offset);
+  }
+  return runtime::ContentsThroughOffsetOf(held).transform(
+      [&](std::uint64_t offset) -> llvm::Value* {
+        return builder_.CreateLoad(module_->Types().Ptr(), at(offset));
       });
 }
 
-// A cell holding an integral value as its own bytes is read where they lie, and
-// a net of one through the address it keeps of what it shows, since that is
-// its own value or another object's. Anything else hands its contents out
-// through its own access.
+// A cell of an integral value is read where the value lies, and a net of one
+// through the address it keeps of what it shows, since that is its own value
+// or another object's. Anything else hands its contents out through its own
+// access.
 auto CodeGenFunction::ContentsOf(
     support::ValueDomain domain, WrapperKind kind, llvm::Value* wrapper)
     -> llvm::Value* {
@@ -218,11 +227,10 @@ auto CodeGenFunction::ContentsOf(
       }
       break;
     case WrapperKind::kNet:
-      if (const std::optional<std::uint64_t> at =
-              runtime::ShownThroughOffsetOf(domain)) {
-        return builder_.CreateLoad(
-            module_->Types().Ptr(), builder_.CreateConstInBoundsGEP1_64(
-                                        builder_.getInt8Ty(), wrapper, *at));
+      if (const std::optional<llvm::Value*> held = HeldAt(
+              wrapper, {.kind = support::MemberStorageKind::kResolvedNet,
+                        .domain = domain})) {
+        return *held;
       }
       break;
     case WrapperKind::kDriver:

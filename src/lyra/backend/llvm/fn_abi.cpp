@@ -804,7 +804,17 @@ auto CallArranger::ConstructionOf(
                 if (!domain) {
                   return std::unexpected(std::move(domain.error()));
                 }
-                return entry_over(*domain, RuntimeOp::kSharedCellMake);
+                const Told told = ToldOf(*domain, RuntimeOp::kSharedCellMake);
+                return Construction{
+                    .symbol =
+                        RuntimeSymbol(*domain, RuntimeOp::kSharedCellMake),
+                    .operands = OperandReadingsOf(RuntimeOp::kSharedCellMake),
+                    .told = told,
+                    .answer_told = AnswerToldOf(RuntimeOp::kSharedCellMake),
+                    .implicit_arg = ImplicitArgOf(
+                        told,
+                        ToldTypes{
+                            .acted_on = cell->value, .member = std::nullopt})};
               }
               case lir::PointerOwnership::kBorrowed:
                 return no_construct();

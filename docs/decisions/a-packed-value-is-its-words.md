@@ -305,15 +305,17 @@ or without an unknown plane -- so the runtime library compiles each holder famil
 and the execution backend lays out values, cells and frame slots of such a type from the type. No
 holder of them is told a type.
 
-A value wider than a word is held as the words of its planes at a width the holder is told once, by
-whatever installs it: a declaration for a variable's cell, the default a history is filled with, the
-count of positions a net's declared type has, and, for a procedural local, which no declaration
-installs, whatever builds its storage. Every value the holder takes afterwards is the bytes of a
-value that wide, and a write is a change exactly where the words differ. A whole write compares
-those bytes with the words the holder has and copies them there; a level of a procedural continuous
-assignment holds no words until the first value it is driven with, so that one value is built for
-it. A reference, and a place designated within a write, hold nothing and name bytes lying in
-something else, so neither can be told at an install; an access through one is told the width, as
+A value wider than a word is held as the words of its planes at a width the holder is told once. A
+variable's cell, a net and a procedural local are told it where they are built, and hold the words
+in their own storage, which the code generator lays out at the size the type gives, as clang lays
+out a member of a class it compiles; so the value has one address for as long as its holder lives,
+and a reference bound to it before the declaration's value arrives names that address already. A
+history is told it by the default it is filled with. Every value the holder takes afterwards is the
+bytes of a value that wide, and a write is a change exactly where the words differ. A whole write
+compares those bytes with the words the holder has and copies them there; a level of a procedural
+continuous assignment holds no words until the first value it is driven with, so that one value is
+built for it. A reference, and a place designated within a write, hold nothing and name bytes lying
+in something else, so neither can be told at an install; an access through one is told the width, as
 the size of what a thin pointer names is the accessing code's and never the pointer's.
 
 **D7. Code compiled before a design exists is told three things about the design's types and no

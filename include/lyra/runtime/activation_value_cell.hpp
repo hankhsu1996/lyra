@@ -1,7 +1,11 @@
 #pragma once
 
+#include <cstdint>
+
 #include "lyra/runtime/value_storage_core.hpp"
+#include "lyra/runtime/words_holding.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::runtime {
 
@@ -27,6 +31,33 @@ class ActivationValueCell : public ValueStorageCore<T> {
     }
     this->Overwrite(value);
   }
+};
+
+// The same of an integral value wider than a word, whose words lie after the
+// cell. A local has no declaration to install it, so the cell is built at its
+// width holding the default of its type (LRM Table 6-7), and every store into
+// it is the bytes of a value that wide.
+template <value::StateDomain kDomain>
+class ActivationWordsCell {
+ public:
+  explicit ActivationWordsCell(std::uint64_t width) : held_(width) {
+    held_.Take(
+        WordsHolding<kDomain>::Owned::Filled(
+            width, value::FourStateBit::kUnknown));
+  }
+
+  void Store(const void* bytes) {
+    held_.TakeBytes(bytes);
+  }
+  [[nodiscard]] auto Bytes() const -> void* {
+    return held_.Bytes();
+  }
+  [[nodiscard]] auto BytesThrough() const -> void* const* {
+    return held_.BytesThrough();
+  }
+
+ private:
+  WordsHolding<kDomain> held_;
 };
 
 }  // namespace lyra::runtime

@@ -29,8 +29,6 @@ namespace lyra::runtime {
 // library's own code refers to that copy. Code compiled with the design's types
 // holds none of them, which is why nothing it includes states these.
 
-extern template class ValueStorageCore<value::WideBitVector>;
-extern template class ValueStorageCore<value::WideLogicVector>;
 extern template class ValueStorageCore<value::RuntimeTuple>;
 extern template class ValueStorageCore<value::RuntimeUnion>;
 extern template class ValueStorageCore<value::RuntimeTaggedUnion>;
@@ -39,8 +37,18 @@ extern template class ValueStorageCore<value::RuntimeFixedArray>;
 extern template class ValueStorageCore<value::RuntimeQueue>;
 extern template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
-extern template class Var<value::WideBitVector>;
-extern template class Var<value::WideLogicVector>;
+extern template class Cell<WordsHolding<value::StateDomain::kTwoState>>;
+extern template class Cell<WordsHolding<value::StateDomain::kFourState>>;
+extern template class Cell<ValueStorageCore<value::RuntimeTuple>>;
+extern template class Cell<ValueStorageCore<value::RuntimeUnion>>;
+extern template class Cell<ValueStorageCore<value::RuntimeTaggedUnion>>;
+extern template class Cell<ValueStorageCore<value::RuntimeDynamicArray>>;
+extern template class Cell<ValueStorageCore<value::RuntimeFixedArray>>;
+extern template class Cell<ValueStorageCore<value::RuntimeQueue>>;
+extern template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
+
+extern template class WordsCell<value::StateDomain::kTwoState>;
+extern template class WordsCell<value::StateDomain::kFourState>;
 extern template class Var<value::RuntimeTuple>;
 extern template class Var<value::RuntimeUnion>;
 extern template class Var<value::RuntimeTaggedUnion>;
@@ -49,15 +57,20 @@ extern template class Var<value::RuntimeFixedArray>;
 extern template class Var<value::RuntimeQueue>;
 extern template class Var<value::RuntimeAssociativeArray>;
 
-extern template class CellRareState<value::WideBitVector>;
-extern template class CellRareState<value::WideLogicVector>;
-extern template class CellRareState<value::RuntimeTuple>;
-extern template class CellRareState<value::RuntimeUnion>;
-extern template class CellRareState<value::RuntimeTaggedUnion>;
-extern template class CellRareState<value::RuntimeDynamicArray>;
-extern template class CellRareState<value::RuntimeFixedArray>;
-extern template class CellRareState<value::RuntimeQueue>;
-extern template class CellRareState<value::RuntimeAssociativeArray>;
+extern template class CellRareState<
+    WordsHolding<value::StateDomain::kTwoState>>;
+extern template class CellRareState<
+    WordsHolding<value::StateDomain::kFourState>>;
+extern template class CellRareState<ValueStorageCore<value::RuntimeTuple>>;
+extern template class CellRareState<ValueStorageCore<value::RuntimeUnion>>;
+extern template class CellRareState<
+    ValueStorageCore<value::RuntimeTaggedUnion>>;
+extern template class CellRareState<
+    ValueStorageCore<value::RuntimeDynamicArray>>;
+extern template class CellRareState<ValueStorageCore<value::RuntimeFixedArray>>;
+extern template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
+extern template class CellRareState<
+    ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 extern template class Ref<value::WideBitVector>;
 extern template class Ref<value::WideLogicVector>;
@@ -89,8 +102,6 @@ extern template class Takeovers<value::RuntimeFixedArray>;
 extern template class Takeovers<value::RuntimeQueue>;
 extern template class Takeovers<value::RuntimeAssociativeArray>;
 
-extern template class ActivationValueCell<value::WideBitVector>;
-extern template class ActivationValueCell<value::WideLogicVector>;
 extern template class ActivationValueCell<value::RuntimeTuple>;
 extern template class ActivationValueCell<value::RuntimeUnion>;
 extern template class ActivationValueCell<value::RuntimeTaggedUnion>;
@@ -153,6 +164,15 @@ extern template class ValueStorageCore<value::LogicVector<16>>;
 extern template class ValueStorageCore<value::LogicVector<32>>;
 extern template class ValueStorageCore<value::LogicVector<64>>;
 
+extern template class Cell<ValueStorageCore<value::BitVector<8>>>;
+extern template class Cell<ValueStorageCore<value::BitVector<16>>>;
+extern template class Cell<ValueStorageCore<value::BitVector<32>>>;
+extern template class Cell<ValueStorageCore<value::BitVector<64>>>;
+extern template class Cell<ValueStorageCore<value::LogicVector<8>>>;
+extern template class Cell<ValueStorageCore<value::LogicVector<16>>>;
+extern template class Cell<ValueStorageCore<value::LogicVector<32>>>;
+extern template class Cell<ValueStorageCore<value::LogicVector<64>>>;
+
 extern template class Var<value::BitVector<8>>;
 extern template class Var<value::BitVector<16>>;
 extern template class Var<value::BitVector<32>>;
@@ -162,14 +182,14 @@ extern template class Var<value::LogicVector<16>>;
 extern template class Var<value::LogicVector<32>>;
 extern template class Var<value::LogicVector<64>>;
 
-extern template class CellRareState<value::BitVector<8>>;
-extern template class CellRareState<value::BitVector<16>>;
-extern template class CellRareState<value::BitVector<32>>;
-extern template class CellRareState<value::BitVector<64>>;
-extern template class CellRareState<value::LogicVector<8>>;
-extern template class CellRareState<value::LogicVector<16>>;
-extern template class CellRareState<value::LogicVector<32>>;
-extern template class CellRareState<value::LogicVector<64>>;
+extern template class CellRareState<ValueStorageCore<value::BitVector<8>>>;
+extern template class CellRareState<ValueStorageCore<value::BitVector<16>>>;
+extern template class CellRareState<ValueStorageCore<value::BitVector<32>>>;
+extern template class CellRareState<ValueStorageCore<value::BitVector<64>>>;
+extern template class CellRareState<ValueStorageCore<value::LogicVector<8>>>;
+extern template class CellRareState<ValueStorageCore<value::LogicVector<16>>>;
+extern template class CellRareState<ValueStorageCore<value::LogicVector<32>>>;
+extern template class CellRareState<ValueStorageCore<value::LogicVector<64>>>;
 
 extern template class Ref<value::BitVector<8>>;
 extern template class Ref<value::BitVector<16>>;

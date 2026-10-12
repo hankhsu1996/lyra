@@ -282,6 +282,8 @@ class CodeGenModule {
   [[nodiscard]] auto MemberLayout(
       lir::TypeId type, support::DeclaredMemberStorage storage)
       -> support::ObjectLayout;
+  [[nodiscard]] auto HeldTypeOf(lir::TypeId type) const
+      -> std::optional<lir::TypeId>;
   // Builds, at `at`, the storage a member of `type` is held as.
   void BuildMemberStorage(
       llvm::IRBuilderBase& builder, lir::TypeId type,

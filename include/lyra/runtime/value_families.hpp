@@ -40,16 +40,22 @@ extern template class ValueStorageCore<value::ShortReal>;
 extern template class ValueStorageCore<value::Chandle>;
 extern template class ValueStorageCore<value::ObjectRef>;
 
+extern template class Cell<ValueStorageCore<value::String>>;
+extern template class Cell<ValueStorageCore<value::Real>>;
+extern template class Cell<ValueStorageCore<value::ShortReal>>;
+extern template class Cell<ValueStorageCore<value::Chandle>>;
+extern template class Cell<ValueStorageCore<value::ObjectRef>>;
+
 extern template class Var<value::String>;
 extern template class Var<value::Real>;
 extern template class Var<value::ShortReal>;
 extern template class Var<value::Chandle>;
 extern template class Var<value::ObjectRef>;
 
-extern template class CellRareState<value::String>;
-extern template class CellRareState<value::Real>;
-extern template class CellRareState<value::ShortReal>;
-extern template class CellRareState<value::ObjectRef>;
+extern template class CellRareState<ValueStorageCore<value::String>>;
+extern template class CellRareState<ValueStorageCore<value::Real>>;
+extern template class CellRareState<ValueStorageCore<value::ShortReal>>;
+extern template class CellRareState<ValueStorageCore<value::ObjectRef>>;
 
 extern template class Ref<value::String>;
 extern template class Ref<value::Real>;
