@@ -92,6 +92,14 @@ target and why a forced value is not a driver; this file does not restate it.
       backend carries it out, and the execution backend ends the build as a failure of the
       compiler's own.
 
+- [ ] PCA7 -- A force on part of a variable, when the caller asks for it. The standard forbids it,
+      but its meaning follows from the rules for a whole variable: a procedural write leaves the
+      forced part as it is while the force is in effect, and the release keeps the forced value of
+      that part until the next procedural assignment to it, or hands it back to a continuous
+      assignment that drives it. Built on PCA5's range, since this is the same range on a variable;
+      a write to such a variable then keeps the forced part and stores the rest. Lyra refuses it
+      today even when asked, and a design that leans on it stops there.
+
 ## What a read costs, settled
 
 **Nothing, and the standard is what makes that available.** The question looked like it reached the
