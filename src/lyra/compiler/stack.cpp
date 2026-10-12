@@ -9,7 +9,7 @@
 #include <sys/resource.h>
 #include <utility>
 
-#include "lyra/base/internal_error.hpp"
+#include "lyra/base/memory_watch.hpp"
 #include "lyra/base/stack_watch.hpp"
 
 namespace lyra::compiler {
@@ -47,7 +47,7 @@ StackThread::StackThread(std::function<void()> work)
   const int refused = ::pthread_create(&thread_, &attributes, Run, this);
   ::pthread_attr_destroy(&attributes);
   if (refused != 0) {
-    throw InternalError("compiler: the host refused a thread to compile on");
+    base::EndForLackOfMemory();
   }
 }
 

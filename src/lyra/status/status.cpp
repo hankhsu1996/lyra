@@ -12,10 +12,12 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include "lyra/base/memory_watch.hpp"
 #include "lyra/status/render.hpp"
 
 namespace lyra::status {
@@ -256,7 +258,11 @@ Shown::Shown(Look look) {
   state.began = Clock::now();
   state.ending = false;
   if (look.display != Display::kNone) {
-    state.display = std::thread(LookUntilEnded, std::ref(state));
+    try {
+      state.display = std::thread(LookUntilEnded, std::ref(state));
+    } catch (const std::system_error&) {
+      base::EndForLackOfMemory();
+    }
   }
 }
 

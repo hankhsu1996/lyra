@@ -5,9 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-#include <iostream>
 #include <memory>
-#include <new>
 #include <span>
 #include <string>
 #include <string_view>
@@ -15,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/memory_watch.hpp"
 #include "lyra/base/stack_watch.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/design.hpp"
@@ -27,26 +26,6 @@
 namespace lyra::runtime {
 
 namespace {
-
-// What a refused request for memory runs, where the request would otherwise
-// have answered. Anything carried on from here may ask again -- a message
-// being composed, a frame being left, a `final` procedure -- so the line is one
-// that needed nothing to write and the program ends where it stands. Standard
-// output is the process's own and holds nothing a refused request can have
-// left half made, so every line the design finished there is delivered first.
-[[noreturn]] void EndForLackOfMemory() {
-  std::cout.flush();
-  std::fflush(stdout);
-  std::string_view left = "lyra: out of memory\n";
-  while (!left.empty()) {
-    const ssize_t wrote = ::write(STDERR_FILENO, left.data(), left.size());
-    if (wrote <= 0) {
-      break;
-    }
-    left.remove_prefix(static_cast<std::size_t>(wrote));
-  }
-  std::_Exit(EXIT_FAILURE);
-}
 
 // Drives a bound Runtime to completion. The run accounts for a design's own
 // run-time error and for a failure of the tool discovered while it is under
@@ -73,12 +52,14 @@ constexpr std::string_view kOutOfStack =
     "itself, or others, more deeply than the stack this program was started "
     "with allows.\n";
 
+constexpr std::string_view kOutOfMemory = "lyra: out of memory\n";
+
 }  // namespace
 
 auto RunDesignRoot(
     int argc, char** argv, std::string_view root_name, const RootFactory& make)
     -> int {
-  std::set_new_handler(EndForLackOfMemory);
+  base::InstallOutOfMemoryHandler(kOutOfMemory);
   // The simulation runs on the stack of the thread the program starts on. A
   // foreign task runs on a stack of its own, which is not registered.
   static std::array<std::byte, base::kAltStackSize> alt_stack;

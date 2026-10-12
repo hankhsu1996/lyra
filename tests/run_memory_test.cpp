@@ -88,7 +88,7 @@ TEST(RunMemory, AWaitingProcessHoldsWhatItHas) {
   ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
       << built.stdout_text << built.stderr_text;
 
-  const auto ran = RunUnderAddressLimit(program, kAddressLimitKib);
+  const auto ran = RunUnderAddressLimit(program, {}, kAddressLimitKib);
   EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
       << "under " << kAddressLimitKib << " KiB the program said:\n"
       << ran.stderr_text;

@@ -1434,7 +1434,7 @@ TEST(LyraBuild, AValueEndsWithTheExpressionThatMadeIt) {
   ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
       << built.stdout_text << built.stderr_text;
 
-  const auto ran = RunUnderAddressLimit(program, 524288);
+  const auto ran = RunUnderAddressLimit(program, {}, 524288);
   EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
       << ran.stdout_text << ran.stderr_text;
   EXPECT_NE(ran.stdout_text.find("low=64"), std::string::npos)

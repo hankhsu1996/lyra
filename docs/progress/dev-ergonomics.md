@@ -327,6 +327,13 @@ layer directly.
       ends it, on both backends. Not built: what the design had printed and the program had not yet
       written out when the fault came is lost.
 
+- [x] D31 -- A compiler its host refuses memory says so. Wherever the request was made -- lowering,
+      starting a thread to compile on, or generating code -- a build prints
+      `error: the compiler ran out of memory.` and exits with a failing status, as a built program
+      does; it is never reported as a defect of the compiler, and never ends by a signal. A build
+      that compiles several units at once asks for the memory of all of them together. Not built:
+      what a unit's code generation needs is not measured per unit.
+
 ## Out of Scope
 
 - New SystemVerilog feature coverage. This file tracks the developer feedback loop, not language
