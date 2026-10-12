@@ -15,14 +15,14 @@ Caliptra:default:hello:
   stops: build
   says: numeric literals must not start with a leading underscore
 HammerBlade:16x8:hello:
-  stops: build
-  says: cannot refer to element
+  stops: run
+  says: did not end within
 NVDLA:default:hello:
   stops: build
   says: duplicate definition of 'first_stage_of_sync'
 OpenPiton:1x1:hello:
   stops: build
-  says: cannot select range of
+  says: cannot mix strings and integers in a concatenation
 OpenTitan:default:hello:
   stops: build
   says: no implicit conversion from 'logic' to 'mubi4_t'
