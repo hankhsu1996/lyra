@@ -85,7 +85,10 @@ part tells the write what forming it did.**
   whether or not that write changes it: nothing in the slot has changed the variable before its
   first write, so what it holds then is that value.
 - **A net driver hears which of its positions a write moved.** Its net resolves again only over the
-  positions whose contribution moved (LRM 6.5).
+  positions whose contribution moved (LRM 6.5). A net one driver decides
+  ([net-driver-resolution](net-driver-resolution.md) decision 9) resolves nothing, so its driver is
+  told as a variable is: only where a wait is enrolled on the net, and those waits are told what
+  moved.
 
 ## Rejected
 

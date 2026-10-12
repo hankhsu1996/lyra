@@ -198,8 +198,9 @@ that true of a packed value. These make it true of what holds one.
       to the child's port.
 - [ ] A variable continuously assigned the whole of another of an equivalent type, with no delay,
       names that other's storage, and no assignment runs.
-- [ ] A net with one driver once the design is built shows that driver's value with nothing
-      resolved.
+- [x] A net with one driver once the design is built shows that driver's value with nothing
+      resolved, where its net type contributes nothing of its own and no connection joined it to
+      another net. The connection or assignment driving it still runs as a process.
 - [ ] Every other connection moves only the range its source's write reached.
 - [x] A force on a sink retargets its reference and a release restores it, together with every port
       the sink is handed on to and every wait on them.

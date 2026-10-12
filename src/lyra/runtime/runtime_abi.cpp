@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <concepts>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
@@ -275,8 +274,8 @@ auto RefGet(void* reference) -> const void* {
 
 // Opening a write into what a wrapper stands for, in the storage the caller
 // gave. A cell and a watchable referent report the write when it ends;
-// storage nothing can watch takes it with nothing to report; a driver
-// re-resolves its net if its contribution moved.
+// storage nothing can watch takes it with nothing to report; a driver's net
+// is told what the write did to that driver's value.
 template <value::LyraValue T>
 auto OpenCellWrite(void* cell, void* out) -> void* {
   return std::construct_at(

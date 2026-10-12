@@ -170,6 +170,20 @@ closed below.
       rather than decide one. Tracked with the construct it affects, in
       [processes.md](processes.md).
 
+- [x] A net one driver decides is no longer resolved. Its driver's write lands in the value the net
+      shows and wakes on what it changed, as a variable's does; a net with several drivers, a pull,
+      a supply or a charge, and one a connection joined to another, resolve as before. An input port
+      written with no data type is a net (LRM 23.2.2.3), so a design whose modules declare their
+      inputs that way resolved one net per port per change. Measured on eight modules each clocked
+      through such a port, the execution backend: 1,940 instructions a port a clock edge down to
+      920, the rest being the connection's own process.
+
+- [ ] A connection or continuous assignment whose source is the whole of an object still runs a
+      process where what it drives is a net, though one that drives a variable input shares the
+      source's storage and runs nothing. The two spellings of an input port, with a data type and
+      without, therefore cost differently for the same connection. Target: a net whose one driver is
+      the whole of an object is that object.
+
 - [x] A wait whose watched storage cannot change while its process lives -- an `always_comb`, an
       `always_ff`, an event control on fixed storage anywhere in a body, a continuous assignment and
       every port connection, a sampler, an assertion's clock tick -- is built once and no longer

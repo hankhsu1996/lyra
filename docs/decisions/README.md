@@ -604,7 +604,8 @@ the detail lives in the entry itself.
   so a driver's first value is a change a waiting procedure sees.
 - [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
   driver contributions and capability-handle drivers, with the topology frozen at a Seal barrier;
-  single-driver is N=1.
+  what a single-driver net shows is the N=1 reading, and such a net holds its driver's value as its
+  own.
 - [net-type-is-a-fold-and-a-contribution](net-type-is-a-fold-and-a-contribution.md) -- a net type
   states a fold and the contribution it makes to its own resolution, so strength decides between
   levels and the truth table within one; a per-bit strength on the resolved value, a value-only fold

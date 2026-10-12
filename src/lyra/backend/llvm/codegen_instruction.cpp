@@ -250,8 +250,9 @@ auto CodeGenFunction::ValueCellContents(
 }
 
 // Writing a place mirrors reading one, and a write through a wrapper is what
-// gives the write its meaning -- waking whoever subscribed to a cell, or moving
-// one driver's contribution and re-resolving the net it feeds -- which is why
+// gives the write its meaning -- waking whoever subscribed to a cell, or giving
+// one driver's value to the net it feeds, which shows what its drivers then
+// determine -- which is why
 // it is the wrapper that performs the write rather than a store to an address.
 // What is stored crosses as a value the storage holds.
 auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)

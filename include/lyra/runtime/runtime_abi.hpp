@@ -1406,8 +1406,9 @@ auto lyra_rt_unpackedarray_value_cell_load(void* cell) noexcept -> void*;
 // `attach_driver` issues one at the strength its source drives at, and the
 // handle it answers with is the net's to own, so a source may hold it for as
 // long as the net lives. `driver_set` publishes that driver's whole
-// contribution, after which the net re-resolves and wakes its subscribers only
-// on a real change; `driver_get` reads the contribution back, which is what a
+// contribution, after which the net shows what its drivers then determine and
+// wakes its subscribers only on a real change; `driver_get` reads the
+// contribution back, which is what a
 // source driving part of a net updates part of and leaves the rest of at high
 // impedance (LRM 6.6.1).
 //
