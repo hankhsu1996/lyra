@@ -9,6 +9,7 @@
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/value_type.hpp"
+#include "lyra/value/wide.hpp"
 
 namespace lyra::value {
 
@@ -33,52 +34,54 @@ class TupleType : public ValueType {
     return {components_, count_};
   }
 
+  // Where component `index` of a tuple of this type laid out at `laid_out`
+  // lies, which is that component's handle: a tuple or a fixed-size array
+  // component's bytes are laid out there, and every other component's object
+  // is.
+  [[nodiscard]] auto ComponentAt(void* laid_out, std::size_t index) const
+      -> void*;
+  [[nodiscard]] auto ComponentAt(const void* laid_out, std::size_t index) const
+      -> const void*;
+
+  // Builds at `laid_out` a tuple of this type with each component at what its
+  // own type builds before anything writes it. A component that fails to
+  // build ends the ones built before it.
+  void BuildEachComponentDefault(void* laid_out) const;
+
  private:
   std::uint32_t count_;
   const TupleComponent* components_;
 };
 
-// A tuple as the runtime holds one. The execution backend's library is compiled
-// once, so it cannot be instantiated for each tuple type the way the C++
-// backend's `Tuple<Ts...>` is; it holds every tuple through this one type
-// instead: the tuple exactly as the program lays it out, in storage of its own,
-// held with its type as any value the library was compiled without is. The
-// bytes open with the address of that type, so a tuple lent by its bytes alone
-// still says what it is.
+// A tuple as the runtime keeps one of its own. The execution backend's library
+// is compiled once, so it cannot be instantiated for each tuple type the way
+// the C++ backend's `Tuple<Ts...>` is; it holds every tuple through this one
+// type instead: the tuple exactly as the program lays it out, in storage of its
+// own, held with its type as any value the library was compiled without is.
+// The bytes carry no type, so whoever hands a tuple in by its bytes states the
+// type beside them.
 class RuntimeTuple {
  public:
-  // Holds no tuple: a variable's storage before its declaration installs one.
+  // Holds no tuple: storage before whatever declares it installs one.
   RuntimeTuple() = default;
 
-  // A copy of the tuple laid out at `laid_out`.
-  [[nodiscard]] static auto CopyOf(const void* laid_out) -> RuntimeTuple;
+  // The tuple `value` holds, which is a value of a tuple type.
+  explicit RuntimeTuple(AnyValue value);
 
-  // The tuple's bytes, which is what crosses as its handle, and the type they
-  // open with.
+  // A copy of the tuple of `type` laid out at `laid_out`.
+  [[nodiscard]] static auto CopyOf(const TupleType& type, const void* laid_out)
+      -> RuntimeTuple;
+
+  // The tuple's bytes, which is what crosses as its handle, and its type.
   [[nodiscard]] auto Bytes() const -> const void*;
   [[nodiscard]] auto Bytes() -> void*;
-  [[nodiscard]] auto Type() const -> const TupleType&;
+  [[nodiscard]] auto Type() const -> const ValueType&;
 
-  // The type the tuple laid out at `laid_out` opens with. The caller of a
-  // library call answering a tuple knows its type and the library does not,
-  // so the caller states the type in the storage it gives.
-  [[nodiscard]] static auto TypeAt(const void* laid_out) -> const TupleType&;
-
-  // What a tuple wherever it lies answers through the type its bytes open
-  // with, for a tuple no object of this type holds -- one lent by reference,
-  // or a component of another. Component `index` of the tuple laid out at
-  // `laid_out` lies at the address this answers, which is that component's
-  // handle: a tuple component's bytes are laid out there, and every other
-  // component's object is.
-  [[nodiscard]] static auto ComponentAt(void* laid_out, std::size_t index)
-      -> void*;
-  [[nodiscard]] static auto ComponentAt(const void* laid_out, std::size_t index)
-      -> const void*;
-  [[nodiscard]] static auto BitIdentical(const void* lhs, const void* rhs)
-      -> bool;
-  // Writes the tuple laid out at `value` into the one laid out at `storage`,
-  // which goes on being that tuple.
-  static void AssignAt(void* storage, const void* value);
+  // The tuple of this one's type laid out at `bytes`, compared with and taken
+  // into the components this holds, so a store of one obtains no storage for
+  // the tuple. The bytes may be this tuple's own.
+  [[nodiscard]] auto IsBitIdenticalTo(const void* bytes) const -> bool;
+  void AssignBytes(const void* bytes);
 
   // A copy of the tuple, or the tuple itself, laid out in `out`.
   auto CopyInto(void* out) const -> void*;
@@ -105,12 +108,10 @@ class RuntimeTuple {
   [[nodiscard]] auto BitstreamWidth() const -> Int;
   [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
       -> Int;
-  auto WriteToStream(const IntegralView& stream, std::uint64_t filled) const
-      -> std::uint64_t;
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t;
 
  private:
-  explicit RuntimeTuple(AnyValue value);
-
   AnyValue value_;
 };
 
@@ -118,5 +119,6 @@ static_assert(LyraValue<RuntimeTuple>);
 static_assert(NetResolvable<RuntimeTuple>);
 static_assert(CaseEqualComparable<RuntimeTuple>);
 static_assert(BitstreamSizable<RuntimeTuple, ConstIntegralView>);
+static_assert(TakesBytesInPlace<RuntimeTuple>);
 
 }  // namespace lyra::value

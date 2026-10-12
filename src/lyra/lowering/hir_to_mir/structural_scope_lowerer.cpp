@@ -2477,7 +2477,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     if (data_object_fields[id.value].has_value()) continue;
     const auto& d = hir_scope.structural_data_objects.Get(id);
     const mir::TypeId cell = unit_lowerer.MemberCellType(
-        unit_lowerer.TranslateType(d.type), hir::StorageOf(d));
+        unit_lowerer.TranslateType(d.type), hir::PublishedStorageOf(d));
     data_object_fields[id.value] = mir::ClassFieldTarget{
         .owner = mir::IntraUnitClassRef{class_id_},
         .slot = hir::AnsweredByName(d) ? shape.AddNamedField(d.name, cell)
@@ -3093,9 +3093,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           mir::MakeFieldAccessExpr(self_object(), cell, mir_field_type));
       const NetData data =
           unit_lowerer.Unit().types.Get(mir_value_type).IsIntegral()
-              ? NetData{IntegralNetData{
-                    .position_count = BuildNetPositionCount(
-                        unit_lowerer.Unit(), ctor_block, mir_value_type)}}
+              ? NetData{IntegralNetData{}}
               : NetData{AggregateNetData{
                     .prototype = ctor_block.exprs.Add(BuildDefaultValueFromHir(
                         unit_lowerer, ctor_block, d.type))}};

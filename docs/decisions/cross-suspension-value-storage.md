@@ -66,7 +66,7 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
   never an update event and wakes no subscriber. The cell shares the store discipline of a signal
   cell -- install the declared representation once, overwrite at that representation, preserve the
   declared type across writes -- but not its observation. The signal cell (`Var<T>`) and the
-  activation value cell (`ActivationValueCell<T>`) are two roles over one storage core
+  activation value cell (`ValueCell<T>`) are two roles over one storage core
   (`ValueStorageCore<T>`); the cell never routes through the signal cell's notifying `Set`.
 
 - **The activation owns the cell storage; the frame holds a handle.** The adapter coroutine that
@@ -180,8 +180,8 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
   counter, a read-only local read after a resume -- so a clock generator written as a loop runs
   without spelling the clock out.
 - `Var<T>` is factored into `ValueStorageCore<T>` (storage and store discipline) plus its observable
-  behavior; `ActivationValueCell<T>` is the second role over the same core. The signal cell's public
-  surface is unchanged.
+  behavior; `ValueCell<T>` is the second role over the same core. The signal cell's public surface
+  is unchanged.
 - The adapter coroutine owns an activation frame and RAII-owns the generated coroutine, closing the
   generated-frame leak on cancellation and shutdown as a side effect of giving the cells a single
   destruction path.

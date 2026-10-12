@@ -20,7 +20,6 @@
 #include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/runtime_tuple.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -153,7 +152,8 @@ auto CodeGenTypes::GetFunctionType(const FnAbi& abi) -> llvm::FunctionType* {
       Overloaded{
           [](const NoImplicitArg&) {},
           [&](const CompleteObjectSizeArg&) { params.push_back(count); },
-          [&](const HeldWidthArg&) { params.push_back(count); }},
+          [&](const WidthMetadataArg&) { params.push_back(count); },
+          [&](const TypeMetadataArg&) { params.push_back(ptr_ty_); }},
       abi.implicit_arg);
   for (std::size_t i = 0; i <= abi.args.size(); ++i) {
     if (abi.named_part.has_value() && abi.named_part->before == i) {
@@ -245,7 +245,7 @@ auto CodeGenTypes::IntegralShapeOf(lir::TypeId type) const
   return ShapeOf(*integral);
 }
 
-auto CodeGenTypes::StorageOf(lir::TypeId type) -> support::ObjectLayout {
+auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
   const lir::Type& ty = unit_->types.Get(type);
   if (ty.IsProduct()) {
     return LayoutOfTuple(type).storage;
@@ -290,7 +290,7 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
   }
   const lir::TypeId element_type = stated->element_type;
   const std::uint64_t count = stated->size;
-  const support::ObjectLayout element = StorageOf(element_type);
+  const support::ObjectLayout element = LayoutOf(element_type);
   const value::FixedArrayLayout laid =
       value::FixedArrayLayoutOf(element.size, element.align, count);
   return arrays_
@@ -325,13 +325,10 @@ auto CodeGenTypes::LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout& {
   TupleLayout layout{
       .components = {components->begin(), components->end()},
       .offsets = {},
-      .storage = {
-          .size = sizeof(const value::TupleType*),
-          .align = alignof(const value::TupleType*),
-          .ends_with_nothing_to_do = true}};
+      .storage = {.size = 0, .align = 1, .ends_with_nothing_to_do = true}};
   layout.offsets.reserve(layout.components.size());
   for (const lir::TypeId component : layout.components) {
-    const support::ObjectLayout held = StorageOf(component);
+    const support::ObjectLayout held = LayoutOf(component);
     const std::uint32_t offset = aligned_up(layout.storage.size, held.align);
     layout.offsets.push_back(offset);
     layout.storage.size = offset + held.size;

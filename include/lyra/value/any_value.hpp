@@ -69,8 +69,8 @@ class AnyValue {
       -> Int;
   // The value's bits written into a stream below its `filled` most significant
   // positions (LRM 6.24.3), with how many positions are filled after it.
-  auto WriteToStream(const IntegralView& stream, std::uint64_t filled) const
-      -> std::uint64_t;
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t;
 
  private:
   // Frees storage a value was being built in, for a build that did not finish:

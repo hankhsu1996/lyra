@@ -116,6 +116,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "stream_read";
     case RuntimeOp::kStreamBuild:
       return "stream_build";
+    case RuntimeOp::kTupleBuildDefault:
+      return "tuple_build_default";
     case RuntimeOp::kInsertBits:
       return "insert_bits";
     case RuntimeOp::kInsertDesignatedBits:
@@ -173,6 +175,9 @@ constexpr DomainSet kFourStateIntegral =
 // design is compiled with; the other sequences and containers are objects the
 // library holds as its own.
 constexpr DomainSet kArrays{Domain::kUnpackedArray};
+// What is laid out by a type the design is compiled with and states nothing of
+// it in its bytes: a tuple, and a fixed-size unpacked array.
+constexpr DomainSet kLaidOutByType = kArrays | DomainSet{Domain::kTuple};
 constexpr DomainSet kLibrarySequences{Domain::kDynArray, Domain::kQueue};
 constexpr DomainSet kLibraryContainers =
     kLibrarySequences | DomainSet{Domain::kAssocArray};
@@ -195,14 +200,15 @@ constexpr DomainSet kLibraryObjects =
 constexpr DomainSet kAggregateNets =
     kArrays | DomainSet{Domain::kTuple, Domain::kUnion};
 constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
+
 // What a variable holds besides an integral value: the objects that say what
-// they are where they lie, and a fixed-size unpacked array, whose bytes do
-// not.
+// they are where they lie, and a tuple and a fixed-size unpacked array, whose
+// bytes do not.
 constexpr DomainSet kObjectsThatStateThemselves =
     kLibraryContainers | kUnions | kReals |
-    DomainSet{
-        Domain::kString, Domain::kChandle, Domain::kTuple, Domain::kManagedRef};
-constexpr DomainSet kVariableObjects = kObjectsThatStateThemselves | kArrays;
+    DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef};
+constexpr DomainSet kVariableObjects =
+    kObjectsThatStateThemselves | kLaidOutByType;
 constexpr DomainSet kVariableValues = kIntegral | kVariableObjects;
 // What a variable a procedural continuous assignment takes over may hold: a
 // singular value (LRM 10.6.1, 10.6.2, 6.4), but no chandle, which no
@@ -212,6 +218,11 @@ constexpr DomainSet kVariableValuesTakenOver =
 
 constexpr std::array kForAssociativeArrays{
     RealizedFor{.domains = {Domain::kAssocArray}}};
+// A literal's entries each cross as the pair of the index and the element it
+// stores (LRM 7.9.11), a tuple, so the array built from them is told the type
+// of that pair after them.
+constexpr std::array kForAssociativeArraysFromEntries{RealizedFor{
+    .domains = {Domain::kAssocArray}, .told = ToldEntryType{.after = 0}}};
 constexpr std::array kForDynamicArraysAndQueues{
     RealizedFor{.domains = kLibrarySequences}};
 constexpr std::array kForWhatDeletesWhole{
@@ -245,7 +256,10 @@ constexpr std::array kForWhatAnAggregateNetResolves{
 constexpr std::array kForUnpackedArrays{RealizedFor{.domains = kArrays}};
 constexpr std::array kForUnpackedArraysAndQueues{
     RealizedFor{.domains = kArrays | DomainSet{Domain::kQueue}}};
-constexpr std::array kForTuples{RealizedFor{.domains = {Domain::kTuple}}};
+// A step into a component is taken on a reference or a designation, which
+// names bytes lying in something else, so it is told the tuple's type.
+constexpr std::array kForTuplesSteppedInto{RealizedFor{
+    .domains = {Domain::kTuple}, .told = ToldLaidOutTypes{.reached_after = 0}}};
 constexpr std::array kForJoinedNets{RealizedFor{.domains = kFourStateIntegral}};
 constexpr std::array kForNets{RealizedFor{.domains = kNetValues}};
 constexpr std::array kForVariables{RealizedFor{.domains = kVariableValues}};
@@ -272,14 +286,22 @@ constexpr std::array kForHistoriesInstalled{
         .domains =
             kOneWordIntegral | kContainers | kUnions | kReals |
             DomainSet{Domain::kString, Domain::kTuple, Domain::kManagedRef}},
-    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidth{.after = 1}}};
-constexpr std::array kForHistories{RealizedFor{
-    .domains =
-        kIntegral | kContainers | kUnions | kReals |
-        DomainSet{Domain::kString, Domain::kTuple, Domain::kManagedRef}}};
+    RealizedFor{
+        .domains = kWideIntegral, .told = ToldWidthMetadata{.after = 1}}};
+// A history keeps the type of the default it was filled with, so what is
+// pushed into it and read back out is told nothing more.
+constexpr std::array kForHistories{
+    RealizedFor{
+        .domains = kIntegral | kLibraryContainers | kUnions | kReals |
+                   DomainSet{Domain::kString, Domain::kManagedRef}},
+    RealizedFor{.domains = kLaidOutByType, .told = ToldByTheStorage{}}};
 constexpr std::array kForIntegralNets{
     RealizedFor{.domains = kFourStateIntegral}};
-constexpr std::array kForAggregateNets{RealizedFor{.domains = kAggregateNets}};
+// A net laying a tuple or an array out after itself was told the value's type
+// where it was built.
+constexpr std::array kForAggregateNets{
+    RealizedFor{.domains = kLaidOutByType, .told = ToldByTheStorage{}},
+    RealizedFor{.domains = {Domain::kUnion}}};
 
 // A variable is taken over whether reached through its cell or through storage
 // lent for it.
@@ -290,19 +312,19 @@ constexpr std::array kTakeovers{
     ThroughWrapper{
         .wrapper = WrapperKind::kRef, .domains = kVariableValuesTakenOver}};
 // A variable's cell is installed with its declaration's value. A cell of words
-// was told its width where it was built.
+// was told its width where it was built, and one of a tuple or an array its
+// type.
 constexpr std::array kInstalls{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues}};
 // A cell holds the bytes of a value no wider than a word where generated code
-// reads them, and a net the address of such bytes, so neither has an entry
+// reads them, and the address of any other value of its own laying it out after
+// itself; a net keeps the address of what it shows, whatever that is laid out
+// by. So only the cells and nets of objects the library keeps have an entry
 // reading one.
 constexpr std::array kLoads{
     ThroughWrapper{
-        .wrapper = WrapperKind::kCell,
-        .domains = kWideIntegral | kVariableObjects},
-    ThroughWrapper{
-        .wrapper = WrapperKind::kNet,
-        .domains = kAggregateNets | DomainSet{Domain::kLogicWide}},
+        .wrapper = WrapperKind::kCell, .domains = kObjectsThatStateThemselves},
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = {Domain::kUnion}},
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
     ThroughWrapper{.wrapper = WrapperKind::kRef, .domains = kVariableValues}};
 // What a driver is told of the object it carries, and asked at its turn.
@@ -320,54 +342,53 @@ constexpr std::array kArmings{
 constexpr ThroughWrapper kThroughAReferenceToBytesOrAnObject{
     .wrapper = WrapperKind::kRef,
     .domains = kOneWordIntegral | kObjectsThatStateThemselves};
-// A reference to an array names elements lying in something else, which say
-// nothing of what they are. An access that hands the whole array over or
-// builds a copy of it is told the type beside that array like any other; one
-// that only reaches the array is told the type of what it reached.
-constexpr ThroughWrapper kThroughAReferenceToAnArrayHandedOver{
-    .wrapper = WrapperKind::kRef, .domains = kArrays};
-constexpr ThroughWrapper kThroughAReferenceToAnArrayReached{
+// A reference to a tuple or an array names bytes lying in something else,
+// which say nothing of what they are. An access that hands the whole value
+// over or builds a copy of it is told the type beside that value like any
+// other; one that only reaches the value is told the type of what it reached.
+constexpr ThroughWrapper kThroughAReferenceToALaidOutValueHandedOver{
+    .wrapper = WrapperKind::kRef, .domains = kLaidOutByType};
+constexpr ThroughWrapper kThroughAReferenceToALaidOutValueReached{
     .wrapper = WrapperKind::kRef,
-    .domains = kArrays,
-    .told = ToldArrayTypes{.reached_after = 0}};
+    .domains = kLaidOutByType,
+    .told = ToldLaidOutTypes{.reached_after = 0}};
 constexpr ThroughWrapper kThroughAReferenceToWords{
     .wrapper = WrapperKind::kRef,
     .domains = kWideIntegral,
-    .told = ToldHeldWidth{.after = 0}};
+    .told = ToldWidthMetadata{.after = 0}};
 constexpr std::array kSampledLoads{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
     ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
     kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
-    kThroughAReferenceToAnArrayHandedOver};
+    kThroughAReferenceToALaidOutValueHandedOver};
 constexpr std::array kStores{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
     kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
-    kThroughAReferenceToAnArrayHandedOver};
+    kThroughAReferenceToALaidOutValueHandedOver};
 constexpr std::array kOpenedWrites{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
     kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
-    kThroughAReferenceToAnArrayReached};
+    kThroughAReferenceToALaidOutValueReached};
 
 constexpr std::array kRealConversions{
     Conversion{.destination = Domain::kReal, .source = Domain::kReal},
     Conversion{.destination = Domain::kReal, .source = Domain::kShortReal},
     Conversion{.destination = Domain::kShortReal, .source = Domain::kReal}};
 
-// A value cell holding a value's bytes is read and written where they lie, so
-// only allocating one is an entry for every value a variable holds; a cell of
-// words is allocated at the width of the values it is to hold.
-constexpr std::array kForCellsAllocated{
-    RealizedFor{.domains = kOneWordIntegral | kVariableObjects},
-    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidthAhead{}}};
-constexpr std::array kForCellsReached{
-    RealizedFor{.domains = kWideIntegral | kVariableObjects}};
-// A cell a counted hold makes is as large as the value it is to hold, so one of
-// words is made at their width.
+// A cell the library makes -- what a suspending call answers into, or one a
+// counted hold keeps -- is as large as the value it is to hold, so one of
+// words is made at their width, and one of a tuple or an array with its type.
+// A cell whose value lies where the library states is read and written there,
+// so only making one is an entry for every value a variable holds, and only
+// an object of the library's own is read and written through one.
 constexpr std::array kForCellsMade{
-    RealizedFor{.domains = kOneWordIntegral | kVariableObjects},
-    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidthAhead{}}};
+    RealizedFor{.domains = kOneWordIntegral | kObjectsThatStateThemselves},
+    RealizedFor{.domains = kWideIntegral, .told = ToldWidthMetadataAhead{}},
+    RealizedFor{.domains = kLaidOutByType, .told = ToldTypeMetadataAhead{}}};
+constexpr std::array kForCellsReached{
+    RealizedFor{.domains = kObjectsThatStateThemselves}};
 
 // A designation of words is told how wide they are where the write lands, and
 // one of any integral value where a write of some of its bits is reported
@@ -376,21 +397,23 @@ constexpr std::array kForLandings{
     RealizedFor{
         .domains = kOneWordIntegral | kObjectsThatStateThemselves |
                    DomainSet{Domain::kEmpty}},
-    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidth{.after = 0}},
     RealizedFor{
-        .domains = kArrays, .told = ToldArrayTypes{.reached_after = 0}}};
+        .domains = kWideIntegral, .told = ToldWidthMetadata{.after = 0}},
+    RealizedFor{
+        .domains = kLaidOutByType,
+        .told = ToldLaidOutTypes{.reached_after = 0}}};
 // A step into an element and a write of a run of elements each act on the
 // sequence a designation or a reference names where it lies.
 constexpr std::array kForSequencesSteppedInto{
     RealizedFor{.domains = kLibrarySequences},
     RealizedFor{
-        .domains = kArrays, .told = ToldArrayTypes{.reached_after = 0}}};
+        .domains = kArrays, .told = ToldLaidOutTypes{.reached_after = 0}}};
 constexpr std::array kForSlicesAssigned{
     RealizedFor{.domains = {Domain::kDynArray}},
     RealizedFor{
-        .domains = kArrays, .told = ToldArrayTypes{.reached_after = 0}}};
+        .domains = kArrays, .told = ToldLaidOutTypes{.reached_after = 0}}};
 constexpr std::array kForBitsWritten{
-    RealizedFor{.domains = kIntegral, .told = ToldHeldWidth{.after = 0}}};
+    RealizedFor{.domains = kIntegral, .told = ToldWidthMetadata{.after = 0}}};
 
 constexpr std::array kForWhatIsNull{RealizedFor{
     .domains = {Domain::kChandle, Domain::kEmpty, Domain::kManagedRef}}};
@@ -477,14 +500,37 @@ auto Conversions(const EntryNaming& naming) -> std::span<const Conversion> {
 }
 
 // What a realization for `domain` is told, given what its entry states of
-// it. Every realization for a fixed-size unpacked array is told the types of
-// the arrays it is handed, whatever else the entry says, since no array's
-// bytes state one.
+// it. Every realization for a tuple or a fixed-size unpacked array is told the
+// types of such values it is handed, whatever else the entry says, since no
+// such value's bytes state one.
 auto ToldOfTheDomain(support::ValueDomain domain, const Told& stated) -> Told {
-  if (kArrays.Holds(domain) && std::holds_alternative<ToldNothing>(stated)) {
-    return ToldArrayTypes{};
+  if (kLaidOutByType.Holds(domain) &&
+      std::holds_alternative<ToldNothing>(stated)) {
+    return ToldLaidOutTypes{};
   }
   return stated;
+}
+
+// The same for a realization reached through `wrapper`. A cell, a net and a
+// driver laying a tuple or an array out after themselves were told its type
+// where they were built, so one is told nothing of the values it is handed; a
+// reference holds no type and is told it like any other realization.
+auto ToldThroughTheWrapper(
+    support::ValueDomain domain, WrapperKind wrapper, const Told& stated)
+    -> Told {
+  switch (wrapper) {
+    case WrapperKind::kCell:
+    case WrapperKind::kNet:
+    case WrapperKind::kDriver:
+      if (kLaidOutByType.Holds(domain) &&
+          std::holds_alternative<ToldNothing>(stated)) {
+        return ToldByTheStorage{};
+      }
+      return ToldOfTheDomain(domain, stated);
+    case WrapperKind::kRef:
+      return ToldOfTheDomain(domain, stated);
+  }
+  throw InternalError("llvm codegen: unknown capability wrapper");
 }
 
 auto ToldIn(
@@ -523,7 +569,7 @@ auto ToldOf(
   const EntryNaming naming = EntryNamingOf(fn);
   for (const ThroughWrapper& one : ThroughWrappers(naming)) {
     if (one.wrapper == wrapper && one.domains.Holds(domain)) {
-      return ToldOfTheDomain(domain, one.told);
+      return ToldThroughTheWrapper(domain, wrapper, one.told);
     }
   }
   throw InternalError(Refusal(
@@ -673,6 +719,15 @@ auto HeldObjectOf(const lir::Type& type)
       *held);
 }
 
+auto IsLaidOutByType(const lir::Type& type) -> bool {
+  const std::optional<support::RuntimeObject> held = HeldObjectOf(type);
+  if (!held.has_value()) {
+    return false;
+  }
+  const auto* domain = std::get_if<support::ValueDomain>(&*held);
+  return domain != nullptr && kLaidOutByType.Holds(*domain);
+}
+
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)
     -> std::optional<support::ValueDomain> {
   const std::optional<support::RuntimeObject> held =
@@ -739,16 +794,28 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
   throw InternalError("llvm codegen: unknown member storage kind");
 }
 
-auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool {
+auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told {
   switch (storage.kind) {
-    // A cell or a net of words lays them out after itself, so it has their
-    // place from the moment it is built.
+    // A net of an integral type is told how many positions the type has,
+    // which a layout of a narrower one does not say.
+    case support::MemberStorageKind::kResolvedNet:
+      if (kFourStateIntegral.Holds(storage.domain)) {
+        return ToldWidthMetadataAhead{};
+      }
+      [[fallthrough]];
+    // A cell or a net of words, a tuple or an array lays the value out after
+    // itself, so it has the value's place from the moment it is built.
     case support::MemberStorageKind::kValueCell:
     case support::MemberStorageKind::kObservableCell:
-    case support::MemberStorageKind::kResolvedNet:
-      return kWideIntegral.Holds(storage.domain);
+      if (kWideIntegral.Holds(storage.domain)) {
+        return ToldWidthMetadataAhead{};
+      }
+      if (kLaidOutByType.Holds(storage.domain)) {
+        return ToldTypeMetadataAhead{};
+      }
+      return ToldNothing{};
     // A history is installed by an entry of its own, and every other storage
-    // holds no integral value's words.
+    // holds no value it lays out after itself.
     case support::MemberStorageKind::kSampledHistory:
     case support::MemberStorageKind::kInlineValue:
     case support::MemberStorageKind::kBorrowedHandle:
@@ -760,7 +827,7 @@ auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool {
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
     case support::MemberStorageKind::kLoopBlocks:
-      return false;
+      return ToldNothing{};
   }
   throw InternalError("llvm codegen: unknown member storage kind");
 }
@@ -1168,6 +1235,7 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kSettleDeparture:
     case RuntimeOp::kStreamRead:
     case RuntimeOp::kStreamBuild:
+    case RuntimeOp::kTupleBuildDefault:
     case RuntimeOp::kAllocBytes:
     case RuntimeOp::kDeallocBytes:
     case RuntimeOp::kFromElements:
@@ -1202,6 +1270,7 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kElementDefault:
     case RuntimeOp::kDiscardedWrite:
       return support::AnswerTold::kElementType;
+    case RuntimeOp::kTupleBuildDefault:
     case RuntimeOp::kCellRefer:
     case RuntimeOp::kReferStorage:
     case RuntimeOp::kRunProgram:
@@ -1288,7 +1357,7 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
       return kForCellsMade;
     case RuntimeOp::kFromEntries:
     case RuntimeOp::kFromEntriesWildcard:
-      return kForAssociativeArrays;
+      return kForAssociativeArraysFromEntries;
     case RuntimeOp::kDefault:
       return kForWhatIsNull;
     case RuntimeOp::kFromLiteral:
@@ -1342,6 +1411,7 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kSettleDeparture:
     case RuntimeOp::kStreamWrite:
     case RuntimeOp::kStreamBuild:
+    case RuntimeOp::kTupleBuildDefault:
     case RuntimeOp::kStreamRead:
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kAllocBytes:
@@ -1358,7 +1428,7 @@ auto RealizationsOf(lir::ValueCellTarget::Op op)
     -> std::span<const RealizedFor> {
   switch (op) {
     case lir::ValueCellTarget::Op::kAllocate:
-      return kForCellsAllocated;
+      return kForCellsMade;
     case lir::ValueCellTarget::Op::kLoad:
     case lir::ValueCellTarget::Op::kStore:
       return kForCellsReached;
@@ -1672,7 +1742,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByStorageDomain{.realized = kForSequencesSteppedInto};
     case support::BuiltinFn::kDesignateComponent:
     case support::BuiltinFn::kReferComponent:
-      return NamedByStorageDomain{.realized = kForTuples};
+      return NamedByStorageDomain{.realized = kForTuplesSteppedInto};
 
     // A body that leaves by branching reaches the gate as the pair of questions
     // the lowering already asks wherever this execution regains control -- and

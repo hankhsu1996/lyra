@@ -23,11 +23,10 @@ struct FnAbi;
 
 // Where each component of a tuple value -- the runtime's one form for a
 // product, a struct a declaration names among them -- sits in the storage the
-// value occupies. A tuple opens with the address of its type's operation table
-// and is laid out after it the way a C record is: each component at the first
-// offset its own alignment allows after the one before, and the whole rounded
-// to the widest alignment among them, so a component's position follows from
-// the components ahead of it and nothing else.
+// value occupies. A tuple is laid out the way a C record is: each component at
+// the first offset its own alignment allows after the one before, and the
+// whole rounded to the widest alignment among them, so a component's position
+// follows from the components ahead of it and nothing else.
 struct TupleLayout {
   std::vector<lir::TypeId> components;
   std::vector<std::uint32_t> offsets;
@@ -72,7 +71,7 @@ class CodeGenTypes {
   // an integral value's is the bytes the value layer lays a value of its
   // width and states out in; a machine integer's is that integer's; every
   // other owned value is one runtime object, whose storage the library states.
-  auto StorageOf(lir::TypeId type) -> support::ObjectLayout;
+  auto LayoutOf(lir::TypeId type) -> support::ObjectLayout;
   // An integral type as the value layer states one, or nothing for a type that
   // is not integral.
   [[nodiscard]] auto IntegralShapeOf(lir::TypeId type) const

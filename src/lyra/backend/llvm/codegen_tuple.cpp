@@ -110,10 +110,13 @@ static_assert(offsetof(value::TupleComponent, type) == sizeof(void*));
 // `with` clause answers -- an order, a truth, a reduction (LRM 7.8, 7.12, 12.4)
 // -- none of which is asked of a structure: it has no relational or arithmetic
 // operator to order, test or fold by, and an associative array indexed by one
-// is refused where it is declared. Nor is the default a type fixes alone, which
-// is asked only of a singular type (LRM 6.4): a structure's is what its
-// declaration states (LRM 7.2.2).
+// is refused where it is declared.
 struct NeverAskedOfAStructure {};
+
+// What storage of a structure holds before anything writes it: each component
+// at what its own type builds then, which the library reads off the components
+// the type lists.
+struct BuiltComponentByComponent {};
 
 // What a type is asked that a structure answers with nothing: the walk over
 // parts ordered by position, a structure's being components named by position
@@ -139,7 +142,7 @@ using IntegralCrossing = std::variant<
 
 using SlotFilling = std::variant<
     LifecycleStep, support::ValueOperation, NeverAskedOfAStructure,
-    AnsweredWithNothing>;
+    BuiltComponentByComponent, AnsweredWithNothing>;
 
 // Where the virtual function `member` lies in its class's table, counted in
 // entries from the address point. A pointer to a virtual member function holds
@@ -204,7 +207,9 @@ auto TableSlots() -> std::vector<TableSlot> {
           AnswerWhetherItHolds{}),
       Slot("bit_identical", &ValueType::BitIdentical, BuiltinFn::kBitIdentical),
       Slot("has_unknown", &ValueType::HasUnknown, BuiltinFn::kHasUnknown),
-      Slot("build_default", &ValueType::BuildDefault, NeverAskedOfAStructure{}),
+      Slot(
+          "build_default", &ValueType::BuildDefault,
+          BuiltComponentByComponent{}),
       Slot(
           "bitstream_width", &ValueType::BitstreamWidth,
           BuiltinFn::kBitstreamWidth),
@@ -472,7 +477,7 @@ auto CodeGenTuples::OpenThunkBody(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
   // The value is a comparison's one-bit answer or a count's control bits,
   // which a design does not make wide.
-  const support::ObjectLayout layout = types_->StorageOf(stated);
+  const support::ObjectLayout layout = types_->LayoutOf(stated);
   llvm::AllocaInst* const storage =
       b.CreateAlloca(llvm::ArrayType::get(b.getInt8Ty(), layout.size));
   storage->setAlignment(llvm::Align(layout.align));
@@ -609,6 +614,21 @@ auto CodeGenTuples::ControlReadBody(
   return thunk.function;
 }
 
+// The type is what lists the components, so the body hands it to the library
+// beside the storage it builds in.
+auto CodeGenTuples::DefaultBody(
+    lir::TypeId tuple, std::string_view slot,
+    const VirtualSignature& stands_in_for) -> llvm::Constant* {
+  llvm::Function* const body = DeclareBody(tuple, slot, stands_in_for);
+  llvm::IRBuilder<> b(
+      llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
+  ForwardToEntry(
+      b, RuntimeOp::kTupleBuildDefault, b.getVoidTy(),
+      {body->getArg(0), body->getArg(1)});
+  b.CreateRetVoid();
+  return body;
+}
+
 auto CodeGenTuples::NullBody(
     lir::TypeId tuple, std::string_view slot,
     const VirtualSignature& stands_in_for) -> llvm::Constant* {
@@ -640,8 +660,8 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
   llvm::GlobalVariable* type =
       global(std::format("lyra.tuple{}", key), type_ty);
   type->setAlignment(llvm::Align(alignof(value::TupleType)));
-  // Named before it is filled: filling it emits the lifecycle, and each step
-  // that builds a tuple writes this type's address into it.
+  // Named before it is filled, so that a body emitted while filling it that
+  // names this type again names the one being filled.
   types_of_.emplace(key, type);
 
   // A struct has one type in the program, the declaring unit's, since that
@@ -753,6 +773,9 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
             [&](NeverAskedOfAStructure) -> llvm::Constant* {
               return filled_by(nullptr);
             },
+            [&](BuiltComponentByComponent) -> llvm::Constant* {
+              return DefaultBody(tuple, slot.name, slot.stands_in_for);
+            },
             [&](AnsweredWithNothing) -> llvm::Constant* {
               return NullBody(tuple, slot.name, slot.stands_in_for);
             }},
@@ -813,7 +836,7 @@ auto CodeGenTuples::Emit(
   switch (step) {
     case LifecycleStep::kCopy:
     case LifecycleStep::kMove:
-      b.CreateStore(TypeOf(tuple), fn->getArg(1));
+    case LifecycleStep::kAssign:
       for (std::size_t i = 0; i < count; ++i) {
         component(i, {at(fn->getArg(0), i), at(fn->getArg(1), i)});
       }
@@ -821,11 +844,6 @@ auto CodeGenTuples::Emit(
     case LifecycleStep::kDestroy:
       for (std::size_t i = 0; i < count; ++i) {
         component(i, {at(fn->getArg(0), i)});
-      }
-      break;
-    case LifecycleStep::kAssign:
-      for (std::size_t i = 0; i < count; ++i) {
-        component(i, {at(fn->getArg(0), i), at(fn->getArg(1), i)});
       }
       break;
   }

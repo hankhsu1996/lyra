@@ -178,6 +178,7 @@ auto MakesValue(const InstrData& instr) -> bool {
           [](const ArrayInstr&) { return true; },
           [](const AddrOfInstr&) { return true; },
           [](const StoreInstr&) { return false; },
+          [](const InitializeInstr&) { return false; },
           [](const BitsStoreInstr&) { return false; },
           [](const StorageInstr&) { return false; },
           [](const ReceiveDepartureInstr&) { return true; },

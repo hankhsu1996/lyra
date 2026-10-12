@@ -6,7 +6,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
 
@@ -23,10 +22,9 @@ concept RepresentedAtRunTime = requires(const T& value, const T& other) {
 
 // The storage half of a value cell, with no observation attached: it owns one
 // value of the declared representation and preserves that representation across
-// writes (LRM 4.3). It is the shared substrate under an observable signal cell
-// (`Var<T>`, which adds subscriber wakeup) and a non-observable procedural cell
-// (`ActivationValueCell<T>`). Non-copyable and non-movable: a cell is
-// addressed, so its identity is its address.
+// writes (LRM 4.3). It is the shared substrate under an observable signal cell,
+// which adds subscriber wakeup, and a cell nothing observes. Non-copyable and
+// non-movable: a cell is addressed, so its identity is its address.
 //
 // It is how a cell holds a value whose type is known where it is compiled, so
 // what the cell keeps for itself is a value of that type too.
@@ -91,19 +89,25 @@ class ValueStorageCore {
     value_ = value;
   }
 
-  // What a cell's protocol asks of how it holds its value: whether it holds
-  // `value`'s bits, taking them, and a copy of its own of what it holds.
-  [[nodiscard]] auto Holds(const T& value) const -> bool {
+  // What a holder's protocol asks of how it holds its value: whether it holds
+  // `value`'s bits, assigning them, and a copy of its own of what it holds.
+  // The first value assigned installs the representation.
+  [[nodiscard]] auto IsBitIdentical(const T& value) const -> bool {
     return value_.IsBitIdentical(value);
   }
-  void Take(const T& value) {
+  void Assign(const T& value) {
+    if (!IsInstalled()) {
+      Install(value);
+      return;
+    }
     Overwrite(value);
   }
-  [[nodiscard]] auto Holds(const ValueStorageCore& other) const -> bool {
-    return Holds(other.value_);
+  [[nodiscard]] auto IsBitIdentical(const ValueStorageCore& other) const
+      -> bool {
+    return IsBitIdentical(other.value_);
   }
-  void Take(const ValueStorageCore& other) {
-    Take(other.value_);
+  void Assign(const ValueStorageCore& other) {
+    Assign(other.value_);
   }
   [[nodiscard]] auto Copy() const -> T {
     return value_;
@@ -115,24 +119,11 @@ class ValueStorageCore {
   }
 
   // The same of a value lying at `bytes` as a reference names one.
-  [[nodiscard]] auto HoldsBytes(const void* bytes) const -> bool {
-    if constexpr (value::TakesBytesInPlace<T>) {
-      return value_.HoldsBytes(bytes);
-    } else {
-      return value_.IsBitIdentical(Read<T>(bytes));
-    }
+  [[nodiscard]] auto IsBitIdenticalTo(const void* bytes) const -> bool {
+    return value_.IsBitIdentical(Read<T>(bytes));
   }
-  void TakeBytes(const void* bytes) {
-    if constexpr (value::TakesBytesInPlace<T>) {
-      value_.TakeBytes(bytes);
-    } else {
-      value_ = Read<T>(bytes);
-    }
-  }
-  [[nodiscard]] auto CopyOf(const void* bytes) const -> T
-    requires value::TakesBytesInPlace<T>
-  {
-    return value_.Holding(bytes);
+  void AssignBytes(const void* bytes) {
+    value_ = Read<T>(bytes);
   }
 
  private:

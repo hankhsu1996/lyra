@@ -13,6 +13,9 @@ the element default among a fixed-size array's construction arguments in
 here for an array; Rejected quotes both and says what differs. Who states an element's default, and
 that no array of any kind is handed one, is
 [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md).
+D6 is superseded by [a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md):
+a variable, a net and a local lay an array out after themselves from the type they are told where
+they are built.
 
 ## Context
 
@@ -205,8 +208,8 @@ Two of these are rejections other records make, reversed here for an array.
   an array is installed with the array's type where a cell of a wide integral is installed with its
   width.
 - No speed or memory figure for the new layout is recorded here; none was taken.
-- A tuple still opens with its type's table. Nothing here needs it to, and nothing here changes when
-  it stops.
+- A tuple's bytes opened with its type's table when this was decided. Nothing here needed them to,
+  and nothing here changed when they stopped.
 
 ## Cross-references
 

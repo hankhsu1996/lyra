@@ -1,7 +1,10 @@
 #pragma once
 
+#include <bit>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/reduction.hpp"
@@ -51,8 +54,8 @@ template <typename Whole, typename Member>
     -> StatedAt {
   return StatedAt{
       .offset = static_cast<std::size_t>(
-          static_cast<const std::byte*>(static_cast<const void*>(&member)) -
-          static_cast<const std::byte*>(static_cast<const void*>(whole))),
+          std::bit_cast<std::uintptr_t>(std::addressof(member)) -
+          std::bit_cast<std::uintptr_t>(whole)),
       .bytes = sizeof(Member)};
 }
 
@@ -68,10 +71,10 @@ template <typename Whole, typename Member>
 //
 // A value's type is exact, since nothing in the language makes the type a value
 // has differ from the type it is held as, so whoever holds the value states its
-// type once and the value carries none of its own. The one exception is a
-// tuple, whose bytes open with its type, because the cells, references and
-// nets that hold one do not state it; a fixed-size unpacked array carries
-// none, so an access through one of those is told the array's type.
+// type once and the value carries none of its own. A reference and a part
+// designated within a write name bytes lying in something else and hold no
+// type, so an access through one of those is told the type of what it
+// reaches.
 //
 // Every value is passed as its address. Copying and moving build in `out` a
 // value the source still has to end; `Assign` writes into a value already
@@ -119,9 +122,13 @@ class ValueType {
       const void* lhs, const void* rhs) const -> bool = 0;
   [[nodiscard]] virtual auto HasUnknown(const void* value) const -> bool = 0;
 
-  // LRM 6.4, Table 6-7: the value a variable of a singular type holds before
-  // anything writes it, which the type alone fixes. An aggregate's depends on
-  // what the program declares of it (LRM 7.2.2), so it is never asked here.
+  // The value storage of the type holds before anything writes it, which the
+  // type alone fixes: a singular type's default (LRM 6.4, Table 6-7), an empty
+  // container, and an aggregate's parts each at what its own type builds. What
+  // a declaration states of its members (LRM 7.2.2) is written by its
+  // initialization after this. An untagged union's type states none of its
+  // members, so it builds one holding none, short of the first member's
+  // default LRM 7.3 gives it.
   virtual void BuildDefault(void* out) const = 0;
 
   virtual void BitstreamWidth(const void* value, void* out) const = 0;
@@ -185,6 +192,17 @@ class ValueType {
  private:
   std::uint32_t size_;
   std::uint32_t align_;
+};
+
+// A value the library holds of a type it was compiled without and is handed as
+// bytes laid out by that type, which state nothing of it -- a tuple, a
+// fixed-size unpacked array: kept with its type, and compared with and taking
+// the bytes of a value of that type.
+template <class T>
+concept LaidOutByType = requires(T& held, const T& read, const void* bytes) {
+  { read.Type() } -> std::convertible_to<const ValueType&>;
+  { read.IsBitIdenticalTo(bytes) } -> std::same_as<bool>;
+  held.AssignBytes(bytes);
 };
 
 }  // namespace lyra::value

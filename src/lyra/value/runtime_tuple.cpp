@@ -3,6 +3,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <utility>
 
@@ -27,18 +28,44 @@ auto At(const void* tuple, std::uint32_t offset) -> const void* {
 auto Stated(const TupleType& type, std::size_t index) -> const TupleComponent& {
   const std::span<const TupleComponent> stated = type.Components();
   if (index >= stated.size()) {
-    throw InternalError("RuntimeTuple: a component index is out of range");
+    throw InternalError("TupleType: a component index is out of range");
   }
   return stated[index];
 }
 
 }  // namespace
 
+auto TupleType::ComponentAt(void* laid_out, std::size_t index) const -> void* {
+  return At(laid_out, Stated(*this, index).offset);
+}
+
+auto TupleType::ComponentAt(const void* laid_out, std::size_t index) const
+    -> const void* {
+  return At(laid_out, Stated(*this, index).offset);
+}
+
+void TupleType::BuildEachComponentDefault(void* laid_out) const {
+  const std::span<const TupleComponent> stated = Components();
+  std::size_t built = 0;
+  const auto end_built = [&](const std::size_t* count) {
+    for (std::size_t i = 0; i < *count; ++i) {
+      stated[i].type->Destroy(ComponentAt(laid_out, i));
+    }
+  };
+  std::unique_ptr<const std::size_t, decltype(end_built)> unwinding(
+      &built, end_built);
+  for (; built < stated.size(); ++built) {
+    stated[built].type->BuildDefault(ComponentAt(laid_out, built));
+  }
+  unwinding.release();
+}
+
 RuntimeTuple::RuntimeTuple(AnyValue value) : value_(std::move(value)) {
 }
 
-auto RuntimeTuple::CopyOf(const void* laid_out) -> RuntimeTuple {
-  return RuntimeTuple(AnyValue::CopyOf(TypeAt(laid_out), laid_out));
+auto RuntimeTuple::CopyOf(const TupleType& type, const void* laid_out)
+    -> RuntimeTuple {
+  return RuntimeTuple(AnyValue::CopyOf(type, laid_out));
 }
 
 auto RuntimeTuple::Bytes() const -> const void* {
@@ -49,25 +76,16 @@ auto RuntimeTuple::Bytes() -> void* {
   return value_.Bytes();
 }
 
-auto RuntimeTuple::TypeAt(const void* laid_out) -> const TupleType& {
-  return **static_cast<const TupleType* const*>(laid_out);
+auto RuntimeTuple::Type() const -> const ValueType& {
+  return value_.Type();
 }
 
-auto RuntimeTuple::ComponentAt(void* laid_out, std::size_t index) -> void* {
-  return At(laid_out, Stated(TypeAt(laid_out), index).offset);
+auto RuntimeTuple::IsBitIdenticalTo(const void* bytes) const -> bool {
+  return Type().BitIdentical(Bytes(), bytes);
 }
 
-auto RuntimeTuple::ComponentAt(const void* laid_out, std::size_t index) -> const
-    void* {
-  return At(laid_out, Stated(TypeAt(laid_out), index).offset);
-}
-
-auto RuntimeTuple::BitIdentical(const void* lhs, const void* rhs) -> bool {
-  return TypeAt(lhs).BitIdentical(lhs, rhs);
-}
-
-void RuntimeTuple::AssignAt(void* storage, const void* value) {
-  TypeAt(storage).Assign(storage, value);
+void RuntimeTuple::AssignBytes(const void* bytes) {
+  Type().Assign(Bytes(), bytes);
 }
 
 auto RuntimeTuple::CopyInto(void* out) const -> void* {
@@ -79,15 +97,6 @@ auto RuntimeTuple::MoveInto(void* out) && -> void* {
   Type().Move(Bytes(), out);
   value_ = AnyValue();
   return out;
-}
-
-auto RuntimeTuple::Type() const -> const TupleType& {
-  if (Bytes() == nullptr) {
-    throw InternalError(
-        "RuntimeTuple: a tuple is read from storage that holds none -- please "
-        "report this as a bug");
-  }
-  return TypeAt(Bytes());
 }
 
 auto RuntimeTuple::operator==(const RuntimeTuple& other) const -> FourStateBit {

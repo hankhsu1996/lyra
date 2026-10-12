@@ -47,61 +47,55 @@ static_assert(FamiliesCover(support::ValueDomain::kLogicWide));
 
 }  // namespace
 
-template class ValueStorageCore<value::RuntimeTuple>;
 template class ValueStorageCore<value::RuntimeUnion>;
 template class ValueStorageCore<value::RuntimeTaggedUnion>;
 template class ValueStorageCore<value::RuntimeDynamicArray>;
-template class ValueStorageCore<value::RuntimeFixedArray>;
 template class ValueStorageCore<value::RuntimeQueue>;
 template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
-template class Cell<WordsHolding<value::StateDomain::kTwoState>>;
-template class Cell<WordsHolding<value::StateDomain::kFourState>>;
-template class Cell<ValueStorageCore<value::RuntimeTuple>>;
+template class Cell<WordsStorage<value::StateDomain::kTwoState>>;
+template class Cell<WordsStorage<value::StateDomain::kFourState>>;
+template class Cell<LaidOutStorage<value::RuntimeTuple>>;
 template class Cell<ValueStorageCore<value::RuntimeUnion>>;
 template class Cell<ValueStorageCore<value::RuntimeTaggedUnion>>;
 template class Cell<ValueStorageCore<value::RuntimeDynamicArray>>;
-template class Cell<ValueStorageCore<value::RuntimeFixedArray>>;
+template class Cell<LaidOutStorage<value::RuntimeFixedArray>>;
 template class Cell<ValueStorageCore<value::RuntimeQueue>>;
 template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
-template class WordsCell<value::StateDomain::kTwoState>;
-template class WordsCell<value::StateDomain::kFourState>;
-template class Var<value::RuntimeTuple>;
+template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
+template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
+template class TailCell<LaidOutStorage<value::RuntimeTuple>>;
+template class TailCell<LaidOutStorage<value::RuntimeFixedArray>>;
 template class Var<value::RuntimeUnion>;
 template class Var<value::RuntimeTaggedUnion>;
 template class Var<value::RuntimeDynamicArray>;
-template class Var<value::RuntimeFixedArray>;
 template class Var<value::RuntimeQueue>;
 template class Var<value::RuntimeAssociativeArray>;
 
-template class CellRareState<WordsHolding<value::StateDomain::kTwoState>>;
-template class CellRareState<WordsHolding<value::StateDomain::kFourState>>;
-template class CellRareState<ValueStorageCore<value::RuntimeTuple>>;
+template class CellRareState<WordsStorage<value::StateDomain::kTwoState>>;
+template class CellRareState<WordsStorage<value::StateDomain::kFourState>>;
+template class CellRareState<LaidOutStorage<value::RuntimeTuple>>;
 template class CellRareState<ValueStorageCore<value::RuntimeUnion>>;
 template class CellRareState<ValueStorageCore<value::RuntimeTaggedUnion>>;
 template class CellRareState<ValueStorageCore<value::RuntimeDynamicArray>>;
-template class CellRareState<ValueStorageCore<value::RuntimeFixedArray>>;
+template class CellRareState<LaidOutStorage<value::RuntimeFixedArray>>;
 template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
 template class CellRareState<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 template class Ref<value::WideBitVector>;
 template class Ref<value::WideLogicVector>;
-template class Ref<value::RuntimeTuple>;
 template class Ref<value::RuntimeUnion>;
 template class Ref<value::RuntimeTaggedUnion>;
 template class Ref<value::RuntimeDynamicArray>;
-template class Ref<value::RuntimeFixedArray>;
 template class Ref<value::RuntimeQueue>;
 template class Ref<value::RuntimeAssociativeArray>;
 
 template class ScopedMutation<Ref<value::WideBitVector>>;
 template class ScopedMutation<Ref<value::WideLogicVector>>;
-template class ScopedMutation<Ref<value::RuntimeTuple>>;
 template class ScopedMutation<Ref<value::RuntimeUnion>>;
 template class ScopedMutation<Ref<value::RuntimeTaggedUnion>>;
 template class ScopedMutation<Ref<value::RuntimeDynamicArray>>;
-template class ScopedMutation<Ref<value::RuntimeFixedArray>>;
 template class ScopedMutation<Ref<value::RuntimeQueue>>;
 template class ScopedMutation<Ref<value::RuntimeAssociativeArray>>;
 
@@ -115,13 +109,11 @@ template class Takeovers<value::RuntimeFixedArray>;
 template class Takeovers<value::RuntimeQueue>;
 template class Takeovers<value::RuntimeAssociativeArray>;
 
-template class ActivationValueCell<value::RuntimeTuple>;
-template class ActivationValueCell<value::RuntimeUnion>;
-template class ActivationValueCell<value::RuntimeTaggedUnion>;
-template class ActivationValueCell<value::RuntimeDynamicArray>;
-template class ActivationValueCell<value::RuntimeFixedArray>;
-template class ActivationValueCell<value::RuntimeQueue>;
-template class ActivationValueCell<value::RuntimeAssociativeArray>;
+template class ValueCell<value::RuntimeUnion>;
+template class ValueCell<value::RuntimeTaggedUnion>;
+template class ValueCell<value::RuntimeDynamicArray>;
+template class ValueCell<value::RuntimeQueue>;
+template class ValueCell<value::RuntimeAssociativeArray>;
 
 template class SampledHistory<value::WideBitVector>;
 template class SampledHistory<value::WideLogicVector>;
@@ -222,14 +214,14 @@ template class Takeovers<value::LogicVector<16>>;
 template class Takeovers<value::LogicVector<32>>;
 template class Takeovers<value::LogicVector<64>>;
 
-template class ActivationValueCell<value::BitVector<8>>;
-template class ActivationValueCell<value::BitVector<16>>;
-template class ActivationValueCell<value::BitVector<32>>;
-template class ActivationValueCell<value::BitVector<64>>;
-template class ActivationValueCell<value::LogicVector<8>>;
-template class ActivationValueCell<value::LogicVector<16>>;
-template class ActivationValueCell<value::LogicVector<32>>;
-template class ActivationValueCell<value::LogicVector<64>>;
+template class ValueCell<value::BitVector<8>>;
+template class ValueCell<value::BitVector<16>>;
+template class ValueCell<value::BitVector<32>>;
+template class ValueCell<value::BitVector<64>>;
+template class ValueCell<value::LogicVector<8>>;
+template class ValueCell<value::LogicVector<16>>;
+template class ValueCell<value::LogicVector<32>>;
+template class ValueCell<value::LogicVector<64>>;
 
 template class SampledHistory<value::BitVector<8>>;
 template class SampledHistory<value::BitVector<16>>;

@@ -304,10 +304,10 @@ enum class BuiltinFn : std::uint16_t {
   // an operation is named here. What the contribution is stays a value the
   // call carries.
   //
-  // A net of an integral type is told how many positions that type has, which
-  // is all a connection can name of it (LRM 23.3.3.7). A net of an unpacked
-  // aggregate is handed a value of its data type, whose shape it takes (LRM
-  // 6.7.1), so its install is an entry of its own.
+  // A net of an integral type counts its positions by that type, which is all
+  // a connection can name of it (LRM 23.3.3.7). A net of an unpacked aggregate
+  // is handed a value of its data type, whose shape it takes (LRM 6.7.1), so
+  // its install is an entry of its own.
   kNetInitializeTriState,
   kNetInitializeWiredAnd,
   kNetInitializeWiredOr,
@@ -1303,8 +1303,9 @@ enum class AnswerTold : std::uint8_t {
   // The type of the value it answers, which nothing it is handed states: what
   // it answers where it finds nothing to answer with -- a reduction (LRM
   // 7.12.3) over no entries, the index an unallocated dimension reports (LRM
-  // 20.7) -- is that type's default (LRM Table 6-7), and what a stream of bits
-  // is read as (LRM 6.24.3) is a value of it.
+  // 20.7) -- is that type's default (LRM Table 6-7), what a stream of bits is
+  // read as (LRM 6.24.3) is a value of it, and a tuple it lays its answers out
+  // in states nothing of it in its bytes.
   kAnswerType,
   // The element type of the element it answers with where no array is in hand
   // to state one: what a read of a position naming no element yields, and

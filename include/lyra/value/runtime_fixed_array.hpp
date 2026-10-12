@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <span>
 
@@ -15,10 +14,11 @@ namespace lyra::value {
 
 class String;
 
-// A fixed-size unpacked array (LRM 7.4.2) as the runtime holds one: the array
-// exactly as the program lays it out, in storage of its own, held with its
-// type as any value the library was compiled without is. The bytes carry no
-// type, so whoever hands an array in by its bytes states the type beside them.
+// A fixed-size unpacked array (LRM 7.4.2) as the runtime keeps one of its own:
+// the array exactly as the program lays it out, in storage of its own, held
+// with its type as any value the library was compiled without is. The bytes
+// carry no type, so whoever hands an array in by its bytes states the type
+// beside them.
 //
 // An array that holds elements keeps them where they are: an assignment gives
 // each element the value of the one in the same place, so whatever names an
@@ -27,6 +27,9 @@ class RuntimeFixedArray {
  public:
   // Holds no array: a variable's storage before its declaration installs one.
   RuntimeFixedArray() = default;
+
+  // The array `value` holds, which is a value of an array type.
+  explicit RuntimeFixedArray(AnyValue value);
 
   // A copy of the array of `type` laid out at `laid_out`.
   [[nodiscard]] static auto CopyOf(
@@ -74,11 +77,8 @@ class RuntimeFixedArray {
   // The array of this one's type laid out at `bytes`, compared with and taken
   // into the elements this holds, so a store of one obtains no storage for the
   // array. The bytes may be this array's own.
-  [[nodiscard]] auto HoldsBytes(const void* bytes) const -> bool;
-  void TakeBytes(const void* bytes);
-
-  // A copy of the array of this one's type laid out at `bytes`.
-  [[nodiscard]] auto Holding(const void* bytes) const -> RuntimeFixedArray;
+  [[nodiscard]] auto IsBitIdenticalTo(const void* bytes) const -> bool;
+  void AssignBytes(const void* bytes);
 
   // A copy of the array, or the array itself, laid out in `out`.
   auto CopyInto(void* out) const -> void*;
@@ -111,12 +111,10 @@ class RuntimeFixedArray {
   [[nodiscard]] auto BitstreamWidth() const -> Int;
   [[nodiscard]] auto CountBits(const ConstIntegralView& control_bits) const
       -> Int;
-  auto WriteToStream(const IntegralView& stream, std::uint64_t filled) const
-      -> std::uint64_t;
+  [[nodiscard]] auto WriteToStream(
+      const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t;
 
  private:
-  explicit RuntimeFixedArray(AnyValue value);
-
   AnyValue value_;
 };
 

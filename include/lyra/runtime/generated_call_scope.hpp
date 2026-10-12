@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/runtime/words_holding.hpp"
+#include "lyra/runtime/tail.hpp"
 
 namespace lyra::runtime {
 
@@ -26,10 +26,10 @@ class ActivationValueStore {
     return value;
   }
 
-  // The same of a `T` laying a value `bytes` bytes long out after itself.
+  // The same of a `T` keeping a value of layout `held` at its tail.
   template <typename T, typename... Args>
-  auto NewWithRoomAfter(std::size_t bytes, Args&&... args) -> T* {
-    auto owner = MakeWithRoomAfter<T>(bytes, std::forward<Args>(args)...);
+  auto NewWithTail(Layout held, Args&&... args) -> T* {
+    auto owner = MakeWithTail<T>(held, std::forward<Args>(args)...);
     T* value = owner.get();
     objects_.push_back(std::move(owner));
     return value;

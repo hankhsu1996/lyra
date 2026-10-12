@@ -3032,6 +3032,21 @@ enough to warrant its own focused review.
       a failure of the compiler's own. Target: a write a takeover turns away is kept beneath it
       wherever the write names a part of the variable, however the variable was reached. Not
       blocked.
+- [ ] R221 -- A value type's table of operations is one interface every type answers in full, so a
+      type the language gives no operation of some kind still overrides it with a body that refuses
+      and ignores what it is handed. Each such parameter is unnamed, which clang-tidy's
+      readability-named-parameter reports, and naming it instead is reported by the build's own
+      `-Wunused-parameter`; the one spelling both accept, a name written as a comment, is a
+      suppression the project's style forbids. Seen on the fixed-size array type's and the library
+      value types' refusing overrides. Target: a type answers only the operations it has, so no
+      override exists to refuse -- the operations no type of a family answers move to the family
+      that does. Not blocked.
+- [ ] R222 -- clang-tidy reports readability-static-accessed-through-instance on the generated
+      process body the runtime resumes, at the coroutine's own declaration, where nothing in the
+      source names a static member. The cause is not established; a coroutine's promise type has
+      static members the compiler's expansion of the body reaches, which is the first thing to
+      check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
+      silencing the check. Not blocked.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

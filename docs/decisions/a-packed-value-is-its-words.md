@@ -373,10 +373,11 @@ the caller states.
 of positions the design's construction gave it, by the same functions that fold an integral value,
 with the count as their width. The fold is instantiated for no type. Reading a driver's contribution
 into positions, and showing resolved positions in the value a name holds, are compiled once per
-layout, because each reads or writes a value where it lies. A net of an integral type has one
-install on both backends, told the count of positions its declared type has and the scalar its net
-type contributes where nothing drives it; a net of an unpacked aggregate is installed with a value
-of its type instead, which is an entry of its own.
+layout, because each reads or writes a value where it lies. A net of an integral type counts its
+positions by its declared type: a type that states its width gives it, and a layout serving several
+widths is built told the count, as a holder of words is told its width. Its one install on both
+backends is told only the scalar its net type contributes where nothing drives it; a net of an
+unpacked aggregate is installed with a value of its type instead, which is an entry of its own.
 
 **D11. The widest packed type is the front end's, 2^24 - 1 bits.** The standard's floor is 65,536
 (LRM 6.9.1, 7.4.1), and a design is refused only where the front end refuses it

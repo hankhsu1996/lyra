@@ -112,16 +112,12 @@ auto RuntimeFixedArray::Type() const -> const FixedArrayType& {
   return *type;
 }
 
-auto RuntimeFixedArray::HoldsBytes(const void* bytes) const -> bool {
+auto RuntimeFixedArray::IsBitIdenticalTo(const void* bytes) const -> bool {
   return Type().BitIdentical(Bytes(), bytes);
 }
 
-void RuntimeFixedArray::TakeBytes(const void* bytes) {
+void RuntimeFixedArray::AssignBytes(const void* bytes) {
   Type().Assign(Bytes(), bytes);
-}
-
-auto RuntimeFixedArray::Holding(const void* bytes) const -> RuntimeFixedArray {
-  return CopyOf(Type(), bytes);
 }
 
 auto RuntimeFixedArray::operator==(const RuntimeFixedArray& other) const

@@ -31,27 +31,6 @@ auto Unsupported(std::string message) -> std::unexpected<diag::Diagnostic> {
       diag::DiagCode::kUnsupportedExpressionForm, std::move(message));
 }
 
-// The values a storage holds, where they are all of one representation;
-// nothing for a type that is not such storage. A capability wrapper holds the
-// value it represents, a history holds what each tick of one clocking event
-// settled for one expression, and a place designated within a write reaches
-// the value it designates -- one representation each way, which is what lets
-// an entry reaching the storage be named once per representation rather than
-// per call.
-auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
-  if (const std::optional<std::pair<WrapperKind, lir::TypeId>> wrapper =
-          WrapperOf(type)) {
-    return wrapper->second;
-  }
-  if (const auto* history = type.As<lir::SampledHistoryType>()) {
-    return history->value;
-  }
-  if (const auto* designation = type.As<lir::DesignationType>()) {
-    return designation->value;
-  }
-  return std::nullopt;
-}
-
 // The type a realization told of one is told of, which the call entering it
 // states.
 auto ToldOfType(std::optional<lir::TypeId> stated, std::string_view what)
@@ -85,6 +64,20 @@ auto WrapperOf(const lir::Type& type)
   // where it stands, before anything strips it to look at what it points at.
   if (const auto* reference = type.As<lir::RefType>()) {
     return std::pair{WrapperKind::kRef, reference->pointee};
+  }
+  return std::nullopt;
+}
+
+auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
+  if (const std::optional<std::pair<WrapperKind, lir::TypeId>> wrapper =
+          WrapperOf(type)) {
+    return wrapper->second;
+  }
+  if (const auto* history = type.As<lir::SampledHistoryType>()) {
+    return history->value;
+  }
+  if (const auto* designation = type.As<lir::DesignationType>()) {
+    return designation->value;
   }
   return std::nullopt;
 }
@@ -168,26 +161,28 @@ auto ToldModeOf(
   return std::visit(
       Overloaded{
           [](const ToldNothing&) -> Mode { return std::nullopt; },
-          [](const ToldHeldWidthAhead&) -> Mode { return std::nullopt; },
-          [&](const ToldHeldWidth& t) -> Mode {
+          [](const ToldWidthMetadataAhead&) -> Mode { return std::nullopt; },
+          [](const ToldTypeMetadataAhead&) -> Mode { return std::nullopt; },
+          [](const ToldByTheStorage&) -> Mode { return std::nullopt; },
+          [&](const ToldWidthMetadata& t) -> Mode {
             if (t.after != index) {
               return std::nullopt;
             }
             return PassWithWidth{.type = held()};
           },
-          [&](const ToldArrayTypes& t) -> Mode {
+          [&](const ToldLaidOutTypes& t) -> Mode {
             if (t.reached_after == index) {
               return PassWithType{
                   .type = ToldOfType(
                       types.acted_on,
-                      "the type of the array the storage holds")};
+                      "the type of the value the storage holds")};
             }
-            if (!pool.Get(own).Is<lir::UnpackedArrayType>()) {
+            if (!IsLaidOutByType(pool.Get(own))) {
               return std::nullopt;
             }
             // The readings that hand a value over with nothing of its type
-            // are the ones a realization for arrays adds the type to; any
-            // other already says what crosses with the operand.
+            // are the ones a realization for such values adds the type to;
+            // any other already says what crosses with the operand.
             switch (reading) {
               case support::OperandReading::kHeld:
               case support::OperandReading::kMachine:
@@ -221,6 +216,19 @@ auto ToldModeOf(
             return PassWithType{
                 .type =
                     ToldOfType(types.member, "the member a union is to hold")};
+          },
+          [&](const ToldEntryType& t) -> Mode {
+            if (t.after != index) {
+              return std::nullopt;
+            }
+            const auto* entries = pool.Get(own).As<lir::MachineArrayType>();
+            if (entries == nullptr) {
+              throw InternalError(
+                  "llvm codegen: a realization told the type of a literal's "
+                  "entries is handed no sequence of them -- please report "
+                  "this as a bug");
+            }
+            return PassWithType{.type = entries->element};
           }},
       told);
 }
@@ -325,44 +333,57 @@ auto TypeArgsToldAs(
   throw InternalError("llvm codegen: unknown answer told");
 }
 
-// What a realization told `told` takes ahead of its operands, which is of the
-// type the call states the entry acts on.
+}  // namespace
+
 auto ImplicitArgOf(const Told& told, const ToldTypes& types) -> ImplicitArg {
   return std::visit(
       Overloaded{
-          [&](const ToldHeldWidthAhead&) -> ImplicitArg {
-            return HeldWidthArg{
+          [&](const ToldWidthMetadataAhead&) -> ImplicitArg {
+            return WidthMetadataArg{
                 .of = ToldOfType(
                     types.acted_on,
                     "how wide the values the storage it makes holds are")};
           },
+          [&](const ToldTypeMetadataAhead&) -> ImplicitArg {
+            return TypeMetadataArg{
+                .of = ToldOfType(
+                    types.acted_on,
+                    "the type of the value the storage it makes holds")};
+          },
           [](const ToldNothing&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldHeldWidth&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldArrayTypes&) -> ImplicitArg { return NoImplicitArg{}; },
+          [](const ToldByTheStorage&) -> ImplicitArg {
+            return NoImplicitArg{};
+          },
+          [](const ToldWidthMetadata&) -> ImplicitArg {
+            return NoImplicitArg{};
+          },
+          [](const ToldLaidOutTypes&) -> ImplicitArg {
+            return NoImplicitArg{};
+          },
           [](const ToldKeyType&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldMemberType&) -> ImplicitArg { return NoImplicitArg{}; }},
+          [](const ToldMemberType&) -> ImplicitArg { return NoImplicitArg{}; },
+          [](const ToldEntryType&) -> ImplicitArg { return NoImplicitArg{}; }},
       told);
 }
-
-}  // namespace
 
 auto TypeArgsOf(
     const lir::TypePool& types, const Told& told, support::AnswerTold declared,
     std::optional<lir::TypeId> called_at, lir::TypeId answered,
     const ReturnInfo& ret) -> std::vector<TypeArg> {
   switch (declared) {
-    // Whether a realization for fixed-size unpacked arrays builds one follows
-    // from the types a call states, which no declaration holds.
+    // A realization for tuples or fixed-size unpacked arrays building one is
+    // told its type, which its bytes do not state; whether one builds such a
+    // value follows from the type a call answers at, which no declaration
+    // holds.
     case support::AnswerTold::kNothing: {
-      const bool builds_an_array =
-          std::holds_alternative<ToldArrayTypes>(told) &&
+      const bool builds_a_value_laid_out_by_type =
+          std::holds_alternative<ToldLaidOutTypes>(told) &&
           std::holds_alternative<ReturnIndirect>(ret) &&
-          types.Get(answered).Is<lir::UnpackedArrayType>();
-      if (!builds_an_array) {
+          IsLaidOutByType(types.Get(answered));
+      if (!builds_a_value_laid_out_by_type) {
         return {};
       }
-      return TypeArgsToldAs(
-          types, support::AnswerTold::kBuiltArray, called_at, answered);
+      return {TypeConstantArg{.type = answered}};
     }
     case support::AnswerTold::kBuiltArray:
     case support::AnswerTold::kAnswerType:

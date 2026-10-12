@@ -52,15 +52,17 @@ struct VirtualSignature {
   std::vector<MachineKind> takes;
 };
 
-// The lifecycle of each tuple type a module uses, and the type a tuple of it
-// opens with the address of. A tuple is a value made of several components at
+// The lifecycle of each tuple type a module uses, and the constant stating the
+// type to the runtime. A tuple is a value made of several components at
 // once -- an unpacked structure (LRM 7.2), or a call's answer, its result
 // together with its `output` and `inout` arguments (LRM 13.5) -- so each step
 // of its life applies the same step to every component, the way clang emits a
 // class's implicit special members. The type is how the runtime, compiled
 // before any tuple type existed, reaches what a value it holds can do: the
 // lifecycle compiled here, and every operation the language defines on the
-// whole value, which are the methods the type's declaration states. It is an
+// whole value, which are the methods the type's declaration states. A tuple's
+// bytes state nothing of it, so whatever hands one to the runtime hands the
+// type beside it. It is an
 // object of a class the runtime declares, emitted as clang emits one of a
 // class deriving from it: the object holds the address of a table of bodies,
 // one per virtual function.
@@ -76,7 +78,7 @@ class CodeGenTuples {
 
   auto Function(lir::TypeId tuple, LifecycleStep step) -> llvm::Function*;
 
-  // The type a tuple of `tuple`'s type opens with the address of.
+  // The constant stating `tuple`'s type to the runtime.
   auto TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable*;
 
   // The type of every struct this unit declares, which another unit may refer
@@ -138,6 +140,11 @@ class CodeGenTuples {
       lir::TypeId tuple, std::string_view slot,
       const VirtualSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
+  // The body of the slot building a structure's value before anything writes
+  // it.
+  auto DefaultBody(
+      lir::TypeId tuple, std::string_view slot,
+      const VirtualSignature& stands_in_for) -> llvm::Constant*;
   // The body of a slot a structure answers with nothing.
   auto NullBody(
       lir::TypeId tuple, std::string_view slot,

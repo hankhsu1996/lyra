@@ -264,9 +264,9 @@ class CodeGenModule {
 
   // Building each member `placed` lays out, in the storage at `value`, and
   // ending each of them, last placed first as a C++ class ends its members.
-  void BeginMembers(
+  auto BeginMembers(
       llvm::IRBuilderBase& builder, llvm::Value* value,
-      const RecordLayout& placed);
+      const RecordLayout& placed) -> diag::Result<void>;
   auto EndMembers(
       llvm::IRBuilderBase& builder, llvm::Value* value,
       const RecordLayout& placed) -> diag::Result<void>;
@@ -282,21 +282,20 @@ class CodeGenModule {
   [[nodiscard]] auto MemberLayout(
       lir::TypeId type, support::DeclaredMemberStorage storage)
       -> support::ObjectLayout;
-  [[nodiscard]] auto HeldTypeOf(lir::TypeId type) const
+  // The values a member of `type` holds: its own value, or what the storage
+  // it is holds.
+  [[nodiscard]] auto ValuesHeldByMember(lir::TypeId type) const
       -> std::optional<lir::TypeId>;
   // Builds, at `at`, the storage a member of `type` is held as.
-  void BuildMemberStorage(
+  auto BuildMemberStorage(
       llvm::IRBuilderBase& builder, lir::TypeId type,
-      support::DeclaredMemberStorage storage, llvm::Value* at);
+      support::DeclaredMemberStorage storage, llvm::Value* at)
+      -> diag::Result<void>;
   // The arguments that tell an entry how wide an integral type is, and whether
   // it is four-state.
   auto WidthArg(const value::IntegralShape& shape) -> llvm::Constant*;
   auto FourStateArg(const value::IntegralShape& shape) -> llvm::Constant*;
-  // What builds the storage of a member held as `storage`, handed where that
-  // storage is and, where it is built at the width of what it holds, that
-  // width; and what ends it, handed where it is.
-  auto MemberStorageConstructor(support::DeclaredMemberStorage storage)
-      -> llvm::FunctionCallee;
+  // What ends the storage of a member held as `storage`, handed where it is.
   auto MemberStorageDestructor(support::DeclaredMemberStorage storage)
       -> llvm::Function*;
   // What registers a function to run on an object when the program exits (C++

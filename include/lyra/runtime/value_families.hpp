@@ -1,11 +1,11 @@
 #pragma once
 
-#include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/takeover.hpp"
+#include "lyra/runtime/value_cell.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
@@ -75,11 +75,11 @@ extern template class Takeovers<value::ShortReal>;
 extern template class Takeovers<value::Chandle>;
 extern template class Takeovers<value::ObjectRef>;
 
-extern template class ActivationValueCell<value::String>;
-extern template class ActivationValueCell<value::Real>;
-extern template class ActivationValueCell<value::ShortReal>;
-extern template class ActivationValueCell<value::Chandle>;
-extern template class ActivationValueCell<value::ObjectRef>;
+extern template class ValueCell<value::String>;
+extern template class ValueCell<value::Real>;
+extern template class ValueCell<value::ShortReal>;
+extern template class ValueCell<value::Chandle>;
+extern template class ValueCell<value::ObjectRef>;
 
 extern template class SampledHistory<value::String>;
 extern template class SampledHistory<value::Real>;

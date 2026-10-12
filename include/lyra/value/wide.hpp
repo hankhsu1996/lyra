@@ -103,7 +103,7 @@ class WideVector {
       return *this;
     }
     if (SameRepresentation(other)) {
-      TakeBytes(other.Bytes());
+      AssignBytes(other.Bytes());
       return *this;
     }
     words_ = other.words_;
@@ -115,7 +115,7 @@ class WideVector {
       return *this;
     }
     if (SameRepresentation(other)) {
-      TakeBytes(other.Bytes());
+      AssignBytes(other.Bytes());
       return *this;
     }
     words_ = std::move(other.words_);
@@ -207,10 +207,10 @@ class WideVector {
   // The value laid out at `bytes`, as wide as this one, compared with and
   // taken into the words this holds, so a store of one allocates nothing. The
   // bytes may be this value's own.
-  [[nodiscard]] auto HoldsBytes(const void* bytes) const -> bool {
+  [[nodiscard]] auto IsBitIdenticalTo(const void* bytes) const -> bool {
     return std::memcmp(words_.data(), bytes, ByteSize()) == 0;
   }
-  void TakeBytes(const void* bytes) {
+  void AssignBytes(const void* bytes) {
     std::memmove(words_.data(), bytes, ByteSize());
   }
 
@@ -233,8 +233,8 @@ class WideVector {
 template <class T>
 concept TakesBytesInPlace =
     requires(T& held, const T& read, const void* bytes) {
-      { read.HoldsBytes(bytes) } -> std::same_as<bool>;
-      held.TakeBytes(bytes);
+      { read.IsBitIdenticalTo(bytes) } -> std::same_as<bool>;
+      held.AssignBytes(bytes);
     };
 
 using WideBitVector = WideVector<StateDomain::kTwoState>;

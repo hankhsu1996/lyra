@@ -144,12 +144,12 @@ auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
   if (!module_->Unit().types.Get(type).IsOwnedValue()) {
     return nullptr;
   }
-  return LaidOutStorage(module_->Types().StorageOf(type));
+  return LaidOutStorage(module_->Types().LayoutOf(type));
 }
 
 auto CodeGenFunction::NeedsHeapStorage(lir::TypeId type) const -> bool {
   return module_->Unit().types.Get(type).IsOwnedValue() &&
-         module_->Types().StorageOf(type).size > value::kMaxInlineBytes;
+         module_->Types().LayoutOf(type).size > value::kMaxInlineBytes;
 }
 
 void CodeGenFunction::DeclareHeapPointers() {
@@ -196,7 +196,7 @@ auto CodeGenFunction::AllocateBytes(lir::ValueId of) -> llvm::Value* {
         "to keep their address in -- please report this as a bug");
   }
   const std::array<llvm::Value*, 1> args{builder_.getInt64(
-      module_->Types().StorageOf(fn_->values.Get(of).type).size)};
+      module_->Types().LayoutOf(fn_->values.Get(of).type).size)};
   llvm::Value* const bytes = CallEntry(
       RuntimeSymbol(RuntimeOp::kAllocBytes), module_->Types().Ptr(),
       {CallArranger::Direct(builder_.getInt64Ty())}, args);
@@ -212,7 +212,7 @@ void CodeGenFunction::DeallocateBytes(lir::ValueId of) {
   const std::array<llvm::Value*, 2> args{
       builder_.CreateLoad(module_->Types().Ptr(), kept->second),
       builder_.getInt64(
-          module_->Types().StorageOf(fn_->values.Get(of).type).size)};
+          module_->Types().LayoutOf(fn_->values.Get(of).type).size)};
   CallEntry(
       RuntimeSymbol(RuntimeOp::kDeallocBytes), builder_.getVoidTy(),
       {CallArranger::Direct(module_->Types().Ptr()),
@@ -261,7 +261,7 @@ auto CodeGenFunction::BuildInto(
 
 auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
     -> diag::Result<void> {
-  if (module_->Types().StorageOf(type).ends_with_nothing_to_do) {
+  if (module_->Types().LayoutOf(type).ends_with_nothing_to_do) {
     return {};
   }
   const std::array<llvm::Value*, 1> args{value};
@@ -328,7 +328,9 @@ auto CodeGenFunction::LowerOpenVariables() -> diag::Result<llvm::Value*> {
       llvm::ArrayType::get(at.getInt8Ty(), (*record)->size), nullptr,
       "variables");
   storage->setAlignment(llvm::Align((*record)->align));
-  module_->BeginMembers(builder_, storage, **record);
+  if (auto begun = module_->BeginMembers(builder_, storage, **record); !begun) {
+    return std::unexpected(std::move(begun.error()));
+  }
   return storage;
 }
 

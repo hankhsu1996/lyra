@@ -18,10 +18,11 @@
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/sampled_value.hpp"
+#include "lyra/runtime/storage_for.hpp"
+#include "lyra/runtime/tail.hpp"
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
-#include "lyra/runtime/words_holding.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
@@ -231,14 +232,14 @@ class VariableCell : public Observable {
 // value: its sampled value (LRM 16.5.1), and the procedural continuous
 // assignments it has been put under (LRM 10.6). Each part is empty until its
 // feature is used.
-template <class Holding>
+template <class HeldAs>
 class CellRareState final : public RareWriteState {
  public:
-  using Owned = typename Holding::Owned;
+  using Owned = typename HeldAs::Owned;
   // The variable's value as its sampled value takes it: a copy of its own.
-  using Copied = ReadThrough<Holding, &Holding::Copy>;
+  using Copied = ReadThrough<HeldAs, &HeldAs::Copy>;
 
-  explicit CellRareState(const Holding& holding) : holding_(&holding) {
+  explicit CellRareState(const HeldAs& storage) : storage_(&storage) {
   }
   CellRareState(const CellRareState&) = delete;
   auto operator=(const CellRareState&) -> CellRareState& = delete;
@@ -258,7 +259,7 @@ class CellRareState final : public RareWriteState {
       return;
     }
     sampled_ = std::make_unique<SampledValueOf<Copied>>(
-        Copied(*holding_), holding_->Copy(),
+        Copied(*storage_), storage_->Copy(),
         Trigger(&variable, Observation{}, {}, 0, 0));
   }
   [[nodiscard]] auto Sampled() const -> const SampledValueOf<Copied>* {
@@ -276,13 +277,13 @@ class CellRareState final : public RareWriteState {
   }
 
  private:
-  const Holding* holding_;
+  const HeldAs* storage_;
   std::unique_ptr<SampledValueOf<Copied>> sampled_;
   std::unique_ptr<runtime::Takeovers<Owned>> takeovers_;
 };
 
-template <class Holding>
-CellRareState<Holding>::~CellRareState() = default;
+template <class HeldAs>
+CellRareState<HeldAs>::~CellRareState() = default;
 
 // Replaces the whole of `storage` by `overwrite`, a write already known to
 // change it, and answers what its waits are told. Of a bit-addressed value the
@@ -303,16 +304,16 @@ auto ReplaceWhole(const T& storage, Overwrite overwrite) -> Change {
 }
 
 // A variable (LRM 6.8) as the library keeps one: what every variable is,
-// followed by how this one holds its value. The holding is the cell's last
-// part, so a value whose size the library is told lies at the cell's end.
-// Every write a variable takes follows one protocol whatever it holds, which
-// is written here once; what depends on the value is asked of the holding.
-template <class Holding>
+// followed by the storage of its value. That storage is the cell's last part,
+// so a value whose size the library is told lies at the cell's tail. Every
+// write a variable takes follows one protocol whatever it holds, which is
+// written here once; what depends on the value is asked of the storage.
+template <class HeldAs>
 class Cell : public VariableCell {
  public:
   // A value of the cell's type that the cell keeps for itself: what a write
   // turned away lands in, what a takeover level holds, what sampling retains.
-  using Owned = typename Holding::Owned;
+  using Owned = typename HeldAs::Owned;
 
   Cell(const Cell&) = delete;
   auto operator=(const Cell&) -> Cell& = delete;
@@ -330,36 +331,36 @@ class Cell : public VariableCell {
   // that was overridden.
   void Set(const Owned& new_val);
 
-  // The same write of what another cell of this holding holds.
+  // The same write of what another cell of this storage holds.
   void SetFrom(const Cell& other) {
     if (TakenOver()) {
       if (Owned* beneath = DisplacedStorage()) {
-        *beneath = other.holding_.Copy();
+        *beneath = other.storage_.Copy();
       }
       return;
     }
     StoreBy(
-        [&] { return holding_.Holds(other.holding_); },
-        [&] { holding_.Take(other.holding_); });
+        [&] { return storage_.IsBitIdentical(other.storage_); },
+        [&] { storage_.Assign(other.storage_); });
   }
 
   // The same write of a value handed as its bytes, laid out as what the cell
   // holds is, which the cell compares with and takes into the storage it has.
   void SetBytes(const void* bytes)
-    requires requires(Holding& held, Owned& owned) {
-      held.TakeBytes(bytes);
-      owned.TakeBytes(bytes);
+    requires requires(HeldAs& held, Owned& owned) {
+      held.AssignBytes(bytes);
+      owned.AssignBytes(bytes);
     }
   {
     if (TakenOver()) {
       if (Owned* beneath = DisplacedStorage()) {
-        beneath->TakeBytes(bytes);
+        beneath->AssignBytes(bytes);
       }
       return;
     }
     StoreBy(
-        [&] { return holding_.HoldsBytes(bytes); },
-        [&] { holding_.TakeBytes(bytes); });
+        [&] { return storage_.IsBitIdenticalTo(bytes); },
+        [&] { storage_.AssignBytes(bytes); });
   }
 
   // Starts a procedural continuous assignment at `level`, superseding whatever
@@ -381,9 +382,9 @@ class Cell : public VariableCell {
   // is, which the level takes into the storage it has once it holds a value.
   auto DriveTakeoverBytes(
       std::int64_t level, std::int64_t generation, const void* bytes) -> bool
-    requires requires(const Holding& held, Owned& owned) {
-      { held.CopyOf(bytes) } -> std::same_as<Owned>;
-      owned.TakeBytes(bytes);
+    requires requires(const HeldAs& held, Owned& owned) {
+      { held.ToOwned(bytes) } -> std::same_as<Owned>;
+      owned.AssignBytes(bytes);
     };
 
   // Ends the procedural continuous assignment at `level`, handing the cell to
@@ -398,7 +399,7 @@ class Cell : public VariableCell {
   // the assignment. None where nothing drives the cell continuously, or
   // nothing covers it.
   [[nodiscard]] auto DisplacedStorage() const -> Owned* {
-    const CellRareState<Holding>* rare = ExistingRareState();
+    const CellRareState<HeldAs>* rare = ExistingRareState();
     Takeovers<Owned>* takeovers =
         rare == nullptr ? nullptr : rare->ExistingTakeovers();
     return takeovers == nullptr ? nullptr : takeovers->Beneath();
@@ -418,7 +419,7 @@ class Cell : public VariableCell {
   // What the cell held in the Preponed region of the current time slot -- its
   // value before anything in that slot ran (LRM 4.4.2.1, 16.5.1).
   [[nodiscard]] auto SampledGet() const -> const Owned& {
-    const CellRareState<Holding>* rare = ExistingRareState();
+    const CellRareState<HeldAs>* rare = ExistingRareState();
     return SampledOf(rare == nullptr ? nullptr : rare->Sampled());
   }
 
@@ -432,18 +433,18 @@ class Cell : public VariableCell {
 
  protected:
   Cell()
-    requires std::default_initializable<Holding>;
-  // A holding told what it holds where it is built.
+    requires std::default_initializable<HeldAs>;
+  // A storage told what it holds where it is built.
   template <class Told>
-  explicit Cell(Told told) : holding_(told) {
+  explicit Cell(const Told& told) : storage_(told) {
   }
   ~Cell();
 
-  [[nodiscard]] auto Held() -> Holding& {
-    return holding_;
+  [[nodiscard]] auto Held() -> HeldAs& {
+    return storage_;
   }
-  [[nodiscard]] auto Held() const -> const Holding& {
-    return holding_;
+  [[nodiscard]] auto Held() const -> const HeldAs& {
+    return storage_;
   }
 
  private:
@@ -453,8 +454,8 @@ class Cell : public VariableCell {
   // value, except the old words a packed value's waits are passed over by.
   void Store(const Owned& new_val) {
     StoreBy(
-        [&] { return holding_.Holds(new_val); },
-        [&] { holding_.Take(new_val); });
+        [&] { return storage_.IsBitIdentical(new_val); },
+        [&] { storage_.Assign(new_val); });
   }
 
   // That path over however the arriving value is held: `already_held` answers
@@ -462,8 +463,10 @@ class Cell : public VariableCell {
   // holds.
   template <class AlreadyHeld, class Overwrite>
   void StoreBy(AlreadyHeld already_held, Overwrite overwrite) {
-    if (!holding_.IsInstalled()) {
-      throw InternalError("Var: store into a cell that was never initialized");
+    if (!storage_.IsInstalled()) {
+      throw InternalError(
+          "Cell: a store reached a cell that was never initialized -- please "
+          "report this as a bug");
     }
     if (!this->HasMembers()) {
       overwrite();
@@ -472,13 +475,13 @@ class Cell : public VariableCell {
     if (already_held()) {
       return;
     }
-    PublishTransition(PartPath{}, ReplaceWhole(holding_.Get(), overwrite));
+    PublishTransition(PartPath{}, ReplaceWhole(storage_.Get(), overwrite));
   }
 
   // Whether a procedural continuous assignment shows through the cell (LRM
   // 10.6).
   [[nodiscard]] auto TakenOver() const -> bool {
-    const CellRareState<Holding>* rare = ExistingRareState();
+    const CellRareState<HeldAs>* rare = ExistingRareState();
     return rare != nullptr && rare->TakenOver();
   }
 
@@ -490,19 +493,19 @@ class Cell : public VariableCell {
 
   // What only a sampled or taken-over cell keeps, made the first time either
   // is asked for. This cell is the only thing that makes it, so it is always
-  // over the cell's own holding.
-  [[nodiscard]] auto RareState() -> CellRareState<Holding>& {
+  // over the cell's own storage.
+  [[nodiscard]] auto RareState() -> CellRareState<HeldAs>& {
     if (Rare() == nullptr) {
-      InstallRare(std::make_unique<CellRareState<Holding>>(holding_));
+      InstallRare(std::make_unique<CellRareState<HeldAs>>(storage_));
     }
-    return static_cast<CellRareState<Holding>&>(*Rare());
+    return static_cast<CellRareState<HeldAs>&>(*Rare());
   }
-  [[nodiscard]] auto ExistingRareState() const -> CellRareState<Holding>* {
-    return static_cast<CellRareState<Holding>*>(Rare());
+  [[nodiscard]] auto ExistingRareState() const -> CellRareState<HeldAs>* {
+    return static_cast<CellRareState<HeldAs>*>(Rare());
   }
 
   // Comes last, so that a value whose size the library is told follows it.
-  Holding holding_;
+  HeldAs storage_;
 };
 
 // A variable of a type known where it is compiled: the cell holding the value
@@ -555,33 +558,34 @@ class Var final : public Cell<ValueStorageCore<T>> {
   auto Mutate() -> ScopedMutation<Ref<T>>;
 };
 
-// A variable of an integral type wider than a word, whose width the library is
-// told where the variable is installed: the cell, then the value's words.
-// Generated code knows the type and reads and writes the value as its words,
-// so that is all this answers with.
-template <value::StateDomain kDomain>
-class WordsCell final : public Cell<WordsHolding<kDomain>> {
+// A variable whose value lies after it, held as `HeldAs` holds it -- the
+// words of an integral value wider than a word, or a tuple or a fixed-size
+// unpacked array laid out by its type -- told its width or type where it is
+// built. Generated code knows the type and reads and writes the value as its
+// bytes, so that is all this answers with.
+template <class HeldAs>
+class TailCell final : public Cell<HeldAs> {
  public:
-  explicit WordsCell(std::uint64_t width);
-  WordsCell(const WordsCell&) = delete;
-  auto operator=(const WordsCell&) -> WordsCell& = delete;
-  WordsCell(WordsCell&&) = delete;
-  auto operator=(WordsCell&&) -> WordsCell& = delete;
-  ~WordsCell();
+  template <class Told>
+  explicit TailCell(const Told& told);
+  TailCell(const TailCell&) = delete;
+  auto operator=(const TailCell&) -> TailCell& = delete;
+  TailCell(TailCell&&) = delete;
+  auto operator=(TailCell&&) -> TailCell& = delete;
+  ~TailCell();
+
+  // How the value is held, which says how wide it is or its type.
+  [[nodiscard]] auto HeldStorage() const -> const HeldAs& {
+    return this->Held();
+  }
 
   // The write a declaration makes, which may run more than once.
   void Initialize(const void* bytes) {
-    this->Held().TakeBytes(bytes);
+    this->Held().AssignBytes(bytes);
   }
 
-  [[nodiscard]] auto Width() const -> std::uint64_t {
-    return this->Held().Width();
-  }
   [[nodiscard]] auto Bytes() const -> void* {
     return this->Held().Bytes();
-  }
-  [[nodiscard]] auto BytesThrough() const -> void* const* {
-    return this->Held().BytesThrough();
   }
 
   // What the cell held in the Preponed region of the current time slot (LRM
@@ -589,18 +593,24 @@ class WordsCell final : public Cell<WordsHolding<kDomain>> {
   [[nodiscard]] auto SampledBytes() const -> const void* {
     return this->SampledGet().Bytes();
   }
-  [[nodiscard]] auto ByteSize() const -> std::size_t {
-    return this->Held().ByteSize();
-  }
 };
 
-// A variable of `width` such words the library makes for itself -- a force's
-// storage, a cell a branch outlives its block for -- in storage of the size a
-// cell of that width takes.
-template <value::StateDomain kDomain>
-auto MakeWordsCell(std::uint64_t width) -> std::shared_ptr<WordsCell<kDomain>> {
-  return MakeWithRoomAfter<WordsCell<kDomain>>(
-      value::IntegralBytesFor(width, kDomain), width);
+// The cell a variable of `T` is.
+template <class T>
+struct VariableOf {
+  using Type = Var<T>;
+};
+template <DynamicallySized T>
+struct VariableOf<T> {
+  using Type = TailCell<typename StorageFor<T>::Type>;
+};
+
+// A variable the library makes for itself -- a force's storage, a cell a
+// branch outlives its block for -- of a value held as `HeldAs` holds one,
+// told `told`, in storage of the size such a cell takes.
+template <class HeldAs, class Told>
+auto MakeTailCell(const Told& told) -> std::shared_ptr<TailCell<HeldAs>> {
+  return MakeWithTail<TailCell<HeldAs>>(HeldAs::ValueLayoutFor(told), told);
 }
 
 // What a write keeps of the part it lands on, to tell afterwards what it did
@@ -804,8 +814,8 @@ auto WholeReference(Var<T>& variable) -> ErasedReference {
       .storage = HandleTo(variable.Storage()),
       .whole = true};
 }
-template <value::StateDomain kDomain>
-auto WholeReference(WordsCell<kDomain>& variable) -> ErasedReference {
+template <class HeldAs>
+auto WholeReference(TailCell<HeldAs>& variable) -> ErasedReference {
   return {
       .holder = static_cast<VariableCell*>(&variable),
       .storage = variable.Bytes(),
@@ -1035,13 +1045,13 @@ void DrivesContinuously(const Ref<T>& reference) {
 // destructor defaulted on its first declaration is not user-provided, so a unit
 // constructing a cell would define it itself with everything it reaches, and a
 // family stated as already compiled would not withhold it.
-template <class Holding>
-Cell<Holding>::Cell()
-  requires std::default_initializable<Holding>
+template <class HeldAs>
+Cell<HeldAs>::Cell()
+  requires std::default_initializable<HeldAs>
 = default;
 
-template <class Holding>
-Cell<Holding>::~Cell() = default;
+template <class HeldAs>
+Cell<HeldAs>::~Cell() = default;
 
 template <value::LyraValue T>
 Var<T>::Var() = default;
@@ -1049,16 +1059,16 @@ Var<T>::Var() = default;
 template <value::LyraValue T>
 Var<T>::~Var() = default;
 
-template <value::StateDomain kDomain>
-WordsCell<kDomain>::WordsCell(std::uint64_t width)
-    : Cell<WordsHolding<kDomain>>(width) {
+template <class HeldAs>
+template <class Told>
+TailCell<HeldAs>::TailCell(const Told& told) : Cell<HeldAs>(told) {
 }
 
-template <value::StateDomain kDomain>
-WordsCell<kDomain>::~WordsCell() = default;
+template <class HeldAs>
+TailCell<HeldAs>::~TailCell() = default;
 
-template <class Holding>
-void Cell<Holding>::Set(const Owned& new_val) {
+template <class HeldAs>
+void Cell<HeldAs>::Set(const Owned& new_val) {
   // A procedural write is discarded outright while any takeover shows through
   // this cell (LRM 10.6). A cell nobody has ever taken over holds no record at
   // all, so the ordinary write pays one null test.
@@ -1071,40 +1081,40 @@ void Cell<Holding>::Set(const Owned& new_val) {
   Store(new_val);
 }
 
-template <class Holding>
-auto Cell<Holding>::BeginTakeover(std::int64_t level) -> std::int64_t {
+template <class HeldAs>
+auto Cell<HeldAs>::BeginTakeover(std::int64_t level) -> std::int64_t {
   return std::int64_t{RareState().Takeovers().Begin(TakeoverLevelOf(level))};
 }
 
-template <class Holding>
-auto Cell<Holding>::DriveTakeover(
+template <class HeldAs>
+auto Cell<HeldAs>::DriveTakeover(
     std::int64_t level, std::int64_t generation, const Owned& new_val) -> bool {
   return RecordTakeover(
       level, generation, [&](std::optional<Owned>& held) { held = new_val; });
 }
 
-template <class Holding>
-auto Cell<Holding>::DriveTakeoverBytes(
+template <class HeldAs>
+auto Cell<HeldAs>::DriveTakeoverBytes(
     std::int64_t level, std::int64_t generation, const void* bytes) -> bool
-  requires requires(const Holding& held, Owned& owned) {
-    { held.CopyOf(bytes) } -> std::same_as<Owned>;
-    owned.TakeBytes(bytes);
+  requires requires(const HeldAs& held, Owned& owned) {
+    { held.ToOwned(bytes) } -> std::same_as<Owned>;
+    owned.AssignBytes(bytes);
   }
 {
   return RecordTakeover(level, generation, [&](std::optional<Owned>& held) {
     if (held.has_value()) {
-      held->TakeBytes(bytes);
+      held->AssignBytes(bytes);
     } else {
-      held.emplace(holding_.CopyOf(bytes));
+      held.emplace(storage_.ToOwned(bytes));
     }
   });
 }
 
-template <class Holding>
+template <class HeldAs>
 template <class Record>
-auto Cell<Holding>::RecordTakeover(
+auto Cell<HeldAs>::RecordTakeover(
     std::int64_t level, std::int64_t generation, Record record) -> bool {
-  const CellRareState<Holding>* rare = ExistingRareState();
+  const CellRareState<HeldAs>* rare = ExistingRareState();
   Takeovers<Owned>* takeovers =
       rare == nullptr ? nullptr : rare->ExistingTakeovers();
   if (takeovers == nullptr) {
@@ -1119,7 +1129,7 @@ auto Cell<Holding>::RecordTakeover(
   // what that driver last produced, which is what the cell shows again once
   // nothing covers it (LRM 10.6.2).
   if (!was_covered && current_runtime().DrivenContinuously(*this)) {
-    takeovers->KeepBeneath(holding_.Copy());
+    takeovers->KeepBeneath(storage_.Copy());
   }
   // A level that just recorded always leaves something showing, and it is this
   // value only where no higher level covers it. Storing whatever shows needs
@@ -1129,11 +1139,11 @@ auto Cell<Holding>::RecordTakeover(
   return true;
 }
 
-template <class Holding>
-void Cell<Holding>::EndTakeover(std::int64_t level) {
+template <class HeldAs>
+void Cell<HeldAs>::EndTakeover(std::int64_t level) {
   // Ending a level nothing occupies is what a `release` on an untaken variable
   // does, and the language gives it no effect (LRM 10.6.2).
-  const CellRareState<Holding>* rare = ExistingRareState();
+  const CellRareState<HeldAs>* rare = ExistingRareState();
   Takeovers<Owned>* takeovers =
       rare == nullptr ? nullptr : rare->ExistingTakeovers();
   if (takeovers == nullptr) {

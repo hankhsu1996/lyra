@@ -192,9 +192,10 @@ class FunctionLowerer {
   void EmitScopeDrop(const SlotEnd& end);
   // Brings a slot's bytes into use with the first value it is to own.
   void InitializeSlot(lir::ValueId slot, lir::Operand value);
-  // Stores a value a slot is to own, handing it on, and leaves the bytes it
-  // was made in out of use: the slot holds it from here.
-  auto StoreMoved(lir::Place place, lir::Operand value) -> lir::Operand;
+  // Initializes storage holding no value with a value it is to own, handing it
+  // on, and leaves the bytes it was made in out of use: the storage holds it
+  // from here.
+  auto Initialize(lir::Place place, lir::Operand value) -> lir::Operand;
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
   auto LowerForInto(const mir::Block& block, const mir::ForStmt& stmt)

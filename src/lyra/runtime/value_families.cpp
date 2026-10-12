@@ -43,11 +43,11 @@ template class Takeovers<value::ShortReal>;
 template class Takeovers<value::Chandle>;
 template class Takeovers<value::ObjectRef>;
 
-template class ActivationValueCell<value::String>;
-template class ActivationValueCell<value::Real>;
-template class ActivationValueCell<value::ShortReal>;
-template class ActivationValueCell<value::Chandle>;
-template class ActivationValueCell<value::ObjectRef>;
+template class ValueCell<value::String>;
+template class ValueCell<value::Real>;
+template class ValueCell<value::ShortReal>;
+template class ValueCell<value::Chandle>;
+template class ValueCell<value::ObjectRef>;
 
 template class SampledHistory<value::String>;
 template class SampledHistory<value::Real>;

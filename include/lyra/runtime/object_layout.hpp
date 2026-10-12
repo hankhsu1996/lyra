@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 
 #include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -25,32 +26,33 @@ auto LayoutOf(const support::RuntimeObject& object) -> support::ObjectLayout;
 // The same for the storage one member of a declaration occupies where the
 // declaration is laid out, for each kind over each domain it is realized for,
 // holding values laid out as `held` is, none for storage holding no value of
-// the program's. Storage that holds a value whose size the library is told lays
-// that value out after itself, so it is as large as the value; every other
-// holds it in the library's own type. A pair it is not realized for is a
-// compiler bug, since the kind is chosen from the member's type and a type
-// names only realized pairs.
+// the program's. Storage that holds a value whose size the library is told
+// keeps that value at its tail, so it is as large as the value where the value
+// lies inline; every other holds it in the library's own type. A pair it is not
+// realized for is a compiler bug, since the kind is chosen from the member's
+// type and a type names only realized pairs.
 auto LayoutOf(
     support::DeclaredMemberStorage storage,
     std::optional<support::ObjectLayout> held) -> support::ObjectLayout;
 
-// Where the value a member's storage holds lies in that storage, for storage
-// that holds an integral value as its own bytes and answers a read with them.
-// A target reads such a value at this offset, as a compiler holding the
-// storage's class reads the member through the class's own accessor. Nothing
-// for any other storage, whose contents its own access hands out.
-auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
-    -> std::optional<std::uint64_t>;
-
-// Where storage that answers a read through an address it keeps keeps that
-// address: a net of an integral value, whose value is its own or that of the
-// object its one driver carries, and a variable or a procedural local of an
-// integral value wider than a word, whose words lie at its end or apart by how
-// wide it is. A target reads the value through the address it finds at this
-// offset, which is the same whatever the value's width. Nothing for storage
-// whose contents lie at an offset or are handed out by its own access.
-auto ContentsThroughOffsetOf(support::DeclaredMemberStorage storage)
-    -> std::optional<std::uint64_t>;
+// Where the value a member's storage holds is found in that storage, which a
+// target reads and writes it at as a compiler holding the storage's class
+// reaches the member through the class's own accessor. The value lies at an
+// offset in storage holding an integral value no wider than a word as its own
+// bytes. Storage that keeps the value's address keeps it at an offset, which is
+// the same whatever the value's type: a net, whose value is its own or that of
+// the object its one driver carries, and a variable or a procedural local
+// laying its value out after itself, where it lies at its end or apart by its
+// size. Nothing for storage whose contents its own access hands out.
+struct ContentsAt {
+  std::uint64_t offset;
+};
+struct ContentsIndirectAt {
+  std::uint64_t offset;
+};
+using HeldContents = std::variant<ContentsAt, ContentsIndirectAt>;
+auto HeldContentsOf(support::DeclaredMemberStorage storage)
+    -> std::optional<HeldContents>;
 
 // The constant that tells the library an integral type's numbers, as a target
 // stating one lays it out: what the whole occupies, the symbol of the table

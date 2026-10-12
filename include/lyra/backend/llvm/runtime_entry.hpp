@@ -41,6 +41,10 @@ inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 auto HeldObjectOf(const lir::Type& type)
     -> std::optional<support::RuntimeObject>;
 
+// Whether a value of `type` is its bytes laid out by the type, which state
+// nothing of it: a tuple, and a fixed-size unpacked array.
+auto IsLaidOutByType(const lir::Type& type) -> bool;
+
 // The domain a LIR type is realized in, absent for a type whose values are not
 // values of the design. It is the type's held object where that object is a
 // domain's, so the entry a call names and the storage a cell owns read one
@@ -87,22 +91,30 @@ class DomainSet {
 // off its own layout, so most realizations are told nothing. Storage holding
 // the words of a wider value, and a designation of an integral value, are told
 // how wide the values held there are, after operand `after`, and an entry
-// making such storage out of nothing is told it ahead of whatever it takes. A
+// making such storage, or a net of any integral value, is told it ahead of
+// whatever it takes. A
 // memory reached by a key is told the type its keys are built at (LRM 21.4.1),
-// and a union the type of the member its callee names (LRM 7.3), each after
-// the operand it concerns.
+// a union the type of the member its callee names (LRM 7.3), and an
+// associative array built from a literal the type of the pairs its entries
+// cross as (LRM 7.9.11), each after the operand it concerns.
 struct ToldNothing {};
-struct ToldHeldWidth {
+struct ToldWidthMetadata {
   std::size_t after;
 };
-struct ToldHeldWidthAhead {};
-// A fixed-size unpacked array is its elements and nothing more, so a
-// realization for one is told the type of every array it is handed as the
-// value it is, after that array. Where it reaches the array through a
-// reference or a designation instead, which name bytes lying in something
-// else, it is told the type of the array reached, after operand
-// `reached_after`.
-struct ToldArrayTypes {
+struct ToldWidthMetadataAhead {};
+// Storage holding a tuple or a fixed-size unpacked array laid out after it is
+// told the value's type ahead of whatever it takes where it is made, and an
+// entry acting on such storage once it is made is told nothing of the values
+// it is handed, which the storage keeps the type of.
+struct ToldTypeMetadataAhead {};
+struct ToldByTheStorage {};
+// A tuple and a fixed-size unpacked array are their bytes laid out by their
+// type and nothing more, so a realization for one is told the type of every
+// such value it is handed as the value it is, after that value. Where it
+// reaches the value through a reference or a designation instead, which name
+// bytes lying in something else, it is told the type of the value reached,
+// after operand `reached_after`.
+struct ToldLaidOutTypes {
   std::optional<std::size_t> reached_after = std::nullopt;
 };
 struct ToldKeyType {
@@ -111,9 +123,13 @@ struct ToldKeyType {
 struct ToldMemberType {
   std::size_t after;
 };
+struct ToldEntryType {
+  std::size_t after;
+};
 using Told = std::variant<
-    ToldNothing, ToldHeldWidth, ToldHeldWidthAhead, ToldArrayTypes, ToldKeyType,
-    ToldMemberType>;
+    ToldNothing, ToldWidthMetadata, ToldWidthMetadataAhead,
+    ToldTypeMetadataAhead, ToldByTheStorage, ToldLaidOutTypes, ToldKeyType,
+    ToldMemberType, ToldEntryType>;
 
 // The domains the library realizes an entry for that are told the same thing.
 // An entry states one of these per thing its realizations are told, and a
@@ -202,10 +218,13 @@ enum class RuntimeOp : std::uint8_t {
   // What stands between a structure's own operations and the type the library
   // asks them through: the stream a structure's function answers written into
   // the stream the type was handed, a stream's bits laid out as an integral
-  // value, and a structure built by its function out of such a stream.
+  // value, and a structure built by its function out of such a stream; and a
+  // structure built with each of its components at what that component's type
+  // builds before anything writes it.
   kStreamWrite,
   kStreamRead,
   kStreamBuild,
+  kTupleBuildDefault,
   // Bits written into an integral value where they lie (LRM 11.5.1): into the
   // words of a value held at a place, and into the value a write in progress
   // designates, which hears which of them moved and is named by the domain
@@ -413,6 +432,15 @@ auto ToldOf(
 // for every operator. No table states which domains realize an operator, so
 // none is refused here.
 auto ToldOfAnOperator(support::ValueDomain domain) -> Told;
+// What the entry building a member's storage is told of the values held there,
+// ahead of the storage it is built in, as a cell the library makes is. Storage
+// laying the words of a value wider than a word out after itself is built at
+// their width, and storage laying a tuple or a fixed-size unpacked array out
+// after itself with its type, so the value has its place from the moment the
+// storage exists; and a net of any integral type is built at its width, which
+// is how many positions it has and which a layout of a narrower type does not
+// say.
+auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told;
 
 // The symbol a runtime entry is published under. An operation realized per
 // value representation leads with that representation, so one library serves
@@ -429,11 +457,6 @@ auto RuntimeSymbol(support::RuntimeObject object, RuntimeOp op) -> std::string;
 // holds any, and then the kind.
 auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
     -> std::string;
-// Whether the entry building a member's storage is told, after the storage it
-// builds, how wide the values held there are: a variable nothing subscribes to
-// that holds the words of a value wider than a word has no declaration to
-// install it, so it is built at its width.
-auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool;
 auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
     -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;

@@ -946,20 +946,19 @@ struct Expr {
 }
 
 // Installs what a net's declaration gives it, once at construction. `entry`
-// names which resolution the net performs (LRM 6.6), `data` is what the net's
-// data type gives it -- how many positions an integral type has, or a value of
-// an unpacked aggregate type -- and the two operands beside it are the
-// contribution the net type makes to the net's own resolution: the scalar the
-// net shows where nothing drives it, and the strength it holds that scalar at
-// (LRM 6.7.1, 28.11).
+// names which resolution the net performs (LRM 6.6), and `arguments` are what
+// the net's data type gives it -- a value of an unpacked aggregate type, and
+// nothing for an integral type -- followed by the contribution the net type
+// makes to the net's own resolution: the scalar the net shows where nothing
+// drives it, and the strength it holds that scalar at (LRM 6.7.1, 28.11).
 [[nodiscard]] inline auto MakeNetInstallCallExpr(
-    ExprId net, ExprId data, ExprId fill, ExprId strength,
-    support::BuiltinFn entry, TypeId void_type) -> Expr {
+    ExprId net, std::vector<ExprId> arguments, support::BuiltinFn entry,
+    TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee = Direct{.target = entry, .receiver = net},
-              .arguments = {data, fill, strength}},
+              .arguments = std::move(arguments)},
       .type = void_type};
 }
 

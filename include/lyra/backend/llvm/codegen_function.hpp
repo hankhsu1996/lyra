@@ -229,6 +229,8 @@ class CodeGenFunction {
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
+  auto LowerInitialize(const lir::InitializeInstr& initialize)
+      -> diag::Result<llvm::Value*>;
   // Bits written into the integral value at a place, where it lies: the
   // insertion as instructions where the value, every part and the bits each
   // lie in place, and a call on the library's insertion otherwise.

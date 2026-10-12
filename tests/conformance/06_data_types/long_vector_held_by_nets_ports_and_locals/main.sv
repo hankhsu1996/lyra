@@ -3,10 +3,11 @@
 // a variable, an input port declared as a variable and one declared as a net
 // (LRM 23.3.3), a procedural continuous assignment and its release (LRM
 // 10.6.2), a local of a task that waits between its writes and reads (LRM
-// 13.4.2), and a local a forked process declares from one of its parent's
-// (LRM 9.3.2). Each shows the value its source gave it, every bit of it, and a
-// wait on a port wakes once for each value that moved what it shows, which a
-// change made under a force does not.
+// 13.4.2), a local a forked process declares from one of its parent's (LRM
+// 9.3.2), and a `ref` port whose sampled value is read (LRM 16.5.1). Each
+// shows the value its source gave it, every bit of it, and a wait on a port
+// wakes once for each value that moved what it shows, which a change made
+// under a force does not.
 module Leaf (input logic [8191:0] in);
   int changes = 0;
   always @(in) changes++;
@@ -15,6 +16,11 @@ endmodule
 module NetLeaf (input wire [8191:0] in);
   int changes = 0;
   always @(in) changes++;
+endmodule
+
+module Sampler (ref logic [8191:0] r, input logic clk);
+  logic [8191:0] seen;
+  always @(posedge clk) seen = $sampled(r);
 endmodule
 
 module Top;
@@ -33,6 +39,10 @@ module Top;
 
   Leaf typed (.in(v));
   NetLeaf through_net (.in(shown));
+
+  logic clk = 0;
+  vector sampled_source = A;
+  Sampler sampler (.r(sampled_source), .clk(clk));
 
   vector early_shown, forced_shown, released_shown;
   vector early_inverted, forced_inverted, released_inverted;
@@ -54,6 +64,10 @@ module Top;
     early_inverted = inverted;
     typed_before = typed.changes;
     net_before = through_net.changes;
+
+    clk = 1;
+    sampled_source = B;
+    #1;
 
     force shown = B;
     force inverted = B;
@@ -100,6 +114,9 @@ module Top;
     if (held_across_wait !== B)
       $fatal(1, "a local read after a wait was %h...",
              held_across_wait[W-1 -: 8]);
+    if (sampler.seen !== A)
+      $fatal(1, "a sampled vector read through a ref was %h...",
+             sampler.seen[W-1 -: 8]);
     if (captured !== C)
       $fatal(1, "a captured local read %h..., expected the value captured",
              captured[W-1 -: 8]);

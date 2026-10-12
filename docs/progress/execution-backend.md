@@ -132,14 +132,14 @@ ownership, or native in-frame layout) for every value.
       answer and not one per container. Reading a class object out as a bit stream (LRM 6.24.3) is a
       separate operation over the object's own properties and is not carried out.
 - [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product the code
-      generator lays out by its type, opening with its type's table of operations, so a component
-      lies at an offset wherever the struct lies and the runtime reaches what the struct can do
-      through that table. It default-constructs member-wise, builds from an assignment pattern,
-      copies with value semantics, takes the equality and case-equality families as the methods its
-      declaration states, reads and writes a component (including a nested struct and a string
-      component), reads its bit stream out and builds one back from a stream, lives in a member slot
-      as a whole-cell observable signal whose partial write fires subscribers, and crosses a
-      suspension as an activation-frame value.
+      generator lays out by its type, so a component lies at an offset wherever the struct lies, and
+      the runtime reaches what the struct can do through its type, which whatever hands a struct to
+      the runtime states beside it. It default-constructs member-wise, builds from an assignment
+      pattern, copies with value semantics, takes the equality and case-equality families as the
+      methods its declaration states, reads and writes a component (including a nested struct and a
+      string component), reads its bit stream out and builds one back from a stream, lives in a
+      member slot as a whole-cell observable signal whose partial write fires subscribers, and
+      crosses a suspension as an activation-frame value.
 - [x] **The dynamic array** (LRM 7.5) -- realized on the execution backend as a run-time-sized
       container value domain, the first variable-size aggregate. It defaults to empty, builds from
       `new[N]` / `new[N](src)` and an assignment pattern, copies with value semantics, takes the

@@ -575,9 +575,18 @@ struct LoadInstr {
   Place place;
 };
 
-// Writes `value` into `place`. The store yields no value; its instruction
-// result is an unused void.
+// Writes `value` into the value `place` holds. The store yields no value; its
+// instruction result is an unused void.
 struct StoreInstr {
+  Place place;
+  Operand value;
+};
+
+// Moves `value` into a frame slot holding no value until then: one a
+// declaration introduces, or one whose value was ended before. What is moved
+// in is the slot's value from there on, and it is ended where the slot's value
+// is. Yields no value.
+struct InitializeInstr {
   Place place;
   Operand value;
 };
@@ -716,10 +725,10 @@ struct CloseVariablesInstr {
 
 using InstrData = std::variant<
     CallInstr, TupleInstr, ClosureInstr, ArrayInstr, AggregateExtractInstr,
-    AggregateUpdateInstr, LoadInstr, StoreInstr, BitsStoreInstr, StorageInstr,
-    AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr,
-    DynamicCastInstr, ReceiveDepartureInstr, OpenVariablesInstr,
-    VariableAddressInstr, CloseVariablesInstr>;
+    AggregateUpdateInstr, LoadInstr, StoreInstr, InitializeInstr,
+    BitsStoreInstr, StorageInstr, AddrOfInstr, BinaryInstr, UnaryInstr,
+    CastInstr, HandleCastInstr, DynamicCastInstr, ReceiveDepartureInstr,
+    OpenVariablesInstr, VariableAddressInstr, CloseVariablesInstr>;
 
 // One instruction: it defines `result` (whose type lives on the function's
 // value arena) from `data`.

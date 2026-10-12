@@ -61,6 +61,10 @@ below LIR, at LIR-to-LLVM.
   dereference step.
 - When the bytes a frame keeps for a value are in use: from where a slot's first value is stored or
   a value is made, to a point stated on every way out of the extent it belongs to.
+- Whether a write initializes or assigns: a value moved into storage holding none -- a slot's first
+  value, or one whose value was ended before -- is an initialization, and every other write is a
+  store into the value already there. Both are stated, so nothing below works out which a write is
+  from the shape of its place, as SIL states `store [init]` beside `store [assign]`.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
 - The value-aggregate selector vocabulary: which subvalue of a view a step names -- the one member

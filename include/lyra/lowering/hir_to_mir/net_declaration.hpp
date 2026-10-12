@@ -12,12 +12,10 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// What a net's data type gives its install (LRM 6.7.1): how many positions an
-// integral type has, or a value of an unpacked aggregate type, whose shape the
-// net takes.
-struct IntegralNetData {
-  mir::ExprId position_count;
-};
+// What a net's data type gives its install (LRM 6.7.1): nothing for an integral
+// type, whose positions the type itself counts, or a value of an unpacked
+// aggregate type, whose shape the net takes.
+struct IntegralNetData {};
 struct AggregateNetData {
   mir::ExprId prototype;
 };
@@ -33,12 +31,6 @@ using NetData = std::variant<IntegralNetData, AggregateNetData>;
     const mir::CompilationUnit& unit, mir::Block& block,
     const hir::StructuralNetDecl& net, mir::ExprId target, const NetData& data,
     mir::TypeId void_type) -> mir::Expr;
-
-// How many positions a net of the integral type `data_type` has, as the
-// operand its install carries.
-[[nodiscard]] auto BuildNetPositionCount(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId data_type)
-    -> mir::ExprId;
 
 // A strength as the operand a net install or a driver attach carries: the level
 // on the scale LRM Table 28-7 numbers, written as a machine integer.

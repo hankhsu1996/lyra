@@ -275,8 +275,10 @@ auto FixedArrayType::HasUnknown(const void* value) const -> bool {
   return detail::SequenceHasUnknown(Elements(*this, value));
 }
 
-void FixedArrayType::BuildDefault(void*) const {
-  NeverAskedOfAnArray();
+void FixedArrayType::BuildDefault(void* out) const {
+  BuildEach(out, [&](std::size_t, void* element) {
+    element_->Type().BuildDefault(element);
+  });
 }
 
 void FixedArrayType::BitstreamWidth(const void* value, void* out) const {

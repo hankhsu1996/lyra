@@ -110,7 +110,9 @@ the detail lives in the entry itself.
   as a C++ object with virtual functions opens with its vtable pointer. The code generator compiles
   each tuple type's lifecycle, and the prebuilt runtime reaches that and the type's operations
   through the table. Call-chain 1,032.0 M -> 851.3 M instructions, a struct loop 278.7 M -> 236.3 M.
-  A description the runtime walks and a tuple converted where it crosses are rejected.
+  A description the runtime walks and a tuple converted where it crosses are rejected. The table in
+  the bytes, and holding a tuple in storage of the runtime's own, are superseded by the holder entry
+  below.
 - [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) -- on the
   execution backend a fixed-size unpacked array is its elements one after another, in place up to
   1,024 bytes and one address of a run it owns past that, an element reached by address arithmetic
@@ -120,6 +122,14 @@ the detail lives in the entry itself.
   Read it for why a type stated as data and a type passed beside the bytes, both rejected for a
   tuple, are taken for an array. A function per array type, a header in the bytes, and an element
   default handed to each construction are rejected.
+- [a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md) -- on the
+  execution backend a variable, a net and a procedural local of an integral value wider than a word,
+  a tuple or a fixed-size unpacked array are told its width or type where they are built and lay the
+  value out after themselves, or keep one address of storage they own past the in-place bound, so
+  the value has one address for the holder's life and generated code reads it through one pointer. A
+  tuple's bytes state nothing of its type. What the library keeps for itself stays a value of its
+  own. A library object standing for the value in the holder, and a family instantiated per type,
+  are rejected.
 - [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
   element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A

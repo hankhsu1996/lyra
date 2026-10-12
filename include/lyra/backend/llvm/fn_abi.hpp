@@ -69,17 +69,21 @@ using TypeArg =
 
 // What a callee takes ahead of the arguments a call states. The host's
 // `operator new` is asked for the size of a complete object of the type it
-// allocates, and an entry making storage for the words of a value wider than a
-// word is told how wide the values held there are.
+// allocates, an entry making storage for the words of a value wider than a
+// word is told how wide the values held there are, and one making storage for
+// a tuple or a fixed-size unpacked array is told its type.
 struct NoImplicitArg {};
 struct CompleteObjectSizeArg {
   lir::TypeId of;
 };
-struct HeldWidthArg {
+struct WidthMetadataArg {
   lir::TypeId of;
 };
-using ImplicitArg =
-    std::variant<NoImplicitArg, CompleteObjectSizeArg, HeldWidthArg>;
+struct TypeMetadataArg {
+  lir::TypeId of;
+};
+using ImplicitArg = std::variant<
+    NoImplicitArg, CompleteObjectSizeArg, WidthMetadataArg, TypeMetadataArg>;
 
 // One argument of a call as it is arranged, the role of rustc's `ArgAbi`: the
 // machine type its value crosses at, and what crosses with it.
@@ -157,13 +161,17 @@ auto ToldModeOf(
     const ToldTypes& types, lir::TypeId own, const lir::TypePool& pool)
     -> std::optional<PassMode>;
 
+// What a realization told `told` takes ahead of its operands, which is of the
+// type the call states the entry acts on.
+auto ImplicitArgOf(const Told& told, const ToldTypes& types) -> ImplicitArg;
+
 // What an entry is handed after its operands by a call answering a value of
 // `answered` that comes back as `ret`. It is what the entry's declaration says
 // it is told of its answer, read from the type `called_at` the call is made at
-// or from `answered`; and a realization told the types of the arrays it is
-// handed, building a fixed-size unpacked array where its entry's declaration
-// says it is told nothing of its answer, is told that array's type, since the
-// array's bytes state none.
+// or from `answered`; and a realization told the types of the tuples or arrays
+// it is handed, building one where its entry's declaration says it is told
+// nothing of its answer, is told that value's type, since the value's bytes
+// state none.
 auto TypeArgsOf(
     const lir::TypePool& types, const Told& told, support::AnswerTold declared,
     std::optional<lir::TypeId> called_at, lir::TypeId answered,
@@ -286,6 +294,15 @@ class CallArranger {
 // reached through an operand from disagreeing about what a wrapper is.
 auto WrapperOf(const lir::Type& type)
     -> std::optional<std::pair<WrapperKind, lir::TypeId>>;
+
+// The values a storage holds, where they are all of one representation;
+// nothing for a type that is not such storage. A capability wrapper holds the
+// value it represents, a history holds what each tick of one clocking event
+// settled for one expression, and a place designated within a write reaches
+// the value it designates -- one representation each way, which is what lets
+// an entry reaching the storage be named once per representation rather than
+// per call.
+auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId>;
 
 // The type of a union's member `index`. Both union kinds hold their member
 // types positionally, so this reads either one.

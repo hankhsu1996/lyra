@@ -595,7 +595,7 @@ TEST(RuntimeFixedArray, HoldsACopyInStorageOfItsOwn) {
     EXPECT_NE(
         type.ElementAt(copy.Bytes(), 0), type.ElementAt(laid_out.Bytes(), 0));
     EXPECT_EQ(NumberAt(type, copy.Bytes(), 3), 33);
-    EXPECT_TRUE(copy.HoldsBytes(laid_out.Bytes()));
+    EXPECT_TRUE(copy.IsBitIdenticalTo(laid_out.Bytes()));
 
     const RuntimeFixedArray built = CountingArray(type, 30);
     EXPECT_EQ(&built.Type(), &type);
@@ -670,15 +670,15 @@ TEST(RuntimeFixedArray, AnAssignmentKeepsEveryElementWhereItLies) {
 
     const Storage laid_out(type);
     BuildCounting(type, laid_out.Bytes(), 80);
-    EXPECT_FALSE(held.HoldsBytes(laid_out.Bytes()));
-    held.TakeBytes(laid_out.Bytes());
-    EXPECT_TRUE(held.HoldsBytes(laid_out.Bytes()));
+    EXPECT_FALSE(held.IsBitIdenticalTo(laid_out.Bytes()));
+    held.AssignBytes(laid_out.Bytes());
+    EXPECT_TRUE(held.IsBitIdenticalTo(laid_out.Bytes()));
     EXPECT_EQ(type.ElementAt(held.Bytes(), 2), third);
     EXPECT_EQ(NumberAt(type, held.Bytes(), 2), 82);
 
     // The bytes handed in may be the ones held.
-    EXPECT_TRUE(held.HoldsBytes(held.Bytes()));
-    held.TakeBytes(held.Bytes());
+    EXPECT_TRUE(held.IsBitIdenticalTo(held.Bytes()));
+    held.AssignBytes(held.Bytes());
     EXPECT_EQ(NumberAt(type, held.Bytes(), 2), 82);
 
     type.Destroy(laid_out.Bytes());
@@ -708,9 +708,10 @@ TEST(RuntimeFixedArray, LaysItsArrayOutWhereItIsAsked) {
   }
 }
 
-TEST(ValueType, ASingularTypeBuildsItsDefaultAndAnAggregateIsNeverAsked) {
+TEST(ValueType, EveryTypeBuildsWhatItsStorageHoldsBeforeAnyWrite) {
   // LRM Table 6-7: x in every position of a four-state integral, 0 in every
-  // position of a two-state one, and the empty string.
+  // position of a two-state one, and the empty string; an array with every
+  // element at its element type's, and a queue holding nothing.
   Element logic = Element::FromInt(5);
   IntegralValueType::Of<Element>().BuildDefault(&logic);
   EXPECT_TRUE(logic.HasUnknown());
@@ -726,11 +727,19 @@ TEST(ValueType, ASingularTypeBuildsItsDefaultAndAnAggregateIsNeverAsked) {
   LibraryTypeOf<String>().Destroy(text.Bytes());
 
   const FixedArrayType array(ElementTypeOf<Element>(), 2);
-  const Storage never(array);
-  EXPECT_THROW(array.BuildDefault(never.Bytes()), InternalError);
+  const Storage pair(array);
+  array.BuildDefault(pair.Bytes());
+  for (std::size_t i = 0; i < 2; ++i) {
+    const auto* element =
+        static_cast<const Element*>(array.ElementAt(pair.Bytes(), i));
+    EXPECT_TRUE(element->CaseEqual(Element{}).IsTruthy());
+  }
+  array.Destroy(pair.Bytes());
+
   const Storage queue(LibraryTypeOf<RuntimeQueue>());
-  EXPECT_THROW(
-      LibraryTypeOf<RuntimeQueue>().BuildDefault(queue.Bytes()), InternalError);
+  LibraryTypeOf<RuntimeQueue>().BuildDefault(queue.Bytes());
+  EXPECT_EQ(static_cast<const RuntimeQueue*>(queue.Bytes())->Count(), 0U);
+  LibraryTypeOf<RuntimeQueue>().Destroy(queue.Bytes());
 }
 
 TEST(RuntimeQueue, HoldsTheBoundItsTypeStates) {

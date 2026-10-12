@@ -102,6 +102,10 @@ auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
           [&](const lir::StoreInstr& store) -> diag::Result<llvm::Value*> {
             return LowerStore(store);
           },
+          [&](const lir::InitializeInstr& initialize)
+              -> diag::Result<llvm::Value*> {
+            return LowerInitialize(initialize);
+          },
           [&](const lir::BitsStoreInstr& store) -> diag::Result<llvm::Value*> {
             return LowerBitsStore(store);
           },
@@ -201,20 +205,26 @@ auto CodeGenFunction::HeldAt(
     return builder_.CreateConstInBoundsGEP1_64(
         builder_.getInt8Ty(), storage, offset);
   };
-  if (const std::optional<std::uint64_t> offset =
-          runtime::ContentsOffsetOf(held)) {
-    return at(*offset);
-  }
-  return runtime::ContentsThroughOffsetOf(held).transform(
-      [&](std::uint64_t offset) -> llvm::Value* {
-        return builder_.CreateLoad(module_->Types().Ptr(), at(offset));
+  return runtime::HeldContentsOf(held).transform(
+      [&](const runtime::HeldContents& contents) -> llvm::Value* {
+        return std::visit(
+            Overloaded{
+                [&](const runtime::ContentsAt& lies) {
+                  return at(lies.offset);
+                },
+                [&](const runtime::ContentsIndirectAt& kept) -> llvm::Value* {
+                  return builder_.CreateLoad(
+                      module_->Types().Ptr(), at(kept.offset));
+                }},
+            contents);
       });
 }
 
-// A cell of an integral value is read where the value lies, and a net of one
-// through the address it keeps of what it shows, since that is its own value
-// or another object's. Anything else hands its contents out through its own
-// access.
+// A cell is read where the library states its value lies, at an offset or
+// through the address it keeps, and a net through the address it keeps of
+// what it shows, since that is its own value or another object's. Only one
+// keeping an object of the library's own hands its contents out through its
+// own access.
 auto CodeGenFunction::ContentsOf(
     support::ValueDomain domain, WrapperKind kind, llvm::Value* wrapper)
     -> llvm::Value* {
@@ -315,16 +325,10 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
           {*address}, OperandReadingsOf(lir::ValueCellTarget::Op::kStore),
           ToldOf(*cell, lir::ValueCellTarget::Op::kStore), *value);
     }
+    // A store writes into a value that is already there, so whatever names
+    // that storage goes on naming it.
     if (module_->Unit().types.Get(stored).IsOwnedValue()) {
-      // A frame slot of an owned type holds the value, and a store into one
-      // hands it the value along with its end, so the value moves in and
-      // nothing is left behind where it was built.
-      // Anything else a chain reaches is a value that is already there, and a
-      // store writes into it: whatever names that storage goes on naming it.
-      auto written =
-          lir::IsPlaceLocal(*fn_, store.place.base) && store.place.chain.empty()
-              ? RelocateValue(stored, *value, *address)
-              : AssignValue(stored, *value, *address);
+      auto written = AssignValue(stored, *value, *address);
       if (!written) {
         return std::unexpected(std::move(written.error()));
       }
@@ -359,6 +363,29 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   return stored_by(
       RuntimeSymbol(through.domain, through.kind, support::BuiltinFn::kStore),
       std::move(arranged), std::move(wrapper_args), readings, told, *value);
+}
+
+// Storage holding no value takes the value whole: one of an owned type moves
+// in, and nothing is left behind where it was built.
+auto CodeGenFunction::LowerInitialize(const lir::InitializeInstr& initialize)
+    -> diag::Result<llvm::Value*> {
+  auto value = LowerOperand(initialize.value);
+  if (!value) {
+    return std::unexpected(std::move(value.error()));
+  }
+  auto address = ResolvePlaceAddress(initialize.place, Access::kWrite);
+  if (!address) {
+    return std::unexpected(std::move(address.error()));
+  }
+  const lir::TypeId initialized = OperandType(initialize.value);
+  if (module_->Unit().types.Get(initialized).IsOwnedValue()) {
+    auto moved = RelocateValue(initialized, *value, *address);
+    if (!moved) {
+      return std::unexpected(std::move(moved.error()));
+    }
+    return nullptr;
+  }
+  return builder_.CreateStore(*value, *address);
 }
 
 // A place resolves to an address. A place local's storage is its frame slot;
@@ -1150,9 +1177,7 @@ auto CodeGenFunction::ResolveCall(
     return std::unexpected(std::move(args.error()));
   }
   // Storage for what the callee builds goes last, whichever kind of callee it
-  // is: an entry of the library and a body of this program take it alike. The
-  // library holds no tuple type of its own, so storage given for a tuple says
-  // which tuple it is before anything is built there.
+  // is: an entry of the library and a body of this program take it alike.
   const bool builds_its_answer = std::visit(
       Overloaded{
           [](const ReturnDirect&) { return false; },
@@ -1164,9 +1189,6 @@ auto CodeGenFunction::ResolveCall(
         "it is arranged to build one -- please report this as a bug");
   }
   if (builds_its_answer) {
-    if (module_->Unit().types.Get(result_type).IsProduct()) {
-      builder_.CreateStore(module_->Tuples().TypeOf(result_type), out);
-    }
     args->push_back(out);
   }
   auto callee = ResolveCallee(call, result_type, *abi, *args);
@@ -1278,17 +1300,15 @@ auto CodeGenFunction::LowerCall(
             }
             return CopyValue(result_type, *copied, out);
           },
-          // A cell holding a value as its own bytes is read and written where
-          // they lie; only one the activation owns is asked of the library.
+          // A cell whose value lies where the library states is read and
+          // written there; only one keeping an object of the library's own is
+          // asked of the library.
           [&](const lir::ValueCellTarget& cell) -> Lowered {
             auto held_in = DomainOf(cell.value);
             if (!held_in) {
               return std::unexpected(std::move(held_in.error()));
             }
             const support::ValueDomain domain = *held_in;
-            if (!support::IsIntegralLayout(domain)) {
-              return called(cell);
-            }
             switch (cell.op) {
               case lir::ValueCellTarget::Op::kAllocate:
                 return called(cell);
@@ -1304,12 +1324,17 @@ auto CodeGenFunction::LowerCall(
                 if (!handle) {
                   return std::unexpected(std::move(handle.error()));
                 }
+                const std::optional<llvm::Value*> held = HeldAt(
+                    *handle, {.kind = support::MemberStorageKind::kValueCell,
+                              .domain = domain});
+                if (!held.has_value()) {
+                  return called(cell);
+                }
                 auto stored = LowerOperand(call.args.at(1));
                 if (!stored) {
                   return std::unexpected(std::move(stored.error()));
                 }
-                auto assigned = AssignValue(
-                    cell.value, *stored, ValueCellContents(domain, *handle));
+                auto assigned = AssignValue(cell.value, *stored, *held);
                 if (!assigned) {
                   return std::unexpected(std::move(assigned.error()));
                 }
@@ -1662,9 +1687,8 @@ auto CodeGenFunction::LowerArray(
   return SpanOver(elements, module_->Types().Map(element_type));
 }
 
-// A tuple value is laid out in place: it opens with its type's operation
-// table, and each component is built where the type's layout puts it, from a
-// value LIR ends on its own, so the tuple takes a copy.
+// A tuple value is laid out in place: each component is built where the type's
+// layout puts it, from a value LIR ends on its own, so the tuple takes a copy.
 auto CodeGenFunction::LowerTuple(
     const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
@@ -1674,7 +1698,6 @@ auto CodeGenFunction::LowerTuple(
         "llvm codegen: a tuple's result type does not describe the components "
         "it is built from");
   }
-  builder_.CreateStore(module_->Tuples().TypeOf(result_type), out);
   for (std::size_t i = 0; i < tuple.components.size(); ++i) {
     auto component = LowerOperand(tuple.components[i]);
     if (!component) {

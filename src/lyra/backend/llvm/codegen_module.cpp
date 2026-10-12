@@ -291,8 +291,16 @@ auto CodeGenModule::BuildCallArgs(
             args.push_back(llvm::ConstantInt::get(count, *size));
             return {};
           },
-          [&](const HeldWidthArg& held) -> diag::Result<void> {
+          [&](const WidthMetadataArg& held) -> diag::Result<void> {
             args.push_back(WidthArg(types_.RequiredIntegralShapeOf(held.of)));
+            return {};
+          },
+          [&](const TypeMetadataArg& held) -> diag::Result<void> {
+            auto type_object = ValueTypeOf(held.of);
+            if (!type_object) {
+              return std::unexpected(std::move(type_object.error()));
+            }
+            args.push_back(*type_object);
             return {};
           }},
       abi.implicit_arg);
@@ -406,7 +414,7 @@ auto CodeGenModule::EmitLifecycle(
     builder.CreateCall(tuples_.Function(type, step), args);
     return {};
   }
-  const support::ObjectLayout storage = types_.StorageOf(type);
+  const support::ObjectLayout storage = types_.LayoutOf(type);
   // An integral value, and a fixed-size unpacked array that ends with nothing
   // to do, is its bytes where it is held, so every step that has anything to
   // do is a copy of them.
@@ -484,17 +492,6 @@ auto CodeGenModule::DynamicCast() -> llvm::FunctionCallee {
           ptr_ty, {ptr_ty, ptr_ty, ptr_ty, llvm::Type::getInt64Ty(*context_)},
           false),
       "__dynamic_cast");
-}
-
-auto CodeGenModule::MemberStorageConstructor(
-    support::DeclaredMemberStorage storage) -> llvm::FunctionCallee {
-  std::vector<llvm::Type*> params{types_.Ptr()};
-  if (BuiltAtTheWidthHeld(storage)) {
-    params.push_back(llvm::Type::getInt64Ty(*context_));
-  }
-  return CreateRuntimeFunction(
-      llvm::FunctionType::get(types_.Void(), params, false),
-      RuntimeSymbol(storage, RuntimeOp::kConstruct));
 }
 
 auto CodeGenModule::MemberStorageDestructor(
@@ -1027,69 +1024,69 @@ auto CodeGenModule::MemberLayout(
     lir::TypeId type, support::DeclaredMemberStorage storage)
     -> support::ObjectLayout {
   if (HoldsItsBytesInline(type, storage)) {
-    return types_.StorageOf(type);
+    return types_.LayoutOf(type);
   }
   return runtime::LayoutOf(
-      storage, HeldTypeOf(type).transform(
-                   [&](lir::TypeId held) { return types_.StorageOf(held); }));
+      storage, ValuesHeldByMember(type).transform(
+                   [&](lir::TypeId held) { return types_.LayoutOf(held); }));
 }
 
-// The type of the value a member of `type` holds: the value a cell, a net or a
-// history wraps, or the member's own, and none for a member holding no value
-// of the program's.
-auto CodeGenModule::HeldTypeOf(lir::TypeId type) const
+// A member holding no value of the program's holds none.
+auto CodeGenModule::ValuesHeldByMember(lir::TypeId type) const
     -> std::optional<lir::TypeId> {
   const lir::Type& member = unit_->types.Get(type);
-  if (const auto* cell = member.As<lir::ObservableType>()) {
-    return cell->value;
-  }
-  if (const auto* net = member.As<lir::ResolvedType>()) {
-    return net->value;
-  }
-  if (const auto* history = member.As<lir::SampledHistoryType>()) {
-    return history->value;
-  }
   if (member.IsOwnedValue()) {
     return type;
   }
-  return std::nullopt;
+  return ValuesHeldBy(member);
 }
 
 // A value held as its bytes has none until one is copied in, which is how the
 // one record holding such members -- a closure's captures -- is filled, so
 // nothing builds it here.
-void CodeGenModule::BeginMembers(
+auto CodeGenModule::BeginMembers(
     llvm::IRBuilderBase& builder, llvm::Value* value,
-    const RecordLayout& placed) {
+    const RecordLayout& placed) -> diag::Result<void> {
   for (std::size_t i = 0; i < placed.storage.size(); ++i) {
     if (HoldsItsBytesInline(placed.types[i], placed.storage[i])) {
       throw InternalError(
           "llvm codegen: a value held as its bytes is built by copying a value "
           "in, never default-built -- please report this as a bug");
     }
-    BuildMemberStorage(
+    auto built = BuildMemberStorage(
         builder, placed.types[i], placed.storage[i],
         builder.CreateConstInBoundsGEP1_64(
             builder.getInt8Ty(), value, placed.offsets[i]));
+    if (!built) {
+      return built;
+    }
   }
+  return {};
 }
 
-void CodeGenModule::BuildMemberStorage(
+// The entry building a member's storage takes where the storage is, after
+// what it is told of the values held there.
+auto CodeGenModule::BuildMemberStorage(
     llvm::IRBuilderBase& builder, lir::TypeId type,
-    support::DeclaredMemberStorage storage, llvm::Value* at) {
-  std::vector<llvm::Value*> args{at};
-  if (BuiltAtTheWidthHeld(storage)) {
-    const std::optional<lir::TypeId> held = HeldTypeOf(type);
-    if (!held.has_value()) {
-      throw InternalError(
-          "llvm codegen: storage built at the width of what it holds holds no "
-          "value -- please report this as a bug");
-    }
-    args.push_back(
-        llvm::ConstantInt::get(
-            builder.getInt64Ty(), types_.RequiredIntegralShapeOf(*held).width));
+    support::DeclaredMemberStorage storage, llvm::Value* at)
+    -> diag::Result<void> {
+  const FnAbi abi{
+      .implicit_arg = ImplicitArgOf(
+          ToldBuilding(storage),
+          {.acted_on = ValuesHeldByMember(type), .member = std::nullopt}),
+      .named_part = std::nullopt,
+      .args = {CallArranger::Direct(types_.Ptr())},
+      .type_args = {},
+      .ret = ReturnDirect{.type = types_.Void()}};
+  const std::array<llvm::Value*, 1> operands{at};
+  auto args = BuildCallArgs(abi, operands);
+  if (!args) {
+    return std::unexpected(std::move(args.error()));
   }
-  builder.CreateCall(MemberStorageConstructor(storage), args);
+  builder.CreateCall(
+      RuntimeFunction(RuntimeSymbol(storage, RuntimeOp::kConstruct), abi),
+      *args);
+  return {};
 }
 
 auto CodeGenModule::EndMembers(
@@ -1147,7 +1144,9 @@ auto CodeGenModule::EmitConstructorPrologue(
         builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), value, offset));
   };
   table_at(0, points.lineage);
-  BeginMembers(builder, value, *record);
+  if (auto begun = BeginMembers(builder, value, *record); !begun) {
+    return begun;
+  }
   // Each interface class part is placed where a complete object of this
   // declaration places it. Where the value is of a class extending this one,
   // that is storage the extending class's own members later take, and its
@@ -1716,7 +1715,11 @@ auto CodeGenModule::StateSharedStorage(
     return std::unexpected(std::move(described.error()));
   }
   llvm::GlobalVariable* shared = SharedStorage(storage.symbol);
-  BuildMemberStorage(builder, storage.type, *described, shared);
+  if (auto built =
+          BuildMemberStorage(builder, storage.type, *described, shared);
+      !built) {
+    return built;
+  }
   if (MemberLayout(storage.type, *described).ends_with_nothing_to_do) {
     return {};
   }
@@ -1793,7 +1796,7 @@ auto CodeGenModule::GetAddrOfIntegralType(lir::TypeId type) -> llvm::Constant* {
   const runtime::IntegralTypeConstantLayout layout =
       runtime::LayoutOfIntegralTypeConstant();
   auto* ptr_ty = types_.Ptr();
-  const support::ObjectLayout storage = types_.StorageOf(type);
+  const support::ObjectLayout storage = types_.LayoutOf(type);
   ConstantRecord out(*context_, layout.object.size);
   out.Place(
       0, llvm::ConstantExpr::getInBoundsGetElementPtr(

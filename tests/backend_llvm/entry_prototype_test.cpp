@@ -192,9 +192,9 @@ struct Declared {
   // of the operands a call states.
   bool names_a_member_first;
   // The operand whose representation names the realization, where that is a
-  // fixed-size unpacked array: it is an array whatever the call, so the type
-  // that crosses with it is no matter of which types the call states.
-  std::optional<std::size_t> own_array = std::nullopt;
+  // tuple or a fixed-size unpacked array: it is one whatever the call, so the
+  // type that crosses with it is no matter of which types the call states.
+  std::optional<std::size_t> own_laid_out = std::nullopt;
 };
 
 // Where `declared` and `parameters` disagree, or nothing where every operand
@@ -212,25 +212,31 @@ auto Disagreement(
     ++at;
     return true;
   };
-  if (std::holds_alternative<ToldHeldWidthAhead>(declared.told) &&
+  if (std::holds_alternative<ToldWidthMetadataAhead>(declared.told) &&
       !take(Hands::kWidth)) {
     return "is declared told how wide the values it holds are ahead of its "
            "operands and does not open with a width";
   }
-  // A realization for a fixed-size unpacked array is told the type of every
-  // array it is handed. Which other operands are arrays follows from the types
-  // a call states, which no declaration holds, so a prototype says it by how
-  // it spells one: the parameter naming the array and, right after it, the
-  // parameter naming that one's type. Where an array may stand is the rule's
-  // own answer, asked of it for an array type.
-  const bool for_arrays = std::holds_alternative<ToldArrayTypes>(declared.told);
+  if (std::holds_alternative<ToldTypeMetadataAhead>(declared.told) &&
+      !take(Hands::kTypeConstant)) {
+    return "is declared told the type of the values it holds ahead of its "
+           "operands and does not open with a type";
+  }
+  // A realization for a tuple or a fixed-size unpacked array is told the type
+  // of every such value it is handed. Which other operands are such values
+  // follows from the types a call states, which no declaration holds, so a
+  // prototype says it by how it spells one: the parameter naming the value
+  // and, right after it, the parameter naming that one's type. Where such a
+  // value may stand is the rule's own answer, asked of it for an array type.
+  const bool for_laid_out =
+      std::holds_alternative<ToldLaidOutTypes>(declared.told);
   const lir::TypePool pool;
   const lir::TypeId array = pool.Intern(
       lir::Type{lir::UnpackedArrayType{
           .element_type = pool.Intern(lir::Type{lir::EmptyType{}}),
           .size = 1}});
-  const auto an_array_crosses_with_its_type = [&](std::size_t operand) {
-    if (!for_arrays) {
+  const auto a_laid_out_value_crosses_with_its_type = [&](std::size_t operand) {
+    if (!for_laid_out) {
       return false;
     }
     const std::optional<PassMode> told = ToldModeOf(
@@ -247,13 +253,13 @@ auto Disagreement(
     }
     return false;
   };
-  // An array operand takes its type where it is the realization's own, and
-  // may take it wherever else the rule says an array may stand.
-  const auto take_an_arrays_type = [&](std::size_t operand) {
-    if (declared.own_array == operand) {
+  // A tuple or array operand takes its type where it is the realization's own,
+  // and may take it wherever else the rule says such a value may stand.
+  const auto take_a_laid_out_values_type = [&](std::size_t operand) {
+    if (declared.own_laid_out == operand) {
       return take_the_type_of_the_one_before();
     }
-    if (an_array_crosses_with_its_type(operand)) {
+    if (a_laid_out_value_crosses_with_its_type(operand)) {
       take_the_type_of_the_one_before();
     }
     return true;
@@ -270,11 +276,13 @@ auto Disagreement(
     return std::visit(
         Overloaded{
             [&](const ToldNothing&) { return read; },
-            [&](const ToldHeldWidthAhead&) { return read; },
-            [&](const ToldHeldWidth& t) {
+            [&](const ToldWidthMetadataAhead&) { return read; },
+            [&](const ToldTypeMetadataAhead&) { return read; },
+            [&](const ToldByTheStorage&) { return read; },
+            [&](const ToldWidthMetadata& t) {
               return told_at(t.after, PassWithWidth{.type = lir::TypeId{}});
             },
-            [&](const ToldArrayTypes& t) {
+            [&](const ToldLaidOutTypes& t) {
               return t.reached_after.has_value()
                          ? told_at(
                                *t.reached_after,
@@ -286,6 +294,9 @@ auto Disagreement(
             },
             [&](const ToldMemberType& t) {
               return told_at(t.after, PassWithType{.type = lir::TypeId{}});
+            },
+            [&](const ToldEntryType& t) {
+              return told_at(t.after, PassWithType{.type = lir::TypeId{}});
             }},
         declared.told);
   };
@@ -294,20 +305,23 @@ auto Disagreement(
       std::visit(
           Overloaded{
               [](const ToldNothing&) -> std::size_t { return 0; },
-              [](const ToldHeldWidthAhead&) -> std::size_t { return 0; },
-              [](const ToldHeldWidth& t) { return t.after + 1; },
-              [](const ToldArrayTypes& t) -> std::size_t {
+              [](const ToldWidthMetadataAhead&) -> std::size_t { return 0; },
+              [](const ToldTypeMetadataAhead&) -> std::size_t { return 0; },
+              [](const ToldByTheStorage&) -> std::size_t { return 0; },
+              [](const ToldWidthMetadata& t) { return t.after + 1; },
+              [](const ToldLaidOutTypes& t) -> std::size_t {
                 return t.reached_after.has_value() ? *t.reached_after + 1 : 0;
               },
               [](const ToldKeyType& t) { return t.after + 1; },
-              [](const ToldMemberType& t) { return t.after + 1; }},
+              [](const ToldMemberType& t) { return t.after + 1; },
+              [](const ToldEntryType& t) { return t.after + 1; }},
           declared.told));
   for (std::size_t i = 0; i < stated; ++i) {
     const std::size_t began = at;
     const bool taken = std::visit(
         Overloaded{
             [&](const PassDirect&) {
-              return take(Hands::kValue) && take_an_arrays_type(i);
+              return take(Hands::kValue) && take_a_laid_out_values_type(i);
             },
             [&](const PassWithExtent&) {
               return take(Hands::kValue) && take(Hands::kWidth) &&
@@ -332,17 +346,17 @@ auto Disagreement(
     }
   }
   // An operand past the ones a reading is stated for is read as the thing it
-  // is, so an array among them is followed by its type like any other. What
-  // is left is what the entry is told of its answer.
+  // is, so a tuple or an array among them is followed by its type like any
+  // other. What is left is what the entry is told of its answer.
   std::vector<Parameter> told;
   std::vector<std::size_t> told_at;
   for (std::size_t operand = stated; at < parameters.size();) {
     switch (parameters[at].hands) {
       case Hands::kValue:
         ++at;
-        if (!take_an_arrays_type(operand)) {
+        if (!take_a_laid_out_values_type(operand)) {
           return std::format(
-              "does not take the type of operand {}, the array its "
+              "does not take the type of operand {}, the tuple or array its "
               "realization is named by, right after it",
               operand);
         }
@@ -384,12 +398,12 @@ auto Disagreement(
     return is_told_alone_as(name, 2) && parameters.back().name == "out";
   };
   switch (declared.answer_told) {
-    // A realization for fixed-size unpacked arrays building one is told its
-    // type whatever its entry's declaration says, which arrays a call hands it
-    // being the call's types' to say.
+    // A realization for tuples or fixed-size unpacked arrays building one is
+    // told its type whatever its entry's declaration says, whether it builds
+    // one being the type the call answers at to say.
     case support::AnswerTold::kNothing:
       if (told.empty() ||
-          (for_arrays && is_told_of_its_answer_as("answer_type"))) {
+          (for_laid_out && is_told_of_its_answer_as("answer_type"))) {
         return std::nullopt;
       }
       return std::format(
@@ -481,7 +495,7 @@ auto DeclaredRealizations() -> Realizations {
   };
   const auto builtin = [&](const std::string& symbol, support::BuiltinFn fn,
                            const Told& told,
-                           std::optional<std::size_t> own_array) {
+                           std::optional<std::size_t> own_laid_out) {
     const support::RuntimeEntry entry = support::RuntimeEntryOf(fn);
     state(
         symbol, Declared{
@@ -490,15 +504,15 @@ auto DeclaredRealizations() -> Realizations {
                     .answer_told = entry.answer_told,
                     .names_a_member_first =
                         std::holds_alternative<ToldMemberType>(told),
-                    .own_array = own_array});
+                    .own_laid_out = own_laid_out});
     all.functions.push_back(symbol);
   };
-  // The operand naming a realization where that operand is a fixed-size
-  // unpacked array, which is where the realization is told the types of the
-  // arrays it is handed.
-  const auto array_at = [](const Told& told,
-                           std::size_t operand) -> std::optional<std::size_t> {
-    if (!std::holds_alternative<ToldArrayTypes>(told)) {
+  // The operand naming a realization where that operand is a tuple or a
+  // fixed-size unpacked array, which is where the realization is told the
+  // types of such values it is handed.
+  const auto laid_out_at =
+      [](const Told& told, std::size_t operand) -> std::optional<std::size_t> {
+    if (!std::holds_alternative<ToldLaidOutTypes>(told)) {
       return std::nullopt;
     }
     return operand;
@@ -521,7 +535,7 @@ auto DeclaredRealizations() -> Realizations {
         const Told told = ToldOf(domain, fn);
         builtin(
             RuntimeSymbol(domain, fn), fn, told,
-            named_by.has_value() ? array_at(told, *named_by) : std::nullopt);
+            named_by.has_value() ? laid_out_at(told, *named_by) : std::nullopt);
       });
     };
     std::visit(
@@ -618,9 +632,7 @@ auto DeclaredRealizations() -> Realizations {
       state(
           symbol, Declared{
                       .operands = {},
-                      .told = BuiltAtTheWidthHeld(storage)
-                                  ? Told{ToldHeldWidth{.after = 0}}
-                                  : Told{ToldNothing{}},
+                      .told = ToldBuilding(storage),
                       .answer_told = support::AnswerTold::kNothing,
                       .names_a_member_first = false});
       all.functions.push_back(symbol);
@@ -640,12 +652,13 @@ auto DeclaredRealizations() -> Realizations {
         continue;
       }
       state(
-          symbol, Declared{
-                      .operands = {},
-                      .told = ToldOfAnOperator(domain),
-                      .answer_told = support::AnswerTold::kNothing,
-                      .names_a_member_first = false,
-                      .own_array = array_at(ToldOfAnOperator(domain), 0)});
+          symbol,
+          Declared{
+              .operands = {},
+              .told = ToldOfAnOperator(domain),
+              .answer_told = support::AnswerTold::kNothing,
+              .names_a_member_first = false,
+              .own_laid_out = laid_out_at(ToldOfAnOperator(domain), 0)});
     }
   }
   return all;
@@ -814,15 +827,46 @@ TEST(EntryPrototypeTest, WhatAnAnswerIsToldIsHeldToItsDeclaration) {
   EXPECT_TRUE(disagrees(support::AnswerTold::kAnswerType, misplaced));
 }
 
-// A realization for fixed-size unpacked arrays named by an array operand takes
-// that array's type right after it.
-TEST(EntryPrototypeTest, TheArrayARealizationIsNamedByCrossesWithItsType) {
+// What an entry making storage is told of the values it holds -- their width,
+// or their type -- opens what it takes, ahead of the storage it builds in.
+TEST(EntryPrototypeTest, WhatStorageIsToldAheadOpensItsPrototype) {
+  const auto declared = [](Told told) {
+    return Declared{
+        .operands = {},
+        .told = told,
+        .answer_told = support::AnswerTold::kNothing,
+        .names_a_member_first = false};
+  };
+  const auto disagrees = [&](Told told, std::string_view prototype) {
+    return Disagreement(
+               declared(told), PrototypesIn(prototype).at("lyra_rt_probe"))
+        .has_value();
+  };
+  constexpr std::string_view kWidthFirst =
+      "void lyra_rt_probe(std::int64_t width, void* storage);";
+  constexpr std::string_view kTypeFirst =
+      "void lyra_rt_probe(const void* held_type, void* storage);";
+  constexpr std::string_view kStorageFirst =
+      "void lyra_rt_probe(void* storage, const void* held_type);";
+  EXPECT_FALSE(disagrees(ToldWidthMetadataAhead{}, kWidthFirst));
+  EXPECT_FALSE(disagrees(ToldTypeMetadataAhead{}, kTypeFirst));
+  EXPECT_TRUE(disagrees(ToldWidthMetadataAhead{}, kTypeFirst));
+  EXPECT_TRUE(disagrees(ToldTypeMetadataAhead{}, kWidthFirst));
+  EXPECT_TRUE(disagrees(ToldTypeMetadataAhead{}, kStorageFirst));
+  EXPECT_TRUE(disagrees(ToldNothing{}, kTypeFirst));
+}
+
+// A realization for tuples or fixed-size unpacked arrays named by such an
+// operand takes that operand's type right after it.
+TEST(
+    EntryPrototypeTest,
+    TheLaidOutValueARealizationIsNamedByCrossesWithItsType) {
   const Declared declared{
       .operands = {},
-      .told = ToldArrayTypes{},
+      .told = ToldLaidOutTypes{},
       .answer_told = support::AnswerTold::kNothing,
       .names_a_member_first = false,
-      .own_array = 0};
+      .own_laid_out = 0};
   const auto parameters_of = [](std::string_view prototype) {
     return PrototypesIn(prototype).at("lyra_rt_probe");
   };

@@ -4,6 +4,7 @@
 #include <format>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -111,6 +112,29 @@ void RequireCallWellFormed(
 void VerifyInstr(
     const CompilationUnit& unit, const Function& fn, const Instr& instr) {
   const TypeId result_type = fn.values.Get(instr.result).type;
+  // A store and an initialization each put a value of the place's type into
+  // storage that can hold one, and yield nothing.
+  const auto write_into = [&](const Place& place, const Operand& value,
+                              std::string_view what) {
+    const TypeId place_type = PlaceType(unit, fn, place);
+    if (unit.types.Get(place_type).IsAddressOnly()) {
+      throw InternalError(
+          std::format(
+              "lir verify: {} into a place whose storage is only addressable",
+              what));
+    }
+    const TypeId value_type = OperandType(fn, value);
+    if (value_type != place_type) {
+      throw InternalError(
+          std::format(
+              "lir verify: {} value type does not match its place type "
+              "(value Type[{}], place Type[{}])",
+              what, value_type.value, place_type.value));
+    }
+    if (!IsVoid(unit, result_type)) {
+      throw InternalError(std::format("lir verify: {} must yield void", what));
+    }
+  };
   std::visit(
       Overloaded{
           [&](const LoadInstr& load) {
@@ -129,23 +153,16 @@ void VerifyInstr(
             }
           },
           [&](const StoreInstr& store) {
-            const TypeId place_type = PlaceType(unit, fn, store.place);
-            if (unit.types.Get(place_type).IsAddressOnly()) {
+            write_into(store.place, store.value, "store");
+          },
+          [&](const InitializeInstr& initialize) {
+            if (!IsPlaceLocal(fn, initialize.place.base) ||
+                !initialize.place.chain.empty()) {
               throw InternalError(
-                  "lir verify: store into a place whose storage is only "
-                  "addressable");
+                  "lir verify: an initialization names storage other than a "
+                  "frame slot");
             }
-            const TypeId value_type = OperandType(fn, store.value);
-            if (value_type != place_type) {
-              throw InternalError(
-                  std::format(
-                      "lir verify: store value type does not match its place "
-                      "type (value Type[{}], place Type[{}])",
-                      value_type.value, place_type.value));
-            }
-            if (!IsVoid(unit, result_type)) {
-              throw InternalError("lir verify: store must yield void");
-            }
+            write_into(initialize.place, initialize.value, "initialization");
           },
           [&](const BitsStoreInstr& store) {
             RequireBitsStoreWellFormed(

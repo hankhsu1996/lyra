@@ -868,7 +868,7 @@ void FunctionLowerer::EmitScopeDrop(const SlotEnd& end) {
   MarkStorage(lir::StorageInstr::Op::kDead, end.slot);
 }
 
-auto FunctionLowerer::StoreMoved(lir::Place place, lir::Operand value)
+auto FunctionLowerer::Initialize(lir::Place place, lir::Operand value)
     -> lir::Operand {
   const bool owned =
       unit_->Types().Get(lir::OperandType(fn_, value)).IsOwnedValue();
@@ -876,13 +876,14 @@ auto FunctionLowerer::StoreMoved(lir::Place place, lir::Operand value)
   const auto* made = std::get_if<lir::Use>(&handed);
   const std::optional<lir::ValueId> left_behind =
       owned && made != nullptr ? std::optional{made->value} : std::nullopt;
-  lir::Operand stored = Emit(
+  lir::Operand initialized = Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
-      lir::StoreInstr{.place = std::move(place), .value = std::move(handed)});
+      lir::InitializeInstr{
+          .place = std::move(place), .value = std::move(handed)});
   if (left_behind.has_value()) {
     MarkStorage(lir::StorageInstr::Op::kDead, *left_behind);
   }
-  return stored;
+  return initialized;
 }
 
 void FunctionLowerer::OpenScope(ScopeKind kind) {
@@ -966,7 +967,7 @@ void FunctionLowerer::InitializeSlot(lir::ValueId slot, lir::Operand value) {
   if (unit_->Types().Get(fn_.values.Get(slot).type).IsOwnedValue()) {
     MarkStorage(lir::StorageInstr::Op::kLive, slot);
   }
-  StoreMoved(LocalPlace(slot), std::move(value));
+  Initialize(LocalPlace(slot), std::move(value));
 }
 
 // Introduces a declared local, holding its initial value. A local the body
@@ -1032,7 +1033,7 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
         fn_.values.Get(std::get<lir::Use>(place.base).value).type;
     if (unit_->Types().Get(type).IsOwnedValue()) {
       EndValue(Load(place, type));
-      return StoreMoved(std::move(place), std::move(value));
+      return Initialize(std::move(place), std::move(value));
     }
   }
   return Emit(

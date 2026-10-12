@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <type_traits>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
@@ -45,25 +46,6 @@ template <typename Host>
 inline constexpr bool kIsBitStreamType<RealValue<Host>> = false;
 template <>
 inline constexpr bool kIsBitStreamType<Chandle> = false;
-
-// LRM 6.4: whether `T` is a singular type, whose default (Table 6-7) is what
-// its own default construction builds. An unpacked union or array is an
-// aggregate, and a value held with the type it was written in is of no type
-// of its own, so neither has a default its type alone fixes.
-template <typename T>
-inline constexpr bool kIsSingular = true;
-template <>
-inline constexpr bool kIsSingular<AnyValue> = false;
-template <>
-inline constexpr bool kIsSingular<RuntimeUnion> = false;
-template <>
-inline constexpr bool kIsSingular<RuntimeTaggedUnion> = false;
-template <>
-inline constexpr bool kIsSingular<RuntimeDynamicArray> = false;
-template <>
-inline constexpr bool kIsSingular<RuntimeQueue> = false;
-template <>
-inline constexpr bool kIsSingular<RuntimeAssociativeArray> = false;
 
 // A value of `T` holds parts ordered by position, each a value of a type the
 // value states and handed out where it lies.
@@ -194,11 +176,13 @@ class ValueTypeOf final : public ValueType {
     return Of(value).HasUnknown();
   }
 
+  // A value held with the type it was written in is of no type of its own, so
+  // there is no value of it before anything writes one (LRM 7.8.1).
   void BuildDefault(void* out) const override {
-    if constexpr (detail::kIsSingular<T>) {
-      std::construct_at(static_cast<T*>(out));
-    } else {
+    if constexpr (std::is_same_v<T, AnyValue>) {
       detail::LacksOperation();
+    } else {
+      std::construct_at(static_cast<T*>(out));
     }
   }
 

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
 
 #include "lyra/runtime/var.hpp"
@@ -25,19 +24,20 @@ class SharedPointer {
   SharedPointer() = default;
 
   // The first hold and the cell come into existence together, so there is no
-  // moment at which one of them is reachable without the other. The cell holds
-  // nothing until the local's declaration initializes it.
+  // moment at which one of them is reachable without the other. A cell of a
+  // value of the library's own holds nothing until the local's declaration
+  // initializes it.
   template <value::LyraValue T>
   [[nodiscard]] static auto MakeCell() -> SharedPointer {
     return SharedPointer(std::make_shared<Var<T>>());
   }
 
-  // The same of a variable of an integral value wider than a word, whose cell
-  // is as large as the width it is told.
-  template <value::StateDomain kDomain>
-  [[nodiscard]] static auto MakeWordsCell(std::uint64_t width)
-      -> SharedPointer {
-    return SharedPointer(runtime::MakeWordsCell<kDomain>(width));
+  // The same of a variable whose value lies at its cell's tail, held as
+  // `HeldAs` holds one and told `told`, which holds what the value's type
+  // builds before anything writes it from then.
+  template <class HeldAs, class Told>
+  [[nodiscard]] static auto MakeTailCell(const Told& told) -> SharedPointer {
+    return SharedPointer(runtime::MakeTailCell<HeldAs>(told));
   }
 
   // Where the held cell lies.

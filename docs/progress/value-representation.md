@@ -156,8 +156,8 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
 - [x] The instructions the execution backend writes for an operation are held to the library's
       statement of the same operation by a test that evaluates both on the same operands, at widths
       on both sides of 64 bits.
-- [x] A net of an integral type has one install, told how many positions its declared type has, on
-      both backends.
+- [x] A net of an integral type has one install on both backends, and counts its positions by its
+      declared type.
 - [x] An enumeration's member table states the base type it is laid out at, and the library reads
       how many words a member takes from the table.
 - [ ] Every operation over constants is folded where it is built, except where folding would make
@@ -168,9 +168,17 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
       and the text of a constant under a format are still folded by functions of their own, an
       enumeration method called on a constant is not folded, and an enumeration's members are not
       constants the unit names.
-- [ ] The execution backend lays out a cell of every other type from the type.
-- [ ] A tuple's bytes no longer open with its type: every holder of one -- a cell, a reference, a
+- [x] A variable, a net, a class's property and what a suspending call answers into, of an unpacked
+      structure or a fixed-size unpacked array, are told its type where they are built and keep the
+      value in their own storage, holding a valid value of the type from then, so the value has one
+      address from the moment its holder exists and is read and written where it lies. A property
+      read before its initializer runs (LRM 8.7) reads that value.
+- [x] A tuple's bytes no longer open with its type: every holder of one -- a cell, a reference, a
       designated part, a net, a sampled history -- states the type of what it holds.
+- [ ] The execution backend lays out a cell of an unpacked union from the union's type. Until it
+      does, a property of a union type, or of a structure holding one, read before its initializer
+      runs stops the execution backend with an internal error, where LRM 7.3 gives the union its
+      first member's default and the C++ backend answers it.
 - [ ] An unpacked union is one storage its members overlay, laid out from its type. A structure
       member's common initial sequence then reads what was written through another member (LRM 7.3),
       and a union streams its first-declared member whichever is live (LRM 11.4.14.1). Both are

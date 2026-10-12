@@ -341,6 +341,11 @@ class LirDumper {
                   "store {} = {}", FormatPlace(store.place),
                   FormatOperand(store.value));
             },
+            [&](const InitializeInstr& initialize) -> std::string {
+              return std::format(
+                  "initialize {} = {}", FormatPlace(initialize.place),
+                  FormatOperand(initialize.value));
+            },
             [&](const BitsStoreInstr& store) -> std::string {
               return std::format(
                   "store_bits {}{} = {}", FormatPlace(store.place),

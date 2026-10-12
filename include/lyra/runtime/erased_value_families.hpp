@@ -1,11 +1,11 @@
 #pragma once
 
-#include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/takeover.hpp"
+#include "lyra/runtime/value_cell.hpp"
 #include "lyra/runtime/value_families.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/runtime/var.hpp"
@@ -29,66 +29,60 @@ namespace lyra::runtime {
 // library's own code refers to that copy. Code compiled with the design's types
 // holds none of them, which is why nothing it includes states these.
 
-extern template class ValueStorageCore<value::RuntimeTuple>;
 extern template class ValueStorageCore<value::RuntimeUnion>;
 extern template class ValueStorageCore<value::RuntimeTaggedUnion>;
 extern template class ValueStorageCore<value::RuntimeDynamicArray>;
-extern template class ValueStorageCore<value::RuntimeFixedArray>;
 extern template class ValueStorageCore<value::RuntimeQueue>;
 extern template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
-extern template class Cell<WordsHolding<value::StateDomain::kTwoState>>;
-extern template class Cell<WordsHolding<value::StateDomain::kFourState>>;
-extern template class Cell<ValueStorageCore<value::RuntimeTuple>>;
+extern template class Cell<WordsStorage<value::StateDomain::kTwoState>>;
+extern template class Cell<WordsStorage<value::StateDomain::kFourState>>;
+extern template class Cell<LaidOutStorage<value::RuntimeTuple>>;
 extern template class Cell<ValueStorageCore<value::RuntimeUnion>>;
 extern template class Cell<ValueStorageCore<value::RuntimeTaggedUnion>>;
 extern template class Cell<ValueStorageCore<value::RuntimeDynamicArray>>;
-extern template class Cell<ValueStorageCore<value::RuntimeFixedArray>>;
+extern template class Cell<LaidOutStorage<value::RuntimeFixedArray>>;
 extern template class Cell<ValueStorageCore<value::RuntimeQueue>>;
 extern template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
-extern template class WordsCell<value::StateDomain::kTwoState>;
-extern template class WordsCell<value::StateDomain::kFourState>;
-extern template class Var<value::RuntimeTuple>;
+extern template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
+extern template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
+extern template class TailCell<LaidOutStorage<value::RuntimeTuple>>;
+extern template class TailCell<LaidOutStorage<value::RuntimeFixedArray>>;
 extern template class Var<value::RuntimeUnion>;
 extern template class Var<value::RuntimeTaggedUnion>;
 extern template class Var<value::RuntimeDynamicArray>;
-extern template class Var<value::RuntimeFixedArray>;
 extern template class Var<value::RuntimeQueue>;
 extern template class Var<value::RuntimeAssociativeArray>;
 
 extern template class CellRareState<
-    WordsHolding<value::StateDomain::kTwoState>>;
+    WordsStorage<value::StateDomain::kTwoState>>;
 extern template class CellRareState<
-    WordsHolding<value::StateDomain::kFourState>>;
-extern template class CellRareState<ValueStorageCore<value::RuntimeTuple>>;
+    WordsStorage<value::StateDomain::kFourState>>;
+extern template class CellRareState<LaidOutStorage<value::RuntimeTuple>>;
 extern template class CellRareState<ValueStorageCore<value::RuntimeUnion>>;
 extern template class CellRareState<
     ValueStorageCore<value::RuntimeTaggedUnion>>;
 extern template class CellRareState<
     ValueStorageCore<value::RuntimeDynamicArray>>;
-extern template class CellRareState<ValueStorageCore<value::RuntimeFixedArray>>;
+extern template class CellRareState<LaidOutStorage<value::RuntimeFixedArray>>;
 extern template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
 extern template class CellRareState<
     ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 extern template class Ref<value::WideBitVector>;
 extern template class Ref<value::WideLogicVector>;
-extern template class Ref<value::RuntimeTuple>;
 extern template class Ref<value::RuntimeUnion>;
 extern template class Ref<value::RuntimeTaggedUnion>;
 extern template class Ref<value::RuntimeDynamicArray>;
-extern template class Ref<value::RuntimeFixedArray>;
 extern template class Ref<value::RuntimeQueue>;
 extern template class Ref<value::RuntimeAssociativeArray>;
 
 extern template class ScopedMutation<Ref<value::WideBitVector>>;
 extern template class ScopedMutation<Ref<value::WideLogicVector>>;
-extern template class ScopedMutation<Ref<value::RuntimeTuple>>;
 extern template class ScopedMutation<Ref<value::RuntimeUnion>>;
 extern template class ScopedMutation<Ref<value::RuntimeTaggedUnion>>;
 extern template class ScopedMutation<Ref<value::RuntimeDynamicArray>>;
-extern template class ScopedMutation<Ref<value::RuntimeFixedArray>>;
 extern template class ScopedMutation<Ref<value::RuntimeQueue>>;
 extern template class ScopedMutation<Ref<value::RuntimeAssociativeArray>>;
 
@@ -102,13 +96,11 @@ extern template class Takeovers<value::RuntimeFixedArray>;
 extern template class Takeovers<value::RuntimeQueue>;
 extern template class Takeovers<value::RuntimeAssociativeArray>;
 
-extern template class ActivationValueCell<value::RuntimeTuple>;
-extern template class ActivationValueCell<value::RuntimeUnion>;
-extern template class ActivationValueCell<value::RuntimeTaggedUnion>;
-extern template class ActivationValueCell<value::RuntimeDynamicArray>;
-extern template class ActivationValueCell<value::RuntimeFixedArray>;
-extern template class ActivationValueCell<value::RuntimeQueue>;
-extern template class ActivationValueCell<value::RuntimeAssociativeArray>;
+extern template class ValueCell<value::RuntimeUnion>;
+extern template class ValueCell<value::RuntimeTaggedUnion>;
+extern template class ValueCell<value::RuntimeDynamicArray>;
+extern template class ValueCell<value::RuntimeQueue>;
+extern template class ValueCell<value::RuntimeAssociativeArray>;
 
 extern template class SampledHistory<value::WideBitVector>;
 extern template class SampledHistory<value::WideLogicVector>;
@@ -218,14 +210,14 @@ extern template class Takeovers<value::LogicVector<16>>;
 extern template class Takeovers<value::LogicVector<32>>;
 extern template class Takeovers<value::LogicVector<64>>;
 
-extern template class ActivationValueCell<value::BitVector<8>>;
-extern template class ActivationValueCell<value::BitVector<16>>;
-extern template class ActivationValueCell<value::BitVector<32>>;
-extern template class ActivationValueCell<value::BitVector<64>>;
-extern template class ActivationValueCell<value::LogicVector<8>>;
-extern template class ActivationValueCell<value::LogicVector<16>>;
-extern template class ActivationValueCell<value::LogicVector<32>>;
-extern template class ActivationValueCell<value::LogicVector<64>>;
+extern template class ValueCell<value::BitVector<8>>;
+extern template class ValueCell<value::BitVector<16>>;
+extern template class ValueCell<value::BitVector<32>>;
+extern template class ValueCell<value::BitVector<64>>;
+extern template class ValueCell<value::LogicVector<8>>;
+extern template class ValueCell<value::LogicVector<16>>;
+extern template class ValueCell<value::LogicVector<32>>;
+extern template class ValueCell<value::LogicVector<64>>;
 
 extern template class SampledHistory<value::BitVector<8>>;
 extern template class SampledHistory<value::BitVector<16>>;
