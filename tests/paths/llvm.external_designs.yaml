@@ -8,21 +8,27 @@
 # stopping, until its entry says so or goes -- so this file is the record of what
 # stands between Lyra and each design, and an entry leaves it only by the design
 # getting all the way.
+BlackParrot:1x1:hello:
+  stops: build
+  says: cannot be written to by any other process
 Caliptra:default:hello:
   stops: build
-  says: taking over part of a target is not yet supported
+  says: numeric literals must not start with a leading underscore
 HammerBlade:16x8:hello:
-  stops: run
-  says: did not end within
+  stops: build
+  says: cannot refer to element
 NVDLA:default:hello:
-  stops: run
-  says: did not end within
+  stops: build
+  says: duplicate definition of 'first_stage_of_sync'
 OpenPiton:1x1:hello:
   stops: build
-  says: the front end could give it no meaning
+  says: cannot select range of
 OpenTitan:default:hello:
-  stops: run
-  says: did not end within
+  stops: build
+  says: no implicit conversion from 'logic' to 'mubi4_t'
+Vortex:mini:hello:
+  stops: build
+  says: hierarchical references are not allowed in calls to '$bits'
 XuanTie-C910:default:hello:
   stops: build
   says: delay on continuous assignment is not yet supported
