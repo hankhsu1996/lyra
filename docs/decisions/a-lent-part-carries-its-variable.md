@@ -53,14 +53,12 @@ reference to its whole.**
   part can lie at the address its whole does (the last component of a C++ `std::tuple` does). A wait
   through a reference registers on the holder whatever part the reference names
   ([a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)).
-- **What a write asks of the variable needs no type, except where the variable is in a rare state,
-  and then the variable carries it.** Whether a procedural continuous assignment holds it (LRM 10.6)
-  and whether anything waits are yes-or-no facts of any variable. The one type-dependent duty is a
-  sampled variable keeping its value from before the time slot's first change (LRM 16.5.1). So every
+- **What a write asks of the variable needs no type.** Whether a procedural continuous assignment
+  holds it (LRM 10.6) and whether anything waits are yes-or-no facts of any variable. So every
   variable is, whatever it holds, one type-free cell whose write rules are a null test, and a
-  variable that is sampled or taken over grows a state behind it that does the typed work through an
-  ordinary virtual call. A write the variable turns away lands in a copy the write itself keeps,
-  since only the writer knows the type of what it reaches.
+  variable that is sampled or taken over grows a state behind it that answers through an ordinary
+  virtual call. A write the variable turns away lands in a copy the write itself keeps, since only
+  the writer knows the type of what it reaches.
 - **A step reports what forming the part did.** Binding a reference to an associative entry that
   does not exist creates it (LRM 7.8.7), which is a change of the variable at the bind, reported
   there. An index naming no element names storage that belongs to nothing (LRM 7.4.6).

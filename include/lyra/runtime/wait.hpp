@@ -48,13 +48,20 @@ struct AtTime {
 using Resumption =
     std::variant<WithoutStopping, OnAnOccurrence, LaterInThisTimeStep, AtTime>;
 
-// One place an awaiter watches: an observable, a named event, a join, a `wait
+class SampledValue;
+
+// What is enrolled on a place to be told of what happens there: the awaiter of
+// a wait, told so that the execution parked on it may be woken, or a sampled
+// value, which wakes nothing.
+using Observer = std::variant<Awaiter*, SampledValue*>;
+
+// One place an observer watches: an observable, a named event, a join, a `wait
 // fork` condition, a process's termination. It stands for as long as the
-// awaiter does, so what the awaiter watches is enrolled on once however often
+// observer does, so what an awaiter watches is enrolled on once however often
 // the execution stops there.
 struct WaitMembership : IntrusiveListNode<WaitMembership> {
-  // Null on the sentinel a list embeds to close its ring.
-  Awaiter* awaiter = nullptr;
+  // A null awaiter on the sentinel a list embeds to close its ring.
+  Observer observer = static_cast<Awaiter*>(nullptr);
 
   // The member of a scope the place was reached through, where it was reached
   // through a reference bound into one (LRM 23.3.3). A force on that member

@@ -13,11 +13,11 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/base/time.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/sampled_value.hpp"
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
@@ -95,9 +95,7 @@ void KeepAfter(Change& change, const T& storage) {
 // that takes, named for the role rather than for either owner's vocabulary.
 //
 // `AdmitsWrite` is whether the write goes into the owner at all: one does not
-// while a procedural continuous assignment holds a variable (LRM 10.6). Asking
-// is the first write of the time slot at the latest, so a sampled variable
-// keeps its value from before it here (LRM 16.5.1).
+// while a procedural continuous assignment holds a variable (LRM 10.6).
 //
 // `DisplacedStorage` is where a write turned away lands so that it is kept:
 // what a variable driven continuously holds beneath the assignment covering it
@@ -170,12 +168,13 @@ class ScopedMutation;
 template <value::LyraValue T>
 class Ref;
 
-// What only a variable something samples or takes over has to do before a
-// write lands in it: keep its value from before the time slot's first change
-// (LRM 16.5.1), and turn the write away while a procedural continuous
-// assignment holds it (LRM 10.6). Almost no variable is either, so this exists
-// only once one is, behind the variable, and the variable asks it for nothing
-// otherwise.
+template <value::LyraValue T>
+class Var;
+
+// What only a variable something samples or takes over keeps. Almost no
+// variable is either, so this exists only once one is, behind the variable. A
+// write asks it one thing: whether a procedural continuous assignment holds the
+// variable, which turns the write away (LRM 10.6).
 class RareWriteState {
  public:
   RareWriteState();
@@ -185,17 +184,13 @@ class RareWriteState {
   auto operator=(RareWriteState&&) -> RareWriteState& = delete;
   virtual ~RareWriteState();
 
-  // Before a write lands: keeps the value the variable held when the slot
-  // began, the first time in the slot, and answers whether the write lands.
-  [[nodiscard]] virtual auto Admit() -> bool = 0;
   [[nodiscard]] virtual auto TakenOver() const -> bool = 0;
 };
 
 // What every variable is whatever it holds: the waits enrolled on it, and
-// whatever a sampled or taken-over variable has to do before a write lands. A
-// write that knows the variable only as this -- one through a reference to a
-// part of it, which knows the part's type and not the variable's -- asks it
-// everything it needs.
+// whether a procedural continuous assignment holds it. A write that knows the
+// variable only as this -- one through a reference to a part of it, which knows
+// the part's type and not the variable's -- asks it everything it needs.
 class VariableCell : public Observable {
  public:
   VariableCell(const VariableCell&) = delete;
@@ -206,8 +201,8 @@ class VariableCell : public Observable {
   // Written here rather than in the library's own source because every write
   // asks them, and for a variable nothing samples or takes over each is a null
   // test.
-  [[nodiscard]] auto AdmitsWrite() -> bool {
-    return rare_ == nullptr || rare_->Admit();
+  [[nodiscard]] auto AdmitsWrite() const -> bool {
+    return rare_ == nullptr || !rare_->TakenOver();
   }
   // Whether a write into the variable has anyone to tell what it did: a wait
   // enrolled here (LRM 4.3). Under a procedural continuous assignment a write
@@ -231,60 +226,34 @@ class VariableCell : public Observable {
   std::unique_ptr<RareWriteState> rare_;
 };
 
-// What a sampled or taken-over variable of type `T` keeps: the value it held
-// when the current slot began, and the slot that value belongs to (LRM
-// 16.5.1); and the procedural continuous assignments it has been put under
+// What a sampled or taken-over variable of type `T` keeps: its sampled value
+// (LRM 16.5.1), and the procedural continuous assignments it has been put under
 // (LRM 10.6). Each part is empty until its feature is used.
 template <value::LyraValue T>
 class CellRareState final : public RareWriteState {
  public:
-  explicit CellRareState(const T& value) : value_(&value) {
-  }
+  CellRareState() = default;
   CellRareState(const CellRareState&) = delete;
   auto operator=(const CellRareState&) -> CellRareState& = delete;
   CellRareState(CellRareState&&) = delete;
   auto operator=(CellRareState&&) -> CellRareState& = delete;
   ~CellRareState() override;
 
-  auto Admit() -> bool override {
-    KeepPreponed();
-    return !TakenOver();
-  }
   [[nodiscard]] auto TakenOver() const -> bool override {
     return takeovers_ != nullptr && takeovers_->Highest() != nullptr;
   }
 
-  // Arms the variable to answer for its sampled value, taking what it holds
-  // now, stamped with time zero.
-  void ArmSampling() {
-    if (retained_.has_value()) {
+  // Keeps the sampled value of `variable` from now on, its default sampled
+  // value being what it holds now. Keeping one already kept changes nothing.
+  void ArmSampling(Var<T>& variable) {
+    if (sampled_ != nullptr) {
       return;
     }
-    retained_ = *value_;
-    retained_slot_ = SimTime{};
+    sampled_ = std::make_unique<SampledValueOf<Var<T>>>(
+        variable, variable.Get(), Trigger(&variable, Observation{}, {}, 0, 0));
   }
-
-  [[nodiscard]] auto Retained() const -> const std::optional<T>& {
-    return retained_;
-  }
-  [[nodiscard]] auto RetainedSlot() const -> SimTime {
-    return retained_slot_;
-  }
-
-  // Keeps what the variable held in the Preponed region of the current slot,
-  // the first time a write reaches it in that slot (LRM 4.4.2.1, 16.5.1).
-  // Nothing in the slot has changed it before its first write, so what it
-  // holds then is that value, whether or not the write goes on to change it.
-  void KeepPreponed() {
-    if (!retained_.has_value()) {
-      return;
-    }
-    const SimTime now = current_runtime().Now();
-    if (retained_slot_ == now) {
-      return;
-    }
-    retained_ = *value_;
-    retained_slot_ = now;
+  [[nodiscard]] auto Sampled() const -> const SampledValueOf<Var<T>>* {
+    return sampled_.get();
   }
 
   [[nodiscard]] auto Takeovers() -> runtime::Takeovers<T>& {
@@ -298,9 +267,7 @@ class CellRareState final : public RareWriteState {
   }
 
  private:
-  const T* value_;
-  std::optional<T> retained_;
-  SimTime retained_slot_ = SimTime{};
+  std::unique_ptr<SampledValueOf<Var<T>>> sampled_;
   std::unique_ptr<runtime::Takeovers<T>> takeovers_;
 };
 
@@ -417,36 +384,22 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     return takeovers == nullptr ? nullptr : takeovers->Beneath();
   }
 
-  // Arms the cell to answer for its sampled value (LRM 16.5.1) and installs the
-  // one every read answers with until the first change of some later slot.
-  //
-  // A static variable's default sampled value is the value its declaration
-  // assigns (LRM 16.5.1), which is in the cell once time-zero initialization
-  // has run (LRM 10.5), so arming takes what it finds there. Stamping it at
-  // time zero is what makes the whole of time zero answer with it: a write then
-  // finds the slot already current and leaves the retained value alone.
+  // Arms the cell to answer for its sampled value (LRM 16.5.1). A static
+  // variable's default sampled value is the value its declaration assigns,
+  // which is in the cell once time-zero initialization has run (LRM 10.5), so
+  // arming takes what it finds there.
   //
   // More than one read may name one cell, and they all want the same answer, so
   // arming an armed cell is not an error and changes nothing.
   void ArmSampling() {
-    RareState().ArmSampling();
+    RareState().ArmSampling(*this);
   }
 
   // What the cell held in the Preponed region of the current time slot -- its
-  // value before anything in that slot ran (LRM 4.4.2.1, 16.5.1). Once the slot
-  // has changed the cell that value is the retained one; until then the cell
-  // still holds it.
+  // value before anything in that slot ran (LRM 4.4.2.1, 16.5.1).
   [[nodiscard]] auto SampledGet() const -> const T& {
     const CellRareState<T>* rare = ExistingRareState();
-    if (rare == nullptr || !rare->Retained().has_value()) {
-      throw InternalError(
-          "Var::SampledGet: a sampled value was read from a cell nothing armed "
-          "to answer for one");
-    }
-    if (rare->RetainedSlot() == current_runtime().Now()) {
-      return *rare->Retained();
-    }
-    return this->Get();
+    return SampledOf(rare == nullptr ? nullptr : rare->Sampled());
   }
 
   // Tells whoever waits on the part of the cell at `reached`, on what that
@@ -487,9 +440,6 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     if (!this->IsInstalled()) {
       throw InternalError("Var: store into a cell that was never initialized");
     }
-    if (CellRareState<T>* rare = ExistingRareState()) {
-      rare->KeepPreponed();
-    }
     if (!this->HasMembers()) {
       overwrite();
       return;
@@ -518,7 +468,7 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // of the cell's own type.
   [[nodiscard]] auto RareState() -> CellRareState<T>& {
     if (Rare() == nullptr) {
-      InstallRare(std::make_unique<CellRareState<T>>(this->Get()));
+      InstallRare(std::make_unique<CellRareState<T>>());
     }
     return static_cast<CellRareState<T>&>(*Rare());
   }
@@ -824,11 +774,11 @@ class Ref {
   // A reference denotes the storage it binds (LRM 23.3.3.2), so the operations
   // on a cell answer through it. Storage nothing holds changes only where the
   // reference is, so its sampled value is its current one. A variable keeps
-  // the value a time slot moved away from, and keeps it whole, so a reference
-  // to a part of one has none to answer with; and nothing keeps a class
-  // property's Preponed value.
+  // its sampled value whole, so a reference to a part of one has none to
+  // answer with; nothing keeps a class property's Preponed value; and a net
+  // keeps its own, which a reference naming no net type cannot ask for.
   void ArmSampling() const {
-    if (Whole()) {
+    if (Whole() && std::holds_alternative<VariableCell*>(erased_.holder)) {
       Cell().ArmSampling();
     }
   }
@@ -849,7 +799,11 @@ class Ref {
                   "a sampled value of a class property lent by reference is "
                   "not yet supported");
             },
-            [&](HeldByNet) -> const T& { return Storage(); }},
+            [](HeldByNet) -> const T& {
+              throw SimulationError(
+                  "a sampled value of a net lent by reference is not yet "
+                  "supported");
+            }},
         erased_.holder);
   }
 

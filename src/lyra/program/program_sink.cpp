@@ -1274,6 +1274,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_tuple_net_begin_takeover", &lyra_rt_tuple_net_begin_takeover);
   add("lyra_rt_tuple_net_drive_takeover", &lyra_rt_tuple_net_drive_takeover);
   add("lyra_rt_tuple_net_end_takeover", &lyra_rt_tuple_net_end_takeover);
+  add("lyra_rt_tuple_net_arm_sampling", &lyra_rt_tuple_net_arm_sampling);
+  add("lyra_rt_tuple_net_sampled_load", &lyra_rt_tuple_net_sampled_load);
   add("lyra_rt_tuple_attach_driver", &lyra_rt_tuple_attach_driver);
   add("lyra_rt_tuple_driver_get", &lyra_rt_tuple_driver_get);
   add("lyra_rt_tuple_driver_set", &lyra_rt_tuple_driver_set);
@@ -1289,6 +1291,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_union_net_begin_takeover", &lyra_rt_union_net_begin_takeover);
   add("lyra_rt_union_net_drive_takeover", &lyra_rt_union_net_drive_takeover);
   add("lyra_rt_union_net_end_takeover", &lyra_rt_union_net_end_takeover);
+  add("lyra_rt_union_net_arm_sampling", &lyra_rt_union_net_arm_sampling);
+  add("lyra_rt_union_net_sampled_load", &lyra_rt_union_net_sampled_load);
   add("lyra_rt_union_attach_driver", &lyra_rt_union_attach_driver);
   add("lyra_rt_union_driver_get", &lyra_rt_union_driver_get);
   add("lyra_rt_union_driver_set", &lyra_rt_union_driver_set);
@@ -1307,6 +1311,10 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_unpackedarray_net_drive_takeover);
   add("lyra_rt_unpackedarray_net_end_takeover",
       &lyra_rt_unpackedarray_net_end_takeover);
+  add("lyra_rt_unpackedarray_net_arm_sampling",
+      &lyra_rt_unpackedarray_net_arm_sampling);
+  add("lyra_rt_unpackedarray_net_sampled_load",
+      &lyra_rt_unpackedarray_net_sampled_load);
   add("lyra_rt_unpackedarray_attach_driver",
       &lyra_rt_unpackedarray_attach_driver);
   add("lyra_rt_unpackedarray_driver_get", &lyra_rt_unpackedarray_driver_get);
@@ -1710,6 +1718,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic8_net_begin_takeover", &lyra_rt_logic8_net_begin_takeover);
   add("lyra_rt_logic8_net_drive_takeover", &lyra_rt_logic8_net_drive_takeover);
   add("lyra_rt_logic8_net_end_takeover", &lyra_rt_logic8_net_end_takeover);
+  add("lyra_rt_logic8_net_arm_sampling", &lyra_rt_logic8_net_arm_sampling);
+  add("lyra_rt_logic8_net_sampled_load", &lyra_rt_logic8_net_sampled_load);
   add("lyra_rt_logic8_attach_driver", &lyra_rt_logic8_attach_driver);
   add("lyra_rt_logic8_net_join", &lyra_rt_logic8_net_join);
   add("lyra_rt_logic8_driver_get", &lyra_rt_logic8_driver_get);
@@ -1773,6 +1783,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic16_net_drive_takeover",
       &lyra_rt_logic16_net_drive_takeover);
   add("lyra_rt_logic16_net_end_takeover", &lyra_rt_logic16_net_end_takeover);
+  add("lyra_rt_logic16_net_arm_sampling", &lyra_rt_logic16_net_arm_sampling);
+  add("lyra_rt_logic16_net_sampled_load", &lyra_rt_logic16_net_sampled_load);
   add("lyra_rt_logic16_attach_driver", &lyra_rt_logic16_attach_driver);
   add("lyra_rt_logic16_net_join", &lyra_rt_logic16_net_join);
   add("lyra_rt_logic16_driver_get", &lyra_rt_logic16_driver_get);
@@ -1836,6 +1848,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic32_net_drive_takeover",
       &lyra_rt_logic32_net_drive_takeover);
   add("lyra_rt_logic32_net_end_takeover", &lyra_rt_logic32_net_end_takeover);
+  add("lyra_rt_logic32_net_arm_sampling", &lyra_rt_logic32_net_arm_sampling);
+  add("lyra_rt_logic32_net_sampled_load", &lyra_rt_logic32_net_sampled_load);
   add("lyra_rt_logic32_attach_driver", &lyra_rt_logic32_attach_driver);
   add("lyra_rt_logic32_net_join", &lyra_rt_logic32_net_join);
   add("lyra_rt_logic32_driver_get", &lyra_rt_logic32_driver_get);
@@ -1899,6 +1913,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic64_net_drive_takeover",
       &lyra_rt_logic64_net_drive_takeover);
   add("lyra_rt_logic64_net_end_takeover", &lyra_rt_logic64_net_end_takeover);
+  add("lyra_rt_logic64_net_arm_sampling", &lyra_rt_logic64_net_arm_sampling);
+  add("lyra_rt_logic64_net_sampled_load", &lyra_rt_logic64_net_sampled_load);
   add("lyra_rt_logic64_attach_driver", &lyra_rt_logic64_attach_driver);
   add("lyra_rt_logic64_net_join", &lyra_rt_logic64_net_join);
   add("lyra_rt_logic64_driver_get", &lyra_rt_logic64_driver_get);
@@ -2032,6 +2048,10 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_logic_wide_net_drive_takeover);
   add("lyra_rt_logic_wide_net_end_takeover",
       &lyra_rt_logic_wide_net_end_takeover);
+  add("lyra_rt_logic_wide_net_arm_sampling",
+      &lyra_rt_logic_wide_net_arm_sampling);
+  add("lyra_rt_logic_wide_net_sampled_load",
+      &lyra_rt_logic_wide_net_sampled_load);
   add("lyra_rt_logic_wide_attach_driver", &lyra_rt_logic_wide_attach_driver);
   add("lyra_rt_logic_wide_net_join", &lyra_rt_logic_wide_net_join);
   add("lyra_rt_logic_wide_driver_get", &lyra_rt_logic_wide_driver_get);

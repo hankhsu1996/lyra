@@ -329,10 +329,9 @@ enum class BuiltinFn : std::uint16_t {
   // the same reason; the two differ only in which of the values the cell holds
   // is asked for.
   kSampledLoad,
-  // Arming a cell to answer for a sampled value at all, and installing the one
-  // every read answers with until some later slot first changes the cell (LRM
-  // 16.5.1). A cell nothing samples is never armed and carries neither the
-  // storage nor the work of maintaining it.
+  // Arming a cell to answer for a sampled value at all, starting from its
+  // default sampled value (LRM 16.5.1). A cell nothing samples is never armed
+  // and carries neither the storage nor the work of maintaining it.
   kArmSampling,
   // Opening a cell's storage for a write, which is an operation on the wrapper
   // for the same reason the two above are: which storage it currently stands

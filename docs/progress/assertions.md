@@ -98,16 +98,18 @@ The IDs are stable references and do not imply execution order beyond the depend
       Inside an assertion they disappear with it, which is why this item is separable from AS5. All
       six are in place on both backends, over every kind of value a variable can hold except an
       opaque handle, whose value is the pointer it carries and which LRM 16.6 keeps out of a
-      concurrent assertion anyway. A variable naming an object is included: what a tick settles for
-      one is which object it named, and every entry a history keeps is a reference to that object,
-      so an object nothing else names is still there for a past tick to answer with (LRM 8.4).
-      `$rose` and `$fell` are refused over a value with no least significant bit, which is what LRM
-      16.9.3 defines them on. `$sampled` reads a different value: an observable cell may be armed to
-      answer for the value it held before the current time slot first changed it, and an
-      expression's sampled value is that expression over its variables' sampled ones. The other five
-      answer across the ticks of a clocking event, so a scope keeps a history of what is read that
-      way, filled with the expression's default sampled value where the design activates and
-      appended to by a synthesized process at each tick. That process records in the Postponed
+      concurrent assertion anyway, and over every net, whichever way it comes by its value: one
+      driver, several resolved, the object its one driver carries, a force, a port with no data
+      type. A net's default sampled value is the default of its type. A variable naming an object is
+      included: what a tick settles for one is which object it named, and every entry a history
+      keeps is a reference to that object, so an object nothing else names is still there for a past
+      tick to answer with (LRM 8.4). `$rose` and `$fell` are refused over a value with no least
+      significant bit, which is what LRM 16.9.3 defines them on. `$sampled` reads a different value:
+      a variable or a net may be armed to answer for the value it held when the current time slot
+      began, and an expression's sampled value is that expression over its leaves' sampled ones. The
+      other five answer across the ticks of a clocking event, so a scope keeps a history of what is
+      read that way, filled with the expression's default sampled value where the design activates
+      and appended to by a synthesized process at each tick. That process records in the Postponed
       region of the tick's own time step, which is what makes every tick a reader can see strictly
       prior to it whatever order the two ran in; and because the history starts full, a read
       reaching further back than the ticks that have happened answers with the default sampled value

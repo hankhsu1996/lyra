@@ -1493,6 +1493,8 @@ auto lyra_rt_tuple_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_tuple_net_end_takeover(void* net, std::int64_t level);
+void lyra_rt_tuple_net_arm_sampling(void* net);
+auto lyra_rt_tuple_net_sampled_load(void* net, void* out) -> void*;
 auto lyra_rt_tuple_attach_driver(void* net, std::int64_t strength) -> void*;
 auto lyra_rt_tuple_driver_get(void* driver) -> const void*;
 void lyra_rt_tuple_driver_set(void* driver, const void* value);
@@ -1511,6 +1513,8 @@ auto lyra_rt_union_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_union_net_end_takeover(void* net, std::int64_t level);
+void lyra_rt_union_net_arm_sampling(void* net);
+auto lyra_rt_union_net_sampled_load(void* net, void* out) -> void*;
 auto lyra_rt_union_attach_driver(void* net, std::int64_t strength) -> void*;
 auto lyra_rt_union_driver_get(void* driver) -> const void*;
 void lyra_rt_union_driver_set(void* driver, const void* value);
@@ -1533,6 +1537,9 @@ auto lyra_rt_unpackedarray_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value,
     const void* value_type) -> bool;
 void lyra_rt_unpackedarray_net_end_takeover(void* net, std::int64_t level);
+void lyra_rt_unpackedarray_net_arm_sampling(void* net);
+auto lyra_rt_unpackedarray_net_sampled_load(
+    void* net, const void* answer_type, void* out) -> void*;
 auto lyra_rt_unpackedarray_attach_driver(void* net, std::int64_t strength)
     -> void*;
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> const void*;
@@ -2828,6 +2835,8 @@ auto lyra_rt_logic8_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic8_net_end_takeover(void* net, std::int64_t level);
+void lyra_rt_logic8_net_arm_sampling(void* net);
+auto lyra_rt_logic8_net_sampled_load(void* net, void* out) -> void*;
 auto lyra_rt_logic8_attach_driver(void* net, std::int64_t strength) -> void*;
 void lyra_rt_logic8_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
@@ -2893,6 +2902,8 @@ auto lyra_rt_logic16_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic16_net_end_takeover(void* net, std::int64_t level);
+void lyra_rt_logic16_net_arm_sampling(void* net);
+auto lyra_rt_logic16_net_sampled_load(void* net, void* out) -> void*;
 auto lyra_rt_logic16_attach_driver(void* net, std::int64_t strength) -> void*;
 void lyra_rt_logic16_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
@@ -2958,6 +2969,8 @@ auto lyra_rt_logic32_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic32_net_end_takeover(void* net, std::int64_t level);
+void lyra_rt_logic32_net_arm_sampling(void* net);
+auto lyra_rt_logic32_net_sampled_load(void* net, void* out) -> void*;
 auto lyra_rt_logic32_attach_driver(void* net, std::int64_t strength) -> void*;
 void lyra_rt_logic32_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
@@ -3023,6 +3036,8 @@ auto lyra_rt_logic64_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic64_net_end_takeover(void* net, std::int64_t level);
+void lyra_rt_logic64_net_arm_sampling(void* net);
+auto lyra_rt_logic64_net_sampled_load(void* net, void* out) -> void*;
 auto lyra_rt_logic64_attach_driver(void* net, std::int64_t strength) -> void*;
 void lyra_rt_logic64_net_join(
     void* net, void* other, std::int64_t here, std::int64_t there,
@@ -3172,6 +3187,8 @@ auto lyra_rt_logic_wide_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool;
 void lyra_rt_logic_wide_net_end_takeover(void* net, std::int64_t level);
+void lyra_rt_logic_wide_net_arm_sampling(void* net);
+auto lyra_rt_logic_wide_net_sampled_load(void* net, void* out) -> void*;
 auto lyra_rt_logic_wide_attach_driver(void* net, std::int64_t strength)
     -> void*;
 void lyra_rt_logic_wide_net_join(

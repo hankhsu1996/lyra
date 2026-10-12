@@ -311,6 +311,7 @@ constexpr std::array kNetsWaitedOn{
     ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues}};
 constexpr std::array kArmings{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
     ThroughWrapper{.wrapper = WrapperKind::kRef, .domains = kVariableValues}};
 // A reference to a value wider than a word names words lying in something
 // else, so an access through one that takes or replaces them is told how wide
@@ -334,6 +335,7 @@ constexpr ThroughWrapper kThroughAReferenceToWords{
     .told = ToldHeldWidth{.after = 0}};
 constexpr std::array kSampledLoads{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
     kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
     kThroughAReferenceToAnArrayHandedOver};
 constexpr std::array kStores{
