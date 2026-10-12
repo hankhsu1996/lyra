@@ -6,7 +6,6 @@
 #include <slang/analysis/AnalysisManager.h>
 #include <slang/ast/Compilation.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
-#include <slang/driver/CompatSettings.h>
 #include <slang/driver/Driver.h>
 
 #include "lyra/frontend/slang_source_manager.hpp"
@@ -21,15 +20,6 @@ namespace {
 void ApplyBaseline(slang::driver::Driver& driver) {
   if (!driver.options.languageVersion) {
     driver.options.languageVersion = "1800-2023";
-  }
-
-  // slang answers to the standard; Lyra answers to the designs people already
-  // simulate, and those were written against tools that depart from it in
-  // well-known ways. Rejecting a design every other simulator runs helps
-  // nobody, so the most tolerant reading the front end has is the default and
-  // strictness is asked for.
-  if (!driver.options.compat) {
-    driver.options.compat = slang::driver::CompatMode::All;
   }
 }
 

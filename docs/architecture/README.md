@@ -55,6 +55,7 @@ Read top to bottom on first pass:
     registries, builders, walk frame)
 27. `incremental_build.md` -- query-based incremental compilation and caching
 28. `testing_strategy.md` -- test categories and structure
+29. `language_conformance.md` -- what source text is accepted, and how a disputed text is ruled on
 
 ## Concept Index
 
@@ -101,6 +102,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Incremental compilation; query-based caching                                                          | `incremental_build.md`          |
 | Locating/bundling the C++ runtime; the foreign-language ABI surface; run output contract              | `runtime_distribution.md`       |
 | Test categories; suite layout; expectation forms                                                      | `testing_strategy.md`           |
+| What text is legal; tolerated readings; ruling on a disputed text                                     | `language_conformance.md`       |
 
 These docs are the contracts. For the trade-off records behind them -- rejected alternatives and
 load-bearing invariants, grouped by subject -- see the Index in
