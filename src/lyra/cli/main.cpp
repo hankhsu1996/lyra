@@ -3,12 +3,15 @@
 #include <exception>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include <fmt/core.h>
+#include <llvm/Support/ErrorHandling.h>
 #include <slang/driver/Driver.h>
 #include <slang/text/SourceManager.h>
 
+#include "lyra/base/memory_watch.hpp"
 #include "lyra/cli/command_line.hpp"
 #include "lyra/cli/commands.hpp"
 #include "lyra/compiler/stack.hpp"
@@ -22,6 +25,16 @@
 #include "lyra/status/status.hpp"
 
 namespace {
+
+constexpr std::string_view kOutOfMemory =
+    "error: the compiler ran out of memory.\n";
+
+// The code generator's own allocator answers a refused request here rather
+// than through `operator new`, and its code cannot be unwound through.
+// NOLINTNEXTLINE(readability-named-parameter)
+void EndForLackOfMemoryInCodeGenerator(void*, const char*, bool) {
+  lyra::base::EndForLackOfMemory();
+}
 
 auto RunLyra(int argc, char** argv) -> int {
   const std::span<char* const> raw_args(argv, static_cast<std::size_t>(argc));
@@ -122,6 +135,8 @@ auto ShowFailure(const std::exception& failure) -> int {
 // Everything a command does is done on a thread with the stack compiling
 // takes, so the process's own limit stays what its invoker set.
 auto main(int argc, char** argv) -> int {
+  lyra::base::InstallOutOfMemoryHandler(kOutOfMemory);
+  llvm::install_bad_alloc_error_handler(EndForLackOfMemoryInCodeGenerator);
   try {
     lyra::driver::EndOnSignal();
     int exit_code = lyra::cli::kCompilerFailureExit;

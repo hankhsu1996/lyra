@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "lyra/base/memory_watch.hpp"
 #include "lyra/status/status.hpp"
 
 namespace lyra::driver {
@@ -75,7 +76,11 @@ auto RequestsToEnd() -> sigset_t {
 void EndOnSignal() {
   const sigset_t requests = RequestsToEnd();
   ::pthread_sigmask(SIG_BLOCK, &requests, nullptr);
-  std::thread(AnswerARequestToEnd, requests).detach();
+  try {
+    std::thread(AnswerARequestToEnd, requests).detach();
+  } catch (const std::system_error&) {
+    base::EndForLackOfMemory();
+  }
 }
 
 void RemoveOnSignal(const std::filesystem::path& path) {

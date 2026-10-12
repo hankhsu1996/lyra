@@ -252,16 +252,19 @@ auto RunChildProcess(
 }
 
 auto RunUnderAddressLimit(
-    const std::filesystem::path& program, int kibibytes,
-    std::chrono::seconds timeout) -> ProcessOutcome {
+    const std::filesystem::path& program, std::span<const std::string> args,
+    int kibibytes, std::chrono::seconds timeout) -> ProcessOutcome {
   const auto sh = driver::FindOnPath("sh");
   if (!sh) {
     return {};
   }
-  const std::vector<std::string> args = {
-      "-c",
-      std::format("ulimit -v {} && exec '{}'", kibibytes, program.string())};
-  return RunChildProcess(*sh, args, timeout);
+  // The program and its arguments reach the shell as its own positional
+  // parameters, so none of them is read as shell text.
+  std::vector<std::string> shell_args = {
+      "-c", std::format(R"(ulimit -v {} && exec "$0" "$@")", kibibytes),
+      program.string()};
+  shell_args.insert(shell_args.end(), args.begin(), args.end());
+  return RunChildProcess(*sh, shell_args, timeout);
 }
 
 }  // namespace lyra::test

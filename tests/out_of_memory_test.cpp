@@ -1,11 +1,11 @@
-// A built program that is refused memory says so in one line and exits with a
-// failing status, whatever it was doing when it asked: building the design,
-// registering its processes, or entering a subroutine. What is held here is
-// that under any address limit the program either finishes or ends that way,
-// and never by a signal.
+// A built program, and the compiler building it, that is refused memory says
+// so in one line and exits with a failing status, whatever it was doing when it
+// asked. What is held here is that under any address limit each either
+// finishes or ends that way, and never by a signal or as a report of its own
+// defect.
 //
-// Where a limit falls among the program's requests belongs to the build of the
-// runtime, so this is a statement about the program as it is shipped.
+// Where a limit falls among the requests belongs to the build of the runtime
+// and of the compiler, so this is a statement about each as it is shipped.
 
 #include <filesystem>
 #include <fstream>
@@ -113,7 +113,7 @@ TEST(OutOfMemory, IsSaidInWordsWhereverTheRequestWasMade) {
   int refused = 0;
   int finished = 0;
   for (int limit = kLowestKib; limit <= kHighestKib; limit += kStepKib) {
-    const auto ran = RunUnderAddressLimit(program, limit);
+    const auto ran = RunUnderAddressLimit(program, {}, limit);
     if (ran.termination == TerminationKind::kExitedNormally) {
       ++finished;
       continue;
@@ -130,6 +130,85 @@ TEST(OutOfMemory, IsSaidInWordsWhereverTheRequestWasMade) {
   }
   // A run of limits that refused nothing, or let nothing through, would hold
   // for a program that never asks for memory or never starts.
+  EXPECT_GT(refused, 0);
+  EXPECT_GT(finished, 0);
+}
+
+// Enough procedures that compiling the design's units asks for memory at every
+// stage a build passes through: lowering, starting the threads that compile,
+// and the code generator splitting each procedure into its resumable parts.
+constexpr std::string_view kDesignToCompile = R"(
+module Leaf (
+    input logic clk,
+    input logic [7:0] d,
+    output logic [7:0] q
+);
+  always @(posedge clk) q <= d;
+  always @(d) if (d === 8'hff) $display("d is all ones");
+  always @(q) if (q === 8'hff) $display("q is all ones");
+endmodule
+
+module Test;
+  logic clk = 0;
+  logic [7:0] d[64];
+  logic [7:0] q[64];
+  for (genvar i = 0; i < 64; i++) begin : leaves
+    Leaf u (.clk(clk), .d(d[i]), .q(q[i]));
+    always @(posedge clk) d[i] <= d[i] + 8'(i);
+  end
+  initial begin
+    #1 clk = 1;
+    #1 $finish;
+  end
+endmodule
+)";
+
+constexpr std::string_view kCompilerSaidInWords =
+    "error: the compiler ran out of memory";
+
+TEST(OutOfMemory, TheCompilerSaysItInWordsWhereverItWasRefused) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << kDesignToCompile;
+
+  // From where the compiler starts at all to past what building the design
+  // needs, each build with a store of its own so that it compiles everything.
+  constexpr int kLowestKib = 140'000;
+  constexpr int kHighestKib = 560'000;
+  constexpr int kStepKib = 9'973;
+  int refused = 0;
+  int finished = 0;
+  for (int limit = kLowestKib; limit <= kHighestKib; limit += kStepKib) {
+    const auto at = *tmp_or / std::to_string(limit);
+    const std::vector<std::string> build = {
+        "build",
+        "--backend",
+        "llvm",
+        "--top",
+        "Test",
+        "--cache-dir",
+        (at / "cache").string(),
+        "-o",
+        (at / "sim").string(),
+        src.string()};
+    const auto built = RunUnderAddressLimit(lyra, build, limit, 120s);
+    if (built.termination == TerminationKind::kExitedNormally) {
+      ++finished;
+      continue;
+    }
+    ++refused;
+    EXPECT_EQ(built.termination, TerminationKind::kExitedNonZero)
+        << "under " << limit << " KiB the compiler ended by signal "
+        << built.signal_number << "\n"
+        << built.stderr_text;
+    EXPECT_EQ(built.exit_code, 1) << "under " << limit << " KiB";
+    EXPECT_NE(built.stderr_text.find(kCompilerSaidInWords), std::string::npos)
+        << "under " << limit << " KiB the compiler said:\n"
+        << built.stderr_text;
+  }
   EXPECT_GT(refused, 0);
   EXPECT_GT(finished, 0);
 }

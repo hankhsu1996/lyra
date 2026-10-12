@@ -85,6 +85,7 @@ cc_library(
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
+    deps = [":base"],
 )
 
 # The compiler's record of where a run's time went, kept apart from `support`
@@ -443,12 +444,14 @@ cc_binary(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":base",
         ":cli",
         ":compiler",
         ":diag",
         ":driver",
         ":status",
         "@fmt",
+        "@llvm-project//llvm:Support",
         "@slang",
     ],
 )
