@@ -75,11 +75,10 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 """,
-    commit = "622b0e588d92cc07d8c371624c76ce2c21bfbc70",
+    commit = "75fc4ce73f5bd366368ff4215ae1e61914a4cf90",
     patch_strip = 1,
     patches = [
-        "//third_party/rtlmeter:openpiton_bootrom_two_words.patch",
-        "//third_party/rtlmeter:vortex_dpi_trailing_comma.patch",
+        "//third_party/rtlmeter:openpiton_string_cast.patch",
     ],
     remote = "https://github.com/verilator/rtlmeter.git",
 )
