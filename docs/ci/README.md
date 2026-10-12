@@ -222,11 +222,13 @@ right for any simulator that follows the standard, is argued from the clause wit
 corpus holding it, and sits under `third_party/rtlmeter/` until the named commit contains it. One
 the suite declines is taken out again, and the case is then recorded as stopping where it does.
 
-A text the standard does not settle is not corrected, since its author is not wrong either. Lyra
-refuses it unless asked, so the design is built with the front end's option that reads it the other
-way, as its author would build it, and what stands behind that text is still measured. The options
-each design is built with are listed in `tests/external_design_options.yaml`, and one a design no
-longer needs fails the run until it is taken out.
+A text the standard does not settle is not corrected, since its author is not wrong either, and
+neither is a forbidden text whose defect is the standard's
+([`language_conformance.md`](../architecture/language_conformance.md) says when that is so). Lyra
+refuses either unless asked, so the design is built with the front end's option that reads it the
+way its author does, and what stands behind that text is still measured. The options each design is
+built with are listed in `tests/external_design_options.yaml`, and one a design no longer needs
+fails the run until it is taken out.
 
 A step that takes more than half an hour, or asks for more memory than the smallest machine these
 run on holds, stops the case there. The first is set well past the slowest build measured, so that a

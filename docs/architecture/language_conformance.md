@@ -16,7 +16,11 @@ Four consequences, each of which has been argued the other way and lost:
 
 1. **A text that is widely taken is still an error.** An exception for "every tool takes this one"
    turns the rule into "the standard, except where enough tools agree", and that boundary cannot be
-   stated in advance. The first exception is what the second is argued from.
+   stated in advance. The first exception is what the second is argued from. **One class of
+   forbidden text is still run when a caller asks for it**, and its boundary is stated in advance
+   and drawn by the standard rather than by any tool's answer: the standard's own rules fix what the
+   text means, and it allows no other way to say it (see _Forbidden, but the defect is the
+   standard's_ below). It stays an error by default.
 2. **A text the standard does not settle is read the stricter way.** A design refused can be
    rewritten in a form every reading accepts. A design accepted under one reading of an unclear
    clause means something else under the other.
@@ -43,8 +47,8 @@ defect it is. The steps are in this order because each one has overturned a ruli
    clauses can each read as the whole answer (see _One module described twice_ below).
 4. **Check the reduction writes what the design writes.** A reduction that reaches a name through an
    instance, where the design reaches it through an interface port, rules on another construct.
-5. **Rule**: the design is wrong, the front end is wrong, Lyra is wrong, or the standard does not
-   settle it.
+5. **Rule**: the design is wrong, the front end is wrong, Lyra is wrong, the standard does not
+   settle it, or the standard is wrong.
 
 The ruling is argued from the standard's text and from nothing else. What an open-source tool does
 with the reduction may be noted beside it, as a reason the text went unnoticed or as a second reader
@@ -53,6 +57,20 @@ ruling: a tool that accepts says only that it accepts.
 
 A design that is wrong is reported to whoever maintains it. A front end that is wrong is reported
 upstream. Neither is answered by changing what Lyra accepts.
+
+A forbidden text is not always its author's mistake. Where all three of these hold, the defect is
+the standard's, the author is not reported to, and the text is run when a caller asks for it:
+
+1. **The text is in common use.** Shown from open sources: an open tool that takes it, the front end
+   listing it among the texts it relaxes for other tools.
+2. **The standard already fixes its meaning.** The rules the standard gives for the texts it does
+   allow, applied to this one, leave no choice for a tool to make. The test is whether running it
+   needs an answer nobody wrote down: if it does, the text has no meaning to run.
+3. **No text the standard allows says the same without rewriting the design.** Where an allowed form
+   says it, the author is told of that form, as with any forbidden text.
+
+Each is argued in the ruling from the standard's text and open sources, and a ruling that cannot
+show all three leaves the text an ordinary forbidden one.
 
 ## The rulings
 
@@ -154,7 +172,44 @@ endmodule
 and its example marks `C = I` illegal.
 
 This is the forbidden text with the best case for an exception, since a tool that takes it has one
-obvious meaning to give it. It is an error all the same (consequence 1). Write `mubi_t'(j)`.
+obvious meaning to give it. It is an error all the same, because an allowed text says the same with
+nothing rewritten: `mubi_t'(j)`.
+
+### Forbidden, but the defect is the standard's
+
+Refused by default and run when the caller asks for it by name. The author is not reported to.
+
+#### A `force` on a member of a variable of a packed structure type
+
+```systemverilog
+typedef struct packed { logic [8:0] next; logic we; } field_t;
+typedef struct packed { logic reset_b; field_t [3:0] ctrl; } hwif_t;
+hwif_t hwif;
+
+always_comb hwif = '0;
+
+for (genvar slot = 0; slot < 4; slot++) begin : g
+  initial force hwif.ctrl[slot].we = 1'b1;
+end
+```
+
+10.6.2: the target "shall not be a bit-select or a part-select of a variable". 7.2.1: a packed
+structure is "a mechanism for subdividing a vector into subfields", so a member of `hwif` is bits of
+one vector variable. Forbidden.
+
+All three conditions hold. The front end keeps the refusal as a warning raised to an error, in the
+set it relaxes because "some tools violate the standard", and an open simulator takes the text. The
+standard's rules for forcing a whole variable already say what it means: a procedural assignment
+does not change what is forced while the force is in effect, and after the release the variable
+keeps that value until the next procedural assignment, unless a continuous assignment or an `assign`
+drives it, which is then reestablished; applied to the forced bits, nothing is left to choose. The
+open simulator answers otherwise after the release of a part, taking the value `always_comb` last
+wrote, while it keeps the forced value of a whole variable as 10.6.2 says, so its answer for a part
+is its own. And no allowed text says the same: forcing the whole variable restates every member the
+design drives, and forcing a net adds one to the design for the testbench's sake.
+
+`-Wno-error=bad-procedural-force` asks for it, and so does `--compat all`. Lyra does not yet carry
+out a force on part of a variable and says so.
 
 ### Not settled by the standard, so refused
 
@@ -195,7 +250,9 @@ vector net, a constant part-select of a vector net, or a concatenation of these.
 bit-select or a part-select of a variable".
 
 The sentence lists what a target can be and names neither a member nor an array element. Whether a
-member of an element is "a singular variable" is a reading, and the list is read as complete.
+member of an element is "a singular variable" is a reading, and the list is read as complete. A
+member of a packed structure leaves no such reading, since it is a part-select of a variable
+(above).
 
 #### A width given by `$bits` of a name reached through an instance
 
