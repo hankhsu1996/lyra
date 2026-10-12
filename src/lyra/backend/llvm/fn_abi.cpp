@@ -759,13 +759,16 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kCancellationTarget:
               case lir::RuntimeLibraryKind::kTimer:
               case lir::RuntimeLibraryKind::kChannelCancellation:
-              // A class's definition, what a definition is made of, and an
-              // enumeration's member table are constants the unit emits, so a
-              // body names one and never builds one.
+              // A class's definition, what a definition is made of, an
+              // enumeration's member table and a construction table are
+              // constants a unit emits, so a body names one and never builds
+              // one.
               case lir::RuntimeLibraryKind::kEnumeration:
               case lir::RuntimeLibraryKind::kObjectDefinition:
               case lir::RuntimeLibraryKind::kScopeInfo:
               case lir::RuntimeLibraryKind::kScopeCallable:
+              case lir::RuntimeLibraryKind::kConstructionTable:
+              case lir::RuntimeLibraryKind::kInstantiation:
                 return no_construct();
             }
             throw InternalError("llvm codegen: unknown runtime library kind");

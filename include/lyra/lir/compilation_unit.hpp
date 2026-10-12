@@ -92,10 +92,12 @@ struct ConstantFunction {
   FunctionId function;
 };
 
-// The address of data linked under `symbol`: a constant of this unit, or a
-// class's definition, which another unit may emit.
+// The address linked under `symbol`: of data -- a constant of this unit, or a
+// class's definition, which another unit may emit -- or of code another unit
+// emits, an entry of its that answers to no name.
 struct ConstantAddress {
   std::string symbol;
+  AddressKind kind;
 };
 
 // A structure of the runtime library, its members given in the order the

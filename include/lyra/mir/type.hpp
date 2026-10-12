@@ -421,6 +421,12 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // export's C name with its body (LRM 35.5.3).
   kScopeInfo,
   kScopeCallable,
+  // What a constructor of the design hierarchy is handed, and how the instance
+  // at one of its instantiations is made: `lyra::runtime::ConstructionTable`
+  // and `lyra::runtime::Instantiation`, constants the design's root unit
+  // states, which the library reads.
+  kConstructionTable,
+  kInstantiation,
 };
 
 struct RuntimeLibraryType {

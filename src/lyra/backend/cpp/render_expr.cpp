@@ -255,10 +255,10 @@ void RenderFieldAccessExpr(
 }
 
 // A reference is a name, or a scope and a name, `C::x`; the kinds differ only
-// in which table the name comes from.
+// in which table the name comes from. `type` is what the reference reads as.
 void RenderReferenceExpr(
     const ScopeView& view, const mir::ReferenceExpr& reference,
-    TargetText& out) {
+    mir::TypeId type, TargetText& out) {
   std::visit(
       Overloaded{
           [&](const mir::LocalRef& l) { Write(out, LookupLocalName(view, l)); },
@@ -309,6 +309,14 @@ void RenderReferenceExpr(
             Write(
                 out, CppClassPath(view.Unit(), r.body.owner),
                 "::", CppClassCallableName(view.Unit(), owner, r.body.slot));
+          },
+          // The entry has the prototype its own unit declared, and the
+          // reference reads as the code address with that prototype erased.
+          [&](const mir::ExternalUnitMintedEntryRef& r) {
+            Write(
+                out, "reinterpret_cast<", CppType(view.Unit(), type), ">(&",
+                CppUnitScope(r.unit_name), "::", CppMintedEntryName(r.entry),
+                ")");
           }},
       reference.target);
 }
@@ -552,7 +560,7 @@ void RenderExpr(
             out += "LL";
           },
           [&](const mir::ReferenceExpr& r) {
-            RenderReferenceExpr(view, r, out);
+            RenderReferenceExpr(view, r, expr.type, out);
           },
           [&](const mir::UnaryExpr& u) {
             RenderUnaryExpr(view, u, at_least, out);

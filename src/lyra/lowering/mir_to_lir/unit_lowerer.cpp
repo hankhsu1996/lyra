@@ -525,6 +525,13 @@ auto UnitLowerer::DefinitionSymbolOf(const mir::DeclaredClassRef& of) const
       of);
 }
 
+auto UnitLowerer::ClassConstantSymbolOf(
+    const mir::ClassConstantRef& constant) const -> std::string {
+  return lir::ClassConstantSymbol(
+      DefinitionSymbolOf(mir::IntraUnitClassRef{.class_id = constant.owner}),
+      constant.constant.value);
+}
+
 auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
     -> lir::Constant {
   const mir::Expr& expr = build.body.exprs.Get(id);
@@ -534,11 +541,6 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
             "mir_to_lir: a constant is built of {}, which is no data -- please "
             "report this as a bug",
             what));
-  };
-  const auto constant_symbol = [&](const mir::ClassConstantRef& ref) {
-    return lir::ClassConstantSymbol(
-        DefinitionSymbolOf(mir::IntraUnitClassRef{.class_id = ref.owner}),
-        ref.constant.value);
   };
   const auto parts_of = [&](std::span<const mir::ExprId> parts) {
     std::vector<lir::Constant> out;
@@ -568,6 +570,12 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                       return {lir::ConstantFunction{
                           .function =
                               MethodFunction(f.body.owner, f.body.slot)}};
+                    },
+                    [&](const mir::ExternalUnitMintedEntryRef& e)
+                        -> lir::Constant {
+                      return {lir::ConstantAddress{
+                          .symbol = MintedEntrySymbol(e.unit_name, e.entry),
+                          .kind = lir::AddressKind::kCode}};
                     },
                     [&](const mir::ClassConstantRef&) {
                       return not_data("a constant read whole");
@@ -610,13 +618,18 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                 Overloaded{
                     [&](const mir::DefinitionRef& d) -> lir::Constant {
                       return {lir::ConstantAddress{
-                          .symbol = DefinitionSymbolOf(d.of)}};
+                          .symbol = DefinitionSymbolOf(d.of),
+                          .kind = lir::AddressKind::kStorage}};
                     },
                     [&](const mir::ClassConstantRef& c) -> lir::Constant {
-                      return {
-                          lir::ConstantAddress{.symbol = constant_symbol(c)}};
+                      return {lir::ConstantAddress{
+                          .symbol = ClassConstantSymbolOf(c),
+                          .kind = lir::AddressKind::kStorage}};
                     },
                     [&](const mir::FunctionRef&) {
+                      return not_data("the address of a body's address");
+                    },
+                    [&](const mir::ExternalUnitMintedEntryRef&) {
                       return not_data("the address of a body's address");
                     },
                     [&](const mir::LocalRef&) {

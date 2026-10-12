@@ -17,12 +17,16 @@ namespace lyra::lowering::hir_to_mir {
 // same shape, a role-tagged leading parameter, for a body of the class that
 // has no object recording it -- a static method, or the constructor, which
 // enters its base before the object records anything -- identified by
-// `DeclaringInstance()`. Each is a binding rather than a bare local so a
-// closure inside the body reaches it by capture, as it reaches any other.
+// `DeclaringInstance()`. So is the table a constructor of the design
+// hierarchy is handed, which says how the instance at each of the object's
+// instantiations is made, identified by `ConstructionTable()`. Each is a
+// binding rather than a bare local so a closure inside the body reaches it by
+// capture, as it reaches any other.
 struct BindingOriginId {
   enum class Kind : std::uint8_t {
     kReceiver,
     kDeclaringInstance,
+    kConstructionTable,
     kSourceProcedural,
     kIterator,
     kPattern,
@@ -48,6 +52,9 @@ struct BindingOriginId {
   }
   static auto DeclaringInstance() -> BindingOriginId {
     return {.kind = Kind::kDeclaringInstance};
+  }
+  static auto ConstructionTable() -> BindingOriginId {
+    return {.kind = Kind::kConstructionTable};
   }
   static auto Procedural(hir::ProceduralVarId var) -> BindingOriginId {
     return {.kind = Kind::kSourceProcedural, .key = var.value};

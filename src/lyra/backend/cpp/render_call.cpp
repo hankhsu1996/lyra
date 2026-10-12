@@ -294,7 +294,8 @@ void WriteDirectCallee(
                 CppStructRef(t.declaration.unit_name, t.declaration.path),
                 "::", CppStructMethodName(t.answers));
           },
-          // One of another unit's fixed entries: `::Pkg::sv_create`.
+          // One of another unit's fixed entries:
+          // `::Pkg::sv_initialize_namespace_storage`.
           [&](const mir::ExternalUnitMintedEntryTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),

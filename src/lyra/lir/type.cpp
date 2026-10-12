@@ -115,6 +115,10 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "scope info";
     case RuntimeLibraryKind::kScopeCallable:
       return "scope callable";
+    case RuntimeLibraryKind::kConstructionTable:
+      return "construction table";
+    case RuntimeLibraryKind::kInstantiation:
+      return "instantiation";
   }
   throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
 }
@@ -609,10 +613,12 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               case RuntimeLibraryKind::kObjectWrite:
                 return LibraryObject::kObjectWrite;
               // Kept by the run -- an enumeration's members, a class's
-              // record, the time format -- or reached inside something else --
-              // a buffer's chunk, an image's handle, the effect a departure
-              // carries, the target a disable names, the timer a delayed
-              // continuous assignment propagates through.
+              // record, the time format, a construction table -- or reached
+              // inside something else -- a buffer's chunk, an image's handle,
+              // the effect a departure carries, the target a disable names,
+              // the timer a delayed continuous assignment propagates through.
+              case RuntimeLibraryKind::kConstructionTable:
+              case RuntimeLibraryKind::kInstantiation:
               case RuntimeLibraryKind::kEnumeration:
               case RuntimeLibraryKind::kTimeFormat:
               case RuntimeLibraryKind::kDpiBitChunk:

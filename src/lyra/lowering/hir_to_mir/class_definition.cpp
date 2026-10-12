@@ -2,7 +2,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -10,12 +12,15 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/library_entry_body.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
-#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
@@ -139,6 +144,19 @@ auto ErasedFunction(
           .type = mir::ErasedFunction(unit.types)});
 }
 
+// The address of `constant`, a value of `type`, as a value of `block`.
+auto AddressOfConstant(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const mir::ClassConstantRef& constant, mir::TypeId type) -> mir::ExprId {
+  return block.exprs.Add(
+      mir::MakeAddressOfExpr(
+          block.exprs.Add(
+              mir::Expr{
+                  .data = mir::ReferenceExpr{.target = constant},
+                  .type = type}),
+          ReadOnlyPointerTo(unit, type)));
+}
+
 // Holds `build`, a value of `type`, as a constant of class `id`, and answers
 // its address as a value of `block`.
 auto ConstantAddress(
@@ -146,17 +164,9 @@ auto ConstantAddress(
     mir::Class& cls, mir::TypeId type, mir::ValueBuild build) -> mir::ExprId {
   const mir::ClassConstantId constant = cls.constants.Add(
       mir::ClassConstantDecl{.type = type, .initializer = std::move(build)});
-  return block.exprs.Add(
-      mir::MakeAddressOfExpr(
-          block.exprs.Add(
-              mir::Expr{
-                  .data =
-                      mir::ReferenceExpr{
-                          .target =
-                              mir::ClassConstantRef{
-                                  .owner = id, .constant = constant}},
-                  .type = type}),
-          ReadOnlyPointerTo(unit, type)));
+  return AddressOfConstant(
+      unit, block, mir::ClassConstantRef{.owner = id, .constant = constant},
+      type);
 }
 
 // A table of `count` values of type `element`, each written by `write` into
@@ -254,6 +264,98 @@ void StateDefinition(
   cls.object_definition_initializer = std::move(build);
 }
 
+// The object entry of `unit_name`, with its prototype erased, as a value of
+// `block`.
+//
+//   (Erased)&Child::sv_create
+auto ErasedObjectEntry(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const std::string& unit_name) -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::ReferenceExpr{
+                  .target =
+                      mir::ExternalUnitMintedEntryRef{
+                          .unit_name = unit_name,
+                          .entry = mir::MintedEntry::kMakeObject}},
+          .type = mir::ErasedFunction(unit.types)});
+}
+
+// The construction tables the design root states, one per unit an object is
+// made of, each stated the first time an instantiation makes that unit and
+// named by every later one.
+//
+//   const Instantiation entries[2] = {{(Erased)&Child::sv_create, &child},
+//                                     ...};
+//   const ConstructionTable top = {entries, 2};
+class ConstructionTables {
+ public:
+  ConstructionTables(
+      mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
+      const DesignInstantiations& instantiations)
+      : unit_(&unit), id_(id), cls_(&cls), instantiations_(&instantiations) {
+  }
+
+  // The table listing, at each instantiation, how the unit `instantiated`
+  // names there is made.
+  auto Of(std::span<const std::string> instantiated) -> mir::ClassConstantRef {
+    std::vector<mir::ClassConstantRef> tables;
+    tables.reserve(instantiated.size());
+    for (const std::string& made : instantiated) {
+      tables.push_back(OfUnit(made));
+    }
+
+    using Kind = mir::RuntimeLibraryKind;
+    const mir::TypeId table_type = mir::ConstructionTableType(unit_->types);
+    mir::ValueBuild build;
+    mir::Block& table = build.body;
+    std::vector<mir::ExprId> parts;
+    AppendTable(
+        parts, *unit_, table, id_, *cls_,
+        LibraryType(*unit_, Kind::kInstantiation), instantiated.size(),
+        [&](mir::Block& entry, std::size_t i) {
+          unit_->ConsumeNamespaceOf(instantiated[i]);
+          return Record(
+              *unit_, entry, Kind::kInstantiation,
+              {ErasedObjectEntry(*unit_, entry, instantiated[i]),
+               AddressOfConstant(*unit_, entry, tables[i], table_type)});
+        });
+    build.value =
+        Record(*unit_, table, Kind::kConstructionTable, std::move(parts));
+    return mir::ClassConstantRef{
+        .owner = id_,
+        .constant = cls_->constants.Add(
+            mir::ClassConstantDecl{
+                .type = table_type, .initializer = std::move(build)})};
+  }
+
+ private:
+  auto OfUnit(const std::string& made) -> mir::ClassConstantRef {
+    if (const auto stated = of_unit_.find(made); stated != of_unit_.end()) {
+      return stated->second;
+    }
+    const auto found = instantiations_->by_unit.find(made);
+    if (found == instantiations_->by_unit.end()) {
+      throw InternalError(
+          std::format(
+              "hir_to_mir: an object of unit '{}' is made, and what that unit "
+              "elaborated at its instantiations was never recorded -- please "
+              "report this as a bug",
+              made));
+    }
+    const mir::ClassConstantRef table = Of(found->second);
+    of_unit_.emplace(made, table);
+    return table;
+  }
+
+  mir::CompilationUnit* unit_;
+  mir::ClassId id_;
+  mir::Class* cls_;
+  const DesignInstantiations* instantiations_;
+  std::map<std::string, mir::ClassConstantRef, std::less<>> of_unit_;
+};
+
 }  // namespace
 
 void StateNamedClassDefinition(
@@ -283,6 +385,13 @@ void StateScopeDefinition(
   StateDefinition(unit, cls, [&](mir::Block& block) {
     return ScopeInfoAddress(unit, block, id, cls, entered);
   });
+}
+
+auto StateConstructionTables(
+    mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
+    std::span<const std::string> own,
+    const DesignInstantiations& instantiations) -> mir::ClassConstantRef {
+  return ConstructionTables(unit, id, cls, instantiations).Of(own);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -11,7 +11,6 @@
 #include "lyra/backend/cpp/formatting.hpp"
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_decl.hpp"
-#include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"

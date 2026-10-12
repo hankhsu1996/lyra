@@ -14,6 +14,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -22,6 +23,7 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
+#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -57,6 +59,11 @@ struct GenerateBinding {
   mir::ClassFieldTarget handle;
   base::Translation<hir::StructuralScopeId, ChildStructuralScopeBinding> blocks;
 };
+
+// Where the object an entry makes takes its construction table from: handed
+// in by whoever asks for the object, or a constant the unit states of itself.
+struct TableHandedIn {};
+using EntryTableSource = std::variant<TableHandedIn, mir::ClassConstantRef>;
 
 // A value whoever builds a scope hands it: the declaration it fills, and the
 // type the constructor takes it as.
@@ -110,20 +117,26 @@ class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      const hir::StructuralScope& hir_scope, DesignNamespaces namespaces = {})
+      const hir::StructuralScope& hir_scope, const hir::ScopeLayout& layout,
+      DesignNamespaces namespaces = {},
+      std::optional<DesignInstantiations> instantiations = std::nullopt)
       : owner_(&unit_lowerer),
         parent_(parent),
         hir_scope_(&hir_scope),
-        namespaces_(std::move(namespaces)) {
+        layout_(&layout),
+        namespaces_(std::move(namespaces)),
+        instantiations_(std::move(instantiations)) {
   }
 
-  // The lowering of `hir_scope`, a scope of the design hierarchy, and of every
-  // scope it holds, each taking the identity of the class its unit published
-  // of it as it is built -- which is before any type translates, since a type
-  // may name one.
+  // The lowering of `hir_scope`, a scope of the design hierarchy laid out in
+  // its unit's construction table as `layout` says, and of every scope it
+  // holds, each taking the identity of the class its unit published of it as it
+  // is built -- which is before any type translates, since a type may name one.
   [[nodiscard]] static auto ForScope(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      const hir::StructuralScope& hir_scope, DesignNamespaces namespaces = {})
+      const hir::StructuralScope& hir_scope, const hir::ScopeLayout& layout,
+      DesignNamespaces namespaces = {},
+      std::optional<DesignInstantiations> instantiations = std::nullopt)
       -> std::unique_ptr<StructuralScopeLowerer>;
 
   // Mints this class's identity, builds its structural shape, publishes the
@@ -188,6 +201,19 @@ class StructuralScopeLowerer {
 
   [[nodiscard]] auto HirScope() const -> const hir::StructuralScope& {
     return *hir_scope_;
+  }
+
+  // Where the scope's instantiations stand in its unit's construction table.
+  [[nodiscard]] auto Layout() const -> const hir::ScopeLayout& {
+    return *layout_;
+  }
+
+  // Where the object the unit's object entry makes takes its construction
+  // table from: handed in by whoever asks for the object, or, for the design
+  // root, which nothing instantiates (LRM 23.3.1), the table the root states
+  // of itself. Settled once the bodies are populated.
+  [[nodiscard]] auto EntryTable() const -> const EntryTableSource& {
+    return entry_table_;
   }
 
   // The scope's time unit (LRM 3.14.2), which a time query scales its result
@@ -457,10 +483,15 @@ class StructuralScopeLowerer {
   UnitLowerer* owner_;
   const StructuralScopeLowerer* parent_;
   const hir::StructuralScope* hir_scope_;
+  const hir::ScopeLayout* layout_;
   // Non-empty only on the design root's own scope, the sole scope whose
   // elaboration spans the whole design. Every source unit's scope and every
   // nested scope leaves it empty.
   DesignNamespaces namespaces_;
+  // Present only on the design root's own scope, which states every unit's
+  // construction table as constants of its class.
+  std::optional<DesignInstantiations> instantiations_;
+  EntryTableSource entry_table_ = TableHandedIn{};
   base::Translation<hir::StructuralDataObjectId, mir::ClassFieldTarget>
       data_object_fields_;
   base::Translation<hir::SampledHistoryId, mir::FieldId>

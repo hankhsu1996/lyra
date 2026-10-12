@@ -218,10 +218,7 @@ cc_library(
     copts = LYRA_COPTS,
     includes = ["include"],
     visibility = ["//visibility:public"],
-    deps = [
-        ":mir",
-        ":support",
-    ],
+    deps = [":support"],
 )
 
 cc_library(

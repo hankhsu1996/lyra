@@ -26,6 +26,7 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/construction_table.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
@@ -2146,6 +2147,7 @@ using lyra::runtime::ChannelCancellation;
 using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
 using lyra::runtime::Compared;
+using lyra::runtime::ConstructionTable;
 using lyra::runtime::ControlEffect;
 using lyra::runtime::Coroutine;
 using lyra::runtime::current_runtime;
@@ -2183,6 +2185,8 @@ using lyra::runtime::HandleTo;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::HistoryAt;
 using lyra::runtime::InsertDesignatedBits;
+using lyra::runtime::InstantiationEntry;
+using lyra::runtime::InstantiationTable;
 using lyra::runtime::IntegralTypeAt;
 using lyra::runtime::IntOf;
 using lyra::runtime::JoinNets;
@@ -3433,6 +3437,16 @@ auto lyra_rt_run_program(
         return std::unique_ptr<Scope>(
             static_cast<Scope*>(make(parent, &segment)));
       });
+}
+
+auto lyra_rt_instantiation_entry(const void* table, std::int64_t at)
+    -> LyraMethodEntry {
+  return InstantiationEntry(static_cast<const ConstructionTable*>(table), at);
+}
+
+auto lyra_rt_instantiation_table(const void* table, std::int64_t at) -> const
+    void* {
+  return InstantiationTable(static_cast<const ConstructionTable*>(table), at);
 }
 
 auto lyra_rt_refer_storage(void* storage, void* out) -> void* {

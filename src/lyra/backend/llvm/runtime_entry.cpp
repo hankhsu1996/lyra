@@ -918,6 +918,8 @@ auto MemberStorageKindOf(
               // What a constant is made of, which no member holds.
               case lir::RuntimeLibraryKind::kScopeInfo:
               case lir::RuntimeLibraryKind::kScopeCallable:
+              case lir::RuntimeLibraryKind::kConstructionTable:
+              case lir::RuntimeLibraryKind::kInstantiation:
                 return std::nullopt;
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
@@ -1793,6 +1795,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEnclosingScope:
     case support::BuiltinFn::kIsOfClass:
     case support::BuiltinFn::kAddOwnedChild:
+    case support::BuiltinFn::kInstantiationEntry:
+    case support::BuiltinFn::kInstantiationTable:
     case support::BuiltinFn::kExtendSequence:
     // Recovering the object a handle names, or a handle naming the object a
     // body runs on. Each is one library function serving every class, so the

@@ -776,6 +776,14 @@ auto lyra_rt_run_program(
     std::int32_t argc, char** argv, void* (*make)(void*, const void*),
     const void* name) -> std::int32_t;
 
+// How the instance at instantiation `at` of a construction table is made
+// (`lyra::runtime::ConstructionTable`): the entry making it, and the table it
+// is constructed with.
+auto lyra_rt_instantiation_entry(const void* table, std::int64_t at)
+    -> LyraMethodEntry;
+auto lyra_rt_instantiation_table(const void* table, std::int64_t at) -> const
+    void*;
+
 // A reference, built in the storage the caller gives: where a value lies, and
 // what holds that storage, if anyone is told about it. A body holding a
 // reference is lowered once for every caller and cannot ask what it was lent

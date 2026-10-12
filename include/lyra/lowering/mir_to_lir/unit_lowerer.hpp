@@ -121,6 +121,10 @@ class UnitLowerer {
   [[nodiscard]] auto MethodFunction(
       mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
 
+  // The symbol a constant of a class of this unit is linked under.
+  [[nodiscard]] auto ClassConstantSymbolOf(
+      const mir::ClassConstantRef& constant) const -> std::string;
+
   // The behavior a MIR dispatch slot names, as LIR names one: the declaration
   // that introduced it, and which of that declaration's introductions it is.
   // `owner` and `callable` are the slot's own canonical identity, so this reads

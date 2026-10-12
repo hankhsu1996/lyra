@@ -382,6 +382,10 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kScopeInfo);
     case mir::RuntimeLibraryKind::kScopeCallable:
       return mirror(lir::RuntimeLibraryKind::kScopeCallable);
+    case mir::RuntimeLibraryKind::kConstructionTable:
+      return mirror(lir::RuntimeLibraryKind::kConstructionTable);
+    case mir::RuntimeLibraryKind::kInstantiation:
+      return mirror(lir::RuntimeLibraryKind::kInstantiation);
   }
   throw InternalError("TranslateRuntimeLibrary: unknown RuntimeLibraryKind");
 }

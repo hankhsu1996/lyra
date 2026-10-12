@@ -144,7 +144,8 @@ auto PopulateNamespaceOwnStorage(
   // The package root scope is an ExprLowerer over its own expressions: a
   // variable initializer's operands are literals, operators, and by-name
   // package symbols, none of which reach a class or a `self`.
-  const StructuralScopeLowerer expr_lowerer(unit_lowerer, nullptr, scope);
+  const StructuralScopeLowerer expr_lowerer(
+      unit_lowerer, nullptr, scope, unit_lowerer.ConstructionLayout().Root());
 
   const auto make_cell = [&](mir::Block& block, mir::StaticVariableId variable,
                              mir::TypeId cell_type) -> mir::ExprId {
@@ -353,11 +354,14 @@ void PublishNamespaceStorageBringUp(
 // sits on the side that knows the answer. The party that builds the design's
 // tops asks the same way, having no more than any other referrer.
 //
-// Beside where the object hangs, it takes the values an instance is handed at
-// construction and passes them on.
+// Beside where the object hangs, it takes the construction table the object
+// is built with -- handed in by whoever asks, unless `table` says the unit
+// states its own -- and the values an instance is handed at construction, and
+// passes them on.
 auto PublishObjectEntry(
     mir::CompilationUnit& unit, mir::ClassId root, mir::ClassId published,
-    std::span<const ConstructionValue> handed) -> mir::CallableId {
+    std::span<const ConstructionValue> handed, const EntryTableSource& table)
+    -> mir::CallableId {
   const auto owning_pointer = [&](mir::ClassId cls) {
     return unit.types.Intern(
         mir::Type{mir::PointerType{
@@ -371,6 +375,7 @@ auto PublishObjectEntry(
   const mir::TypeId owning = owning_pointer(published);
 
   mir::CallableCode code = mir::CallableCode::Defined();
+  const mir::TypeId table_type = mir::ConstructionTablePointer(unit.types);
   const mir::LocalId parent = code.AddLocal(unit.builtins.scope_ptr);
   const mir::LocalId segment = code.AddLocal(unit.builtins.hierarchy_segment);
   code.params = {parent, segment};
@@ -380,7 +385,26 @@ auto PublishObjectEntry(
   std::vector<mir::ExprId> arguments{
       body.exprs.Add(mir::MakeLocalRefExpr(parent, unit.builtins.scope_ptr)),
       body.exprs.Add(
-          mir::MakeLocalRefExpr(segment, unit.builtins.hierarchy_segment))};
+          mir::MakeLocalRefExpr(segment, unit.builtins.hierarchy_segment)),
+      std::visit(
+          Overloaded{
+              [&](const TableHandedIn&) {
+                const mir::LocalId handed_in = code.AddLocal(table_type);
+                code.params.push_back(handed_in);
+                return body.exprs.Add(
+                    mir::MakeLocalRefExpr(handed_in, table_type));
+              },
+              [&](const mir::ClassConstantRef& own) {
+                return body.exprs.Add(
+                    mir::MakeAddressOfExpr(
+                        body.exprs.Add(
+                            mir::Expr{
+                                .data = mir::ReferenceExpr{.target = own},
+                                .type =
+                                    mir::ConstructionTableType(unit.types)}),
+                        table_type));
+              }},
+          table)};
   for (const ConstructionValue& value : handed) {
     const mir::LocalId param = code.AddLocal(value.type);
     code.params.push_back(param);
@@ -707,32 +731,37 @@ void UnitLowerer::PublishTypeDefaults() {
 }
 
 auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
-  if (auto root = PopulateModuleRoot({}); !root) {
+  if (auto root = PopulateModuleRoot({}, std::nullopt); !root) {
     return std::unexpected(std::move(root.error()));
   }
   return std::move(unit_);
 }
 
-auto UnitLowerer::RunDesignRoot(DesignNamespaces namespaces)
+auto UnitLowerer::RunDesignRoot(
+    DesignNamespaces namespaces, DesignInstantiations instantiations)
     -> diag::Result<mir::CompilationUnit> {
-  if (auto root = PopulateModuleRoot(std::move(namespaces)); !root) {
+  if (auto root =
+          PopulateModuleRoot(std::move(namespaces), std::move(instantiations));
+      !root) {
     return std::unexpected(std::move(root.error()));
   }
   return std::move(unit_);
 }
 
-auto UnitLowerer::PopulateModuleRoot(DesignNamespaces namespaces)
-    -> diag::Result<void> {
+auto UnitLowerer::PopulateModuleRoot(
+    DesignNamespaces namespaces,
+    std::optional<DesignInstantiations> instantiations) -> diag::Result<void> {
   WalkFrame root_frame;
   // The tree of scope lowerers is built first, and building it takes the
   // identity of every class the unit published of its scopes: a type a record
   // of another unit states may name one -- wherever a name leaves an instance
   // of this unit and reaches another -- so each exists before any type
-  // translates. The namespaces the design root brings up ride on the root
-  // scope's lowering and are empty for a source module.
+  // translates. What the design root brings up and states ride on the root
+  // scope's lowering, and a source module has neither.
   const std::unique_ptr<StructuralScopeLowerer> root =
       StructuralScopeLowerer::ForScope(
-          *this, nullptr, hir_->root_scope, std::move(namespaces));
+          *this, nullptr, hir_->root_scope, construction_layout_.Root(),
+          std::move(namespaces), std::move(instantiations));
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
   }
@@ -749,7 +778,8 @@ auto UnitLowerer::PopulateModuleRoot(DesignNamespaces namespaces)
   unit_.content = mir::RootedTree{
       .root = *top_r,
       .object_entry = PublishObjectEntry(
-          unit_, *top_r, root->PublishedClassId(), root->ConstructionValues())};
+          unit_, *top_r, root->PublishedClassId(), root->ConstructionValues(),
+          root->EntryTable())};
   return {};
 }
 

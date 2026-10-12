@@ -16,6 +16,7 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
@@ -23,6 +24,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
+#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -117,7 +119,9 @@ class UnitLowerer {
   UnitLowerer(
       const hir::CompilationUnit& hir,
       const diag::SourceManager& source_manager)
-      : hir_(&hir), source_manager_(&source_manager) {
+      : hir_(&hir),
+        source_manager_(&source_manager),
+        construction_layout_(hir) {
   }
 
   // Lowers a unit whose instances exist as objects: its body (variables,
@@ -130,8 +134,10 @@ class UnitLowerer {
   // 10.5). Which namespaces those are is read off the signatures the root
   // consumes and passed in; the lowering turns each into cross-unit calls, so
   // this input stays at the design-root boundary and never reaches a source
-  // unit's lowering.
-  auto RunDesignRoot(DesignNamespaces namespaces)
+  // unit's lowering. So does `instantiations`, from which the root states every
+  // unit's construction table, its own among them.
+  auto RunDesignRoot(
+      DesignNamespaces namespaces, DesignInstantiations instantiations)
       -> diag::Result<mir::CompilationUnit>;
 
   // Lowers a unit that roots no object -- a package (LRM 26) or the `$unit`
@@ -154,6 +160,12 @@ class UnitLowerer {
 
   [[nodiscard]] auto Hir() const -> const hir::CompilationUnit& {
     return *hir_;
+  }
+
+  // The order this unit's construction table lists its instantiations in.
+  [[nodiscard]] auto ConstructionLayout() const
+      -> const hir::ConstructionTableLayout& {
+    return construction_layout_;
   }
 
   // Where a construct was written, which a diagnostic the lowering emits names
@@ -436,8 +448,11 @@ class UnitLowerer {
   // which the unit then names as its root. The namespace list is empty for a
   // source module and names every namespace of the design for the design root
   // (LRM 26.2 / 10.5), whose Initialize phase turns each into a cross-unit
-  // install and initialize call.
-  auto PopulateModuleRoot(DesignNamespaces namespaces) -> diag::Result<void>;
+  // install and initialize call; the instantiations are present for the design
+  // root alone, which states every construction table.
+  auto PopulateModuleRoot(
+      DesignNamespaces namespaces,
+      std::optional<DesignInstantiations> instantiations) -> diag::Result<void>;
 
   // Everything one class declaration can be named by before it settles: its
   // own identity, the object type that names it, and one identity per method a
@@ -488,6 +503,7 @@ class UnitLowerer {
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;
+  hir::ConstructionTableLayout construction_layout_;
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
   base::Translation<hir::ClassId, ClassTranslation> class_translations_;

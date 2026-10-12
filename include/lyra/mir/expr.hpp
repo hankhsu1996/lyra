@@ -221,10 +221,12 @@ struct ExternalUnitCallableTarget {
 };
 
 // Identity of a body of another unit that answers to no name -- bringing that
-// unit's namespace up, or making one of its objects. The source declares none
-// of them, so none can be named (LRM 5.6.1); the two ends agree on which is
-// meant by which of them it is, so this is its own identity space rather than a
-// name in the unit's.
+// unit's namespace up. The source declares none of them, so none can be named
+// (LRM 5.6.1); the two ends agree on which is meant by which of them it is, so
+// this is its own identity space rather than a name in the unit's. Making one
+// of a unit's objects is never called this way: which unit is made at an
+// instantiation is decided where the program is assembled, so a construction
+// reads the entry off the table it was handed.
 struct ExternalUnitMintedEntryTarget {
   std::string unit_name;
   MintedEntry entry;
@@ -624,6 +626,15 @@ struct FunctionRef {
   CallableTarget body;
 };
 
+// A body of another unit that answers to no name, named as the code it is --
+// the peer of `ExternalUnitMintedEntryTarget`, which calls one. What it takes
+// is not this unit's to know, so `Expr::type` is the code address with its
+// prototype erased, and whatever calls it restores the prototype it read.
+struct ExternalUnitMintedEntryRef {
+  std::string unit_name;
+  MintedEntry entry;
+};
+
 // Which declared thing a reference names. The alternatives differ in the table
 // that resolves the name -- a body's own bindings, a class's arena, another
 // unit's signature, the constants this unit holds -- and that is the
@@ -632,7 +643,8 @@ struct FunctionRef {
 using ReferenceTarget = std::variant<
     LocalRef, DefinitionRef, EnumTableRef, IntegralConstantRef,
     StaticPropertyRef, StaticVariableRef, ExternalUnitVariableRef,
-    ExternalStaticPropertyRef, ClassConstantRef, FunctionRef>;
+    ExternalStaticPropertyRef, ClassConstantRef, FunctionRef,
+    ExternalUnitMintedEntryRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to
 // it stores there, and taking its address yields a pointer to it -- one node

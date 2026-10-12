@@ -104,6 +104,19 @@ auto ClassDefinitionPointer(const TypePool& types) -> TypeId {
           .mutability = Mutability::kReadOnly}});
 }
 
+auto ConstructionTableType(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kConstructionTable}});
+}
+
+auto ConstructionTablePointer(const TypePool& types) -> TypeId {
+  return types.Intern(
+      Type{PointerType{
+          .pointee = ConstructionTableType(types),
+          .ownership = PointerOwnership::kBorrowed,
+          .mutability = Mutability::kReadOnly}});
+}
+
 auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
   // One arm per MIR type and no catch-all: a type added later fails to compile
   // here until it is classified, rather than silently defaulting to

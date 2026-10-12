@@ -103,16 +103,23 @@ shared by all consumers: external references, child routing, and construction.
   elaboration; that doc relies on this faithfulness to make cross-unit resolution total.
 - A node whose owned child is built from another compilation unit (an instantiation) crosses the
   unit boundary: the parent references the class the child's unit published, never its body or
-  internal ids. An owned child that belongs to the same unit (a named generate scope) is intra-unit
-  and crosses no boundary for the unit's own code; a referrer in another unit reaches it through the
-  class it was published as. `compilation_unit_model.md` owns the signature and the name-based
-  linkage; this doc owns only the resulting ownership edge in the object tree.
+  internal ids, and never which unit is made there. An object is handed a construction table, which
+  says how the instance at each of its instantiations is made, and makes each child through the
+  entry the table holds there, so the code compiled for a unit counts its instantiations and the
+  design root states, for every unit, what is made at each. An owned child that belongs to the same
+  unit (a named generate scope) is intra-unit and crosses no boundary for the unit's own code; a
+  referrer in another unit reaches it through the class it was published as.
+  `compilation_unit_model.md` owns the signature and the name-based linkage; this doc owns only the
+  resulting ownership edge in the object tree.
 
 ## Forbidden Shapes
 
 - A coordinate or ordinal side system that numbers generate regions and is used as identity.
 - A topology representation owned by the driver or a central map instead of by the object tree
-  itself.
+  itself, which fails invariant 4: a consumer navigating such a map instead of the tree reaches
+  something the tree may not hold. The table a constructor is handed -- which unit is made at each
+  of the object's instantiations, decided by elaborating the instance -- is not this: nothing
+  navigates it and nothing reads it once construction is over.
 - Separate hierarchy models for compile-time and runtime. Only one model exists.
 - Two independently maintained runtime child views that can drift -- e.g., one list for traversal
   plus a separate registry of children, each written by a distinct opcode and at a distinct

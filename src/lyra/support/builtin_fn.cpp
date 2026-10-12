@@ -1163,6 +1163,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kAddOwnedChild:
       return {
           .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};
+    case BuiltinFn::kInstantiationEntry:
+      return {
+          .name = "instantiation_entry",
+          .declaration = RuntimeFunction("InstantiationEntry")};
+    case BuiltinFn::kInstantiationTable:
+      return {
+          .name = "instantiation_table",
+          .declaration = RuntimeFunction("InstantiationTable")};
     case BuiltinFn::kExtendSequence:
       return {
           .name = "sequence_extend",

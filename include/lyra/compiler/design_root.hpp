@@ -7,6 +7,7 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
+#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::compiler {
@@ -26,14 +27,20 @@ inline constexpr std::string_view kDesignRootUnitName = "$root";
 // model and a caller that wants it executable takes it the rest of the way.
 //
 // It is a referrer like any other, and `signatures` is the whole of what it
-// reads: each top states the class its instances are, which types the root's
-// handle to one, and a unit that roots no object is a namespace to bring up.
-// No unit's lowered form is among its inputs, so a unit is finished with as
-// soon as a backend has written it, and symbol resolution proper happens where
-// it does for any program -- at link time.
+// reads of another unit's declarations: each top states the class its
+// instances are, which types the root's handle to one, and a unit that roots
+// no object is a namespace to bring up. No unit's lowered form is among its
+// inputs, so a unit is finished with as soon as a backend has written it, and
+// symbol resolution proper happens where it does for any program -- at link
+// time.
+//
+// Being the unit the whole design links through, it also states every unit's
+// construction table, from what `instantiations` says each unit elaborated at
+// its instantiations, as a link states where each symbol resolves.
 auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures,
+    lowering::hir_to_mir::DesignInstantiations instantiations,
     const diag::SourceManager& source_manager)
     -> diag::Result<mir::CompilationUnit>;
 

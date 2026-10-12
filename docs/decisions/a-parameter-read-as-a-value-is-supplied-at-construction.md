@@ -28,9 +28,15 @@ design C++ where one `Leaf` serves every index. A large design measured outside 
 of its emitted text in modules like this one.
 
 [one-body-built-at-every-index](one-body-built-at-every-index.md) removed the same growth one level
-down, for a block's own constant computed from its index. A module boundary adds the one thing that
-record did not face: a parent names the child it builds without reading the child's body, so
-whatever decides sharing has to be known before the body is.
+down, for a block's own constant computed from its index. A module boundary added the one thing that
+record did not face: a parent named the child it built without reading the child's body, so whatever
+decided sharing had to be known before the body was.
+
+That premise no longer holds. A parent is handed a construction table saying which unit is made at
+each of its instantiations, and its code names no child, so two parents that differ only in which
+child they make are one body. What a value decides is then a question about the child alone, which
+lowering it answers better than predicting it; until that replaces the classification below, the
+classification stands as the rule.
 
 ## The tension this addresses
 
@@ -196,10 +202,9 @@ as before.
 
 ### D5. A construction hands its values to the entry by type
 
-The unit's object entry takes the supplied values after the parent and the segment, in the order the
-child declares them, and passes them to the constructor. Both sides reach that order and those types
-from the child's instantiation. The design's tops are handed nothing and keep the prototype the
-runtime calls.
+The unit's object entry takes the supplied values after the parent, the segment and the construction
+table, in the order the child declares them, and passes them to the constructor. Both sides reach
+that order and those types from the child's instantiation. The design's tops are handed no values.
 
 Every construction states its constructor arguments where the construction is written: for an
 instance, the values its instantiation overrides or that were given it elsewhere, the latter as

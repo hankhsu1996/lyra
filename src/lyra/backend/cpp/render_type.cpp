@@ -95,6 +95,10 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::runtime::ScopeInfo";
     case mir::RuntimeLibraryKind::kScopeCallable:
       return "lyra::runtime::ScopeCallable";
+    case mir::RuntimeLibraryKind::kConstructionTable:
+      return "lyra::runtime::ConstructionTable";
+    case mir::RuntimeLibraryKind::kInstantiation:
+      return "lyra::runtime::Instantiation";
     case mir::RuntimeLibraryKind::kDpiBitBuffer:
       return "lyra::value::DpiBitBuffer";
     case mir::RuntimeLibraryKind::kDpiLogicBuffer:

@@ -69,6 +69,11 @@ auto ErasedPointer(const TypePool& types) -> TypeId;
 auto ClassDefinitionType(const TypePool& types) -> TypeId;
 auto ClassDefinitionPointer(const TypePool& types) -> TypeId;
 
+// The table a constructor of the design hierarchy is handed, and its address,
+// through which it is only read.
+auto ConstructionTableType(const TypePool& types) -> TypeId;
+auto ConstructionTablePointer(const TypePool& types) -> TypeId;
+
 // The observable-cell type for a variable of `value_type`: a SystemVerilog
 // value-storage data object (LRM 6.5) is an observable cell, so its writes fire
 // subscribers and its value is reached through the cell; any other type -- a

@@ -16,6 +16,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
+#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -141,13 +142,15 @@ auto BuildDesignRootHir(
 auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures,
+    lowering::hir_to_mir::DesignInstantiations instantiations,
     const diag::SourceManager& source_manager)
     -> diag::Result<mir::CompilationUnit> {
   const hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
   auto root_mir = root_lowerer.RunDesignRoot(
       lowering::hir_to_mir::DesignNamespaces{
-          .units = signatures.NamespaceUnitNames()});
+          .units = signatures.NamespaceUnitNames()},
+      std::move(instantiations));
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));
   }

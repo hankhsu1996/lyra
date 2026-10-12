@@ -543,7 +543,21 @@ auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
               return UnitFunction(c.function);
             },
             [&](const lir::ConstantAddress& c) -> llvm::Constant* {
-              return DefinitionGlobal(c.symbol);
+              switch (c.kind) {
+                case lir::AddressKind::kStorage:
+                  return DefinitionGlobal(c.symbol);
+                // Code another unit emits, held with its prototype erased; the
+                // call that reads it restores the prototype.
+                case lir::AddressKind::kCode:
+                  return llvm::cast<llvm::Constant>(
+                      module_
+                          ->getOrInsertFunction(
+                              c.symbol,
+                              llvm::FunctionType::get(
+                                  llvm::Type::getVoidTy(*context_), {}, false))
+                          .getCallee());
+              }
+              throw InternalError("llvm codegen: unknown address kind");
             },
             [&](const lir::ConstantInt&) { return mismatch("a pointer"); },
             [&](const lir::ConstantRecord&) { return mismatch("a pointer"); },
