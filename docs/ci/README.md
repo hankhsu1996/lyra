@@ -134,8 +134,24 @@ The corpus cannot say what a compile costs: a compiler that writes a file per re
 declares a loop in the square of its count, passes every case and is fast on each. Nor can one
 compile, at any size. So `growth_tests` compiles each design under `tests/growth/` at one size and
 at twice that, on both backends, each run asked for its trace and its statistics, and holds the
-larger run to the smaller: nothing more left behind, and each stage's time and peak memory under
-three times what it was.
+larger run to the smaller: what it left behind grown by what the design says its extra steps add,
+and each stage's time and peak memory under three times what it was.
+
+A design states one thing and takes N steps of it, and its own file says what one more step adds.
+Most say nothing, because a step of theirs repeats what is written once, and repeating adds nothing.
+A design whose steps are unlike one another -- a width that follows the index, a child handed a
+different size -- carries a `// @each-adds:` line naming each kind of thing a step is worth, with
+how many where the source shows how many: one procedure written is one callable. What a compile left
+is read from the statistics as every kind of thing its units hold in each form they pass through, so
+the check names no kind itself. A kind the design does not name must not follow N, and one it names
+must follow N as named; a count is held exactly, and the difference of the two runs holds nothing
+that does not depend on the size. So a kind of thing the compiler begins to make once per step is
+held from the day it is reported, and a statement in a design cannot outlive what it speaks of.
+
+Bytes are the one size among the counts. A design that does not name them may leave a quarter more
+at twice the size, since a file can carry the size it was compiled at; one that names them must
+leave more, and how much more is not held, because what a body is made of follows how much the
+source wrote. What holds such a design is the counts.
 
 Holding a time is what the rest of this document declines to do, and the reason it gives does not
 reach here. A duration reports on the machine that ran it, and comparing one to another day's needs
@@ -149,10 +165,11 @@ One run of a pair can still be stretched by a loaded machine, so a time or a pea
 measured again, and counts as exceeded only if it is on every attempt. Counts and sizes of files are
 the same on every run and are never measured again.
 
-What a design exceeds today is recorded per path, in `tests/paths/<path>.growth.yaml`, beside that
-path's refusal and defect records and by the same rule. A design is held to exactly what is listed
-for it: something new exceeding fails the run, and so does something listed that has stopped, until
-it goes. So the file only shrinks, and what is left in it is what that path still owes.
+Where a design departs from its statement today is recorded per path, in
+`tests/paths/<path>.growth.yaml`, beside that path's refusal and defect records and by the same
+rule. A design is held to exactly what is listed for it: something new departing fails the run, and
+so does something listed that has stopped, until it goes. So the file only shrinks, and what is left
+in it is what that path still owes.
 
 ## What an edit may cost
 

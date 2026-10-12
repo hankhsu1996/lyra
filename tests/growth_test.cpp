@@ -2,21 +2,30 @@
 // simulates can observe, and one no single compile shows: a compiler that
 // writes a file per repetition, or declares a loop in the square of its count,
 // is correct at every size and fast at a small one. So each design here states
-// one thing and repeats it N times, and is compiled at N and at twice N, both
-// runs asked to report on themselves. Repeating what is stated once adds
-// nothing to what a compile leaves behind, and at most proportionally to what
-// it spends.
+// one thing and takes N steps of it, and is compiled at N and at twice N, both
+// runs asked to report on themselves. A step that repeats what is stated once
+// adds nothing to what a compile leaves behind; a step unlike the others adds
+// what its own statements are worth, which the design says kind by kind. Either
+// way a step adds at most proportionally to what a compile spends.
+//
+// What is held of what a compile leaves is every kind of thing the run reports
+// holding, whichever kinds those are: a kind the design does not name must not
+// follow its size, and one it names must follow it as named. So a kind of thing
+// the compiler starts to make per step is held from the day it is reported,
+// without this file naming it.
 //
 // The two runs are made back to back on one machine, which is what lets time
 // be held at all: a duration says how fast the machine is, the ratio of two
 // taken together says how the cost grows.
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <gtest/gtest.h>
 #include <map>
@@ -28,8 +37,10 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tests/framework/held_record.hpp"
 #include "tests/framework/process.hpp"
@@ -84,25 +95,47 @@ auto NameOf(Backend backend) -> std::string_view {
   std::unreachable();
 }
 
+// A step adds this many of a kind, which the source shows: one procedure
+// written is one callable.
+struct ThisMany {
+  std::uint64_t count = 0;
+};
+
+// A step adds to a kind by an amount nobody can read off the source, as the
+// bytes a unit leaves follow how much its bodies say.
+struct SomeAmount {};
+
+using Added = std::variant<ThisMany, SomeAmount>;
+
+// What one more step of a design's size adds, by kind.
+using Adds = std::map<std::string, Added>;
+
 struct GrowthCase {
   std::string name;
   std::filesystem::path design;
   std::uint64_t size = 0;
-  // What the larger run is recorded as exceeding today, for every backend.
+  // What the design's own file says a step adds. A kind it does not name is
+  // one a step adds none of.
+  Adds each_adds;
+  // How the larger run is recorded as departing from that today, for every
+  // backend.
   std::map<Backend, std::set<std::string>> recorded;
 };
 
+// The kinds a run is read for beyond the ones it reports holding.
+constexpr std::string_view kUnits = "units";
+constexpr std::string_view kFiles = "files";
+constexpr std::string_view kBytes = "bytes";
+// A unit's own body and every one lowered only to be held against a unit.
+constexpr std::string_view kBodiesLowered = "bodies lowered";
+
 // What one compile left behind and spent, as the run itself recorded it.
 struct Reading {
-  // What its units left, taken together. A unit's name carries the size it
-  // was specialized on, so two runs name their units differently and only the
-  // whole of each can be held to the other.
-  std::size_t units = 0;
-  std::size_t files = 0;
-  std::uint64_t bytes = 0;
-  // How many bodies the run lowered, a unit's own and every one lowered only
-  // to be held against a unit.
-  std::size_t bodies_lowered = 0;
+  // How many of each kind of thing its units left and hold, taken together. A
+  // unit's name carries the size it was specialized on, so two runs name their
+  // units differently and only the whole of each can be held to the other. A
+  // kind a unit holds in one of its forms is named `form.kind`.
+  std::map<std::string, std::uint64_t> left;
   // The stages that ran alone, each with the peak it reached where the
   // platform offers one.
   std::map<std::string, std::optional<std::uint64_t>> stage_peak_bytes;
@@ -174,10 +207,17 @@ auto Compile(
 
   Reading reading;
   for (const nlohmann::json& unit : stats.at("units")) {
-    reading.units += 1;
+    reading.left[std::string(kUnits)] += 1;
     for (const nlohmann::json& artifact : unit.at("artifacts")) {
-      reading.files += 1;
-      reading.bytes += artifact.at("bytes").get<std::uint64_t>();
+      reading.left[std::string(kFiles)] += 1;
+      reading.left[std::string(kBytes)] +=
+          artifact.at("bytes").get<std::uint64_t>();
+    }
+    for (const auto& [form, held] : unit.at("counts").items()) {
+      for (const auto& [kind, count] : held.items()) {
+        reading.left[std::format("{}.{}", form, kind)] +=
+            count.get<std::uint64_t>();
+      }
     }
   }
   for (const nlohmann::json& stage : stats.at("stages")) {
@@ -197,7 +237,7 @@ auto Compile(
       reading.span_microseconds[name.substr(kTotal.size())] =
           event.at("dur").get<std::uint64_t>();
     } else if (name == kBodyLowered) {
-      reading.bodies_lowered += 1;
+      reading.left[std::string(kBodiesLowered)] += 1;
     }
   }
   return reading;
@@ -221,36 +261,96 @@ auto OutgrewProportion(std::uint64_t small, std::uint64_t large) -> bool {
   return large >= kProportionalBound * small;
 }
 
-// What was exceeded, in the words a record names it by, each with the two
-// numbers that show it.
-using Outgrowths = std::map<std::string, std::string>;
+// What departed, in the words a record names it by, each with the numbers that
+// show it.
+using Departed = std::map<std::string, std::string>;
 
-// What the larger run left behind or lowered that the smaller did not. These
-// are counts and sizes, the same on every run of one compiler.
-auto LeftBehindOutgrowths(const Reading& small, const Reading& large)
-    -> Outgrowths {
-  Outgrowths outgrew;
-  if (large.units > small.units) {
-    outgrew["units"] = std::format("{} -> {}", small.units, large.units);
+// The form a kind is held in, which is what stands before the dot of its name,
+// and nothing for a kind of the run as a whole.
+auto FormOf(std::string_view kind) -> std::string_view {
+  const std::size_t dot = kind.find('.');
+  return dot == std::string_view::npos ? std::string_view{}
+                                       : kind.substr(0, dot);
+}
+
+auto LeftOf(const Reading& reading, const std::string& kind) -> std::uint64_t {
+  const auto found = reading.left.find(kind);
+  return found == reading.left.end() ? 0 : found->second;
+}
+
+// Where what the larger run left departs from what the design says its extra
+// steps add. These are counts and sizes, the same on every run of one
+// compiler, and the difference of two runs holds nothing that does not follow
+// the size.
+//
+// A kind is held both ways. One the design names and that did not follow the
+// size as named is a departure as much as one it does not name that did: a
+// statement nothing answers to would otherwise stand after the compiler
+// stopped making, or stopped reporting, what it speaks of.
+auto DepartedInWhatWasLeft(
+    const GrowthCase& growth, const Reading& small, const Reading& large)
+    -> Departed {
+  std::set<std::string> kinds;
+  for (const auto& [kind, count] : small.left) {
+    kinds.insert(kind);
   }
-  if (large.files > small.files) {
-    outgrew["files"] = std::format("{} -> {}", small.files, large.files);
+  for (const auto& [kind, count] : large.left) {
+    kinds.insert(kind);
   }
-  if (large.bytes * kBytesAllowedDenominator >
-      small.bytes * kBytesAllowedNumerator) {
-    outgrew["bytes"] = std::format("{} -> {}", small.bytes, large.bytes);
+  // A design speaks of every form a unit may pass through, and a path takes a
+  // unit through some of them, so what is said of a form this run never
+  // reported is said of another path.
+  std::set<std::string_view> forms;
+  for (const std::string& kind : kinds) {
+    forms.insert(FormOf(kind));
   }
-  if (large.bodies_lowered > small.bodies_lowered) {
-    outgrew["bodies lowered"] =
-        std::format("{} -> {}", small.bodies_lowered, large.bodies_lowered);
+  for (const auto& [kind, added] : growth.each_adds) {
+    if (forms.contains(FormOf(kind))) {
+      kinds.insert(kind);
+    }
   }
-  return outgrew;
+
+  Departed departed;
+  for (const std::string& kind : kinds) {
+    const std::uint64_t before = LeftOf(small, kind);
+    const std::uint64_t after = LeftOf(large, kind);
+    const auto said = growth.each_adds.find(kind);
+    if (said == growth.each_adds.end()) {
+      const bool followed = kind == kBytes ? after * kBytesAllowedDenominator >
+                                                 before * kBytesAllowedNumerator
+                                           : after > before;
+      if (followed) {
+        departed[kind] = std::format("{} -> {}", before, after);
+      }
+      continue;
+    }
+    std::visit(
+        lyra::Overloaded{
+            [&](const ThisMany& many) {
+              const std::uint64_t expected =
+                  before + (many.count * growth.size);
+              if (after != expected) {
+                departed[kind] = std::format(
+                    "{} -> {}, where {} a step makes it {}", before, after,
+                    many.count, expected);
+              }
+            },
+            [&](const SomeAmount&) {
+              if (after <= before) {
+                departed[kind] = std::format(
+                    "{} -> {}, where a step is said to add", before, after);
+              }
+            }},
+        said->second);
+  }
+  return departed;
 }
 
 // What the larger run spent beyond its proportion, per stage that ran alone.
 // These move with the machine.
-auto SpentOutgrowths(const Reading& small, const Reading& large) -> Outgrowths {
-  Outgrowths outgrew;
+auto DepartedInWhatWasSpent(const Reading& small, const Reading& large)
+    -> Departed {
+  Departed outgrew;
   for (const auto& [stage, peak] : large.stage_peak_bytes) {
     const std::uint64_t took = TimeOf(large, stage);
     const std::uint64_t took_before = TimeOf(small, stage);
@@ -332,7 +432,7 @@ auto CheckGrowth(
   }
   // A time or a peak outgrew only if it does on every attempt, so the pair is
   // compiled again while something not recorded is still standing.
-  Outgrowths spent = SpentOutgrowths(pair->small, pair->large);
+  Departed spent = DepartedInWhatWasSpent(pair->small, pair->large);
   const auto all_recorded = [&] {
     return std::ranges::all_of(spent, [&](const auto& entry) {
       return recorded.contains(entry.first);
@@ -343,28 +443,29 @@ auto CheckGrowth(
     if (!pair.has_value()) {
       return pair.error();
     }
-    const Outgrowths again = SpentOutgrowths(pair->small, pair->large);
+    const Departed again = DepartedInWhatWasSpent(pair->small, pair->large);
     std::erase_if(
         spent, [&](const auto& entry) { return !again.contains(entry.first); });
   }
 
-  Outgrowths outgrew = LeftBehindOutgrowths(pair->small, pair->large);
-  outgrew.insert(spent.begin(), spent.end());
+  Departed departed = DepartedInWhatWasLeft(growth, pair->small, pair->large);
+  departed.insert(spent.begin(), spent.end());
   const std::string spans = SpansThatOutgrew(pair->small, pair->large);
 
   std::set<std::string> found;
-  for (const auto& [name, numbers] : outgrew) {
+  for (const auto& [name, numbers] : departed) {
     found.insert(name);
   }
-  const lyra::test::Departures departures = HoldToRecord(recorded, found);
+  const lyra::test::Departures against_record = HoldToRecord(recorded, found);
   std::string differs;
-  for (const std::string& name : departures.not_recorded) {
-    differs +=
-        std::format("  outgrew its size: {} ({})\n", name, outgrew.at(name));
-  }
-  for (const std::string& name : departures.no_longer_found) {
+  for (const std::string& name : against_record.not_recorded) {
     differs += std::format(
-        "  recorded as outgrowing and no longer does, so its line goes: {}\n",
+        "  does not follow its size as the design says: {} ({})\n", name,
+        departed.at(name));
+  }
+  for (const std::string& name : against_record.no_longer_found) {
+    differs += std::format(
+        "  recorded as departing and no longer does, so its line goes: {}\n",
         name);
   }
   if (differs.empty()) {
@@ -379,10 +480,70 @@ auto CheckGrowth(
       Joined(large_command));
 }
 
+auto Trimmed(std::string_view text) -> std::string_view {
+  constexpr std::string_view kBlank = " \t\r";
+  const std::size_t first = text.find_first_not_of(kBlank);
+  if (first == std::string_view::npos) {
+    return {};
+  }
+  return text.substr(first, text.find_last_not_of(kBlank) - first + 1);
+}
+
+// What a design's file says one more step of its size adds: the kinds on its
+// `// @each-adds:` lines, separated by commas, each followed by how many where
+// the source shows how many. A design with no such line says a step adds
+// nothing. A line that names nothing is reported into `problems`, since it
+// would read as that.
+auto EachAddsOf(
+    const std::filesystem::path& design, std::vector<std::string>& problems)
+    -> Adds {
+  constexpr std::string_view kKey = "// @each-adds:";
+  Adds adds;
+  std::ifstream source(design);
+  std::string line;
+  while (std::getline(source, line)) {
+    if (!line.starts_with(kKey)) {
+      continue;
+    }
+    std::string_view rest = std::string_view(line).substr(kKey.size());
+    bool named = false;
+    while (true) {
+      const std::size_t comma = rest.find(',');
+      const std::string_view item = Trimmed(rest.substr(0, comma));
+      const std::size_t last_word = item.find_last_of(' ');
+      std::uint64_t count = 0;
+      const std::string_view number = last_word == std::string_view::npos
+                                          ? std::string_view{}
+                                          : item.substr(last_word + 1);
+      const bool counted =
+          !number.empty() &&
+          std::from_chars(number.data(), number.data() + number.size(), count)
+                  .ptr == number.data() + number.size();
+      const std::string_view kind =
+          counted ? Trimmed(item.substr(0, last_word)) : item;
+      if (!kind.empty()) {
+        adds[std::string(kind)] =
+            counted ? Added{ThisMany{.count = count}} : Added{SomeAmount{}};
+        named = true;
+      }
+      if (comma == std::string_view::npos) {
+        break;
+      }
+      rest = rest.substr(comma + 1);
+    }
+    if (!named) {
+      problems.push_back(
+          std::format(
+              "{} names no kind in '{}'", design.filename().string(), line));
+    }
+  }
+  return adds;
+}
+
 // Every design under `designs_root`, at the size the file beside them gives
-// it, with what each path's record under `paths_root` says it exceeds. A
-// design given no size, and a size or a record naming no design, are reported
-// into `problems`.
+// it, with what its own file says a step adds and how each path's record under
+// `paths_root` says it departs from that. A design given no size, and a size
+// or a record naming no design, are reported into `problems`.
 auto LoadGrowthCases(
     const std::filesystem::path& designs_root,
     const std::filesystem::path& paths_root, std::vector<std::string>& problems)
@@ -395,6 +556,7 @@ auto LoadGrowthCases(
           .name = name,
           .design = entry.path(),
           .size = 0,
+          .each_adds = EachAddsOf(entry.path(), problems),
           .recorded = {{Backend::kCpp, {}}, {Backend::kLlvm, {}}}};
     }
   }

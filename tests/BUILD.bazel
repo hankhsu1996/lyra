@@ -371,6 +371,7 @@ cc_test(
     tags = ["cost"],
     deps = [
         ":framework",
+        "//:base",
         "@bazel_tools//tools/cpp/runfiles",
         "@googletest//:gtest_main",
         "@nlohmann_json//:json",

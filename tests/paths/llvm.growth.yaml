@@ -1,12 +1,111 @@
-# What the llvm path lets grow with a design's size, one entry per growth
-# design: the design's name, and what its larger run exceeds, in the words the
-# check reports it in.
+# Where the llvm path departs from what a design says its size adds, one entry
+# per growth design: the design's name, and each kind of thing its larger run
+# left or spent otherwise than the design's own file says a step adds, in the
+# words the check reports it in. A kind a unit holds in one of its forms is
+# named by the form and the kind.
 #
-# A design is held to exactly what is listed for it. Something new exceeding
+# A design is held to exactly what is listed for it. Something new departing
 # fails the run, and so does something listed that has stopped, until it goes --
 # so this file only ever shrinks, which makes it the record of what a design's
 # size still costs on this path that it should not.
 instance_array: [bytes]
+loop_holding_a_sized_block:
+  - bytes
+  - lir.classes
+  - lir.constants
+  - lir.coroutines
+  - lir.functions
+  - lir.integral constants
+  - lir.members
+  - lir.types
+  - mir.callables
+  - mir.class constants
+  - mir.classes
+  - mir.constructors
+  - mir.coroutines
+  - mir.fields
+  - mir.integral constants
+  - mir.types
+loop_of_children_sized_by_index:
+  - lir.classes
+  - lir.constants
+  - lir.coroutines
+  - lir.integral constants
+  - mir.class constants
+  - mir.classes
+  - mir.constructors
+  - mir.coroutines
+  - mir.integral constants
+loop_of_clocked_procedures_sized_by_index:
+  - lir.captures
+  - lir.classes
+  - lir.closures
+  - lir.constants
+  - lir.coroutines
+  - lir.functions
+  - lir.integral constants
+  - lir.members
+  - lir.types
+  - mir.callables
+  - mir.captures
+  - mir.class constants
+  - mir.classes
+  - mir.closures
+  - mir.constructors
+  - mir.coroutines
+  - mir.fields
+  - mir.integral constants
+  - mir.types
 loop_of_instances: [bodies lowered]
 loop_of_instances_built_by_parameter: [bodies lowered]
 loop_of_instances_reading_their_block: [bodies lowered]
+loop_reaching_its_neighbour:
+  - bytes
+  - lir.classes
+  - lir.constants
+  - lir.coroutines
+  - lir.functions
+  - lir.integral constants
+  - lir.members
+  - lir.types
+  - mir.callables
+  - mir.class constants
+  - mir.classes
+  - mir.constructors
+  - mir.coroutines
+  - mir.fields
+  - mir.integral constants
+  - mir.types
+loop_sized_from_a_table:
+  - bytes
+  - lir.classes
+  - lir.constants
+  - lir.coroutines
+  - lir.functions
+  - lir.integral constants
+  - lir.members
+  - lir.types
+  - mir.callables
+  - mir.class constants
+  - mir.classes
+  - mir.constructors
+  - mir.coroutines
+  - mir.fields
+  - mir.integral constants
+  - mir.types
+loop_sizing_by_index:
+  - lir.classes
+  - lir.constants
+  - lir.coroutines
+  - lir.functions
+  - lir.integral constants
+  - lir.members
+  - lir.types
+  - mir.callables
+  - mir.class constants
+  - mir.classes
+  - mir.constructors
+  - mir.coroutines
+  - mir.fields
+  - mir.integral constants
+  - mir.types

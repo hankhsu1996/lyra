@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_member.hpp"
@@ -149,6 +150,7 @@ auto SynthesizeDesignRoot(
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));
   }
+  RecordSemanticForm(*root_mir);
   return *std::move(root_mir);
 }
 
