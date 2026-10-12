@@ -56,4 +56,9 @@ auto MakesValue(const InstrData& instr) -> bool;
 // call that may depart as much as of one that returns.
 auto CallMakesValue(const CallTarget& target) -> bool;
 
+// Whether a call builds an execution the engine drives -- entering a body's
+// frame, or a library entry answering with one -- which it does in storage its
+// caller gives, and which whoever drives it takes from there.
+auto CallBuildsExecution(const CallTarget& target) -> bool;
+
 }  // namespace lyra::lir

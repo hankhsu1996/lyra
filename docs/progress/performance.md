@@ -583,12 +583,12 @@ specializations, not with instance count.
       size adds, and every kind reported is held to that at two sizes.
 
 - [ ] A generate block that is not shared costs a fixed apparatus, where it should cost about its
-      own statements. One continuous assignment in such a block adds a class, a construction, a body
-      that waits, three start-up bodies and the constants describing them: about four thousand bytes
-      of machine code on the execution backend, against about fifty for a simulator that writes the
-      block's statements into its module. So every way two blocks can differ that sharing does not
-      see costs a multiple of that, and a loop of a thousand such blocks is where a design stops
-      building. The growth record names what follows the block count on each path.
+      own statements. One continuous assignment in such a block adds a class, a construction, the
+      bodies running it, three start-up bodies and the constants describing them, where a simulator
+      that writes the block's statements into its module adds those statements. So every way two
+      blocks can differ that sharing does not see costs a multiple of that, and a loop of a thousand
+      such blocks is where a design stops building. The growth record names what follows the block
+      count on each path.
 
 - [ ] Blocks that are one text are still told apart by what selects them. A declaration sized by a
       block parameter set from the loop index is one class per block where the sizes are few; a
@@ -597,7 +597,11 @@ specializations, not with instance count.
 
 - [ ] A block reaching its neighbour by a name indexed from its own index is compiled once per
       block, and lowering such a loop takes more than proportional time: twice the blocks is over
-      three times the time, held in the C++ path's growth record.
+      three times the time, held in both paths' growth records. Which blocks are one body is found
+      by comparing each block with every body found before it, so a loop whose blocks are all
+      distinct takes time in the square of its length; a block is its text and the values its
+      elaboration read as constants, and blocks agreeing on those are one body with nothing
+      compared.
 
 - [ ] What remains of the instance array on that same axis. The member and the construction
       statement no longer scale: `Child c[0:N-1]` is one member whose type carries the multiplicity
@@ -666,6 +670,16 @@ specializations, not with instance count.
       backend in under 6 s at the last two, and the program is the same size within three hundred
       bytes at all three. `../decisions/a-packed-value-is-its-words.md` holds why the line is drawn by
       size and what folding declines.
+
+- [x] A process that waits only at the head of its loop is no longer compiled as a coroutine. A
+      continuous assignment, a port connection, an `always_comb` and an `always @(...)` or
+      `always_ff` whose event control opens its statement each became one, and splitting a coroutine
+      into its resumable parts is most of what code generation spends on a design made of them. Each
+      is now two plain bodies -- what runs before the loop, and one pass of it -- which one
+      coroutine of the runtime calls, on both backends. Where the loop's wait is built inside it, or
+      a process waits anywhere else, it stays a coroutine.
+      `../decisions/a-process-stopping-only-at-its-loop-head-is-called.md` holds why this is a
+      rewrite of MIR rather than a second kind of process.
 
 ### Open questions
 

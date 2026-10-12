@@ -217,6 +217,10 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_enter_coroutine_borrowed_environment);
   add("lyra_rt_enter_coroutine_owned_environment",
       &lyra_rt_enter_coroutine_owned_environment);
+  add("lyra_rt_enter_reaction_running_first",
+      &lyra_rt_enter_reaction_running_first);
+  add("lyra_rt_enter_reaction_stopping_first",
+      &lyra_rt_enter_reaction_stopping_first);
   add("lyra_rt_await_coroutine", &lyra_rt_await_coroutine);
   add("lyra_rt_release_coroutine", &lyra_rt_release_coroutine);
   add("lyra_rt_register_always", &lyra_rt_register_always);
@@ -802,6 +806,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_assocarray_assign", &lyra_rt_assocarray_assign);
   add("lyra_rt_managedref_assign", &lyra_rt_managedref_assign);
   add("lyra_rt_reference_assign", &lyra_rt_reference_assign);
+  add("lyra_rt_wait_assign", &lyra_rt_wait_assign);
   add("lyra_rt_element_default", &lyra_rt_element_default);
   add("lyra_rt_discarded_write", &lyra_rt_discarded_write);
   add("lyra_rt_string_copy", &lyra_rt_string_copy);

@@ -18,7 +18,6 @@
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
-#include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/integral.hpp"
@@ -466,17 +465,10 @@ auto CallArranger::ReturnOf(
     const lir::CallInstr& call, lir::TypeId result_type) const -> ReturnInfo {
   // What builds its answer where its caller says answers with where that is.
   const ReturnInfo built = ReturnIndirect{.returned = module_->Types().Ptr()};
-  // Entering a body builds the execution it becomes in storage its caller
-  // gives, whatever the body answers once it is driven.
-  if (const auto* coroutine = std::get_if<lir::CoroutineTarget>(&call.target)) {
-    switch (coroutine->op) {
-      case lir::CoroutineTarget::Op::kEnterBorrowedEnvironment:
-      case lir::CoroutineTarget::Op::kEnterOwnedEnvironment:
-        return built;
-      case lir::CoroutineTarget::Op::kAwait:
-      case lir::CoroutineTarget::Op::kRelease:
-        break;
-    }
+  // An execution is built in storage its caller gives, whatever the body it
+  // runs answers once it is driven.
+  if (lir::CallBuildsExecution(call.target)) {
+    return built;
   }
   if (lir::CallMakesValue(call.target) &&
       module_->Unit().types.Get(result_type).IsOwnedValue()) {

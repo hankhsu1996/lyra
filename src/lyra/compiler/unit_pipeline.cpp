@@ -8,7 +8,9 @@
 #include "lyra/lir/verify.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/mir_to_lir/lower.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/counts.hpp"
+#include "lyra/mir_transform/transform.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/statistics.hpp"
 
@@ -29,10 +31,13 @@ auto LowerUnitToSemantic(
   auto semantic = unit.role == hir::UnitRole::kNamespace
                       ? lowerer.RunNamespace()
                       : lowerer.RunObjectRoot();
-  if (semantic) {
-    RecordSemanticForm(*semantic);
+  if (!semantic) {
+    return semantic;
   }
-  return semantic;
+  mir::CompilationUnit transformed =
+      mir_transform::Transform(*std::move(semantic));
+  RecordSemanticForm(transformed);
+  return transformed;
 }
 
 auto LowerUnitToExecutable(const mir::CompilationUnit& unit)

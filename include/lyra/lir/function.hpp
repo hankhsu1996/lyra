@@ -135,13 +135,21 @@ struct DefinitionRef {
   TypeId type;
 };
 
+// The address of a function of this unit, read as a value: code handed to
+// whatever calls back through it. `type` is the function's machine function
+// type.
+struct FunctionRef {
+  FunctionId function;
+  TypeId type;
+};
+
 // An instruction input: a prior value, an inline constant, or a reference to
-// a constant or to shared storage. A constant or a reference is an operand
-// rather than a value of its own because it has no dataflow origin to name --
-// it is materialized at the use site.
+// a constant, to shared storage or to code. A constant or a reference is an
+// operand rather than a value of its own because it has no dataflow origin to
+// name -- it is materialized at the use site.
 using Operand = std::variant<
     Use, IntConst, StrConst, RealConst, NullConst, BoolConst, EnumTableRef,
-    IntegralConstantRef, StaticRef, DefinitionRef>;
+    IntegralConstantRef, StaticRef, DefinitionRef, FunctionRef>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the

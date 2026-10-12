@@ -51,7 +51,6 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
-#include "lyra/mir/verify.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -706,16 +705,11 @@ void UnitLowerer::PublishTypeDefaults() {
   }
 }
 
-auto UnitLowerer::Finish() -> mir::CompilationUnit {
-  mir::Verify(unit_);
-  return std::move(unit_);
-}
-
 auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
   if (auto root = PopulateModuleRoot({}); !root) {
     return std::unexpected(std::move(root.error()));
   }
-  return Finish();
+  return std::move(unit_);
 }
 
 auto UnitLowerer::RunDesignRoot(DesignNamespaces namespaces)
@@ -723,7 +717,7 @@ auto UnitLowerer::RunDesignRoot(DesignNamespaces namespaces)
   if (auto root = PopulateModuleRoot(std::move(namespaces)); !root) {
     return std::unexpected(std::move(root.error()));
   }
-  return Finish();
+  return std::move(unit_);
 }
 
 auto UnitLowerer::PopulateModuleRoot(DesignNamespaces namespaces)
@@ -899,7 +893,7 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
   PublishNamespaceStorageBringUp(
       *this, unit_, std::move(install_code), std::move(value_code));
 
-  return Finish();
+  return std::move(unit_);
 }
 
 auto UnitLowerer::MakeExternalClassPointee(const hir::ExternalClassRef& ref)

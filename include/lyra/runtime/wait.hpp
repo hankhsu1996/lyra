@@ -214,6 +214,9 @@ class StateAwaiter : public Awaiter {
 // awaiter made, on every way out of that scope.
 class Wait {
  public:
+  // A wait not yet built: storage an activation holds for one, which the
+  // body that builds the wait moves it into.
+  Wait();
   explicit Wait(std::unique_ptr<Awaiter> awaiter);
 
   Wait(const Wait&) = delete;

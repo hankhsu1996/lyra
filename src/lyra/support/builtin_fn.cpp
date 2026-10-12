@@ -1251,6 +1251,18 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "register_final",
           .declaration = RuntimeFunction("RegisterFinalProcess")};
+    case BuiltinFn::kEnterReactionRunningFirst:
+      return {
+          .name = "enter_reaction_running_first",
+          .declaration = RuntimeFunction("EnterReactionRunningFirst"),
+          .ending = CallEnding::kReturns,
+          .answer = EntryAnswer::kExecution};
+    case BuiltinFn::kEnterReactionStoppingFirst:
+      return {
+          .name = "enter_reaction_stopping_first",
+          .declaration = RuntimeFunction("EnterReactionStoppingFirst"),
+          .ending = CallEnding::kReturns,
+          .answer = EntryAnswer::kExecution};
     case BuiltinFn::kEnterScopeStaticInit:
       return {
           .name = "enter_scope_static_init",

@@ -48,6 +48,7 @@
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/process_control.hpp"
 #include "lyra/runtime/random.hpp"
+#include "lyra/runtime/reaction.hpp"
 #include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -2461,6 +2462,22 @@ auto lyra_rt_enter_coroutine_borrowed_environment(
     void* frame, void* out) noexcept -> void* {
   return lyra::runtime::StartGeneratedProcess(
       out, lyra::runtime::GeneratedBody(frame, nullptr));
+}
+
+auto lyra_rt_enter_reaction_running_first(
+    void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
+    void* out) noexcept -> void* {
+  return std::construct_at(
+      static_cast<Coroutine<void>*>(out),
+      lyra::runtime::EnterReactionRunningFirst(receiver, setup, pass));
+}
+
+auto lyra_rt_enter_reaction_stopping_first(
+    void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
+    void* out) noexcept -> void* {
+  return std::construct_at(
+      static_cast<Coroutine<void>*>(out),
+      lyra::runtime::EnterReactionStoppingFirst(receiver, setup, pass));
 }
 
 // The site holds only the closure's owner, which generated code cannot see
@@ -7459,6 +7476,9 @@ void lyra_rt_managedref_assign(void* storage, const void* value) {
 // replaces the reference it holds, never what it names.
 void lyra_rt_reference_assign(void* storage, const void* value) {
   *static_cast<ErasedReference*>(storage) = Read<ErasedReference>(value);
+}
+void lyra_rt_wait_assign(void* storage, void* value) {
+  *static_cast<Wait*>(storage) = std::move(*static_cast<Wait*>(value));
 }
 
 // A fixed-size unpacked array is laid out by the body that holds it as its
