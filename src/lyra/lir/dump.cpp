@@ -56,6 +56,12 @@ class LirDumper {
               "{} constant \"{}\" = {}", LinkageName(constant.linkage),
               constant.symbol, FormatConstant(constant.initializer)));
     }
+    for (const TypeDefault& stated : unit_->type_defaults) {
+      Line(
+          std::format(
+              "default of {} = \"{}\"", FormatType(stated.type),
+              unit_->functions.Get(stated.function).name));
+    }
     for (const ClassId id : unit_->classes.Ids()) {
       DumpClass(id);
     }

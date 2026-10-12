@@ -151,19 +151,22 @@ ownership, or native in-frame layout) for every value.
       An element write reaches the element it names and a range write the elements it names, within
       one write of the variable, and neither rebuilds the array; this is the mutating-container
       protocol the queue and associative array reuse.
-- [x] **The fixed-size unpacked array** (LRM 7.4.2) -- realized on the execution backend as a
-      fixed-arity container value domain. It default-constructs member-wise, builds from an
-      enumerated element list and from a replicated pattern through one repeat-unit-and-count path,
-      copies with value semantics, takes the equality and case-equality families, reports its size
-      and its bit-stream width and count, reads its bit stream out and builds one back from a stream
-      and a prototype, reads and writes an element, reads and writes a contiguous range select,
-      lives in a member slot as a whole-cell observable signal, and crosses a suspension as an
-      activation-frame value. Its payload is ordinal-only: the declared range is the receiver's
-      static type's and arrives at a select as its own operand, so a whole-value store copies
-      positions and relabels nothing -- and a store between two arrays whose declared ranges differ
-      lowers, because the range is gone by this layer, both sides are one type, and a type pool
-      keyed by content says so. A range write reaches the elements it names and does not rebuild the
-      value (LRM 7.4.6).
+- [x] **The fixed-size unpacked array** (LRM 7.4.2) -- realized on the execution backend as its
+      elements laid out by its type, one after another where the array lies, an array past the
+      in-place size owning its elements apart from whatever holds it
+      (`../decisions/a-fixed-array-is-laid-out-by-its-type.md`). It default-constructs element by
+      element, builds from an enumerated element list and from a replicated pattern through one path
+      that lays a unit of elements down until the array is full, copies with value semantics, takes
+      the equality and case-equality families, reports its size and its bit-stream width and count,
+      reads its bit stream out and builds one back from a stream and its type, reads an element
+      where it lies and writes one through the write of the variable it is part of, reads and writes
+      a contiguous range select, lives in a member slot as a whole-cell observable signal, and
+      crosses a suspension as an activation-frame value. Its payload is ordinal-only: the declared
+      range is the receiver's static type's and arrives at a select as its own operand, so a
+      whole-value store copies positions and relabels nothing -- and a store between two arrays
+      whose declared ranges differ lowers, because the range is gone by this layer, both sides are
+      one type, and a type pool keyed by content says so. A range write reaches the elements it
+      names and does not rebuild the value (LRM 7.4.6).
 - [x] **The queue** (LRM 7.10) -- realized on the execution backend as a run-time-sized ordered
       container value domain. It defaults to empty, builds from an assignment pattern, copies with
       value semantics, takes the equality and case-equality families, reports its size and its
@@ -171,25 +174,27 @@ ownership, or native in-frame layout) for every value.
       appends one, LRM 7.10.1, and every other invalid index discards the write), takes a slice,
       pushes at either end, inserts, drops the entry an index names or empties entirely (LRM
       7.10.2.3), lives in a member slot as a whole-cell observable signal, and crosses a suspension
-      as an activation-frame value. A declared bound (LRM 7.10.5) belongs to the variable rather
-      than to the value written, so it reaches a construction as an operand and a semantic store
-      passes its right-hand side through the bound the destination declares. A pop both updates the
-      queue and yields the element it removed (LRM 7.10.2.4), so the entry completes with the two of
-      them and the call site stores the queue back and takes the element as the call's value.
+      as an activation-frame value. A declared bound (LRM 7.10.5) is a fact of the queue's type,
+      which every construction of a queue and every conversion into one is told, so none is handed a
+      bound; a semantic store passes its right-hand side through the bound the destination's type
+      declares. A pop both updates the queue and yields the element it removed (LRM 7.10.2.4), so
+      the entry completes with the two of them and the call site stores the queue back and takes the
+      element as the call's value.
 - [x] **The associative array** (LRM 7.8) -- realized on the execution backend as a keyed container
       value domain, the first container whose coordinates are values rather than ordinals. It
-      defaults to empty, builds from a list of entries and the miss value a read of an absent index
-      answers with -- which a `default:` states (LRM 7.9.11) and which is otherwise the element
-      type's own default -- copies with value semantics, takes the equality and case-equality
-      families, reports how many entries it holds and its bit-stream width and count, reads an index
-      with no entry as the element default, allocates an entry on a write, reports whether an index
-      has one, drops the entry an index names or empties entirely (LRM 7.9.3), answers the smallest
-      and largest index it holds, lives in a member slot as a whole-cell observable signal, and
-      crosses a suspension as an activation-frame value. It holds no prototype for an index -- the
-      clause gives it no index bounds and no index default -- so an index crosses in the
-      representation its own type names. What it does carry is the order its index type imposes (LRM
-      7.8), which for every declared index type is the one the index values already carry and for a
-      wildcard index (LRM 7.8.1) is not: that clause admits an index of any width, makes it
+      defaults to empty, builds from a list of entries, is then given the value a read of an absent
+      index answers with where the literal states a `default:` (LRM 7.9.11) -- which is otherwise
+      the element type's own default and is not handed over -- copies with value semantics, takes
+      the equality and case-equality families, reports how many entries it holds and its bit-stream
+      width and count, reads an index with no entry as the element default, allocates an entry on a
+      write, reports whether an index has one, drops the entry an index names or empties entirely
+      (LRM 7.9.3), answers the smallest and largest index it holds -- and, holding none, the default
+      of the type the query answers (LRM 20.7) -- lives in a member slot as a whole-cell observable
+      signal, and crosses a suspension as an activation-frame value. It holds no prototype for an
+      index -- the clause gives it no index bounds and no index default -- so an index crosses in
+      the representation its own type names. What it does carry is the order its index type imposes
+      (LRM 7.8), which for every declared index type is the one the index values already carry and
+      for a wildcard index (LRM 7.8.1) is not: that clause admits an index of any width, makes it
       self-determined and unsigned, and orders the entries by numerical value, so how two of them
       compare is settled by the declaration and absent from both indices. A wildcard index is also
       not a data type, so a construction cannot list its keys under the declared index type the way
@@ -305,8 +310,12 @@ The value layer is realized two ways, and the breadth work above runs against th
   runtime holds it in that same layout and reaches those, and the methods a structure's declaration
   states in MIR for its whole-value operations, through the table the value carries
   (`../decisions/a-tuple-is-laid-out-by-its-type.md`,
-  `../decisions/a-structures-operations-are-stated-in-mir.md`). Containers and unions stay one
-  erased object, and a component that is storage of its own is reached where it lies.
+  `../decisions/a-structures-operations-are-stated-in-mir.md`). A fixed-size unpacked array is laid
+  out by the code generator too, as its elements and nothing else, and the runtime is handed the
+  array's type beside its bytes, a constant stating the count and the element's type, over which it
+  runs every whole-array operation (`../decisions/a-fixed-array-is-laid-out-by-its-type.md`). A
+  container whose size is a run-time quantity and a union stay one erased object, and a component
+  that is storage of its own is reached where it lies.
 
 Both are correct and agree per source (the backend-agreement tests check this), but they are two
 implementations of the same value semantics. Every value domain added to the execution backend is a
@@ -454,11 +463,11 @@ each meets the same lifetime question above.
       element and that entry's index and takes back the value it settled on; where the source wrote
       no clause the identity one is supplied, so one shape reaches every consumer. What crosses in
       each direction is what its own type names, and the one thing no type names -- which
-      representation a handle is in -- is recorded where the thing it describes is registered: the
-      body's answer on the body's definition, and the result shape the producer supplies on the
-      call, which crosses erased because it follows the clause rather than the receiver. Erasing an
-      index and an element makes them one type, so the algorithms are the ones the other backend
-      runs rather than a second family beside them.
+      representation a handle is in -- is recorded where the thing it describes is registered, the
+      body's answer on the body's definition. An answer that is an array follows the clause rather
+      than the receiver, so the call tells the entry the type of the array it builds and hands it no
+      value of that type. Erasing an index and an element makes them one type, so the algorithms are
+      the ones the other backend runs rather than a second family beside them.
 - [x] **Storage reached by name rather than through a receiver.** A cell the whole program shares is
       named by its linkage symbol, a place opens at that symbol and dereferences it, and the
       program's link resolves the name to the address the design's own storage sits at. A cell a

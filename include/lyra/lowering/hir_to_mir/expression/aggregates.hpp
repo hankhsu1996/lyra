@@ -5,11 +5,16 @@
 // constructor (LRM 7.5.1), whose expression form is a constructor-style build
 // of the same family.
 
+#include <vector>
+
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -17,20 +22,12 @@ namespace lyra::lowering::hir_to_mir {
 // An aggregate value-build's meaning is independent of the enclosing scope, so
 // one template over the pass class serves both contexts. Explicit
 // instantiations for the two pass classes live in the implementation file.
-//
-// Every one of them carries the source result type beside the lowered one. Two
-// things a build needs are legible only in the source type: the dimension a
-// keyed index resolves against, and the element default a container carries for
-// every position it does not hold, which includes a member's declaration
-// initializer (LRM 7.2.2) that the lowered element type has dropped.
+// Each builds a value of the lowered result type, which states everything the
+// build reads but what a keyed pattern reads of the declared dimension (below).
 template <ExprLowerer Lowerer>
 auto LowerHirConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
-    hir::TypeId hir_result_type, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
-// A stream carries no element default and no keyed index, so it takes the
-// lowered result type alone: what it builds is a sequence of bits, whose every
-// fact the operands' own types already state.
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerHirStreamingConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::StreamingConcatExpr& s,
@@ -40,19 +37,18 @@ auto LowerHirStreamingConcatExpr(
 // them into its one vector, an array takes them as its element list, and a
 // structure is those members and nothing more.
 [[nodiscard]] auto BuildPositionalAggregate(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_result_type,
-    mir::TypeId result_type, std::vector<mir::ExprId> elements) -> mir::Expr;
+    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId result_type,
+    std::vector<mir::ExprId> elements) -> mir::Expr;
 
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
-    hir::TypeId hir_result_type, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternReplicationExpr(
     Lowerer& lowerer, WalkFrame frame,
-    const hir::AssignmentPatternReplicationExpr& a, hir::TypeId hir_result_type,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 // A keyed pattern is the one aggregate build whose shape is not readable from
 // the lowered type: an index names an element, so resolving it to an offset
 // takes the dimension, and a default stands for however many elements are
@@ -66,8 +62,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
 template <ExprLowerer Lowerer>
 auto LowerHirAssociativeAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,
-    const hir::AssociativeAssignmentPatternExpr& a, hir::TypeId hir_result_type,
-    mir::TypeId result_type) -> diag::Result<mir::Expr>;
+    const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr>;
 
 // Replication (LRM 11.4.12) is an ordinary value expression, legal wherever a
 // value is, so it is one template over the pass class like the other aggregate
@@ -85,7 +81,6 @@ auto LowerHirReplicationExpr(
 template <ExprLowerer Lowerer>
 auto LowerHirDynamicArrayNewExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
-    hir::TypeId hir_result_type, mir::TypeId result_type)
-    -> diag::Result<mir::Expr>;
+    mir::TypeId result_type) -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -61,9 +61,11 @@ whole-value assignment is the defect this split exists to prevent.
 - A select of a packed-struct field, whose declared type can differ from the part-select's natural
   type, states that difference as an explicit conversion at lowering -- "convert at the boundary,
   keep the value pure" -- rather than letting a value or the runtime re-derive the result type.
-- The container out-of-bounds default mechanism (a per-container prototype element) is a separate
-  concern, untouched by this split; see
-  [runtime-shape-and-default-value](runtime-shape-and-default-value.md).
+- What a container answers an out-of-bounds read with is a separate concern, untouched by this
+  split. It was a prototype element each container held
+  ([runtime-shape-and-default-value](runtime-shape-and-default-value.md)) and is the element type's
+  own default, held by no container
+  ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
 
 ## Cross-references
 

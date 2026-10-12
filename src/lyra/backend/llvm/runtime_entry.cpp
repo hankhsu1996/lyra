@@ -80,12 +80,12 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "default";
     case RuntimeOp::kFromLiteral:
       return "from_literal";
-    case RuntimeOp::kFromLiteralBounded:
-      return "from_literal_bounded";
-    case RuntimeOp::kFromEntriesDefault:
-      return "from_entries_default";
-    case RuntimeOp::kFromEntriesDefaultWildcard:
-      return "from_entries_default_wildcard";
+    case RuntimeOp::kFromElements:
+      return "from_elements";
+    case RuntimeOp::kFromEntries:
+      return "from_entries";
+    case RuntimeOp::kFromEntriesWildcard:
+      return "from_entries_wildcard";
     case RuntimeOp::kMakeSegment:
       return "make_segment";
     case RuntimeOp::kMakeTrigger:
@@ -124,6 +124,10 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "alloc_bytes";
     case RuntimeOp::kDeallocBytes:
       return "dealloc_bytes";
+    case RuntimeOp::kElementDefault:
+      return "element_default";
+    case RuntimeOp::kDiscardedWrite:
+      return "discarded_write";
     case RuntimeOp::kConstruct:
       return "construct";
     case RuntimeOp::kDestroy:
@@ -165,39 +169,48 @@ constexpr DomainSet kOneWordFourState{
     Domain::kLogic8, Domain::kLogic16, Domain::kLogic32, Domain::kLogic64};
 constexpr DomainSet kFourStateIntegral =
     kOneWordFourState | DomainSet{Domain::kLogicWide};
-constexpr DomainSet kSequences{
-    Domain::kDynArray, Domain::kUnpackedArray, Domain::kQueue};
-constexpr DomainSet kContainers = kSequences | DomainSet{Domain::kAssocArray};
+// A fixed-size unpacked array is its elements laid out by its type, which the
+// design is compiled with; the other sequences and containers are objects the
+// library holds as its own.
+constexpr DomainSet kArrays{Domain::kUnpackedArray};
+constexpr DomainSet kLibrarySequences{Domain::kDynArray, Domain::kQueue};
+constexpr DomainSet kLibraryContainers =
+    kLibrarySequences | DomainSet{Domain::kAssocArray};
+constexpr DomainSet kSequences = kLibrarySequences | kArrays;
+constexpr DomainSet kContainers = kLibraryContainers | kArrays;
 constexpr DomainSet kUnions{Domain::kUnion, Domain::kTaggedUnion};
 constexpr DomainSet kReals{Domain::kReal, Domain::kShortReal};
 // What a stream of bits is read out of (LRM 6.24.3) besides an integral value.
 constexpr DomainSet kBitstreams = kContainers | kUnions |
                                   DomainSet{Domain::kString} |
                                   DomainSet{Domain::kManagedRef};
-// The values the library holds as an object of its own, apart from a tuple,
-// whose type is compiled with the design.
+// The values the library holds as an object of its own: every value that is
+// neither its bytes nor laid out by a type compiled with the design.
 constexpr DomainSet kLibraryObjects =
-    kContainers | kUnions | kReals |
+    kLibraryContainers | kUnions | kReals |
     DomainSet{
         Domain::kWildcardIndex, Domain::kString, Domain::kChandle,
         Domain::kEmpty, Domain::kManagedRef};
 // What an aggregate net resolves in (LRM 6.7.1), and what any net does.
-constexpr DomainSet kAggregateNets{
-    Domain::kTuple, Domain::kUnion, Domain::kUnpackedArray};
+constexpr DomainSet kAggregateNets =
+    kArrays | DomainSet{Domain::kTuple, Domain::kUnion};
 constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
-// What a variable holds besides an integral value.
-constexpr DomainSet kVariableObjects =
-    kContainers | kUnions | kReals |
+// What a variable holds besides an integral value: the objects that say what
+// they are where they lie, and a fixed-size unpacked array, whose bytes do
+// not.
+constexpr DomainSet kObjectsThatStateThemselves =
+    kLibraryContainers | kUnions | kReals |
     DomainSet{
         Domain::kString, Domain::kChandle, Domain::kTuple, Domain::kManagedRef};
+constexpr DomainSet kVariableObjects = kObjectsThatStateThemselves | kArrays;
 constexpr DomainSet kVariableValues = kIntegral | kVariableObjects;
 
 constexpr std::array kForAssociativeArrays{
     RealizedFor{.domains = {Domain::kAssocArray}}};
 constexpr std::array kForDynamicArraysAndQueues{
-    RealizedFor{.domains = {Domain::kDynArray, Domain::kQueue}}};
-constexpr std::array kForWhatDeletesWhole{RealizedFor{
-    .domains = {Domain::kDynArray, Domain::kQueue, Domain::kAssocArray}}};
+    RealizedFor{.domains = kLibrarySequences}};
+constexpr std::array kForWhatDeletesWhole{
+    RealizedFor{.domains = kLibraryContainers}};
 constexpr std::array kForArraysOfFixedExtent{
     RealizedFor{.domains = {Domain::kDynArray, Domain::kUnpackedArray}}};
 constexpr std::array kForSequences{RealizedFor{.domains = kSequences}};
@@ -210,8 +223,10 @@ constexpr std::array kForWhatCaseEqualityCompares{RealizedFor{
     .domains =
         kContainers | kUnions |
         DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
-constexpr std::array kForWhatNumbersItsElements{
-    RealizedFor{.domains = kSequences | DomainSet{Domain::kString}}};
+// What an element is read out of by an entry: a fixed-size unpacked array's
+// lies where arithmetic on the array's address says, so none is asked for it.
+constexpr std::array kForWhatAnEntryReadsAnElementOf{
+    RealizedFor{.domains = kLibrarySequences | DomainSet{Domain::kString}}};
 constexpr std::array kForWhatIsComparedBitForBit{RealizedFor{
     .domains =
         kContainers | kUnions | kReals |
@@ -221,19 +236,23 @@ constexpr std::array kForTaggedUnions{
     RealizedFor{.domains = {Domain::kTaggedUnion}}};
 constexpr std::array kForUnions{RealizedFor{.domains = kUnions}};
 constexpr std::array kForWhatMayHoldUnknowns{
-    RealizedFor{.domains = kUnions | DomainSet{Domain::kUnpackedArray}}};
+    RealizedFor{.domains = kUnions | kArrays}};
 constexpr std::array kForWhatAnAggregateNetResolves{
-    RealizedFor{.domains = {Domain::kUnion, Domain::kUnpackedArray}}};
-constexpr std::array kForUnpackedArrays{
-    RealizedFor{.domains = {Domain::kUnpackedArray}}};
+    RealizedFor{.domains = kArrays | DomainSet{Domain::kUnion}}};
+constexpr std::array kForUnpackedArrays{RealizedFor{.domains = kArrays}};
 constexpr std::array kForUnpackedArraysAndQueues{
-    RealizedFor{.domains = {Domain::kUnpackedArray, Domain::kQueue}}};
+    RealizedFor{.domains = kArrays | DomainSet{Domain::kQueue}}};
 constexpr std::array kForTuples{RealizedFor{.domains = {Domain::kTuple}}};
 constexpr std::array kForJoinedNets{RealizedFor{.domains = kFourStateIntegral}};
 constexpr std::array kForNets{RealizedFor{.domains = kNetValues}};
 constexpr std::array kForVariables{RealizedFor{.domains = kVariableValues}};
 constexpr std::array kForLibraryObjects{
     RealizedFor{.domains = kLibraryObjects}};
+// What an entry copies, moves and writes into whole: an object of the
+// library's own, and a fixed-size unpacked array, which the library walks
+// element by element through the type it is handed.
+constexpr std::array kForWhatAnEntryCopies{
+    RealizedFor{.domains = kLibraryObjects | kArrays}};
 
 // A memory a file fills (LRM 21.4): one reached by a key is told the type its
 // keys are built at, after the memory.
@@ -298,18 +317,35 @@ constexpr std::array kArmings{
 // they are.
 constexpr ThroughWrapper kThroughAReferenceToBytesOrAnObject{
     .wrapper = WrapperKind::kRef,
-    .domains = kOneWordIntegral | kVariableObjects};
+    .domains = kOneWordIntegral | kObjectsThatStateThemselves};
+// A reference to an array names elements lying in something else, which say
+// nothing of what they are. An access that hands the whole array over or
+// builds a copy of it is told the type beside that array like any other; one
+// that only reaches the array is told the type of what it reached.
+constexpr ThroughWrapper kThroughAReferenceToAnArrayHandedOver{
+    .wrapper = WrapperKind::kRef, .domains = kArrays};
+constexpr ThroughWrapper kThroughAReferenceToAnArrayReached{
+    .wrapper = WrapperKind::kRef,
+    .domains = kArrays,
+    .told = ToldArrayTypes{.reached_after = 0}};
 constexpr ThroughWrapper kThroughAReferenceToWords{
     .wrapper = WrapperKind::kRef,
     .domains = kWideIntegral,
     .told = ToldHeldWidth{.after = 0}};
 constexpr std::array kSampledLoads{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
-    kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords};
-constexpr std::array kWholeWrites{
+    kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
+    kThroughAReferenceToAnArrayHandedOver};
+constexpr std::array kStores{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
-    kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords};
+    kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
+    kThroughAReferenceToAnArrayHandedOver};
+constexpr std::array kOpenedWrites{
+    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
+    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
+    kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
+    kThroughAReferenceToAnArrayReached};
 
 constexpr std::array kRealConversions{
     Conversion{.destination = Domain::kReal, .source = Domain::kReal},
@@ -330,9 +366,21 @@ constexpr std::array kForCellsReached{
 // (LRM 11.5.1), which holds the bits written to the value's width.
 constexpr std::array kForLandings{
     RealizedFor{
-        .domains =
-            kOneWordIntegral | kVariableObjects | DomainSet{Domain::kEmpty}},
-    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidth{.after = 0}}};
+        .domains = kOneWordIntegral | kObjectsThatStateThemselves |
+                   DomainSet{Domain::kEmpty}},
+    RealizedFor{.domains = kWideIntegral, .told = ToldHeldWidth{.after = 0}},
+    RealizedFor{
+        .domains = kArrays, .told = ToldArrayTypes{.reached_after = 0}}};
+// A step into an element and a write of a run of elements each act on the
+// sequence a designation or a reference names where it lies.
+constexpr std::array kForSequencesSteppedInto{
+    RealizedFor{.domains = kLibrarySequences},
+    RealizedFor{
+        .domains = kArrays, .told = ToldArrayTypes{.reached_after = 0}}};
+constexpr std::array kForSlicesAssigned{
+    RealizedFor{.domains = {Domain::kDynArray}},
+    RealizedFor{
+        .domains = kArrays, .told = ToldArrayTypes{.reached_after = 0}}};
 constexpr std::array kForBitsWritten{
     RealizedFor{.domains = kIntegral, .told = ToldHeldWidth{.after = 0}}};
 
@@ -348,7 +396,7 @@ constexpr std::array kForWhatAHostValueBuilds{
     RealizedFor{.domains = {Domain::kString, Domain::kChandle}}};
 constexpr std::array kForWhatEndsWithWork{RealizedFor{
     .domains =
-        kContainers | kUnions |
+        kLibraryContainers | kArrays | kUnions |
         DomainSet{
             Domain::kWildcardIndex, Domain::kString, Domain::kManagedRef}}};
 // A union with one member replaced is told the type of that member, after the
@@ -420,12 +468,23 @@ auto Conversions(const EntryNaming& naming) -> std::span<const Conversion> {
       naming);
 }
 
+// What a realization for `domain` is told, given what its entry states of
+// it. Every realization for a fixed-size unpacked array is told the types of
+// the arrays it is handed, whatever else the entry says, since no array's
+// bytes state one.
+auto ToldOfTheDomain(support::ValueDomain domain, const Told& stated) -> Told {
+  if (kArrays.Holds(domain) && std::holds_alternative<ToldNothing>(stated)) {
+    return ToldArrayTypes{};
+  }
+  return stated;
+}
+
 auto ToldIn(
     std::span<const RealizedFor> realized, support::ValueDomain domain,
     std::string_view entry) -> Told {
   for (const RealizedFor& one : realized) {
     if (one.domains.Holds(domain)) {
-      return one.told;
+      return ToldOfTheDomain(domain, one.told);
     }
   }
   throw InternalError(Refusal(entry, support::ValueDomainName(domain)));
@@ -456,7 +515,7 @@ auto ToldOf(
   const EntryNaming naming = EntryNamingOf(fn);
   for (const ThroughWrapper& one : ThroughWrappers(naming)) {
     if (one.wrapper == wrapper && one.domains.Holds(domain)) {
-      return one.told;
+      return ToldOfTheDomain(domain, one.told);
     }
   }
   throw InternalError(Refusal(
@@ -464,6 +523,24 @@ auto ToldOf(
       std::format(
           "{} through a {}", support::ValueDomainName(domain),
           WrapperName(wrapper))));
+}
+
+auto ToldOfAnOperator(support::ValueDomain domain) -> Told {
+  return ToldOfTheDomain(domain, ToldNothing{});
+}
+
+auto LifecycleOp(LifecycleStep step) -> RuntimeOp {
+  switch (step) {
+    case LifecycleStep::kCopy:
+      return RuntimeOp::kCopy;
+    case LifecycleStep::kMove:
+      return RuntimeOp::kMove;
+    case LifecycleStep::kDestroy:
+      return RuntimeOp::kDestroy;
+    case LifecycleStep::kAssign:
+      return RuntimeOp::kAssign;
+  }
+  throw InternalError("llvm codegen: unknown lifecycle step");
 }
 
 auto IntegralOpOf(lir::BinaryOp op) -> support::IntegralOp {
@@ -1015,19 +1092,11 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     // elements that take their place (LRM 7.4.6).
     case RuntimeOp::kWithSlice:
       return {kMachine, kPosition, kMachine, kHeld};
-    // A container is built over an element list laid down a stated number of
-    // times, and holds elements of a type nothing else states, so it takes a
-    // value of that type first (LRM 7.5.1, 7.10).
-    case RuntimeOp::kFromLiteral:
-    case RuntimeOp::kFromLiteralBounded:
+    // The image of an actual and a wildcard index are each built over a value
+    // whose type nothing else states (LRM 35.5.6.1, 7.8.1).
     case RuntimeOp::kMakeDpiOpenArray:
     case RuntimeOp::kMakeWildcardIndex:
       return {kTyped};
-    // That value, the entries, and what a read of an index holding no entry
-    // yields (LRM 7.8.6).
-    case RuntimeOp::kFromEntriesDefault:
-    case RuntimeOp::kFromEntriesDefaultWildcard:
-      return {kTyped, kMachine, kHeld};
     case RuntimeOp::kMakeIntegralPrintValueItem:
     case RuntimeOp::kMakeIntegralFormatArg:
       return {kNumber};
@@ -1063,6 +1132,9 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kToBool:
     case RuntimeOp::kMake:
     case RuntimeOp::kDefault:
+    case RuntimeOp::kFromLiteral:
+    case RuntimeOp::kFromEntries:
+    case RuntimeOp::kFromEntriesWildcard:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
     case RuntimeOp::kMakePrintLiteralItem:
@@ -1074,6 +1146,9 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kStreamBuild:
     case RuntimeOp::kAllocBytes:
     case RuntimeOp::kDeallocBytes:
+    case RuntimeOp::kFromElements:
+    case RuntimeOp::kElementDefault:
+    case RuntimeOp::kDiscardedWrite:
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
     case RuntimeOp::kCopy:
@@ -1091,6 +1166,18 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kStreamRead:
     case RuntimeOp::kStreamBuild:
       return support::AnswerTold::kIntegralExtent;
+    // A dynamic array, a queue and an associative array are each built
+    // holding elements of a type no operand states, and a queue holding as
+    // many as a bound no operand states either (LRM 7.10.5).
+    case RuntimeOp::kFromLiteral:
+    case RuntimeOp::kFromEntries:
+    case RuntimeOp::kFromEntriesWildcard:
+      return support::AnswerTold::kBuiltArray;
+    // A position naming no element is answered for out of the element type,
+    // which no array in hand states.
+    case RuntimeOp::kElementDefault:
+    case RuntimeOp::kDiscardedWrite:
+      return support::AnswerTold::kElementType;
     case RuntimeOp::kCellRefer:
     case RuntimeOp::kReferStorage:
     case RuntimeOp::kRunProgram:
@@ -1110,10 +1197,6 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kWithElement:
     case RuntimeOp::kWithSlice:
     case RuntimeOp::kDefault:
-    case RuntimeOp::kFromLiteral:
-    case RuntimeOp::kFromLiteralBounded:
-    case RuntimeOp::kFromEntriesDefault:
-    case RuntimeOp::kFromEntriesDefaultWildcard:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
     case RuntimeOp::kMakePrintLiteralItem:
@@ -1131,6 +1214,7 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kInsertDesignatedBits:
     case RuntimeOp::kAllocBytes:
     case RuntimeOp::kDeallocBytes:
+    case RuntimeOp::kFromElements:
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
     case RuntimeOp::kCopy:
@@ -1159,13 +1243,13 @@ auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
     -> support::OperandReadings {
   using enum support::OperandReading;
   // Each acts on what a designation names. A write of a run of elements takes
-  // where they start, how many there are, and the elements, which the
-  // container holds the type of.
+  // where they start, how many there are, and the elements, a fixed-size
+  // unpacked array crossing with its type.
   switch (op) {
     case lir::OpenWriteTarget::Op::kLand:
       return {};
     case lir::OpenWriteTarget::Op::kAssignSlice:
-      return {kMachine, kPosition, kMachine, kHeld};
+      return {kMachine, kPosition, kMachine, kTyped};
     case lir::OpenWriteTarget::Op::kReadSlice:
       return {kMachine, kPosition};
   }
@@ -1177,15 +1261,15 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kCellRefer:
     case RuntimeOp::kSharedCellMake:
       return kForVariables;
-    case RuntimeOp::kFromEntriesDefault:
-    case RuntimeOp::kFromEntriesDefaultWildcard:
+    case RuntimeOp::kFromEntries:
+    case RuntimeOp::kFromEntriesWildcard:
       return kForAssociativeArrays;
     case RuntimeOp::kDefault:
       return kForWhatIsNull;
     case RuntimeOp::kFromLiteral:
-      return kForSequences;
-    case RuntimeOp::kFromLiteralBounded:
-      return kForQueues;
+      return kForDynamicArraysAndQueues;
+    case RuntimeOp::kFromElements:
+      return kForUnpackedArrays;
     case RuntimeOp::kConst:
       return kForReals;
     case RuntimeOp::kToBool:
@@ -1202,7 +1286,7 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kCopy:
     case RuntimeOp::kMove:
     case RuntimeOp::kAssign:
-      return kForLibraryObjects;
+      return kForWhatAnEntryCopies;
     case RuntimeOp::kDestroy:
       return kForWhatEndsWithWork;
     case RuntimeOp::kInsertDesignatedBits:
@@ -1237,6 +1321,8 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kAllocBytes:
     case RuntimeOp::kDeallocBytes:
+    case RuntimeOp::kElementDefault:
+    case RuntimeOp::kDiscardedWrite:
     case RuntimeOp::kConstruct:
       return {};
   }
@@ -1261,7 +1347,7 @@ auto RealizationsOf(lir::OpenWriteTarget::Op op)
     case lir::OpenWriteTarget::Op::kLand:
       return kForLandings;
     case lir::OpenWriteTarget::Op::kAssignSlice:
-      return kForArraysOfFixedExtent;
+      return kForSlicesAssigned;
     // No container lends a run of its elements within a write.
     case lir::OpenWriteTarget::Op::kReadSlice:
       return {};
@@ -1332,6 +1418,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAssocPrev:
     case support::BuiltinFn::kAssocMinIndex:
     case support::BuiltinFn::kAssocMaxIndex:
+    case support::BuiltinFn::kAssocWithDefault:
       return NamedByValue{.realized = kForAssociativeArrays};
 
     // LRM 7.6 assignment between unpacked array kinds, one entry per
@@ -1354,8 +1441,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kReverse:
     case support::BuiltinFn::kSort:
     case support::BuiltinFn::kRsort:
-    case support::BuiltinFn::kElementRef:
       return NamedByValue{.realized = kForSequences};
+    // An element of a fixed-size unpacked array lies where arithmetic on the
+    // array's address says, so no entry is asked for one.
+    case support::BuiltinFn::kElementRef:
+      return NamedByValue{.realized = kForDynamicArraysAndQueues};
 
     case support::BuiltinFn::kSize:
     case support::BuiltinFn::kSum:
@@ -1437,7 +1527,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByValue{.realized = kForStrings};
 
     case support::BuiltinFn::kElement:
-      return NamedByValue{.realized = kForWhatNumbersItsElements};
+      return NamedByValue{.realized = kForWhatAnEntryReadsAnElementOf};
     case support::BuiltinFn::kCaseEqual:
       return NamedByValue{.realized = kForWhatCaseEqualityCompares};
     case support::BuiltinFn::kBitIdentical:
@@ -1509,8 +1599,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // Opening a write reaches the contents of the wrapper it is opened on, and
     // what the write reports when it ends is that wrapper's own business.
     case support::BuiltinFn::kStore:
+      return NamedByWrapper{.realized = kStores};
     case support::BuiltinFn::kOpenForWrite:
-      return NamedByWrapper{.realized = kWholeWrites};
+      return NamedByWrapper{.realized = kOpenedWrites};
     // A driver carrying the whole of an object is told so, and asked at its
     // turn whether its net now shows that object; the driver it acts on names
     // the entry.
@@ -1554,7 +1645,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // designated or referred to there.
     case support::BuiltinFn::kDesignateElement:
     case support::BuiltinFn::kReferElement:
-      return NamedByStorageDomain{.realized = kForSequences};
+      return NamedByStorageDomain{.realized = kForSequencesSteppedInto};
     case support::BuiltinFn::kDesignateComponent:
     case support::BuiltinFn::kReferComponent:
       return NamedByStorageDomain{.realized = kForTuples};
@@ -1733,7 +1824,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFindExportEntry:
     case support::BuiltinFn::kRunForeignTaskOnFiber:
     case support::BuiltinFn::kRunExportedTaskToCompletion:
-    case support::BuiltinFn::kMakeDynamicArrayDefault:
     case support::BuiltinFn::kMakeDynamicArrayNew:
     case support::BuiltinFn::kMakeDynamicArrayNewCopy:
     case support::BuiltinFn::kEnterTarget:
@@ -1773,9 +1863,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // what it guards decides nothing about the code: one realization serves
     // every value, and serves a cell reached through the same access too.
     case support::BuiltinFn::kRequire:
-    // A value built from a stream of bits under a prototype (LRM 6.24.3), asked
-    // of the type the prototype crosses with, so one function serves every
-    // type.
+    // A value built from a stream of bits (LRM 6.24.3), asked of the type it
+    // is told it answers, so one function serves every type.
     case support::BuiltinFn::kFromBitstream:
     // The DPI-C boundary marshaling (LRM 35.5.6, Annex H.7.7, H.10). Each of
     // these is one library function and not a family: what a canonical buffer,

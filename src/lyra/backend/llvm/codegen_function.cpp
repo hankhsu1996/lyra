@@ -259,65 +259,44 @@ auto CodeGenFunction::BuildInto(
   return out;
 }
 
-auto CodeGenFunction::OwnedCallee(lir::TypeId type, TupleLifecycle step)
-    -> llvm::FunctionCallee {
-  if (module_->Unit().types.Get(type).IsProduct()) {
-    return module_->Tuples().Function(type, step);
-  }
-  if (module_->Types().IntegralShapeOf(type).has_value()) {
-    throw InternalError(
-        "llvm codegen: an integral value's lifecycle is a copy of its bytes, "
-        "which no entry carries out -- please report this as a bug");
-  }
-  return module_->LifecycleEntry(
-      RuntimeSymbol(ObjectOf(type), LifecycleOp(step)), step);
-}
-
-void CodeGenFunction::CopyIntegralBytes(
-    lir::TypeId type, llvm::Value* value, llvm::Value* out) {
-  const support::ObjectLayout layout = module_->Types().StorageOf(type);
-  const llvm::Align align(layout.align);
-  builder_.CreateMemCpy(out, align, value, align, layout.size);
-}
-
-void CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value) {
+auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
+    -> diag::Result<void> {
   if (module_->Types().StorageOf(type).ends_with_nothing_to_do) {
-    return;
+    return {};
   }
   const std::array<llvm::Value*, 1> args{value};
-  builder_.CreateCall(OwnedCallee(type, TupleLifecycle::kDestroy), args);
+  return module_->EmitLifecycle(builder_, type, LifecycleStep::kDestroy, args);
 }
 
 auto CodeGenFunction::CopyValue(
-    lir::TypeId type, llvm::Value* value, llvm::Value* out) -> llvm::Value* {
-  if (module_->Types().IntegralShapeOf(type).has_value()) {
-    CopyIntegralBytes(type, value, out);
-    return out;
-  }
+    lir::TypeId type, llvm::Value* value, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
   const std::array<llvm::Value*, 2> args{value, out};
-  builder_.CreateCall(OwnedCallee(type, TupleLifecycle::kCopy), args);
+  auto copied =
+      module_->EmitLifecycle(builder_, type, LifecycleStep::kCopy, args);
+  if (!copied) {
+    return std::unexpected(std::move(copied.error()));
+  }
   return out;
 }
 
-void CodeGenFunction::AssignValue(
-    lir::TypeId type, llvm::Value* value, llvm::Value* out) {
-  if (module_->Types().IntegralShapeOf(type).has_value()) {
-    CopyIntegralBytes(type, value, out);
-    return;
-  }
+auto CodeGenFunction::AssignValue(
+    lir::TypeId type, llvm::Value* value, llvm::Value* out)
+    -> diag::Result<void> {
   const std::array<llvm::Value*, 2> args{out, value};
-  builder_.CreateCall(OwnedCallee(type, TupleLifecycle::kAssign), args);
+  return module_->EmitLifecycle(builder_, type, LifecycleStep::kAssign, args);
 }
 
-void CodeGenFunction::RelocateValue(
-    lir::TypeId type, llvm::Value* value, llvm::Value* out) {
-  if (module_->Types().IntegralShapeOf(type).has_value()) {
-    CopyIntegralBytes(type, value, out);
-    return;
-  }
+auto CodeGenFunction::RelocateValue(
+    lir::TypeId type, llvm::Value* value, llvm::Value* out)
+    -> diag::Result<void> {
   const std::array<llvm::Value*, 2> args{value, out};
-  builder_.CreateCall(OwnedCallee(type, TupleLifecycle::kMove), args);
-  EndValue(type, value);
+  auto moved =
+      module_->EmitLifecycle(builder_, type, LifecycleStep::kMove, args);
+  if (!moved) {
+    return moved;
+  }
+  return EndValue(type, value);
 }
 
 auto CodeGenFunction::ComponentAddress(
@@ -325,18 +304,6 @@ auto CodeGenFunction::ComponentAddress(
   return builder_.CreateConstInBoundsGEP1_64(
       builder_.getInt8Ty(), value,
       module_->Types().LayoutOfTuple(tuple).offsets.at(index));
-}
-
-auto CodeGenFunction::ObjectOf(lir::TypeId type) const
-    -> support::RuntimeObject {
-  const std::optional<support::RuntimeObject> object =
-      HeldObjectOf(module_->Unit().types.Get(type));
-  if (!object.has_value()) {
-    throw InternalError(
-        "llvm codegen: an owned value's operation names a type that is no "
-        "runtime object -- please report this as a bug");
-  }
-  return *object;
 }
 
 auto CodeGenFunction::Variables() -> diag::Result<const RecordLayout*> {
@@ -390,7 +357,10 @@ auto CodeGenFunction::LowerCloseVariables(
   if (!storage) {
     return std::unexpected(std::move(storage.error()));
   }
-  module_->EndMembers(builder_, *storage, **record);
+  auto ended = module_->EndMembers(builder_, *storage, **record);
+  if (!ended) {
+    return std::unexpected(std::move(ended.error()));
+  }
   return nullptr;
 }
 
@@ -495,7 +465,10 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             // the body answers with as an entry does.
             if (module_->Unit().types.Get(fn_->result_type).IsOwnedValue()) {
               llvm::Value* out = value_->getArg(value_->arg_size() - 1);
-              RelocateValue(fn_->result_type, *value, out);
+              auto relocated = RelocateValue(fn_->result_type, *value, out);
+              if (!relocated) {
+                return relocated;
+              }
               // The bytes the answer was made in go out of use with the
               // return, once the answer lies where the caller reads it.
               if (const auto* made = std::get_if<lir::Use>(&*ret.value)) {

@@ -4,8 +4,9 @@
 #include <cstdint>
 #include <span>
 
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral_value_type.hpp"
-#include "lyra/value/runtime_unpacked_array.hpp"
+#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -37,12 +38,13 @@ struct ConstMemoryWord {
 // The word at one grid coordinate of `memory`, where it lies: `top` is an
 // address of the addressed dimension, `dims[0]`, and `ordinal` counts the
 // leaves that address expands to across the rest of `dims`, one declared range
-// per dimension.
+// per dimension. A memory that is written is one the runtime holds; one that
+// is only read is read where it lies.
 [[nodiscard]] auto MemoryLeaf(
-    RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
+    RuntimeFixedArray& memory, std::span<const UnpackedRange> dims,
     std::int64_t top, std::size_t ordinal) -> MemoryWord;
 [[nodiscard]] auto MemoryLeaf(
-    const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
+    const FixedArrayView& memory, std::span<const UnpackedRange> dims,
     std::int64_t top, std::size_t ordinal) -> ConstMemoryWord;
 
 }  // namespace lyra::value

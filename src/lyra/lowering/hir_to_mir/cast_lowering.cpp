@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 
-#include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
@@ -11,7 +10,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -24,52 +22,17 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// LRM 7.10.5: the maximum index a queue's type declares, as the operand a
-// runtime entry takes for it. A bound below zero is the unbounded queue, so one
-// operand covers both and a queue declaring no bound is not a second form.
-auto BuildQueueBoundOperand(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    const mir::QueueType& queue) -> mir::ExprId {
-  return BuildMachineIntLiteral(
-      unit, block,
-      queue.max_bound.has_value() ? static_cast<std::int64_t>(*queue.max_bound)
-                                  : -1);
-}
-
-// An array of one kind built out of another kind's elements (LRM 7.6). The
-// element shape, the element count a fixed-size array declares, and a queue's
-// bound are properties of the destination variable, so each is read from
-// `dst_type`, and which of them there is to hand over is what tells the three
-// destinations' entries apart.
+// An array of one kind built out of another kind's elements (LRM 7.6), or a
+// queue brought to the bound its own declaration states (LRM 7.10.5): the
+// source is the one operand, and everything else the destination's type says.
 auto BuildArrayFromArrayCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId src_id,
-    mir::TypeId dst_type) -> mir::Expr {
-  const mir::ExprId element_default = block.exprs.Add(BuildDefaultValueExpr(
-      unit, block, RequiredContainerElementType(unit, dst_type)));
-  const auto call = [&](support::BuiltinFn entry,
-                        std::vector<mir::ExprId> arguments) {
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee = mir::Direct{.target = entry},
-                .arguments = std::move(arguments)},
-        .type = dst_type};
-  };
-  const mir::Type& destination = unit.types.Get(dst_type);
-  if (const auto* fixed_size = destination.As<mir::UnpackedArrayType>()) {
-    return call(
-        support::BuiltinFn::kUnpackedArrayFromArray,
-        {src_id, element_default,
-         BuildMachineIntLiteral(
-             unit, block, static_cast<std::int64_t>(fixed_size->Size()))});
-  }
-  if (const auto* queue = destination.As<mir::QueueType>()) {
-    return call(
-        support::BuiltinFn::kQueueFromArray,
-        {src_id, element_default, BuildQueueBoundOperand(unit, block, *queue)});
-  }
-  return call(
-      support::BuiltinFn::kDynamicArrayFromArray, {src_id, element_default});
+    support::BuiltinFn entry, mir::ExprId src_id, mir::TypeId dst_type)
+    -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = entry}, .arguments = {src_id}},
+      .type = dst_type};
 }
 
 // A conversion into a real type, named for which conversion this is: landing a
@@ -215,17 +178,12 @@ auto ToString(
 // past its end left at the element type's default. `entry` is the one taking
 // the form the text arrives in.
 auto MakeBytesFromTextCall(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand,
-    mir::TypeId destination, support::BuiltinFn entry, std::uint64_t count)
+    mir::ExprId operand, mir::TypeId destination, support::BuiltinFn entry)
     -> mir::Expr {
-  const mir::ExprId count_id =
-      BuildMachineIntLiteral(unit, block, static_cast<std::int64_t>(count));
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee =
-                  mir::Direct{.target = entry, .type_argument = destination},
-              .arguments = {operand, count_id}},
+              .callee = mir::Direct{.target = entry}, .arguments = {operand}},
       .type = destination};
 }
 
@@ -242,21 +200,20 @@ auto ToFixedSizeArray(
     return block.exprs.Get(operand);
   }
   if (source.Is<mir::DynamicArrayType>() || source.Is<mir::QueueType>()) {
-    return BuildArrayFromArrayCall(unit, block, operand, destination);
+    return BuildArrayFromArrayCall(
+        support::BuiltinFn::kUnpackedArrayFromArray, operand, destination);
   }
   if (IsArrayOfBytes(unit, array)) {
     if (source.Is<mir::StringType>()) {
       return MakeBytesFromTextCall(
-          unit, block, operand, destination,
-          support::BuiltinFn::kByteArrayFromString, array.Size());
+          operand, destination, support::BuiltinFn::kByteArrayFromString);
     }
     // A string literal is a packed constant, and its bytes arrive whole: a
     // NUL among them is a byte like any other, where a string value would
     // have dropped it (LRM 6.16).
     if (source.IsIntegral()) {
       return MakeBytesFromTextCall(
-          unit, block, operand, destination,
-          support::BuiltinFn::kByteArrayFromBits, array.Size());
+          operand, destination, support::BuiltinFn::kByteArrayFromBits);
     }
   }
   RefuseConversion("a fixed-size unpacked array");
@@ -270,7 +227,8 @@ auto ToDynamicArray(
     return block.exprs.Get(operand);
   }
   if (source.Is<mir::UnpackedArrayType>() || source.Is<mir::QueueType>()) {
-    return BuildArrayFromArrayCall(unit, block, operand, destination);
+    return BuildArrayFromArrayCall(
+        support::BuiltinFn::kDynamicArrayFromArray, operand, destination);
   }
   RefuseConversion("a dynamic array");
 }
@@ -281,23 +239,15 @@ auto ToQueue(
   const mir::Type& source = unit.types.Get(block.exprs.Get(operand).type);
   if (source.Is<mir::UnpackedArrayType>() ||
       source.Is<mir::DynamicArrayType>()) {
-    return BuildArrayFromArrayCall(unit, block, operand, destination);
+    return BuildArrayFromArrayCall(
+        support::BuiltinFn::kQueueFromArray, operand, destination);
   }
   // LRM 7.10.5: the bound is a declared property of the destination variable,
   // so a queue assigned another's contents keeps only what its own bound
   // admits.
   if (source.Is<mir::QueueType>()) {
-    const mir::ExprId bound = BuildQueueBoundOperand(
-        unit, block, unit.types.Get(destination).Get<mir::QueueType>());
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = support::BuiltinFn::kConformBound,
-                        .receiver = operand},
-                .arguments = {bound}},
-        .type = destination};
+    return BuildArrayFromArrayCall(
+        support::BuiltinFn::kConformBound, operand, destination);
   }
   RefuseConversion("a queue");
 }

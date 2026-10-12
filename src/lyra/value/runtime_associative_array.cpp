@@ -8,6 +8,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/basic_associative_array.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
@@ -51,11 +52,14 @@ auto WitnessedKey::Less::operator()(IndexView a, IndexView b) const -> bool {
 RuntimeAssociativeArray::RuntimeAssociativeArray() = default;
 
 RuntimeAssociativeArray::RuntimeAssociativeArray(
-    AssociativeIndexOrder index_order, const ValueType& element,
-    const void* element_default, const void* miss)
+    AssociativeIndexOrder index_order, const value::ElementType& element)
     : core_(
           std::in_place, WitnessedKey{.order = index_order},
-          WitnessedElem(element, element_default), miss) {
+          WitnessedElem(element)) {
+}
+
+RuntimeAssociativeArray::RuntimeAssociativeArray(Core core)
+    : core_(std::move(core)) {
 }
 
 RuntimeAssociativeArray::RuntimeAssociativeArray(
@@ -92,16 +96,13 @@ auto RuntimeAssociativeArray::IndexOrder() const -> AssociativeIndexOrder {
   return Installed().KeyType().order;
 }
 
-auto RuntimeAssociativeArray::ElementType() const -> const ValueType& {
-  return Installed().Element().Type();
+auto RuntimeAssociativeArray::ElementType() const -> const value::ElementType& {
+  return Installed().Element().ElementType();
 }
 
-auto RuntimeAssociativeArray::ElementDefault() const -> const void* {
-  return Installed().Element().Default();
-}
-
-auto RuntimeAssociativeArray::Miss() const -> const void* {
-  return Installed().Miss();
+auto RuntimeAssociativeArray::WithDefault(const void* stated_default) const
+    -> RuntimeAssociativeArray {
+  return RuntimeAssociativeArray(Installed().WithDefault(stated_default));
 }
 
 auto RuntimeAssociativeArray::Count() const -> std::size_t {

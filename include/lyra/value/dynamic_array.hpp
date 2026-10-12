@@ -5,25 +5,23 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <utility>
 
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
-#include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/position.hpp"
 #include "lyra/value/queue.hpp"
 #include "lyra/value/unpacked_array.hpp"
 
 namespace lyra::value {
 
 // SystemVerilog dynamic array (LRM 7.5). Size set at run time via `new[N]` /
-// `new[N](other)` constructors; default is the empty array (LRM Table 6-7). The
-// element default is what an invalid-index read returns.
+// `new[N](other)` constructors; default is the empty array (LRM Table 6-7).
+// What an invalid-index read returns and a new element starts as is the element
+// type's default (LRM Table 7-1), which `T`'s own default construction builds.
 template <typename T>
 class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
  public:
@@ -31,86 +29,59 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
   template <typename U>
   using Rebound = DynamicArray<U>;
 
-  // Sentinel "uninitialized" form -- empty container with no element default.
-  // Used as the declared default state of a `Var<DynamicArray<T>>` field; the
-  // first MIR-level assignment overwrites the whole array (LRM 10.5 variable
-  // initialization).
   DynamicArray() = default;
 
-  // Empty container with the element default seeded. Used for declarations
-  // like `int arr[];` where the array starts empty but the element shape is
-  // known at lowering time.
-  explicit DynamicArray(T element_default)
-      : core_(StaticElem<T>(std::move(element_default))) {
-  }
-
-  // LRM 7.5.1 `new[N]`: build `n` elements, each a copy of the element default.
-  // `n` is a longint per LRM 7.5.1; the negative-N case throws at construction.
-  DynamicArray(std::int64_t n, T element_default)
-      : core_(
-            StaticElem<T>(std::move(element_default)),
-            CountOf(n, "dynamic array new[N]"), nullptr) {
+  // LRM 7.5.1 `new[N]`: `n` elements, each the element type's default. `n` is
+  // a longint per LRM 7.5.1; the negative-N case throws at construction.
+  explicit DynamicArray(std::int64_t n)
+      : core_(StaticElem<T>{}, CountOf(n, "dynamic array new[N]"), nullptr) {
   }
 
   // LRM 7.5.1 `new[N](other)`: the first `N` of `other`'s elements, padded with
-  // the element default where `other` has fewer.
-  DynamicArray(std::int64_t n, T element_default, const DynamicArray& src)
+  // the element type's default where `other` has fewer.
+  DynamicArray(std::int64_t n, const DynamicArray& src)
       : core_(
-            StaticElem<T>(std::move(element_default)),
-            CountOf(n, "dynamic array new[N](src)"), &src.core_) {
+            StaticElem<T>{}, CountOf(n, "dynamic array new[N](src)"),
+            &src.core_) {
   }
 
-  // LRM 10.9.1 assignment-pattern construction: the element default seeded,
-  // size taken from the pattern's element list. Mirrors `UnpackedArray`'s span
-  // ctor so a single emit path produces `std::array<T, N>{...}` as the
-  // second argument for either container.
-  DynamicArray(T element_default, std::span<const T> init)
-      : DynamicArray(std::move(element_default)) {
+  // LRM 10.9.1 assignment-pattern construction: the elements of the pattern's
+  // list, in order.
+  explicit DynamicArray(std::span<const T> init) {
     core_ = core_.Extended(detail::ReplicatedAddresses(init, 1));
   }
 
   // LRM 10.9.1 `'{count{...}}` pattern: `count` replications of `unit`.
   // Taking the repeat unit and the count separately keeps the value O(unit)
   // to build rather than O(unit * count).
-  DynamicArray(T element_default, std::span<const T> unit, std::size_t count)
-      : DynamicArray(std::move(element_default)) {
+  DynamicArray(std::span<const T> unit, std::size_t count) {
     core_ = core_.Extended(detail::ReplicatedAddresses(unit, count));
   }
 
   // The LRM 7.5.1 run-time-sized forms, each named. Which one a source
   // construct means is decided where that construct is read, not by the
-  // argument list: `new[N]` and an assignment pattern both carry two operands,
-  // so a target with no overload resolution of its own has nothing to tell them
-  // apart. The assignment pattern stays the constructor, since a container has
-  // one way to be built from an element list.
-  [[nodiscard]] static auto Default(T element_default) -> DynamicArray {
-    return DynamicArray(std::move(element_default));
+  // argument list, so a target with no overload resolution of its own has a
+  // name to call. The assignment pattern stays the constructor, since a
+  // container has one way to be built from an element list.
+  [[nodiscard]] static auto New(std::int64_t n) -> DynamicArray {
+    return DynamicArray(n);
   }
 
-  [[nodiscard]] static auto New(std::int64_t n, T element_default)
+  [[nodiscard]] static auto NewCopy(std::int64_t n, const DynamicArray& src)
       -> DynamicArray {
-    return DynamicArray(n, std::move(element_default));
-  }
-
-  [[nodiscard]] static auto NewCopy(
-      std::int64_t n, T element_default, const DynamicArray& src)
-      -> DynamicArray {
-    return DynamicArray(n, std::move(element_default), src);
+    return DynamicArray(n, src);
   }
 
   // LRM 7.6: a dynamic array assigned an array of any of the three unpacked
   // kinds is resized to the source's element count and takes its elements in
   // left-to-right order. The clause admits the assignment only where the
-  // element types are equivalent, so each element crosses as it stands, and the
-  // element default is the destination's own -- the element shape is a declared
-  // property of the variable being written, which the source has no say in.
-  // Named rather than left a constructor because an argument list of an element
-  // default and one more operand does not say which of the run-time-sized forms
-  // it is, and a target with no overload resolution has nothing else to read.
+  // element types are equivalent, so each element crosses as it stands. Named
+  // rather than left a constructor because an argument list of one operand
+  // does not say which of the run-time-sized forms it is, and a target with no
+  // overload resolution has nothing else to read.
   template <OrdinalElements C>
-  [[nodiscard]] static auto FromArray(const C& source, T element_default)
-      -> DynamicArray {
-    DynamicArray result(std::move(element_default));
+  [[nodiscard]] static auto FromArray(const C& source) -> DynamicArray {
+    DynamicArray result;
     result.core_ = result.core_.Extended(detail::OrdinalAddresses(source));
     return result;
   }
@@ -134,12 +105,6 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
     return *static_cast<const T*>(core_.At(i));
   }
 
-  // The element type's default (LRM Table 7-1), the shape an out-of-range read
-  // returns and a derived container seeds its own out-of-range source with.
-  [[nodiscard]] auto ElementDefault() const -> const T& {
-    return core_.Element().DefaultValue();
-  }
-
   // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no
   // element of the array.
   [[nodiscard]] auto ElementRef(const Position& position, Formation& formed)
@@ -158,7 +123,7 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
 
   // LRM 7.4.5 / 7.4.6 contiguous-range selector: a fixed-size unpacked array of
   // `count` elements from `start`. An element outside the array, and every
-  // element of a start that names no position, reads the canonical default.
+  // element of a start that names no position, reads the element default.
   template <typename Result>
   [[nodiscard]] auto Slice(const Position& start, std::int64_t count) const
       -> Result {

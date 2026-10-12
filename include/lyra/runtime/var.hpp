@@ -29,7 +29,7 @@
 
 namespace lyra::value {
 
-template <typename T>
+template <typename T, std::int64_t kBound>
 class Queue;
 class RuntimeQueue;
 
@@ -41,8 +41,8 @@ namespace detail {
 
 template <typename Container>
 inline constexpr bool kIsQueue = false;
-template <typename T>
-inline constexpr bool kIsQueue<value::Queue<T>> = true;
+template <typename T, std::int64_t kBound>
+inline constexpr bool kIsQueue<value::Queue<T, kBound>> = true;
 template <>
 inline constexpr bool kIsQueue<value::RuntimeQueue> = true;
 
@@ -363,8 +363,8 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // that was overridden.
   void Set(const T& new_val);
 
-  // The same write of a value handed as its bytes, as wide as what the cell
-  // holds, which the cell compares with and takes into the words it has.
+  // The same write of a value handed as its bytes, laid out as what the cell
+  // holds is, which the cell compares with and takes into the storage it has.
   void SetBytes(const void* bytes)
     requires value::TakesBytesInPlace<T>
   {
@@ -393,8 +393,8 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& new_val) -> bool;
 
-  // The same of a value handed as its bytes, as wide as what the cell holds,
-  // which the level takes into the words it has once it holds a value.
+  // The same of a value handed as its bytes, laid out as what the cell holds
+  // is, which the level takes into the storage it has once it holds a value.
   auto DriveTakeoverBytes(
       std::int64_t level, std::int64_t generation, const void* bytes) -> bool
     requires value::TakesBytesInPlace<T>;

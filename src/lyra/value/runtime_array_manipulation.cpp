@@ -5,11 +5,14 @@
 #include <vector>
 
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/element_type.hpp"
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/queue_type.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -47,7 +50,7 @@ auto EntriesOf(const RuntimeDynamicArray& array) -> ArrayEntries {
   return OrdinalEntries(array);
 }
 
-auto EntriesOf(const RuntimeUnpackedArray& array) -> ArrayEntries {
+auto EntriesOf(const FixedArrayView& array) -> ArrayEntries {
   return OrdinalEntries(array);
 }
 
@@ -60,12 +63,6 @@ auto EntriesOf(const RuntimeAssociativeArray& array) -> ArrayEntries {
   return entries;
 }
 
-auto LocatedQueue(
-    const ValueType& type, const void* prototype,
-    const std::vector<const void*>& places) -> RuntimeQueue {
-  return RuntimeQueue::FromElements(type, prototype, places);
-}
-
 auto PlacesOf(const std::vector<AnyValue>& values) -> std::vector<const void*> {
   std::vector<const void*> places;
   places.reserve(values.size());
@@ -76,38 +73,73 @@ auto PlacesOf(const std::vector<AnyValue>& values) -> std::vector<const void*> {
 }
 
 template <>
-auto ContainerOf<RuntimeQueue>(
-    const std::vector<AnyValue>& elements, const ValueType& type,
-    const void* prototype) -> RuntimeQueue {
-  return LocatedQueue(type, prototype, PlacesOf(elements));
+auto ContainerOf<RuntimeQueue, QueueType>(
+    const std::vector<AnyValue>& elements, const QueueType& answer)
+    -> RuntimeQueue {
+  return RuntimeQueue::FromElements(answer, PlacesOf(elements));
 }
 
 template <>
-auto ContainerOf<RuntimeDynamicArray>(
-    const std::vector<AnyValue>& elements, const ValueType& type,
-    const void* prototype) -> RuntimeDynamicArray {
-  return RuntimeDynamicArray::FromElements(type, prototype, PlacesOf(elements));
-}
-
-template <>
-auto ContainerOf<RuntimeUnpackedArray>(
-    const std::vector<AnyValue>& elements, const ValueType& type,
-    const void* prototype) -> RuntimeUnpackedArray {
-  return {type, prototype, PlacesOf(elements)};
+auto ContainerOf<RuntimeDynamicArray, ElementType>(
+    const std::vector<AnyValue>& elements, const ElementType& answer)
+    -> RuntimeDynamicArray {
+  return RuntimeDynamicArray::FromElements(answer, PlacesOf(elements));
 }
 
 }  // namespace detail
 
 auto RuntimeArrayMap(
+    const FixedArrayView& receiver, const ArrayMethodBody& body,
+    const FixedArrayType& answer_type) -> RuntimeFixedArray {
+  const detail::ArrayEntries entries = detail::EntriesOf(receiver);
+  return RuntimeFixedArray::FromElements(
+      answer_type,
+      detail::PlacesOf(
+          detail::KeysOf(
+              entries.elements.size(), detail::KeyOf(entries, body))));
+}
+
+auto RuntimeArrayMap(
     const RuntimeAssociativeArray& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeAssociativeArray {
-  RuntimeAssociativeArray projected(
-      receiver.IndexOrder(), type, prototype, prototype);
+    const ElementType& answer_element) -> RuntimeAssociativeArray {
+  RuntimeAssociativeArray projected(receiver.IndexOrder(), answer_element);
   for (const auto& [index, element] : receiver.Entries()) {
     const AnyValue answered = body(element, index->Bytes());
     projected.Store(WitnessedKey::ViewOf(*index), answered.Bytes());
   }
   return projected;
+}
+
+namespace {
+
+// Every key is projected before any element moves, and the permutation the
+// keys settle is applied to the elements where they lie.
+void SortWhereItLies(
+    const FixedArrayType& type, void* array, const ArrayMethodBody& body,
+    bool descending) {
+  const detail::ArrayEntries entries =
+      detail::EntriesOf(FixedArrayView{.type = &type, .bytes = array});
+  type.Permute(
+      array,
+      detail::SortedPositions(
+          detail::KeysOf(entries.elements.size(), detail::KeyOf(entries, body)),
+          descending));
+}
+
+}  // namespace
+
+void RuntimeArraySort(
+    const FixedArrayType& type, void* array, const ArrayMethodBody& body) {
+  SortWhereItLies(type, array, body, false);
+}
+
+void RuntimeArrayRsort(
+    const FixedArrayType& type, void* array, const ArrayMethodBody& body) {
+  SortWhereItLies(type, array, body, true);
+}
+
+void RuntimeArrayReverse(const FixedArrayType& type, void* array) {
+  type.Permute(array, detail::ReversedPositions(type.Count()));
 }
 
 auto KeyBefore(const AnyValue& a, const AnyValue& b) -> bool {

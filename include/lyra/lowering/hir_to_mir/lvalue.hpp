@@ -56,7 +56,7 @@ struct LvalueConcat {
 
 // `type` is the type of the value the lvalue holds: the place's own, or what
 // the join's members make together. `source_type` is that type as the source
-// declared it, which is what a value of it is built from.
+// declared it, which is what a drive compares the type of its source with.
 struct Lvalue {
   std::variant<AccessPath, LvalueConcat> form;
   mir::TypeId type;

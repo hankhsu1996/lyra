@@ -1,11 +1,14 @@
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
 
 #include <cstddef>
+#include <cstdint>
+#include <expected>
 #include <format>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -199,6 +202,29 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       return std::unexpected(std::move(fn.error()));
     }
     out_.functions.Add(*std::move(fn));
+  }
+
+  // A type's default is a function no call of the program names, so its symbol
+  // is counted. Two types MIR tells apart and LIR does not are one
+  // representation with one default, which the first of them states.
+  std::unordered_set<lir::TypeId> defaulted;
+  for (const mir::TypeDefault& stated : mir_->type_defaults) {
+    const lir::TypeId type = TranslateType(stated.type);
+    if (!defaulted.insert(type).second) {
+      continue;
+    }
+    auto fn = FunctionLowerer(
+                  *this, stated.code,
+                  lir::TypeDefaultSymbol(
+                      mir_->name,
+                      static_cast<std::uint32_t>(out_.type_defaults.size())))
+                  .Run();
+    if (!fn) {
+      return std::unexpected(std::move(fn.error()));
+    }
+    out_.type_defaults.push_back(
+        lir::TypeDefault{
+            .type = type, .function = out_.functions.Add(*std::move(fn))});
   }
 
   // A struct's method is a function under a symbol composed from the struct

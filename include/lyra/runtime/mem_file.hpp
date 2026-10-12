@@ -368,38 +368,38 @@ void WriteMemWithin(
       runtime, src, filename, static_cast<unsigned>(base), start, finish);
 }
 
-template <value::IntegralValue T>
+template <value::IntegralValue T, std::int64_t kBound>
 auto ReadMem(
-    RuntimeEffects& runtime, value::Queue<T> dest,
+    RuntimeEffects& runtime, value::Queue<T, kBound> dest,
     const value::String& filename, std::int64_t base, std::int64_t start)
-    -> MemoryLoad<value::Queue<T>> {
+    -> MemoryLoad<value::Queue<T, kBound>> {
   detail::ReadMemZeroBased(
       runtime, dest, filename, static_cast<unsigned>(base), start,
       std::nullopt);
-  return MemoryLoad<value::Queue<T>>{std::move(dest)};
+  return MemoryLoad<value::Queue<T, kBound>>{std::move(dest)};
 }
 
-template <value::IntegralValue T>
+template <value::IntegralValue T, std::int64_t kBound>
 auto ReadMemWithin(
-    RuntimeEffects& runtime, value::Queue<T> dest,
+    RuntimeEffects& runtime, value::Queue<T, kBound> dest,
     const value::String& filename, std::int64_t base, std::int64_t start,
-    std::int64_t finish) -> MemoryLoad<value::Queue<T>> {
+    std::int64_t finish) -> MemoryLoad<value::Queue<T, kBound>> {
   detail::ReadMemZeroBased(
       runtime, dest, filename, static_cast<unsigned>(base), start, finish);
-  return MemoryLoad<value::Queue<T>>{std::move(dest)};
+  return MemoryLoad<value::Queue<T, kBound>>{std::move(dest)};
 }
 
-template <value::IntegralValue T>
+template <value::IntegralValue T, std::int64_t kBound>
 void WriteMem(
-    RuntimeEffects& runtime, const value::Queue<T>& src,
+    RuntimeEffects& runtime, const value::Queue<T, kBound>& src,
     const value::String& filename, std::int64_t base, std::int64_t start) {
   detail::WriteMemZeroBased(
       runtime, src, filename, static_cast<unsigned>(base), start, std::nullopt);
 }
 
-template <value::IntegralValue T>
+template <value::IntegralValue T, std::int64_t kBound>
 void WriteMemWithin(
-    RuntimeEffects& runtime, const value::Queue<T>& src,
+    RuntimeEffects& runtime, const value::Queue<T, kBound>& src,
     const value::String& filename, std::int64_t base, std::int64_t start,
     std::int64_t finish) {
   detail::WriteMemZeroBased(

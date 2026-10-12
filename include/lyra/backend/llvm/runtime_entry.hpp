@@ -96,6 +96,15 @@ struct ToldHeldWidth {
   std::size_t after;
 };
 struct ToldHeldWidthAhead {};
+// A fixed-size unpacked array is its elements and nothing more, so a
+// realization for one is told the type of every array it is handed as the
+// value it is, after that array. Where it reaches the array through a
+// reference or a designation instead, which name bytes lying in something
+// else, it is told the type of the array reached, after operand
+// `reached_after`.
+struct ToldArrayTypes {
+  std::optional<std::size_t> reached_after = std::nullopt;
+};
 struct ToldKeyType {
   std::size_t after;
 };
@@ -103,7 +112,7 @@ struct ToldMemberType {
   std::size_t after;
 };
 using Told = std::variant<
-    ToldNothing, ToldHeldWidth, ToldHeldWidthAhead, ToldKeyType,
+    ToldNothing, ToldHeldWidth, ToldHeldWidthAhead, ToldArrayTypes, ToldKeyType,
     ToldMemberType>;
 
 // The domains the library realizes an entry for that are told the same thing.
@@ -166,9 +175,15 @@ enum class RuntimeOp : std::uint8_t {
   kWithSlice,
   kDefault,
   kFromLiteral,
-  kFromLiteralBounded,
-  kFromEntriesDefault,
-  kFromEntriesDefaultWildcard,
+  // A fixed-size unpacked array built from an element list, laid down as many
+  // times over as fill the array: how many elements there are is the type's
+  // to say.
+  kFromElements,
+  // An associative array built from its entries. A wildcard index type's
+  // order is absent from the indices, so an array of one is built by an entry
+  // of its own (LRM 7.8.1).
+  kFromEntries,
+  kFromEntriesWildcard,
   kMakeSegment,
   kMakeTrigger,
   kMakePrintLiteralItem,
@@ -201,6 +216,11 @@ enum class RuntimeOp : std::uint8_t {
   // given back.
   kAllocBytes,
   kDeallocBytes,
+  // What a position of a fixed-size unpacked array naming no element reaches
+  // (LRM 7.4.5), which the element type answers since no array is asked: the
+  // default a read yields, and storage no read reaches for a write to land in.
+  kElementDefault,
+  kDiscardedWrite,
   // Ending an object held in the generated body's own storage, copying one into
   // further storage, moving one into storage that takes it over -- a slot, or
   // what a caller gave for a body's answer -- and writing one into an object
@@ -213,6 +233,21 @@ enum class RuntimeOp : std::uint8_t {
   kMove,
   kAssign,
 };
+
+// One step of the life of a value some code holds, whatever its type: copying
+// it, moving it, ending it, and writing into one already there. They are what
+// clang calls a class's special members, and each type says how its own are
+// carried out.
+enum class LifecycleStep : std::uint8_t {
+  kCopy,
+  kMove,
+  kDestroy,
+  kAssign,
+};
+
+// The operation of the library's that carries out `step` on a value it
+// realizes.
+auto LifecycleOp(LifecycleStep step) -> RuntimeOp;
 
 // The symbol of the type of a value held in `domain`, which the library
 // defines once per kind of value it holds as an object of its own and
@@ -374,6 +409,10 @@ auto ToldOf(support::ValueDomain domain, support::BuiltinFn fn) -> Told;
 auto ToldOf(
     support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
     -> Told;
+// What the realization of an operator for `domain` is told, which is the same
+// for every operator. No table states which domains realize an operator, so
+// none is refused here.
+auto ToldOfAnOperator(support::ValueDomain domain) -> Told;
 
 // The symbol a runtime entry is published under. An operation realized per
 // value representation leads with that representation, so one library serves

@@ -87,6 +87,11 @@ what the construct means.
   language reads a name for -- rendering a value (LRM 21.2.1.6) -- is computation built from the
   source type before this layer. An enumeration's member list is part of what the type is, because
   its value is asked for its member's name at run time (LRM 6.19.5).
+- What a value of a type is before anything is written to it, for every type the unit holds an array
+  of: the code that builds it, stated once for the type, because the source's declaration decides it
+  -- a structure member's own initializer is part of it (LRM 7.2.2, 7.4.5) -- and nothing below this
+  layer has that declaration. An array's type names its element type, so whatever builds, sizes or
+  answers an array of any kind learns how its elements start from the type.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell, a reference, a net's resolved value, a net driver's contribution. A capability
   wrapper composes over the value type it represents, and the wrapper and that storage are distinct
@@ -402,6 +407,13 @@ implies; the diagnostic for any new forbidden shape is "what identity property d
   belongs there as structure) or already present (and the field is noise). The falsifiable check on
   a new field is: does every backend's realization read it, and does it state something the
   structure does not?
+- A call handed, as an operand, what an element of the array it builds holds before it is written.
+  The array's element type fixes that value, so it comes out the same at every evaluation of the
+  call: each site would restate one fact, each consumer would build a value to hand over, and a kind
+  of array that needs none handed would have to be told apart from the kinds that do. A value a
+  program wrote for one array -- the `default:` of an associative array literal (LRM 7.9.11) -- is
+  that array's and not its type's, and is an operand. (A fact of a type is stated with the type; an
+  operand is what can differ between two evaluations.)
 - An expression node whose meaning depends on which callable encloses it. A node that resolves to
   "the current receiver, whatever that is" carries an implicit context the consumer must walk
   surroundings to discover. Receiver semantics live on `locals[0]` as the `self` binding, reached as

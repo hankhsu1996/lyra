@@ -8,6 +8,7 @@
 
 #include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -28,10 +29,10 @@ class RuntimeDynamicArray {
   RuntimeDynamicArray();
 
   // LRM 7.5.1: an array of `element` holding `count` elements, the first of
-  // them copies of `from`'s first elements where it is given and the rest
-  // `element_default` (LRM Table 7-1).
+  // them copies of `from`'s first elements where it is given and the rest the
+  // element type's default (LRM Table 7-1).
   RuntimeDynamicArray(
-      const ValueType& element, const void* element_default, std::size_t count,
+      const value::ElementType& element, std::size_t count,
       const RuntimeDynamicArray* from);
 
   RuntimeDynamicArray(const RuntimeDynamicArray&);
@@ -42,11 +43,12 @@ class RuntimeDynamicArray {
 
   // LRM 7.6 / 10.9.1: copies of `items`, in order, as an array of `element`.
   [[nodiscard]] static auto FromElements(
-      const ValueType& element, const void* element_default,
-      std::span<const void* const> items) -> RuntimeDynamicArray;
+      const value::ElementType& element, std::span<const void* const> items)
+      -> RuntimeDynamicArray;
 
-  [[nodiscard]] auto ElementType() const -> const ValueType&;
-  [[nodiscard]] auto ElementDefault() const -> const void*;
+  // The element type the array was built from, which an array built out of
+  // this one's elements is built from in turn.
+  [[nodiscard]] auto ElementType() const -> const value::ElementType&;
 
   // LRM 7.5.2: the current element count, and as an SV `int`.
   [[nodiscard]] auto Count() const -> std::size_t;

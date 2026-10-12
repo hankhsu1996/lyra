@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -60,26 +61,26 @@ class AssociativeArray {
   using KeyType = K;
   using ElementType = V;
 
-  // Sentinel "uninitialized" form -- an empty map holding no element shape yet,
-  // used as the declared default state of an associative field before the
-  // constructor scope seeds it.
   AssociativeArray() = default;
 
-  // LRM 7.9.11 associative literal `'{key: value, ...}`: seed the map from the
-  // (key, value) entries. `element_default` carries the element shape;
-  // `user_default` is what a read of an absent key returns (LRM 7.8.6) and the
-  // seed for an entry a later write allocates (LRM 7.8.7), which a `default:`
-  // clause names and which is otherwise the element type's own default.
-  AssociativeArray(
-      V element_default, std::span<const Tuple<K, V>> entries,
-      const V& user_default)
-      : core_(
-            StaticKey<K>{}, StaticElem<V>(std::move(element_default)),
-            &user_default) {
+  // LRM 7.9.11 associative literal `'{key: value, ...}`: the (key, value)
+  // entries. A read of an absent key returns the element type's default (LRM
+  // 7.8.6), which is also what an entry a later write allocates starts as (LRM
+  // 7.8.7).
+  explicit AssociativeArray(std::span<const Tuple<K, V>> entries) {
     for (const auto& entry : entries) {
       core_.Store(
           entry.template Component<0>(), &entry.template Component<1>());
     }
+  }
+
+  // LRM 7.9.11: this array's entries in one whose absent keys read a copy of
+  // `stated_default`, and whose entries a later write allocates start as one
+  // (LRM 7.8.7), as a literal's `default:` clause states.
+  [[nodiscard]] auto WithDefault(V stated_default) const -> AssociativeArray {
+    AssociativeArray result;
+    result.core_ = core_.WithDefault(&stated_default);
+    return result;
   }
 
   AssociativeArray(const AssociativeArray&) = default;
@@ -142,13 +143,13 @@ class AssociativeArray {
 
   // LRM 20.7 `$low` / `$high` over an associative dimension: the smallest and
   // largest currently allocated index. With none allocated the dimension has no
-  // index to report and the query reads `unallocated` -- the index type's
-  // default, which is `'x` for a 4-state index type, as LRM 20.7 requires.
-  [[nodiscard]] auto MinIndex(const K& unallocated) const -> K {
-    return FirstIndex().value_or(unallocated);
+  // index to report and the query reads the index type's default, which is
+  // `'x` for a 4-state index type, as LRM 20.7 requires.
+  [[nodiscard]] auto MinIndex() const -> K {
+    return FirstIndex().value_or(detail::DefaultOf<K>());
   }
-  [[nodiscard]] auto MaxIndex(const K& unallocated) const -> K {
-    return LastIndex().value_or(unallocated);
+  [[nodiscard]] auto MaxIndex() const -> K {
+    return LastIndex().value_or(detail::DefaultOf<K>());
   }
 
   // LRM 7.9.6 / 7.9.7: the smallest stored index strictly greater than `probe`
@@ -184,119 +185,109 @@ class AssociativeArray {
   // LRM 7.12.3 reduction over the entry stream. LRM 7.12.3 permits reduction on
   // any integral-valued unpacked array, the associative array included; the
   // ordering family (LRM 7.12.2) is excluded and rejected upstream by slang.
-  // The closure receives each value and its key; `proto` is the
-  // producer-supplied result default returned for an empty array.
-  template <typename F, typename R>
-  [[nodiscard]] auto Sum(F key, R proto) const -> R {
-    return Folded(key, Reduction::kSum, std::move(proto));
+  // The closure receives each value and its key; an empty array answers the
+  // default of the closure's result type.
+  template <typename F>
+  [[nodiscard]] auto Sum(F key) const {
+    return Folded(key, Reduction::kSum);
   }
-  template <typename F, typename R>
-  [[nodiscard]] auto Product(F key, R proto) const -> R {
-    return Folded(key, Reduction::kProduct, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto Product(F key) const {
+    return Folded(key, Reduction::kProduct);
   }
-  template <typename F, typename R>
-  [[nodiscard]] auto And(F key, R proto) const -> R {
-    return Folded(key, Reduction::kAnd, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto And(F key) const {
+    return Folded(key, Reduction::kAnd);
   }
-  template <typename F, typename R>
-  [[nodiscard]] auto Or(F key, R proto) const -> R {
-    return Folded(key, Reduction::kOr, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto Or(F key) const {
+    return Folded(key, Reduction::kOr);
   }
-  template <typename F, typename R>
-  [[nodiscard]] auto Xor(F key, R proto) const -> R {
-    return Folded(key, Reduction::kXor, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto Xor(F key) const {
+    return Folded(key, Reduction::kXor);
   }
 
   // LRM 7.12.1 locator family. Value locators return a queue of values; index
   // locators return a queue of the KEY, since an associative receiver's index
-  // is its key (LRM 7.12.1), not an ordinal int. Both seed the result with the
-  // producer-supplied `proto`.
+  // is its key (LRM 7.12.1), not an ordinal int.
   template <typename F>
-  [[nodiscard]] auto Find(F pred, V proto) const -> Queue<V> {
+  [[nodiscard]] auto Find(F pred) const -> Queue<V> {
     const Snapshot entries = Entries();
     return Values(
-        entries, std::move(proto),
+        entries,
         detail::MatchingPositions(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindIndex(F pred, K proto) const -> Queue<K> {
+  [[nodiscard]] auto FindIndex(F pred) const -> Queue<K> {
     const Snapshot entries = Entries();
     return Keys(
-        entries, std::move(proto),
+        entries,
         detail::MatchingPositions(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindFirst(F pred, V proto) const -> Queue<V> {
+  [[nodiscard]] auto FindFirst(F pred) const -> Queue<V> {
     const Snapshot entries = Entries();
     return Values(
-        entries, std::move(proto),
-        detail::FirstMatching(entries.size(), KeyOf(entries, pred)));
+        entries, detail::FirstMatching(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindFirstIndex(F pred, K proto) const -> Queue<K> {
+  [[nodiscard]] auto FindFirstIndex(F pred) const -> Queue<K> {
     const Snapshot entries = Entries();
     return Keys(
-        entries, std::move(proto),
-        detail::FirstMatching(entries.size(), KeyOf(entries, pred)));
+        entries, detail::FirstMatching(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindLast(F pred, V proto) const -> Queue<V> {
+  [[nodiscard]] auto FindLast(F pred) const -> Queue<V> {
     const Snapshot entries = Entries();
     return Values(
-        entries, std::move(proto),
-        detail::LastMatching(entries.size(), KeyOf(entries, pred)));
+        entries, detail::LastMatching(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindLastIndex(F pred, K proto) const -> Queue<K> {
+  [[nodiscard]] auto FindLastIndex(F pred) const -> Queue<K> {
     const Snapshot entries = Entries();
     return Keys(
-        entries, std::move(proto),
-        detail::LastMatching(entries.size(), KeyOf(entries, pred)));
+        entries, detail::LastMatching(entries.size(), KeyOf(entries, pred)));
   }
   template <typename F>
-  [[nodiscard]] auto Min(F key, V proto) const -> Queue<V> {
+  [[nodiscard]] auto Min(F key) const -> Queue<V> {
     const Snapshot entries = Entries();
     return Values(
-        entries, std::move(proto),
-        detail::LeastPosition(entries.size(), KeyOf(entries, key)));
+        entries, detail::LeastPosition(entries.size(), KeyOf(entries, key)));
   }
   template <typename F>
-  [[nodiscard]] auto Max(F key, V proto) const -> Queue<V> {
+  [[nodiscard]] auto Max(F key) const -> Queue<V> {
     const Snapshot entries = Entries();
     return Values(
-        entries, std::move(proto),
-        detail::GreatestPosition(entries.size(), KeyOf(entries, key)));
+        entries, detail::GreatestPosition(entries.size(), KeyOf(entries, key)));
   }
   template <typename F>
-  [[nodiscard]] auto Unique(F key, V proto) const -> Queue<V> {
+  [[nodiscard]] auto Unique(F key) const -> Queue<V> {
     const Snapshot entries = Entries();
     return Values(
-        entries, std::move(proto),
-        detail::UniquePositions(entries.size(), KeyOf(entries, key)));
+        entries, detail::UniquePositions(entries.size(), KeyOf(entries, key)));
   }
   template <typename F>
-  [[nodiscard]] auto UniqueIndex(F key, K proto) const -> Queue<K> {
+  [[nodiscard]] auto UniqueIndex(F key) const -> Queue<K> {
     const Snapshot entries = Entries();
     return Keys(
-        entries, std::move(proto),
-        detail::UniquePositions(entries.size(), KeyOf(entries, key)));
+        entries, detail::UniquePositions(entries.size(), KeyOf(entries, key)));
   }
 
   // LRM 7.12.5 projection into a same-key associative array: each value maps
   // through the closure and keeps its key, so the result is keyed identically
-  // with the `with`-expression's element type. `proto` seeds that element
-  // type's canonical default (producer-supplied).
-  template <typename F, typename U>
-  [[nodiscard]] auto Map(F closure, U proto) const -> AssociativeArray<K, U> {
+  // with the `with`-expression's element type. Mapping writes no `default:`
+  // clause of its own, so an absent key of the result reads that type's
+  // default.
+  template <typename F>
+  [[nodiscard]] auto Map(F closure) const {
+    using U = std::decay_t<decltype(closure(
+        std::declval<const V&>(), std::declval<const K&>()))>;
     std::vector<Tuple<K, U>> pairs;
     for (const auto& [k, value] : Entries()) {
       pairs.emplace_back(*k, closure(*value, *k));
     }
-    // Mapping writes no `default:` clause of its own, so what a read of an
-    // absent key answers with is the projected element type's own default.
-    const U miss = proto;
-    return AssociativeArray<K, U>(
-        std::move(proto), std::span<const Tuple<K, U>>{pairs}, miss);
+    return AssociativeArray<K, U>(std::span<const Tuple<K, U>>{pairs});
   }
 
   [[nodiscard]] auto operator==(const AssociativeArray& other) const ->
@@ -364,32 +355,33 @@ class AssociativeArray {
     };
   }
 
-  template <typename F, typename R>
-  [[nodiscard]] auto Folded(F& key, Reduction reduction, R empty) const -> R {
+  template <typename F>
+  [[nodiscard]] auto Folded(F& key, Reduction reduction) const {
+    using R = std::remove_cvref_t<std::invoke_result_t<F&, const V&, const K&>>;
     const Snapshot entries = Entries();
     return detail::Folded(
-        entries.size(), KeyOf(entries, key), reduction, std::move(empty));
+        entries.size(), KeyOf(entries, key), reduction, detail::DefaultOf<R>());
   }
 
   [[nodiscard]] static auto Values(
-      const Snapshot& entries, V proto,
-      const std::vector<std::size_t>& positions) -> Queue<V> {
+      const Snapshot& entries, const std::vector<std::size_t>& positions)
+      -> Queue<V> {
     std::vector<V> found;
     found.reserve(positions.size());
     for (const std::size_t i : positions) {
       found.push_back(*entries[i].second);
     }
-    return Queue<V>(std::move(proto), found);
+    return Queue<V>(std::span<const V>{found});
   }
   [[nodiscard]] static auto Keys(
-      const Snapshot& entries, K proto,
-      const std::vector<std::size_t>& positions) -> Queue<K> {
+      const Snapshot& entries, const std::vector<std::size_t>& positions)
+      -> Queue<K> {
     std::vector<K> found;
     found.reserve(positions.size());
     for (const std::size_t i : positions) {
       found.push_back(*entries[i].first);
     }
-    return Queue<K>(std::move(proto), found);
+    return Queue<K>(std::span<const K>{found});
   }
 
   BasicAssociativeArray<StaticKey<K>, StaticElem<V>> core_;

@@ -94,6 +94,8 @@ module Top;
     byte_right = $right(table_by_byte);
 
     table_by_byte.delete();
+    unallocated_low = 8'h55;
+    unallocated_high = 8'h55;
     unallocated_low = $low(table_by_byte);
     unallocated_high = $high(table_by_byte);
 

@@ -879,6 +879,51 @@ void VerifyOwnClassesNamedAsOwn(const CompilationUnit& unit) {
   }
 }
 
+// The code holding an array -- fixed-size, dynamic, associative or a queue --
+// asks for its element's default by the element type alone (LRM 7.4.5), and no
+// call building one states it. So the unit answers for exactly the types some
+// array of it has as its element: one with no default leaves the question
+// unanswered, one with two leaves which body answers to chance, and a default
+// no array asks for is a body nothing runs.
+void VerifyTypeDefaults(const CompilationUnit& unit) {
+  const auto refuse = [&](TypeId type, std::string_view defect) {
+    throw InternalError(
+        std::format(
+            "mir verify: in unit '{}', {} (type {}) -- please report this as a "
+            "bug",
+            unit.name, defect, type.value));
+  };
+  const std::vector<TypeId> elements = ArrayElementTypes(unit.types);
+  std::vector<bool> asked_for(unit.types.size(), false);
+  for (const TypeId element : elements) {
+    asked_for[element.value] = true;
+  }
+  std::vector<bool> answered(unit.types.size(), false);
+  for (const TypeDefault& stated : unit.type_defaults) {
+    if (!asked_for[stated.type.value]) {
+      refuse(
+          stated.type,
+          "a default is stated for a type no array has as its element");
+    }
+    if (answered[stated.type.value]) {
+      refuse(stated.type, "a type has two defaults stated");
+    }
+    answered[stated.type.value] = true;
+    if (stated.code.result_type != stated.type) {
+      refuse(stated.type, "a type's default answers a value of another type");
+    }
+    VerifyCode(unit, stated.code, [&] {
+      return std::format(
+          "the default of type {} in unit '{}'", stated.type.value, unit.name);
+    });
+  }
+  for (const TypeId element : elements) {
+    if (!answered[element.value]) {
+      refuse(element, "the element type of an array has no default stated");
+    }
+  }
+}
+
 }  // namespace
 
 auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
@@ -902,6 +947,7 @@ void Verify(const CompilationUnit& unit) {
           BodyLabel(NameOf(unit.named_callables, id), id.value), unit.name);
     });
   }
+  VerifyTypeDefaults(unit);
   for (const ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     VerifyCode(unit, entry.definition, [&] {
       return std::format("the foreign entry '{}'", entry.linkage.foreign_name);

@@ -70,9 +70,9 @@ computes for every formal.
 
 LRM 35.6.1.1: "The unsized ranges of open arrays are determined at a call site; the rest of the type
 information is specified at the import declaration." Every consumer of a formal's SV type -- the
-boundary temporary, the prototype that shapes a marshaled value, the write-back destination -- needs
-the actual's type, not the formal's. A type describing the formal's unsized shape would therefore be
-a type no consumer of the SV type system may use.
+boundary temporary, the type a marshaled value is built at, the write-back destination -- needs the
+actual's type, not the formal's. A type describing the formal's unsized shape would therefore be a
+type no consumer of the SV type system may use.
 
 `mir.md` states where such a fact belongs: the ABI classification of a foreign call's formal is a
 property of the signature and belongs on the callable's declaration.

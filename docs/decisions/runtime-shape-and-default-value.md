@@ -6,9 +6,19 @@ runtime property of the value) superseded 2026-10-04 by
 state domain to the type -- the question this record's first question asked and answered the other
 way. Under [a-packed-value-is-its-words](a-packed-value-is-its-words.md) the one runtime class the
 Context and decision 1 describe does not exist: each packed type is a value type of its own, no
-instance carries a shape, and the rejected template over shape is what was built. Decisions 2 to 6
-stand with the element's type where they name that class: a container keeps the default its element
-type reads at a nonexistent entry and a place a discarded write lands on.
+instance carries a shape, and the rejected template over shape is what was built.
+
+Decisions 2, 5 and 6 are superseded 2026-10-11 by
+[an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md),
+for every array kind. They were derived under decision 1: with shape a run-time property, an empty
+container had nothing to ask for its element's shape, so each was handed a default and kept it. With
+shape the type's, the element type states its default once, and no array of any kind is handed one
+or keeps one. What stands: decision 4, that an element is reached as a reference to it with no proxy
+class and that an invalid read and an invalid write are answered with two different things, a value
+no write reaches and storage no read reaches (LRM 7.4.5); and the rejections of an element-reference
+proxy, of one slot serving both, of an oracle read off the first element, of a validity gate at
+every access, and of a failure on an empty container. Each decision below says where it is
+superseded.
 
 The 2026-06-22 revision splits the container's single `mutable` default slot into two fields -- an
 immutable canonical default and a separate write-discard sink -- so the read path is genuinely
@@ -67,7 +77,9 @@ Three questions surface:
    non-const write path restores it by copying `element_default_` before handing out the reference,
    so a discarded write never leaks into a later access. The two fields are two distinct
    responsibilities -- the canonical default value versus the throwaway write target -- not a
-   duplicated value.
+   duplicated value. _(Superseded 2026-10-11: the two responsibilities stand and no container
+   carries either. Both are kept once for the element's type, the read's never written and the
+   write's restored each time it is handed out.)_
 
 3. Withdrawn 2026-09-28; see the note under the title.
 
@@ -83,13 +95,17 @@ Three questions surface:
    declare-empty case (`Wrapper(canonical_default)`), a two-argument form for sized construction
    (`Wrapper(n, canonical_default)`), and additional forms as element semantics require. The
    parameter seeds both `element_default_` and `discard_sink_` rather than being consumed during the
-   fill, so the canonical default is available for later resize and miss paths.
+   fill, so the canonical default is available for later resize and miss paths. _(Superseded
+   2026-10-11: no construction takes a default. `std::vector(n, value)` is the form for a caller
+   holding a value to fill with; a type that states its own start is `std::vector(n)`.)_
 
 6. **The canonical default flows from MIR lowering.** HIR-to-MIR already produces shape-correct
    default expressions from MIR type information. The emit chain is: MIR type -> default-value
    expression -> wrapper-constructor argument -> stored `element_default_` / `discard_sink_`
    members. The shape information that is "lost" at the C++ template-parameter level is restored via
-   this explicit channel; no separate channel is introduced.
+   this explicit channel; no separate channel is introduced. _(Superseded 2026-10-11: the default is
+   still made from the source's type by the lowering, and that is all that stands. It is stated once
+   for the element type, and nothing is lost at the template parameter for a channel to restore.)_
 
 _Rejected alternatives:_
 
@@ -113,7 +129,9 @@ _Rejected alternatives:_
 
 - **Store a callable (`std::function<T()>` or lambda) instead of a `T` instance.** Type-erasure
   overhead, no shape introspection from the stored callable, idiomatic mismatch with the
-  `std::vector(n, value)` API that the rest of the wrapper mirrors.
+  `std::vector(n, value)` API that the rest of the wrapper mirrors. _(Answered 2026-10-11 in
+  [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md):
+  a function per type is the type's default constructor and not a callable per container.)_
 
 - **`MakeDefaultLike(data_.front())` oracle.** Breaks on empty containers; depends on the "first
   element survives" convention; does not enforce shape uniformity across elements.
@@ -131,6 +149,10 @@ _Rejected alternatives:_
   7-1 default.
 
 ## Consequences
+
+These are the consequences of decisions 2, 5 and 6 as they were taken. The first, third, fifth and
+sixth no longer hold: no container carries either member, no construction site provides a default,
+and uniformity within a collection is the element type's.
 
 - Every container wrapper carries two extra `T` members (`element_default_`, `discard_sink_`). The
   size cost is two element-sized objects per wrapper, independent of element count.

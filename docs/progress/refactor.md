@@ -3019,14 +3019,13 @@ enough to warrant its own focused review.
       Found by reading. Target: each has one producer the others read, and loaded planes state a
       signedness only where a number was loaded. Not blocked.
 
-- [ ] R209 -- Two families of calls pass a count their result type fixes as an operand beside that
-      type: a run of array elements and the conversions to an array of bytes. And an operand a
-      runtime entry takes as a machine integer is converted by hand at each call site that builds
-      one, about twenty-five of them; MIR's own check refuses an integral value handed where an
-      entry reads a machine value, so a conversion left out is refused on both backends, but nothing
-      makes the conversion from the entry's declaration. Found by reading. Target: no count a type
-      fixes is an operand, and one builder converts what an entry reads as a machine value. Not
-      blocked.
+- [ ] R209 -- A read of a run of array elements passes the count its result type fixes as an operand
+      beside that type. And an operand a runtime entry takes as a machine integer is converted by
+      hand at each call site that builds one, about twenty-five of them; MIR's own check refuses an
+      integral value handed where an entry reads a machine value, so a conversion left out is
+      refused on both backends, but nothing makes the conversion from the entry's declaration. Found
+      by reading. Target: no count a type fixes is an operand, and one builder converts what an
+      entry reads as a machine value. Not blocked.
 
 - [ ] R211 -- The code this change added names several roles in words of its own. How an argument
       crosses to a callee is arrangement in clang and rustc, and the step that arranges a call uses
@@ -3042,8 +3041,8 @@ enough to warrant its own focused review.
       left. A comparison in the C++ library answers a scalar where it was compiled without the type
       of what it compares and a one-bit value of the type the language gives the answer where it was
       compiled with it, bridged by three small functions; the per-type table hands an integral type
-      a value to read a shape from in three operations, which that type does not read; the fold over
-      a net's positions is untyped while two steps beside it are compiled per layout; an exhaustive
+      a value to read a shape from when it fills one, which that type does not read; the fold over a
+      net's positions is untyped while two steps beside it are compiled per layout; an exhaustive
       switch ends two different ways, one in the library's compiled sources and another in the
       operations over words; a handful of comparisons against one member of a two-member set remain
       in the value library where a switch belongs; an element update that assumes the element's
@@ -3089,6 +3088,20 @@ enough to warrant its own focused review.
       value its object is built with; and keys whose lowered forms are the same share everything
       after. No parameter is classified beforehand. First to find out: where emitted code and what a
       unit publishes take the name for the artifact. Not blocked.
+
+- [ ] R220 -- On the execution backend, what a continuous assignment writes to part of a forced
+      variable through a reference to the whole of it is kept nowhere, so the release does not show
+      it. Reproduced with a 100-bit variable connected to a child's `ref` port, the child driving it
+      with one continuous assignment to its low byte and one to the rest: the variable is forced,
+      the low byte's source changes, and the release shows the low byte the driver held before the
+      force, where LRM 10.6.2 reestablishes the assignment and so shows what it holds now. The same
+      two assignments made in the module declaring the variable show the new byte, a 16-bit variable
+      driven the same way through the port does, the 100-bit one driven whole through the port does,
+      and the C++ backend does in every one of these. A variable of an unpacked structure or a
+      fixed-size array type cannot be asked the question there: a force naming one ends the build as
+      a failure of the compiler's own. Target: a write a takeover turns away is kept beneath it
+      wherever the write names a part of the variable, however the variable was reached. Not
+      blocked.
 
 ## Out of Scope
 

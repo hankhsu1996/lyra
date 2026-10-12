@@ -45,85 +45,40 @@ auto DefaultIntegralConstant(const mir::IntegralType& integral)
 
 namespace {
 
-// The LRM 7.10.5 maximum index a bounded queue enforces, appended as the number
-// the construction is handed so the runtime trims an over-long initializer. A
-// container whose type declares no bound -- which is every container but a
-// bounded queue -- appends nothing.
-void AppendBoundedQueueMax(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    std::vector<mir::ExprId>& args, mir::TypeId array_type) {
-  const auto* queue = unit.types.Get(array_type).As<mir::QueueType>();
-  if (queue == nullptr || !queue->max_bound.has_value()) {
-    return;
-  }
-  args.push_back(BuildMachineIntLiteral(
-      unit, block, static_cast<std::int64_t>(*queue->max_bound)));
-}
-
-// The element default a container carries for every position it does not hold
-// (LRM Table 7-1).
-auto BuildContainerElementDefault(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId container)
-    -> mir::ExprId {
-  return block.exprs.Add(BuildDefaultValueExpr(
-      unit, block, RequiredContainerElementType(unit, container)));
-}
-
-// LRM Table 7-1: a dynamic array's default is the empty array. The wrapper
-// still takes the element default it carries for every position it does not
-// hold, which is the one operand the empty form has.
-auto BuildDynamicArrayDefault(mir::TypeId type, mir::ExprId element_default)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kMakeDynamicArrayDefault},
-              .arguments = {element_default}},
-      .type = type};
-}
-
-// Builds the container an element list feeds: the element default it carries
-// for every position it does not hold, the list, how many times the list
-// repeats, and a bounded queue's declared bound. The list itself is the value
-// literal; what it feeds is the container's own constructor, which is a call
-// like any other.
-auto BuildContainerFromElements(
+// The elements a construction is handed, as one value: the plain-data array of
+// the container's element type holding them in order. The container is what
+// the construction makes of the list, never what the list itself is.
+auto BuildElementList(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    mir::ExprId element_default, mir::ExprId elements, mir::ExprId count)
-    -> mir::Expr {
-  std::vector<mir::ExprId> args = {element_default, elements, count};
-  AppendBoundedQueueMax(unit, block, args, array_type);
+    std::vector<mir::ExprId> elements) -> mir::ExprId {
+  const mir::TypeId list_type = mir::MachineArrayOf(
+      unit.types, RequiredContainerElementType(unit, array_type),
+      elements.size());
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::CompositeExpr{.parts = std::move(elements)},
+          .type = list_type});
+}
+
+// Builds the queue or the dynamic array an element list feeds. Neither has a
+// size of its own, so its construction states the list and how many times it
+// repeats. What a position no element fills holds, and how many a queue may
+// hold (LRM 7.4.5, 7.10.5), are the type's to say, so nothing here states
+// either.
+auto BuildContainerFromElements(
+    const mir::CompilationUnit& unit, mir::TypeId array_type,
+    mir::ExprId elements, mir::ExprId count) -> mir::Expr {
+  if (unit.types.Get(array_type).Is<mir::UnpackedArrayType>()) {
+    throw InternalError(
+        "BuildContainerFromElements: a fixed-size unpacked array's element "
+        "count is its type's, so its construction states no repeat count -- "
+        "please report this as a bug");
+  }
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Construct{}, .arguments = std::move(args)},
+              .callee = mir::Construct{}, .arguments = {elements, count}},
       .type = array_type};
-}
-
-// A folded-constant array (LRM 7.2.2), whose elements are materialized
-// individually because a constant fixes each element's own value. The element
-// type's default carries its own member inits, and the list stands for itself,
-// so it repeats once.
-auto BuildUnpackedArrayValue(
-    const UnitLowerer& unit_lowerer, mir::Block& block, mir::TypeId array_type,
-    hir::TypeId element_type, std::vector<mir::ExprId> element_ids)
-    -> mir::Expr {
-  const mir::ExprId element_default = block.exprs.Add(
-      BuildDefaultValueFromHir(unit_lowerer, block, element_type));
-  const mir::TypeId list_type = mir::MachineArrayOf(
-      unit_lowerer.Unit().types, unit_lowerer.TranslateType(element_type),
-      element_ids.size());
-  const mir::ExprId list_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(element_ids)},
-          .type = list_type});
-  const mir::ExprId count_id =
-      BuildMachineIntLiteral(unit_lowerer.Unit(), block, 1);
-  return BuildContainerFromElements(
-      unit_lowerer.Unit(), block, array_type, element_default, list_id,
-      count_id);
 }
 
 // Materialize a folded member-default constant (LRM 7.2.2) as a MIR value of
@@ -177,9 +132,8 @@ auto MaterializeConstant(
                 element_ids.push_back(block.exprs.Add(MaterializeConstant(
                     unit_lowerer, block, ua->element_type, component)));
               }
-              return BuildUnpackedArrayValue(
-                  unit_lowerer, block, mir_type, ua->element_type,
-                  std::move(element_ids));
+              return BuildArrayConstructionCall(
+                  unit_lowerer.Unit(), block, mir_type, std::move(element_ids));
             }
             throw InternalError(
                 "MaterializeConstant: aggregate value for a non-aggregate "
@@ -268,22 +222,14 @@ auto BuildDefaultValueExpr(
             return block.exprs.Get(BuildRealLiteral(unit, block, type, 0.0));
           },
           // LRM Table 7-1: a fixed unpacked array defaults to every element at
-          // the element type's default. That uniform value is the element
-          // default replicated across the array's size, so it builds through
-          // the repeat call and stays O(1) in the array's element count. The
-          // default the container carries for a position it does not hold and
-          // the repeat unit are each the element default.
+          // the element type's default. One element default fills the array,
+          // so stating it stays O(1) in the array's element count.
           [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
-            const auto size = static_cast<std::int64_t>(ua.Size());
             const mir::TypeId element_type = ua.element_type;
-            const mir::ExprId seed = block.exprs.Add(
-                BuildDefaultValueExpr(unit, block, element_type));
-            const mir::ExprId repeated = block.exprs.Add(
-                BuildDefaultValueExpr(unit, block, element_type));
-            const mir::ExprId size_id =
-                BuildMachineIntLiteral(unit, block, size);
-            return BuildArrayRepeatCall(
-                unit, block, type, seed, {repeated}, size_id);
+            return BuildFixedArrayConstructionCall(
+                unit, block, type,
+                {block.exprs.Add(
+                    BuildDefaultValueExpr(unit, block, element_type))});
           },
           // LRM Table 7-1: a product no declaration names defaults
           // component-wise -- each takes its own type's default, recursively.
@@ -313,25 +259,20 @@ auto BuildDefaultValueExpr(
           [&](const mir::TaggedUnionType& u) -> mir::Expr {
             return first_member_default(u.members.front());
           },
-          [&](const mir::DynamicArrayType& da) -> mir::Expr {
-            return BuildDynamicArrayDefault(
-                type, block.exprs.Add(
-                          BuildDefaultValueExpr(unit, block, da.element_type)));
+          // LRM Table 7-1: a dynamic array's default and a queue's are the
+          // empty array, which its own construction builds from a list of no
+          // elements.
+          [&](const mir::DynamicArrayType&) -> mir::Expr {
+            return BuildArrayConstructionCall(unit, block, type, {});
           },
-          // LRM Table 7-1: a queue's default is the empty queue, which its own
-          // constructor builds from a list of no elements.
           [&](const mir::QueueType&) -> mir::Expr {
-            return BuildArrayConstructionCall(
-                unit, block, type,
-                BuildContainerElementDefault(unit, block, type), {});
+            return BuildArrayConstructionCall(unit, block, type, {});
           },
           // LRM Table 7-1: an associative array's default is empty, which is
           // its literal over no entries and no `default:` clause.
           [&](const mir::AssociativeArrayType&) -> mir::Expr {
             return BuildAssociativeConstructionCall(
-                unit, block, type,
-                BuildContainerElementDefault(unit, block, type), {},
-                BuildContainerElementDefault(unit, block, type));
+                unit, block, type, {}, std::nullopt);
           },
           // Types whose default is what their own constructor makes of no
           // arguments: a named event, which SV gives no initializer grammar at
@@ -546,50 +487,46 @@ auto RequiredContainerElementType(
   return *element;
 }
 
-auto BuildElementDefault(
-    const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId container)
-    -> mir::ExprId {
-  const std::optional<hir::TypeId> element =
-      unit_lowerer.Hir().types.Get(container).ContainerElementType();
-  if (!element.has_value()) {
+auto BuildFixedArrayConstructionCall(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
+    std::vector<mir::ExprId> repeat_unit) -> mir::Expr {
+  const std::uint64_t element_count =
+      unit.types.Get(array_type).Get<mir::UnpackedArrayType>().Size();
+  if (repeat_unit.empty() || element_count % repeat_unit.size() != 0) {
     throw InternalError(
-        "BuildElementDefault: the type holds no elements, and the caller "
-        "reached it only because its own construction said it would -- please "
-        "report this as a bug");
+        std::format(
+            "BuildFixedArrayConstructionCall: {} elements laid down again and "
+            "again do not fill an array of {} -- please report this as a bug",
+            repeat_unit.size(), element_count));
   }
-  return block.exprs.Add(
-      BuildDefaultValueFromHir(unit_lowerer, block, *element));
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Construct{},
+              .arguments = {BuildElementList(
+                  unit, block, array_type, std::move(repeat_unit))}},
+      .type = array_type};
 }
 
 auto BuildArrayConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    mir::ExprId element_default, std::vector<mir::ExprId> elements)
-    -> mir::Expr {
-  const mir::TypeId list_type = mir::MachineArrayOf(
-      unit.types, RequiredContainerElementType(unit, array_type),
-      elements.size());
-  const mir::ExprId list_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(elements)},
-          .type = list_type});
-  const mir::ExprId count_id = BuildMachineIntLiteral(unit, block, 1);
+    std::vector<mir::ExprId> elements) -> mir::Expr {
+  if (unit.types.Get(array_type).Is<mir::UnpackedArrayType>()) {
+    return BuildFixedArrayConstructionCall(
+        unit, block, array_type, std::move(elements));
+  }
+  const mir::ExprId list_id =
+      BuildElementList(unit, block, array_type, std::move(elements));
   return BuildContainerFromElements(
-      unit, block, array_type, element_default, list_id, count_id);
+      unit, array_type, list_id, BuildMachineIntLiteral(unit, block, 1));
 }
 
 auto BuildArrayRepeatCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    mir::ExprId element_default, std::vector<mir::ExprId> repeat_unit,
-    mir::ExprId count_id) -> mir::Expr {
-  const mir::TypeId repeat_unit_type = mir::MachineArrayOf(
-      unit.types, RequiredContainerElementType(unit, array_type),
-      repeat_unit.size());
-  const mir::ExprId repeat_unit_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(repeat_unit)},
-          .type = repeat_unit_type});
-  return BuildContainerFromElements(
-      unit, block, array_type, element_default, repeat_unit_id, count_id);
+    std::vector<mir::ExprId> repeat_unit, mir::ExprId count_id) -> mir::Expr {
+  const mir::ExprId repeat_unit_id =
+      BuildElementList(unit, block, array_type, std::move(repeat_unit));
+  return BuildContainerFromElements(unit, array_type, repeat_unit_id, count_id);
 }
 
 auto BuildSequenceConstructionCall(
@@ -610,9 +547,8 @@ auto BuildSequenceConstructionCall(
 
 auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
-    mir::ExprId element_default,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
-    mir::ExprId absent_key_answer) -> mir::Expr {
+    std::optional<mir::ExprId> stated_default) -> mir::Expr {
   const auto* assoc =
       unit.types.Get(assoc_type).As<mir::AssociativeArrayType>();
   if (assoc == nullptr) {
@@ -640,11 +576,21 @@ auto BuildAssociativeConstructionCall(
           .data = mir::CompositeExpr{.parts = std::move(tuple_ids)},
           .type = entries_type});
 
+  mir::Expr built{
+      .data =
+          mir::CallExpr{.callee = mir::Construct{}, .arguments = {entries_id}},
+      .type = assoc_type};
+  if (!stated_default.has_value()) {
+    return built;
+  }
   return mir::Expr{
       .data =
           mir::CallExpr{
-              .callee = mir::Construct{},
-              .arguments = {element_default, entries_id, absent_key_answer}},
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kAssocWithDefault,
+                      .receiver = block.exprs.Add(std::move(built))},
+              .arguments = {*stated_default}},
       .type = assoc_type};
 }
 

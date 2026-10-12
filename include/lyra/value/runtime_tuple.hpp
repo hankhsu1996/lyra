@@ -107,9 +107,6 @@ class RuntimeTuple {
       -> Int;
   auto WriteToStream(const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t;
-  [[nodiscard]] auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken) const
-      -> std::pair<RuntimeTuple, std::uint64_t>;
 
  private:
   explicit RuntimeTuple(AnyValue value);

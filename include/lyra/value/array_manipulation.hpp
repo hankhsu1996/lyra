@@ -139,10 +139,9 @@ template <typename KeyOf>
 }
 
 // LRM 7.12.3: every key folded by `reduction`, the first seeding the fold, so
-// a fold of no entries is `empty` (LRM is silent on empty input, so the
-// producer supplies the answer of the result's shape rather than this
-// inventing one). The result is of the key's type, so a widening `with`
-// expression widens it.
+// a fold of no entries is `empty`, which the clause states nothing of and the
+// caller builds as the default of the answer's type. The result is of the
+// key's type, so a widening `with` expression widens it.
 template <typename KeyOf, typename K>
 [[nodiscard]] auto Folded(
     std::size_t count, KeyOf key, Reduction reduction, K empty) -> K {

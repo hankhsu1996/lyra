@@ -235,6 +235,15 @@ struct ExternalStruct {
   std::vector<TypeId> elements;
 };
 
+// The function of the unit that builds the default value of `type`: what code
+// holding an array of it, compiled before the type existed, calls for the
+// value a read through an index naming no element answers (LRM 7.4.5) and a
+// position no write has reached holds (LRM 7.5.1).
+struct TypeDefault {
+  TypeId type;
+  FunctionId function;
+};
+
 // Storage this unit defines that no instance owns: one cell for the whole
 // program, reached by its linkage symbol rather than through a receiver.
 // `type` is the storage's own type, which is what tells whoever realizes it
@@ -275,6 +284,8 @@ struct CompilationUnit {
   // and the record its slot is counted out of cannot come apart.
   std::vector<ExternalClass> external_classes;
   base::Registry<Function, FunctionId> functions;
+  // The default of each type the unit holds an array of, of any kind.
+  std::vector<TypeDefault> type_defaults;
   std::vector<StaticStorage> static_storage;
   // The read-only data the unit defines. What the runtime library reads of each
   // class -- its record of the class, under external linkage and the class's

@@ -86,6 +86,12 @@ target and why a forced value is not a driver; this file does not restate it.
 - [ ] PCA5 -- A constant bit-select or part-select of a vector net as a force target, which is what
       makes the range the unit of a takeover rather than the signal.
 
+- [ ] PCA6 -- A force naming a variable of an unpacked structure or a fixed-size unpacked array type
+      gets one answer on both backends. The variable a force may name is a singular one (LRM
+      10.6.2), which neither of those is (LRM 6.4). The front end accepts such a force, the C++
+      backend carries it out, and the execution backend ends the build as a failure of the
+      compiler's own.
+
 ## What a read costs, settled
 
 **Nothing, and the standard is what makes that available.** The question looked like it reached the

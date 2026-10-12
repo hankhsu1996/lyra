@@ -4,27 +4,27 @@
 #include <cstdint>
 #include <span>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/value/basic_queue.hpp"
 #include "lyra/value/element_sequence.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/value_type.hpp"
+#include "lyra/value/queue_type.hpp"
 #include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::value {
 
 RuntimeQueue::RuntimeQueue() = default;
 
-RuntimeQueue::RuntimeQueue(
-    const ValueType& element, const void* element_default, std::int64_t bound)
-    : core_(std::in_place, WitnessedElem(element, element_default)) {
-  core_->SetBound(bound);
+RuntimeQueue::RuntimeQueue(const QueueType& type)
+    : core_(
+          std::in_place, WitnessedElem(type.ElementType()),
+          WitnessedBound(type)) {
 }
 
-RuntimeQueue::RuntimeQueue(BasicQueue<WitnessedElem> core)
-    : core_(std::move(core)) {
+RuntimeQueue::RuntimeQueue(Held core) : core_(std::move(core)) {
 }
 
 RuntimeQueue::RuntimeQueue(const RuntimeQueue&) = default;
@@ -34,36 +34,37 @@ auto RuntimeQueue::operator=(RuntimeQueue&&) noexcept
     -> RuntimeQueue& = default;
 RuntimeQueue::~RuntimeQueue() = default;
 
-// A queue whose declaration has not installed its element type has no
-// elements to act on, so being asked to act on one is a lowering defect.
+// A queue whose declaration has not installed its type has no elements to act
+// on, so being asked to act on one is a lowering defect.
 void RuntimeQueue::RequireInstalled() const {
   if (!core_.has_value()) {
     throw InternalError(
         "RuntimeQueue: a queue is used before its declaration installs its "
-        "element type -- please report this as a bug");
+        "type -- please report this as a bug");
   }
 }
 
-auto RuntimeQueue::Core() const -> const BasicQueue<WitnessedElem>& {
+auto RuntimeQueue::Core() const -> const Held& {
   RequireInstalled();
   return *core_;
 }
 
-auto RuntimeQueue::Core() -> BasicQueue<WitnessedElem>& {
+auto RuntimeQueue::Core() -> Held& {
   RequireInstalled();
   return *core_;
 }
 
-auto RuntimeQueue::ElementType() const -> const ValueType& {
-  return Core().Element().Type();
+auto RuntimeQueue::ElementType() const -> const value::ElementType& {
+  return Core().Element().ElementType();
 }
 
-auto RuntimeQueue::ElementDefault() const -> const void* {
-  return Core().Element().Default();
-}
-
-auto RuntimeQueue::ConformBound(std::int64_t bound) const -> RuntimeQueue {
-  return RuntimeQueue(Core().WithBound(bound));
+auto RuntimeQueue::ConformBound(const QueueType& type) const -> RuntimeQueue {
+  std::vector<const void*> items;
+  items.reserve(Count());
+  for (std::size_t i = 0; i < Count(); ++i) {
+    items.push_back(ElementAt(i));
+  }
+  return FromElements(type, items);
 }
 
 auto RuntimeQueue::Count() const -> std::size_t {
@@ -101,9 +102,9 @@ auto RuntimeQueue::ElementRef(
 }
 
 auto RuntimeQueue::Slice(
-    std::optional<std::int64_t> lo, std::optional<std::int64_t> hi) const
-    -> RuntimeQueue {
-  return RuntimeQueue(Core().Slice(lo, hi));
+    std::optional<std::int64_t> lo, std::optional<std::int64_t> hi,
+    const QueueType& type) const -> RuntimeQueue {
+  return RuntimeQueue(Core().Slice(lo, hi, WitnessedBound(type)));
 }
 
 void RuntimeQueue::PushFront(const void* item) {
@@ -124,18 +125,8 @@ auto RuntimeQueue::Concat(std::span<const void* const> items) const
 }
 
 auto RuntimeQueue::FromElements(
-    const ValueType& element, const void* element_default, std::int64_t bound,
-    std::span<const void* const> items) -> RuntimeQueue {
-  RuntimeQueue result(element, element_default, bound);
-  result.Core().Assign(items);
-  return result;
-}
-
-auto RuntimeQueue::FromElements(
-    const ValueType& element, const void* element_default,
-    std::span<const void* const> items) -> RuntimeQueue {
-  RuntimeQueue result(
-      BasicQueue<WitnessedElem>(WitnessedElem(element, element_default)));
+    const QueueType& type, std::span<const void* const> items) -> RuntimeQueue {
+  RuntimeQueue result(type);
   result.Core().Assign(items);
   return result;
 }
@@ -160,7 +151,7 @@ void RuntimeQueue::Permute(std::span<const std::size_t> order) {
   Core().Permute(order);
 }
 
-// A queue with no element type yet holds no elements, which is all a
+// A queue with no type yet holds no elements, which is all a
 // comparison with one can read.
 auto RuntimeQueue::operator==(const RuntimeQueue& other) const -> FourStateBit {
   if (!core_.has_value() || !other.core_.has_value()) {

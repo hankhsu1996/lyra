@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/basic_dynamic_array.hpp"
 #include "lyra/value/element_sequence.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -21,10 +22,10 @@ namespace lyra::value {
 RuntimeDynamicArray::RuntimeDynamicArray() = default;
 
 RuntimeDynamicArray::RuntimeDynamicArray(
-    const ValueType& element, const void* element_default, std::size_t count,
+    const value::ElementType& element, std::size_t count,
     const RuntimeDynamicArray* from)
     : core_(
-          std::in_place, WitnessedElem(element, element_default), count,
+          std::in_place, WitnessedElem(element), count,
           from == nullptr ? nullptr : &from->Core()) {
 }
 
@@ -63,19 +64,14 @@ auto RuntimeDynamicArray::Core() -> BasicDynamicArray<WitnessedElem>& {
 }
 
 auto RuntimeDynamicArray::FromElements(
-    const ValueType& element, const void* element_default,
-    std::span<const void* const> items) -> RuntimeDynamicArray {
+    const value::ElementType& element, std::span<const void* const> items)
+    -> RuntimeDynamicArray {
   return RuntimeDynamicArray(
-      BasicDynamicArray<WitnessedElem>(WitnessedElem(element, element_default))
-          .Extended(items));
+      BasicDynamicArray<WitnessedElem>(WitnessedElem(element)).Extended(items));
 }
 
-auto RuntimeDynamicArray::ElementType() const -> const ValueType& {
-  return Core().Element().Type();
-}
-
-auto RuntimeDynamicArray::ElementDefault() const -> const void* {
-  return Core().Element().Default();
+auto RuntimeDynamicArray::ElementType() const -> const value::ElementType& {
+  return Core().Element().ElementType();
 }
 
 auto RuntimeDynamicArray::Count() const -> std::size_t {

@@ -1,12 +1,10 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -454,9 +452,10 @@ class UnitLowerer {
 
   // Publishes everything the unit declares before any root-scope body lowers:
   // every class identity and body, every interned type and the functions each
-  // structure type answers a whole-value operation with, this unit's record of
-  // each object it reaches in another unit, and the prototype of every foreign
-  // symbol the unit takes part in. Shared prologue of every unit
+  // structure type answers a whole-value operation with, the default of each
+  // type an array of any kind holds, this unit's record of each object it
+  // reaches in another unit, and the prototype of every foreign symbol the unit
+  // takes part in. Shared prologue of every unit
   // kind -- a module and a package own the same declaration kinds; they differ
   // only in whether the root scope becomes a top class or a set of namespace
   // callables.
@@ -469,6 +468,12 @@ class UnitLowerer {
   // type. Each is a function the unit owns: it takes the value and no object,
   // so no class is its owner.
   void PublishAssignmentPatternTexts();
+
+  // States the default of every type the unit holds an array of, whatever the
+  // array's kind (LRM 7.4.5). Which types those are follows from the source's
+  // types alone, every one of which is translated before any body lowers, so
+  // the set is whole here and no body adds to it.
+  void PublishTypeDefaults();
 
   [[nodiscard]] auto TranslateType(const hir::Type& type) -> mir::Type;
 

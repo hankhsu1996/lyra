@@ -32,7 +32,7 @@ template <typename T>
 class ArraySliceRef;
 class String;
 
-// LRM 7.4.6: how many elements a slice takes, which the type the select
+// LRM 7.4.5: how many elements a slice takes, which the type the select
 // produces fixes. A select never names an empty run, so a count below one is a
 // lowering defect rather than a value.
 [[nodiscard]] inline auto SliceCount(std::int64_t count) -> std::size_t {
@@ -177,21 +177,6 @@ template <typename T, typename Build>
   return out;
 }
 
-// The two below are of the element type alone, so arrays of one element type
-// and different counts share them.
-template <typename T>
-[[nodiscard]] auto DefaultOf() -> const T& {
-  static const T element_default{};
-  return element_default;
-}
-
-template <typename T>
-[[nodiscard]] auto DiscardedWriteOf() -> T& {
-  thread_local T discarded;
-  discarded = DefaultOf<T>();
-  return discarded;
-}
-
 }  // namespace detail
 
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2): `N` elements of the C++
@@ -229,26 +214,18 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
 
   UnpackedArray() = default;
 
-  // Element-list construction (LRM 10.9 assignment pattern lowering). The
-  // element list is taken as a span so the emit side can hand in a
-  // `std::array<T, N>{...}` literal whose self-determined type is unambiguous.
-  UnpackedArray(const T& element_default, std::span<const T> init)
-      : UnpackedArray(element_default, init, 1) {
-  }
-
-  // LRM 10.9.1: `count` replications of `unit`, where a replication stands for
-  // an entire dimension. Covers both a fixed array's all-default state (`unit`
-  // is one element default, LRM Table 7-1) and an `'{count{...}}` pattern
-  // (`unit` is the replicated items), which are the same repeat-and-count
-  // shape and so construct through one path.
-  UnpackedArray(
-      const T& element_default, std::span<const T> unit, std::size_t count) {
-    RequireTypeDefault(element_default);
-    if (unit.size() * count != N) {
+  // The array `unit` fills when laid down again and again from the left:
+  // element `i` is a copy of `unit[i % unit.size()]`. Every element stated
+  // once (LRM 10.9), one element default (LRM Table 7-1) and the items of a
+  // `'{n{...}}` pattern (LRM 10.9.1) are each such a unit. How many elements
+  // the array has is the type's, so a unit that is empty, or of which no whole
+  // number fills the array, is a lowering defect.
+  explicit UnpackedArray(std::span<const T> unit) {
+    if (unit.empty() || N % unit.size() != 0) {
       throw InternalError(
           std::format(
-              "an unpacked array of {} elements was built from {}", N,
-              unit.size() * count));
+              "an unpacked array of {} elements was built from a unit of {}", N,
+              unit.size()));
     }
     for (std::size_t i = 0; i < N; ++i) {
       Items()[i] = unit[i % unit.size()];
@@ -261,17 +238,14 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   // element type's default, and text beyond the array's last element is
   // dropped. The clause admits this form for an array of bytes alone, so the
   // element is integral.
-  [[nodiscard]] static auto FromString(const String& text, std::int64_t count)
-      -> UnpackedArray;
+  [[nodiscard]] static auto FromString(const String& text) -> UnpackedArray;
 
   // LRM 5.9: a string literal assigned to an unpacked array of bytes, under the
   // same left justification. A literal is a packed bit-vector constant, not a
   // string value, so its bytes arrive whole -- a NUL among them is a byte like
   // any other, where building a string value would have removed it (LRM 6.16).
   template <IntegralValue Bits>
-  [[nodiscard]] static auto FromIntegral(const Bits& bits, std::int64_t count)
-      -> UnpackedArray {
-    RequireDeclared(count);
+  [[nodiscard]] static auto FromIntegral(const Bits& bits) -> UnpackedArray {
     return OfBytes(BytesOf(bits.AsWords().View()));
   }
 
@@ -282,9 +256,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   // Templated on the accumulator so the fixed-size type needs no dependency on
   // the growable one that feeds it.
   template <typename C>
-  [[nodiscard]] static auto ConformSize(const C& parts, std::int64_t count)
-      -> UnpackedArray {
-    RequireDeclared(count);
+  [[nodiscard]] static auto ConformSize(const C& parts) -> UnpackedArray {
     if (parts.RawSize() != N) {
       throw SimulationError(
           std::format(
@@ -301,11 +273,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   // anything the source decides -- so a source of another size is a run-time
   // error and the assignment does not happen.
   template <OrdinalElements C>
-  [[nodiscard]] static auto FromArray(
-      const C& source, const T& element_default, std::int64_t declared)
-      -> UnpackedArray {
-    RequireTypeDefault(element_default);
-    RequireDeclared(declared);
+  [[nodiscard]] static auto FromArray(const C& source) -> UnpackedArray {
     if (source.RawSize() != N) {
       throw SimulationError(
           std::format(
@@ -338,7 +306,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
     return Int::FromInt(static_cast<std::int64_t>(N));
   }
 
-  [[nodiscard]] auto RawSize() const -> std::size_t {
+  [[nodiscard]] static constexpr auto RawSize() -> std::size_t {
     return N;
   }
 
@@ -347,12 +315,6 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   // `Element` instead, which answers one naming no element.
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
     return Items()[i];
-  }
-
-  // The element type's default (LRM Table 7-1), which an invalid-index read
-  // returns and a derived container seeds its own out-of-range source with.
-  [[nodiscard]] static auto ElementDefault() -> const T& {
-    return detail::DefaultOf<T>();
   }
 
   // LRM 11.4.11: the two arms of a conditional operator whose condition is
@@ -374,7 +336,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
       -> T& {
     const auto ordinal = ElementOrdinal(position, N);
     formed = ordinal ? Formation::kExisting : Formation::kNowhere;
-    return ordinal ? Items()[*ordinal] : Nowhere();
+    return ordinal ? Items()[*ordinal] : DiscardedWrite();
   }
   [[nodiscard]] auto ElementRef(const Position& position) -> T& {
     Formation formed{};
@@ -419,24 +381,15 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
     });
   }
 
-  // The count the lowering states for an array of this type is the one the
-  // type has; anything else is a lowering defect.
+  // A slice select states how many elements it takes (LRM 7.4.5), and the
+  // array type it produces fixes the same number, so a count that is not this
+  // type's is a lowering defect.
   static void RequireDeclared(std::int64_t count) {
     if (count < 0 || static_cast<std::uint64_t>(count) != N) {
       throw InternalError(
           std::format(
               "an unpacked array of {} elements was stated as one of {}", N,
               count));
-    }
-  }
-
-  // The element default the lowering states for an array of this type is the
-  // element type's own, which is what an element of the array starts as.
-  static void RequireTypeDefault(const T& element_default) {
-    if (!element_default.IsBitIdentical(ElementDefault())) {
-      throw InternalError(
-          "an unpacked array was stated an element default that is not its "
-          "element type's");
     }
   }
 
@@ -535,8 +488,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
 
   // LRM 6.24.3: the elements' own streams laid end to end into a stream below
   // its `filled` most significant positions, answering how many are filled
-  // after them; and the inverse, which reads an array of this one's element
-  // shapes and answers how many positions it took.
+  // after them; and the inverse, which reads an array of this type and answers
+  // how many positions it took.
   [[nodiscard]] auto WriteToStream(
       const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
     for (std::size_t i = 0; i < N; ++i) {
@@ -544,24 +497,22 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
     }
     return filled;
   }
-  [[nodiscard]] auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken) const
+  [[nodiscard]] static auto ReadFromStream(
+      const ConstIntegralView& stream, std::uint64_t taken)
       -> std::pair<UnpackedArray, std::uint64_t> {
     UnpackedArray read;
     for (std::size_t i = 0; i < N; ++i) {
       read.Items()[i] = detail::BuiltInPlace<T>([&](void* out) {
-        taken = StaticElem<T>::ReadFromStream(stream, taken, &RawAt(i), out);
+        taken = StaticElem<T>::ReadFromStream(stream, taken, out);
       });
     }
     return {std::move(read), taken};
   }
 
-  // The array a stream of exactly its bits holds, `prototype` stating every
-  // element's shape (LRM 11.4.14.3).
+  // The array a stream of exactly its bits holds (LRM 11.4.14.3).
   template <IntegralValue Bits>
-  [[nodiscard]] static auto FromBitstream(
-      const Bits& bits, const UnpackedArray& prototype) -> UnpackedArray {
-    return prototype.ReadFromStream(bits.AsWords().View(), 0).first;
+  [[nodiscard]] static auto FromBitstream(const Bits& bits) -> UnpackedArray {
+    return ReadFromStream(bits.AsWords().View(), 0).first;
   }
 
   // The elements, in ordinal order, where they lie.
@@ -585,10 +536,16 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
     return detail::ElementRun<T>{Elements()};
   }
 
+  // The element type's default (LRM Table 7-1), which a read answers with
+  // where no element of the array is named.
+  [[nodiscard]] static auto ElementDefault() -> const T& {
+    return detail::DefaultOf<T>();
+  }
+
   // Where a write through an invalid index lands (LRM 7.4.5): storage no read
   // reaches, holding the element default again each time it is handed out so
   // a discarded write never shows through a later access.
-  [[nodiscard]] static auto Nowhere() -> T& {
+  [[nodiscard]] static auto DiscardedWrite() -> T& {
     return detail::DiscardedWriteOf<T>();
   }
 

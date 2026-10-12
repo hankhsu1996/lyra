@@ -7,7 +7,9 @@
 
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -107,6 +109,17 @@ class OpenWrite {
     landing_of_ = &kTupleLandingOf;
   }
 
+  // The same, for a fixed-size unpacked array where it lies, which is its
+  // elements and nothing that says what they are: `type` states it. Its value
+  // from before the write is an array of its own.
+  void LandArray(const value::FixedArrayType& type, void* part) {
+    if (!Undecided()) {
+      return;
+    }
+    std::construct_at(Landing<ArrayLanding>(landing_.data()), type, part);
+    landing_of_ = &kArrayLandingOf;
+  }
+
   // The same, for an integral value wider than a word where it lies, which is
   // its bytes too: `part` names them with how wide the value is. What is kept
   // of it is the bits it held, so the write tells which moved.
@@ -194,6 +207,14 @@ class OpenWrite {
     value::RuntimeTuple before;
   };
 
+  struct ArrayLanding {
+    ArrayLanding(const value::FixedArrayType& type, void* landed)
+        : part(landed), before(value::RuntimeFixedArray::CopyOf(type, landed)) {
+    }
+    void* part;
+    value::RuntimeFixedArray before;
+  };
+
   template <value::HeldAsWords Wide>
   struct WideLanding {
     explicit WideLanding(Wide landed) : part(landed), kept(landed) {
@@ -231,6 +252,15 @@ class OpenWrite {
         auto* landing = Landing<TupleLanding>(room);
         if (!value::RuntimeTuple::BitIdentical(
                 landing->before.Bytes(), landing->part)) {
+          bracket_of.landed(bracket, Change::Whole());
+        }
+        std::destroy_at(landing);
+      }};
+
+  static constexpr ResolveBitRange kArrayLandingOf{
+      .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
+        auto* landing = Landing<ArrayLanding>(room);
+        if (!landing->before.HoldsBytes(landing->part)) {
           bracket_of.landed(bracket, Change::Whole());
         }
         std::destroy_at(landing);

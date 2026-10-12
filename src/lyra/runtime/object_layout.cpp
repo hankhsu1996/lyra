@@ -36,19 +36,22 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/empty.hpp"
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/object_ref.hpp"
+#include "lyra/value/queue_type.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/runtime_tagged_union.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_union.hpp"
-#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/wide.hpp"
 
@@ -124,7 +127,7 @@ auto WithValueClass(ValueDomain domain, F f)
     case ValueDomain::kDynArray:
       return f.template operator()<value::RuntimeDynamicArray>();
     case ValueDomain::kUnpackedArray:
-      return f.template operator()<value::RuntimeUnpackedArray>();
+      return f.template operator()<value::RuntimeFixedArray>();
     case ValueDomain::kQueue:
       return f.template operator()<value::RuntimeQueue>();
     case ValueDomain::kAssocArray:
@@ -346,6 +349,48 @@ auto LayoutOfIntegralTypeConstant() -> IntegralTypeConstantLayout {
       .value_size = stated.SizeStatedAt(),
       .value_align = stated.AlignStatedAt(),
       .shape_at = stated.ShapeOffset()};
+}
+
+auto LayoutOfElementTypeConstant() -> ElementTypeConstantLayout {
+  value::ElementScratch scratch;
+  const value::ElementType stated(
+      value::IntegralValueType::Of<value::Bit>(), nullptr, scratch);
+  return ElementTypeConstantLayout{
+      .object = Of<value::ElementType>(),
+      .type = stated.TypeStatedAt(),
+      .build_default = stated.BuildDefaultStatedAt(),
+      .scratch = stated.ScratchStatedAt(),
+      .scratch_object = Of<value::ElementScratch>()};
+}
+
+auto LayoutOfFixedArrayTypeConstant() -> FixedArrayTypeConstantLayout {
+  value::ElementScratch scratch;
+  const value::ElementType element(
+      value::IntegralValueType::Of<value::Bit>(), nullptr, scratch);
+  const value::FixedArrayType stated(element, 1);
+  return FixedArrayTypeConstantLayout{
+      .object = Of<value::FixedArrayType>(),
+      .table_symbol =
+          std::string("_ZTV") + typeid(value::FixedArrayType).name(),
+      .parts_table_symbol =
+          std::string("_ZTV") + value::FixedArrayType::PartsClassName(),
+      .value_size = stated.SizeStatedAt(),
+      .value_align = stated.AlignStatedAt(),
+      .count = stated.CountStatedAt(),
+      .element = stated.ElementStatedAt(),
+      .parts = stated.PartsStatedAt(),
+      .parts_owner = stated.PartsOwnerStatedAt()};
+}
+
+auto LayoutOfQueueTypeConstant() -> QueueTypeConstantLayout {
+  value::ElementScratch scratch;
+  const value::ElementType element(
+      value::IntegralValueType::Of<value::Bit>(), nullptr, scratch);
+  const value::QueueType stated(element, -1);
+  return QueueTypeConstantLayout{
+      .object = Of<value::QueueType>(),
+      .element = stated.ElementStatedAt(),
+      .bound = stated.BoundStatedAt()};
 }
 
 auto LayoutOf(support::RuntimeClass klass) -> ObjectLayout {

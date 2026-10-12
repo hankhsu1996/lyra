@@ -1,7 +1,10 @@
 # Array method runtime semantics
 
 Date: 2026-06-04 Status: dispatch portion superseded by
-[builtin-call-identity](builtin-call-identity.md); runtime semantics below remain in force
+[builtin-call-identity](builtin-call-identity.md); the empty-array reduction superseded 2026-10-11
+by D6 of
+[an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md);
+the sort below remains in force
 
 ## Context
 
@@ -16,7 +19,9 @@ be pinned regardless of how the dispatch is modelled in IR.
 LRM 7.12.3 is silent on the empty-input case. The runtime returns an integral value of the element's
 bit width and signedness filled with zero, regardless of which reduction (`sum`, `product`, `and`,
 `or`, `xor`). The implementation re-uses the receiver's canonical-shape shield slot: copy the slot,
-default-initialise the copy, return.
+default-initialise the copy, return. _(Superseded 2026-10-11: the answer is the default of the type
+the reduction answers -- the element type's, or the one a `with` expression chose -- so x for a
+4-state type and 0 for a 2-state one, and the reduction builds it from that type.)_
 
 ### Sort uses selection sort, not the standard-library introsort
 

@@ -34,6 +34,18 @@ struct TupleLayout {
   support::ObjectLayout storage;
 };
 
+// How a fixed-size unpacked array is laid out: its elements one after another
+// `stride` bytes apart, where the array lies when `in_place`, and otherwise in
+// a run the array owns and holds the address of. `storage` is what the array
+// takes of whatever holds it.
+struct ArrayLayout {
+  lir::TypeId element;
+  std::uint64_t count;
+  std::uint64_t stride;
+  bool in_place;
+  support::ObjectLayout storage;
+};
+
 // An integral type as the value layer states one.
 [[nodiscard]] auto ShapeOf(const lir::IntegralType& integral)
     -> value::IntegralShape;
@@ -55,10 +67,11 @@ class CodeGenTypes {
   auto GetFunctionType(const FnAbi& abi) -> llvm::FunctionType*;
 
   // The storage a value an owner holds occupies. A tuple's is composed from
-  // its components'; an integral value's is the bytes the value layer lays a
-  // value of its width and states out in; a machine integer's is that
-  // integer's; every other owned value is one runtime object, whose storage
-  // the library states.
+  // its components'; a fixed-size unpacked array's is its elements', or the
+  // address of them where they are too many to lie in what holds the array;
+  // an integral value's is the bytes the value layer lays a value of its
+  // width and states out in; a machine integer's is that integer's; every
+  // other owned value is one runtime object, whose storage the library states.
   auto StorageOf(lir::TypeId type) -> support::ObjectLayout;
   // An integral type as the value layer states one, or nothing for a type that
   // is not integral.
@@ -71,6 +84,8 @@ class CodeGenTypes {
       -> value::IntegralShape;
   // Where each component of a tuple sits. Asked only of a product.
   auto LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout&;
+  // Where the elements of a fixed-size unpacked array lie. Asked only of one.
+  auto LayoutOfArray(lir::TypeId array) -> const ArrayLayout&;
 
   auto Ptr() const -> llvm::PointerType* {
     return ptr_ty_;
@@ -95,6 +110,7 @@ class CodeGenTypes {
   llvm::StructType* bits_part_ty_;
   std::unordered_map<lir::TypeId, llvm::Type*> cache_;
   std::unordered_map<lir::TypeId, TupleLayout> tuples_;
+  std::unordered_map<lir::TypeId, ArrayLayout> arrays_;
 };
 
 }  // namespace lyra::backend::llvm_backend

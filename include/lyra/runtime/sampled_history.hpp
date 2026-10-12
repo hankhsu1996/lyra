@@ -58,8 +58,8 @@ class SampledHistory {
     Advance() = value;
   }
 
-  // The same of a value handed as its bytes, as wide as the default the
-  // history was installed with, taken into the words the oldest entry has.
+  // The same of a value handed as its bytes, laid out as the default the
+  // history was installed with is, taken into the storage the oldest entry has.
   void PushBytes(const void* bytes)
     requires value::TakesBytesInPlace<T>
   {

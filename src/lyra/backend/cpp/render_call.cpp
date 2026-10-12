@@ -286,7 +286,7 @@ void WriteDirectCallee(
           },
           // A struct's method, qualified by the struct the way a class method
           // is: `v.::Pkg::sv_types::s::IsBitIdentical(w)` on the value it is
-          // asked of, `::Pkg::sv_types::s::FromBitstream(b, p)` for a question
+          // asked of, `::Pkg::sv_types::s::FromBitstream(b)` for a question
           // asked of the type.
           [&](const mir::StructMethodTarget& t) {
             callee.Named(

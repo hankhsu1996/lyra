@@ -19,9 +19,11 @@ namespace lyra::value {
 // own, and in the library, where the answers come from the element type's
 // table.
 //
-// The element default (LRM Table 7-1) is the policy's to hold, since it is a
+// The element default (LRM Table 7-1) is the policy's to answer, since it is a
 // property of the element type: what a read naming no element answers with and
-// what a new element starts as.
+// what a new element starts as. So is where a write naming no element lands
+// (LRM 7.4.5): storage no read reaches, holding the default again each time it
+// is handed out so a discarded write never shows through a later one.
 //
 // A comparison of two elements answers 0, 1 or x as a scalar, which a container
 // folds over its elements and whoever knows the type the comparison has holds
@@ -34,6 +36,7 @@ concept ElementPolicy =
       { p.Size() } -> std::same_as<std::size_t>;
       { p.Align() } -> std::same_as<std::size_t>;
       { p.Default() } -> std::same_as<const void*>;
+      { p.DiscardedWrite() } -> std::same_as<void*>;
       p.Copy(in, out);
       p.Move(from, out);
       p.Destroy(from);
@@ -43,7 +46,27 @@ concept ElementPolicy =
       { p.HasUnknown(in) } -> std::same_as<bool>;
     };
 
-// The element is the C++ type `T`.
+namespace detail {
+
+// The two below are of the element type alone, so every array of one element
+// type shares them.
+template <typename T>
+[[nodiscard]] auto DefaultOf() -> const T& {
+  static const T element_default{};
+  return element_default;
+}
+
+template <typename T>
+[[nodiscard]] auto DiscardedWriteOf() -> T& {
+  static T discarded;
+  discarded = DefaultOf<T>();
+  return discarded;
+}
+
+}  // namespace detail
+
+// The element is the C++ type `T`, whose default is what its own default
+// construction builds.
 template <LyraValue T>
 class StaticElem {
  public:
@@ -52,11 +75,6 @@ class StaticElem {
   using Equality =
       decltype(std::declval<const T&>() == std::declval<const T&>());
 
-  StaticElem() = default;
-  explicit StaticElem(T element_default)
-      : default_(std::move(element_default)) {
-  }
-
   [[nodiscard]] static constexpr auto Size() -> std::size_t {
     return sizeof(T);
   }
@@ -64,11 +82,11 @@ class StaticElem {
     return alignof(T);
   }
 
-  [[nodiscard]] auto Default() const -> const void* {
-    return &default_;
+  [[nodiscard]] static auto Default() -> const void* {
+    return &detail::DefaultOf<T>();
   }
-  [[nodiscard]] auto DefaultValue() const -> const T& {
-    return default_;
+  [[nodiscard]] static auto DiscardedWrite() -> void* {
+    return &detail::DiscardedWriteOf<T>();
   }
 
   static void Copy(const void* value, void* out) {
@@ -152,27 +170,24 @@ class StaticElem {
     }
   }
 
-  // The inverse: the element of `prototype`'s shape a stream holds below its
-  // `taken` most significant positions, built in `out`. Answers how many are
-  // taken after it.
+  // The inverse: the element a stream holds below its `taken` most significant
+  // positions, built in `out`, `T` stating how wide it is. Answers how many
+  // are taken after it.
   static auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken,
-      const void* prototype, void* out) -> std::uint64_t {
+      const ConstIntegralView& stream, std::uint64_t taken, void* out)
+      -> std::uint64_t {
     if constexpr (IntegralValue<T>) {
       Build(out, lyra::value::ReadFromStream<T>(stream, taken));
       return taken + T::kWidth;
-    } else if constexpr (requires {
-                           Of(prototype).ReadFromStream(stream, taken);
-                         }) {
-      auto [element, after] = Of(prototype).ReadFromStream(stream, taken);
+    } else if constexpr (requires { T::ReadFromStream(stream, taken); }) {
+      auto [element, after] = T::ReadFromStream(stream, taken);
       Build(out, std::move(element));
       return after;
     } else {
-      using Bits = decltype(Of(prototype).ToBitstream());
+      using Bits = decltype(std::declval<const T&>().ToBitstream());
       Build(
           out,
-          T::FromBitstream(
-              lyra::value::ReadFromStream<Bits>(stream, taken), Of(prototype)));
+          T::FromBitstream(lyra::value::ReadFromStream<Bits>(stream, taken)));
       return taken + Bits::kWidth;
     }
   }
@@ -184,24 +199,52 @@ class StaticElem {
   static void Build(void* out, T value) {
     std::construct_at(static_cast<T*>(out), std::move(value));
   }
-
-  T default_{};
 };
 
 static_assert(ElementPolicy<StaticElem<Int>>);
 
-// Storage for one element of `elem`'s type, holding none yet.
-template <ElementPolicy Elem>
-[[nodiscard]] auto AllocateElement(const Elem& elem) -> void* {
-  return ::operator new(elem.Size(), std::align_val_t{elem.Align()});
-}
+// Storage for one value of a type that states its size and alignment, given
+// back unless it is released: building the value may fail, and the storage is
+// then nobody's.
+class StorageFor {
+ public:
+  template <typename Type>
+    requires requires(const Type& type) {
+      { type.Size() } -> std::same_as<std::size_t>;
+      { type.Align() } -> std::same_as<std::size_t>;
+    }
+  explicit StorageFor(const Type& type)
+      : align_(std::align_val_t{type.Align()}),
+        storage_(::operator new(type.Size(), align_)) {
+  }
+  StorageFor(const StorageFor&) = delete;
+  auto operator=(const StorageFor&) -> StorageFor& = delete;
+  StorageFor(StorageFor&&) = delete;
+  auto operator=(StorageFor&&) -> StorageFor& = delete;
+  ~StorageFor() {
+    if (storage_ != nullptr) {
+      ::operator delete(storage_, align_);
+    }
+  }
+
+  [[nodiscard]] auto Get() const -> void* {
+    return storage_;
+  }
+  [[nodiscard]] auto Release() -> void* {
+    return std::exchange(storage_, nullptr);
+  }
+
+ private:
+  std::align_val_t align_;
+  void* storage_;
+};
 
 // Storage of its own holding a copy of `value`.
 template <ElementPolicy Elem>
 [[nodiscard]] auto CopyElement(const Elem& elem, const void* value) -> void* {
-  void* slot = AllocateElement(elem);
-  elem.Copy(value, slot);
-  return slot;
+  StorageFor storage(elem);
+  elem.Copy(value, storage.Get());
+  return storage.Release();
 }
 
 // Ends the element at `slot` and gives its storage back.
@@ -209,20 +252,6 @@ template <ElementPolicy Elem>
 void FreeElement(const Elem& elem, void* slot) {
   elem.Destroy(slot);
   ::operator delete(slot, std::align_val_t{elem.Align()});
-}
-
-// Where an invalid-index write lands (LRM 7.4.5): storage a container keeps
-// outside its elements, made on first use, holding the element default again
-// each time it is handed out so a discarded write never shows through a later
-// access.
-template <ElementPolicy Elem>
-[[nodiscard]] auto DiscardTarget(const Elem& elem, void*& slot) -> void* {
-  if (slot == nullptr) {
-    slot = CopyElement(elem, elem.Default());
-  } else {
-    elem.Assign(slot, elem.Default());
-  }
-  return slot;
 }
 
 }  // namespace lyra::value

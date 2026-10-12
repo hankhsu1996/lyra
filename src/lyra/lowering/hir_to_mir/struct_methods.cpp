@@ -465,14 +465,13 @@ auto Synthesizer::ToBitstream() -> mir::StructMethod {
 
 // The inverse: each member reads its own width off the stream, the first from
 // the most significant end (LRM 11.4.14.3). The type fixes every member's
-// width, so where each one starts is known here, and the prototype the
-// question takes of any value is not read.
+// width, so where each one starts is known here.
 auto Synthesizer::FromBitstream() -> mir::StructMethod {
   const StreamShape shape = Stream();
   const mir::TypeId stream =
       mir::PackedVectorOf(Unit().types, shape.width, shape.state_kind);
   return Method(
-      support::BuiltinFn::kFromBitstream, {stream, structure_}, structure_,
+      support::BuiltinFn::kFromBitstream, {stream}, structure_,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
         std::vector<mir::ExprId> members;
         std::uint64_t taken = 0;

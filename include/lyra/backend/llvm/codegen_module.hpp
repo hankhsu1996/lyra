@@ -63,11 +63,11 @@ namespace lyra::backend::llvm_backend {
 // start, where the library's root class, which every class extends and which
 // has a virtual destructor, places it (C++ ABI 2.4, the primary base).
 //
-// A member holding a product, an integral value or a machine integer inline
-// holds its bytes, laid out by this backend as a tuple holds a component that
-// is one, so that member is built and ended by what is compiled for its type
-// rather than by the library; which type each member holds is kept beside its
-// storage for that.
+// A member holding a product, a fixed-size unpacked array, an integral value
+// or a machine integer inline holds its bytes, laid out by this backend as a
+// tuple holds a component that is one, so that member is built and ended as
+// its type says rather than as an object of the library is; which type each
+// member holds is kept beside its storage for that.
 struct RecordLayout {
   std::vector<lir::TypeId> types;
   std::vector<support::DeclaredMemberStorage> storage;
@@ -156,8 +156,9 @@ class CodeGenModule {
   auto DefinitionOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
 
   // The type the library asks of a value of `type`: a tuple's own, which this
-  // unit emits with the tuple type, an integral type's, which it emits too, or
-  // the library's for a value of one of its own kinds.
+  // unit emits with the tuple type; an integral type's and a fixed-size
+  // unpacked array's, which it emits too; or the library's for a value of one
+  // of its own kinds.
   auto ValueTypeOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
 
   // A function something outside this module defines -- an entry the runtime
@@ -181,12 +182,15 @@ class CodeGenModule {
   auto BuildCallArg(
       const PassMode& mode, llvm::Value* value, std::vector<llvm::Value*>& args)
       -> diag::Result<void>;
-  // The library entry `symbol`, which carries out lifecycle step `step` on an
-  // object of the library's own. Ending one takes it; assigning takes the one
-  // written into and then the one written; copying and moving take the source
-  // and build in storage handed last, which they answer with.
-  auto LifecycleEntry(std::string_view symbol, TupleLifecycle step)
-      -> llvm::FunctionCallee;
+  // One step of the life of a value of `type`, emitted where `builder`
+  // stands: a copy or a move takes the value and the storage it is built in,
+  // an assignment the storage written into and the value, an end the value.
+  // Which code carries a step out is the type's to say, and is said here for
+  // every owner of a value. A step the library carries out fails where a type
+  // it has to be handed is one it does not realize.
+  auto EmitLifecycle(
+      llvm::IRBuilderBase& builder, lir::TypeId type, LifecycleStep step,
+      std::span<llvm::Value* const> args) -> diag::Result<void>;
   // The host's dynamic cast (C++ ABI 2.9.7): handed a part of an object, the
   // descriptions of that part's class and of the wanted one, and a hint of
   // where the wanted part sits, it answers the wanted part or null.
@@ -259,14 +263,15 @@ class CodeGenModule {
   void BeginMembers(
       llvm::IRBuilderBase& builder, llvm::Value* value,
       const RecordLayout& placed);
-  void EndMembers(
+  auto EndMembers(
       llvm::IRBuilderBase& builder, llvm::Value* value,
-      const RecordLayout& placed);
+      const RecordLayout& placed) -> diag::Result<void>;
 
  private:
   // Whether a member of `type` held as `storage` is the bytes this backend lays
-  // a value of the type out in -- a product's, an integral value's, a machine
-  // integer's -- rather than an object of the library.
+  // a value of the type out in -- a product's, a fixed-size unpacked array's,
+  // an integral value's, a machine integer's -- rather than an object of the
+  // library.
   [[nodiscard]] auto HoldsItsBytesInline(
       lir::TypeId type, support::DeclaredMemberStorage storage) const -> bool;
   // What a member of `type` held as `storage` occupies.
@@ -428,6 +433,20 @@ class CodeGenModule {
   // and states that class's operations read. The module defines one per
   // integral type it hands over that way.
   auto GetAddrOfIntegralType(lir::TypeId type) -> llvm::Constant*;
+  // The constant that states a fixed-size unpacked array type to the library:
+  // how many elements, and the constant stating their type.
+  auto GetAddrOfFixedArrayType(lir::TypeId type)
+      -> diag::Result<llvm::Constant*>;
+  // The constant that states `element` to the library as the type of an
+  // array's elements: the type, and the function of this unit that builds the
+  // value one starts as (LRM Table 7-1). The module defines one per element
+  // type it hands over, whatever kind of array holds the elements.
+  auto GetAddrOfElementType(lir::TypeId element)
+      -> diag::Result<llvm::Constant*>;
+  // The constant that states the queue type `queue` to the library: the
+  // constant stating its elements' type, and the bound it declares (LRM
+  // 7.10.5). The module defines one per queue type it hands over.
+  auto GetAddrOfQueueType(lir::TypeId queue) -> diag::Result<llvm::Constant*>;
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::Module> module_;
@@ -439,6 +458,9 @@ class CodeGenModule {
   std::unordered_map<lir::IntegralConstantId, llvm::GlobalVariable*>
       integral_constants_;
   std::unordered_map<lir::TypeId, llvm::GlobalVariable*> integral_types_;
+  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> fixed_array_types_;
+  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> element_types_;
+  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> queue_types_;
   std::unordered_map<lir::TypeId, RecordLayout> records_;
   std::unordered_map<lir::TypeId, std::vector<std::optional<std::string>>>
       tables_;

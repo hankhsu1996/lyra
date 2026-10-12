@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -63,62 +64,52 @@ namespace lyra::lowering::hir_to_mir {
 [[nodiscard]] auto RequiredContainerElementType(
     const mir::CompilationUnit& unit, mir::TypeId container) -> mir::TypeId;
 
-// The element default a container carries for every position it does not hold
-// (LRM 7.4.5, Table 7-1): what an invalid read answers with, what a grow fills
-// a new slot with, and what an invalid write is discarded into. It is built
-// from the source container type, because a member's declaration initializer
-// (LRM 7.2.2) is part of that value and the lowered element type has dropped
-// it, so a container built without the source type in reach cannot reproduce
-// it.
-[[nodiscard]] auto BuildElementDefault(
-    const UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId container)
-    -> mir::ExprId;
+// Builds a fixed-size unpacked array from `repeat_unit`, laid down again and
+// again until the array is full: every element of the array stated once (LRM
+// 10.9), one element default (LRM Table 7-1), or the items of a `'{n{...}}`
+// pattern (LRM 10.9.1). The array's type fixes how many elements it has, so
+// the construction's one argument is the unit, and the value's MIR stays
+// O(repeat_unit) however large the array is. The unit holds at least one
+// element and a whole number of them fills the array.
+[[nodiscard]] auto BuildFixedArrayConstructionCall(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
+    std::vector<mir::ExprId> repeat_unit) -> mir::Expr;
 
-// Builds a container from an explicit element list, laid down once, whose
-// constructor arguments are `[element_default, elements, count]` plus the LRM
-// 7.10.5 bound for a bounded queue. This is the construction shape every site
-// producing such a value must use: the elements ride as one literal of the
-// plain-data array of that element, so the container is what the construction
-// produces, never what the literal itself claims to be. A uniform value is
-// built by the repeat call below instead.
+// Builds an array-shaped container from an explicit element list, laid down
+// once. A fixed-size unpacked array is the construction above over the whole
+// list. A queue and a dynamic array have no size of their own, so their
+// arguments are `[elements, 1]`.
 [[nodiscard]] auto BuildArrayConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    mir::ExprId element_default, std::vector<mir::ExprId> elements)
-    -> mir::Expr;
+    std::vector<mir::ExprId> elements) -> mir::Expr;
 
-// Builds the construction call for a uniform array-container value: `count`
-// replications of `repeat_unit`, seeded with the element default above. The
-// repeat unit rides as an aggregate literal and the
-// count as a machine scalar, so the constructor arguments are
-// `[element_default, repeat_unit, count]` (plus the LRM 7.10.5 bound for a
-// bounded queue). This is the shape every site that produces an all-default or
-// `'{count{...}}` array value must use, so the value's MIR and emitted text
-// stay O(repeat_unit) rather than O(repeat_unit * count). A list whose elements
-// differ is built by the construction call above instead.
+// Builds a queue or a dynamic array holding `count` replications of
+// `repeat_unit` (LRM 10.9.1), in the argument shape of the construction call
+// above with the count where it has one, so the value's MIR stays
+// O(repeat_unit) rather than O(repeat_unit * count). A fixed-size unpacked
+// array states no count and is built by its own construction.
 [[nodiscard]] auto BuildArrayRepeatCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId array_type,
-    mir::ExprId element_default, std::vector<mir::ExprId> repeat_unit,
-    mir::ExprId count_id) -> mir::Expr;
+    std::vector<mir::ExprId> repeat_unit, mir::ExprId count_id) -> mir::Expr;
 
 // Builds the construction call for a sequence: the values it holds, in order.
-// A sequence seeds no default and repeats nothing, so the element list is the
-// constructor's one argument, and a sequence holding nothing is that list with
-// no elements rather than a second form of the call.
+// A sequence is built from its values alone and repeats nothing, so the element
+// list is the constructor's one argument, and a sequence holding nothing is
+// that list with no elements rather than a second form of the call.
 [[nodiscard]] auto BuildSequenceConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block,
     mir::TypeId sequence_type, std::vector<mir::ExprId> elements) -> mir::Expr;
 
-// Builds the construction call for an associative-array literal (LRM 7.9.11).
-// Each (key, value) entry is a pair, and the entries ride in the plain-data
-// array of those pairs, so the constructor arguments are `[element_default,
-// entries, absent_key_answer]`. `absent_key_answer` is what a read of an absent
-// key returns (LRM 7.8.6): the LRM 7.9.11 `default:` clause where the literal
-// writes one, and the element type's own default where it does not, built by
-// the caller as a value of its own beside `element_default`.
+// Builds the value of an associative-array literal (LRM 7.9.11). Each (key,
+// value) entry is a pair, and the entries ride in the plain-data array of
+// those pairs, which is the construction's one argument. Where the literal
+// writes a `default:` clause, what a read of an absent key returns (LRM 7.8.6)
+// is a value of that array which only the literal can state, so the built
+// array is then given it by the operation that says so. Where it writes none,
+// such a read returns what the element type says and nothing is stated for it.
 [[nodiscard]] auto BuildAssociativeConstructionCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId assoc_type,
-    mir::ExprId element_default,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
-    mir::ExprId absent_key_answer) -> mir::Expr;
+    std::optional<mir::ExprId> stated_default) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

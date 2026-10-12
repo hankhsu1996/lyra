@@ -35,6 +35,7 @@ class Value;
 namespace lyra::backend::llvm_backend {
 
 class CodeGenModule;
+struct Planes;
 
 // Per-function code generation: lowers one LIR callable body into its LLVM
 // function. Each LIR value becomes one LLVM value; reads resolve through the
@@ -110,32 +111,21 @@ class CodeGenFunction {
   auto BuildInto(
       std::string_view symbol, std::vector<ArgAbi> arranged,
       std::vector<llvm::Value*> args, llvm::Value* out) -> llvm::Value*;
-  // The runtime object an owned value of `type` is. For a product that is the
-  // tuple domain the library holds one as, while its lifecycle here is the one
-  // compiled for its type.
-  [[nodiscard]] auto ObjectOf(lir::TypeId type) const -> support::RuntimeObject;
-  // What carries out a lifecycle step on an owned value of `type`: the step
-  // compiled for its tuple type, as clang emits a class's implicit special
-  // members, or the entry the library defines over its object. An integral
-  // value has neither, its bytes being the whole of it.
-  auto OwnedCallee(lir::TypeId type, TupleLifecycle step)
-      -> llvm::FunctionCallee;
   // The lifecycle of an owned value. `EndValue` ends the value `value` names,
   // where ending one has anything to do. `CopyValue` builds a second value
   // equal to it in the unbuilt storage `out`, and answers `out`.
   // `RelocateValue` moves it into the unbuilt storage `out` and ends what the
   // move left behind, so the value lives in `out` and nowhere else.
   // `AssignValue` writes it into the value already built at `out`, which goes
-  // on being that value.
-  void EndValue(lir::TypeId type, llvm::Value* value);
+  // on being that value. Each fails where the step is the library's to carry
+  // out and has to be handed a type the library does not realize.
+  auto EndValue(lir::TypeId type, llvm::Value* value) -> diag::Result<void>;
   auto CopyValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
-      -> llvm::Value*;
-  void RelocateValue(lir::TypeId type, llvm::Value* value, llvm::Value* out);
-  void AssignValue(lir::TypeId type, llvm::Value* value, llvm::Value* out);
-  // What each of the three is over an integral value, which owns nothing: its
-  // bytes copied to `out`.
-  void CopyIntegralBytes(
-      lir::TypeId type, llvm::Value* value, llvm::Value* out);
+      -> diag::Result<llvm::Value*>;
+  auto RelocateValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
+      -> diag::Result<void>;
+  auto AssignValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
+      -> diag::Result<void>;
 
   // A value an operation is handed, with the type it is a value of.
   struct OperandRef {
@@ -336,6 +326,16 @@ class CodeGenFunction {
   // default and changes nothing, and a write to one allocates or discards it by
   // the container's own rule.
   enum class Access : std::uint8_t { kRead, kWrite };
+  // The planes of `position`, which has to be stated as the position type
+  // every ordinal of the layer above is brought to.
+  auto LoadPosition(const OperandRef& position) -> Planes;
+  // Where the element `position` names lies in the fixed-size unpacked array
+  // lying at `array`: arithmetic on where the array lies. A position naming no
+  // element reaches what the array's type answers for one (LRM 7.4.5), the
+  // element default for a read and storage no read reaches for a write.
+  auto ArrayElementAddress(
+      lir::TypeId array_type, llvm::Value* array, const OperandRef& position,
+      Access access) -> diag::Result<llvm::Value*>;
   // The address a place names. The base contributes the storage the chain
   // starts from, either a place local's own frame slot or the referent of a
   // reference value, and each further step walks one projection.

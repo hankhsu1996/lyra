@@ -25,8 +25,15 @@ rules a later change meets: an array of at most 1,024 bytes lies in whatever hol
 one owns one run of elements apart from itself, the type deciding, so a frame's size never follows a
 declared size; assignment writes each element where it lies and never takes another array's run; and
 a structure states its declared default once, so an element's default is its type's. The execution
-backend still holds the array as an object of the library's, which assigns its elements in place for
-the same reason.
+backend lays the array out by the same three rules, from its type, and hands the prebuilt library
+that type beside the array's bytes
+([a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md)). On both
+backends a construction takes a unit of elements and no count, so decision 3's range, default and
+element-list arguments are superseded by the unit alone. A dynamic array's construction, which
+decision 3 gives the same list without the range, takes no default either, and finding F4's
+consequence that a prototype reaches a backend as an operand of the construction holds for no array
+kind: what an element holds before it is written is stated once for the element's type
+([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
 
 ## Why this decision matters
 

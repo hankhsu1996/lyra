@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -18,7 +19,13 @@ auto SameType(const ValueType& a, const ValueType& b) -> bool {
   }
   const IntegralValueType* x = a.AsIntegral();
   const IntegralValueType* y = b.AsIntegral();
-  return x != nullptr && y != nullptr && x->Shape() == y->Shape();
+  if (x != nullptr && y != nullptr) {
+    return x->Shape() == y->Shape();
+  }
+  const FixedArrayType* p = a.AsFixedArray();
+  const FixedArrayType* q = b.AsFixedArray();
+  return p != nullptr && q != nullptr && p->Count() == q->Count() &&
+         SameType(p->ElementType().Type(), q->ElementType().Type());
 }
 
 auto AnyValue::CopyOf(const ValueType& type, const void* value) -> AnyValue {
@@ -125,17 +132,6 @@ auto AnyValue::CountBits(const ConstIntegralView& control_bits) const -> Int {
 auto AnyValue::WriteToStream(
     const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
   return Type().WriteToStream(Bytes(), stream, filled);
-}
-
-auto AnyValue::ReadFromStream(
-    const ConstIntegralView& stream, std::uint64_t taken) const
-    -> std::pair<AnyValue, std::uint64_t> {
-  const ValueType& type = Type();
-  std::uint64_t after = taken;
-  AnyValue read = Built(type, [&](void* out) {
-    after = type.ReadFromStream(stream, taken, Bytes(), out);
-  });
-  return {std::move(read), after};
 }
 
 }  // namespace lyra::value
