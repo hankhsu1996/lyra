@@ -1,0 +1,19 @@
+The Vortex testbench's `mem_access` DPI import has a comma after its last
+argument, which IEEE 1800-2023 A.2.7 does not allow
+(`tf_port_list ::= tf_port_item { , tf_port_item }`). Drop it.
+
+Reported as https://github.com/verilator/rtlmeter/issues/54
+
+diff --git a/designs/Vortex/src/tb.sv b/designs/Vortex/src/tb.sv
+index 7572494..428fca3 100644
+--- a/designs/Vortex/src/tb.sv
++++ b/designs/Vortex/src/tb.sv
+@@ -168,7 +168,7 @@ module tb;
+     input  longint unsigned               req_byteen,
+     input  longint unsigned               req_addr,
+     input  bit [`VX_MEM_DATA_WIDTH-1:0]   req_data,
+-    output bit [`VX_MEM_DATA_WIDTH-1:0]   rsp_data,
++    output bit [`VX_MEM_DATA_WIDTH-1:0]   rsp_data
+   );
+
+   assign mem_rsp[0].tag_d = mem_req_tag;
