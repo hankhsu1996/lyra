@@ -64,7 +64,9 @@ one too large to hold, and a select no step stands for -- an index into an assoc
 something inside it. An inexact path only ever covers more than the source wrote, so a wait named by
 one misses no write and a write named by one misses no wait. What it costs is the other direction: a
 procedure's own write is taken out of its reads (LRM 9.2.2.2.1) only where its path is exact, so
-past the bound a procedure may be run by a write of its own that the standard leaves off its list. A
+past the bound a procedure is run once more by a write of its own that the standard leaves off its
+list, where that write lands after the procedure has stopped, as a nonblocking assignment's does. A
+blocking one lands while the procedure runs, when it waits on nothing, and runs it no further. A
 reference into a queue is inexact from the queue on for another reason: the element it names keeps
 no ordinal while others are added and removed around it (LRM 7.10).
 

@@ -1,6 +1,13 @@
 # A construction says which thing it is
 
-Date: 2026-08-28 Status: accepted
+Date: 2026-08-28 Status: accepted. The element default among a container's construction arguments
+(D1) and beside a run-time size (D2), and the element prototype a construction crossed with
+(Consequences), are superseded 2026-10-11 by
+[an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md):
+what an element holds before it is written is its type's, so no construction states it. A queue's
+declared bound as an operand of its construction (D1, Consequences) is superseded the same day by
+that record's D6: the bound is the queue type's and reaches the library with it. The argument lists
+below are the ones that hold.
 
 ## Context
 
@@ -72,14 +79,25 @@ itself either way, naming no entry.
 
 A container holding that list is not its elements. It is a library type, with a representation the
 library owns, and it comes into existence the way every library type does -- through its own
-constructor, invoked with the list. So the list is the primitive and the container is D2: the
-element list, how many times it repeats, the element default the container is seeded with, and a
-bounded queue's declared bound are the arguments of that call, and every one of them is an operand.
+constructor, invoked with the list. So the list is the primitive and the container is D2, and the
+arguments of that call are what the container's type does not already state, every one of them an
+operand. For a dynamic array and a queue those are the element list and how many times it repeats,
+an empty one being the list with no elements. A queue's declared bound (LRM 7.10.5) is not among
+them: it is a fact of the queue's type, which the construction is told as it is told a fixed-size
+array's count, so what a queue's construction takes does not depend on whether it is bounded. For an
+associative array they are its entries. The value a literal's `default:` states (LRM 7.9.11) is no
+argument of the construction: the source may or may not write one, and a construction told apart by
+how many arguments arrived is what this record rules out, so it is the operand of an operation on
+the array the entries built. A fixed-size array's type fixes its count, so its construction takes
+the list alone, laid down again and again until the array is full
+([a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md)). What an element
+holds before it is written is among none of them, for any array kind: the element's type states it
+([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
 
 The tell is what a backend has to write. A build primitive over a container renders as
-`Container(seed, list, count)` -- a callee, parentheses, comma-separated arguments -- text no node
-in the IR stands for, composed by the backend out of a shape it chose. A backend translates what the
-IR states and composes nothing, so a render that has to compose a call is looking at a call.
+`Container(list, count)` -- a callee, parentheses, comma-separated arguments -- text no node in the
+IR stands for, composed by the backend out of a shape it chose. A backend translates what the IR
+states and composes nothing, so a render that has to compose a call is looking at a call.
 
 This is also what keeps the realization question a backend's own. `jit-aggregate-realization.md`
 settles that an aggregate on the execution backend is realized by erasure, and that the decision "is
@@ -90,9 +108,9 @@ own, and naming its type is what names it.
 
 ### D2. A library operation names its entry
 
-Sizing a container at run time has no parts to be built from -- it has a size and an element default
--- so it is an operation, and it names which one. `new[N]` and `new[N](src)` are different entries,
-not one entry told apart by how many operands arrived.
+Sizing a container at run time has no parts to be built from -- it has a size -- so it is an
+operation, and it names which one. `new[N]` takes the size and `new[N](src)` the size and the source
+(LRM 7.5.1); they are different entries, not one entry told apart by how many operands arrived.
 
 The identity is `support::BuiltinFn`, which is the shape `builtin-call-identity.md` already fixes
 for every other runtime entry: the callee carries the function-side identity, and the type-side
@@ -127,16 +145,17 @@ the program, so bringing one into existence is D2, and the pointee comes into ex
 - A backend's construct path has no decision in it. Which entry a construct resolves to is read from
   the result type the same way extract and update read theirs -- a representation choice, not a
   semantic one -- and the arguments are forwarded as the call states them.
-- A container's declared bound (LRM 7.10.5) is an operand of the construction, because it is a value
-  the constructor takes. A fact may live on the result type; a value the target spells has to be
-  materialized by the IR, or the backend is composing it.
+- A container's declared bound (LRM 7.10.5) is a fact of the result type and not an operand: the
+  same at every evaluation, it reaches the library with the type, where the C++ backend spells it in
+  the type it names and the execution backend in the type's constant. What a backend may not do is
+  compose a value the IR did not state; a fact the type states is read through type mapping.
 - Adding a container is adding one construct entry per form that container is built in, not a new
   construction form and not an entry per representation its contents might take.
 - A value crosses into an entry in an erased representation exactly where it _states_ one, and as
   the bare handle of its own domain where it _conforms_ to one the entry already holds. A
-  construction's element prototype states the representation every element beside it is then read
-  in, and nothing on the far side could know it beforehand, so it crosses erased and the entry
-  erases the rest against it. A product's components each state their own, which is why every one of
+  construction of an array is told the type of the array it builds -- a fixed-size array's or a
+  queue's own, any other's element type -- so its elements conform to that and no element prototype
+  crosses. A product's components each state their own representation, which is why every one of
   them crosses erased. An index a keyed container selects by states one too, because such a
   container holds no prototype for an index.
 

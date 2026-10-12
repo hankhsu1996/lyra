@@ -34,23 +34,6 @@ namespace lyra::backend::llvm_backend {
 
 class CodeGenModule;
 
-// What a tuple value's storage asks of the code that holds one, whatever its
-// type: copying it, moving it, ending it, and writing into one already there.
-// A tuple is a value made of several components at once -- an unpacked
-// structure (LRM 7.2), or a call's answer, its result together with its
-// `output` and `inout` arguments (LRM 13.5) -- so each applies the same step to
-// every component, the way clang emits a class's implicit special members.
-enum class TupleLifecycle : std::uint8_t {
-  kCopy,
-  kMove,
-  kDestroy,
-  kAssign,
-};
-
-// The operation of the library's that carries out `step` on an object of its
-// own.
-auto LifecycleOp(TupleLifecycle step) -> RuntimeOp;
-
 // The machine type one parameter or the answer of a virtual function of the
 // library's has where a body of this module stands in for that function.
 enum class MachineKind : std::uint8_t {
@@ -70,13 +53,17 @@ struct VirtualSignature {
 };
 
 // The lifecycle of each tuple type a module uses, and the type a tuple of it
-// opens with the address of. The type is how the runtime, compiled before any
-// tuple type existed, reaches what a value it holds can do: the lifecycle
-// compiled here, and every operation the language defines on the whole value,
-// which are the methods the type's declaration states. It is an object of a
-// class the runtime declares, emitted as clang emits one of a class deriving
-// from it: the object holds the address of a table of bodies, one per virtual
-// function.
+// opens with the address of. A tuple is a value made of several components at
+// once -- an unpacked structure (LRM 7.2), or a call's answer, its result
+// together with its `output` and `inout` arguments (LRM 13.5) -- so each step
+// of its life applies the same step to every component, the way clang emits a
+// class's implicit special members. The type is how the runtime, compiled
+// before any tuple type existed, reaches what a value it holds can do: the
+// lifecycle compiled here, and every operation the language defines on the
+// whole value, which are the methods the type's declaration states. It is an
+// object of a class the runtime declares, emitted as clang emits one of a
+// class deriving from it: the object holds the address of a table of bodies,
+// one per virtual function.
 //
 // The type of a struct is its declaring unit's, one in the program, which
 // every other module refers to. A tuple has no operations, so a type of one
@@ -87,7 +74,7 @@ class CodeGenTuples {
       CodeGenModule& module, CodeGenTypes& types,
       const lir::CompilationUnit& unit);
 
-  auto Function(lir::TypeId tuple, TupleLifecycle step) -> llvm::Function*;
+  auto Function(lir::TypeId tuple, LifecycleStep step) -> llvm::Function*;
 
   // The type a tuple of `tuple`'s type opens with the address of.
   auto TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable*;
@@ -103,7 +90,7 @@ class CodeGenTuples {
   // A name the type's components settle, which tells one type's code from
   // another's when reading the module.
   auto KeyOf(lir::TypeId tuple) -> const std::string&;
-  auto Emit(lir::TypeId tuple, TupleLifecycle step, llvm::Function* fn) -> void;
+  auto Emit(lir::TypeId tuple, LifecycleStep step, llvm::Function* fn) -> void;
   [[nodiscard]] auto MachineTypeOf(MachineKind kind) const -> llvm::Type*;
   // A body standing in for a virtual function of signature `stands_in_for`,
   // declared and left for its slot to fill: it takes the type it is entered
@@ -171,7 +158,7 @@ class CodeGenTuples {
   CodeGenTypes* types_;
   const lir::CompilationUnit* unit_;
   std::unordered_map<lir::TypeId, std::string> keys_;
-  std::map<std::pair<std::string, TupleLifecycle>, llvm::Function*> functions_;
+  std::map<std::pair<std::string, LifecycleStep>, llvm::Function*> functions_;
   std::map<std::string, llvm::GlobalVariable*> types_of_;
 };
 

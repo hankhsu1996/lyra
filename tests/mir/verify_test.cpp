@@ -1,7 +1,6 @@
 #include "lyra/mir/verify.hpp"
 
 #include <gtest/gtest.h>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -106,6 +105,20 @@ TEST(MirVerifyTest, ASuspensionWaitsOnWhatItsKindWaitsOn) {
   }
 }
 
+// A default stated for `type` whose body answers a value of `answers`. What a
+// verifier holds a default to is the type it is stated for and the type it
+// answers, so a value standing in for one the program computes is the body.
+auto DefaultAnswering(TypeId type, TypeId answers) -> TypeDefault {
+  CallableCode code = CallableCode::Defined();
+  code.result_type = answers;
+  Block& block = code.Body();
+  block.AppendStmt(
+      ReturnStmt{
+          .value =
+              block.exprs.Add(Expr{.data = NullLiteral{}, .type = answers})});
+  return TypeDefault{.type = type, .code = std::move(code)};
+}
+
 // A unit whose one body, `f`, is the statements `fill` writes into it.
 template <typename Fill>
 auto UnitWithBody(const Fill& fill) -> CompilationUnit {
@@ -114,6 +127,11 @@ auto UnitWithBody(const Fill& fill) -> CompilationUnit {
   CallableCode code = CallableCode::Defined();
   code.result_type = unit.builtins.void_type;
   fill(unit, code.Body());
+  // Every unit states the default of each type an array it holds has as its
+  // element, so one built here does too, whatever its body reaches.
+  for (const TypeId element : ArrayElementTypes(unit.types)) {
+    unit.type_defaults.push_back(DefaultAnswering(element, element));
+  }
   const CallableId id = unit.callables.Add(
       CallableDecl{
           .code = std::move(code),
@@ -537,6 +555,46 @@ TEST(MirVerifyTest, AnOperationOverConstantsIsStatedAsItsConstant) {
             ExprStmt{.expr = AddSum(u, body, one(u, body), one(u, body))});
       }),
       "an operation over constants");
+}
+
+// What a position of an array holds before anything is written to it is asked
+// of the element type alone (LRM 7.4.5), so a unit states exactly one default
+// for each type its arrays have as their element, answering a value of that
+// type, and none for any other type.
+TEST(MirVerifyTest, AUnitStatesOneDefaultForEachArrayElementType) {
+  const auto holding_an_array = [] {
+    return UnitWithBody([](CompilationUnit& u, Block& body) {
+      const TypeId array = u.types.Intern(
+          Type{DynamicArrayType{.element_type = u.builtins.int_type}});
+      body.AppendStmt(
+          ExprStmt{
+              .expr =
+                  body.exprs.Add(Expr{.data = NullLiteral{}, .type = array})});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(holding_an_array()));
+
+  CompilationUnit unasked = holding_an_array();
+  unasked.type_defaults.push_back(
+      DefaultAnswering(unasked.builtins.string, unasked.builtins.string));
+  ExpectRefused(
+      unasked, "a default is stated for a type no array has as its element");
+
+  CompilationUnit twice = holding_an_array();
+  twice.type_defaults.push_back(
+      DefaultAnswering(twice.builtins.int_type, twice.builtins.int_type));
+  ExpectRefused(twice, "a type has two defaults stated");
+
+  CompilationUnit mistyped = holding_an_array();
+  mistyped.type_defaults.front() =
+      DefaultAnswering(mistyped.builtins.int_type, mistyped.builtins.string);
+  ExpectRefused(mistyped, "a type's default answers a value of another type");
+
+  CompilationUnit unanswered = holding_an_array();
+  unanswered.type_defaults.clear();
+  ExpectRefused(
+      unanswered, "the element type of an array has no default stated");
 }
 
 }  // namespace

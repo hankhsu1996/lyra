@@ -53,7 +53,7 @@ template class ValueStorageCore<value::RuntimeTuple>;
 template class ValueStorageCore<value::RuntimeUnion>;
 template class ValueStorageCore<value::RuntimeTaggedUnion>;
 template class ValueStorageCore<value::RuntimeDynamicArray>;
-template class ValueStorageCore<value::RuntimeUnpackedArray>;
+template class ValueStorageCore<value::RuntimeFixedArray>;
 template class ValueStorageCore<value::RuntimeQueue>;
 template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
@@ -63,7 +63,7 @@ template class Var<value::RuntimeTuple>;
 template class Var<value::RuntimeUnion>;
 template class Var<value::RuntimeTaggedUnion>;
 template class Var<value::RuntimeDynamicArray>;
-template class Var<value::RuntimeUnpackedArray>;
+template class Var<value::RuntimeFixedArray>;
 template class Var<value::RuntimeQueue>;
 template class Var<value::RuntimeAssociativeArray>;
 
@@ -73,7 +73,7 @@ template class CellRareState<value::RuntimeTuple>;
 template class CellRareState<value::RuntimeUnion>;
 template class CellRareState<value::RuntimeTaggedUnion>;
 template class CellRareState<value::RuntimeDynamicArray>;
-template class CellRareState<value::RuntimeUnpackedArray>;
+template class CellRareState<value::RuntimeFixedArray>;
 template class CellRareState<value::RuntimeQueue>;
 template class CellRareState<value::RuntimeAssociativeArray>;
 
@@ -83,7 +83,7 @@ template class Ref<value::RuntimeTuple>;
 template class Ref<value::RuntimeUnion>;
 template class Ref<value::RuntimeTaggedUnion>;
 template class Ref<value::RuntimeDynamicArray>;
-template class Ref<value::RuntimeUnpackedArray>;
+template class Ref<value::RuntimeFixedArray>;
 template class Ref<value::RuntimeQueue>;
 template class Ref<value::RuntimeAssociativeArray>;
 
@@ -93,7 +93,7 @@ template class ScopedMutation<Ref<value::RuntimeTuple>>;
 template class ScopedMutation<Ref<value::RuntimeUnion>>;
 template class ScopedMutation<Ref<value::RuntimeTaggedUnion>>;
 template class ScopedMutation<Ref<value::RuntimeDynamicArray>>;
-template class ScopedMutation<Ref<value::RuntimeUnpackedArray>>;
+template class ScopedMutation<Ref<value::RuntimeFixedArray>>;
 template class ScopedMutation<Ref<value::RuntimeQueue>>;
 template class ScopedMutation<Ref<value::RuntimeAssociativeArray>>;
 
@@ -103,7 +103,7 @@ template class Takeovers<value::RuntimeTuple>;
 template class Takeovers<value::RuntimeUnion>;
 template class Takeovers<value::RuntimeTaggedUnion>;
 template class Takeovers<value::RuntimeDynamicArray>;
-template class Takeovers<value::RuntimeUnpackedArray>;
+template class Takeovers<value::RuntimeFixedArray>;
 template class Takeovers<value::RuntimeQueue>;
 template class Takeovers<value::RuntimeAssociativeArray>;
 
@@ -113,7 +113,7 @@ template class ActivationValueCell<value::RuntimeTuple>;
 template class ActivationValueCell<value::RuntimeUnion>;
 template class ActivationValueCell<value::RuntimeTaggedUnion>;
 template class ActivationValueCell<value::RuntimeDynamicArray>;
-template class ActivationValueCell<value::RuntimeUnpackedArray>;
+template class ActivationValueCell<value::RuntimeFixedArray>;
 template class ActivationValueCell<value::RuntimeQueue>;
 template class ActivationValueCell<value::RuntimeAssociativeArray>;
 
@@ -123,25 +123,25 @@ template class SampledHistory<value::RuntimeTuple>;
 template class SampledHistory<value::RuntimeUnion>;
 template class SampledHistory<value::RuntimeTaggedUnion>;
 template class SampledHistory<value::RuntimeDynamicArray>;
-template class SampledHistory<value::RuntimeUnpackedArray>;
+template class SampledHistory<value::RuntimeFixedArray>;
 template class SampledHistory<value::RuntimeQueue>;
 template class SampledHistory<value::RuntimeAssociativeArray>;
 
 template class ResolvedNet<value::WideLogicVector>;
 template class ResolvedNet<value::RuntimeTuple>;
 template class ResolvedNet<value::RuntimeUnion>;
-template class ResolvedNet<value::RuntimeUnpackedArray>;
+template class ResolvedNet<value::RuntimeFixedArray>;
 
 template class Driver<value::WideLogicVector>;
 template class Driver<value::RuntimeTuple>;
 template class Driver<value::RuntimeUnion>;
-template class Driver<value::RuntimeUnpackedArray>;
+template class Driver<value::RuntimeFixedArray>;
 
 template class CompletionSlot<value::RuntimeTuple>;
 template class CompletionSlot<value::RuntimeUnion>;
 template class CompletionSlot<value::RuntimeTaggedUnion>;
 template class CompletionSlot<value::RuntimeDynamicArray>;
-template class CompletionSlot<value::RuntimeUnpackedArray>;
+template class CompletionSlot<value::RuntimeFixedArray>;
 template class CompletionSlot<value::RuntimeQueue>;
 template class CompletionSlot<value::RuntimeAssociativeArray>;
 
@@ -149,7 +149,7 @@ template class Coroutine<value::RuntimeTuple>;
 template class Coroutine<value::RuntimeUnion>;
 template class Coroutine<value::RuntimeTaggedUnion>;
 template class Coroutine<value::RuntimeDynamicArray>;
-template class Coroutine<value::RuntimeUnpackedArray>;
+template class Coroutine<value::RuntimeFixedArray>;
 template class Coroutine<value::RuntimeQueue>;
 template class Coroutine<value::RuntimeAssociativeArray>;
 

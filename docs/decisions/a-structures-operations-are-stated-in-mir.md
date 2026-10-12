@@ -100,8 +100,10 @@ call, and so is every whole-value question a structure's own body asks of a memb
 
 - A unit states up to fifteen methods for each structure it declares, used or not. A unit naming a
   structure another unit declares states none.
-- A method asked of the type takes the prototype the library's entry takes of any value, which a
-  structure's own reading does not need; the runtime's table passes it too.
+- A method asked of the type takes what the library's entry takes of any value, which is the stream
+  alone: the type it builds is its own, as every type's reading of a stream knows its type
+  ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
+  D6).
 - A tuple a lowering composes for itself -- a completion's answer, an associative entry -- is its
   components and nothing more, and has no operations. Nothing asks a whole-value operation of one.
 - The methods are built while the declaration is made, so what a method answers of the structure

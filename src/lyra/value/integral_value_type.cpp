@@ -69,6 +69,12 @@ auto IntegralValueType::HasUnknown(const void* value) const -> bool {
   return lyra::value::HasUnknown(Load(value).View());
 }
 
+void IntegralValueType::BuildDefault(void* out) const {
+  WrittenWords built(shape_);
+  FillDefault(built.MutableView());
+  built.StoreTo(out);
+}
+
 // LRM 20.6.2, 20.9, 6.24.3: an integral value's stream of bits is its own bits,
 // read unsigned.
 void IntegralValueType::BitstreamWidth(const void*, void* out) const {
@@ -95,8 +101,8 @@ auto IntegralValueType::WriteToStream(
 
 // A two-state type reads each x or z of the stream as 0 (LRM 11.4.14.3).
 auto IntegralValueType::ReadFromStream(
-    const ConstIntegralView& stream, std::uint64_t taken, const void*,
-    void* out) const -> std::uint64_t {
+    const ConstIntegralView& stream, std::uint64_t taken, void* out) const
+    -> std::uint64_t {
   WrittenWords bits(shape_);
   Extract(
       bits.MutableView(), stream,
@@ -206,6 +212,10 @@ auto IntegralValueType::Parts() const -> const PartsByPosition* {
 
 auto IntegralValueType::AsIntegral() const -> const IntegralValueType* {
   return this;
+}
+
+auto IntegralValueType::AsFixedArray() const -> const FixedArrayType* {
+  return nullptr;
 }
 
 }  // namespace lyra::value

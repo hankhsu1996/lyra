@@ -43,9 +43,10 @@ class BasicDynamicArray {
 
   // LRM 7.5.1 `new[N]` and `new[N](from)`: `count` elements, the first of them
   // copies of `from`'s first elements where it is given, and the rest the
-  // element default.
+  // element default. It delegates, so that the array is already one whose
+  // destructor runs when a copy throws, ending the elements built before it.
   BasicDynamicArray(Elem elem, std::size_t count, const BasicDynamicArray* from)
-      : elem_(std::move(elem)) {
+      : BasicDynamicArray(std::move(elem)) {
     Allocate(count);
     const std::size_t kept =
         from == nullptr ? 0 : std::min(count, from->count_);
@@ -75,8 +76,7 @@ class BasicDynamicArray {
   BasicDynamicArray(BasicDynamicArray&& other) noexcept
       : elem_(std::move(other.elem_)),
         data_(std::exchange(other.data_, {})),
-        count_(std::exchange(other.count_, 0)),
-        discard_(std::exchange(other.discard_, nullptr)) {
+        count_(std::exchange(other.count_, 0)) {
   }
   auto operator=(const BasicDynamicArray& other) -> BasicDynamicArray& {
     if (this != &other) {
@@ -98,9 +98,6 @@ class BasicDynamicArray {
     }
     if (!data_.empty()) {
       ::operator delete(data_.data(), std::align_val_t{elem_.Align()});
-    }
-    if (discard_ != nullptr) {
-      FreeElement(elem_, discard_);
     }
   }
 
@@ -139,7 +136,7 @@ class BasicDynamicArray {
       std::optional<std::int64_t> position, Formation& formed) -> void* {
     const auto ordinal = ElementOrdinal(position, count_);
     formed = ordinal ? Formation::kExisting : Formation::kNowhere;
-    return ordinal ? At(*ordinal) : DiscardTarget(elem_, discard_);
+    return ordinal ? At(*ordinal) : elem_.DiscardedWrite();
   }
 
   // LRM 11.4.11: the two arms of a conditional operator whose condition is
@@ -179,9 +176,7 @@ class BasicDynamicArray {
     });
   }
 
-  // These elements' shapes with every bit set to `fill` (LRM 6.7.1). The
-  // element default stays this array's, which an invalid-index read returns
-  // under LRM 7.4.5 whether the array is a net or a variable.
+  // These elements' shapes with every bit set to `fill` (LRM 6.7.1).
   template <typename Fill>
   [[nodiscard]] auto FilledLike(const Fill& fill) const -> BasicDynamicArray {
     return Built(elem_, count_, [&](std::size_t i, void* out) {
@@ -201,37 +196,13 @@ class BasicDynamicArray {
     return filled;
   }
 
-  // The inverse, each element taking its own width off the front of what is
-  // left (LRM 11.4.14.3). These elements state the count and every element's
-  // shape, both of which a sequence of bits carries nothing of. Answers the
-  // array and how many positions are taken after it.
-  [[nodiscard]] auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken) const
-      -> std::pair<BasicDynamicArray, std::uint64_t> {
-    BasicDynamicArray read =
-        Built(elem_, count_, [&](std::size_t i, void* out) {
-          taken = elem_.ReadFromStream(stream, taken, At(i), out);
-        });
-    return {std::move(read), taken};
-  }
-
   // LRM 7.4.5 / 7.4.6: the `count` elements from `start`, each the element
   // default where it lies outside the array, every one of them where `start`
   // names no position.
   [[nodiscard]] auto SliceElements(
       std::optional<std::int64_t> start, std::size_t count) const
       -> std::vector<const void*> {
-    std::vector<const void*> elements;
-    elements.reserve(count);
-    const auto size = static_cast<std::int64_t>(count_);
-    for (std::size_t i = 0; i < count; ++i) {
-      const std::int64_t at =
-          start.has_value() ? *start + static_cast<std::int64_t>(i) : -1;
-      elements.push_back(
-          at >= 0 && at < size ? At(static_cast<std::size_t>(at))
-                               : elem_.Default());
-    }
-    return elements;
+    return detail::SequenceSliceElements(*this, start, count);
   }
 
   // LRM 7.6: the `count` elements from `start` take `replacement`, element for
@@ -241,24 +212,7 @@ class BasicDynamicArray {
   auto AssignSlice(
       std::optional<std::int64_t> start, std::size_t count,
       std::span<const void* const> replacement) -> bool {
-    if (!start.has_value()) {
-      return false;
-    }
-    const auto size = static_cast<std::int64_t>(count_);
-    bool moved = false;
-    for (std::size_t i = 0; i < count; ++i) {
-      const std::int64_t at = *start + static_cast<std::int64_t>(i);
-      if (at < 0 || at >= size) {
-        continue;
-      }
-      void* element = At(static_cast<std::size_t>(at));
-      if (elem_.BitIdentical(element, replacement[i])) {
-        continue;
-      }
-      elem_.Assign(element, replacement[i]);
-      moved = true;
-    }
-    return moved;
+    return detail::SequenceAssignSlice(*this, start, count, replacement);
   }
 
   // A generation of these elements followed by copies of the ones `values`
@@ -286,9 +240,7 @@ class BasicDynamicArray {
   // Puts the value that was at `order[k]` at index `k` (LRM 7.12.2).
   void Permute(std::span<const std::size_t> order) {
     const BasicDynamicArray held(elem_, count_, this);
-    for (std::size_t k = 0; k < order.size(); ++k) {
-      elem_.Assign(At(k), held.At(order[k]));
-    }
+    detail::SequencePermute(*this, held, order);
   }
 
  private:
@@ -306,7 +258,6 @@ class BasicDynamicArray {
     std::swap(elem_, other.elem_);
     std::swap(data_, other.data_);
     std::swap(count_, other.count_);
-    std::swap(discard_, other.discard_);
   }
 
   void Allocate(std::size_t count) {
@@ -326,7 +277,6 @@ class BasicDynamicArray {
   Elem elem_;
   std::span<std::byte> data_;
   std::size_t count_ = 0;
-  void* discard_ = nullptr;
 };
 
 }  // namespace lyra::value

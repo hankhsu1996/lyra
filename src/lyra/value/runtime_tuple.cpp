@@ -153,11 +153,4 @@ auto RuntimeTuple::WriteToStream(
   return value_.WriteToStream(stream, filled);
 }
 
-auto RuntimeTuple::ReadFromStream(
-    const ConstIntegralView& stream, std::uint64_t taken) const
-    -> std::pair<RuntimeTuple, std::uint64_t> {
-  auto [read, after] = value_.ReadFromStream(stream, taken);
-  return {RuntimeTuple(std::move(read)), after};
-}
-
 }  // namespace lyra::value

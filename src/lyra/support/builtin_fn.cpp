@@ -79,13 +79,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"Slice"},
           .takes_a_type_argument = true,
           .selects = PartSelection::kSlice,
-          .operands = {kMachine, kPosition}};
+          .operands = {kMachine, kPosition},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kQueueSlice:
       return {
           .name = "queue_slice",
           .declaration = Method{"Slice"},
           .selects = PartSelection::kSlice,
-          .operands = {kMachine, kPosition, kPosition}};
+          .operands = {kMachine, kPosition, kPosition},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kElementRef:
       return {
           .name = "element_ref",
@@ -114,7 +116,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"SliceRef"},
           .answer = EntryAnswer::kPartOfTheReceiver,
           .selects = PartSelection::kSlice,
-          .operands = {kMachine, kPosition, kMachine, kHeld}};
+          .operands = {kMachine, kPosition, kMachine, kTyped}};
     case BuiltinFn::kComponent:
       return {
           .name = "component",
@@ -157,7 +159,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "from_bitstream",
           .declaration = StaticFactory{"FromBitstream"},
-          .operands = {kBits, kTyped}};
+          .operands = {kBits},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kReverseBlocks:
       return IntegralEntry(IntegralOp::kReverseBlocks, Method{"ReverseBlocks"});
     case BuiltinFn::kDelete:
@@ -199,113 +202,113 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "sum",
           .declaration = Method{"Sum"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kProduct:
       return {
           .name = "product",
           .declaration = Method{"Product"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kAnd:
       return {
           .name = "and",
           .declaration = Method{"And"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kOr:
       return {
           .name = "or",
           .declaration = Method{"Or"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kXor:
       return {
           .name = "xor",
           .declaration = Method{"Xor"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kFind:
       return {
           .name = "find",
           .declaration = Method{"Find"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kFindIndex:
       return {
           .name = "find_index",
           .declaration = Method{"FindIndex"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kFindFirst:
       return {
           .name = "find_first",
           .declaration = Method{"FindFirst"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kFindFirstIndex:
       return {
           .name = "find_first_index",
           .declaration = Method{"FindFirstIndex"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kFindLast:
       return {
           .name = "find_last",
           .declaration = Method{"FindLast"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kFindLastIndex:
       return {
           .name = "find_last_index",
           .declaration = Method{"FindLastIndex"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kMin:
       return {
           .name = "min",
           .declaration = Method{"Min"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kMax:
       return {
           .name = "max",
           .declaration = Method{"Max"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kUnique:
       return {
           .name = "unique",
           .declaration = Method{"Unique"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kUniqueIndex:
       return {
           .name = "unique_index",
           .declaration = Method{"UniqueIndex"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kMap:
       return {
           .name = "map",
           .declaration = Method{"Map"},
           .takes_closure = true,
-          .operands = {kMachine, kMachine, kTyped},
-          .answer_starts_from = 2};
+          .operands = {kMachine, kMachine},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kInsert:
       return {
           .name = "insert",
@@ -367,14 +370,17 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "assoc_min_index",
           .declaration = Method{"MinIndex"},
-          .operands = {kMachine, kTyped},
-          .answer_starts_from = 1};
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kAssocMaxIndex:
       return {
           .name = "assoc_max_index",
           .declaration = Method{"MaxIndex"},
-          .operands = {kMachine, kTyped},
-          .answer_starts_from = 1};
+          .answer_told = AnswerTold::kAnswerType};
+    case BuiltinFn::kAssocWithDefault:
+      return {
+          .name = "assoc_with_default",
+          .declaration = Method{"WithDefault"},
+          .operands = {kMachine, kHeld}};
     case BuiltinFn::kGetc:
       return {
           .name = "getc",
@@ -903,7 +909,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"Read"},
           .operands = {kMachine, kNumber}};
     case BuiltinFn::kFileReadMemory:
-      return {.name = "file_read_memory", .declaration = Method{"ReadMemory"}};
+      return {
+          .name = "file_read_memory",
+          .declaration = Method{"ReadMemory"},
+          .operands = {kMachine, kTyped}};
     case BuiltinFn::kFileSeek:
       return {.name = "file_seek", .declaration = Method{"Seek"}};
     case BuiltinFn::kFileRewind:
@@ -1353,7 +1362,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "dpi_open_array_value",
           .declaration = Method{"ToValue"},
-          .operands = {kMachine, kTyped}};
+          .takes_a_type_argument = true,
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kRunForeignTaskOnFiber:
       return {
           .name = "run_foreign_task_on_fiber",
@@ -1396,39 +1406,41 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kFromByteArray:
       return {
           .name = "from_byte_array",
-          .declaration = StaticFactory{"FromByteArray"}};
+          .declaration = StaticFactory{"FromByteArray"},
+          .operands = {kTyped}};
     case BuiltinFn::kIntegralFromString:
       return IntegralEntry(IntegralOp::kFromText, ValueFunction("FromString"));
     case BuiltinFn::kByteArrayFromString:
       return {
           .name = "byte_array_from_string",
           .declaration = StaticFactory{"FromString"},
-          .takes_a_type_argument = true,
-          .answer_told = AnswerTold::kElementType};
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kByteArrayFromBits:
       return {
           .name = "byte_array_from_bits",
           .declaration = StaticFactory{"FromIntegral"},
-          .takes_a_type_argument = true,
           .operands = {kBits},
-          .answer_told = AnswerTold::kElementType};
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kDynamicArrayFromArray:
       return {
           .name = "dynamic_array_from_array",
           .declaration = StaticFactory{"FromArray"},
-          .operands = {kMachine, kTyped}};
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kUnpackedArrayFromArray:
       return {
           .name = "unpacked_array_from_array",
           .declaration = StaticFactory{"FromArray"},
-          .operands = {kMachine, kTyped}};
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kQueueFromArray:
       return {
           .name = "queue_from_array",
           .declaration = StaticFactory{"FromArray"},
-          .operands = {kMachine, kTyped}};
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kConformBound:
-      return {.name = "conform_bound", .declaration = Method{"ConformBound"}};
+      return {
+          .name = "conform_bound",
+          .declaration = StaticFactory{"ConformBound"},
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kArrayConcatElement:
       return {
           .name = "concat_element",
@@ -1442,21 +1454,16 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kArrayConformSize:
       return {
           .name = "conform_size", .declaration = StaticFactory{"ConformSize"}};
-    case BuiltinFn::kMakeDynamicArrayDefault:
-      return {
-          .name = "make_dynamic_array_default",
-          .declaration = StaticFactory{"Default"},
-          .operands = {kTyped}};
     case BuiltinFn::kMakeDynamicArrayNew:
       return {
           .name = "make_dynamic_array_new",
           .declaration = StaticFactory{"New"},
-          .operands = {kMachine, kTyped}};
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kMakeDynamicArrayNewCopy:
       return {
           .name = "make_dynamic_array_new_copy",
           .declaration = StaticFactory{"NewCopy"},
-          .operands = {kMachine, kTyped}};
+          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kConcat:
       return {
           .name = "concat",

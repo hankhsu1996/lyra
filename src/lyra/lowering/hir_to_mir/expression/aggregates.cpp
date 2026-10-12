@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
@@ -78,17 +77,13 @@ auto BuildBitsReplication(
 // so the fold is here and each step is a two-operand call; the accumulator's
 // own domain (a queue enforcing its bound, a dynamic array unbounded) selects
 // the realization. A spread part crosses erased, its own container domain being
-// no concern of the entry that appends its elements. The empty `{}` is the seed
-// with no step folded onto it.
+// no concern of the entry that appends its elements. The empty `{}` is the
+// accumulator with no step folded onto it.
 auto BuildUnpackedConcatChain(
-    const UnitLowerer& owner, WalkFrame frame, mir::TypeId acc_type,
-    mir::ExprId element_default, const std::vector<mir::ExprId>& operand_ids)
-    -> mir::Expr {
-  auto& block = *frame.current_block;
-  const mir::CompilationUnit& unit = owner.Unit();
+    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId acc_type,
+    const std::vector<mir::ExprId>& operand_ids) -> mir::Expr {
   const mir::TypeId element_type = RequiredContainerElementType(unit, acc_type);
-  mir::Expr acc =
-      BuildArrayConstructionCall(unit, block, acc_type, element_default, {});
+  mir::Expr acc = BuildArrayConstructionCall(unit, block, acc_type, {});
   for (const mir::ExprId part : operand_ids) {
     const bool spread =
         ContributesItsElements(unit, block.exprs.Get(part).type, element_type);
@@ -113,8 +108,7 @@ auto BuildUnpackedConcatChain(
 template <ExprLowerer Lowerer>
 auto LowerHirConcatExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ConcatExpr& c,
-    hir::TypeId hir_result_type, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> operand_ids;
   operand_ids.reserve(c.operands.size());
@@ -156,10 +150,7 @@ auto LowerHirConcatExpr(
   // building at the destination's own type -- which is also what decides what
   // each part contributes.
   if (result_ty.Is<mir::QueueType>() || result_ty.Is<mir::DynamicArrayType>()) {
-    return BuildUnpackedConcatChain(
-        lowerer.Owner(), frame, result_type,
-        BuildElementDefault(lowerer.Owner(), block, hir_result_type),
-        operand_ids);
+    return BuildUnpackedConcatChain(unit, block, result_type, operand_ids);
   }
   // A fixed-size unpacked array whose parts are all single elements is the
   // assignment pattern it coincides with (LRM 10.10.1), built by position. One
@@ -168,9 +159,6 @@ auto LowerHirConcatExpr(
   // when the counts differ (LRM 10.10). The front end has already rejected a
   // spread-free mismatch, so only the spread form can reach the run-time check.
   if (result_ty.Is<mir::UnpackedArrayType>()) {
-    // By value: the pool's view does not survive the interning below.
-    const std::uint64_t element_count =
-        result_ty.Get<mir::UnpackedArrayType>().Size();
     const mir::TypeId element_type =
         RequiredContainerElementType(unit, result_type);
     const bool has_spread =
@@ -178,25 +166,21 @@ auto LowerHirConcatExpr(
           return ContributesItsElements(
               unit, block.exprs.Get(part).type, element_type);
         });
-    const mir::ExprId element_default =
-        BuildElementDefault(lowerer.Owner(), block, hir_result_type);
     if (!has_spread) {
       return BuildArrayConstructionCall(
-          unit, block, result_type, element_default, std::move(operand_ids));
+          unit, block, result_type, std::move(operand_ids));
     }
     const mir::TypeId dyn_type = unit.types.Intern(
         mir::Type{mir::DynamicArrayType{.element_type = element_type}});
-    const mir::ExprId dyn_id = block.exprs.Add(BuildUnpackedConcatChain(
-        lowerer.Owner(), frame, dyn_type, element_default, operand_ids));
-    const mir::ExprId count_id = BuildMachineIntLiteral(
-        unit, block, static_cast<std::int64_t>(element_count));
+    const mir::ExprId dyn_id = block.exprs.Add(
+        BuildUnpackedConcatChain(unit, block, dyn_type, operand_ids));
     return mir::Expr{
         .data =
             mir::CallExpr{
                 .callee =
                     mir::Direct{
                         .target = support::BuiltinFn::kArrayConformSize},
-                .arguments = {dyn_id, count_id}},
+                .arguments = {dyn_id}},
         .type = result_type};
   }
   return BuildValueConversion(
@@ -257,15 +241,12 @@ auto LowerHirReplicationExpr(
 }
 
 auto BuildPositionalAggregate(
-    UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId hir_result_type,
-    mir::TypeId result_type, std::vector<mir::ExprId> elements) -> mir::Expr {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
+    mir::CompilationUnit& unit, mir::Block& block, mir::TypeId result_type,
+    std::vector<mir::ExprId> elements) -> mir::Expr {
   const auto& result_ty = unit.types.Get(result_type);
   if (BuildsFromAnElementList(result_ty)) {
     return BuildArrayConstructionCall(
-        unit, block, result_type,
-        BuildElementDefault(unit_lowerer, block, hir_result_type),
-        std::move(elements));
+        unit, block, result_type, std::move(elements));
   }
   if (mir::ProductElements(unit, result_type).has_value()) {
     return mir::Expr{
@@ -284,14 +265,13 @@ auto BuildPositionalAggregate(
 //
 // The shapes differ only in how they package the positional elements: a packed
 // target joins them into one bit plane, because its members share one; an array
-// container is a library type and takes the element list as its constructor's
-// argument; and an unpacked struct -- whose members are independent value
-// slots, not a shared bit plane -- is those elements and nothing more.
+// is built by its construction, which takes the element list as an argument;
+// and an unpacked struct -- whose members are independent value slots, not a
+// shared bit plane -- is those elements and nothing more.
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternExpr& a,
-    hir::TypeId hir_result_type, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   std::vector<mir::ExprId> element_ids;
   element_ids.reserve(a.elements.size());
@@ -301,8 +281,7 @@ auto LowerHirAssignmentPatternExpr(
     element_ids.push_back(block.exprs.Add(*std::move(lowered)));
   }
   return BuildPositionalAggregate(
-      lowerer.Owner(), block, hir_result_type, result_type,
-      std::move(element_ids));
+      lowerer.Owner().Unit(), block, result_type, std::move(element_ids));
 }
 
 // The whole target before any key names an element of it: every element holding
@@ -311,9 +290,10 @@ auto LowerHirAssignmentPatternExpr(
 // value, which no key can leave showing.
 //
 // A packed array's elements share a bit plane, so the default replicated to the
-// plane's width is the value; an unpacked array's are separate storage, so the
-// repeat entry its family carries builds it. Neither counts out elements, which
-// is what keeps a 32768-element target from costing its own length to describe.
+// plane's width is the value; an unpacked array's are separate storage, so its
+// construction lays the one default down until the array is full. Neither
+// counts out elements, which is what keeps a 32768-element target from costing
+// its own length to describe.
 template <ExprLowerer Lowerer>
 auto BuildKeyedPatternBase(
     Lowerer& lowerer, WalkFrame frame, const hir::AssignmentPatternKeyedExpr& k,
@@ -341,15 +321,7 @@ auto BuildKeyedPatternBase(
         block.exprs.Add(BuildBitsReplication(unit, block, fill, copies)),
         result_type);
   }
-  // By value: building the element's default interns, and the pool's view
-  // does not survive that.
-  const std::uint64_t element_count =
-      unit.types.Get(result_type).Get<mir::UnpackedArrayType>().Size();
-  return BuildArrayRepeatCall(
-      unit, block, result_type,
-      BuildElementDefault(lowerer.Owner(), block, hir_result_type), {fill},
-      BuildMachineIntLiteral(
-          unit, block, static_cast<std::int64_t>(element_count)));
+  return BuildFixedArrayConstructionCall(unit, block, result_type, {fill});
 }
 
 // LRM 10.9.1 `'{index: value, ..., default: value}`: the elements no index
@@ -432,8 +404,8 @@ auto LowerHirAssignmentPatternKeyedExpr(
 template <ExprLowerer Lowerer>
 auto LowerHirAssignmentPatternReplicationExpr(
     Lowerer& lowerer, WalkFrame frame,
-    const hir::AssignmentPatternReplicationExpr& a, hir::TypeId hir_result_type,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    const hir::AssignmentPatternReplicationExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const auto lower_item = [&](hir::ExprId id) -> diag::Result<mir::ExprId> {
@@ -471,6 +443,13 @@ auto LowerHirAssignmentPatternReplicationExpr(
     item_ids.push_back(*item);
   }
 
+  // A fixed-size array is the items laid down until it is full, and how many
+  // times that is its own type says, as a structure's does.
+  if (unit.types.Get(result_type).Is<mir::UnpackedArrayType>()) {
+    return BuildFixedArrayConstructionCall(
+        unit, block, result_type, std::move(item_ids));
+  }
+
   // Every type read below is read by value or where it is used: lowering the
   // count and building the concatenation intern types, which can relocate what
   // the pool holds.
@@ -480,9 +459,7 @@ auto LowerHirAssignmentPatternReplicationExpr(
     const mir::ExprId count_value = block.exprs.Add(*std::move(count_or));
     const mir::ExprId count_id = BuildToInt64Call(unit, block, count_value);
     return BuildArrayRepeatCall(
-        unit, block, result_type,
-        BuildElementDefault(lowerer.Owner(), block, hir_result_type),
-        std::move(item_ids), count_id);
+        unit, block, result_type, std::move(item_ids), count_id);
   }
   // A packed target is as many copies of the items as fill it, which its own
   // type states.
@@ -498,38 +475,22 @@ auto LowerHirAssignmentPatternReplicationExpr(
   return BuildValueConversion(unit, block, repl_id, result_type);
 }
 
-// LRM 7.5.1 `new[N]` / `new[N](other)`. The argument list on the lowered
-// construction call is `[size, element-default prototype, optional copy
-// source]`: the prototype carries the element type's default value -- a
-// struct element's own member initializers included (LRM 7.2.2) -- so the
-// runtime ctor populates new slots without re-querying the type, and the
-// optional copy source feeds the LRM 7.5.1 truncate / pad behaviour on
-// `new[N](other)`.
+// LRM 7.5.1 `new[N]` / `new[N](other)`. The lowered call's arguments are the
+// size and, where the source wrote one, the array whose elements the new one
+// starts from, truncated or padded to the size. What a slot nothing is copied
+// into holds is the element type's to say, so the call states no value for it.
 template <ExprLowerer Lowerer>
 auto LowerHirDynamicArrayNewExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::DynamicArrayNewExpr& n,
-    hir::TypeId hir_result_type, mir::TypeId result_type)
-    -> diag::Result<mir::Expr> {
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   auto size_or = lowerer.LowerExpr(lowerer.HirExprs().Get(n.size), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
-  const mir::ExprId size_id = BuildToInt64Call(
-      lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(size_or)));
+  const mir::ExprId size_id =
+      BuildToInt64Call(unit, block, block.exprs.Add(*std::move(size_or)));
 
-  const hir::Type& hir_result_ty =
-      lowerer.Owner().Hir().types.Get(hir_result_type);
-  const auto* hir_da = hir_result_ty.As<hir::DynamicArrayType>();
-  if (hir_da == nullptr) {
-    throw InternalError(
-        "LowerHirDynamicArrayNewExpr: result type is not DynamicArrayType");
-  }
-  const mir::ExprId prototype_id = block.exprs.Add(
-      BuildDefaultValueFromHir(lowerer.Owner(), block, hir_da->element_type));
-
-  std::vector<mir::ExprId> args;
-  args.reserve(n.initializer.has_value() ? 3U : 2U);
-  args.push_back(size_id);
-  args.push_back(prototype_id);
+  std::vector<mir::ExprId> args{size_id};
   if (n.initializer.has_value()) {
     auto init_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*n.initializer), frame);
@@ -549,14 +510,15 @@ auto LowerHirDynamicArrayNewExpr(
 
 // LRM 7.9.11 associative literal. Each (key, value) entry is lowered into a
 // pair of MIR ExprIds and handed to the shared construction helper, which wraps
-// them as tuples and hands the associative constructor what a read of an
-// absent key answers with.
+// them as tuples; the `default:` clause, where the literal writes one, is the
+// value a read of an absent key answers with (LRM 7.8.6).
 template <ExprLowerer Lowerer>
 auto LowerHirAssociativeAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,
-    const hir::AssociativeAssignmentPatternExpr& a, hir::TypeId hir_result_type,
-    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+    const hir::AssociativeAssignmentPatternExpr& a, mir::TypeId result_type)
+    -> diag::Result<mir::Expr> {
   auto& block = *frame.current_block;
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   std::vector<std::pair<mir::ExprId, mir::ExprId>> entries;
   entries.reserve(a.entries.size());
   for (const auto& entry : a.entries) {
@@ -569,33 +531,26 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     const mir::ExprId value_id = block.exprs.Add(*std::move(value_or));
     entries.emplace_back(key_id, value_id);
   }
-  // LRM 7.8.6: a literal that writes no `default:` clause answers a read of an
-  // absent key with the element type's own default.
-  mir::ExprId absent_key_answer{};
+  std::optional<mir::ExprId> stated_default;
   if (a.default_value.has_value()) {
     auto default_or =
         lowerer.LowerExpr(lowerer.HirExprs().Get(*a.default_value), frame);
     if (!default_or) return std::unexpected(std::move(default_or.error()));
-    absent_key_answer = block.exprs.Add(*std::move(default_or));
-  } else {
-    absent_key_answer =
-        BuildElementDefault(lowerer.Owner(), block, hir_result_type);
+    stated_default = block.exprs.Add(*std::move(default_or));
   }
   return BuildAssociativeConstructionCall(
-      lowerer.Owner().Unit(), block, result_type,
-      BuildElementDefault(lowerer.Owner(), block, hir_result_type),
-      std::move(entries), absent_key_answer);
+      unit, block, result_type, std::move(entries), stated_default);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined
 // in this file rather than the header so the file-local helpers stay private,
 // so each pass class's dispatcher links against the symbols emitted here.
 template auto LowerHirConcatExpr(
-    ProcessLowerer&, WalkFrame, const hir::ConcatExpr&, hir::TypeId,
-    mir::TypeId) -> diag::Result<mir::Expr>;
+    ProcessLowerer&, WalkFrame, const hir::ConcatExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirConcatExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::ConcatExpr&,
-    hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirStreamingConcatExpr(
     ProcessLowerer&, WalkFrame, const hir::StreamingConcatExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
@@ -603,17 +558,17 @@ template auto LowerHirStreamingConcatExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::StreamingConcatExpr&,
     mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternExpr(
-    ProcessLowerer&, WalkFrame, const hir::AssignmentPatternExpr&, hir::TypeId,
-    mir::TypeId) -> diag::Result<mir::Expr>;
+    ProcessLowerer&, WalkFrame, const hir::AssignmentPatternExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::AssignmentPatternExpr&,
-    hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternReplicationExpr(
     ProcessLowerer&, WalkFrame, const hir::AssignmentPatternReplicationExpr&,
-    hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternReplicationExpr(
     const StructuralScopeLowerer&, WalkFrame,
-    const hir::AssignmentPatternReplicationExpr&, hir::TypeId, mir::TypeId)
+    const hir::AssignmentPatternReplicationExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirAssignmentPatternKeyedExpr(
     ProcessLowerer&, WalkFrame, const hir::AssignmentPatternKeyedExpr&,
@@ -623,17 +578,17 @@ template auto LowerHirAssignmentPatternKeyedExpr(
     const hir::AssignmentPatternKeyedExpr&, hir::TypeId, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirDynamicArrayNewExpr(
-    ProcessLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&, hir::TypeId,
-    mir::TypeId) -> diag::Result<mir::Expr>;
+    ProcessLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&, mir::TypeId)
+    -> diag::Result<mir::Expr>;
 template auto LowerHirDynamicArrayNewExpr(
     const StructuralScopeLowerer&, WalkFrame, const hir::DynamicArrayNewExpr&,
-    hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssociativeAssignmentPatternExpr(
     ProcessLowerer&, WalkFrame, const hir::AssociativeAssignmentPatternExpr&,
-    hir::TypeId, mir::TypeId) -> diag::Result<mir::Expr>;
+    mir::TypeId) -> diag::Result<mir::Expr>;
 template auto LowerHirAssociativeAssignmentPatternExpr(
     const StructuralScopeLowerer&, WalkFrame,
-    const hir::AssociativeAssignmentPatternExpr&, hir::TypeId, mir::TypeId)
+    const hir::AssociativeAssignmentPatternExpr&, mir::TypeId)
     -> diag::Result<mir::Expr>;
 template auto LowerHirReplicationExpr(
     ProcessLowerer&, WalkFrame, const hir::ReplicationExpr&, mir::TypeId)

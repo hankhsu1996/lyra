@@ -12,7 +12,6 @@
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/runtime_tagged_union.hpp"
 #include "lyra/value/runtime_union.hpp"
-#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type_of.hpp"
 
@@ -27,7 +26,6 @@ extern template class ValueTypeOf<Empty>;
 extern template class ValueTypeOf<RuntimeUnion>;
 extern template class ValueTypeOf<RuntimeTaggedUnion>;
 extern template class ValueTypeOf<RuntimeDynamicArray>;
-extern template class ValueTypeOf<RuntimeUnpackedArray>;
 extern template class ValueTypeOf<RuntimeQueue>;
 extern template class ValueTypeOf<RuntimeAssociativeArray>;
 extern template class ValueTypeOf<ObjectRef>;
@@ -58,8 +56,6 @@ extern const lyra::value::ValueTypeOf<lyra::value::RuntimeTaggedUnion>
     lyra_rt_tagged_union_value_type;
 extern const lyra::value::ValueTypeOf<lyra::value::RuntimeDynamicArray>
     lyra_rt_dynarray_value_type;
-extern const lyra::value::ValueTypeOf<lyra::value::RuntimeUnpackedArray>
-    lyra_rt_unpackedarray_value_type;
 extern const lyra::value::ValueTypeOf<lyra::value::RuntimeQueue>
     lyra_rt_queue_value_type;
 extern const lyra::value::ValueTypeOf<lyra::value::RuntimeAssociativeArray>
@@ -89,8 +85,6 @@ template <typename T>
     return lyra_rt_tagged_union_value_type;
   } else if constexpr (std::is_same_v<T, RuntimeDynamicArray>) {
     return lyra_rt_dynarray_value_type;
-  } else if constexpr (std::is_same_v<T, RuntimeUnpackedArray>) {
-    return lyra_rt_unpackedarray_value_type;
   } else if constexpr (std::is_same_v<T, RuntimeQueue>) {
     return lyra_rt_queue_value_type;
   } else if constexpr (std::is_same_v<T, RuntimeAssociativeArray>) {

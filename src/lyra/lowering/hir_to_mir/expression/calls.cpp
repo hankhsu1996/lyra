@@ -27,7 +27,6 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
@@ -96,17 +95,6 @@ auto LowerAssociativeTraversal(
   return BuildAssociativeTraversal(
       unit_lowerer, steps, b.method, map_read_id, *std::move(idx_lhs_or),
       key_type, result_type);
-}
-
-// The canonical-default prototype type for an entry whose result shape the
-// receiver does not determine: a container result contributes its element type
-// as the prototype; a scalar result is its own prototype.
-auto ResultPrototypeType(
-    const UnitLowerer& unit_lowerer, mir::TypeId result_type) -> mir::TypeId {
-  return unit_lowerer.Unit()
-      .types.Get(result_type)
-      .ContainerElementType()
-      .value_or(result_type);
 }
 
 // LRM 7.12.1 / 7.12.2 / 7.12.3 with-clause closure synthesis. The element and
@@ -460,20 +448,6 @@ auto BuildBuiltinMethodCall(
         block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer)));
   }
   arguments.insert(arguments.end(), operands.begin(), operands.end());
-
-  // The value the entry's answer starts from is no operand the source wrote,
-  // so it is supplied here, at the result type's own canonical default.
-  if (entry.answer_starts_from.has_value()) {
-    const std::size_t ahead = receiver.has_value() ? 1 : 0;
-    if (*entry.answer_starts_from != ahead + arguments.size()) {
-      throw InternalError(
-          "BuildBuiltinMethodCall: the value an entry's answer starts from "
-          "does not follow the operands the source wrote");
-    }
-    arguments.push_back(block.exprs.Add(BuildDefaultValueExpr(
-        unit_lowerer.Unit(), block,
-        ResultPrototypeType(unit_lowerer, result_type))));
-  }
 
   // An entry answering a wait answers the wait its caller then stops at, so
   // that is what the call is, whatever the source-level call it came from

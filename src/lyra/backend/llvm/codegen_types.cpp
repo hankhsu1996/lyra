@@ -17,6 +17,7 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/object_layout.hpp"
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/runtime_tuple.hpp"
@@ -80,11 +81,13 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           // An integral value is the bytes its type lays it out in, built in
           // storage this backend sizes from the type and held where they lie.
           [&](const lir::IntegralType& t) { return address(t); },
+          // A fixed-size unpacked array is its elements one after another,
+          // laid out here from the type and held where they lie.
+          [&](const lir::UnpackedArrayType& t) { return address(t); },
           // A simulation value the runtime realizes as an object it owns. Every
           // operation on one is a library call handed where the object lives,
           // so generated code never holds the object's shape and would have
           // nothing to do with it if it did.
-          [&](const lir::UnpackedArrayType& t) { return address(t); },
           [&](const lir::DynamicArrayType& t) { return address(t); },
           [&](const lir::QueueType& t) { return address(t); },
           [&](const lir::AssociativeArrayType& t) { return address(t); },
@@ -182,7 +185,9 @@ auto CodeGenTypes::GetFunctionType(const FnAbi& abi) -> llvm::FunctionType* {
             [&](const TypeExtentArg&) {
               params.push_back(count);
               params.push_back(flag);
-            }},
+            },
+            [&](const ElementTypeArg&) { params.push_back(ptr_ty_); },
+            [&](const QueueTypeArg&) { params.push_back(ptr_ty_); }},
         told);
   }
   return std::visit(
@@ -251,6 +256,9 @@ auto CodeGenTypes::StorageOf(lir::TypeId type) -> support::ObjectLayout {
             static_cast<std::uint32_t>(value::IntegralAlignFor(shape->width)),
         .ends_with_nothing_to_do = true};
   }
+  if (ty.Is<lir::UnpackedArrayType>()) {
+    return LayoutOfArray(type).storage;
+  }
   if (const auto* machine = ty.As<lir::MachineIntType>()) {
     const std::uint32_t bytes = lir::BitsOf(machine->width) / 8U;
     return support::ObjectLayout{
@@ -263,6 +271,41 @@ auto CodeGenTypes::StorageOf(lir::TypeId type) -> support::ObjectLayout {
         "please report this as a bug");
   }
   return runtime::LayoutOf(*object);
+}
+
+// The library walks every whole array by the layout it states, so that
+// statement is the one read here. Elements lying where the array does end as
+// they would anywhere; an array holding them apart owns the run they lie in,
+// so ending it always has that to give back.
+auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
+  if (const auto found = arrays_.find(array); found != arrays_.end()) {
+    return found->second;
+  }
+  const auto* stated = unit_->types.Get(array).As<lir::UnpackedArrayType>();
+  if (stated == nullptr) {
+    throw InternalError(
+        "llvm codegen: an array layout asked of a type that is no fixed-size "
+        "unpacked array");
+  }
+  const lir::TypeId element_type = stated->element_type;
+  const std::uint64_t count = stated->size;
+  const support::ObjectLayout element = StorageOf(element_type);
+  const value::FixedArrayLayout laid =
+      value::FixedArrayLayoutOf(element.size, element.align, count);
+  return arrays_
+      .emplace(
+          array,
+          ArrayLayout{
+              .element = element_type,
+              .count = count,
+              .stride = laid.stride,
+              .in_place = laid.in_place,
+              .storage =
+                  {.size = static_cast<std::uint32_t>(laid.size),
+                   .align = static_cast<std::uint32_t>(laid.align),
+                   .ends_with_nothing_to_do =
+                       laid.in_place && element.ends_with_nothing_to_do}})
+      .first->second;
 }
 
 auto CodeGenTypes::LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout& {

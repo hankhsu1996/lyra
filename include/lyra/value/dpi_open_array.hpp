@@ -59,13 +59,13 @@ class DpiOpenArray {
     Fill(sv, 0, position);
   }
 
-  // The SV value the image now holds, shaped like `prototype` -- the write-back
-  // of an `output` or `inout` open array. Reading through a prototype is what
-  // says how many elements each layer holds, which the image's type does not.
+  // The SV value of `T` the image now holds -- the write-back of an `output` or
+  // `inout` open array. How many elements each layer holds is `T`'s, every
+  // layer of an actual this boundary images being of a fixed size.
   template <typename T>
-  [[nodiscard]] auto ToValue(const T& prototype) const -> T {
+  [[nodiscard]] auto ToValue() const -> T {
     std::size_t position = 0;
-    return Rebuild(prototype, 0, position);
+    return Rebuild<T>(0, position);
   }
 
   // One element's canonical groups at an image position: written from a value
@@ -186,8 +186,7 @@ class DpiOpenArray {
   }
 
   template <typename T>
-  [[nodiscard]] auto Rebuild(
-      const T& prototype, std::size_t dimension, std::size_t& position) const
+  [[nodiscard]] auto Rebuild(std::size_t dimension, std::size_t& position) const
       -> T {
     if constexpr (IntegralValue<T>) {
       T read = T::Zero();
@@ -195,14 +194,17 @@ class DpiOpenArray {
       ++position;
       return read;
     } else {
-      const std::size_t count = prototype.RawSize();
-      std::vector<typename T::ElementType> elements(count);
-      for (std::size_t p = 0; p < count; ++p) {
-        const std::size_t ordinal = OrdinalAt(dimension, p);
-        elements[ordinal] =
-            Rebuild(prototype.RawAt(ordinal), dimension + 1, position);
+      using Element = typename T::ElementType;
+      constexpr std::size_t kCount = T::RawSize();
+      std::vector<Element> elements(kCount);
+      for (std::size_t p = 0; p < kCount; ++p) {
+        elements[OrdinalAt(dimension, p)] =
+            Rebuild<Element>(dimension + 1, position);
       }
-      return T(prototype.ElementDefault(), elements);
+      return T::Gathered(
+          [&](std::size_t ordinal) -> const typename T::ElementType& {
+            return elements[ordinal];
+          });
     }
   }
 

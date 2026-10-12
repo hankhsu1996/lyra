@@ -77,13 +77,13 @@ cross-check predicts. This file owns only which instances are known and what is 
 - [x] T5 -- Every property of a runtime entry is read off one declaration of it: what the library
       calls it, whether a call site reaches it as a free function, as a method on the object it acts
       on, or as a factory on the type it builds, whether it updates that object or hands it back,
-      and which of its operands carry an index, a spread part, a closure, or a result prototype. It
-      had been a table per property, each with its own default arm for the entries it did not list,
-      so adding an entry meant editing every one of them and nothing said which. Two divergences the
-      scattering had hidden went with it: six entries that are answered where the source is read
-      were refused by one backend and given a live entry by the other, and five pairs of entries
-      shared one target-language name, leaving overload resolution over the argument list to stand
-      in for an identity the pair already carried.
+      which of its operands carry an index, a spread part or a closure, and what it is told of the
+      type it answers. It had been a table per property, each with its own default arm for the
+      entries it did not list, so adding an entry meant editing every one of them and nothing said
+      which. Two divergences the scattering had hidden went with it: six entries that are answered
+      where the source is read were refused by one backend and given a live entry by the other, and
+      five pairs of entries shared one target-language name, leaving overload resolution over the
+      argument list to stand in for an identity the pair already carried.
 - [x] T21 -- An operation no layer below the front end can meet is not in the vocabulary those
       layers share. Six enumerated type methods are answered from the enumeration's own declared
       members where the source is read, and they had been sitting in the closed set every later
@@ -115,13 +115,18 @@ cross-check predicts. This file owns only which instances are known and what is 
       writing no modifiers writes each at its default, and a literal with no `default:` clause
       answers a read of an absent key with the element type's own default (LRM 7.8.6) -- so each of
       those three now carries the same operands whichever form the source wrote. The one axis a
-      value cannot state, a bounded queue's declared maximum (LRM 7.10.5), is read from the type
-      that declares it. The runtime lost the entries those partial forms named, and an associative
-      array's absent-key answer stopped being an optional whose absence stood for the element
-      default -- which also settled a disagreement between the two realizations of that type about
-      whether the answer is part of the value a change is detected against. A fourth was found
-      later: a format operand carrying the text its type renders it as (LRM 21.2.1.6) was told from
-      a plain one by its operand count, and is now a construction of its own name.
+      value cannot state, a queue's declared maximum (LRM 7.10.5), is a fact of the queue's type and
+      reaches every construction of a queue with that type, so a bounded queue is no form of its own
+      and no construction is handed a bound. The runtime lost the entries those partial forms named,
+      and an associative array's absent-key answer stopped being an optional whose absence stood for
+      the element default -- which also settled a disagreement between the two realizations of that
+      type about whether the answer is part of the value a change is detected against. A fourth was
+      found later: a format operand carrying the text its type renders it as (LRM 21.2.1.6) was told
+      from a plain one by its operand count, and is now a construction of its own name. Since then
+      the element type's own default has stopped being an operand of any construction
+      (`../decisions/an-arrays-element-default-is-its-element-types.md`), so an associative
+      literal's construction carries its entries alone, and a `default:` clause the literal writes
+      is handed to an operation of its own on the array they built.
 - [x] T6 -- A runtime operation is named once, in the namespace of the layer that states it. A
       second namespace sat beside the shared one, private to the execution backend, and seven of its
       entries were second names for the three accesses a capability wrapper defines. MIR states
@@ -159,11 +164,17 @@ cross-check predicts. This file owns only which instances are known and what is 
       conjunction of two unrelated properties standing in for the LRM 7.12 family. The other backend
       never asks, its target language answering from the named type, so nothing held the three in
       step and a construction added anywhere answered "no shape operand" in silence. Which entry
-      builds a value of a type, which of its operands seeds it, and what form that entry takes the
+      builds a value of a type, which of its operands shapes it, and what form that entry takes the
       rest in are now one answer read from that type, which is what a construction naming no entry
       beyond its own result type already meant. What a call's target decides about how its operands
       cross is read from the target once and exhaustively, so a target kind gained anywhere says
-      what it encodes or fails to build.
+      what it encodes or fails to build. Since then no operand shapes an array a construction or an
+      LRM 7.12 method builds: the declaration says instead that the entry is told the array it
+      builds, and the type it answers decides whether that is the array's own type (a fixed-size
+      array, whose bytes state none, and a queue, whose type states its bound) or its element type.
+      No operand carries a value of a call's result at all: a reduction, the two dimension queries
+      below and a value built from a stream of bits are told the type they answer and build what
+      they need of it.
 
       What the conjunction existed to exclude was the two associative dimension queries (LRM 20.7
       `$low` / `$high`), and the rule it excluded them from was already settled: a value crosses into
@@ -174,7 +185,8 @@ cross-check predicts. This file owns only which instances are known and what is 
       straight back on that path, so its two ways out agreed by a coincidence of representation and
       not by anything written down. Both now cross the way that rule says, and the erased container
       gained the pair its monomorphized counterpart already carried, so the entry answering them
-      names that operation instead of open-coding it.
+      names that operation instead of open-coding it. Since then no such index crosses: where none
+      is allocated the entry builds the default of the type it is told it answers.
 
 - [x] T20 -- Making a member the live one is stated, not chosen by where the reach stands, and T14
       -- one visit over the expression set decides how an expression is rendered -- close with it,

@@ -4,8 +4,8 @@
 #include <cstdint>
 #include <utility>
 
-#include "lyra/value/any_value.hpp"
 #include "lyra/value/element_policy.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/take_built.hpp"
@@ -13,49 +13,53 @@
 
 namespace lyra::value {
 
-// The element is of a type the library was compiled without, answered by its
-// type's table. As for a C++ element type, the default arrives as a value of
-// the type, at `element_default`.
+// The element of a container the library holds, of a type the library was
+// compiled without: each operation a container's algorithms ask of one is
+// answered by the type's table, and an index naming no element (LRM 7.4.5) by
+// the element type the container was handed.
 class WitnessedElem {
  public:
-  WitnessedElem(const ValueType& type, const void* element_default)
-      : type_(&type), default_(AnyValue::CopyOf(type, element_default)) {
+  explicit WitnessedElem(const value::ElementType& element)
+      : element_(&element) {
   }
 
-  [[nodiscard]] auto Type() const -> const ValueType& {
-    return *type_;
-  }
-
-  [[nodiscard]] auto Size() const -> std::size_t {
-    return type_->Size();
-  }
-  [[nodiscard]] auto Align() const -> std::size_t {
-    return type_->Align();
+  [[nodiscard]] auto ElementType() const -> const value::ElementType& {
+    return *element_;
   }
 
   [[nodiscard]] auto Default() const -> const void* {
-    return default_.Bytes();
+    return element_->Default();
+  }
+  [[nodiscard]] auto DiscardedWrite() const -> void* {
+    return element_->DiscardedWrite();
+  }
+
+  [[nodiscard]] auto Size() const -> std::size_t {
+    return Type().Size();
+  }
+  [[nodiscard]] auto Align() const -> std::size_t {
+    return Type().Align();
   }
 
   void Copy(const void* value, void* out) const {
-    type_->Copy(value, out);
+    Type().Copy(value, out);
   }
   void Move(void* value, void* out) const {
-    type_->Move(value, out);
+    Type().Move(value, out);
   }
   void Destroy(void* value) const {
-    type_->Destroy(value);
+    Type().Destroy(value);
   }
   void Assign(void* storage, const void* value) const {
-    type_->Assign(storage, value);
+    Type().Assign(storage, value);
   }
 
   [[nodiscard]] auto Equal(const void* lhs, const void* rhs) const
       -> FourStateBit {
-    return type_->Equal(lhs, rhs);
+    return Type().Equal(lhs, rhs);
   }
   [[nodiscard]] auto CaseEqual(const void* lhs, const void* rhs) const -> bool {
-    return type_->CaseEqual(lhs, rhs);
+    return Type().CaseEqual(lhs, rhs);
   }
   [[nodiscard]] static auto CaseAnswer(bool holds) -> Bit {
     return Bit::FromBool(holds);
@@ -65,20 +69,20 @@ class WitnessedElem {
   }
   [[nodiscard]] auto BitIdentical(const void* lhs, const void* rhs) const
       -> bool {
-    return type_->BitIdentical(lhs, rhs);
+    return Type().BitIdentical(lhs, rhs);
   }
   [[nodiscard]] auto HasUnknown(const void* value) const -> bool {
-    return type_->HasUnknown(value);
+    return Type().HasUnknown(value);
   }
   [[nodiscard]] auto BitstreamWidth(const void* value) const -> std::int64_t {
-    return TakeBuilt<Int>([&](void* out) { type_->BitstreamWidth(value, out); })
+    return TakeBuilt<Int>([&](void* out) { Type().BitstreamWidth(value, out); })
         .ToInt64();
   }
   [[nodiscard]] auto CountBits(
       const void* value, const ConstIntegralView& control_bits) const
       -> std::int64_t {
     return TakeBuilt<Int>(
-               [&](void* out) { type_->CountBits(value, control_bits, out); })
+               [&](void* out) { Type().CountBits(value, control_bits, out); })
         .ToInt64();
   }
 
@@ -86,37 +90,35 @@ class WitnessedElem {
       NetResolution fold, const void* lhs, const void* rhs, void* out) const {
     switch (fold) {
       case NetResolution::kTriState:
-        type_->ResolveTriState(lhs, rhs, out);
+        Type().ResolveTriState(lhs, rhs, out);
         return;
       case NetResolution::kWiredAnd:
-        type_->ResolveWiredAnd(lhs, rhs, out);
+        Type().ResolveWiredAnd(lhs, rhs, out);
         return;
       case NetResolution::kWiredOr:
-        type_->ResolveWiredOr(lhs, rhs, out);
+        Type().ResolveWiredOr(lhs, rhs, out);
         return;
     }
     std::unreachable();
   }
   void Dominating(const void* stronger, const void* weaker, void* out) const {
-    type_->Dominating(stronger, weaker, out);
+    Type().Dominating(stronger, weaker, out);
   }
   void FilledLike(const void* prototype, const Logic& fill, void* out) const {
-    type_->FilledLike(prototype, &fill, out);
+    Type().FilledLike(prototype, &fill, out);
   }
   auto WriteToStream(
       const void* value, const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t {
-    return type_->WriteToStream(value, stream, filled);
-  }
-  auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken,
-      const void* prototype, void* out) const -> std::uint64_t {
-    return type_->ReadFromStream(stream, taken, prototype, out);
+    return Type().WriteToStream(value, stream, filled);
   }
 
  private:
-  const ValueType* type_;
-  AnyValue default_;
+  [[nodiscard]] auto Type() const -> const ValueType& {
+    return element_->Type();
+  }
+
+  const value::ElementType* element_;
 };
 
 static_assert(ElementPolicy<WitnessedElem>);

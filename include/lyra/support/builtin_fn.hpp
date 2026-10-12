@@ -84,11 +84,11 @@ enum class BuiltinFn : std::uint16_t {
   // does -- a part reports its own bits, so no caller inspects the part's
   // shape.
   //
-  // Building takes a value of the type it builds, because a sequence of bits
-  // carries no shape: the answer has that value's shape -- how many elements
-  // each array in it holds -- and the sequence is consumed left to right. The
-  // caller brings the sequence to exactly the width that shape takes, so
-  // neither widening nor truncation is this entry's business.
+  // A sequence of bits carries no shape, so building is told the type it
+  // builds, which fixes how many elements each array in it holds, and the
+  // sequence is consumed left to right. The caller brings the sequence to
+  // exactly the width that type takes, so neither widening nor truncation is
+  // this entry's business.
   kToBitstream,
   kFromBitstream,
   // Reversing the order of the fixed-size blocks a vector divides into, from
@@ -141,11 +141,15 @@ enum class BuiltinFn : std::uint16_t {
   kAssocNext,
   kAssocPrev,
   // The smallest and largest currently allocated index (LRM 20.7 `$low` /
-  // `$high` over an associative dimension). Each takes the value to report when
-  // no index is allocated -- the index type's default, which is `'x` for a
-  // 4-state index, as LRM 20.7 requires.
+  // `$high` over an associative dimension). Where no index is allocated each
+  // answers the index type's default, which is `'x` for a 4-state index, as
+  // LRM 20.7 requires.
   kAssocMinIndex,
   kAssocMaxIndex,
+  // LRM 7.9.11: an associative array equal to the one acted on whose read of
+  // an index holding no entry yields the value stated, which is what a
+  // literal's `default:` asks for.
+  kAssocWithDefault,
   // The accesses and the removal above as an associative array takes them (LRM
   // 7.8, 7.9.3): by the key the source wrote, a value of the type it was
   // written in, where every other container is reached by a position. A key
@@ -927,10 +931,10 @@ enum class BuiltinFn : std::uint16_t {
   // The open-array boundary image (LRM 35.5.6.1, Annex H.12).
   // `kDpiOpenArrayHandle` reads the opaque handle the foreign side receives in
   // place of the actual; `kDpiOpenArrayValue` reads the image back as an SV
-  // value shaped like the prototype it carries as an argument, which is what an
-  // `output` / `inout` open array stores into its actual. Each takes as its
-  // receiver the image, which the call site builds from the actual before the
-  // foreign call.
+  // value of the type it answers, whose every layer is of fixed size, which is
+  // what an `output` / `inout` open array stores into its actual. Each takes as
+  // its receiver the image, which the call site builds from the actual before
+  // the foreign call.
   kDpiOpenArrayHandle,
   kDpiOpenArrayValue,
   // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose
@@ -980,25 +984,23 @@ enum class BuiltinFn : std::uint16_t {
   // An unpacked array of byte out of text and out of an integral value's bytes,
   // each left-justified from the array's first element (LRM 5.9). A string
   // literal is an integral constant, so an assignment of one arrives as bits,
-  // whole: a NUL among them is a byte like any other. Each takes how many
-  // elements the array has.
+  // whole: a NUL among them is a byte like any other. How many elements the
+  // array has is the type the call answers with.
   kByteArrayFromString,
   kByteArrayFromBits,
   // LRM 7.6: one unpacked array kind taking another's elements, one entry per
-  // destination kind. The kinds differ in what the destination declares and the
-  // source cannot supply -- a fixed-size array its element count, a queue its
-  // bound (a negative one meaning none, LRM 7.10.5) -- so each entry takes what
-  // its own destination declares, after the source and the default an element
-  // of the destination starts from. The elements themselves cross unchanged,
-  // because the clause admits the assignment only where the element types are
-  // equivalent.
+  // destination kind. Each takes the source alone: what the destination's
+  // declaration states -- a fixed-size array's count, a queue's bound (LRM
+  // 7.10.5) -- is the type the call answers at. The elements themselves cross
+  // unchanged, because the clause admits the assignment only where the element
+  // types are equivalent.
   kDynamicArrayFromArray,
   kUnpackedArrayFromArray,
   kQueueFromArray,
-  // Conforms a queue value to a destination's LRM 7.10.5 bound (a negative
-  // argument means unbounded): the store boundary brings a differently-bounded
-  // source to the destination's declared bound. An instance method on the
-  // queue value.
+  // A queue holding what another queue holds, as far as the bound the type it
+  // answers at declares admits (LRM 7.10.5): the store boundary brings a
+  // differently-bounded source to the destination's. A factory on the queue
+  // type it builds, since that type is what states the bound.
   kConformBound,
   // The two steps an unpacked concatenation (LRM 10.10) folds into: appending
   // one element to the accumulating array, and appending every element of a
@@ -1020,15 +1022,14 @@ enum class BuiltinFn : std::uint16_t {
   // for any static factory, so the entry is named for the array it builds and
   // not for the dynamic array it reads.
   kArrayConformSize,
-  // A dynamic array sized at run time: empty at its declared element shape,
-  // `new[N]`, and `new[N](src)` (LRM 7.5.1). Each is named because the
-  // argument list does not tell them apart -- a sized `new` and an element
-  // list both carry two operands -- so a target that cannot resolve overloads
-  // would have nothing to read. Building one from an element list is not among
-  // them: every container builds from a list the same way, so its own type
-  // names that factory. The call answers with the array, as it does for any
-  // static factory.
-  kMakeDynamicArrayDefault,
+  // A dynamic array sized at run time: `new[N]` and `new[N](src)` (LRM 7.5.1).
+  // Each is named because the argument list does not tell them apart -- a
+  // `new` copying a source and an element list both carry two operands -- so a
+  // target that cannot resolve overloads would have nothing to read. Building
+  // one from an element list, the empty one included, is not among them: every
+  // container builds from a list the same way, so its own type names that
+  // factory. The call answers with the array, as it does for any static
+  // factory.
   kMakeDynamicArrayNew,
   kMakeDynamicArrayNewCopy,
   // LRM 11.4.12 concatenation: two operands joined, bits or characters as the
@@ -1183,8 +1184,9 @@ enum class PartSelection : std::uint8_t {
 // caller composing a call has to know of that operand: what crosses for it
 // follows from this and from nothing about the value in hand. Each names one
 // way of crossing. What one realization of an entry is told beyond it -- how
-// wide the words a holder keeps are, the type a memory's keys are built at --
-// is that realization's to state, where the realizations are named.
+// wide the words a holder keeps are, the type a memory's keys are built at,
+// the type of a fixed-size unpacked array, whose bytes state none -- is that
+// realization's to state, where the realizations are named.
 enum class OperandReading : std::uint8_t {
   // A value that goes into, or comes out of, something that already knows its
   // layout -- an element of the container the entry acts on, what the holder
@@ -1201,8 +1203,7 @@ enum class OperandReading : std::uint8_t {
   // wrote it (LRM 7.4.5, 11.5.1), so its bytes are all that crosses.
   kPosition,
   // A value of a type the entry keeps and acts on afterwards, crossing with
-  // that type: the value an answer starts from, a spread part of a
-  // concatenation (LRM 10.10).
+  // that type, since the entry was compiled without it.
   kTyped,
   // The key an associative array is reached by, crossing with its type,
   // since the array holds no index type of its own. Only an entry acting on
@@ -1253,8 +1254,22 @@ class OperandReadings {
 enum class AnswerTold : std::uint8_t {
   // Nothing: the operands, or the library's own types, settle the layout.
   kNothing,
-  // The element type of the array it builds, out of text or bits that state
-  // none (LRM 5.9).
+  // The type of the array it builds: the array's own where that type states
+  // more than its elements -- a fixed-size unpacked array's count, which its
+  // bytes do not state, or a queue's bound (LRM 7.10.5) -- and otherwise its
+  // element type, which says what a position of the array holds before
+  // anything is written to it (LRM 7.4.5, Table 7-1). Which of these it is is
+  // the type the call answers at to say.
+  kBuiltArray,
+  // The type of the value it answers, which nothing it is handed states: what
+  // it answers where it finds nothing to answer with -- a reduction (LRM
+  // 7.12.3) over no entries, the index an unallocated dimension reports (LRM
+  // 20.7) -- is that type's default (LRM Table 6-7), and what a stream of bits
+  // is read as (LRM 6.24.3) is a value of it.
+  kAnswerType,
+  // The element type of the element it answers with where no array is in hand
+  // to state one: what a read of a position naming no element yields, and
+  // storage a write to one lands in (LRM 7.4.5).
   kElementType,
   // How wide the integral value it answers is and whether that value holds x
   // or z, where its operands fix neither: a stream of bits as wide as what the
@@ -1343,19 +1358,8 @@ struct RuntimeEntry {
   // expression: binding the answer and writing it back are steps rather than
   // one expression.
   bool writes_the_index_back = false;
-  // How the entry reads each operand it is handed. A value the entry's answer
-  // starts from is one of them, read with its type: it stands for the answer
-  // before there is one -- an empty reduction's zero, a locator's key, a map's
-  // chosen element (LRM 7.12), the index an unallocated dimension reports (LRM
-  // 20.7), the element a container is seeded with (LRM 7.5.1), the value whose
-  // shape a stream of bits is read into (LRM 6.24.3) -- and its contents are
-  // part of what the entry reads.
+  // How the entry reads each operand it is handed.
   OperandReadings operands = {};
-  // Which operand is the value the entry's answer starts from, for an entry
-  // whose answer starts from one. The source writes no such operand, so
-  // whoever builds the call supplies it, at the default of the type the call
-  // answers with.
-  std::optional<std::size_t> answer_starts_from = std::nullopt;
   // What the entry is told of the type it answers at.
   AnswerTold answer_told = AnswerTold::kNothing;
   // The operation over integral values the entry is, absent for an entry over

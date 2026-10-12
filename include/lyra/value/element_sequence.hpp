@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -120,6 +121,65 @@ template <typename Seq, typename Control>
     total += seq.Element().CountBits(seq.At(i), control_bits);
   }
   return total;
+}
+
+// LRM 7.4.5 / 7.4.6: the `count` elements of `seq` from `start`, each the
+// element default where it lies outside the sequence, every one of them where
+// `start` names no position.
+template <typename Seq>
+[[nodiscard]] auto SequenceSliceElements(
+    const Seq& seq, std::optional<std::int64_t> start, std::size_t count)
+    -> std::vector<const void*> {
+  std::vector<const void*> elements;
+  elements.reserve(count);
+  const auto size = static_cast<std::int64_t>(seq.Count());
+  for (std::size_t i = 0; i < count; ++i) {
+    const std::int64_t at =
+        start.has_value() ? *start + static_cast<std::int64_t>(i) : -1;
+    elements.push_back(
+        at >= 0 && at < size ? seq.At(static_cast<std::size_t>(at))
+                             : seq.Element().Default());
+  }
+  return elements;
+}
+
+// LRM 7.6: the `count` elements of `seq` from `start` take `replacement`,
+// element for element; an element outside the sequence is skipped and a start
+// naming no position writes nothing. Answers whether any element took a
+// different value (LRM 4.3).
+template <typename Seq>
+auto SequenceAssignSlice(
+    Seq& seq, std::optional<std::int64_t> start, std::size_t count,
+    std::span<const void* const> replacement) -> bool {
+  if (!start.has_value()) {
+    return false;
+  }
+  const auto size = static_cast<std::int64_t>(seq.Count());
+  bool moved = false;
+  for (std::size_t i = 0; i < count; ++i) {
+    const std::int64_t at = *start + static_cast<std::int64_t>(i);
+    if (at < 0 || at >= size) {
+      continue;
+    }
+    void* element = seq.At(static_cast<std::size_t>(at));
+    if (seq.Element().BitIdentical(element, replacement[i])) {
+      continue;
+    }
+    seq.Element().Assign(element, replacement[i]);
+    moved = true;
+  }
+  return moved;
+}
+
+// LRM 7.12.2: puts the value `held` has at `order[k]` at position `k` of
+// `seq`. `held` is a copy of `seq` taken before any element moves, since an
+// element is read after the position it came from was written.
+template <typename Seq, typename Held>
+void SequencePermute(
+    Seq& seq, const Held& held, std::span<const std::size_t> order) {
+  for (std::size_t k = 0; k < order.size(); ++k) {
+    seq.Element().Assign(seq.At(k), held.At(order[k]));
+  }
 }
 
 }  // namespace lyra::value::detail

@@ -5,9 +5,10 @@
 #include <span>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/library_value_types.hpp"
-#include "lyra/value/runtime_unpacked_array.hpp"
+#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -78,10 +79,11 @@ auto PartOf(const PartsByPosition& parts, void* level, std::size_t position)
 // ordered parts, one level per declared dimension.
 template <typename Level>
 auto LeafAt(
-    Level memory, std::span<const UnpackedRange> dims, std::int64_t top,
-    std::size_t ordinal) -> decltype(auto) {
+    Level memory, const ValueType& memory_type,
+    std::span<const UnpackedRange> dims, std::int64_t top, std::size_t ordinal)
+    -> decltype(auto) {
   Level level = memory;
-  const ValueType* type = &lyra_rt_unpackedarray_value_type;
+  const ValueType* type = &memory_type;
   for (std::size_t d = 0; d < dims.size(); ++d) {
     const std::int64_t address = d == 0 ? top : InnerAddress(dims, d, ordinal);
     const PartsByPosition& parts = PartsOf(*type);
@@ -105,15 +107,15 @@ auto MemoryWordOf(const ValueType& type, const void* element)
 }
 
 auto MemoryLeaf(
-    RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
+    RuntimeFixedArray& memory, std::span<const UnpackedRange> dims,
     std::int64_t top, std::size_t ordinal) -> MemoryWord {
-  return LeafAt(static_cast<void*>(&memory), dims, top, ordinal);
+  return LeafAt(memory.Bytes(), memory.Type(), dims, top, ordinal);
 }
 
 auto MemoryLeaf(
-    const RuntimeUnpackedArray& memory, std::span<const UnpackedRange> dims,
+    const FixedArrayView& memory, std::span<const UnpackedRange> dims,
     std::int64_t top, std::size_t ordinal) -> ConstMemoryWord {
-  return LeafAt(static_cast<const void*>(&memory), dims, top, ordinal);
+  return LeafAt(memory.bytes, *memory.type, dims, top, ordinal);
 }
 
 }  // namespace lyra::value

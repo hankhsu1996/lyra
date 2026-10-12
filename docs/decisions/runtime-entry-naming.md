@@ -123,7 +123,11 @@ pairs above became, while a form that differs by an _optional argument with a de
 whose caller materializes the default. A bound has an unbounded spelling and a specification has
 field defaults, so those are the second kind and collapse rather than split. Both readings are the
 construction subject's to apply, so this change leaves the three counting sites as it found them and
-gathers them where they can be seen.
+gathers them where they can be seen. _(Since settled: each construction carries the same operands
+whatever form the source wrote, and a queue's bound is its type's, so no construction of a queue is
+handed one --
+[an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
+D6.)_
 
 **A row of that table is a claim about the library, and a row can be wrong.** Saying an entry is
 named by the representation of the value it acts on asserts that the library has a family there; the

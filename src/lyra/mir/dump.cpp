@@ -171,6 +171,16 @@ class MirDumper {
       DumpCallable(unit.named_callables, id, unit.callables.Get(id), id.value);
     }
     Dedent();
+    // The body building the default of each type the unit holds an array of.
+    Line("TypeDefaults:");
+    Indent();
+    for (const TypeDefault& stated : unit.type_defaults) {
+      Line(std::format("Default : Type[{}]", stated.type.value));
+      Indent();
+      DumpCallableBody(stated.code);
+      Dedent();
+    }
+    Dedent();
     // The foreign names this unit declares on a scope: a prototype no callable
     // of the unit carries, and the symbol the unit writes for it, which belongs
     // to no unit and so sits outside the pool above.

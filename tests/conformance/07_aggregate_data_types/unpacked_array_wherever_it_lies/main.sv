@@ -5,7 +5,8 @@
 // element reads the element type's default and writes nothing (LRM 7.4.5), a
 // whole assignment copies every element (LRM 7.6), and a reference to an
 // element or to a row goes on naming it across a whole assignment (LRM
-// 13.5.2).
+// 13.5.2). An element may itself be an array (LRM 7.4.4), however large, and
+// is then read, written, compared, assigned and passed as any array is.
 module Top;
   typedef struct {
     int tag;
@@ -25,6 +26,9 @@ module Top;
   int many_copy[600];
   int grid[3][4];
   int tall[40][20];
+  int deep[2][600];
+  int deep_copy[2][600];
+  int deep_row[600];
   string words[3];
   int queues[2][$];
   labelled_t labelled[2];
@@ -49,6 +53,13 @@ module Top;
   row_t turned;
   int from_result;
   int local_kept;
+  bit deep_equal_to_its_copy;
+  bit deep_equal_after_a_write;
+  bit deep_rows_equal;
+  int deep_bad_row_read;
+  int deep_by_value;
+  int deep_after_by_value;
+  int deep_through_reference;
 
   assign wired[0] = 8'h12;
   assign wired[1] = 8'h34;
@@ -80,6 +91,20 @@ module Top;
   task automatic bump_row(ref int row[4]);
     grid = '{default: 7};
     row[2] += 1;
+  endtask
+
+  function automatic int corner_sum(int rows[2][600]);
+    rows[1][599] += 1000;
+    return rows[0][0] + rows[1][599];
+  endfunction
+
+  task automatic bump_last(ref int rows[2][600]);
+    deep = deep_copy;
+    rows[1][599] += 1;
+  endtask
+
+  task automatic bump_row_end(ref int row[600]);
+    row[599] += 10;
   endtask
 
   task automatic keeps_a_local(output int kept);
@@ -151,6 +176,28 @@ module Top;
     through_element = few[2];
     bump_row(grid[1]);
     through_row = grid[1][2];
+
+    foreach (deep[i, j]) deep[i][j] = i * 1000 + j;
+    deep_copy = deep;
+    deep_equal_to_its_copy = (deep == deep_copy);
+    deep[1][599] = -1;
+    deep_equal_after_a_write = 1'b1;
+    deep_equal_after_a_write = (deep == deep_copy);
+    deep[0] = deep[1];
+    deep_row = deep[0];
+    deep_rows_equal = (deep[0] == deep[1]) && (deep_row == deep[1]);
+    index = 2;
+    deep_bad_row_read = 5;
+    deep_bad_row_read = deep[index][3];
+    deep[index] = deep_row;
+    deep[index][0] = 77;
+    index = 600;
+    deep[1][index] = 77;
+    deep_by_value = corner_sum(deep);
+    deep_after_by_value = deep[1][599];
+    bump_last(deep);
+    deep_through_reference = deep[1][599];
+    bump_row_end(deep[0]);
     #1;
   end
 
@@ -211,6 +258,25 @@ module Top;
              from_result);
     if (local_kept !== 11)
       $fatal(1, "a task's local past the in-frame size held %0d, expected 11", local_kept);
+    if (deep_equal_to_its_copy !== 1'b1 || deep_equal_after_a_write !== 1'b0)
+      $fatal(1, "an array of large rows compared %b to its copy and %b after a write",
+             deep_equal_to_its_copy, deep_equal_after_a_write);
+    if (deep_rows_equal !== 1'b1 || deep_row[599] !== -1 || deep_row[0] !== 1000)
+      $fatal(1, "a large row assigned from its neighbour ended with %0d",
+             deep_row[599]);
+    if (deep_bad_row_read !== 0)
+      $fatal(1, "a large row past the end read %0d, expected 0",
+             deep_bad_row_read);
+    if (deep_by_value !== 1999 || deep_after_by_value !== -1)
+      $fatal(1, "an array of large rows passed by value answered %0d and was left at %0d",
+             deep_by_value, deep_after_by_value);
+    if (deep_through_reference !== 1600 || deep_copy[1][599] !== 1599)
+      $fatal(1, "a reference to an array of large rows read %0d, expected 1600",
+             deep_through_reference);
+    if (deep[0][0] !== 0 || deep[0][599] !== 609 || deep[1][0] !== 1000 ||
+        deep[1][599] !== 1600)
+      $fatal(1, "an array of large rows held %0d %0d %0d %0d", deep[0][0],
+             deep[0][599], deep[1][0], deep[1][599]);
     $display("All checks passed");
   end
 endmodule

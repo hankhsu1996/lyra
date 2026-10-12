@@ -11,12 +11,20 @@
 #include <vector>
 
 #include "lyra/value/element_policy.hpp"
-#include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/queue_bound.hpp"
 
 namespace lyra::value {
+
+// Where a queue reads its bound (LRM 7.10.5) from: the largest index it holds,
+// below zero where there is none. The bound is a fact of the queue's type,
+// so it is read off whatever states that type -- the C++ type, or the type the
+// library was handed.
+template <typename B>
+concept QueueBound = std::copyable<B> && requires(const B& b) {
+  { b.Bound() } -> std::same_as<std::int64_t>;
+};
 
 // A queue (LRM 7.10), written once over what its element answers: compiled
 // with the element's C++ type for the C++ backend, and once in the library,
@@ -30,39 +38,37 @@ namespace lyra::value {
 // its position (LRM 7.10.3). The ring's length is a power of two, so a position
 // is reduced to a ring index by a mask.
 //
-// A bounded queue (LRM 7.10.5) holds no element whose index exceeds its bound.
-// The bound is a property of the variable rather than of the value written, so
-// a write that grows the queue past it drops what is past it.
+// A bounded queue (LRM 7.10.5) holds no element whose index exceeds its bound,
+// so a write that grows the queue past it drops what is past it.
 //
 // A position arrives as what the program's position value names: a number, or
 // none where it holds x or z.
-template <ElementPolicy Elem>
+template <ElementPolicy Elem, QueueBound Bound>
 class BasicQueue {
  public:
   BasicQueue()
-    requires std::default_initializable<Elem>
+    requires std::default_initializable<Elem> &&
+                 std::default_initializable<Bound>
   = default;
-  explicit BasicQueue(Elem elem, std::optional<std::uint64_t> bound = {})
-      : elem_(std::move(elem)), bound_(bound) {
+  BasicQueue(Elem elem, Bound bound)
+      : elem_(std::move(elem)), bound_(std::move(bound)) {
   }
 
-  BasicQueue(const BasicQueue& other)
-      : elem_(other.elem_), bound_(other.bound_) {
+  // It delegates, so that the queue is already one whose destructor runs when
+  // a copy throws, ending the elements copied before it.
+  BasicQueue(const BasicQueue& other) : BasicQueue(other.elem_, other.bound_) {
     Reserve(other.count_);
     for (std::size_t i = 0; i < other.count_; ++i) {
-      void* slot = AllocateElement(elem_);
-      elem_.Copy(other.At(i), slot);
-      ring_[i] = slot;
+      ring_[i] = CopyElement(elem_, other.At(i));
       count_ = i + 1;
     }
   }
   BasicQueue(BasicQueue&& other) noexcept
       : elem_(std::move(other.elem_)),
+        bound_(other.bound_),
         ring_(std::move(other.ring_)),
         head_(std::exchange(other.head_, 0)),
-        count_(std::exchange(other.count_, 0)),
-        bound_(other.bound_),
-        discard_(std::exchange(other.discard_, nullptr)) {
+        count_(std::exchange(other.count_, 0)) {
   }
   auto operator=(const BasicQueue& other) -> BasicQueue& {
     if (this != &other) {
@@ -80,9 +86,6 @@ class BasicQueue {
   }
   ~BasicQueue() {
     Truncate(0);
-    if (discard_ != nullptr) {
-      FreeElement(elem_, discard_);
-    }
   }
 
   [[nodiscard]] auto Element() const -> const Elem& {
@@ -98,18 +101,6 @@ class BasicQueue {
     return ring_[RingIndex(position)];
   }
 
-  // The same elements, held to `bound` (a negative one being no bound).
-  [[nodiscard]] auto WithBound(std::int64_t bound) const -> BasicQueue {
-    BasicQueue result = *this;
-    result.bound_ = BoundOf(bound);
-    result.EnforceBound();
-    return result;
-  }
-  void SetBound(std::int64_t bound) {
-    bound_ = BoundOf(bound);
-    EnforceBound();
-  }
-
   // LRM 7.10.1 / 7.4.5 read: an index outside `0..size-1` (or carrying x/z)
   // reads the element default, and a read never grows the queue.
   [[nodiscard]] auto ElementAt(std::optional<std::int64_t> position) const
@@ -122,7 +113,7 @@ class BasicQueue {
   // reaches -- the place a write that may not grow the queue lands.
   [[nodiscard]] auto ExistingAt(std::optional<std::int64_t> position) -> void* {
     const auto ordinal = ElementOrdinal(position, count_);
-    return ordinal ? At(*ordinal) : DiscardTarget(elem_, discard_);
+    return ordinal ? At(*ordinal) : elem_.DiscardedWrite();
   }
 
   // LRM 7.10.1 write: `q[$+1] = v` (index == size) appends an element holding
@@ -144,17 +135,19 @@ class BasicQueue {
       }
     }
     formed = Formation::kNowhere;
-    return DiscardTarget(elem_, discard_);
+    return elem_.DiscardedWrite();
   }
 
   // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`. A
   // bound that names no position, or `lo > hi` after clamping, yields the empty
-  // queue; `lo` clamps up to 0 and `hi` down to the last index. The result
-  // carries no bound: a bound belongs to the variable a value is stored into.
+  // queue; `lo` clamps up to 0 and `hi` down to the last index. The slice is a
+  // queue of the type the selection answers, whose bound `into` states and
+  // which need not be this queue's.
+  template <QueueBound Into>
   [[nodiscard]] auto Slice(
-      std::optional<std::int64_t> first, std::optional<std::int64_t> last) const
-      -> BasicQueue {
-    BasicQueue out(elem_);
+      std::optional<std::int64_t> first, std::optional<std::int64_t> last,
+      Into into) const -> BasicQueue<Elem, Into> {
+    BasicQueue<Elem, Into> out(elem_, std::move(into));
     if (!first || !last) {
       return out;
     }
@@ -162,7 +155,7 @@ class BasicQueue {
     const std::int64_t b =
         std::min<std::int64_t>(*last, static_cast<std::int64_t>(count_) - 1);
     for (std::int64_t i = a; i <= b; ++i) {
-      out.InsertCopy(out.count_, At(static_cast<std::size_t>(i)));
+      out.PushBack(At(static_cast<std::size_t>(i)));
     }
     return out;
   }
@@ -274,23 +267,13 @@ class BasicQueue {
     FreeElement(elem_, slot);
   }
 
-  // A bound is the greatest index the queue may hold (LRM 7.10.5). A queue with
-  // no bound spells that as a negative one, so a bound and its absence reach
-  // every construction and every store as the same operand.
-  [[nodiscard]] static auto BoundOf(std::int64_t bound)
-      -> std::optional<std::uint64_t> {
-    if (bound < 0) {
-      return std::nullopt;
-    }
-    return static_cast<std::uint64_t>(bound);
-  }
-
   // LRM 7.10.5: what grew past the bound is dropped, which is worth saying.
   void EnforceBound() {
-    if (!bound_.has_value()) {
+    const std::int64_t bound = bound_.Bound();
+    if (bound < 0) {
       return;
     }
-    const auto cap = static_cast<std::size_t>(*bound_) + 1;
+    const auto cap = static_cast<std::size_t>(bound) + 1;
     if (count_ > cap) {
       Truncate(cap);
       ReportBoundOverflow();
@@ -314,10 +297,11 @@ class BasicQueue {
     }
   }
 
+  // The ring is grown first, so that nothing can fail once the copy holds
+  // storage of its own.
   void InsertCopy(std::size_t position, const void* value) {
-    void* slot = AllocateElement(elem_);
-    elem_.Copy(value, slot);
-    Link(position, slot);
+    Reserve(count_ + 1);
+    Link(position, CopyElement(elem_, value));
   }
 
   [[nodiscard]] auto RingIndex(std::size_t position) const -> std::size_t {
@@ -330,7 +314,6 @@ class BasicQueue {
     std::swap(head_, other.head_);
     std::swap(count_, other.count_);
     std::swap(bound_, other.bound_);
-    std::swap(discard_, other.discard_);
   }
 
   // A ring at least `count` long, holding the same order from index zero.
@@ -379,11 +362,10 @@ class BasicQueue {
   }
 
   Elem elem_;
+  [[no_unique_address]] Bound bound_;
   std::vector<void*> ring_;
   std::size_t head_ = 0;
   std::size_t count_ = 0;
-  std::optional<std::uint64_t> bound_;
-  void* discard_ = nullptr;
 };
 
 }  // namespace lyra::value

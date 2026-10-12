@@ -1,6 +1,10 @@
 # A value states its own bits, as it already states how many
 
-Date: 2026-09-11 Status: accepted
+Date: 2026-09-11 Status: accepted. D2 is superseded 2026-10-11 by D6 of
+[an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md):
+the entry that builds is told the type it answers and handed the stream alone, because the premise
+of D2's second paragraph -- a shape the runtime holds as a value -- was withdrawn when a value's
+shape became its type's.
 
 ## Why this decision matters
 
@@ -63,7 +67,8 @@ has no other way to shape, and the prototype is the destination's default value,
 synthesizes for any type.
 
 A type reference would not serve: the runtime holds a shape as a value, so an aggregate's element
-widths and state domains are reachable only through an instance of it.
+widths and state domains are reachable only through an instance of it. _(Superseded 2026-10-11: a
+value's shape is its type's, so the entry is told the type it answers and takes no prototype.)_
 
 ### D3. Re-ordering is a third entry over the bit vector, and `>>` calls nothing
 
@@ -118,7 +123,9 @@ is a way to name bits whose number the program fixes, and nothing else.
 - **Give the build entry a type reference instead of a prototype.** A packed value's shape does
   travel as a type reference today, but an aggregate's does not: nothing below MIR holds a
   description of an unpacked structure's members. One operand role for every family is what keeps
-  the entry's declaration from splitting per family.
+  the entry's declaration from splitting per family. _(Taken 2026-10-11: every family's type now
+  reaches the library, a structure's through the functions the unit states for it, so a type
+  reference is the one role for every family.)_
 
 - **Let a dynamically sized stream take the statically known part as its type.** It types the
   expression with a width the value will not have, which is worse than refusing: every consumer
@@ -147,8 +154,8 @@ is a way to name bits whose number the program fixes, and nothing else.
   reshape is not one.
 - [builtin-call-identity](builtin-call-identity.md) -- one flat entry per runtime function, with
   every property of an entry stated once beside its identity.
-- [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- the runtime holds a shape
-  as a value, which is what makes a prototype the operand a builder takes.
+- [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
+  -- D6: a conversion out of a stream of bits is told its answer's type, and no prototype crosses.
 - LRM 6.24.1 (cast operator), 6.24.3 (bit-stream casting), 11.4.14 (streaming operators), 11.4.14.1
   (concatenation of stream expressions), 11.4.14.2 (re-ordering), 11.4.14.3 (streaming concatenation
   as an assignment target), 11.4.14.4 (streaming dynamically sized data), 20.6.2 (`$bits`).

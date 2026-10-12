@@ -1,6 +1,11 @@
 # Array manipulation over an entry stream
 
-Date: 2026-06-22 Status: accepted
+Date: 2026-06-22 Status: accepted. What a value-producing method is handed of its answer was revised
+2026-10-11 by
+[an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md):
+a method answering an array is told the type of the array it builds and is handed no value, and a
+reduction is told the type it answers and builds that type's default for a receiver holding no
+entries. The section on it below is written as it now holds.
 
 ## Context
 
@@ -64,17 +69,23 @@ default-constructible) value; a reference member would forfeit Regularity (a ref
 rebound) and cap which combinators an entry can flow through. The pointer is a non-owning handle
 produced transiently by the view, never materialised into a stored collection.
 
-### The producer supplies every result's default prototype
+### The call states its answer's type, never the receiver
 
-Every value-producing method receives the canonical default of its result's element (or scalar) type
-as an argument, built by HIR-to-MIR from the call's result type. The result's runtime shape (bit
-width, signedness, 2/4-state for an integral; the key shape for an index locator) is known at the
-call site and is not always recoverable from the receiver: an index locator on an associative array
-returns a queue of the key type, a `map` returns an element type the `with` expression chose, and a
-reduction over an empty receiver must still carry the result's shape. One rule covers all three --
-the producer supplies the result prototype -- so the runtime never self-derives a result shape from
-the receiver and never fabricates a zero entry to recover one. The ordering family produces no new
-value and takes no prototype.
+What a value-producing method answers is fixed by the call's result type and is not always
+recoverable from the receiver: an index locator on an associative array returns a queue of the key
+type, a `map` returns an element type the `with` expression chose, and a reduction over an empty
+receiver must still answer a value of the result's type. So the answer's type comes from the call,
+and the runtime never derives it from the receiver and never fabricates a zero entry to recover one.
+
+How it comes differs by what the method answers. A locator answers a queue and `map` an array, and
+what such an answer holds before anything is written to it is its element type's, so the call
+carries no value for it and the algorithm is told the type of the array it builds -- a fixed-size
+array's or a queue's own type, and any other array's element type
+([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
+A reduction answers one value of a singular type, and what it answers for a receiver holding no
+entries is that type's default, so the call carries no value for it either: the reduction is told
+the type it answers and builds the default itself (the same record's D6). The ordering family
+produces no new value and is told neither.
 
 ### The closure index is the container's index type
 
@@ -104,18 +115,18 @@ no special-casing.
   ignores the index never builds one and no buffer is allocated.
 
 - **A key-shape prototype field on the associative container.** Carrying a `key_default_` so index
-  locators could self-supply their result shape is unnecessary once the producer supplies result
-  prototypes. An associative array's key shape is carried by its stored keys; any result that needs
-  a key shape (an index locator's queue, including the empty case) receives it from the producer, so
-  the container needs no extra key-shape state.
+  locators could self-supply their result shape is unnecessary once the call states its answer's
+  type. An associative array's key shape is carried by its stored keys; any result that needs a key
+  shape (an index locator's queue, including the empty case) is told it by the call, so the
+  container needs no extra key-shape state.
 
 ## Forbidden shapes
 
 - A locator / reduction / `map` algorithm that assumes random-access storage or synthesizes an
   ordinal index. The index is an entry attribute the container supplies.
-- A value-producing array method that derives its result's runtime shape from the receiver (copying
-  the receiver's element default, or folding a fabricated zero entry to recover a shape). The result
-  shape is producer-supplied.
+- A value-producing array method that derives its result's type from the receiver (taking the
+  receiver's element default for the answer's, or folding a fabricated zero entry to recover a
+  shape). The answer's type is stated by the call.
 - An associative array method that re-implements a 7.12 scan rather than feeding its entry stream
   through the shared algorithm.
 
@@ -132,9 +143,8 @@ quick `g++ -std=c++23 -fsyntax-only` over the value headers reproduces the GCC s
 
 ## Notes
 
-The empty-receiver reduction value (LRM 7.12.3 is silent) remains an element-shaped zero; under this
-decision that zero is the producer-supplied result prototype rather than a copy of the receiver's
-shield reset in place, which is the same value reached more directly. The sort-uses-selection-sort
-and empty-reduction-is-zero runtime semantics pinned in
+The empty-receiver reduction value (LRM 7.12.3 is silent) is the default of the type the reduction
+answers, which is the element type's unless a `with` expression chose another: x for a 4-state type,
+0 for a 2-state one. The sort-uses-selection-sort runtime semantics pinned in
 [array-method-dispatch](array-method-dispatch.md) are unchanged; this decision governs the algorithm
 input shape, not those semantics.

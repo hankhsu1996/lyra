@@ -48,6 +48,8 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'p';
     case SymbolCategory::kClosureInvoke:
       return 'i';
+    case SymbolCategory::kTypeDefault:
+      return 't';
     case SymbolCategory::kConstructorPrologue:
       return 's';
     case SymbolCategory::kBaseObjectDestructor:
@@ -214,6 +216,13 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string {
   return SymbolName(
       SymbolCategory::kClosureInvoke,
+      {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
+}
+
+auto TypeDefaultSymbol(std::string_view unit_name, std::uint32_t ordinal)
+    -> std::string {
+  return SymbolName(
+      SymbolCategory::kTypeDefault,
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 

@@ -64,6 +64,9 @@ class CodeGenFunction::IntegralEmitter {
   auto StoreBitsOfPlace(
       llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
       OperandRef bits) -> bool;
+  // The planes of the value of type `shape` lying at `at`, each loaded as the
+  // integer its bytes are and cut to the value's width.
+  auto LoadPlanes(llvm::Value* at, const value::IntegralShape& shape) -> Planes;
 
  private:
   // The types `op` applied to `operands` and answering at `answer_type` is
@@ -75,11 +78,8 @@ class CodeGenFunction::IntegralEmitter {
   [[nodiscard]] auto ShapesOf(
       IntegralOp op, std::span<const OperandRef> operands,
       lir::TypeId answer_type) const -> IntegralShapes;
-  // The planes of the value of type `shape` lying at `at`, each loaded as the
-  // integer its bytes are and cut to the value's width; and such planes
-  // laid out there, each widened to its storage unit, which is what keeps
-  // every position above the width clear.
-  auto LoadPlanes(llvm::Value* at, const value::IntegralShape& shape) -> Planes;
+  // Planes laid out at `at` as a value of type `shape`, each widened to its
+  // storage unit, which is what keeps every position above the width clear.
   void StorePlanes(
       Planes planes, llvm::Value* at, const value::IntegralShape& shape);
   // `target`, a value of `lying`, with `bits` written over the bits the parts
@@ -371,6 +371,17 @@ auto CodeGenFunction::IntegralEmitter::StoreBitsOfPlace(
   StorePlanes(
       WithBitsWritten(LoadPlanes(at, lying), lying, parts, 0, bits), at, lying);
   return true;
+}
+
+auto CodeGenFunction::LoadPosition(const OperandRef& position) -> Planes {
+  const std::optional<value::IntegralShape> stated =
+      module_->Types().IntegralShapeOf(position.type);
+  if (!stated.has_value() || *stated != value::kShapeOf<value::Position>) {
+    throw InternalError(
+        "llvm codegen: an element is named by something that is not stated "
+        "as a position -- please report this as a bug");
+  }
+  return IntegralEmitter(*this).LoadPlanes(position.value, *stated);
 }
 
 auto CodeGenFunction::StoreBitsOnPlanes(

@@ -9,6 +9,7 @@
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/basic_associative_array.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -90,11 +91,10 @@ class RuntimeAssociativeArray {
   // default state of a cell, which the cell's first initialization overwrites.
   RuntimeAssociativeArray();
 
-  // An empty array of `element`, whose elements start as `element_default`
-  // (LRM Table 7-1) and whose absent keys read `miss` (LRM 7.8.6, 7.9.11).
+  // An empty array of `element`, whose absent keys read the element type's
+  // default (LRM 7.8.6).
   RuntimeAssociativeArray(
-      AssociativeIndexOrder index_order, const ValueType& element,
-      const void* element_default, const void* miss);
+      AssociativeIndexOrder index_order, const value::ElementType& element);
 
   RuntimeAssociativeArray(const RuntimeAssociativeArray&);
   RuntimeAssociativeArray(RuntimeAssociativeArray&&) noexcept;
@@ -104,10 +104,14 @@ class RuntimeAssociativeArray {
   ~RuntimeAssociativeArray();
 
   [[nodiscard]] auto IndexOrder() const -> AssociativeIndexOrder;
-  [[nodiscard]] auto ElementType() const -> const ValueType&;
-  [[nodiscard]] auto ElementDefault() const -> const void*;
-  // What a read of an absent key answers with (LRM 7.8.6, 7.9.11).
-  [[nodiscard]] auto Miss() const -> const void*;
+  // The element type the array was built from, which an array built out of
+  // this one's elements is built from in turn.
+  [[nodiscard]] auto ElementType() const -> const value::ElementType&;
+  // LRM 7.9.11: this array's entries in one whose absent keys read a copy of
+  // `stated_default`, and whose entries a later write allocates start as one
+  // (LRM 7.8.7), as a literal's `default:` clause states.
+  [[nodiscard]] auto WithDefault(const void* stated_default) const
+      -> RuntimeAssociativeArray;
 
   // LRM 7.9.1: the entry count, and as an SV `int`.
   [[nodiscard]] auto Count() const -> std::size_t;
@@ -160,6 +164,8 @@ class RuntimeAssociativeArray {
 
  private:
   using Core = BasicAssociativeArray<WitnessedKey, WitnessedElem>;
+
+  explicit RuntimeAssociativeArray(Core core);
 
   void RequireInstalled() const;
   [[nodiscard]] auto Installed() const -> const Core&;

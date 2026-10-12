@@ -9,6 +9,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -20,6 +21,12 @@ namespace lyra::value {
 template <typename Host>
 class RealValue;
 class Chandle;
+class AnyValue;
+class RuntimeUnion;
+class RuntimeTaggedUnion;
+class RuntimeDynamicArray;
+class RuntimeQueue;
+class RuntimeAssociativeArray;
 
 namespace detail {
 
@@ -39,27 +46,42 @@ inline constexpr bool kIsBitStreamType<RealValue<Host>> = false;
 template <>
 inline constexpr bool kIsBitStreamType<Chandle> = false;
 
+// LRM 6.4: whether `T` is a singular type, whose default (Table 6-7) is what
+// its own default construction builds. An unpacked union or array is an
+// aggregate, and a value held with the type it was written in is of no type
+// of its own, so neither has a default its type alone fixes.
+template <typename T>
+inline constexpr bool kIsSingular = true;
+template <>
+inline constexpr bool kIsSingular<AnyValue> = false;
+template <>
+inline constexpr bool kIsSingular<RuntimeUnion> = false;
+template <>
+inline constexpr bool kIsSingular<RuntimeTaggedUnion> = false;
+template <>
+inline constexpr bool kIsSingular<RuntimeDynamicArray> = false;
+template <>
+inline constexpr bool kIsSingular<RuntimeQueue> = false;
+template <>
+inline constexpr bool kIsSingular<RuntimeAssociativeArray> = false;
+
 // A value of `T` holds parts ordered by position, each a value of a type the
 // value states and handed out where it lies.
 template <typename T>
 concept HoldsParts = requires(const T& c, T& m, std::size_t position) {
   { c.Count() } -> std::same_as<std::size_t>;
-  { c.ElementType() } -> std::same_as<const ValueType&>;
+  { c.ElementType() } -> std::same_as<const ElementType&>;
   { c.ElementAt(position) } -> std::same_as<const void*>;
   { m.ElementAt(position) } -> std::same_as<void*>;
 };
 
-// A value of `T` written into a stream of bits and built back out of one, the
-// stream being an integral value (LRM 6.24.3).
+// A value of `T` written into a stream of bits, the stream being an integral
+// value (LRM 6.24.3).
 template <typename T>
-concept BitStreamable = requires(
-    const T& value, const IntegralView& written, const ConstIntegralView& read,
-    std::uint64_t at) {
-  { value.WriteToStream(written, at) } -> std::same_as<std::uint64_t>;
-  {
-    value.ReadFromStream(read, at)
-  } -> std::same_as<std::pair<T, std::uint64_t>>;
-};
+concept WritesBitStream =
+    requires(const T& value, const IntegralView& written, std::uint64_t at) {
+      { value.WriteToStream(written, at) } -> std::same_as<std::uint64_t>;
+    };
 
 // A question about a value's stream of bits the language defines for a kind
 // and Lyra does not yet answer, which a legal program can ask.
@@ -81,7 +103,7 @@ class PartsOf final : public PartsByPosition {
   }
   [[nodiscard]] auto Type(const void* value) const
       -> const ValueType& override {
-    return static_cast<const T*>(value)->ElementType();
+    return static_cast<const T*>(value)->ElementType().Type();
   }
   [[nodiscard]] auto At(const void* value, std::size_t position) const -> const
       void* override {
@@ -135,6 +157,9 @@ class ValueTypeOf final : public ValueType {
   [[nodiscard]] auto AsIntegral() const -> const IntegralValueType* override {
     return nullptr;
   }
+  [[nodiscard]] auto AsFixedArray() const -> const FixedArrayType* override {
+    return nullptr;
+  }
 
   void Copy(const void* value, void* out) const override {
     std::construct_at(static_cast<T*>(out), Of(value));
@@ -169,6 +194,14 @@ class ValueTypeOf final : public ValueType {
     return Of(value).HasUnknown();
   }
 
+  void BuildDefault(void* out) const override {
+    if constexpr (detail::kIsSingular<T>) {
+      std::construct_at(static_cast<T*>(out));
+    } else {
+      detail::LacksOperation();
+    }
+  }
+
   void BitstreamWidth(const void* value, void* out) const override {
     if constexpr (requires { Of(value).BitstreamWidth(); }) {
       std::construct_at(static_cast<Int*>(out), Of(value).BitstreamWidth());
@@ -193,7 +226,7 @@ class ValueTypeOf final : public ValueType {
   auto WriteToStream(
       const void* value, const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t override {
-    if constexpr (detail::BitStreamable<T>) {
+    if constexpr (detail::WritesBitStream<T>) {
       return Of(value).WriteToStream(stream, filled);
     } else if constexpr (detail::kIsBitStreamType<T>) {
       detail::StreamNotYetSupported();
@@ -201,14 +234,9 @@ class ValueTypeOf final : public ValueType {
       detail::LacksOperation();
     }
   }
-  auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken,
-      const void* prototype, void* out) const -> std::uint64_t override {
-    if constexpr (detail::BitStreamable<T>) {
-      auto [read, after] = Of(prototype).ReadFromStream(stream, taken);
-      std::construct_at(static_cast<T*>(out), std::move(read));
-      return after;
-    } else if constexpr (detail::kIsBitStreamType<T>) {
+  auto ReadFromStream(const ConstIntegralView&, std::uint64_t, void*) const
+      -> std::uint64_t override {
+    if constexpr (detail::kIsBitStreamType<T>) {
       detail::StreamNotYetSupported();
     } else {
       detail::LacksOperation();

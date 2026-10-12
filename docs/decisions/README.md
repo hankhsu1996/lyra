@@ -58,8 +58,9 @@ the detail lives in the entry itself.
 - [value-type-concepts](value-type-concepts.md) -- the `lyra::value` operator surface is a lattice
   of composable C++ concepts, one per LRM operator family.
 - [runtime-shape-and-default-value](runtime-shape-and-default-value.md) -- runtime shape lives on
-  `PackedArray`; one OOB shield slot is both the canonical default and the out-of-bounds discard.
-  Decision 1 superseded by a-value-is-its-machine-data.
+  `PackedArray`; a container is handed its element's default and keeps it beside a slot for
+  discarded writes. Decision 1 superseded by a-value-is-its-machine-data, and decisions 2, 5 and 6
+  by an-arrays-element-default-is-its-element-types.
 - [string-packed-conversion](string-packed-conversion.md) -- a `value::String` holds no NUL;
   packed-to-string strips NUL, `%s` formats bits without a string value.
 - [enum-representation](enum-representation.md) -- an enum's semantic type identity is separate from
@@ -102,13 +103,35 @@ the detail lives in the entry itself.
 - [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend a union or a
   container is a runtime-owned object behind a handle, not structurally monomorphized, holding its
   elements as their type's bytes; the choice is below LIR, and LIR's aggregate operations stay
-  realization-agnostic. Superseded for tuples by the entry below.
+  realization-agnostic. Superseded for tuples by the entry below, and for a fixed-size unpacked
+  array by the one after it.
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- on the execution backend
   a tuple has one form wherever it lies: its type's layout, opening with its type's operation table,
   as a C++ object with virtual functions opens with its vtable pointer. The code generator compiles
   each tuple type's lifecycle, and the prebuilt runtime reaches that and the type's operations
   through the table. Call-chain 1,032.0 M -> 851.3 M instructions, a struct loop 278.7 M -> 236.3 M.
   A description the runtime walks and a tuple converted where it crosses are rejected.
+- [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) -- on the
+  execution backend a fixed-size unpacked array is its elements one after another, in place up to
+  1,024 bytes and one address of a run it owns past that, an element reached by address arithmetic
+  with the library answering only an index that names none. The library is handed the array's type
+  as constant data -- a count and the element's type -- and runs every whole-array operation over
+  it; an array crosses to it as its bytes followed by its type, and a construction carries no count.
+  Read it for why a type stated as data and a type passed beside the bytes, both rejected for a
+  tuple, are taken for an array. A function per array type, a header in the bytes, and an element
+  default handed to each construction are rejected.
+- [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
+  -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
+  element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A
+  unit states it once per element type in MIR and the prebuilt library is handed it with the type,
+  so no construction, `new[]`, conversion, `map` or locator carries it and no array object keeps a
+  copy. An associative literal's own `default:` stays an operand, of an operation on the array its
+  entries built. Every other fact a type fixes reaches the library with the type too: a reduction
+  over no entries and an unallocated dimension's `$low` / `$high` answer their answer type's
+  default, a conversion out of a stream of bits is told its answer's type and takes no prototype,
+  and a queue's bound is its type's, so no call is handed one. Carrying the operand everywhere with
+  the fixed-size array ignoring it, omitting it only where the answer is a fixed-size array, a
+  prototype standing for a type, and a bound as an operand are rejected.
 - [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md) -- `==`,
   `===`, `$bits`, `$countbits`, `$isunknown`, the bit stream and the net folds on a structure are
   methods its declaration states in MIR, one per operation the type has, and the program's use is a
@@ -138,8 +161,9 @@ the detail lives in the entry itself.
 - [a-value-states-its-own-bits](a-value-states-its-own-bits.md) -- which bits a value makes is the
   same question as how many, so a value answers both, and a bit-stream cast and a streaming operator
   are the same pack and unpack stated against those entries plus one that re-orders a bit vector.
-  Unrolling the traversal at the lowering, a direction operand, a type reference in place of the
-  prototype, and typing a dynamically sized stream by its fixed part are rejected.
+  Unrolling the traversal at the lowering, a direction operand and typing a dynamically sized stream
+  by its fixed part are rejected; the prototype the building entry took is superseded by a type
+  reference.
 - [value-construction-forms](value-construction-forms.md) -- a construction says which form it is; a
   value that is its own parts is a primitive, a container built from one is a call, and what names a
   call is the type's own answer.

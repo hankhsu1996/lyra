@@ -6,11 +6,14 @@
 
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/array_manipulation.hpp"
+#include "lyra/value/element_type.hpp"
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/queue_type.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/value_type.hpp"
 
 // LRM 7.12 array manipulation over the containers the library holds, running
@@ -19,9 +22,11 @@
 // differ only in what an entry's index is and what container a result shapes
 // into, so each method here is one body over the entries a container walks.
 //
-// A result's element type is the library's to be handed, since it is what the
-// `with` expression or the receiver's declaration chose: it arrives as a
-// prototype value, where it lies, and the type it is a value of.
+// The type of what a method builds is the library's to be handed, since it is
+// what the `with` expression or the receiver's declaration chose: the type of
+// a queue a locator builds, the element type of an array a projection builds,
+// and the type a reduction answers, whose default is its answer for a
+// receiver with no entries.
 namespace lyra::value {
 
 // The body a method runs once per entry, handed the element and its index
@@ -53,7 +58,7 @@ struct ArrayEntries {
 
 [[nodiscard]] auto EntriesOf(const RuntimeQueue& queue) -> ArrayEntries;
 [[nodiscard]] auto EntriesOf(const RuntimeDynamicArray& array) -> ArrayEntries;
-[[nodiscard]] auto EntriesOf(const RuntimeUnpackedArray& array) -> ArrayEntries;
+[[nodiscard]] auto EntriesOf(const FixedArrayView& array) -> ArrayEntries;
 [[nodiscard]] auto EntriesOf(const RuntimeAssociativeArray& array)
     -> ArrayEntries;
 
@@ -64,12 +69,6 @@ struct ArrayEntries {
     return body(entries.elements[position], entries.indices[position]);
   };
 }
-
-// The queue a located family answers with: copies of what lies at `places`,
-// in that order, of `type`, whose default `prototype` is.
-[[nodiscard]] auto LocatedQueue(
-    const ValueType& type, const void* prototype,
-    const std::vector<const void*>& places) -> RuntimeQueue;
 
 // What lies at `positions` among `places`, in that order.
 [[nodiscard]] inline auto At(
@@ -87,34 +86,29 @@ struct ArrayEntries {
 [[nodiscard]] auto PlacesOf(const std::vector<AnyValue>& values)
     -> std::vector<const void*>;
 
-// A container of `Container`'s kind holding copies of `elements`, elements of
-// `type` whose default `prototype` is.
-template <typename Container>
+// A container of the kind `answer` is the type of, holding copies of
+// `elements`: a queue of a queue type, a dynamic array of an element type.
+template <typename Container, typename Answer>
 [[nodiscard]] auto ContainerOf(
-    const std::vector<AnyValue>& elements, const ValueType& type,
-    const void* prototype) -> Container;
+    const std::vector<AnyValue>& elements, const Answer& answer) -> Container;
 template <>
-[[nodiscard]] auto ContainerOf<RuntimeQueue>(
-    const std::vector<AnyValue>& elements, const ValueType& type,
-    const void* prototype) -> RuntimeQueue;
+[[nodiscard]] auto ContainerOf<RuntimeQueue, QueueType>(
+    const std::vector<AnyValue>& elements, const QueueType& answer)
+    -> RuntimeQueue;
 template <>
-[[nodiscard]] auto ContainerOf<RuntimeDynamicArray>(
-    const std::vector<AnyValue>& elements, const ValueType& type,
-    const void* prototype) -> RuntimeDynamicArray;
-template <>
-[[nodiscard]] auto ContainerOf<RuntimeUnpackedArray>(
-    const std::vector<AnyValue>& elements, const ValueType& type,
-    const void* prototype) -> RuntimeUnpackedArray;
+[[nodiscard]] auto ContainerOf<RuntimeDynamicArray, ElementType>(
+    const std::vector<AnyValue>& elements, const ElementType& answer)
+    -> RuntimeDynamicArray;
 
 template <typename Container>
 [[nodiscard]] auto KeysFolded(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype, Reduction reduction)
-    -> AnyValue {
+    const ValueType& answer_type, Reduction reduction) -> AnyValue {
   const ArrayEntries entries = EntriesOf(receiver);
   return Folded(
       entries.elements.size(), KeyOf(entries, body), reduction,
-      AnyValue::CopyOf(type, prototype));
+      AnyValue::Built(
+          answer_type, [&](void* out) { answer_type.BuildDefault(out); }));
 }
 
 // A locator's answer: the elements, or the indices, at the positions `locate`
@@ -122,177 +116,178 @@ template <typename Container>
 template <typename Container, typename Locate>
 [[nodiscard]] auto LocatedElements(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype, Locate locate)
-    -> RuntimeQueue {
+    const QueueType& answer_type, Locate locate) -> RuntimeQueue {
   const ArrayEntries entries = EntriesOf(receiver);
-  return LocatedQueue(
-      type, prototype,
-      At(entries.elements,
-         locate(entries.elements.size(), KeyOf(entries, body))));
+  return RuntimeQueue::FromElements(
+      answer_type, At(entries.elements,
+                      locate(entries.elements.size(), KeyOf(entries, body))));
 }
 template <typename Container, typename Locate>
 [[nodiscard]] auto LocatedIndices(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype, Locate locate)
-    -> RuntimeQueue {
+    const QueueType& answer_type, Locate locate) -> RuntimeQueue {
   const ArrayEntries entries = EntriesOf(receiver);
-  return LocatedQueue(
-      type, prototype,
-      At(entries.indices,
-         locate(entries.elements.size(), KeyOf(entries, body))));
+  return RuntimeQueue::FromElements(
+      answer_type, At(entries.indices,
+                      locate(entries.elements.size(), KeyOf(entries, body))));
 }
 
 }  // namespace detail
 
-// LRM 7.12.3 reduction. `prototype` is the answer for a receiver with no
-// entries, which the clause leaves open.
+// LRM 7.12.3 reduction, answering a value of `answer_type`. The clause states
+// no answer for a receiver with no entries, which answers that type's default.
 template <typename Container>
 [[nodiscard]] auto RuntimeArraySum(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> AnyValue {
-  return detail::KeysFolded(receiver, body, type, prototype, Reduction::kSum);
+    const ValueType& answer_type) -> AnyValue {
+  return detail::KeysFolded(receiver, body, answer_type, Reduction::kSum);
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayProduct(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> AnyValue {
-  return detail::KeysFolded(
-      receiver, body, type, prototype, Reduction::kProduct);
+    const ValueType& answer_type) -> AnyValue {
+  return detail::KeysFolded(receiver, body, answer_type, Reduction::kProduct);
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayAnd(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> AnyValue {
-  return detail::KeysFolded(receiver, body, type, prototype, Reduction::kAnd);
+    const ValueType& answer_type) -> AnyValue {
+  return detail::KeysFolded(receiver, body, answer_type, Reduction::kAnd);
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayOr(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> AnyValue {
-  return detail::KeysFolded(receiver, body, type, prototype, Reduction::kOr);
+    const ValueType& answer_type) -> AnyValue {
+  return detail::KeysFolded(receiver, body, answer_type, Reduction::kOr);
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayXor(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> AnyValue {
-  return detail::KeysFolded(receiver, body, type, prototype, Reduction::kXor);
+    const ValueType& answer_type) -> AnyValue {
+  return detail::KeysFolded(receiver, body, answer_type, Reduction::kXor);
 }
 
-// LRM 7.12.1 locator family. Each answers with a queue of what it located, in
-// the order it was located, of `type`; nothing located is the empty queue. The
-// index forms answer with the indices instead of the elements, which for a
-// keyed receiver are its own indices.
+// LRM 7.12.1 locator family. Each answers with a queue of `answer_type`
+// holding what it located, in the order it was located; nothing located is the
+// empty queue. The index forms answer with the indices instead of the
+// elements, which for a keyed receiver are its own indices.
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayFind(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedElements(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::MatchingPositions(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayFindIndex(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedIndices(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::MatchingPositions(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayFindFirst(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedElements(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::FirstMatching(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayFindFirstIndex(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedIndices(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::FirstMatching(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayFindLast(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedElements(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::LastMatching(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayFindLastIndex(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedIndices(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::LastMatching(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayMin(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedElements(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::LeastPosition(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayMax(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedElements(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::GreatestPosition(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayUnique(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedElements(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::UniquePositions(count, key);
       });
 }
 template <typename Container>
 [[nodiscard]] auto RuntimeArrayUniqueIndex(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeQueue {
+    const QueueType& answer_type) -> RuntimeQueue {
   return detail::LocatedIndices(
-      receiver, body, type, prototype, [](std::size_t count, auto key) {
+      receiver, body, answer_type, [](std::size_t count, auto key) {
         return detail::UniquePositions(count, key);
       });
 }
 
 // LRM 7.12.5 projection, in entry order, into a container of the receiver's own
 // kind: a keyed receiver keeps each entry's index, a sequence one drops it.
-// `type` is the element type the `with` expression chose.
-template <typename Container>
+// `answer` is the type the projection builds, over the element type the `with`
+// expression chose: a queue's own type, a dynamic array's element type.
+template <typename Container, typename Answer>
 [[nodiscard]] auto RuntimeArrayMap(
     const Container& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> Container {
+    const Answer& answer) -> Container {
   const detail::ArrayEntries entries = detail::EntriesOf(receiver);
   return detail::ContainerOf<Container>(
       detail::KeysOf(entries.elements.size(), detail::KeyOf(entries, body)),
-      type, prototype);
+      answer);
 }
 
-// The projected element type answers a miss as well as naming the shape:
-// mapping produces no `default:` clause of its own, so the absent-key answer
-// is that type's own default. The indices are the receiver's own, so the
-// order its index type imposes is the projection's too.
+// The same over a fixed-size unpacked array, whose projection is an array of
+// `answer_type`: as many elements, of the type the `with` expression chose.
+[[nodiscard]] auto RuntimeArrayMap(
+    const FixedArrayView& receiver, const ArrayMethodBody& body,
+    const FixedArrayType& answer_type) -> RuntimeFixedArray;
+
+// Mapping produces no `default:` clause of its own, so an absent key of the
+// projection reads the projected element type's default. The indices are the
+// receiver's own, so the order its index type imposes is the projection's too.
 [[nodiscard]] auto RuntimeArrayMap(
     const RuntimeAssociativeArray& receiver, const ArrayMethodBody& body,
-    const ValueType& type, const void* prototype) -> RuntimeAssociativeArray;
+    const ElementType& answer_element) -> RuntimeAssociativeArray;
 
 // LRM 7.12.2 ordering: a positional permutation by the body-projected key,
 // applied to the receiver where it lies. It takes no result type, producing no
@@ -321,5 +316,13 @@ template <typename Container>
 void RuntimeArrayReverse(Container& receiver) {
   receiver.Permute(detail::ReversedPositions(receiver.Count()));
 }
+
+// The same three over a fixed-size unpacked array of `type` where it lies at
+// `array`, which is its elements and no object a method could be asked of.
+void RuntimeArraySort(
+    const FixedArrayType& type, void* array, const ArrayMethodBody& body);
+void RuntimeArrayRsort(
+    const FixedArrayType& type, void* array, const ArrayMethodBody& body);
+void RuntimeArrayReverse(const FixedArrayType& type, void* array);
 
 }  // namespace lyra::value

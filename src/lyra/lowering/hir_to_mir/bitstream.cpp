@@ -7,7 +7,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/mir/expr.hpp"
@@ -155,14 +154,9 @@ auto BuildFromBitstream(
   const mir::ExprId stream_id = ConvertToType(
       unit, block, filled,
       mir::PackedVectorOf(unit.types, target->width, target->state_kind));
-  // The prototype is read for its shape alone -- how wide each part of the
-  // destination is and what representation it holds -- which a sequence of bits
-  // carries none of.
-  const mir::ExprId prototype_id =
-      block.exprs.Add(BuildDefaultValueExpr(unit, block, dst_type));
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kFromBitstream, std::nullopt,
-      {stream_id, prototype_id}, dst_type);
+      {stream_id}, dst_type);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

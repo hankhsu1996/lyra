@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -19,7 +20,7 @@
 
 namespace lyra::value {
 
-template <typename T>
+template <typename T, std::int64_t kBound = -1>
 class Queue;
 
 // The LRM 7.12 methods of an unpacked array whose index is the ordinal
@@ -27,93 +28,79 @@ class Queue;
 // closures the C++ backend writes, each closure taking an element and its
 // position. A located family answers with a queue (LRM 7.12.1); `map` answers
 // with an array of the receiver's own kind over the closure's result type
-// (LRM 7.12.5), which `Self` names as its `Rebound`. `proto` is what the
-// producer supplies as the result's element default, and, for a reduction, its
-// answer for no entries.
+// (LRM 7.12.5), which `Self` names as its `Rebound`. A reduction of no entries
+// answers the default of the closure's result type, LRM 7.12.3 stating no
+// answer of its own.
 template <typename Self, typename T>
 class OrdinalArrayMethods {
  public:
-  template <typename F, typename R>
-  [[nodiscard]] auto Sum(F key, R proto) const -> R {
-    return detail::Folded(
-        Count(), KeyOf(key), Reduction::kSum, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto Sum(F key) const {
+    return Reduced(key, Reduction::kSum);
   }
-  template <typename F, typename R>
-  [[nodiscard]] auto Product(F key, R proto) const -> R {
-    return detail::Folded(
-        Count(), KeyOf(key), Reduction::kProduct, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto Product(F key) const {
+    return Reduced(key, Reduction::kProduct);
   }
-  template <typename F, typename R>
-  [[nodiscard]] auto And(F key, R proto) const -> R {
-    return detail::Folded(
-        Count(), KeyOf(key), Reduction::kAnd, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto And(F key) const {
+    return Reduced(key, Reduction::kAnd);
   }
-  template <typename F, typename R>
-  [[nodiscard]] auto Or(F key, R proto) const -> R {
-    return detail::Folded(
-        Count(), KeyOf(key), Reduction::kOr, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto Or(F key) const {
+    return Reduced(key, Reduction::kOr);
   }
-  template <typename F, typename R>
-  [[nodiscard]] auto Xor(F key, R proto) const -> R {
-    return detail::Folded(
-        Count(), KeyOf(key), Reduction::kXor, std::move(proto));
+  template <typename F>
+  [[nodiscard]] auto Xor(F key) const {
+    return Reduced(key, Reduction::kXor);
   }
 
   template <typename F>
-  [[nodiscard]] auto Find(F pred, T proto) const {
-    return Elements(
-        std::move(proto), detail::MatchingPositions(Count(), KeyOf(pred)));
+  [[nodiscard]] auto Find(F pred) const {
+    return Elements(detail::MatchingPositions(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindIndex(F pred, Int proto) const {
-    return Indices(
-        std::move(proto), detail::MatchingPositions(Count(), KeyOf(pred)));
+  [[nodiscard]] auto FindIndex(F pred) const {
+    return Indices(detail::MatchingPositions(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindFirst(F pred, T proto) const {
-    return Elements(
-        std::move(proto), detail::FirstMatching(Count(), KeyOf(pred)));
+  [[nodiscard]] auto FindFirst(F pred) const {
+    return Elements(detail::FirstMatching(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindFirstIndex(F pred, Int proto) const {
-    return Indices(
-        std::move(proto), detail::FirstMatching(Count(), KeyOf(pred)));
+  [[nodiscard]] auto FindFirstIndex(F pred) const {
+    return Indices(detail::FirstMatching(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindLast(F pred, T proto) const {
-    return Elements(
-        std::move(proto), detail::LastMatching(Count(), KeyOf(pred)));
+  [[nodiscard]] auto FindLast(F pred) const {
+    return Elements(detail::LastMatching(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto FindLastIndex(F pred, Int proto) const {
-    return Indices(
-        std::move(proto), detail::LastMatching(Count(), KeyOf(pred)));
+  [[nodiscard]] auto FindLastIndex(F pred) const {
+    return Indices(detail::LastMatching(Count(), KeyOf(pred)));
   }
   template <typename F>
-  [[nodiscard]] auto Min(F key, T proto) const {
-    return Elements(
-        std::move(proto), detail::LeastPosition(Count(), KeyOf(key)));
+  [[nodiscard]] auto Min(F key) const {
+    return Elements(detail::LeastPosition(Count(), KeyOf(key)));
   }
   template <typename F>
-  [[nodiscard]] auto Max(F key, T proto) const {
-    return Elements(
-        std::move(proto), detail::GreatestPosition(Count(), KeyOf(key)));
+  [[nodiscard]] auto Max(F key) const {
+    return Elements(detail::GreatestPosition(Count(), KeyOf(key)));
   }
   template <typename F>
-  [[nodiscard]] auto Unique(F key, T proto) const {
-    return Elements(
-        std::move(proto), detail::UniquePositions(Count(), KeyOf(key)));
+  [[nodiscard]] auto Unique(F key) const {
+    return Elements(detail::UniquePositions(Count(), KeyOf(key)));
   }
   template <typename F>
-  [[nodiscard]] auto UniqueIndex(F key, Int proto) const {
-    return Indices(
-        std::move(proto), detail::UniquePositions(Count(), KeyOf(key)));
+  [[nodiscard]] auto UniqueIndex(F key) const {
+    return Indices(detail::UniquePositions(Count(), KeyOf(key)));
   }
 
-  template <typename F, typename U>
-  [[nodiscard]] auto Map(F closure, U proto) const {
-    return typename Self::template Rebound<U>(
-        std::move(proto), detail::KeysOf(Count(), KeyOf(closure)));
+  template <typename F>
+  [[nodiscard]] auto Map(F closure) const {
+    const auto mapped = detail::KeysOf(Count(), KeyOf(closure));
+    using U = typename decltype(mapped)::value_type;
+    return typename Self::template Rebound<U>(std::span<const U>{mapped});
   }
 
   // LRM 7.12.2 ordering: a positional permutation, by the closure-projected key
@@ -162,100 +149,98 @@ class OrdinalArrayMethods {
     };
   }
 
-  // The located elements, or positions, as the queue a locator answers with,
-  // whose element default is the one the producer supplies. Each builds a
-  // queue only where it is instantiated, which is after the queue is complete.
-  template <typename Element>
-  [[nodiscard]] auto Elements(
-      Element proto, const std::vector<std::size_t>& positions) const
+  template <typename F>
+  [[nodiscard]] auto Reduced(F& key, Reduction reduction) const {
+    using R = std::remove_cvref_t<std::invoke_result_t<F&, const T&, Int>>;
+    return detail::Folded(
+        Count(), KeyOf(key), reduction, detail::DefaultOf<R>());
+  }
+
+  // The located elements, or positions, as the queue a locator answers with
+  // (LRM 7.12.1), a position being an `int`. Each is a template so that it
+  // builds a queue only where it is instantiated, which is after the queue is
+  // complete.
+  template <typename Element = T>
+  [[nodiscard]] auto Elements(const std::vector<std::size_t>& positions) const
       -> Queue<Element> {
     std::vector<Element> found;
     found.reserve(positions.size());
     for (const std::size_t i : positions) {
       found.push_back(This().RawAt(i));
     }
-    return Queue<Element>(std::move(proto), found);
+    return Queue<Element>(std::span<const Element>{found});
   }
-  template <IntegralValue Index>
-  [[nodiscard]] static auto Indices(
-      Index proto, const std::vector<std::size_t>& positions) -> Queue<Index> {
+  template <IntegralValue Index = Int>
+  [[nodiscard]] static auto Indices(const std::vector<std::size_t>& positions)
+      -> Queue<Index> {
     std::vector<Index> found;
     found.reserve(positions.size());
     for (const std::size_t i : positions) {
       found.push_back(Index::FromInt(static_cast<std::int64_t>(i)));
     }
-    return Queue<Index>(std::move(proto), found);
+    return Queue<Index>(std::span<const Index>{found});
   }
 };
 
-// SystemVerilog queue (LRM 7.10) of the C++ type `T`: the queue every element
-// type shares, with its elements read and written as `T` and the LRM 7.12
-// methods run over the closures the C++ backend writes. Default value is the
-// empty queue (LRM Table 6-7). The element default is what an invalid-index
-// read returns and what growth (the `q[$+1]` append), slice results and an
-// empty-queue pop are seeded with.
-template <typename T>
-class Queue : public OrdinalArrayMethods<Queue<T>, T> {
+// The bound a queue's C++ type states (LRM 7.10.5), `kBound`.
+template <std::int64_t kBound>
+struct StaticBound {
+  [[nodiscard]] static constexpr auto Bound() -> std::int64_t {
+    return kBound;
+  }
+};
+
+// SystemVerilog queue (LRM 7.10) of the C++ type `T`, holding no element whose
+// index exceeds `kBound` (LRM 7.10.5), a bound below zero being none: the
+// queue every element type shares, with its elements read and written as `T`
+// and the LRM 7.12 methods run over the closures the C++ backend writes.
+// Default value is the empty queue (LRM Table 6-7). What an invalid-index read
+// returns, and what growth (the `q[$+1]` append) and an empty-queue pop start
+// as, is the element type's default (LRM Table 7-1), which `T`'s own default
+// construction builds.
+template <typename T, std::int64_t kBound>
+class Queue : public OrdinalArrayMethods<Queue<T, kBound>, T> {
  public:
   using ElementType = T;
   template <typename U>
   using Rebound = Queue<U>;
 
-  // Empty queue carrying no element shape, the unestablished state of a
-  // freshly value-initialized cell before its declared representation is
-  // installed. A declared queue is constructed through one of the seeding forms
-  // below, or installed via the cell's initialization; the empty form exists
-  // only for the default-constructed slots STL containers require.
   Queue() = default;
 
-  // An empty queue of a known element shape, which a functional operation
-  // yielding no element starts from.
-  explicit Queue(T element_default)
-      : core_(StaticElem<T>(std::move(element_default))) {
-  }
-
-  // LRM 10.9.1 assignment-pattern construction: the element default seeded,
-  // elements taken from the pattern's list. The list is a span so the emit side
-  // hands in a `std::array<T, N>{...}` literal, mirroring `DynamicArray`.
-  Queue(T element_default, std::span<const T> init)
-      : Queue(std::move(element_default)) {
+  // LRM 10.9.1 assignment-pattern construction: the elements of the pattern's
+  // list, in order.
+  explicit Queue(std::span<const T> init) {
     core_.Assign(detail::ReplicatedAddresses(init, 1));
   }
 
-  // LRM 10.9.1 `'{count{...}}` pattern: `count` replications of `unit`.
-  // Taking the repeat unit and the count separately keeps the value O(unit)
-  // to build rather than O(unit * count).
-  Queue(T element_default, std::span<const T> unit, std::size_t count)
-      : Queue(std::move(element_default)) {
+  // LRM 10.9.1: a queue built from an assignment pattern or a replication,
+  // `count` replications of `unit`, held to the bound. Taking the repeat unit
+  // and the count separately keeps the value O(unit) to build rather than
+  // O(unit * count).
+  Queue(std::span<const T> unit, std::size_t count) {
     core_.Assign(detail::ReplicatedAddresses(unit, count));
-  }
-
-  // LRM 7.10.5 bounded queue initialized by an assignment pattern or a
-  // replication: the pattern's elements, held to the bound on entry.
-  Queue(
-      T element_default, std::span<const T> unit, std::size_t count,
-      std::int64_t max_bound)
-      : Queue(std::move(element_default), unit, count) {
-    core_.SetBound(max_bound);
   }
 
   // LRM 7.6: a queue assigned an array of any of the three unpacked kinds is
   // resized to the source's element count and takes its elements in
-  // left-to-right order. The clause admits the assignment only where the
-  // element types are equivalent, so each element crosses as it stands, and the
-  // element default is the destination's own -- the element shape is a declared
-  // property of the variable being written, which the source has no say in. LRM
-  // 7.10.5 makes the bound another such property, and a bound below zero is the
-  // unbounded queue, so one form covers both and the trimming is the same
-  // trimming any other write gets. Named because the argument list cannot tell
-  // it from building over an element list.
+  // left-to-right order, held to the bound as any other write is. The clause
+  // admits the assignment only where the element types are equivalent, so
+  // each element crosses as it stands. Named because the argument list cannot
+  // tell it from building over an element list.
   template <OrdinalElements C>
-  [[nodiscard]] static auto FromArray(
-      const C& source, T element_default, std::int64_t max_bound) -> Queue {
-    Queue result(std::move(element_default));
-    result.core_.SetBound(max_bound);
+  [[nodiscard]] static auto FromArray(const C& source) -> Queue {
+    Queue result;
     result.core_.Assign(detail::OrdinalAddresses(source));
     return result;
+  }
+
+  // LRM 7.10.5: a queue of another bound assigned to one of this type keeps
+  // only what this bound admits. The bound is the destination's, so the two
+  // types never convert without being asked to.
+  template <std::int64_t kFrom>
+  [[nodiscard]] static auto ConformBound(const Queue<T, kFrom>& source)
+      -> Queue {
+    return FromArray(source);
   }
 
   Queue(const Queue&) = default;
@@ -263,17 +248,6 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   auto operator=(const Queue&) -> Queue& = default;
   auto operator=(Queue&&) noexcept -> Queue& = default;
   ~Queue() = default;
-
-  // The element shape and the LRM 7.10.5 bound are declared-type properties of
-  // the destination variable, not value content. The store boundary brings the
-  // right-hand side to the destination representation before a semantic store,
-  // so a cross-representation source is conformed here rather than preserved by
-  // a shape-keeping assignment. Returns a copy carrying `bound` (a negative
-  // value means unbounded) and this queue's element shape and contents, trimmed
-  // to the bound.
-  [[nodiscard]] auto ConformBound(std::int64_t bound) const -> Queue {
-    return Queue(core_.WithBound(bound));
-  }
 
   // LRM 7.10.2.1: size() yields an SV int.
   [[nodiscard]] auto Size() const -> Int {
@@ -286,12 +260,6 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
 
   [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
     return *static_cast<const T*>(core_.At(i));
-  }
-
-  // The element type's default (LRM Table 7-1), the shape an out-of-range read
-  // returns and a derived container seeds its own out-of-range source with.
-  [[nodiscard]] auto ElementDefault() const -> const T& {
-    return core_.Element().DefaultValue();
   }
 
   [[nodiscard]] auto operator==(const Queue& other) const ->
@@ -345,10 +313,12 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
     return ElementRef(position, formed);
   }
 
-  // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`.
+  // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`, as
+  // the queue declaring no bound that the selection is typed as.
   [[nodiscard]] auto Slice(const Position& lo, const Position& hi) const
-      -> Queue {
-    return Queue(core_.Slice(ReadPosition(lo), ReadPosition(hi)));
+      -> Queue<T> {
+    return Queue<T>(
+        core_.Slice(ReadPosition(lo), ReadPosition(hi), StaticBound<-1>{}));
   }
 
   // LRM 7.10.2.7 / 7.10.2.6: append / prepend a single element.
@@ -392,9 +362,13 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
   }
 
  private:
-  friend class OrdinalArrayMethods<Queue<T>, T>;
+  friend class OrdinalArrayMethods<Queue<T, kBound>, T>;
+  template <typename, std::int64_t>
+  friend class Queue;
 
-  explicit Queue(BasicQueue<StaticElem<T>> core) : core_(std::move(core)) {
+  using Core = BasicQueue<StaticElem<T>, StaticBound<kBound>>;
+
+  explicit Queue(Core core) : core_(std::move(core)) {
   }
 
   // Puts the value that was at `order[k]` at position `k` (LRM 7.12.2).
@@ -402,7 +376,7 @@ class Queue : public OrdinalArrayMethods<Queue<T>, T> {
     core_.Permute(order);
   }
 
-  BasicQueue<StaticElem<T>> core_;
+  Core core_;
 };
 
 static_assert(LyraValue<Queue<LogicVector<4>>>);
@@ -415,5 +389,7 @@ static_assert(Indexable<Queue<LogicVector<4>>>);
 static_assert(ConditionallyMergeable<Queue<LogicVector<4>>>);
 static_assert(Sortable<Queue<LogicVector<4>>>);
 static_assert(OrdinalElements<Queue<LogicVector<4>>>);
+static_assert(
+    sizeof(Queue<LogicVector<4>, 3>) == sizeof(Queue<LogicVector<4>>));
 
 }  // namespace lyra::value

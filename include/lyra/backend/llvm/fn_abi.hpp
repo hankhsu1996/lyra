@@ -47,15 +47,25 @@ using PassMode = std::variant<
     PassDirect, PassWithExtent, PassWithShape, PassWithType, PassWithWidth>;
 
 // What a callee is told of a type no argument is a value of: the constant of a
-// type it keeps and acts on, or how wide an integral type is and whether it
-// holds x or z.
+// type it keeps and acts on, how wide an integral type is and whether it
+// holds x or z, the constant stating a type as the element type of an array,
+// which says how a value of it starts as well (LRM Table 7-1), or the
+// constant stating a queue type, which says that of its elements and how many
+// it may hold (LRM 7.10.5).
 struct TypeConstantArg {
   lir::TypeId type;
 };
 struct TypeExtentArg {
   lir::TypeId type;
 };
-using TypeArg = std::variant<TypeConstantArg, TypeExtentArg>;
+struct ElementTypeArg {
+  lir::TypeId type;
+};
+struct QueueTypeArg {
+  lir::TypeId type;
+};
+using TypeArg =
+    std::variant<TypeConstantArg, TypeExtentArg, ElementTypeArg, QueueTypeArg>;
 
 // What a callee takes ahead of the arguments a call states. The host's
 // `operator new` is asked for the size of a complete object of the type it
@@ -128,31 +138,48 @@ struct FnAbi {
 auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
     -> PassMode;
 
-// How a call on `op`, an entry this target names by an operation of its own,
-// crosses where no call of the layer above states it: each of `operands` as
-// the entry's declaration reads the operand at its place, the entry told what
-// its declaration says it is told of the type `called_at`, and its answer
-// coming back as `ret`.
-auto FnAbiOf(
-    CodeGenModule& module, RuntimeOp op,
-    std::span<const StatedOperand> operands,
-    std::optional<lir::TypeId> called_at, ReturnInfo ret) -> FnAbi;
-
 // The types a call states that what the realization it enters is told of can
-// be read from: the type of the values the storage it acts on holds, and the
-// member a callee building or updating a union names. A call states only those
-// its entry can be told of.
+// be read from. A call states only those its entry can be told of.
 struct ToldTypes {
-  std::optional<lir::TypeId> held;
+  // The type whose representation names the realization: the value the entry
+  // acts on, or, where it acts on storage, the values that storage holds.
+  std::optional<lir::TypeId> acted_on;
+  // The member a callee building or updating a union names.
   std::optional<lir::TypeId> member;
 };
 
-// How operand `index`, of type `own`, crosses where what a realization is told
-// concerns it -- with what it is told, or as it; nothing where the realization
-// is told nothing of that operand, which then crosses as its reading says.
+// How operand `index`, of type `own` and read as `reading`, crosses where what
+// a realization is told concerns it -- with what it is told, or as it; nothing
+// where the realization is told nothing of that operand, which then crosses as
+// its reading says.
 auto ToldModeOf(
-    const Told& told, std::size_t index, const ToldTypes& types,
-    lir::TypeId own, const lir::TypePool& pool) -> std::optional<PassMode>;
+    const Told& told, std::size_t index, support::OperandReading reading,
+    const ToldTypes& types, lir::TypeId own, const lir::TypePool& pool)
+    -> std::optional<PassMode>;
+
+// What an entry is handed after its operands by a call answering a value of
+// `answered` that comes back as `ret`. It is what the entry's declaration says
+// it is told of its answer, read from the type `called_at` the call is made at
+// or from `answered`; and a realization told the types of the arrays it is
+// handed, building a fixed-size unpacked array where its entry's declaration
+// says it is told nothing of its answer, is told that array's type, since the
+// array's bytes state none.
+auto TypeArgsOf(
+    const lir::TypePool& types, const Told& told, support::AnswerTold declared,
+    std::optional<lir::TypeId> called_at, lir::TypeId answered,
+    const ReturnInfo& ret) -> std::vector<TypeArg>;
+
+// How a call on `op`, an entry this target names by an operation of its own,
+// crosses where no call of the layer above states it: each of `operands` as
+// the entry's declaration reads the operand at its place and as its
+// realization, told `told` out of `types`, is told of it; the entry told what
+// its declaration says it is told of the type `called_at`; and its answer
+// coming back as `ret`.
+auto FnAbiOf(
+    CodeGenModule& module, RuntimeOp op,
+    std::span<const StatedOperand> operands, const Told& told,
+    const ToldTypes& types, std::optional<lir::TypeId> called_at,
+    ReturnInfo ret) -> FnAbi;
 
 // The library entry a call or an access enters: the symbol it is published
 // under, and what the realization that symbol names is told, with the types
@@ -214,10 +241,14 @@ class CallArranger {
   [[nodiscard]] auto ReturnOf(
       const lir::CallInstr& call, lir::TypeId result_type) const -> ReturnInfo;
   // The construction of a value of type `result`: its entry, how that entry
-  // reads the operands the construction states, and what leads them.
+  // reads the operands the construction states, what its realization is told,
+  // what the entry is told of the type it answers at, and what leads the
+  // operands.
   struct Construction {
     std::string symbol;
     support::OperandReadings operands;
+    Told told;
+    support::AnswerTold answer_told;
     ImplicitArg implicit_arg;
   };
   [[nodiscard]] auto ConstructionOf(

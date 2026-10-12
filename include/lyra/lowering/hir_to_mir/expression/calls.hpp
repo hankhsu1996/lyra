@@ -33,9 +33,8 @@ namespace lyra::lowering::hir_to_mir {
 // A call of the method `method` the language defines on a built-in type, on
 // `receiver` where the method acts on a value, with `operands` in the order a
 // source call writes them, all already in `block`. What its entry takes that
-// no source writes -- the engine it reaches, and the default of the result's
-// type for an answer to start from -- is supplied here, so a call the source
-// wrote and one a lowering makes of its own are stated one way.
+// no source writes -- the engine it reaches -- is supplied here, so a call the
+// source wrote and one a lowering makes of its own are stated one way.
 [[nodiscard]] auto BuildBuiltinMethodCall(
     const UnitLowerer& unit_lowerer, mir::Block& block,
     support::BuiltinFn method, std::optional<mir::ExprId> receiver,

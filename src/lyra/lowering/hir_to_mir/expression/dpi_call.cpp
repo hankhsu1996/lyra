@@ -460,11 +460,10 @@ auto BuildBoundaryArgument(
 // Each yields one value, so the store into the actual is the ordinary one
 // whatever the carrier.
 //
-// What no carrier carries is the destination's declared representation. A
-// vector's destination is packed, and the read is told that type; an open
-// array's is a nested container whose element count and element structure the
-// read walks, which only a value of that type states, so that read takes one
-// as a trailing operand.
+// What no carrier carries is the destination's declared representation, so
+// each read is told that type: a vector's destination is packed, and an open
+// array's is a nest of fixed-size arrays whose counts and leaves its type
+// states.
 auto BuildBoundaryReadback(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const support::DpiCarrier& carrier, mir::ExprId object,
@@ -502,9 +501,9 @@ auto BuildBoundaryReadback(
             return read(
                 mir::Direct{
                     .target = support::BuiltinFn::kDpiOpenArrayValue,
-                    .receiver = object},
-                {block.exprs.Add(BuildDefaultValueExpr(
-                    unit_lowerer.Unit(), block, sv_type))});
+                    .receiver = object,
+                    .type_argument = sv_type},
+                {});
           }},
       carrier);
 }

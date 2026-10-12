@@ -87,6 +87,8 @@ class IntegralValueType final : public ValueType {
       -> bool override;
   [[nodiscard]] auto HasUnknown(const void* value) const -> bool override;
 
+  void BuildDefault(void* out) const override;
+
   void BitstreamWidth(const void* value, void* out) const override;
   void CountBits(
       const void* value, const ConstIntegralView& control_bits,
@@ -95,8 +97,8 @@ class IntegralValueType final : public ValueType {
       const void* value, const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t override;
   auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken,
-      const void* prototype, void* out) const -> std::uint64_t override;
+      const ConstIntegralView& stream, std::uint64_t taken, void* out) const
+      -> std::uint64_t override;
 
   void ResolveTriState(
       const void* lhs, const void* rhs, void* out) const override;
@@ -117,6 +119,7 @@ class IntegralValueType final : public ValueType {
 
   [[nodiscard]] auto Parts() const -> const PartsByPosition* override;
   [[nodiscard]] auto AsIntegral() const -> const IntegralValueType* override;
+  [[nodiscard]] auto AsFixedArray() const -> const FixedArrayType* override;
 
  private:
   // A fold of two values of this type into a third, which `fold` carries

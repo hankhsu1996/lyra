@@ -1,6 +1,7 @@
 #include "lyra/runtime/object_ref.hpp"
 
 #include <gtest/gtest.h>
+#include <tuple>
 
 namespace {
 
@@ -78,7 +79,7 @@ TEST_F(ObjectRefTest, NullReferenceEquality) {
 
 TEST_F(ObjectRefTest, DerefOnANullReferenceIsTheDesignsFailure) {
   ObjectRef a;
-  EXPECT_THROW((void)a.Deref<Counted>(), lyra::SimulationError);
+  EXPECT_THROW(std::ignore = a.Deref<Counted>(), lyra::SimulationError);
 }
 
 // Carries a Counted so that reclaiming a node is observable; a node holding

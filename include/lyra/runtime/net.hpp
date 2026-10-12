@@ -1307,6 +1307,32 @@ class ResolvedNet<T> : public Observable {
         LandingOf(index));
   }
 
+  // The same of a value handed as its bytes, laid out as the driver's value
+  // is, taken into the storage that value has. A contribution already holding
+  // them moves no resolution.
+  void SetDriverBytes(
+      RuntimeEffects& runtime, std::size_t index, const void* bytes)
+    requires value::TakesBytesInPlace<T>
+  {
+    std::visit(
+        Overloaded{
+            [&](const Contributing<T>& to) {
+              if (to.contribution->HoldsBytes(bytes)) {
+                return;
+              }
+              to.contribution->TakeBytes(bytes);
+              Reresolve(runtime);
+            },
+            [&](const Showing<T>& to) {
+              ShowDriverValue(
+                  runtime, *this, *to.shown,
+                  [&] { return to.shown->HoldsBytes(bytes); },
+                  [&] { to.shown->TakeBytes(bytes); });
+            },
+            [&](const KeptBeneath<T>& to) { to.kept->TakeBytes(bytes); }},
+        LandingOf(index));
+  }
+
   // A write into part of a driver's value is over, having changed it. A
   // contribution resolves again unless the write landed on the whole of it and
   // is known to have moved nothing.
@@ -1414,7 +1440,7 @@ class Driver {
     Net().SetDriver(current_runtime(), contribution_, value);
   }
 
-  // The same of a value handed as its bytes, as wide as the driver's value.
+  // The same of a value handed as its bytes, laid out as the contribution is.
   void SetBytes(const void* bytes) const
     requires value::TakesBytesInPlace<T>
   {

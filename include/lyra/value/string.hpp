@@ -407,9 +407,8 @@ static_assert(Indexable<String>);
 // Defined here rather than alongside the rest of `UnpackedArray` because it is
 // the one member that reads a `String`, whose definition depends on the array.
 template <typename T, std::size_t N>
-auto UnpackedArray<T, N>::FromString(const String& text, std::int64_t count)
+auto UnpackedArray<T, N>::FromString(const String& text)
     -> UnpackedArray<T, N> {
-  RequireDeclared(count);
   return OfBytes(text.View());
 }
 

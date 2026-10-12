@@ -31,7 +31,6 @@
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/symbol_name.hpp"
 #include "lyra/lir/type.hpp"
-#include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
@@ -111,13 +110,15 @@ static_assert(offsetof(value::TupleComponent, type) == sizeof(void*));
 // `with` clause answers -- an order, a truth, a reduction (LRM 7.8, 7.12, 12.4)
 // -- none of which is asked of a structure: it has no relational or arithmetic
 // operator to order, test or fold by, and an associative array indexed by one
-// is refused where it is declared.
+// is refused where it is declared. Nor is the default a type fixes alone, which
+// is asked only of a singular type (LRM 6.4): a structure's is what its
+// declaration states (LRM 7.2.2).
 struct NeverAskedOfAStructure {};
 
 // What a type is asked that a structure answers with nothing: the walk over
 // parts ordered by position, a structure's being components named by position
 // in its type rather than a sequence of one type, and the type as an integral
-// one.
+// one or as a fixed-size unpacked array's.
 struct AnsweredWithNothing {};
 
 // How an operation's body takes and answers its integral values. The type the
@@ -137,7 +138,7 @@ using IntegralCrossing = std::variant<
     StreamOutOfValue, ControlOutOfValue>;
 
 using SlotFilling = std::variant<
-    TupleLifecycle, support::ValueOperation, NeverAskedOfAStructure,
+    LifecycleStep, support::ValueOperation, NeverAskedOfAStructure,
     AnsweredWithNothing>;
 
 // Where the virtual function `member` lies in its class's table, counted in
@@ -191,10 +192,10 @@ auto TableSlots() -> std::vector<TableSlot> {
   using support::BuiltinFn;
   using value::ValueType;
   return {
-      Slot("copy", &ValueType::Copy, TupleLifecycle::kCopy),
-      Slot("move", &ValueType::Move, TupleLifecycle::kMove),
-      Slot("destroy", &ValueType::Destroy, TupleLifecycle::kDestroy),
-      Slot("assign", &ValueType::Assign, TupleLifecycle::kAssign),
+      Slot("copy", &ValueType::Copy, LifecycleStep::kCopy),
+      Slot("move", &ValueType::Move, LifecycleStep::kMove),
+      Slot("destroy", &ValueType::Destroy, LifecycleStep::kDestroy),
+      Slot("assign", &ValueType::Assign, LifecycleStep::kAssign),
       Slot(
           "equal", &ValueType::Equal, support::ValueOperator::kEquality,
           AnswerScalar{}),
@@ -203,6 +204,7 @@ auto TableSlots() -> std::vector<TableSlot> {
           AnswerWhetherItHolds{}),
       Slot("bit_identical", &ValueType::BitIdentical, BuiltinFn::kBitIdentical),
       Slot("has_unknown", &ValueType::HasUnknown, BuiltinFn::kHasUnknown),
+      Slot("build_default", &ValueType::BuildDefault, NeverAskedOfAStructure{}),
       Slot(
           "bitstream_width", &ValueType::BitstreamWidth,
           BuiltinFn::kBitstreamWidth),
@@ -231,6 +233,7 @@ auto TableSlots() -> std::vector<TableSlot> {
       Slot("reduce", &ValueType::Reduce, NeverAskedOfAStructure{}),
       Slot("parts", &ValueType::Parts, AnsweredWithNothing{}),
       Slot("as_integral", &ValueType::AsIntegral, AnsweredWithNothing{}),
+      Slot("as_fixed_array", &ValueType::AsFixedArray, AnsweredWithNothing{}),
   };
 }
 
@@ -238,18 +241,18 @@ auto TableSlots() -> std::vector<TableSlot> {
 // long as the program and nothing ends one, so neither is ever entered.
 constexpr std::size_t kDestructorEntries = 2;
 
-auto StepName(TupleLifecycle step) -> std::string_view {
+auto StepName(LifecycleStep step) -> std::string_view {
   switch (step) {
-    case TupleLifecycle::kCopy:
+    case LifecycleStep::kCopy:
       return "copy";
-    case TupleLifecycle::kMove:
+    case LifecycleStep::kMove:
       return "move";
-    case TupleLifecycle::kDestroy:
+    case LifecycleStep::kDestroy:
       return "destroy";
-    case TupleLifecycle::kAssign:
+    case LifecycleStep::kAssign:
       return "assign";
   }
-  throw InternalError("llvm codegen: unknown tuple lifecycle step");
+  throw InternalError("llvm codegen: unknown lifecycle step");
 }
 
 // The method among `methods` answering `operation`, or none where the type has
@@ -266,20 +269,6 @@ auto MethodAnswering(
 }
 
 }  // namespace
-
-auto LifecycleOp(TupleLifecycle step) -> RuntimeOp {
-  switch (step) {
-    case TupleLifecycle::kCopy:
-      return RuntimeOp::kCopy;
-    case TupleLifecycle::kMove:
-      return RuntimeOp::kMove;
-    case TupleLifecycle::kDestroy:
-      return RuntimeOp::kDestroy;
-    case TupleLifecycle::kAssign:
-      return RuntimeOp::kAssign;
-  }
-  throw InternalError("llvm codegen: unknown tuple lifecycle step");
-}
 
 CodeGenTuples::CodeGenTuples(
     CodeGenModule& module, CodeGenTypes& types,
@@ -304,39 +293,48 @@ auto CodeGenTuples::KeyOf(lir::TypeId tuple) -> const std::string& {
                 lir::SymbolPartOf(declared->path).encoded))
         .first->second;
   }
-  std::string key = "{";
-  const TupleLayout& layout = types_->LayoutOfTuple(tuple);
-  for (std::size_t i = 0; i < layout.components.size(); ++i) {
-    if (i != 0) {
-      key += ",";
+  // What one component contributes: everything about its type that makes two
+  // tuples holding it two types. An integral component's width, signedness and
+  // states are its type, and a fixed-size unpacked array's count and element
+  // are; any other value is an object of the library's, which is one type per
+  // domain.
+  const auto component_key = [&](const auto& self,
+                                 lir::TypeId component) -> std::string {
+    const lir::Type& type = unit_->types.Get(component);
+    if (type.IsProduct()) {
+      return KeyOf(component);
     }
-    const lir::TypeId component = layout.components[i];
-    if (unit_->types.Get(component).IsProduct()) {
-      key += KeyOf(component);
-      continue;
-    }
-    // An integral component's width, signedness and states are its type, so
-    // two tuples differing in any of them are two types.
     if (const std::optional<value::IntegralShape> shape =
             types_->IntegralShapeOf(component)) {
-      key += std::format(
+      return std::format(
           "{}{}{}", shape->width,
           shape->signedness == value::Signedness::kSigned ? "s" : "u",
           shape->IsFourState() ? "4" : "2");
-      continue;
+    }
+    if (const auto* array = type.As<lir::UnpackedArrayType>()) {
+      return std::format(
+          "[{}x{}]", array->size, self(self, array->element_type));
     }
     const std::optional<ValueDomain> domain = ValueDomainOf(*unit_, component);
     if (!domain) {
       throw InternalError(
           "llvm codegen: a tuple component is no value of a runtime domain");
     }
-    key += support::ValueDomainName(*domain);
+    return std::string(support::ValueDomainName(*domain));
+  };
+  std::string key = "{";
+  const TupleLayout& layout = types_->LayoutOfTuple(tuple);
+  for (std::size_t i = 0; i < layout.components.size(); ++i) {
+    if (i != 0) {
+      key += ",";
+    }
+    key += component_key(component_key, layout.components[i]);
   }
   key += "}";
   return keys_.emplace(tuple, std::move(key)).first->second;
 }
 
-auto CodeGenTuples::Function(lir::TypeId tuple, TupleLifecycle step)
+auto CodeGenTuples::Function(lir::TypeId tuple, LifecycleStep step)
     -> llvm::Function* {
   const std::string& key = KeyOf(tuple);
   if (const auto found = functions_.find({key, step});
@@ -346,10 +344,19 @@ auto CodeGenTuples::Function(lir::TypeId tuple, TupleLifecycle step)
   llvm::Module& module = owner_->Module();
   llvm::Type* ptr = types_->Ptr();
   llvm::Type* void_ty = llvm::Type::getVoidTy(module.getContext());
-  llvm::FunctionType* type =
-      step == TupleLifecycle::kDestroy
-          ? llvm::FunctionType::get(void_ty, {ptr}, false)
-          : llvm::FunctionType::get(void_ty, {ptr, ptr}, false);
+  // Ending a value takes it alone; every other step takes a second address,
+  // the storage it builds in or the value it writes.
+  llvm::FunctionType* type = nullptr;
+  switch (step) {
+    case LifecycleStep::kDestroy:
+      type = llvm::FunctionType::get(void_ty, {ptr}, false);
+      break;
+    case LifecycleStep::kCopy:
+    case LifecycleStep::kMove:
+    case LifecycleStep::kAssign:
+      type = llvm::FunctionType::get(void_ty, {ptr, ptr}, false);
+      break;
+  }
   llvm::Function* fn = llvm::Function::Create(
       type, llvm::GlobalValue::InternalLinkage,
       std::format("lyra.tuple{}.{}", key, StepName(step)), module);
@@ -492,7 +499,7 @@ auto CodeGenTuples::ReadOutOfStream(
   return CallStreamEntry(
       *owner_, b, RuntimeOp::kStreamRead,
       FnAbiOf(
-          *owner_, RuntimeOp::kStreamRead, stated, read,
+          *owner_, RuntimeOp::kStreamRead, stated, ToldNothing{}, {}, read,
           ReturnIndirect{.returned = b.getInt64Ty()}),
       operands, laid_out);
 }
@@ -559,7 +566,7 @@ auto CodeGenTuples::StreamReadBody(
       b, RuntimeOp::kStreamBuild, b.getInt64Ty(),
       {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
        b.getInt64(stream.width), b.getInt1(stream.IsFourState()),
-       body->getArg(3), body->getArg(4)}));
+       body->getArg(3)}));
   return body;
 }
 
@@ -703,7 +710,7 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
     };
     entries[at] = std::visit(
         Overloaded{
-            [&](TupleLifecycle step) -> llvm::Constant* {
+            [&](LifecycleStep step) -> llvm::Constant* {
               return filled_by(Function(tuple, step));
             },
             [&](const support::ValueOperation& operation) -> llvm::Constant* {
@@ -781,7 +788,7 @@ auto CodeGenTuples::DeclarationOf(lir::TypeId tuple) const
 }
 
 auto CodeGenTuples::Emit(
-    lir::TypeId tuple, TupleLifecycle step, llvm::Function* fn) -> void {
+    lir::TypeId tuple, LifecycleStep step, llvm::Function* fn) -> void {
   llvm::LLVMContext& ctx = owner_->Module().getContext();
   llvm::IRBuilder<> b(llvm::BasicBlock::Create(ctx, "", fn));
   const TupleLayout& layout = types_->LayoutOfTuple(tuple);
@@ -790,58 +797,31 @@ auto CodeGenTuples::Emit(
   const auto at = [&](llvm::Value* base, std::size_t i) -> llvm::Value* {
     return b.CreateConstInBoundsGEP1_64(b.getInt8Ty(), base, layout.offsets[i]);
   };
-  // Component `i`'s own step: the nested type's own function where the
-  // component is a tuple; the copy of its bytes where it is an integral value,
-  // which is the whole of each step that has anything to do; and its domain's
-  // entry otherwise, which answers with the storage it built in where the
-  // tuple's own step answers nothing.
+  // Component `i`'s own step, which its type says how to carry out. It fails
+  // only where the library realizes no type for the component, which is what
+  // building the tuple's own type refuses a component for.
   const auto component = [&](std::size_t i, std::vector<llvm::Value*> args) {
-    const lir::TypeId type = layout.components[i];
-    if (unit_->types.Get(type).IsProduct()) {
-      b.CreateCall(Function(type, step), args);
-      return;
+    if (!owner_->EmitLifecycle(b, layout.components[i], step, args)) {
+      throw InternalError(
+          "llvm codegen: a tuple component is no value the runtime realizes");
     }
-    if (types_->IntegralShapeOf(type).has_value()) {
-      const support::ObjectLayout bytes = types_->StorageOf(type);
-      const llvm::Align align(bytes.align);
-      switch (step) {
-        case TupleLifecycle::kCopy:
-        case TupleLifecycle::kMove:
-          b.CreateMemCpy(args.at(1), align, args.at(0), align, bytes.size);
-          return;
-        case TupleLifecycle::kAssign:
-          b.CreateMemCpy(args.at(0), align, args.at(1), align, bytes.size);
-          return;
-        case TupleLifecycle::kDestroy:
-          return;
-      }
-      throw InternalError("llvm codegen: unknown tuple lifecycle step");
-    }
-    const ValueDomain domain = *ValueDomainOf(*unit_, type);
-    if (step == TupleLifecycle::kDestroy &&
-        runtime::LayoutOf(domain).ends_with_nothing_to_do) {
-      return;
-    }
-    b.CreateCall(
-        owner_->LifecycleEntry(RuntimeSymbol(domain, LifecycleOp(step)), step),
-        args);
   };
 
   const std::size_t count = layout.components.size();
   switch (step) {
-    case TupleLifecycle::kCopy:
-    case TupleLifecycle::kMove:
+    case LifecycleStep::kCopy:
+    case LifecycleStep::kMove:
       b.CreateStore(TypeOf(tuple), fn->getArg(1));
       for (std::size_t i = 0; i < count; ++i) {
         component(i, {at(fn->getArg(0), i), at(fn->getArg(1), i)});
       }
       break;
-    case TupleLifecycle::kDestroy:
+    case LifecycleStep::kDestroy:
       for (std::size_t i = 0; i < count; ++i) {
         component(i, {at(fn->getArg(0), i)});
       }
       break;
-    case TupleLifecycle::kAssign:
+    case LifecycleStep::kAssign:
       for (std::size_t i = 0; i < count; ++i) {
         component(i, {at(fn->getArg(0), i), at(fn->getArg(1), i)});
       }

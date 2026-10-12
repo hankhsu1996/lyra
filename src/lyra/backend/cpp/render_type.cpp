@@ -218,8 +218,16 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             Write(
                 out, "lyra::value::DynamicArray<", type(da.element_type), ">");
           },
+          // LRM 7.10.5: the bound is part of the queue's type, and a queue
+          // declaring none is spelled with a bound below zero.
           [&](const mir::QueueType& q) {
-            Write(out, "lyra::value::Queue<", type(q.element_type), ">");
+            const std::int64_t bound =
+                q.max_bound.has_value()
+                    ? static_cast<std::int64_t>(*q.max_bound)
+                    : -1;
+            Write(
+                out, "lyra::value::Queue<", type(q.element_type), ", ", bound,
+                ">");
           },
           [&](const mir::AssociativeArrayType& a) {
             Write(

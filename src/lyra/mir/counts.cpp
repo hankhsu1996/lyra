@@ -50,7 +50,7 @@ void Add(const CompilationUnit& unit, const Class& cls, HeldByClasses& held) {
 
 auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // As for a class: every member of the unit is named here.
-  const auto& [name, source_name, types, integral_constants, enum_tables, builtins, classes, content, external_classes, callables, named_callables, static_variables, named_static_variables, foreign_scope_entries, structs, external_structs, closures, consumed_signatures] =
+  const auto& [name, source_name, types, integral_constants, enum_tables, builtins, classes, content, external_classes, callables, named_callables, type_defaults, static_variables, named_static_variables, foreign_scope_entries, structs, external_structs, closures, consumed_signatures] =
       unit;
 
   HeldByClasses in_classes;
@@ -77,6 +77,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "closures", .held = closures.size()},
       {.kind = "captures", .held = captures},
       {.kind = "structs", .held = structs.size()},
+      {.kind = "type defaults", .held = type_defaults.size()},
       {.kind = "static variables", .held = static_variables.size()},
       {.kind = "static properties", .held = in_classes.static_properties},
       {.kind = "class constants", .held = in_classes.constants},

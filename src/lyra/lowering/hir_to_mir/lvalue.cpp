@@ -359,8 +359,7 @@ auto ReadThenWrite(
               }
             }
             return block.exprs.Add(BuildPositionalAggregate(
-                unit_lowerer, block, lvalue.source_type, lvalue.type,
-                std::move(incoming)));
+                unit, block, lvalue.type, std::move(incoming)));
           },
           [](const StreamedJoin&) -> mir::ExprId {
             throw InternalError(

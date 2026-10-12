@@ -260,10 +260,10 @@ that row names. No render-side special case for any entry.
   new name table, not a new HIR-level enum or variant arm.
 - The backend reads `BuiltinFn` plus receiver MIR type and renders without any family-axis switch.
   Every property of an entry -- what the library calls it, how a call site reaches it, whether it
-  updates the object it acts on or hands it back, which operands carry an index, a spread part, a
-  closure, or a result prototype, whether the call carries the engine handle, whether it parks the
-  caller -- is one row of one declaration in the support layer, so a consumer reads the property it
-  needs and no consumer lists the entries that have it.
+  updates the object it acts on or hands it back, which operands carry an index, a spread part or a
+  closure, what it is told of the type it answers, whether the call carries the engine handle,
+  whether it parks the caller -- is one row of one declaration in the support layer, so a consumer
+  reads the property it needs and no consumer lists the entries that have it.
 - Neither layer carries a per-family variant arm or per-family enum. The per-family scaffolding (one
   `*MethodKind` enum and one `*MethodInfo` wrapper per LRM chapter) is gone from both HIR and MIR;
   the LRM-chapter organization survives only as comment-level grouping inside the flat

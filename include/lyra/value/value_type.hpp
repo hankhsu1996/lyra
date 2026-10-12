@@ -8,6 +8,7 @@
 
 namespace lyra::value {
 
+class FixedArrayType;
 class IntegralValueType;
 class ValueType;
 
@@ -44,6 +45,17 @@ struct StatedAt {
   std::size_t bytes;
 };
 
+// Where `whole` states its member `member`.
+template <typename Whole, typename Member>
+[[nodiscard]] auto StatedAtIn(const Whole* whole, const Member& member)
+    -> StatedAt {
+  return StatedAt{
+      .offset = static_cast<std::size_t>(
+          static_cast<const std::byte*>(static_cast<const void*>(&member)) -
+          static_cast<const std::byte*>(static_cast<const void*>(whole))),
+      .bytes = sizeof(Member)};
+}
+
 // What code compiled without knowing a type needs of a value of it: how much
 // storage the value takes, what the storage's own lifecycle is, and the
 // operations the language defines on the whole value (LRM 11.4.5, 20.6.2, 20.9,
@@ -58,7 +70,8 @@ struct StatedAt {
 // has differ from the type it is held as, so whoever holds the value states its
 // type once and the value carries none of its own. The one exception is a
 // tuple, whose bytes open with its type, because the cells, references and
-// nets that hold one do not state it.
+// nets that hold one do not state it; a fixed-size unpacked array carries
+// none, so an access through one of those is told the array's type.
 //
 // Every value is passed as its address. Copying and moving build in `out` a
 // value the source still has to end; `Assign` writes into a value already
@@ -106,20 +119,27 @@ class ValueType {
       const void* lhs, const void* rhs) const -> bool = 0;
   [[nodiscard]] virtual auto HasUnknown(const void* value) const -> bool = 0;
 
+  // LRM 6.4, Table 6-7: the value a variable of a singular type holds before
+  // anything writes it, which the type alone fixes. An aggregate's depends on
+  // what the program declares of it (LRM 7.2.2), so it is never asked here.
+  virtual void BuildDefault(void* out) const = 0;
+
   virtual void BitstreamWidth(const void* value, void* out) const = 0;
   virtual void CountBits(
       const void* value, const ConstIntegralView& control_bits,
       void* out) const = 0;
   // The value's bits written into a stream below its `filled` most
-  // significant positions, and the value of `prototype`'s shape
-  // the stream holds below its `taken` most significant ones, built in `out`.
-  // Each answers how many positions are filled, or taken, after it.
+  // significant positions, and the value of this type the stream holds below
+  // its `taken` most significant ones, built in `out`. The type fixes how
+  // many positions a value of it takes and what each part of it holds, which
+  // is everything a sequence of bits carries nothing of. Each answers how many
+  // positions are filled, or taken, after it.
   virtual auto WriteToStream(
       const void* value, const IntegralView& stream, std::uint64_t filled) const
       -> std::uint64_t = 0;
   virtual auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken,
-      const void* prototype, void* out) const -> std::uint64_t = 0;
+      const ConstIntegralView& stream, std::uint64_t taken, void* out) const
+      -> std::uint64_t = 0;
 
   virtual void ResolveTriState(
       const void* lhs, const void* rhs, void* out) const = 0;
@@ -150,6 +170,12 @@ class ValueType {
   // compiled for every type reads a value's bits through, and nothing for a
   // type whose values are no integral.
   [[nodiscard]] virtual auto AsIntegral() const -> const IntegralValueType* = 0;
+
+  // This type as a fixed-size unpacked array type (LRM 7.4.2), where it is
+  // one, and nothing otherwise. Each unit naming an array type states it with
+  // a constant of its own, so two of them are told to be one type by what
+  // they state.
+  [[nodiscard]] virtual auto AsFixedArray() const -> const FixedArrayType* = 0;
 
  protected:
   constexpr ValueType(std::uint32_t size, std::uint32_t align)

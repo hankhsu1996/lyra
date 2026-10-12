@@ -104,10 +104,25 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
       type, and one past 1,024 bytes owns its elements apart from whatever holds it. An element
       keeps its address across every assignment on both backends, so a reference to one (LRM 13.5.2)
       goes on naming it.
-- [ ] On the execution backend a fixed-size unpacked array is laid out in place from its type. It is
-      still an object of the library's holding its elements apart, and an element read is a call.
-      Until it is, building a fixed-size array is handed a count and an element default on both
-      backends, which its type already states and the C++ backend only checks.
+- [x] On the execution backend a fixed-size unpacked array is laid out in place from its type: its
+      elements one after another where the array lies, and one past 1,024 bytes owning them apart
+      from whatever holds it. A read of an element is arithmetic on where the array lies, with a
+      call only for an index naming no element. A write into an element of a variable is a call for
+      each level of the select, which is where the variable is told the part the write reached. A
+      variable, a net and a history holding one hold it with its type, and a reference to one and a
+      part designated within a write are told the type at each access. Building one takes its
+      elements and nothing its type states, on both backends.
+- [x] What a position of an array holds before anything is written to it (LRM 7.4.5) is stated once
+      for the element's type, for a fixed-size array, a dynamic array, a queue and an associative
+      array alike, on both backends
+      (`../decisions/an-arrays-element-default-is-its-element-types.md`). Building one, sizing one
+      with `new[]`, converting one array kind to another, and a `map` or a locator answering one
+      take no default, and a queue, a dynamic array and an associative array hold no copy of one. An
+      associative array literal's own `default:` (LRM 7.9.11) is still handed over where the source
+      wrote one. Not measured.
+- [ ] An operation on a whole array on the execution backend is carried out inline where every
+      element is its bytes. Comparing two, and each net fold, is a call that asks the element's type
+      for every element. Not measured.
 - [x] Constants are compile-time constants on both backends, and the execution backend lays out a
       value, a cell and a frame slot of an integral up to 64 bits from the type. The one exception
       is a constant of a type that owns its words on the C++ backend, which the host compiler is not
@@ -134,8 +149,8 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
       told, and a call on any other representation is refused where it is composed. The type a
       generated module declares an entry at follows from how the call is arranged, and a name
       declared at two types is refused. An operand an entry reads as a machine integer is still
-      converted by hand where each call is built, and a count a result type fixes is still an
-      operand of a run of array elements and of the conversions to an array of bytes.
+      converted by hand where each call is built, and the count of a run of array elements, which
+      the run's type fixes, is still an operand of reading one.
 - [x] The instructions the execution backend writes for an operation are held to the library's
       statement of the same operation by a test that evaluates both on the same operands, at widths
       on both sides of 64 bits.

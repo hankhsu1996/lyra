@@ -15,6 +15,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
 #include "lyra/mir/callable.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -117,6 +118,39 @@ using ConsumedSignature = std::variant<ConsumedNamespace, ConsumedClass>;
   return std::visit(
       [](const auto& one) -> const std::string& { return one.unit_name; },
       consumed);
+}
+
+// The body that builds the default value of `type` (LRM Table 6-7, Table 7-1),
+// taking nothing and answering the value. A declaration states its variable's
+// default as an expression where the variable comes into existence; this is the
+// same value for where no expression of the program stands -- a read through an
+// index naming no element answers the element type's default (LRM 7.4.5), and
+// an array that grows fills each new position with it (LRM 7.5.1).
+//
+// No expression of the program calls it and no identifier reaches it: what
+// asks is the code that holds an array of the type, compiled before the type
+// existed. So it holds its body, as a struct's method does, and is no callable
+// of the unit's namespace.
+struct TypeDefault {
+  TypeId type;
+  CallableCode code;
+};
+
+// Every type some array of `types` has as its element, whatever the array's
+// kind, each once and in the order the pool first names it: the types a unit
+// states a default for, and no other.
+[[nodiscard]] inline auto ArrayElementTypes(const TypePool& types)
+    -> std::vector<TypeId> {
+  std::vector<bool> taken(types.size(), false);
+  std::vector<TypeId> elements;
+  for (const Type& type : types) {
+    const std::optional<TypeId> element = type.ContainerElementType();
+    if (element.has_value() && !taken[element->value]) {
+      taken[element->value] = true;
+      elements.push_back(*element);
+    }
+  }
+  return elements;
 }
 
 // A unit whose instances are a tree of objects the runtime drives (LRM 23.3):
@@ -282,6 +316,9 @@ struct CompilationUnit {
   // 26.3). A subroutine the source declared is here because another unit spells
   // it; a body the compiler synthesized is not.
   std::vector<NamedCallable> named_callables;
+  // The default of each type this unit holds an array of, of any kind: one for
+  // each of its pool's array element types, and none for any other type.
+  std::vector<TypeDefault> type_defaults;
   // Static variables the unit's namespace owns directly rather than through one
   // of its classes -- a package's variables (LRM 26.2), one program-global cell
   // each, shared and reached by name. A class's own static storage lives on

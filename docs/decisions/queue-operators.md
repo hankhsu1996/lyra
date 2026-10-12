@@ -16,7 +16,15 @@ are two entries the lowering names outright, so no flag chooses between them. Th
 call rather than a select node, and that the store boundary conforms the element shape, are
 unchanged. The slice's operands are superseded by
 [a-select-names-a-position](a-select-names-a-position.md): an indexed form is turned into its two
-positions where it is lowered, so the queue is handed a low and a high position and no form.
+positions where it is lowered, so the queue is handed a low and a high position and no form. The
+element default a queue concatenation carried among its arguments (decision 3) and a queue value
+carried with it (decision 4) is superseded by
+[an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md):
+a queue's type names its element type, which states what an element holds before it is written, so
+an empty `{}` is an empty queue of the result's type. The bound argument of decision 3 is superseded
+by that record's D6: the bound is the queue type's, and the builder is told the type rather than
+handed the bound, so neither argument decision 3 names remains. Decision 4's conforming at the store
+boundary stands, a conversion of its own told the destination's type.
 
 ## Context
 
@@ -105,6 +113,7 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
 - LRM 7.10 (queues), 7.10.1 (operators / invalid index / `q[$+1]`), 7.10.4 (push / pop / insert via
   assignment and concatenation), 7.10.5 (bounded queues), 10.10 (unpacked array concatenation),
   11.2.2 / 11.4.5 (aggregate equality).
-- `runtime-shape-and-default-value.md` -- the element-shape shield slot a queue carries.
+- `an-arrays-element-default-is-its-element-types.md` -- what a queue reads at an invalid index, and
+  why the queue carries none of it.
 - `builtin-call-identity.md` -- the built-in method-call mechanism these operators reuse rather than
   adding select nodes beside.

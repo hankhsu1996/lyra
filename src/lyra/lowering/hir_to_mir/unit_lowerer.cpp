@@ -654,6 +654,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   }
 
   PublishAssignmentPatternTexts();
+  PublishTypeDefaults();
 
   // Every class this unit holds is a type of one of its structural scopes'
   // instance (LRM 23.9, 6.22), which settles that class's shape and lowers its
@@ -686,6 +687,22 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
               .foreign = std::nullopt,
               .virtual_dispatch = std::nullopt});
     }
+  }
+}
+
+void UnitLowerer::PublishTypeDefaults() {
+  // Every element type first: building a default interns types, and a pool is
+  // not walked while it grows.
+  for (const mir::TypeId element : mir::ArrayElementTypes(unit_.types)) {
+    mir::CallableCode code = mir::CallableCode::Defined();
+    code.result_type = element;
+    mir::Block& block = code.Body();
+    block.AppendStmt(
+        mir::ReturnStmt{
+            .value =
+                block.exprs.Add(BuildDefaultValueExpr(unit_, block, element))});
+    unit_.type_defaults.push_back(
+        mir::TypeDefault{.type = element, .code = std::move(code)});
   }
 }
 

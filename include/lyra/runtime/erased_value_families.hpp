@@ -12,11 +12,11 @@
 #include "lyra/value/integral.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
+#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/runtime_tagged_union.hpp"
 #include "lyra/value/runtime_tuple.hpp"
 #include "lyra/value/runtime_union.hpp"
-#include "lyra/value/runtime_unpacked_array.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -35,7 +35,7 @@ extern template class ValueStorageCore<value::RuntimeTuple>;
 extern template class ValueStorageCore<value::RuntimeUnion>;
 extern template class ValueStorageCore<value::RuntimeTaggedUnion>;
 extern template class ValueStorageCore<value::RuntimeDynamicArray>;
-extern template class ValueStorageCore<value::RuntimeUnpackedArray>;
+extern template class ValueStorageCore<value::RuntimeFixedArray>;
 extern template class ValueStorageCore<value::RuntimeQueue>;
 extern template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
@@ -45,7 +45,7 @@ extern template class Var<value::RuntimeTuple>;
 extern template class Var<value::RuntimeUnion>;
 extern template class Var<value::RuntimeTaggedUnion>;
 extern template class Var<value::RuntimeDynamicArray>;
-extern template class Var<value::RuntimeUnpackedArray>;
+extern template class Var<value::RuntimeFixedArray>;
 extern template class Var<value::RuntimeQueue>;
 extern template class Var<value::RuntimeAssociativeArray>;
 
@@ -55,7 +55,7 @@ extern template class CellRareState<value::RuntimeTuple>;
 extern template class CellRareState<value::RuntimeUnion>;
 extern template class CellRareState<value::RuntimeTaggedUnion>;
 extern template class CellRareState<value::RuntimeDynamicArray>;
-extern template class CellRareState<value::RuntimeUnpackedArray>;
+extern template class CellRareState<value::RuntimeFixedArray>;
 extern template class CellRareState<value::RuntimeQueue>;
 extern template class CellRareState<value::RuntimeAssociativeArray>;
 
@@ -65,7 +65,7 @@ extern template class Ref<value::RuntimeTuple>;
 extern template class Ref<value::RuntimeUnion>;
 extern template class Ref<value::RuntimeTaggedUnion>;
 extern template class Ref<value::RuntimeDynamicArray>;
-extern template class Ref<value::RuntimeUnpackedArray>;
+extern template class Ref<value::RuntimeFixedArray>;
 extern template class Ref<value::RuntimeQueue>;
 extern template class Ref<value::RuntimeAssociativeArray>;
 
@@ -75,7 +75,7 @@ extern template class ScopedMutation<Ref<value::RuntimeTuple>>;
 extern template class ScopedMutation<Ref<value::RuntimeUnion>>;
 extern template class ScopedMutation<Ref<value::RuntimeTaggedUnion>>;
 extern template class ScopedMutation<Ref<value::RuntimeDynamicArray>>;
-extern template class ScopedMutation<Ref<value::RuntimeUnpackedArray>>;
+extern template class ScopedMutation<Ref<value::RuntimeFixedArray>>;
 extern template class ScopedMutation<Ref<value::RuntimeQueue>>;
 extern template class ScopedMutation<Ref<value::RuntimeAssociativeArray>>;
 
@@ -85,7 +85,7 @@ extern template class Takeovers<value::RuntimeTuple>;
 extern template class Takeovers<value::RuntimeUnion>;
 extern template class Takeovers<value::RuntimeTaggedUnion>;
 extern template class Takeovers<value::RuntimeDynamicArray>;
-extern template class Takeovers<value::RuntimeUnpackedArray>;
+extern template class Takeovers<value::RuntimeFixedArray>;
 extern template class Takeovers<value::RuntimeQueue>;
 extern template class Takeovers<value::RuntimeAssociativeArray>;
 
@@ -95,7 +95,7 @@ extern template class ActivationValueCell<value::RuntimeTuple>;
 extern template class ActivationValueCell<value::RuntimeUnion>;
 extern template class ActivationValueCell<value::RuntimeTaggedUnion>;
 extern template class ActivationValueCell<value::RuntimeDynamicArray>;
-extern template class ActivationValueCell<value::RuntimeUnpackedArray>;
+extern template class ActivationValueCell<value::RuntimeFixedArray>;
 extern template class ActivationValueCell<value::RuntimeQueue>;
 extern template class ActivationValueCell<value::RuntimeAssociativeArray>;
 
@@ -105,25 +105,25 @@ extern template class SampledHistory<value::RuntimeTuple>;
 extern template class SampledHistory<value::RuntimeUnion>;
 extern template class SampledHistory<value::RuntimeTaggedUnion>;
 extern template class SampledHistory<value::RuntimeDynamicArray>;
-extern template class SampledHistory<value::RuntimeUnpackedArray>;
+extern template class SampledHistory<value::RuntimeFixedArray>;
 extern template class SampledHistory<value::RuntimeQueue>;
 extern template class SampledHistory<value::RuntimeAssociativeArray>;
 
 extern template class ResolvedNet<value::WideLogicVector>;
 extern template class ResolvedNet<value::RuntimeTuple>;
 extern template class ResolvedNet<value::RuntimeUnion>;
-extern template class ResolvedNet<value::RuntimeUnpackedArray>;
+extern template class ResolvedNet<value::RuntimeFixedArray>;
 
 extern template class Driver<value::WideLogicVector>;
 extern template class Driver<value::RuntimeTuple>;
 extern template class Driver<value::RuntimeUnion>;
-extern template class Driver<value::RuntimeUnpackedArray>;
+extern template class Driver<value::RuntimeFixedArray>;
 
 extern template class CompletionSlot<value::RuntimeTuple>;
 extern template class CompletionSlot<value::RuntimeUnion>;
 extern template class CompletionSlot<value::RuntimeTaggedUnion>;
 extern template class CompletionSlot<value::RuntimeDynamicArray>;
-extern template class CompletionSlot<value::RuntimeUnpackedArray>;
+extern template class CompletionSlot<value::RuntimeFixedArray>;
 extern template class CompletionSlot<value::RuntimeQueue>;
 extern template class CompletionSlot<value::RuntimeAssociativeArray>;
 
@@ -131,7 +131,7 @@ extern template class Coroutine<value::RuntimeTuple>;
 extern template class Coroutine<value::RuntimeUnion>;
 extern template class Coroutine<value::RuntimeTaggedUnion>;
 extern template class Coroutine<value::RuntimeDynamicArray>;
-extern template class Coroutine<value::RuntimeUnpackedArray>;
+extern template class Coroutine<value::RuntimeFixedArray>;
 extern template class Coroutine<value::RuntimeQueue>;
 extern template class Coroutine<value::RuntimeAssociativeArray>;
 

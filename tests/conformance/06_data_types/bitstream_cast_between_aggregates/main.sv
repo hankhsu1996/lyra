@@ -6,7 +6,9 @@
 // conversion is lossless in both directions, so casting a value out and back
 // yields what it started as. A packed value converts the same way, its bits
 // already being that sequence, and the sequence is as long as the type makes
-// it, thousands of bits included (LRM 6.24.1, 6.24.3).
+// it, thousands of bits included. A structure whose member is a fixed-size
+// array takes that member's share of the sequence element by element, as the
+// array would on its own (LRM 6.24.1, 6.24.3).
 module Top;
   typedef struct {
     byte first;
@@ -28,6 +30,14 @@ module Top;
   Triple from_bus;
   Bytes from_triple;
   Bus from_array;
+
+  typedef struct {
+    logic [3:0] tag;
+    byte lanes [2];
+    bit [3:0] trailer;
+  } Framed;
+
+  Framed framed;
 
   typedef struct {
     logic [8191:0] upper;
@@ -79,6 +89,13 @@ module Top;
     from_bus = Triple'(24'h123456);
     from_triple = Bytes'(source);
     from_array = Bus'(from_triple);
+
+    // A structure holding an array, its array member filled in the middle.
+    framed.tag = 4'h0;
+    framed.lanes[0] = 8'h00;
+    framed.lanes[1] = 8'h00;
+    framed.trailer = 4'h0;
+    framed = Framed'(24'hC1234D);
   end
 
   final begin
@@ -101,6 +118,10 @@ module Top;
              from_triple[2], from_triple[1], from_triple[0]);
     if (from_array !== 24'hABCDEF)
       $fatal(1, "from_array was %h, expected abcdef", from_array);
+    if (framed.tag !== 4'hC || framed.lanes[0] !== 8'h12 ||
+        framed.lanes[1] !== 8'h34 || framed.trailer !== 4'hD)
+      $fatal(1, "framed was %h %h %h %h, expected c 12 34 d", framed.tag,
+             framed.lanes[0], framed.lanes[1], framed.trailer);
     if (wide_flat[16383:8192] !== {1024{8'hA5}})
       $fatal(1, "the first member of a wide structure was not its upper bits");
     if (wide_flat[8191:0] !== {1024{8'h3C}})

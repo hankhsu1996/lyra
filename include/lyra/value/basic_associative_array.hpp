@@ -35,10 +35,10 @@ concept KeyPolicy =
 // Each element is storage of its own that never moves while its key is in the
 // array, and the array maps each key, in its index order, to that storage, so
 // inserting or removing another key moves no element. What a read of an absent
-// or invalid key answers with (LRM 7.8.6) is the array's own persistent
-// value, which a `default:` clause names (LRM 7.9.11) and which is otherwise
-// the element type's default; it is also what an entry a write allocates starts
-// as (LRM 7.8.7).
+// or invalid key answers with (LRM 7.8.6) is the value a `default:` clause
+// states (LRM 7.9.11), which the array then holds as its own, and otherwise the
+// element type's default; it is also what an entry a write allocates starts as
+// (LRM 7.8.7).
 template <KeyPolicy Key, ElementPolicy Elem>
 class BasicAssociativeArray {
  public:
@@ -49,17 +49,15 @@ class BasicAssociativeArray {
   BasicAssociativeArray()
     requires std::default_initializable<Key> && std::default_initializable<Elem>
   = default;
-  // An empty array whose absent keys read `miss`, or the element default
-  // where there is none.
-  BasicAssociativeArray(Key key, Elem elem, const void* miss)
-      : key_(std::move(key)),
-        elem_(std::move(elem)),
-        map_(key_.Order()),
-        miss_(CopyElement(elem_, miss != nullptr ? miss : elem_.Default())) {
+  BasicAssociativeArray(Key key, Elem elem)
+      : key_(std::move(key)), elem_(std::move(elem)), map_(key_.Order()) {
   }
 
   BasicAssociativeArray(const BasicAssociativeArray& other)
-      : BasicAssociativeArray(other.key_, other.elem_, other.Miss()) {
+      : BasicAssociativeArray(other.key_, other.elem_) {
+    if (other.stated_default_ != nullptr) {
+      stated_default_ = CopyElement(elem_, other.stated_default_);
+    }
     for (const auto& [stored, slot] : other.map_) {
       map_.emplace_hint(map_.end(), stored, CopyElement(elem_, slot));
     }
@@ -68,8 +66,7 @@ class BasicAssociativeArray {
       : key_(std::move(other.key_)),
         elem_(std::move(other.elem_)),
         map_(std::exchange(other.map_, Map(key_.Order()))),
-        miss_(std::exchange(other.miss_, nullptr)),
-        discard_(std::exchange(other.discard_, nullptr)) {
+        stated_default_(std::exchange(other.stated_default_, nullptr)) {
   }
   auto operator=(const BasicAssociativeArray& other) -> BasicAssociativeArray& {
     if (this != &other) {
@@ -88,10 +85,8 @@ class BasicAssociativeArray {
   }
   ~BasicAssociativeArray() {
     Clear();
-    for (void* slot : {miss_, discard_}) {
-      if (slot != nullptr) {
-        FreeElement(elem_, slot);
-      }
+    if (stated_default_ != nullptr) {
+      FreeElement(elem_, stated_default_);
     }
   }
 
@@ -108,10 +103,23 @@ class BasicAssociativeArray {
     return map_.size();
   }
 
-  // The array's own value for an absent key (LRM 7.8.6, 7.9.11), the element
-  // default where the array was never built.
+  // What a read of an absent key answers with (LRM 7.8.6, 7.9.11).
   [[nodiscard]] auto Miss() const -> const void* {
-    return miss_ != nullptr ? miss_ : elem_.Default();
+    return stated_default_ != nullptr ? stated_default_ : elem_.Default();
+  }
+
+  // LRM 7.9.11: this array's entries in one whose absent keys read a copy of
+  // `stated_default`, and whose entries a later write allocates start as one
+  // (LRM 7.8.7), as a literal's `default:` clause states.
+  [[nodiscard]] auto WithDefault(const void* stated_default) const
+      -> BasicAssociativeArray {
+    BasicAssociativeArray result(*this);
+    if (result.stated_default_ == nullptr) {
+      result.stated_default_ = CopyElement(elem_, stated_default);
+    } else {
+      elem_.Assign(result.stated_default_, stated_default);
+    }
+    return result;
   }
 
   // LRM 7.9.3.
@@ -135,7 +143,7 @@ class BasicAssociativeArray {
   [[nodiscard]] auto ElementRef(const Probe& key, Formation& formed) -> void* {
     if (key_.Invalid(key)) {
       formed = Formation::kNowhere;
-      return DiscardTarget(elem_, discard_);
+      return elem_.DiscardedWrite();
     }
     const auto found = map_.lower_bound(key);
     if (found != map_.end() && !map_.key_comp()(key, found->first)) {
@@ -289,15 +297,13 @@ class BasicAssociativeArray {
     std::swap(key_, other.key_);
     std::swap(elem_, other.elem_);
     std::swap(map_, other.map_);
-    std::swap(miss_, other.miss_);
-    std::swap(discard_, other.discard_);
+    std::swap(stated_default_, other.stated_default_);
   }
 
   Key key_;
   Elem elem_;
   Map map_;
-  void* miss_ = nullptr;
-  void* discard_ = nullptr;
+  void* stated_default_ = nullptr;
 };
 
 }  // namespace lyra::value

@@ -340,12 +340,20 @@ designates, and the entry is called at the type of the bits. The unit's verifica
 to such an entry that states no type, and a type stated to a callee generic over none. A count or a
 width the type fixes is therefore never an operand, on a read, a write or a reference alike.
 
-An operand that stands for a type survives only where its contents are an input: a value whose
-element count, bounds or element defaults no type states is handed over as the value it is. A value
-passed for its type alone is the wrong way to say it. Nothing downstream can tell such an operand
-from one whose contents matter, so every backend builds contents it then discards, and every runtime
-entry taking one advertises a parameter whose value it must document as unused. What a declaration
-fixes and an entry needs as numbers -- an array's declared range -- is machine operands of the call
-that needs it. An enumeration's member table is constant data of the enumeration: the unit holds it
-once, a use names it, and it reaches render as that name, never composed by the consuming call's
-render.
+An operand that stands for a type survives only where its contents are an input: a value no type
+states -- the one a literal wrote for a missing entry of one array -- is handed over as the value it
+is. What an element of an array holds before anything is written to it is not such a value. Its type
+states it, the unit states the code that builds it once for that type, and a call that builds an
+array of any kind carries none. The same holds of every other fact a type fixes: what a reduction
+answers over no entries, the index an associative dimension reports where nothing is allocated and
+the shape a value read out of a stream of bits takes are each its answer type's, and a queue's
+declared bound is the queue type's. Each is a fact the type carries, so it reaches an entry with
+that type -- named where the call is written by a backend that resolves types there, handed as the
+type's constant by one calling code compiled once for every type -- and never as an operand. A value
+passed for its type alone is the wrong way to say any of them: nothing downstream can tell such an
+operand from one whose contents matter, so every backend builds contents it then discards, and every
+runtime entry taking one advertises a parameter whose value it must document as unused. What a
+declaration fixes and an entry needs as numbers -- an array's declared range -- is machine operands
+of the call that needs it. An enumeration's member table is constant data of the enumeration: the
+unit holds it once, a use names it, and it reaches render as that name, never composed by the
+consuming call's render.

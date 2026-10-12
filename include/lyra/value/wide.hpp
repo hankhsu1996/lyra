@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <span>
 #include <utility>
 
 #include "lyra/base/fixed_array.hpp"
@@ -229,8 +228,8 @@ class WideVector {
   base::FixedArray<std::uint64_t, 2> words_;
 };
 
-// A held value that compares itself with, and takes, the bytes of a value as
-// wide as itself.
+// A held value that compares itself with, and takes, the bytes of a value laid
+// out as it is itself: an integral value as wide, an array of the same type.
 template <class T>
 concept TakesBytesInPlace =
     requires(T& held, const T& read, const void* bytes) {

@@ -57,6 +57,46 @@ struct IntegralTypeConstantLayout {
 };
 auto LayoutOfIntegralTypeConstant() -> IntegralTypeConstantLayout;
 
+// The constant that tells the library the type of an array's elements: where
+// it states the address of the element's value type, the function building a
+// value of it at its default, and the address of the scratch it names. It
+// opens with no table. `scratch_object` is what one scratch occupies, which a
+// target defines zeroed beside each constant.
+struct ElementTypeConstantLayout {
+  support::ObjectLayout object;
+  value::StatedAt type;
+  value::StatedAt build_default;
+  value::StatedAt scratch;
+  support::ObjectLayout scratch_object;
+};
+auto LayoutOfElementTypeConstant() -> ElementTypeConstantLayout;
+
+// The same for the type of a fixed-size unpacked array: beside what every
+// value type states, how many elements, the address of the constant stating
+// their type, and the part of the constant that answers for its elements,
+// which opens with a table of its own and names the constant it lies in.
+struct FixedArrayTypeConstantLayout {
+  support::ObjectLayout object;
+  std::string table_symbol;
+  std::string parts_table_symbol;
+  value::StatedAt value_size;
+  value::StatedAt value_align;
+  value::StatedAt count;
+  value::StatedAt element;
+  value::StatedAt parts;
+  value::StatedAt parts_owner;
+};
+auto LayoutOfFixedArrayTypeConstant() -> FixedArrayTypeConstantLayout;
+
+// The same for the type of a queue, which opens with no table: where it states
+// the address of the constant stating its elements' type, and its bound.
+struct QueueTypeConstantLayout {
+  support::ObjectLayout object;
+  value::StatedAt element;
+  value::StatedAt bound;
+};
+auto LayoutOfQueueTypeConstant() -> QueueTypeConstantLayout;
+
 // The same for the part of a value this library builds where a class of the
 // source extends one of its classes: what that part occupies, which is where
 // the class's own storage begins.

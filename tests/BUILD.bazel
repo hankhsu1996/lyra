@@ -93,6 +93,17 @@ cc_test(
 )
 
 cc_test(
+    name = "value_fixed_array_type_test",
+    srcs = ["value/fixed_array_type_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "hir_verify_test",
     srcs = ["hir/verify_test.cpp"],
     copts = LYRA_COPTS,

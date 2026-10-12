@@ -134,8 +134,7 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, sel, result_type);
           },
           [&](const hir::ConcatExpr& c) -> diag::Result<mir::Expr> {
-            return LowerHirConcatExpr(
-                lowerer, frame, c, expr.type, result_type);
+            return LowerHirConcatExpr(lowerer, frame, c, result_type);
           },
           [&](const hir::StreamingConcatExpr& s) -> diag::Result<mir::Expr> {
             return LowerHirStreamingConcatExpr(lowerer, frame, s, result_type);
@@ -145,12 +144,12 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           },
           [&](const hir::AssignmentPatternExpr& a) -> diag::Result<mir::Expr> {
             return LowerHirAssignmentPatternExpr(
-                lowerer, frame, a, expr.type, result_type);
+                lowerer, frame, a, result_type);
           },
           [&](const hir::AssignmentPatternReplicationExpr& a)
               -> diag::Result<mir::Expr> {
             return LowerHirAssignmentPatternReplicationExpr(
-                lowerer, frame, a, expr.type, result_type);
+                lowerer, frame, a, result_type);
           },
           [&](const hir::AssignmentPatternKeyedExpr& k)
               -> diag::Result<mir::Expr> {
@@ -158,13 +157,12 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, k, expr.type, result_type);
           },
           [&](const hir::DynamicArrayNewExpr& n) -> diag::Result<mir::Expr> {
-            return LowerHirDynamicArrayNewExpr(
-                lowerer, frame, n, expr.type, result_type);
+            return LowerHirDynamicArrayNewExpr(lowerer, frame, n, result_type);
           },
           [&](const hir::AssociativeAssignmentPatternExpr& a)
               -> diag::Result<mir::Expr> {
             return LowerHirAssociativeAssignmentPatternExpr(
-                lowerer, frame, a, expr.type, result_type);
+                lowerer, frame, a, result_type);
           },
           [&](const hir::ClassNewExpr& n) -> diag::Result<mir::Expr> {
             // `new` allocates a managed object and runs its constructor: a

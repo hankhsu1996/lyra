@@ -32,6 +32,7 @@ enum class SymbolCategory : std::uint8_t {
   kNamespaceVariable,
   kStaticProperty,
   kClosureInvoke,
+  kTypeDefault,
   kConstructorPrologue,
   kBaseObjectDestructor,
   kCompleteObjectDestructor,
@@ -139,6 +140,11 @@ auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)
 // A closure is counted rather than named, having no declaration of the source
 // to take a name from, so its body's symbol is composed from its ordinal.
 auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
+    -> std::string;
+
+// The function building a type's default is counted the same way: a type has
+// no name of its own, and nothing outside the unit reaches the function.
+auto TypeDefaultSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
 // The symbol `type`'s definition is linked under, or nothing where the type
