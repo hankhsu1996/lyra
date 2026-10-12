@@ -12,21 +12,22 @@ the reader existed and kept until it asks, and `$past` keeps several. This is th
 engine whose lifetime is a history rather than a current value, and getting its shape wrong is
 expensive in the way a storage model is expensive -- every later consumer inherits it.
 
-Three questions have real answers with real alternatives: what holds the retained value, where the
+Three questions have real answers with real alternatives: what keeps the sampled value, where the
 clock comes from, and what makes "the previous tick" unambiguous when the reader and the sampler run
 in the same time step.
 
 ## Findings that shaped the decision
 
-### F1. What is sampled is a variable; an expression's sampled value is composed
+### F1. What is sampled is a variable or a net; an expression's sampled value is composed
 
 LRM 16.5.1 defines the sampled value of a _variable_ as its value in the Preponed region of the time
 slot, then defines the sampled value of an _expression_ recursively: the sampled value of `e1 & e2`
 is the bitwise AND of the sampled values of `e1` and `e2`, and a function call is called on the
-sampled values of its arguments.
+sampled values of its arguments. A net is sampled the same way, its default sampled value being the
+default of its type (LRM 6.8 Table 6-7), since a net declares no value.
 
-So retention belongs to the variable. An expression has no state of its own; it is evaluated over
-whatever its leaves retained.
+So the sampled value belongs to the variable or the net. An expression has no state of its own; it
+is evaluated over whatever its leaves kept.
 
 The clause carves out three exceptions, and each is a _current_ value rather than a sampled one: an
 automatic variable, an assertion local variable, and a `const'(...)` cast. A past value of any of
@@ -36,13 +37,23 @@ them is also the current value, not a retained one.
 
 LRM 4.4.2.1: "Sampling in the Preponed region is equivalent to sampling in the previous Postponed
 region." LRM 4.4.2.9 forbids any value change once Postponed is reached. Together these say the
-Preponed value of a time slot is the value the variable held before that slot's first change -- a
-fact recoverable at the first change, with no region pass and no moment to be at.
+Preponed value of a time slot is the value the place held at the end of the last slot it changed in
+-- a value taken in that slot's Postponed region, and in no other, with no pass over every place at
+every slot.
 
 Time zero is not an exception to this but a consequence of it. LRM 16.5.1 makes the sampled value at
 time 0 the _default sampled value_ -- for a static variable, the value its declaration assigns. A
-retained value initialized to exactly that, stamped with time 0, answers every read during time 0
-without any of that slot's writes disturbing it.
+kept value starting at exactly that answers every read during time 0, since the first value taken is
+taken at the end of it.
+
+### F2b. What a net shows changes where the net is not told
+
+A variable's value changes only through its own writes. A net's comes from wherever it shows: a
+resolution, its one driver, a force and its release, and, for a net whose one driver carries the
+whole of another object, that object's own writes, which never pass through the net. What the net
+shows is already followed by one thing: a wait on the net enrols through the member naming where the
+net's value lies, and is moved with the member as it is bound, forced and released. Anything else
+tracking that would say it a second time.
 
 ### F3. The clock is not in the syntax, and the rules for finding it are already implemented
 
@@ -79,35 +90,32 @@ standard rather than of any schedule we choose.
 
 ## The decision
 
-### D1. A sampled value is retained by the cell, at its transition boundary, when armed
+### D1. A sampled value is kept by the variable or the net, learning of changes as a wait does
 
-An observable cell may carry a retained value and the time slot that value belongs to. The one
-boundary every mutation already reports through
-([owner-transition-and-observation](owner-transition-and-observation.md) D1) is where it is
-maintained: when the owner transitions and the retained value does not already belong to the current
-slot, the outgoing value becomes the retained one and is stamped with the current slot. Reading the
-sampled value answers with the retained value when its stamp is the current slot, and with the
-current value otherwise.
+An armed variable or net keeps a value of its own type, which is what a sampled read answers with.
+It is enrolled on the place the way a wait on it is -- a net's through the member naming where its
+value lies -- and is told of every change there, so by F2b it follows a net onto the object its
+driver carries and back without a word of its own about what the net shows. Told of the first change
+of a slot, it submits a taking of the value into the Postponed region of that slot; F2 makes what it
+takes there the Preponed value of every slot until the place changes again. A slot the place does
+not change in costs it nothing, and a write that changes nothing tells it nothing.
 
-A write that changes nothing needs no case of its own: the retained value and the current value are
-then equal, so keying on the transition rather than on the write is not an optimization but the
-whole rule.
+What it is enrolled as is an observer of the place, of which an awaiter is the other kind: an
+awaiter is told so that the execution parked on it may be woken, and this is told so that it may
+take a value, waking nothing.
 
-**Only an armed cell carries any of this**, and arming is what installs the retained value: the cell
-takes its current contents, stamped with time 0. A write during time 0 then finds the stamp already
-current and leaves the retained value alone, so every read through the whole of time 0 answers with
-the value the cell held when it was armed. F2's time-zero requirement is the general path rather
-than a branch.
+**Arming installs the default sampled value.** For a variable it is what the variable holds when
+armed; for a net it is the default of the net's type, whatever the net shows before time zero.
 
 **Arming therefore belongs to Activate, not to Resolve.** LRM 16.5.1 makes a static variable's
 default sampled value the value its _declaration_ assigns, and a declaration initializer runs in
-Initialize (LRM 10.5) -- so a cell armed any earlier would retain the type's default instead, and
+Initialize (LRM 10.5) -- so a cell armed any earlier would keep the type's default instead, and
 answer time 0 wrongly for every variable that declares an initial value. Activate is where reactive
 behaviour is installed and event controls are armed, and it is after Initialize, so the cell holds
 the declared value by then. Nothing about reaching the cell needs the earlier phase: the endpoint a
 clocking block samples through has been sealed since Seal, which is what lets it sample a signal in
 another unit (LRM 14.5) without either unit knowing at compile time that the other sampled it. A
-cell nothing samples pays nothing.
+place nothing samples pays nothing.
 
 ### D2. A clocking event is an event control, and the compiler does not re-derive which one it is
 
@@ -124,7 +132,7 @@ with the diagnostic the standard requires, rather than sampled against a guess.
 ### D3. A sampler is a synthesized process, one per scope and clocking event
 
 Per F4 the sampling agent is an always procedure, and it is lowered as one: a body that waits on the
-clocking event, evaluates each sampled expression over its leaves' retained values, and repeats. It
+clocking event, evaluates each sampled expression over its leaves' sampled values, and repeats. It
 is an action bound to a schedule event, which is a category that already exists, so it needs no
 scheduling concept of its own and waits on its clock through its own loop as any `always` does
 ([a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md)).
@@ -174,23 +182,23 @@ would be an upstream leak.
 
 ## Consequences
 
-- A design that samples nothing pays nothing: no cell carries a retained value, no sampler process
-  exists, and no write path grows a test.
+- A design that samples nothing pays nothing: no variable or net keeps a sampled value, no sampler
+  process exists, and no write path grows a test.
 - The sampled value functions become available in ordinary procedural code, which is the use the
   standard explicitly admits ("not limited to assertion features") and the one no assertion-eliding
   policy can stand in for, because `b <= $past(a)` with `$past` removed has no defensible answer.
 - What a concurrent assertion will later need from sampling is this and nothing more: it evaluates
   against sampled values on a clock tick, which is D1 through D4 with a different consumer.
 
-- **Where the value is a handle, what D1 retains and what D5 keeps are references, so sampling
-  extends an object's life.** An object the program no longer names anywhere is still named by the
-  entries of every history over it and by the retained value of every armed cell that held it, and
-  it is reclaimed only once those move on. That is not a cost to be avoided but the requirement: LRM
-  8.4 reclaims an object when nothing references it, and `$past` has to answer with a handle whoever
-  reads it may reach a member through, so an answer that did not hold the object would name a
-  reclaimed one. The extension is bounded by the declared depth, which D5 fixes where the storage is
-  declared -- so a design that samples a handle holds at most that many objects it would otherwise
-  have dropped, per history, and never a growing number.
+- **Where the value is a handle, what D1 and D5 keep are references, so sampling extends an object's
+  life.** An object the program no longer names anywhere is still named by the entries of every
+  history over it and by the sampled value of every armed variable that held it, and it is reclaimed
+  only once those move on. That is not a cost to be avoided but the requirement: LRM 8.4 reclaims an
+  object when nothing references it, and `$past` has to answer with a handle whoever reads it may
+  reach a member through, so an answer that did not hold the object would name a reclaimed one. The
+  extension is bounded by the declared depth, which D5 fixes where the storage is declared -- so a
+  design that samples a handle holds at most that many objects it would otherwise have dropped, per
+  history, and never a growing number.
 - The front end's analysis diagnostics have to reach the user for the refusal in D2 to be the
   standard's error rather than silence. They are currently computed and dropped.
 - A clocking block is carried only as far as D2 needs it -- a name and an event that a scope may
@@ -235,6 +243,12 @@ would be an upstream leak.
   submission per tick. Rejected: whether a reader must skip the newest entry then depends on whether
   it ran before or after the sampler within one region, which no rule orders.
 
+- **Keeping the value at the first write of each slot, before the write lands.** It takes no
+  deferred submission, and it is what a variable did first. Rejected by F2b: it needs a hook before
+  every way the value can change, which a variable has one of and a net has many, one of them in
+  another object's writes, which never pass through the net; a hook there would be a second account
+  of what the net shows beside the one its waits already follow.
+
 ## Cross-references
 
 - LRM anchors: 4.4.2.1 (Preponed equals the previous Postponed), 4.4.2.9 (Postponed), 14.7 (a
@@ -243,8 +257,8 @@ would be an upstream leak.
   three current-value exceptions), 16.9.3 (the sampled value functions and the clock inference
   ordering), 16.14.6 (the procedural-context inference conditions), 20.12 (the function list).
 - [owner-transition-and-observation](owner-transition-and-observation.md) -- D1 is the boundary D1
-  here maintains the retained value at; its D5 is why a sampled read is a call; its D6 is the
-  observation lifetime D3 deliberately does not use.
+  here learns of a change at; its D5 is why a sampled read is a call; its D6 is the observation
+  lifetime D3 deliberately does not use.
 - [value-change-wait-as-runtime-call](value-change-wait-as-runtime-call.md) -- the trigger set a
   clocking event is expressed as.
 - [read-set-inference](read-set-inference.md) -- the analysis that yields both a sampled

@@ -45,7 +45,7 @@ void Awaiter::Enrol(
         "to watch");
   }
   WaitMembership& membership = memberships_[enrolled_++];
-  membership.awaiter = this;
+  membership.observer = this;
   membership.through = through;
   membership.reads = reads;
   membership.observation = std::move(observation);

@@ -673,6 +673,21 @@ class ResolvedNet<T> : public ConnectableNet {
     return showing_.Member();
   }
 
+  // Arms the net to answer for its sampled value (LRM 16.5.1), whose default
+  // is the type's default (LRM 6.8 Table 6-7) rather than anything the net
+  // shows before time zero. Arming an armed net changes nothing.
+  void ArmSampling() {
+    if (sampled_ != nullptr) {
+      return;
+    }
+    sampled_ = std::make_unique<SampledValueOf<ResolvedNet>>(
+        *this, FilledOver<T>(count_, value::FourStateBit::kUnknown),
+        Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
+  }
+  [[nodiscard]] auto SampledGet() const -> const T& {
+    return SampledOf(sampled_.get());
+  }
+
   // Puts the positions this net reaches under a procedural continuous
   // assignment and takes them back out (LRM 10.6.2). A `force` on a net
   // overrides every driver rather than joining them, so what these change is
@@ -1032,6 +1047,8 @@ class ResolvedNet<T> : public ConnectableNet {
   // and what a reorganization would have to rewrite is these, which it can.
   // Growth therefore must not move what has already been handed out.
   std::deque<Driver<T>> drivers_;
+  // The net's sampled value, absent until something samples it.
+  std::unique_ptr<SampledValueOf<ResolvedNet>> sampled_;
 };
 
 // A net of an unpacked aggregate (LRM 6.7.1): a structure, a union, or a
@@ -1088,6 +1105,23 @@ class ResolvedNet<T> : public Observable {
   }
   [[nodiscard]] auto Member() const noexcept -> const ErasedReference& {
     return showing_.Member();
+  }
+
+  // Arms the net to answer for its sampled value (LRM 16.5.1), whose default
+  // is the type's default (LRM 6.8 Table 6-7) in every bit rather than anything
+  // the net shows before time zero. Arming an armed net changes nothing.
+  void ArmSampling() {
+    if (sampled_ != nullptr) {
+      return;
+    }
+    sampled_ = std::make_unique<SampledValueOf<ResolvedNet>>(
+        *this,
+        T::FilledLike(
+            nondriving_, value::Logic::Filled(value::FourStateBit::kUnknown)),
+        Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
+  }
+  [[nodiscard]] auto SampledGet() const -> const T& {
+    return SampledOf(sampled_.get());
   }
 
   // Puts the net under a procedural continuous assignment and takes it back
@@ -1390,6 +1424,8 @@ class ResolvedNet<T> : public Observable {
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued, which growth must not move.
   std::deque<Driver<T>> drivers_;
+  // The net's sampled value, absent until something samples it.
+  std::unique_ptr<SampledValueOf<ResolvedNet>> sampled_;
 };
 
 // Defaulted here rather than where they are declared, for the reason a variable

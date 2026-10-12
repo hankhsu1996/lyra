@@ -5620,6 +5620,14 @@ void lyra_rt_tuple_net_end_takeover(void* net, std::int64_t level) {
   NetOf<RuntimeTuple>(net).EndTakeover(level);
 }
 
+void lyra_rt_tuple_net_arm_sampling(void* net) {
+  NetOf<RuntimeTuple>(net).ArmSampling();
+}
+
+auto lyra_rt_tuple_net_sampled_load(void* net, void* out) -> void* {
+  return Emplace(out, NetOf<RuntimeTuple>(net).SampledGet());
+}
+
 auto lyra_rt_tuple_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<RuntimeTuple>(net).AttachDriver(strength);
 }
@@ -5680,6 +5688,14 @@ void lyra_rt_union_net_end_takeover(void* net, std::int64_t level) {
   NetOf<RuntimeUnion>(net).EndTakeover(level);
 }
 
+void lyra_rt_union_net_arm_sampling(void* net) {
+  NetOf<RuntimeUnion>(net).ArmSampling();
+}
+
+auto lyra_rt_union_net_sampled_load(void* net, void* out) -> void* {
+  return Emplace(out, NetOf<RuntimeUnion>(net).SampledGet());
+}
+
 auto lyra_rt_union_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<RuntimeUnion>(net).AttachDriver(strength);
 }
@@ -5738,6 +5754,17 @@ auto lyra_rt_unpackedarray_net_drive_takeover(
 
 void lyra_rt_unpackedarray_net_end_takeover(void* net, std::int64_t level) {
   NetOf<RuntimeFixedArray>(net).EndTakeover(level);
+}
+
+void lyra_rt_unpackedarray_net_arm_sampling(void* net) {
+  NetOf<RuntimeFixedArray>(net).ArmSampling();
+}
+
+auto lyra_rt_unpackedarray_net_sampled_load(
+    void* net, const void* answer_type, void* out) -> void* {
+  ArrayTypeAt(answer_type)
+      .Copy(NetOf<RuntimeFixedArray>(net).SampledGet().Bytes(), out);
+  return out;
 }
 
 auto lyra_rt_unpackedarray_attach_driver(void* net, std::int64_t strength)
@@ -8496,6 +8523,12 @@ auto lyra_rt_logic8_net_drive_takeover(
 void lyra_rt_logic8_net_end_takeover(void* net, std::int64_t level) {
   NetOf<Logic8>(net).EndTakeover(level);
 }
+void lyra_rt_logic8_net_arm_sampling(void* net) {
+  NetOf<Logic8>(net).ArmSampling();
+}
+auto lyra_rt_logic8_net_sampled_load(void* net, void* out) -> void* {
+  return Emplace(out, NetOf<Logic8>(net).SampledGet());
+}
 auto lyra_rt_logic8_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic8>(net).AttachDriver(strength);
 }
@@ -8653,6 +8686,12 @@ auto lyra_rt_logic16_net_drive_takeover(
 }
 void lyra_rt_logic16_net_end_takeover(void* net, std::int64_t level) {
   NetOf<Logic16>(net).EndTakeover(level);
+}
+void lyra_rt_logic16_net_arm_sampling(void* net) {
+  NetOf<Logic16>(net).ArmSampling();
+}
+auto lyra_rt_logic16_net_sampled_load(void* net, void* out) -> void* {
+  return Emplace(out, NetOf<Logic16>(net).SampledGet());
 }
 auto lyra_rt_logic16_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic16>(net).AttachDriver(strength);
@@ -8812,6 +8851,12 @@ auto lyra_rt_logic32_net_drive_takeover(
 void lyra_rt_logic32_net_end_takeover(void* net, std::int64_t level) {
   NetOf<Logic32>(net).EndTakeover(level);
 }
+void lyra_rt_logic32_net_arm_sampling(void* net) {
+  NetOf<Logic32>(net).ArmSampling();
+}
+auto lyra_rt_logic32_net_sampled_load(void* net, void* out) -> void* {
+  return Emplace(out, NetOf<Logic32>(net).SampledGet());
+}
 auto lyra_rt_logic32_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic32>(net).AttachDriver(strength);
 }
@@ -8969,6 +9014,12 @@ auto lyra_rt_logic64_net_drive_takeover(
 }
 void lyra_rt_logic64_net_end_takeover(void* net, std::int64_t level) {
   NetOf<Logic64>(net).EndTakeover(level);
+}
+void lyra_rt_logic64_net_arm_sampling(void* net) {
+  NetOf<Logic64>(net).ArmSampling();
+}
+auto lyra_rt_logic64_net_sampled_load(void* net, void* out) -> void* {
+  return Emplace(out, NetOf<Logic64>(net).SampledGet());
 }
 auto lyra_rt_logic64_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic64>(net).AttachDriver(strength);
@@ -9275,6 +9326,12 @@ auto lyra_rt_logic_wide_net_drive_takeover(
 }
 void lyra_rt_logic_wide_net_end_takeover(void* net, std::int64_t level) {
   NetOf<LogicWide>(net).EndTakeover(level);
+}
+void lyra_rt_logic_wide_net_arm_sampling(void* net) {
+  NetOf<LogicWide>(net).ArmSampling();
+}
+auto lyra_rt_logic_wide_net_sampled_load(void* net, void* out) -> void* {
+  return Emplace(out, NetOf<LogicWide>(net).SampledGet());
 }
 auto lyra_rt_logic_wide_attach_driver(void* net, std::int64_t strength)
     -> void* {

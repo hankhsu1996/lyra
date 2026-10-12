@@ -715,10 +715,10 @@ struct StructuralScope {
   // The cells something in this scope reads a sampled value of (LRM 16.5.1),
   // each named the way an event control names the cell it watches -- so one
   // reached across an instance boundary is carried by its route like any other.
-  // A cell answers for a sampled value only once armed, and arming installs the
-  // value every read answers with until a later time slot first changes it, so
-  // it happens once every variable initializer in the design has run. What is
-  // armed is the whole cell, whatever part of it a read selects.
+  // A cell answers for a sampled value only once armed, and arming installs its
+  // default sampled value, so it happens once every variable initializer in the
+  // design has run. What is armed is the whole cell, whatever part of it a read
+  // selects.
   std::vector<ValueTarget> sampled_cells;
   // What something in this scope reads across the ticks of a clocking event
   // (LRM 16.9.3). A history's subject is an expression rather than a reference,

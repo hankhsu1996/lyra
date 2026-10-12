@@ -6,8 +6,10 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
@@ -15,6 +17,7 @@
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/sampled_value.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/format.hpp"
 
@@ -234,9 +237,15 @@ void RuntimeEffects::WakeParkedOn(
     if (change.KnownUnchanged(membership.reads)) {
       return;
     }
-    if (Activation* woken = membership.awaiter->WokenBy(membership)) {
-      Wake(woken);
-    }
+    std::visit(
+        Overloaded{
+            [&](Awaiter* awaiter) {
+              if (Activation* woken = awaiter->WokenBy(membership)) {
+                Wake(woken);
+              }
+            },
+            [](SampledValue* sampled) { sampled->Reached(); }},
+        membership.observer);
   });
 }
 

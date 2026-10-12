@@ -3154,12 +3154,11 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   if (!net_join_r) return std::unexpected(std::move(net_join_r.error()));
 
   // A cell answers for a sampled value only once armed, and what arming
-  // installs is the value every read answers with until a later time slot
-  // first changes the cell -- for a static variable, the value its declaration
-  // assigns (LRM 16.5.1). That value is in the cell once every initializer in
-  // the design has run, which is what puts this here rather than beside the
-  // initializer itself: a cell reached across an instance boundary is one this
-  // scope cannot order itself against.
+  // installs is its default sampled value -- for a static variable, the value
+  // its declaration assigns (LRM 16.5.1). That value is in the cell once every
+  // initializer in the design has run, which is what puts this here rather
+  // than beside the initializer itself: a cell reached across an instance
+  // boundary is one this scope cannot order itself against.
   for (const hir::ValueTarget& sampled : hir_scope.sampled_cells) {
     const mir::ExprId cell = BuildObservableCellExpr(
         activate_block, activate_frame, unit_lowerer.Unit(),

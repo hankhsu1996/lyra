@@ -81,9 +81,6 @@ part tells the write what forming it did.**
   formed for any of them.
 - **A whole-value store compares the new value with the old one before writing it.** It keeps no
   copy, except the old bits a packed variable's waits are passed over by.
-- **A sampled variable keeps its Preponed value at the first write of a time slot** (LRM 16.5.1),
-  whether or not that write changes it: nothing in the slot has changed the variable before its
-  first write, so what it holds then is that value.
 - **A net driver hears which of its positions a write moved.** Its net resolves again only over the
   positions whose contribution moved (LRM 6.5). A net one driver decides
   ([net-driver-resolution](net-driver-resolution.md) decision 9) resolves nothing, so its driver is
