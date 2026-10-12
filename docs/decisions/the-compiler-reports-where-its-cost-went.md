@@ -68,14 +68,7 @@ out, 500 when not given, which is clang's default.
 `--stats-file <file>` writes JSON holding what a span cannot: how many units ran at once, each stage
 that runs alone with its peak resident memory, each unit with every file it left behind and whether
 this run made it or took it from the store, each unit with how many of each kind of thing it holds
-in each form it passed through, each unit of the design with the fingerprint of what it publishes
-and of what it lowered to, and each tool the build ran with its wall time and CPU time.
-
-A unit's fingerprint covers what a program compiled from it can tell: it leaves out the name the
-unit is compiled under and every name the program never reads, and it stands for another unit it
-reads by the fingerprint of what that unit publishes. So two units the run compiled apart that are
-one thing read as one fingerprint. How many distinct fingerprints a run holds is how many units it
-had to compile, which a count of what each unit left behind cannot say.
+in each form it passed through, and each tool the build ran with its wall time and CPU time.
 
 A unit's counts are one per pool of the form, taken by a function that names every member of the
 unit, so a member added to a form does not build until it is said what kind of thing it is. What a

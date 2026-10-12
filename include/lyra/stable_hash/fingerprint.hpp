@@ -3,7 +3,9 @@
 #include <array>
 #include <compare>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace lyra::stable_hash {
 
@@ -21,5 +23,9 @@ struct Fingerprint {
 // Two lowercase hex digits a byte, as a person, a file name or a report reads
 // it.
 [[nodiscard]] auto HexOf(const Fingerprint& fingerprint) -> std::string;
+
+// The fingerprint `HexOf` wrote as `hex`, or nothing where `hex` is not one.
+[[nodiscard]] auto FingerprintOfHex(std::string_view hex)
+    -> std::optional<Fingerprint>;
 
 }  // namespace lyra::stable_hash

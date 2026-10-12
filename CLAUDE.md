@@ -53,64 +53,17 @@ lyra dump hir|mir|lir|llvm [files...] # Dump the named intermediate form
 lyra emit cpp -o <dir> [files...]     # Write a self-contained C++ project
 lyra build [-o <file>] [files...]     # Build the program; ./<library name or top> by default
 lyra run [files...]                   # Build the program and execute it; writes nothing here
-lyra cache clear                      # Empty the store of kept programs, units and headers
+lyra cache clear                      # Empty the store of kept build results
 ```
 
-`--backend cpp|llvm` picks which backend builds the program; either way it is one program, linked
-with the host C++ compiler (`--cxx`, else `clang++`, else `c++`). **A built program is kept in a
-store in the user's cache directory under a name computed from what the build read**, so building or
-running an unchanged design again copies the kept program instead of compiling, several checkouts
-share what they have in common, and nothing is written into the project. On the LLVM backend each
-unit's object is kept the same way, so a build after an edit compiles only the units whose generated
-code changed. `--rebuild` builds as though nothing were kept; `--cache-dir` names the store.
-`docs/decisions/a-program-is-kept-by-what-built-it.md` holds why.
-
-`-j` says how many of the design's units are lowered and compiled at once, on either backend, and
-one is the default. What a build produces is the same however many ran at once.
-`docs/decisions/a-build-is-told-how-wide-to-run.md` holds why.
-
-**A command that takes long shows what it is doing, on the error stream.** On a terminal `check`,
-`emit cpp`, `build` and `run` show the phase, how many modules are done, and the modules being
-worked on, redrawn in place from one second in; at the end what is left is how long each phase took.
-Where that stream is not a terminal the first three print one line at ten seconds, at thirty, and
-every minute after, each opening with a bracket, so a command over in seconds prints nothing but
-diagnostics. `--progress` takes `auto`, `plain` or `none`. A place the command line names that
-cannot be written is refused before the design is read, and a build that is interrupted removes what
-it was building. `docs/decisions/a-build-answers-for-what-it-starts.md` holds why.
-
-**Where a run's cost went is read off the run, never found by comparing builds.**
-`--time-trace <file>` writes a Chrome trace (open it in ui.perfetto.dev) with a span per stage,
-unit, scope and function; `--stats-file <file>` writes each stage's peak memory, what each unit
-holds and left behind, each unit's fingerprints, and how long each tool the build ran took.
-`docs/decisions/the-compiler-reports-where-its-cost-went.md` holds why.
-
-Command words are positional, and everything after them is one command line shared with the slang
-driver: every front-end option slang accepts -- `--top`, `-I`, `-D`, `-G`, `--single-unit`, `-y`,
-`--libext`, `-f` / `-F` filelists, `-W` warnings -- reaches Lyra unchanged. A standalone `--` ends
-Lyra's command line; what follows is the simulation's own argv, where LRM 21.6 plusargs go.
-`lyra --help` prints the authoritative option list.
-
-Every text Lyra reads finds `__lyra__` defined as 1, in every library of a build, beside the front
-end's own `__slang__`: a source selects on the tool that will run it by the first and on the parser
-reading it by the second. A `-U` takes either away and a `-D` gives neither another value.
-
-**A `lyra.toml` beside the sources declares them, so a design is not respelled at every
-invocation.** `[library]` names a library and the sources, search paths, defines and native DPI-C
-sources it is made of; `[design]` states what is run of it -- the tops, their parameter overrides,
-and the same kinds of source where only a testbench needs them. Every cell compiled there is in the
-declared library. `[dependencies]` names the libraries it uses, each by its name and the directory
-declaring it; a library that is depended on is read under its own declaration and the command line,
-and nothing of whoever uses it. The file is found by walking up from the working directory, and
-every path in it resolves against the file's own directory. A command line naming sources uses no
-declaration at all, and `--config <file>` names one outright. What is true of one invocation or one
-machine -- `-o`, `--release`, `--backend`, `--cxx`, `--cache-dir` -- is refused by name, because the
-file is committed and shared. `docs/decisions/project-file.md` holds the schema and the precedence
-rule: material accumulates, selection is replaced.
-
-**`--release` trades build time for simulation speed.** By default the design's own code is compiled
-unoptimized on either backend, because iterating pays that compile on every edit; `--release`
-optimizes it for a run long enough to earn the compile back. The runtime library the program links
-is prebuilt and always optimized, so it is not on this axis and costs nothing either way.
+A design is named by `--top` and the files on the command line, or by a `lyra.toml` found by walking
+up from the working directory. Everything after the command word is one command line shared with the
+slang driver, and a standalone `--` ends it; what follows is the simulation's own argv, where LRM
+21.6 plusargs go. `--backend cpp|llvm` picks the backend, `--release` trades build time for
+simulation speed, and `--time-trace` and `--stats-file` read where a run's cost went off the run
+itself. A build is kept in the user's cache directory by what it read, so `--rebuild` is how to
+build as though nothing were kept. `lyra --help` is the authoritative option list, and why each
+behaves as it does is in `docs/decisions/`.
 
 ## SystemVerilog version
 

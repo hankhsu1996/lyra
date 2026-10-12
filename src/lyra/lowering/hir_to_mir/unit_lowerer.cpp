@@ -494,7 +494,7 @@ auto UnitLowerer::UnitObjectType(hir::ExternalScopeClassId hir_id) const
 auto UnitLowerer::ClassIdentityOf(
     const std::string& unit_name, const support::DefPath& class_path) const
     -> mir::DeclaredClassRef {
-  if (unit_name == unit_.name) {
+  if (hir_->IsItself(unit_name)) {
     return mir::IntraUnitClassRef{
         .class_id = PublishedScopeClassAt(class_path)};
   }
@@ -941,7 +941,7 @@ auto UnitLowerer::PublishedClass(const hir::ExternalClassRef& ref) const
 auto UnitLowerer::DeclaredClassIdentityOf(
     const std::string& unit_name, const support::DefPath& class_path) const
     -> mir::DeclaredClassRef {
-  if (unit_name != unit_.name) {
+  if (!hir_->IsItself(unit_name)) {
     return mir::CrossUnitClassRef{
         .unit_name = unit_name, .class_path = class_path};
   }
@@ -958,7 +958,7 @@ auto UnitLowerer::DeclaredClassIdentityOf(
 
 auto UnitLowerer::MakeExternalClassRef(const hir::ExternalClassRef& ref)
     -> mir::DeclaredClassRef {
-  if (ref.unit_name != unit_.name) {
+  if (!hir_->IsItself(ref.unit_name)) {
     unit_.ConsumeClassOf(ref.unit_name, ref.class_path);
   }
   return DeclaredClassIdentityOf(ref.unit_name, ref.class_path);
@@ -1276,7 +1276,7 @@ auto UnitLowerer::MakeNamespaceCallableTarget(
   // it names the position; one into another unit has only the identifier that
   // unit published, and consuming that signature is what makes the unit a
   // dependency whose header and link edge the backend then emits.
-  if (ref.unit_name == unit_.name) {
+  if (hir_->IsItself(ref.unit_name)) {
     const std::optional<mir::CallableId> body =
         mir::CallableNamed(unit_.named_callables, ref.subroutine_name);
     if (!body.has_value()) {

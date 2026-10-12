@@ -38,7 +38,7 @@ namespace {
 // compiles for it.
 struct NativeTarget {
   llvm::Triple triple;
-  const llvm::Target* target;
+  const llvm::Target* target = nullptr;
 };
 
 // Registered and looked up once for the whole process, the first time any

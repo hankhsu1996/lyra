@@ -192,9 +192,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":diag",
-        ":stable_hash",
         ":support",
-        "@boost.pfr//:boost.pfr",
     ],
 )
 
@@ -414,6 +412,7 @@ cc_library(
     deps = [
         ":backend_cpp",
         ":base",
+        ":compiler",
         ":diag",
         ":dpi",
         ":mir",

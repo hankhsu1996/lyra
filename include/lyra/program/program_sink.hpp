@@ -7,43 +7,34 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/dpi/abi_header.hpp"
-#include "lyra/driver/artifact_store.hpp"
+#include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 
 namespace lyra::program {
 
 // How this build turns a unit's module into an object: how hard to compile
-// it, which build of the code generator does, where objects are kept for the
-// next build and whether one kept may be taken, and where this build's objects
-// are written.
+// it, which build of the code generator does, and the actions the compile is
+// performed or found kept through.
 struct ObjectBuild {
   driver::Optimization optimization;
-  driver::ContentName code_generator;
-  std::optional<std::filesystem::path> store;
-  bool reuse_kept;
-  std::filesystem::path object_dir;
-};
-
-// An object file the program links, and the name it is kept under.
-struct ObjectFile {
-  std::filesystem::path path;
-  driver::ContentName name;
+  std::filesystem::path code_generator;
+  driver::ActionCache* actions;
 };
 
 // One unit's part of the program: its object file, and the text of what the
 // unit states of the foreign name space where it states anything.
 struct BuiltUnit {
-  ObjectFile object;
+  driver::ActionResult object;
   std::optional<std::string> dpi_fragment;
 };
 
 // Takes one unit to its object, while the unit and every form it passed
-// through are released. It reads the unit alone and writes an object named for
-// its content, so several units may be built at once.
+// through are released. It reads the unit alone, so several units may be
+// built at once.
 //
-// The object is named by the module it is compiled from, the code generator
-// and the level, and a kept one of that name is taken instead of compiling.
+// Compiling is an action whose inputs are the module, the code generator and
+// the level, and the object of one kept is taken instead of compiling.
 // Before either, the module is checked against the runtime library this
 // compiler ships, which is the library the program links: a module naming an
 // entry that library does not publish is refused by name, so the absence is
@@ -57,7 +48,7 @@ auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
 // program's foreign name space (LRM 35), which the foreign sources are compiled
 // against.
 struct ProgramObjects {
-  std::vector<ObjectFile> objects;
+  std::vector<driver::ActionResult> objects;
   std::vector<dpi::AbiFragment> dpi_fragments;
 };
 

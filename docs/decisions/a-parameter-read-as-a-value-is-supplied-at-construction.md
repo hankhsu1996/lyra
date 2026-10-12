@@ -34,9 +34,7 @@ decided sharing had to be known before the body was.
 
 That premise no longer holds. A parent is handed a construction table saying which unit is made at
 each of its instantiations, and its code names no child, so two parents that differ only in which
-child they make are one body. What a value decides is then a question about the child alone, which
-lowering it answers better than predicting it; until that replaces the classification below, the
-classification stands as the rule.
+child they make are one body, and what a value decides is a question about the child alone.
 
 ## The tension this addresses
 

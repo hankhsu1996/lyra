@@ -26,7 +26,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/cli/manifest.hpp"
-#include "lyra/driver/artifact_store.hpp"
+#include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/status/status.hpp"

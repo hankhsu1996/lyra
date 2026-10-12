@@ -1593,15 +1593,15 @@ auto CountEntries(const std::filesystem::path& dir) -> std::size_t {
                   entries, std::filesystem::directory_iterator{}));
 }
 
-// How many programs a store keeps.
-auto KeptPrograms(const std::filesystem::path& store) -> std::size_t {
-  return CountEntries(store / "programs");
+// How many actions a store holds a result of.
+auto KeptActions(const std::filesystem::path& store) -> std::size_t {
+  return CountEntries(store / "ac");
 }
 
-// A program is kept under what built it, so building a design again reuses
-// the one kept, and building a changed design, or the same one compiled at
-// another level, keeps a second; how wide it was built changes nothing it
-// holds, so that keeps none. `build` writes the
+// Every step of a build is kept under what it read, so building a design again
+// performs nothing new, and building a changed design, or the same one
+// compiled at another level, keeps more; how wide it was built changes nothing
+// any step reads, so that keeps none. `build` writes the
 // one file it was asked for and `run` writes nothing, and nothing kept can be
 // reached through what a command handed back: clearing the store leaves both
 // the built program and a later run whole.
@@ -1627,24 +1627,26 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
   EXPECT_TRUE(std::filesystem::is_regular_file(work / "Test"))
       << "an anonymous design with one top names its program after the top";
-  EXPECT_EQ(KeptPrograms(store), 1U);
+  const std::size_t kept_first = KeptActions(store);
+  EXPECT_GT(kept_first, 0U);
 
   auto again = RunLyraFrom(lyra, work, "build " + common + " design.sv");
   ASSERT_EQ(again.exit_code, 0) << again.stderr_text;
-  EXPECT_EQ(KeptPrograms(store), 1U)
-      << "an unchanged design built again keeps no second program";
+  EXPECT_EQ(KeptActions(store), kept_first)
+      << "an unchanged design built again performed a step anew";
 
   auto wider = RunLyraFrom(lyra, work, "build -j 4 " + common + " design.sv");
   ASSERT_EQ(wider.exit_code, 0) << wider.stderr_text;
-  EXPECT_EQ(KeptPrograms(store), 1U)
-      << "a design built wider is the same program, and keeps no second";
+  EXPECT_EQ(KeptActions(store), kept_first)
+      << "a design built wider performed a step anew";
 
   auto released =
       RunLyraFrom(lyra, work, "build --release " + common + " design.sv");
   ASSERT_EQ(released.exit_code, 0) << released.stderr_text;
-  EXPECT_EQ(KeptPrograms(store), 2U)
-      << "a design compiled at another level was handed the program kept for "
-         "the first";
+  const std::size_t kept_released = KeptActions(store);
+  EXPECT_GT(kept_released, kept_first)
+      << "a design compiled at another level was handed what was kept for the "
+         "first";
 
   write_design(2);
   auto changed = RunLyraFrom(lyra, work, "run " + common + " design.sv");
@@ -1652,7 +1654,7 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   EXPECT_NE(changed.stdout_text.find("value=2"), std::string::npos)
       << "a changed design ran the program kept for the old one: "
       << changed.stdout_text;
-  EXPECT_EQ(KeptPrograms(store), 3U);
+  EXPECT_GT(KeptActions(store), kept_released);
 
   EXPECT_EQ(CountEntries(work), 2U)
       << "the working directory holds the design and the one program built, "
@@ -1661,7 +1663,8 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   auto cleared = RunLyraFrom(
       lyra, work, std::format("cache clear --cache-dir '{}'", store.string()));
   ASSERT_EQ(cleared.exit_code, 0) << cleared.stderr_text;
-  EXPECT_EQ(KeptPrograms(store), 0U);
+  EXPECT_EQ(KeptActions(store), 0U);
+  EXPECT_EQ(CountEntries(store / "cas"), 0U);
   const auto held = RunChildProcess(work / "Test", {}, 30s);
   EXPECT_EQ(held.exit_code, 0) << held.stderr_text;
   EXPECT_NE(held.stdout_text.find("value=1"), std::string::npos)
@@ -1718,8 +1721,8 @@ TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
   ASSERT_EQ(ran.exit_code, 0) << ran.stderr_text;
   EXPECT_EQ(CountEntries(temporary), 0U)
       << "a run left what it built in the temporary directory";
-  EXPECT_EQ(KeptPrograms(store), 1U)
-      << "the program is kept in the platform's cache directory";
+  EXPECT_GT(KeptActions(store), 0U)
+      << "what the run built is kept in the platform's cache directory";
 
   const auto built = run("build --backend llvm -o program design.sv");
   ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
@@ -2273,28 +2276,14 @@ TEST(LyraBuild, ARunReportsWhereItsCostWent) {
 
     // Every unit left objects behind, the design root among them, and each
     // was made by the first build and taken from the store by the second.
-    // Each unit of the design is fingerprinted by what it publishes and by
-    // what it lowered to; the design root is composed from those and lowered
-    // from no HIR, so it has neither.
     std::set<std::string> units;
     for (const nlohmann::json& unit : stats.at("units")) {
-      const std::string name = unit.at("name").get<std::string>();
-      units.insert(name);
-      EXPECT_FALSE(unit.at("artifacts").empty()) << name;
+      units.insert(unit.at("name").get<std::string>());
+      EXPECT_FALSE(unit.at("artifacts").empty()) << unit.at("name");
       for (const nlohmann::json& object : unit.at("artifacts")) {
         EXPECT_EQ(object.at("kind"), "object");
         EXPECT_GT(object.at("bytes").get<std::uint64_t>(), 0U);
-        EXPECT_EQ(object.at("made").get<bool>(), first) << name;
-      }
-      const nlohmann::json& fingerprints = unit.at("fingerprints");
-      if (!declared.contains(name)) {
-        EXPECT_TRUE(fingerprints.empty()) << name;
-        continue;
-      }
-      for (const std::string of : {"signature", "body"}) {
-        ASSERT_TRUE(fingerprints.contains(of)) << name << " " << of;
-        EXPECT_EQ(fingerprints.at(of).get<std::string>().size(), 32U)
-            << name << " " << of;
+        EXPECT_EQ(object.at("made").get<bool>(), first) << unit.at("name");
       }
     }
     EXPECT_EQ(units.size(), declared.size() + 1);

@@ -379,7 +379,7 @@ struct NullType {
 // stays at the call site; a question about how a later stage will treat a type
 // belongs to that stage.
 class Type {
- public:
+ private:
   using Data = std::variant<
       ScalarBitType, PackedArrayType, PackedStructType, PackedUnionType,
       EnumType, UnpackedStructType, UnpackedUnionType, UnpackedArrayType,
@@ -388,6 +388,7 @@ class Type {
       ClassHandleType, ImportedClassHandleType, UnitObjectType, UnitObjectsType,
       VirtualInterfaceType, NullType, VoidType>;
 
+ public:
   explicit Type(Data data) : data_(std::move(data)) {
   }
 

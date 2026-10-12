@@ -38,7 +38,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
-#include "lyra/driver/artifact_store.hpp"
+#include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/claimed_file.hpp"
 #include "lyra/driver/cpp_build.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
@@ -365,22 +365,52 @@ auto BuildDpiObjects(
   return *std::move(built);
 }
 
-// How one backend makes the design's program: the name it is kept under,
-// computed from everything the expensive half of the build reads, and that half
-// itself, which runs only when nothing is kept under the name.
+// How a design's program is made from its objects: the link, an action reading
+// the bytes of the objects it links, the runtime they link against, the driver
+// that links them, and the foreign objects beside them -- so an object that
+// comes out the same however it was reached leaves the program kept -- and the
+// link itself, which runs only when the action has no kept result. How many
+// units were built at once changes none of the objects, so it is in no action.
 struct ProgramRecipe {
-  driver::ContentName name;
-  std::move_only_function<diag::Result<void>(const std::filesystem::path&)>
-      build;
+  driver::Action action;
+  driver::ActionStep build;
 };
 
-// The C++ backend's program. The name is read off the emitted project as the
-// host compiler will read it -- every file in it, the foreign objects included
-// -- and off the runtime, the compiler, and the level it compiles at.
+auto LinkRecipe(
+    std::span<const driver::ActionResult> objects,
+    std::span<const std::filesystem::path> foreign,
+    const driver::RuntimeLocation& runtime, const driver::HostBuild& host)
+    -> ProgramRecipe {
+  driver::Action action("link");
+  std::vector<std::filesystem::path> linked;
+  linked.reserve(objects.size() + foreign.size());
+  for (const driver::ActionResult& object : objects) {
+    action.InputDigest("object", object.digest);
+    linked.push_back(object.path);
+  }
+  action.InputFile("runtime library", runtime.lib);
+  action.InputExecutable("linker", host.cxx);
+  for (const std::filesystem::path& object : foreign) {
+    action.InputFile("foreign object", object);
+    linked.push_back(object);
+  }
+  return ProgramRecipe{
+      .action = std::move(action),
+      .build = [linked = std::move(linked), runtime_lib = runtime.lib,
+                cxx = host.cxx](const std::filesystem::path& program) {
+        const profiling::StageScope stage("link");
+        return driver::LinkProgram(linked, runtime_lib, program, cxx);
+      }};
+}
+
+// The C++ backend's program. Each emitted file is compiled by an action
+// reading what the host compiler reads of the project, and the program is
+// linked from what they produced.
 auto CppProgramRecipe(
     const CommandContext& ctx, const driver::HostBuild& host,
     const driver::RuntimeLocation& runtime,
-    const std::filesystem::path& scratch) -> std::optional<ProgramRecipe> {
+    const std::filesystem::path& scratch, driver::ActionCache& actions)
+    -> std::optional<ProgramRecipe> {
   const std::filesystem::path project = scratch / "project";
   auto sources = WriteCppSources(ctx, project);
   if (!sources) {
@@ -391,21 +421,16 @@ auto CppProgramRecipe(
   if (!foreign) {
     return std::nullopt;
   }
-  driver::ContentNamer namer;
-  namer.AddTree("project", project);
-  namer.AddTree("runtime headers", runtime.include_root);
-  namer.AddFile("runtime library", runtime.lib);
-  namer.AddExecutable("compiler", host.cxx);
-  namer.Add("optimization", driver::OptimizationFlag(host.optimization));
-  return ProgramRecipe{
-      .name = namer.Finish(),
-      .build = [project, units = std::move(sources->translation_units), runtime,
-                foreign = *std::move(foreign),
-                host](const std::filesystem::path& built) {
-        const profiling::StageScope stage("host compile");
-        return driver::CompileProgram(
-            project, units, runtime, foreign, built, host);
-      }};
+  auto objects = [&] {
+    const profiling::StageScope stage("host compile");
+    return driver::CompileTranslationUnits(
+        project, sources->translation_units, runtime, host, actions);
+  }();
+  if (!objects) {
+    ctx.sink->Report(std::move(objects.error()));
+    return std::nullopt;
+  }
+  return LinkRecipe(*objects, *foreign, runtime, host);
 }
 
 // This compiler's own executable. The LLVM backend's code generator is part of
@@ -421,38 +446,19 @@ auto ThisCompiler(const CommandContext& ctx) -> std::filesystem::path {
 // it is lowered -- a kept object taken in place of compiling one -- so no unit
 // waits on another's, and every form a unit passed through is released as it
 // goes.
-//
-// The program is named by the names of the objects it links, the runtime they
-// link against, the driver that links them, and the foreign objects beside
-// them, so what is kept at this level saves the link. How many units are built
-// at once changes none of the objects, so it is in no name.
 auto LlvmProgramRecipe(
     const CommandContext& ctx, const driver::HostBuild& host,
     const driver::RuntimeLocation& runtime,
-    const std::filesystem::path& scratch) -> std::optional<ProgramRecipe> {
+    const std::filesystem::path& scratch, driver::ActionCache& actions)
+    -> std::optional<ProgramRecipe> {
   auto design = DesignOf(ctx);
   if (!design) {
     return std::nullopt;
   }
-  driver::ContentNamer generator;
-  generator.AddExecutable("code generator", ThisCompiler(ctx));
   const program::ObjectBuild objects{
       .optimization = host.optimization,
-      .code_generator = generator.Finish(),
-      .store = host.store,
-      .reuse_kept = !ctx.args->rebuild,
-      .object_dir = scratch / driver::kObjectDir};
-  std::error_code created;
-  std::filesystem::create_directories(objects.object_dir, created);
-  if (created) {
-    ctx.sink->Report(
-        diag::Make(
-            diag::DiagCode::kHostIoError,
-            std::format(
-                "failed to create '{}': {}", objects.object_dir.string(),
-                created.message())));
-    return std::nullopt;
-  }
+      .code_generator = ThisCompiler(ctx),
+      .actions = &actions};
   program::ProgramSink sink;
   const status::Phase phase("Compiling");
   auto lowered = compiler::LowerToSemantic(
@@ -477,44 +483,25 @@ auto LlvmProgramRecipe(
   if (!foreign) {
     return std::nullopt;
   }
-  driver::ContentNamer namer;
-  std::vector<std::filesystem::path> linked;
-  linked.reserve(built->objects.size() + foreign->size());
-  for (const program::ObjectFile& object : built->objects) {
-    namer.Add("object", object.name.hex);
-    linked.push_back(object.path);
-  }
-  namer.AddFile("runtime library", runtime.lib);
-  namer.AddExecutable("linker", host.cxx);
-  for (const std::filesystem::path& object : *foreign) {
-    namer.AddFile("foreign object", object);
-    linked.push_back(object);
-  }
-  return ProgramRecipe{
-      .name = namer.Finish(),
-      .build = [linked = std::move(linked), runtime_lib = runtime.lib,
-                cxx = host.cxx](const std::filesystem::path& program) {
-        const profiling::StageScope stage("link");
-        return driver::LinkProgram(linked, runtime_lib, program, cxx);
-      }};
+  return LinkRecipe(built->objects, *foreign, runtime, host);
 }
 
 auto RecipeFor(
     const CommandContext& ctx, const driver::HostBuild& host,
     const driver::RuntimeLocation& runtime,
-    const std::filesystem::path& scratch) -> std::optional<ProgramRecipe> {
+    const std::filesystem::path& scratch, driver::ActionCache& actions)
+    -> std::optional<ProgramRecipe> {
   switch (ctx.args->backend) {
     case Backend::kCpp:
-      return CppProgramRecipe(ctx, host, runtime, scratch);
+      return CppProgramRecipe(ctx, host, runtime, scratch, actions);
     case Backend::kLlvm:
-      return LlvmProgramRecipe(ctx, host, runtime, scratch);
+      return LlvmProgramRecipe(ctx, host, runtime, scratch, actions);
   }
   throw InternalError("the request names no backend");
 }
 
-// Places the design's program at `destination`: a copy of the one kept under
-// its name when there is one and a rebuild was not asked for, and otherwise
-// one built now, kept, and copied from what was built.
+// Places the design's program at `destination`: a copy of the output of the
+// action making it, kept or performed now.
 auto PlaceProgram(
     const CommandContext& ctx, const std::filesystem::path& scratch,
     const std::filesystem::path& destination) -> bool {
@@ -526,31 +513,17 @@ auto PlaceProgram(
   if (!runtime) {
     return false;
   }
-  auto recipe = RecipeFor(ctx, *host, *runtime, scratch);
+  driver::ActionCache actions(host->store, scratch, !ctx.args->rebuild);
+  auto recipe = RecipeFor(ctx, *host, *runtime, scratch, actions);
   if (!recipe) {
     return false;
   }
-  const auto& store = host->store;
-  if (store && !ctx.args->rebuild) {
-    auto kept = driver::CopyStored(
-        *store, driver::kStoredProgramDir, recipe->name, destination);
-    if (!kept) {
-      ctx.sink->Report(std::move(kept.error()));
-      return false;
-    }
-    if (*kept) {
-      return true;
-    }
-  }
-  const std::filesystem::path built = scratch / driver::kProgramName;
-  if (auto made = recipe->build(built); !made) {
-    ctx.sink->Report(std::move(made.error()));
+  auto built = actions.Execute(recipe->action, std::move(recipe->build));
+  if (!built) {
+    ctx.sink->Report(std::move(built.error()));
     return false;
   }
-  if (store) {
-    driver::KeepStored(*store, driver::kStoredProgramDir, recipe->name, built);
-  }
-  auto copied = driver::CopyOut(built, destination);
+  auto copied = driver::CopyOut(built->path, destination);
   if (!copied) {
     ctx.sink->Report(std::move(copied.error()));
     return false;

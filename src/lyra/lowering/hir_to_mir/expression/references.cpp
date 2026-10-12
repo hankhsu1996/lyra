@@ -233,7 +233,7 @@ auto LowerExternalUnitValueRefExpr(
   // in, so it names the position; one into another unit has only the identifier
   // that unit published, and consuming that signature is what makes the unit a
   // dependency whose header and link edge the backend then emits.
-  if (r.unit_name == unit.name) {
+  if (unit_lowerer.Hir().IsItself(r.unit_name)) {
     const std::optional<mir::StaticVariableId> variable =
         mir::StaticVariableNamed(unit.named_static_variables, r.variable_name);
     if (!variable.has_value()) {

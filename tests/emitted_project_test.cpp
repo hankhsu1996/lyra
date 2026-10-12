@@ -202,24 +202,39 @@ TEST(LyraEmittedProject, BuildsEvenWhenThePrecompiledHeaderIsRefused) {
       << "stdout: " << ran.stdout_text;
 
   // A store of this test's own, so what the second build is handed is what the
-  // first one left rather than whatever the developer's store happens to hold,
-  // and a rebuild, so the second build compiles rather than reusing the program
-  // the first one kept.
+  // first one left rather than whatever the developer's store happens to hold.
+  // The second build is of another design, so it compiles rather than reusing
+  // the program the first one kept, while the header it is handed is the one
+  // the first prepared.
   const auto store = *tmp_or / "store";
   const auto program = *tmp_or / "program";
-  const std::vector<std::string> build = {
-      "build",       "--top",        "Test",      "-o",        program.string(),
-      "--cache-dir", store.string(), "--rebuild", src.string()};
-  const auto prepared = RunChildProcess(lyra, build, 120s);
+  const auto build = [&](const std::filesystem::path& design) {
+    return std::vector<std::string>{
+        "build",          "--top",       "Test",         "-o",
+        program.string(), "--cache-dir", store.string(), design.string()};
+  };
+  const auto prepared = RunChildProcess(lyra, build(src), 120s);
   ASSERT_EQ(prepared.exit_code, 0) << prepared.stderr_text;
+  // A kept result is named by its digest alone, so the prepared header is
+  // found by what clang writes at the start of one.
+  constexpr std::string_view kPreparedHeaderMagic = "CPCH";
   std::size_t spoiled = 0;
-  for (const auto& entry : std::filesystem::directory_iterator(store / "pch")) {
-    std::ofstream(entry.path(), std::ios::trunc) << "not a prepared header";
-    ++spoiled;
+  for (const auto& entry : std::filesystem::directory_iterator(store / "cas")) {
+    std::string magic(kPreparedHeaderMagic.size(), '\0');
+    std::ifstream(entry.path(), std::ios::binary)
+        .read(magic.data(), static_cast<std::streamsize>(magic.size()));
+    if (magic == kPreparedHeaderMagic) {
+      std::ofstream(entry.path(), std::ios::trunc) << "not a prepared header";
+      ++spoiled;
+    }
   }
   ASSERT_GT(spoiled, 0U) << "the build prepared no header to spoil";
 
-  const auto rebuilt = RunChildProcess(lyra, build, 120s);
+  const auto other = *tmp_or / "other.sv";
+  std::ofstream(other) << "module Test;\n"
+                       << "  initial $display(\"ran %0d again\", 6 * 7);\n"
+                       << "endmodule\n";
+  const auto rebuilt = RunChildProcess(lyra, build(other), 120s);
   EXPECT_EQ(rebuilt.exit_code, 0)
       << "a build was failed by the header it was handed:\n"
       << rebuilt.stderr_text;

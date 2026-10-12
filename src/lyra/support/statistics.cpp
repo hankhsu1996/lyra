@@ -36,16 +36,10 @@ struct FormCounts {
   std::vector<Count> counts;
 };
 
-struct UnitFingerprint {
-  std::string of;
-  std::string fingerprint;
-};
-
 struct UnitRecord {
   std::vector<Artifact> artifacts;
   // In the order the unit passed through its forms.
   std::vector<FormCounts> forms;
-  std::vector<UnitFingerprint> fingerprints;
 };
 
 struct ChildRecord {
@@ -189,19 +183,6 @@ void RecordCounts(
           FormCounts{.form = std::string(form), .counts = std::move(counts)});
 }
 
-void RecordFingerprint(
-    std::string_view unit, std::string_view of, std::string fingerprint) {
-  if (!RecordsStatistics()) {
-    return;
-  }
-  Statistics& statistics = TheStatistics();
-  const std::scoped_lock lock(statistics.lock);
-  UnitNamed(statistics, unit)
-      .fingerprints.push_back(
-          UnitFingerprint{
-              .of = std::string(of), .fingerprint = std::move(fingerprint)});
-}
-
 void RecordChild(std::string command, ChildUsage usage) {
   if (!RecordsStatistics()) {
     return;
@@ -243,15 +224,10 @@ auto WriteStatistics(const std::filesystem::path& path)
       }
       counts[form.form] = std::move(held);
     }
-    nlohmann::ordered_json fingerprints = nlohmann::ordered_json::object();
-    for (const UnitFingerprint& fingerprint : unit.fingerprints) {
-      fingerprints[fingerprint.of] = fingerprint.fingerprint;
-    }
     units.push_back(
         {{"name", name},
          {"artifacts", std::move(artifacts)},
-         {"counts", std::move(counts)},
-         {"fingerprints", std::move(fingerprints)}});
+         {"counts", std::move(counts)}});
   }
   nlohmann::ordered_json children = nlohmann::ordered_json::array();
   for (const ChildRecord& child : statistics.children) {

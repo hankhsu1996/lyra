@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -85,6 +86,13 @@ struct CompilationUnit {
   // Two units are one when every node below them is, which is what decides
   // that instances lowered apart can share one artifact.
   auto operator==(const CompilationUnit&) const -> bool = default;
+
+  // Whether a reference to the unit named `unit_name` is one to this unit: a
+  // hierarchical name reaching another instance of this same application names
+  // it the way a reference to any other unit does, by its name.
+  [[nodiscard]] auto IsItself(std::string_view unit_name) const -> bool {
+    return unit_name == name;
+  }
 
  private:
   // The single-bit leaves and the predefined-width integers are the primitive

@@ -25,12 +25,13 @@
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/dpi/abi_header.hpp"
-#include "lyra/driver/artifact_store.hpp"
+#include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/runtime/runtime_abi.hpp"
+#include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/statistics.hpp"
 
@@ -2298,67 +2299,41 @@ auto PipelineLevel(driver::Optimization optimization)
   throw InternalError("a build names no optimization level");
 }
 
-// An object this run has in hand, and whether it made it or took it from the
-// store, which is the difference between a unit that cost the run its code
-// generation and one that cost it nothing.
-struct CompiledObject {
-  ObjectFile file;
-  bool made = true;
-};
-
-// The object a module compiles to under this build: the kept one when there is
-// one and it may be taken, and otherwise one compiled now and kept. It is
-// written under its own name, which no other unit's object shares, since every
-// unit's module carries that unit's own symbols.
+// The object a module compiles to under this build: the output of the action
+// compiling it, performed now or found kept.
 auto CompileObject(
     backend::llvm_backend::EmittedModule module, const ObjectBuild& build)
-    -> diag::Result<CompiledObject> {
+    -> diag::Result<driver::ActionResult> {
   const llvm::OptimizationLevel level = PipelineLevel(build.optimization);
-  driver::ContentNamer namer;
-  namer.Add("module", module.Print());
-  namer.Add("code generator", build.code_generator.hex);
-  namer.Add("pipeline level", std::format("O{}", std::to_underlying(level)));
-  driver::ContentName name = namer.Finish();
-  ObjectFile object{
-      .path = build.object_dir / (name.hex + ".o"), .name = std::move(name)};
-  if (build.store.has_value() && build.reuse_kept) {
-    auto kept = driver::CopyStored(
-        *build.store, driver::kStoredObjectDir, object.name, object.path);
-    if (!kept) {
-      return std::unexpected(std::move(kept.error()));
-    }
-    if (*kept) {
-      return CompiledObject{.file = std::move(object), .made = false};
-    }
-  }
-  if (auto r = backend::llvm_backend::WriteObjectFile(
-          std::move(module), object.path, level);
-      !r) {
-    return std::unexpected(std::move(r.error()));
-  }
-  if (build.store.has_value()) {
-    driver::KeepStored(
-        *build.store, driver::kStoredObjectDir, object.name, object.path);
-  }
-  return CompiledObject{.file = std::move(object), .made = true};
+  driver::Action action("compile module");
+  action.Input("module", module.Print());
+  action.InputExecutable("code generator", build.code_generator);
+  action.Input("pipeline level", std::format("O{}", std::to_underlying(level)));
+  return build.actions->Execute(
+      action, [&](const std::filesystem::path& object) -> diag::Result<void> {
+        return backend::llvm_backend::WriteObjectFile(
+            std::move(module), object, level);
+      });
 }
 
-auto ArtifactOf(const CompiledObject& object)
+// What an object is to a run that records itself, and whether this run made
+// it or took it from the store, which is the difference between a unit that
+// cost the run its code generation and one that cost it nothing.
+auto ArtifactOf(const driver::ActionResult& object)
     -> diag::Result<support::Artifact> {
   std::error_code ec;
-  const std::uintmax_t bytes = std::filesystem::file_size(object.file.path, ec);
+  const std::uintmax_t bytes = std::filesystem::file_size(object.path, ec);
   if (ec) {
     return diag::Fail(
-        diag::DiagCode::kHostIoError,
-        std::format(
-            "failed to read the size of '{}': {}", object.file.path.string(),
-            ec.message()));
+        diag::DiagCode::kHostIoError, std::format(
+                                          "failed to read the size of '{}': {}",
+                                          object.path.string(), ec.message()));
   }
   return support::Artifact{
       .kind = support::ArtifactKind::kObject,
-      .name = object.file.path.filename().string(),
+      .name = stable_hash::HexOf(object.digest) + ".o",
       .bytes = static_cast<std::uint64_t>(bytes),
-      .made = object.made};
+      .made = object.performed};
 }
 
 }  // namespace
@@ -2377,7 +2352,7 @@ auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
   if (!object) {
     return std::unexpected(std::move(object.error()));
   }
-  if (!object->made) {
+  if (!object->performed) {
     status::UpToDate();
   }
   auto artifact = ArtifactOf(*object);
@@ -2386,8 +2361,7 @@ auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
   }
   support::RecordUnit(unit.name, {*std::move(artifact)});
   return BuiltUnit{
-      .object = std::move(object->file),
-      .dpi_fragment = dpi::AbiFragmentOf(unit)};
+      .object = *std::move(object), .dpi_fragment = dpi::AbiFragmentOf(unit)};
 }
 
 void ProgramSink::Collect(BuiltUnit unit) {
@@ -2418,7 +2392,7 @@ auto ProgramSink::Finish(
     return std::unexpected(std::move(entry_object.error()));
   }
   std::vector<support::Artifact> artifacts;
-  for (const CompiledObject* object : {&*root_object, &*entry_object}) {
+  for (const driver::ActionResult* object : {&*root_object, &*entry_object}) {
     auto artifact = ArtifactOf(*object);
     if (!artifact) {
       return std::unexpected(std::move(artifact.error()));
@@ -2426,8 +2400,8 @@ auto ProgramSink::Finish(
     artifacts.push_back(*std::move(artifact));
   }
   support::RecordUnit(root.name, std::move(artifacts));
-  program_.objects.push_back(std::move(root_object->file));
-  program_.objects.push_back(std::move(entry_object->file));
+  program_.objects.push_back(*std::move(root_object));
+  program_.objects.push_back(*std::move(entry_object));
   return std::move(program_);
 }
 

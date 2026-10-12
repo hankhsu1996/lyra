@@ -12,6 +12,7 @@
 #include "lyra/backend/cpp/artifact.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
+#include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
@@ -146,9 +147,13 @@ auto AssembleProject(
     const std::filesystem::path& dir, const HostBuild& host,
     std::span<const DpiLinkInput> dpi_inputs) -> diag::Result<void>;
 
-// Compiles the emitted sources in `dir` and links them, with the foreign
-// sources' objects, into the program at `program`; a non-zero compiler exit
-// surfaces its stderr as a diagnostic.
+// Compiles each emitted translation unit in `dir` to its object, as many at
+// once as `host` was told to take, in the order given, and reports every one
+// that failed rather than the first; a non-zero compiler exit surfaces its
+// stderr. Each compile is an action whose inputs are what the compiler reads
+// of the project -- the file and every file of the project it includes -- and
+// the runtime's headers, the compiler and the level, so a file whose text and
+// whose includes are unchanged is compiled once, in this build or any other.
 //
 // The compiler is invoked directly rather than through the recipe an emitted
 // project ships. The two are not interchangeable: the recipe compiles against
@@ -156,13 +161,11 @@ auto AssembleProject(
 // portable, while this compiles against the installed runtime and copies
 // nothing. Sharing `HostBuild` is what keeps them agreeing on the toolchain
 // regardless.
-auto CompileProgram(
+auto CompileTranslationUnits(
     const std::filesystem::path& dir,
     std::span<const TranslationUnit> translation_units,
-    const RuntimeLocation& runtime,
-    std::span<const std::filesystem::path> foreign_objects,
-    const std::filesystem::path& program, const HostBuild& host)
-    -> diag::Result<void>;
+    const RuntimeLocation& runtime, const HostBuild& host, ActionCache& actions)
+    -> diag::Result<std::vector<ActionResult>>;
 
 // Links a program's objects -- whatever produced them -- with the runtime
 // library into the executable at `program`; a non-zero linker exit surfaces its

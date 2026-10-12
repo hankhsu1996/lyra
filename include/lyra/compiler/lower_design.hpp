@@ -11,7 +11,6 @@
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/design_root.hpp"
 #include "lyra/compiler/parallel.hpp"
-#include "lyra/compiler/unit_fingerprints.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
@@ -117,12 +116,10 @@ auto LowerToSemantic(
     std::vector<std::string> instantiated;
     typename Produced::value_type produced;
   };
-  const UnitFingerprints fingerprints(design.units.Signatures(), sources);
   lowering::hir_to_mir::DesignInstantiations instantiations;
   LowerToHir(
       design, sink, width,
       [&](const hir::CompilationUnit& hir_unit) -> diag::Result<Lowered> {
-        fingerprints.Lowered(hir_unit);
         auto unit = LowerUnitToSemantic(hir_unit, sources);
         if (!unit) {
           return std::unexpected(std::move(unit.error()));
