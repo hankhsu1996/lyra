@@ -8,7 +8,8 @@ name: External Designs (Nightly)
 # It gates its own run: each case is held to what
 # `tests/paths/llvm.external_designs.yaml` records of it, so red means a design
 # stopped somewhere new -- further along, which is an entry to update, or
-# sooner, which is a regression.
+# sooner, which is a regression -- or no longer needs an option
+# `tests/external_design_options.yaml` lists for it.
 on:
   schedule:
     - cron: '0 9 * * *'
