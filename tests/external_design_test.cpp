@@ -7,12 +7,18 @@
 // sources, what reading them needs, its tests and the script that checks a run,
 // once, for any simulator; what is built from that here is a declaration of the
 // design in Lyra's own form, so a case is reproduced by building in the
-// directory that declaration is written to.
+// directory that declaration is written to, with the command a failure names.
 //
 // A case is the one the suite marks as a design's quick check. What it is
 // recorded as stopping on is held exactly: a case that stops somewhere else,
 // says something else, or stops no longer fails until the record says so, which
 // makes the record the account of how far each design gets.
+//
+// A text the standard does not settle is refused, and its reader may ask for
+// the other reading by name. A design written in such a text is built the way
+// its author would build it, with the front end's options listed for it, so
+// what stands behind that text is still reached. The list is held the way the
+// record is, so an option the design no longer needs fails until it goes.
 
 #include <algorithm>
 #include <cctype>
@@ -24,6 +30,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iostream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -123,6 +130,7 @@ struct Stop {
 struct DesignCase {
   // The suite's own name for it: design, configuration and test.
   std::string name;
+  std::string design_name;
   // The design as Lyra is told of it.
   std::string declaration;
   // What the test reads from the directory it runs in.
@@ -366,6 +374,7 @@ auto QuickChecksOf(
 
       DesignCase quick{
           .name = std::format("{}:{}:{}", design, configuration, test),
+          .design_name = design,
           .declaration = DeclarationOf(
               design, design_dir, suite,
               {Section(descriptor, "compile"), Section(stated, "compile")}),
@@ -429,21 +438,38 @@ auto ReadWhole(const std::filesystem::path& path) -> std::string {
   return text.str();
 }
 
-// Builds the case in `work` and runs it there as the suite would, ending at
-// the first step that fails. The run's output is kept where the suite's check
-// reads it.
+auto LyraCommand(
+    const std::filesystem::path& lyra, std::string_view command,
+    const std::vector<std::string>& options) -> std::string {
+  std::string line = std::format("{} {}", ShellQuoted(lyra.string()), command);
+  for (const std::string& option : options) {
+    line += ' ';
+    line += ShellQuoted(option);
+  }
+  return line;
+}
+
+// The build of a case, from the directory its declaration is written to. A
+// design of this size draws warnings by the thousand, and what stops it is an
+// error, so only errors are asked for.
+auto BuildCommand(
+    const std::filesystem::path& lyra, const std::vector<std::string>& options)
+    -> std::string {
+  return LyraCommand(
+      lyra,
+      "build --backend llvm --progress=none -Wnone --cache-dir cache -o sim",
+      options);
+}
+
+// Builds the case in `work` with the front end's `options` and runs it there as
+// the suite would, ending at the first step that fails. The run's output is
+// kept where the suite's check reads it.
 auto Carry(
     const std::filesystem::path& lyra, const DesignCase& design,
-    const std::filesystem::path& work) -> std::optional<Stop> {
+    const std::vector<std::string>& options, const std::filesystem::path& work)
+    -> std::optional<Stop> {
   std::ofstream(work / "lyra.toml") << design.declaration;
-  // A design of this size draws warnings by the thousand, and what stops it is
-  // an error, so only errors are asked for.
-  const auto built = RunFrom(
-      Step::kBuild, work,
-      std::format(
-          "{} build --backend llvm --progress=none -Wnone --cache-dir "
-          "cache -o sim",
-          ShellQuoted(lyra.string())));
+  const auto built = RunFrom(Step::kBuild, work, BuildCommand(lyra, options));
   if (built.termination != TerminationKind::kExitedNormally) {
     return Stop{.at = Step::kBuild, .said = Said(Step::kBuild, built)};
   }
@@ -477,6 +503,27 @@ auto Carry(
     }
   }
   return std::nullopt;
+}
+
+// Of the front end's `options` the case in `work` was built with, each the
+// front end reads it without all the same. Whether an option is needed is a
+// question for the front end alone, so asking costs no lowering.
+auto NotNeeded(
+    const std::filesystem::path& lyra, const std::vector<std::string>& options,
+    const std::filesystem::path& work) -> std::vector<std::string> {
+  std::vector<std::string> not_needed;
+  for (const std::string& option : options) {
+    std::vector<std::string> others;
+    std::ranges::copy_if(
+        options, std::back_inserter(others),
+        [&](const std::string& other) { return other != option; });
+    const auto checked =
+        RunFrom(Step::kBuild, work, LyraCommand(lyra, "check -Wnone", others));
+    if (checked.termination == TerminationKind::kExitedNormally) {
+      not_needed.push_back(option);
+    }
+  }
+  return not_needed;
 }
 
 auto FirstLines(std::string_view text) -> std::string {
@@ -514,18 +561,19 @@ auto Differs(
       was, FirstLines(stop->said));
 }
 
-// The cases and their record, found where the build put them.
+// The cases, their record, and the front end's options each design is built
+// with, found where the build put them.
 struct Corpus {
   std::vector<DesignCase> cases;
   std::map<std::string, Stop> recorded;
+  std::map<std::string, std::vector<std::string>> options;
   std::vector<std::string> problems;
 };
 
 auto LoadCorpus() -> Corpus {
   Corpus corpus;
   std::string error;
-  const std::unique_ptr<Runfiles> runfiles{
-      Runfiles::CreateForTest(BAZEL_CURRENT_REPOSITORY, &error)};
+  const std::unique_ptr<Runfiles> runfiles{Runfiles::CreateForTest(&error)};
   if (!runfiles) {
     corpus.problems.push_back(
         std::format("failed to create runfiles: {}", error));
@@ -558,7 +606,7 @@ auto LoadCorpus() -> Corpus {
       runfiles->Rlocation("_main/tests/paths/llvm.external_designs.yaml"));
   for (const auto& entry : record) {
     const auto name = entry.first.as<std::string>();
-    const auto at = StepNamed(entry.second["stops"].as<std::string>(""));
+    const auto at = StepNamed(LastOf({entry.second}, "stops").value_or(""));
     if (!at) {
       corpus.problems.push_back(
           std::format("the record of '{}' names no step it stops at", name));
@@ -574,7 +622,27 @@ auto LoadCorpus() -> Corpus {
     }
     corpus.recorded.emplace(
         name,
-        Stop{.at = *at, .said = entry.second["says"].as<std::string>("")});
+        Stop{.at = *at, .said = LastOf({entry.second}, "says").value_or("")});
+  }
+
+  const YAML::Node options = YAML::LoadFile(
+      runfiles->Rlocation("_main/tests/external_design_options.yaml"));
+  for (const auto& entry : options) {
+    const auto design = entry.first.as<std::string>();
+    const auto is_of = [&](const DesignCase& one) {
+      return one.design_name == design;
+    };
+    if (std::ranges::none_of(corpus.cases, is_of)) {
+      corpus.problems.push_back(
+          std::format(
+              "options are listed for '{}', which is not a design", design));
+      continue;
+    }
+    std::vector<std::string> listed;
+    for (const YAML::Node& option : entry.second) {
+      listed.push_back(option.as<std::string>());
+    }
+    corpus.options.emplace(design, std::move(listed));
   }
   return corpus;
 }
@@ -583,12 +651,13 @@ auto LoadCorpus() -> Corpus {
 
 namespace lyra::test {
 
-// One case with what is recorded of it. The test framework finds how to print
-// a parameter by the parameter's own namespace, which is why this one has a
-// name.
+// One case with what is recorded of it and the front end's options its design
+// is built with. The test framework finds how to print a parameter by the
+// parameter's own namespace, which is why this one has a name.
 struct DesignSubject {
   DesignCase design;
   std::optional<Stop> recorded;
+  std::vector<std::string> options;
 
   friend auto PrintTo(const DesignSubject& subject, std::ostream* out) -> void {
     *out << subject.design.name;
@@ -606,19 +675,24 @@ auto Subjects() -> std::vector<DesignSubject> {
   std::vector<DesignSubject> subjects;
   for (const DesignCase& design : corpus.cases) {
     const auto recorded = corpus.recorded.find(design.name);
+    const auto options = corpus.options.find(design.design_name);
     subjects.push_back(
         DesignSubject{
             .design = design,
             .recorded = recorded == corpus.recorded.end()
                             ? std::nullopt
-                            : std::optional{recorded->second}});
+                            : std::optional{recorded->second},
+            .options = options == corpus.options.end()
+                           ? std::vector<std::string>{}
+                           : options->second});
   }
   return subjects;
 }
 
-// A record naming a case the suite does not have would hold nothing, and every
-// other test here would still pass.
-TEST(DesignRecord, NamesOnlyCasesTheSuiteHas) {
+// A record naming a case the suite does not have, or options listed for a
+// design it does not have, would hold nothing, and every other test here would
+// still pass.
+TEST(DesignRecord, NamesOnlyWhatTheSuiteHas) {
   const Corpus corpus = LoadCorpus();
   for (const std::string& problem : corpus.problems) {
     ADD_FAILURE() << problem;
@@ -636,7 +710,8 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
 
   const DesignSubject& subject = GetParam();
   const auto began = std::chrono::steady_clock::now();
-  const std::optional<Stop> stop = Carry(lyra, subject.design, *work);
+  const std::optional<Stop> stop =
+      Carry(lyra, subject.design, subject.options, *work);
   const auto took = std::chrono::duration_cast<std::chrono::seconds>(
       std::chrono::steady_clock::now() - began);
   // Written as each case ends, so a run that is cut short has still said how
@@ -652,8 +727,12 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
 
   if (const auto differs = Differs(stop, subject.recorded)) {
     ADD_FAILURE() << subject.design.name << " " << *differs
-                  << "\n`lyra build --backend llvm` from the directory above "
-                     "is the step that builds it.";
+                  << "\nIt is built from the directory above by\n"
+                  << BuildCommand(lyra, subject.options);
+  }
+  for (const std::string& option : NotNeeded(lyra, subject.options, *work)) {
+    ADD_FAILURE() << subject.design.design_name << " is built with " << option
+                  << " and no longer needs it, so it goes.";
   }
 }
 

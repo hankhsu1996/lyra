@@ -431,6 +431,7 @@ cc_test(
     srcs = ["external_design_test.cpp"],
     copts = LYRA_COPTS,
     data = [
+        "external_design_options.yaml",
         "paths/llvm.external_designs.yaml",
         "//:lyra",
         "@rtlmeter//:suite",

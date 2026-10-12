@@ -28,7 +28,8 @@ Four consequences, each of which has been argued the other way and lost:
    settled. **A choice the standard leaves to the tool is different**: there the front end is not
    wrong whichever way it went, so nothing can be corrected upstream, and Lyra makes the choice
    itself (see _Given a meaning, but a tool may refuse it_ below).
-4. **A caller may ask for another tool's reading by name** (`--compat`). What the design then means
+4. **A caller may ask for another tool's reading by name** (`--compat`, or one of the front end's
+   options for a single reading, such as `--allow-hierarchical-const`). What the design then means
    is that tool's answer, not one Lyra stands behind.
 
 ## Ruling on a disputed text
@@ -120,7 +121,8 @@ parameters, genvars, enumerated names, or a constant function of these. ... Hier
 not allowed."
 
 The neighbouring text that is allowed is `$bits` of a member reached through an interface port,
-below.
+below. The same name through an instance in a declaration's width is not settled by the standard,
+also below.
 
 #### A hierarchical name through an unnamed generate block
 
@@ -194,6 +196,31 @@ bit-select or a part-select of a variable".
 
 The sentence lists what a target can be and names neither a member nor an array element. Whether a
 member of an element is "a singular variable" is a reading, and the list is read as complete.
+
+#### A width given by `$bits` of a name reached through an instance
+
+```systemverilog
+interface bus_if;
+  logic [11:0] data;
+endinterface
+
+module top;
+  bus_if u ();
+  wire [$bits(u.data)-1:0] copy = u.data;
+endmodule
+```
+
+20.6.2: "The `$bits` function can be used as an elaboration-time constant when used on fixed-size
+data types; hence, it can be used in the declaration of other data types, variables, or nets." No
+clause forbids a hierarchical name in a declaration's width.
+
+But every clause that rules on a value fixed at elaboration forbids one: a parameter's value
+(6.20.2), an enumerated name's value (6.19), the argument of `type()` (6.23). Each is the same
+difficulty, a value needed to build the hierarchy taken from inside a part of it, and a width is
+that difficulty as well; the standard says so of those positions and not of this one. Reach the
+member through an interface port, which is not a hierarchical name (see `$bits` of a member reached
+through an interface port, below), or give the width its own parameter. A design whose author reads
+it the other way is built with `--allow-hierarchical-const`.
 
 ### Given a meaning, but a tool may refuse it, so run with a warning
 
