@@ -280,6 +280,13 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   either translated at this boundary (an event-control delay becomes a coroutine suspension; a
   non-blocking assignment becomes a deferred closure submission) or rejected as unsupported.
   HIR-to-MIR has the SV knowledge; MIR does not.
+- Rewritten into MIR before anything reads it below. Between HIR-to-MIR and every consumer, a unit
+  passes through rewrites, each of which keeps what the program does and says what it changes in
+  MIR's own vocabulary; the unit is verified once, as it leaves them, since that is the form every
+  consumer reads. A consumer cannot tell a node a rewrite built from one the lowering built, so a
+  cost the program's meaning does not decide -- how a process that stops only at the head of its
+  loop is compiled -- is taken out once for both backends, and HIR-to-MIR still states the meaning
+  one way (`../decisions/a-process-stopping-only-at-its-loop-head-is-called.md`).
 - `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
   reference names a binding materialized in its own callable body, and a binding crosses a closure
   boundary only as a captured environment field. MIR carries no navigation distance to a

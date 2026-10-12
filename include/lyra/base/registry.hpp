@@ -88,6 +88,24 @@ class Registry {
     return *slot;
   }
 
+  // This registry with every value passed through `transform`, given its
+  // identity and taking the value over, so each stays at the identity every
+  // reference to it names; an identity still waiting for its value stays
+  // waiting. For a pass that rewrites what a registry holds.
+  template <typename Transform>
+  [[nodiscard]] auto TransformValues(
+      const Transform& transform) && -> Registry {
+    Registry transformed;
+    transformed.slots_.reserve(slots_.size());
+    for (const Id id : Ids()) {
+      std::optional<T>& slot = slots_[id.value];
+      transformed.slots_.push_back(
+          slot.has_value() ? std::optional<T>(transform(id, *std::move(slot)))
+                           : std::nullopt);
+    }
+    return transformed;
+  }
+
   // Walks the values in identity order. A registry is read only once the pass
   // that builds it has finished, when every declared identity is defined, so
   // reaching an undefined one reports the broken invariant rather than letting

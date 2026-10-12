@@ -554,6 +554,9 @@ class LirDumper {
             },
             [](const DefinitionRef& c) -> std::string {
               return std::format("definition {}", FormatType(c.defined));
+            },
+            [](const FunctionRef& c) -> std::string {
+              return std::format("function {}", c.function.value);
             }},
         op);
   }

@@ -259,6 +259,20 @@ cc_library(
 )
 
 cc_library(
+    name = "mir_transform",
+    srcs = glob(["src/lyra/mir_transform/*.cpp"]),
+    hdrs = glob(["include/lyra/mir_transform/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":mir",
+        ":profiling",
+        ":support",
+    ],
+)
+
+cc_library(
     name = "mir_to_lir",
     srcs = glob(["src/lyra/lowering/mir_to_lir/**/*.cpp"]),
     hdrs = glob(["include/lyra/lowering/mir_to_lir/**/*.hpp"]),
@@ -369,6 +383,7 @@ cc_library(
         ":lir",
         ":mir",
         ":mir_to_lir",
+        ":mir_transform",
         ":profiling",
         ":status",
         ":support",

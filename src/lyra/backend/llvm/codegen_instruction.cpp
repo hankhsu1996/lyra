@@ -1229,7 +1229,14 @@ auto CodeGenFunction::LowerCall(
         EmitCallOrInvoke(resolved->callee, resolved->args);
     return into != nullptr ? into : answered;
   };
-  const auto called = [&](const auto&) -> Lowered { return called_into(out); };
+  // An execution is built in storage of its own. Nothing ends that here:
+  // whoever drives it takes it out of the storage, the moment it is made.
+  const auto called = [&](const auto&) -> Lowered {
+    return called_into(
+        lir::CallBuildsExecution(call.target)
+            ? ObjectStorage(support::LibraryObject::kExecution)
+            : out);
+  };
   return std::visit(
       Overloaded{
           // An operation over integral values is the instructions it is on
@@ -1307,21 +1314,7 @@ auto CodeGenFunction::LowerCall(
             return LowerDesignatedBitsWrite(bits, call, result_type);
           },
           [&](const lir::OpenWriteTarget& t) { return called(t); },
-          // Entering a body builds the execution it becomes. Nothing ends that
-          // here: whoever drives it takes it out of the storage, the moment it
-          // is made.
-          [&](const lir::CoroutineTarget& coroutine) -> Lowered {
-            switch (coroutine.op) {
-              case lir::CoroutineTarget::Op::kEnterBorrowedEnvironment:
-              case lir::CoroutineTarget::Op::kEnterOwnedEnvironment:
-                return called_into(
-                    ObjectStorage(support::LibraryObject::kExecution));
-              case lir::CoroutineTarget::Op::kAwait:
-              case lir::CoroutineTarget::Op::kRelease:
-                return called(coroutine);
-            }
-            throw InternalError("llvm codegen: unknown coroutine operation");
-          },
+          [&](const lir::CoroutineTarget& t) { return called(t); },
           [&](const lir::FunctionTarget& t) { return called(t); },
           [&](const lir::IndirectTarget& t) { return called(t); },
           [&](const lir::DispatchTarget& t) { return called(t); },
@@ -1993,6 +1986,10 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
               return std::unexpected(std::move(definition.error()));
             }
             return *definition;
+          },
+          // A function is its own address.
+          [&](const lir::FunctionRef& f) -> diag::Result<llvm::Value*> {
+            return module_->UnitFunction(f.function);
           }},
       operand);
 }

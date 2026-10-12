@@ -13,7 +13,6 @@ loop_holding_a_sized_block:
   - bytes
   - lir.classes
   - lir.constants
-  - lir.coroutines
   - lir.functions
   - lir.integral constants
   - lir.members
@@ -22,26 +21,22 @@ loop_holding_a_sized_block:
   - mir.class constants
   - mir.classes
   - mir.constructors
-  - mir.coroutines
   - mir.fields
   - mir.integral constants
   - mir.types
 loop_of_children_sized_by_index:
   - lir.classes
   - lir.constants
-  - lir.coroutines
   - lir.integral constants
   - mir.class constants
   - mir.classes
   - mir.constructors
-  - mir.coroutines
   - mir.integral constants
 loop_of_clocked_procedures_sized_by_index:
   - lir.captures
   - lir.classes
   - lir.closures
   - lir.constants
-  - lir.coroutines
   - lir.functions
   - lir.integral constants
   - lir.members
@@ -52,7 +47,6 @@ loop_of_clocked_procedures_sized_by_index:
   - mir.classes
   - mir.closures
   - mir.constructors
-  - mir.coroutines
   - mir.fields
   - mir.integral constants
   - mir.types
@@ -64,7 +58,6 @@ loop_reaching_its_neighbour:
   - bytes
   - lir.classes
   - lir.constants
-  - lir.coroutines
   - lir.functions
   - lir.integral constants
   - lir.members
@@ -73,7 +66,6 @@ loop_reaching_its_neighbour:
   - mir.class constants
   - mir.classes
   - mir.constructors
-  - mir.coroutines
   - mir.fields
   - mir.integral constants
   - mir.types
@@ -81,7 +73,6 @@ loop_sized_from_a_table:
   - bytes
   - lir.classes
   - lir.constants
-  - lir.coroutines
   - lir.functions
   - lir.integral constants
   - lir.members
@@ -90,14 +81,12 @@ loop_sized_from_a_table:
   - mir.class constants
   - mir.classes
   - mir.constructors
-  - mir.coroutines
   - mir.fields
   - mir.integral constants
   - mir.types
 loop_sizing_by_index:
   - lir.classes
   - lir.constants
-  - lir.coroutines
   - lir.functions
   - lir.integral constants
   - lir.members
@@ -106,7 +95,6 @@ loop_sizing_by_index:
   - mir.class constants
   - mir.classes
   - mir.constructors
-  - mir.coroutines
   - mir.fields
   - mir.integral constants
   - mir.types

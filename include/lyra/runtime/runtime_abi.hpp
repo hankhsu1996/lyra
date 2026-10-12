@@ -206,6 +206,17 @@ auto lyra_rt_enter_coroutine_borrowed_environment(
 auto lyra_rt_enter_coroutine_owned_environment(
     void* closure, void* out) noexcept -> void*;
 
+// Makes an execution the engine can schedule out of a process body that stops
+// only at the wait at the head of its loop, stated as its setup and its pass,
+// each entered on `receiver` and on the wait the execution holds for them. The
+// second is the body whose loop stops before its statements.
+auto lyra_rt_enter_reaction_running_first(
+    void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
+    void* out) noexcept -> void*;
+auto lyra_rt_enter_reaction_stopping_first(
+    void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
+    void* out) noexcept -> void*;
+
 // Calling a task (LRM 13.3, where the call is also named a task enable).
 // `await_coroutine` gives the calling thread to `activation` and runs it there,
 // so it executes in the caller's process (LRM 9.5) rather than as one of its
@@ -2395,6 +2406,9 @@ void lyra_rt_queue_assign(void* storage, const void* value);
 void lyra_rt_assocarray_assign(void* storage, const void* value);
 void lyra_rt_managedref_assign(void* storage, const void* value);
 void lyra_rt_reference_assign(void* storage, const void* value);
+// A wait is never copied, so the one written is a value the body built and
+// ends after, and the storage takes it over.
+void lyra_rt_wait_assign(void* storage, void* value);
 
 // The whole-value lifecycle of a fixed-size unpacked array (LRM 7.4.2). The
 // body holding one lays it out as its elements alone, so each operation is the

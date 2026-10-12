@@ -59,6 +59,8 @@ auto StateAwaiter::Begin() -> Resumption {
   return OnAnOccurrence{};
 }
 
+Wait::Wait() = default;
+
 Wait::Wait(std::unique_ptr<Awaiter> awaiter) : awaiter_(std::move(awaiter)) {
 }
 

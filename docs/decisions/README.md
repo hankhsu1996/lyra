@@ -1202,6 +1202,12 @@ the detail lives in the entry itself.
   branches' termination. Every process stays one coroutine; the two-kinds-of-process split was
   built, measured and rejected. Revises waiting-is-an-operation D4 and disable-scope-invalidation
   D2.
+- [a-process-stopping-only-at-its-loop-head-is-called](a-process-stopping-only-at-its-loop-head-is-called.md)
+  -- a stage rewrites MIR into MIR before any consumer reads it, and its first rewrite splits a
+  process that stops only at the head of its loop into a setup and a pass that the runtime's one
+  coroutine calls, so HIR and MIR as lowered keep one process shape and both backends compile no
+  coroutine for it. Splitting in one backend, two process kinds upstream, kept locals, one entry
+  answering three ways, and predicting a node's position are rejected.
 - [activation-disposition](activation-disposition.md) -- an activation has one authoritative
   disposition (Executing / Runnable / Blocked / Suspended(saved) / Terminal); a wait is a retainable
   pending capability distinct from where the activation is parked, supplied uniformly by each

@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir_transform/transform.hpp"
 
 namespace lyra::compiler {
 
@@ -150,8 +151,10 @@ auto SynthesizeDesignRoot(
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));
   }
-  RecordSemanticForm(*root_mir);
-  return *std::move(root_mir);
+  mir::CompilationUnit transformed =
+      mir_transform::Transform(*std::move(root_mir));
+  RecordSemanticForm(transformed);
+  return transformed;
 }
 
 }  // namespace lyra::compiler

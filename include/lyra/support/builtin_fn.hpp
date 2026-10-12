@@ -832,6 +832,13 @@ enum class BuiltinFn : std::uint16_t {
   kRegisterInitial,
   kRegisterTriggered,
   kRegisterFinal,
+  // The execution a process body runs as when its only stop is the wait at the
+  // head of its loop: built from the object the body belongs to, erased, and
+  // the addresses of its setup and its pass, and registered as any process
+  // body's execution is. A loop whose statements come before its stop is set
+  // up to its first pass, and one stopping first is set up to that stop.
+  kEnterReactionRunningFirst,
+  kEnterReactionStoppingFirst,
   // The extent a static initializer draws inside (LRM 18.14.1): entered before
   // the initializers a body runs and left on every way out of them, so a
   // randomization call made before any procedure starts has the generator the
@@ -1158,11 +1165,15 @@ enum class CallEnding : std::uint8_t {
 // owns and ends. The others answer with storage that already exists and that
 // the caller owns nothing of: the object the call acted on, handed back so an
 // access composes onto the call (a guard, LRM 11.3.5); or a part reached inside
-// that object, which may be written and descended into further.
+// that object, which may be written and descended into further. An entry may
+// also answer with an execution the engine drives (LRM 9.2), which a target
+// building values in its caller's storage builds there too, and which whoever
+// drives it takes from there rather than the caller ending it.
 enum class EntryAnswer : std::uint8_t {
   kNewValue,
   kTheReceiver,
   kPartOfTheReceiver,
+  kExecution,
 };
 
 // How an entry that reaches one part of the value it acts on names that part:

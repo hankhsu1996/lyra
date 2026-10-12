@@ -1,9 +1,9 @@
 # Scheduling
 
 A lyra simulation runs as a set of coroutines coordinated by a stratified event scheduler. Each
-SystemVerilog process -- `initial`, `always*`, `final` -- compiles to a C++ coroutine. The scheduler
-pulls coroutines from time-slot region queues and resumes them; a coroutine runs until it suspends,
-and lands on whichever queue its own `await_suspend` chose. Deferred effects (`<=` writes, `$strobe`
+SystemVerilog process -- `initial`, `always*`, `final` -- runs as a coroutine. The scheduler pulls
+coroutines from time-slot region queues and resumes them; a coroutine runs until it suspends, and
+lands on whichever queue its own `await_suspend` chose. Deferred effects (`<=` writes, `$strobe`
 prints) are not yields: the coroutine snapshots its inputs into a closure, hands the closure to the
 engine, and continues running. The engine invokes those closures when their owning region runs, and
 where the slot to run in is not yet knowable, what is handed over is an execution that finds it.
@@ -19,10 +19,14 @@ cancellation -- is the activation, defined in `activation.md`. This doc owns the
 and resumes activations; `activation.md` owns what an activation is. The scheduler holds an
 activation token (a payload-neutral handle) and never sees an activation's completion type.
 
-A process body -- and a task body, which may consume time -- compiles into a `Coroutine`. The
-scheduler holds the activation token and resumes the body; a `co_await` in the body suspends it
-again. Process state -- procedural locals, the implicit program counter -- lives in the coroutine
-frame, which the engine does not introspect.
+A process body -- and a task body, which may consume time -- runs as a `Coroutine`. The scheduler
+holds the activation token and resumes the body; a `co_await` in the body suspends it again. Process
+state -- procedural locals, the implicit program counter -- lives in the coroutine frame, which the
+engine does not introspect. A body that stops only at the head of its loop is not compiled as one:
+it is a setup and a pass, plain bodies that one coroutine of the runtime calls, and that coroutine
+is what the scheduler resumes, holding the wait between passes
+(`decisions/a-process-stopping-only-at-its-loop-head-is-called.md`). The engine sees one kind of
+execution either way.
 
 Every wait is part of that state too. It is built where what it waits for stops changing and enrols
 on what it watches for its whole life: once in the body's outermost block for a wait on storage that

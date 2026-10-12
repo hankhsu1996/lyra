@@ -1812,6 +1812,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRegisterInitial:
     case support::BuiltinFn::kRegisterTriggered:
     case support::BuiltinFn::kRegisterFinal:
+    case support::BuiltinFn::kEnterReactionRunningFirst:
+    case support::BuiltinFn::kEnterReactionStoppingFirst:
     case support::BuiltinFn::kEnterScopeStaticInit:
     case support::BuiltinFn::kEnterNamespaceStaticInit:
     case support::BuiltinFn::kLeaveStaticInit:
