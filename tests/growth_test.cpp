@@ -346,6 +346,15 @@ auto DepartedInWhatWasLeft(
   return departed;
 }
 
+// How a stage's time and its peak are named in a record.
+constexpr std::string_view kTimeOf = "time ";
+constexpr std::string_view kPeakOf = "peak ";
+
+// Whether `name` is something a run spent rather than something it left.
+auto IsSpent(std::string_view name) -> bool {
+  return name.starts_with(kTimeOf) || name.starts_with(kPeakOf);
+}
+
 // What the larger run spent beyond its proportion, per stage that ran alone.
 // These move with the machine.
 auto DepartedInWhatWasSpent(const Reading& small, const Reading& large)
@@ -356,7 +365,7 @@ auto DepartedInWhatWasSpent(const Reading& small, const Reading& large)
     const std::uint64_t took_before = TimeOf(small, stage);
     if (took >= kShortestTimedStageMicroseconds &&
         OutgrewProportion(took_before, took)) {
-      outgrew[std::format("time {}", stage)] = std::format(
+      outgrew[std::format("{}{}", kTimeOf, stage)] = std::format(
           "{} -> {}", Milliseconds(took_before), Milliseconds(took));
     }
     const auto before = small.stage_peak_bytes.find(stage);
@@ -364,7 +373,7 @@ auto DepartedInWhatWasSpent(const Reading& small, const Reading& large)
         before->second.has_value() &&
         *peak > *before->second + kPeakAllowanceBytes &&
         OutgrewProportion(*before->second, *peak)) {
-      outgrew[std::format("peak {}", stage)] =
+      outgrew[std::format("{}{}", kPeakOf, stage)] =
           std::format("{} -> {}", Mebibytes(*before->second), Mebibytes(*peak));
     }
   }
@@ -464,6 +473,12 @@ auto CheckGrowth(
         departed.at(name));
   }
   for (const std::string& name : against_record.no_longer_found) {
+    // A time or a peak recorded as owed is still owed on a run that stayed
+    // under the bound: whether one cost crosses it depends on the machine as
+    // much as on the cost, so it is the fix that takes its line out.
+    if (IsSpent(name)) {
+      continue;
+    }
     differs += std::format(
         "  recorded as departing and no longer does, so its line goes: {}\n",
         name);

@@ -597,7 +597,11 @@ specializations, not with instance count.
 
 - [ ] A block reaching its neighbour by a name indexed from its own index is compiled once per
       block, and lowering such a loop takes more than proportional time: twice the blocks is over
-      three times the time, held in the C++ path's growth record.
+      three times the time, held in both paths' growth records. Which blocks are one body is found
+      by comparing each block with every body found before it, so a loop whose blocks are all
+      distinct takes time in the square of its length; a block is its text and the values its
+      elaboration read as constants, and blocks agreeing on those are one body with nothing
+      compared.
 
 - [ ] What remains of the instance array on that same axis. The member and the construction
       statement no longer scale: `Child c[0:N-1]` is one member whose type carries the multiplicity

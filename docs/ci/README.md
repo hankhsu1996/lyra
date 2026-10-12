@@ -171,6 +171,12 @@ rule. A design is held to exactly what is listed for it: something new departing
 so does something listed that has stopped, until it goes. So the file only shrinks, and what is left
 in it is what that path still owes.
 
+A time or a peak is the exception to the second half. One step growing faster than its design,
+inside a stage whose other steps grow in proportion, can put the stage over the bound on one machine
+and under it on another, wherever those other steps run faster. So a listed time or peak that a run
+stayed under is still owed rather than gone, and the change that fixes the cost is the one that
+takes its line out. Something not listed that departs still fails the run.
+
 ## What an edit may cost
 
 A build after an edit makes again the units that now mean something else, and no others. The corpus

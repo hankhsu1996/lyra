@@ -89,6 +89,11 @@ published standard, and everything below follows from that.
     a second way of excusing a failure -- a skipped test, a tolerance widened to pass, an
     expectation edited to match.
 
+    The second half holds of what the code alone decides. A time or a peak memory depends on the
+    machine as well, so one machine can stay under a bound another crosses for the same cost; a
+    listed one that a run stayed under is still owed, and it is the change fixing the cost that
+    takes its line out. The bound is not widened, and one not listed that crosses it still fails.
+
 13. **What a design written elsewhere checks of itself is evidence, never the oracle.** Its
     testbench and its check were validated on the simulator its authors ran. A check that passes
     says a second tool agreed with that one; a check that fails says only that the two differ, and

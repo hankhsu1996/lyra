@@ -7,7 +7,9 @@
 # A design is held to exactly what is listed for it. Something new departing
 # fails the run, and so does something listed that has stopped, until it goes --
 # so this file only ever shrinks, which makes it the record of what a design's
-# size still costs on this path that it should not.
+# size still costs on this path that it should not. A time or a peak depends on
+# the machine as well, so one listed is owed even on a run that stayed under the
+# bound, and only the change fixing that cost takes its line out.
 instance_array: [bytes]
 loop_holding_a_sized_block:
   - bytes
