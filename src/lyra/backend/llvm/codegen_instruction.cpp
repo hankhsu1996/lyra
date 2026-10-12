@@ -721,7 +721,7 @@ auto CodeGenFunction::LowerBinary(
   const std::string entry = RuntimeSymbol(*domain, binary.op);
   // An operator's entry takes each operand as the value it is, and is told of
   // them what the realizations for its domain are told.
-  const Told told = ToldOf(*domain, binary.op);
+  const Told told = ToldOfAnOperator(*domain);
   std::vector<ArgAbi> arranged;
   std::vector<llvm::Value*> args;
   const auto crossing = [&](const lir::Operand& operand,

@@ -409,9 +409,10 @@ auto ToldOf(support::ValueDomain domain, support::BuiltinFn fn) -> Told;
 auto ToldOf(
     support::ValueDomain domain, WrapperKind wrapper, support::BuiltinFn fn)
     -> Told;
-// What the realization of an operator for `domain` is told. No table states
-// which domains realize an operator, so none is refused here.
-auto ToldOf(support::ValueDomain domain, lir::BinaryOp op) -> Told;
+// What the realization of an operator for `domain` is told, which is the same
+// for every operator. No table states which domains realize an operator, so
+// none is refused here.
+auto ToldOfAnOperator(support::ValueDomain domain) -> Told;
 
 // The symbol a runtime entry is published under. An operation realized per
 // value representation leads with that representation, so one library serves

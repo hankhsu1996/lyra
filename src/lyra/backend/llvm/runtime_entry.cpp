@@ -525,7 +525,7 @@ auto ToldOf(
           WrapperName(wrapper))));
 }
 
-auto ToldOf(support::ValueDomain domain, lir::BinaryOp) -> Told {
+auto ToldOfAnOperator(support::ValueDomain domain) -> Told {
   return ToldOfTheDomain(domain, ToldNothing{});
 }
 

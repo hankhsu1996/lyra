@@ -642,10 +642,10 @@ auto DeclaredRealizations() -> Realizations {
       state(
           symbol, Declared{
                       .operands = {},
-                      .told = ToldOf(domain, op),
+                      .told = ToldOfAnOperator(domain),
                       .answer_told = support::AnswerTold::kNothing,
                       .names_a_member_first = false,
-                      .own_array = array_at(ToldOf(domain, op), 0)});
+                      .own_array = array_at(ToldOfAnOperator(domain), 0)});
     }
   }
   return all;
