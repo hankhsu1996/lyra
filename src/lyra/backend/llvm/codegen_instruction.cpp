@@ -58,24 +58,6 @@ auto DeclarationOf(const lir::CompilationUnit& unit, lir::TypeId declared_by)
   return *std::move(declaration);
 }
 
-// The member storage a wrapper is where its owner lays it out, which is where
-// generated code can reach into it: a variable's cell and a net. A driver is a
-// handle on a contribution its net keeps, and a reference names storage a
-// caller lent, so neither is storage this side laid out.
-auto StorageLaidOutFor(WrapperKind kind)
-    -> std::optional<support::MemberStorageKind> {
-  switch (kind) {
-    case WrapperKind::kCell:
-      return support::MemberStorageKind::kObservableCell;
-    case WrapperKind::kNet:
-      return support::MemberStorageKind::kResolvedNet;
-    case WrapperKind::kDriver:
-    case WrapperKind::kRef:
-      return std::nullopt;
-  }
-  throw InternalError("llvm codegen: unknown capability wrapper");
-}
-
 // What a dynamic cast is told of where the wanted class sits relative to the
 // part it starts from (C++ ABI 2.9.7 `src2dst_offset`): nothing, so the cast
 // works it out from the descriptions.
@@ -220,15 +202,32 @@ auto CodeGenFunction::HeldAt(
       });
 }
 
+// A cell holding an integral value as its own bytes is read where they lie, and
+// a net of one through the address it keeps of what it shows, since that is
+// its own value or another object's. Anything else hands its contents out
+// through its own access.
 auto CodeGenFunction::ContentsOf(
     support::ValueDomain domain, WrapperKind kind, llvm::Value* wrapper)
     -> llvm::Value* {
-  if (const std::optional<support::MemberStorageKind> laid_out =
-          StorageLaidOutFor(kind)) {
-    if (const std::optional<llvm::Value*> held =
-            HeldAt(wrapper, {.kind = *laid_out, .domain = domain})) {
-      return *held;
-    }
+  switch (kind) {
+    case WrapperKind::kCell:
+      if (const std::optional<llvm::Value*> held = HeldAt(
+              wrapper, {.kind = support::MemberStorageKind::kObservableCell,
+                        .domain = domain})) {
+        return *held;
+      }
+      break;
+    case WrapperKind::kNet:
+      if (const std::optional<std::uint64_t> at =
+              runtime::ShownThroughOffsetOf(domain)) {
+        return builder_.CreateLoad(
+            module_->Types().Ptr(), builder_.CreateConstInBoundsGEP1_64(
+                                        builder_.getInt8Ty(), wrapper, *at));
+      }
+      break;
+    case WrapperKind::kDriver:
+    case WrapperKind::kRef:
+      break;
   }
   const std::array<llvm::Value*, 1> args{wrapper};
   return CallEntry(

@@ -35,7 +35,9 @@ void BoundMembers::Bind(ErasedReference& member, const ErasedReference& bound) {
   if (bound_later) {
     return;
   }
-  Move(Following(member), nullptr, bound);
+  // A member that already names storage -- a net's, which names its own value
+  // until its driver's turn -- has waits through it, which follow.
+  Move(Following(member), member.ReportsTo(), bound);
 }
 
 auto BoundMembers::Forced(const ErasedReference& member) const -> bool {

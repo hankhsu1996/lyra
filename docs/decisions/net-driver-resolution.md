@@ -155,7 +155,12 @@ the design has attached, which is exactly what a global Seal barrier provides.
    is settled once per net, by when a driver first gives a value: decisions 3 and 5 put every
    attachment and every join before that. Measured on a design of about 1,500 units whose input
    ports are nets: resolving each one-driver net on every drive was 24.6% of the instructions of a
-   clock.
+   clock. Where that driver carries the whole of a variable, another net, or a port declared as a
+   variable, of the net's own type, unchanged, the driver's value is that object's, so the net shows
+   the object where it lies and the drive runs nothing after its turn at time zero, by the same
+   binding an input port declared as a variable shares its source's storage with (LRM 23.3.3, 4.8).
+   The drive states the object while the design resolves, so the kind stays a fact of the built
+   design.
 
 ## Consequences
 

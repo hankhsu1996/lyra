@@ -90,17 +90,12 @@ void NetName::Occupy(support::StrengthLevel level) {
   occupied_ |= LevelBit(level);
 }
 
-void RequireUnsettled(NetDecision decision) {
-  switch (decision) {
-    case NetDecision::kUnsettled:
-      return;
-    case NetDecision::kOneDriver:
-    case NetDecision::kResolution:
-      break;
+void RequireUnsettled(const std::optional<NetDecision>& decision) {
+  if (decision.has_value()) {
+    throw InternalError(
+        "ResolvedNet: every driver attaches while the design resolves, which "
+        "is before the net settles what decides it");
   }
-  throw InternalError(
-      "ResolvedNet: every driver attaches while the design resolves, which is "
-      "before the net settles what decides it");
 }
 
 void NetName::SettleReaches() {

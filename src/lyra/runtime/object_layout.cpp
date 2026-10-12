@@ -1,7 +1,6 @@
 #include "lyra/runtime/object_layout.hpp"
 
 #include <bit>
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -301,8 +300,9 @@ auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
       return ReadAtOver<ActivationValueCell, AdmitsVariable>(storage.domain);
     case MemberStorageKind::kObservableCell:
       return ReadAtOver<Var, AdmitsVariable>(storage.domain);
+    // A net shows its own value or another object's, and keeps the address of
+    // whichever it is.
     case MemberStorageKind::kResolvedNet:
-      return ReadAtOver<ResolvedNet, AdmitsNet>(storage.domain);
     // A history answers a read with one of the values it keeps, which its own
     // access picks.
     case MemberStorageKind::kSampledHistory:
@@ -316,6 +316,22 @@ auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
       return std::nullopt;
   }
   throw InternalError("object layout: unknown member storage kind");
+}
+
+auto ShownThroughOffsetOf(ValueDomain domain) -> std::optional<std::uint64_t> {
+  if (!support::IsIntegralLayout(domain)) {
+    return std::nullopt;
+  }
+  return WithValueClass(domain, []<typename T>() -> std::uint64_t {
+    if constexpr (AdmitsNet<T>::value && BitAddressed<T>) {
+      const ResolvedNet<T> net;
+      return std::uint64_t{
+          std::bit_cast<std::uintptr_t>(net.ShownThrough()) -
+          std::bit_cast<std::uintptr_t>(&net)};
+    } else {
+      return NotRealized<std::uint64_t>();
+    }
+  });
 }
 
 // The Itanium ABI names a class's table `_ZTV` followed by the class's mangled

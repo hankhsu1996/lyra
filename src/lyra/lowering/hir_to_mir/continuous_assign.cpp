@@ -8,6 +8,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -85,6 +86,38 @@ auto StateContinuousDriver(
                   {whole}, unit.builtins.void_type))}};
 }
 
+// The entry telling a driver that what it gives is the whole of the object
+// `source` names, unchanged: a variable, a net, or an input port declared as a
+// variable, named whole, of the type the drive writes. A net this drive alone
+// decides then shows that object where it lies, which only the built design
+// says (LRM 23.3.3 has a port connection be a continuous assignment, and
+// LRM 4.8 leaves open when its target sees the update). Any other source is
+// evaluated and given.
+auto CarriedObjectEntry(
+    const hir::StructuralScope& scope, const hir::Expr& source,
+    hir::TypeId written_type) -> std::optional<support::BuiltinFn> {
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&source.data);
+  const auto* named = primary == nullptr
+                          ? nullptr
+                          : std::get_if<hir::RoutedValueRef>(&primary->data);
+  if (named == nullptr || source.type != written_type) return std::nullopt;
+  return std::visit(
+      Overloaded{
+          [](const hir::VariableStorage&) -> std::optional<support::BuiltinFn> {
+            return support::BuiltinFn::kDriveFromVariable;
+          },
+          [](const hir::NetStorage&) -> std::optional<support::BuiltinFn> {
+            return support::BuiltinFn::kDriveFromNet;
+          },
+          [](const hir::ReferenceStorage&)
+              -> std::optional<support::BuiltinFn> {
+            return support::BuiltinFn::kDriveFromReference;
+          },
+          [](const hir::BorrowedObjectStorage&)
+              -> std::optional<support::BuiltinFn> { return std::nullopt; }},
+      hir::CellOf(scope.routes.values.Get(named->id).leaf).storage);
+}
+
 }  // namespace
 
 // LRM 10.3.2 (continuous assignment) and LRM 9.2.2.2.1 (always_comb) share a
@@ -104,7 +137,9 @@ auto StateContinuousDriver(
 // install independent drivers the net resolves. A place that names only part
 // of a net drives only that part, because the rest of its driver's
 // contribution stays at the resolution identity and keeps deferring to whoever
-// drives it. Every other place is written where it is named.
+// drives it. Every other place is written where it is named. A drive of a whole
+// net from the whole of an object of its type may find at its turn that the
+// net shows that object, and then ends there.
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
@@ -135,6 +170,10 @@ auto LowerContinuousDrive(
   // root decides it: the source may have named a whole net or a part of one,
   // and a part of a net is still a net.
   std::vector<std::optional<AttachedDriver>> drivers;
+  // The driver of a whole net this drive gives the whole of an object to,
+  // which is told so as the design is built and asked at its turn whether its
+  // net shows that object.
+  std::optional<AttachedDriver> carrying;
   {
     mir::Block& resolve_block = *resolve_frame.current_block;
     auto named = destination(resolve_frame);
@@ -171,6 +210,33 @@ auto LowerContinuousDrive(
                   mir::MakeAssignExpr(unit.builtins, handle, attach))});
       drivers.emplace_back(driver);
     });
+
+    const auto* whole = std::get_if<AccessPath>(&named->form);
+    const std::optional<support::BuiltinFn> carried =
+        whole == nullptr || !whole->descent.empty() ||
+                !drivers.front().has_value()
+            ? std::nullopt
+            : CarriedObjectEntry(
+                  lowerer.HirScope(), source, named->source_type);
+    if (carried.has_value()) {
+      auto object = lowerer.LowerAccessPath(source, resolve_frame);
+      if (!object) return std::unexpected(std::move(object.error()));
+      const mir::ExprId place = OwnerPlace(*object);
+      const mir::TypeId pointer_type = unit.types.Intern(
+          mir::Type{mir::PointerType{
+              .pointee = resolve_block.exprs.Get(place).type,
+              .ownership = mir::PointerOwnership::kBorrowed}});
+      carrying = drivers.front();
+      resolve_block.AppendStmt(
+          mir::ExprStmt{
+              .expr = resolve_block.exprs.Add(
+                  mir::MakeDriveFromCallExpr(
+                      DriverAccess(
+                          unit, resolve_frame, resolve_block, *carrying),
+                      resolve_block.exprs.Add(
+                          mir::MakeAddressOfExpr(place, pointer_type)),
+                      *carried, unit.builtins.void_type))});
+    }
   }
 
   // One evaluation: the right-hand side read once and each place written its
@@ -231,6 +297,25 @@ auto LowerContinuousDrive(
       BuildValueChangeWaitStmt(body_block, body_frame, lowerer, sensitivity);
   if (!waited) return std::unexpected(std::move(waited.error()));
   body_block.AppendStmt(*std::move(waited));
+
+  // A drive carrying the whole of an object first asks, at its turn, whether
+  // its net now shows that object, which leaves it nothing to do.
+  if (carrying.has_value()) {
+    mir::Block& entry = code.Body();
+    mir::Block leave;
+    leave.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+    const mir::ExprId shows = entry.exprs.Add(
+        mir::MakeShowSourceCallExpr(
+            DriverAccess(
+                unit, ctor_frame.WithBindings(&bindings).WithBlock(&entry),
+                entry, *carrying),
+            unit.builtins.machine_bool));
+    entry.AppendStmt(
+        mir::IfStmt{
+            .condition = shows,
+            .then_scope = entry.child_scopes.Add(std::move(leave)),
+            .else_scope = std::nullopt});
+  }
 
   const mir::BlockId body_scope_id =
       code.Body().child_scopes.Add(std::move(body_block));

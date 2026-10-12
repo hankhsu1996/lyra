@@ -36,6 +36,13 @@ auto LayoutOf(support::DeclaredMemberStorage storage) -> support::ObjectLayout;
 auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
     -> std::optional<std::uint64_t>;
 
+// Where a net of an integral value of `domain` keeps the address of the value
+// it shows, which is its own or that of the object its one driver carries. A
+// target reads the net's value through the address it finds at this offset.
+// Nothing for a net whose value its own access hands out.
+auto ShownThroughOffsetOf(support::ValueDomain domain)
+    -> std::optional<std::uint64_t>;
+
 // The constant that tells the library an integral type's numbers, as a target
 // stating one lays it out: what the whole occupies, the symbol of the table
 // the library defines for it, which the constant opens with the address of

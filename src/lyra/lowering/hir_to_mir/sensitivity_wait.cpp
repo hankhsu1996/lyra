@@ -150,7 +150,7 @@ namespace {
 // reached out of the unit already holds a pointer and composing one from the
 // cell would send that case through a dereference and back; so does whatever
 // is found through a handle or a reference. A cell reached as itself answers
-// with its address.
+// with its address, and a net with what it shows its value through.
 template <typename Lowerer>
 auto BuildObservablePtrExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
@@ -182,7 +182,7 @@ auto BuildObservablePtrExpr(
         },
         sealed);
   };
-  return std::visit(
+  const mir::ExprId reached = std::visit(
       Overloaded{
           [&](const hir::ValueTarget& sealed) -> mir::ExprId {
             return sealed_cell(sealed);
@@ -191,6 +191,27 @@ auto BuildObservablePtrExpr(
             return BodyVariableSource(lowerer, frame, block, var);
           }},
       entry.cell);
+  // A net shows its own value or the object its one driver carries, which
+  // only the built design says, so a wait on it is enrolled through what it
+  // shows its value by, as a wait through a reference is.
+  const auto* pointer =
+      unit.types.Get(block.exprs.Get(reached).type).As<mir::PointerType>();
+  if (pointer == nullptr ||
+      !unit.types.Get(pointer->pointee).Is<mir::ResolvedType>()) {
+    return reached;
+  }
+  const mir::ExprId net = block.exprs.Add(
+      mir::Expr{
+          .data = mir::DerefExpr{.pointer = reached},
+          .type = pointer->pointee});
+  return block.exprs.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{.target = support::BuiltinFn::kNetReportsTo},
+                  .arguments = {net}},
+          .type = mir::ErasedPointer(unit.types)});
 }
 
 // Which part of a place a leaf watches, as a wait's trigger and a report take

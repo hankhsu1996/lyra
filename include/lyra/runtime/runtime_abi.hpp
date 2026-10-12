@@ -2203,6 +2203,55 @@ auto lyra_rt_tuple_driver_open_for_write(void* driver, void* out) -> void*;
 auto lyra_rt_union_driver_open_for_write(void* driver, void* out) -> void*;
 auto lyra_rt_unpackedarray_driver_open_for_write(void* driver, void* out)
     -> void*;
+// A driver told, as the design is built, that what it gives is the whole of a
+// variable's cell, of a net, or of what an input port's reference names, of its
+// own net's type, and asked at its turn at time zero whether its net shows that
+// object from then on.
+void lyra_rt_logic8_driver_drive_from_variable(void* driver, void* cell);
+void lyra_rt_logic16_driver_drive_from_variable(void* driver, void* cell);
+void lyra_rt_logic32_driver_drive_from_variable(void* driver, void* cell);
+void lyra_rt_logic64_driver_drive_from_variable(void* driver, void* cell);
+void lyra_rt_logic_wide_driver_drive_from_variable(void* driver, void* cell);
+void lyra_rt_tuple_driver_drive_from_variable(void* driver, void* cell);
+void lyra_rt_union_driver_drive_from_variable(void* driver, void* cell);
+void lyra_rt_unpackedarray_driver_drive_from_variable(void* driver, void* cell);
+void lyra_rt_logic8_driver_drive_from_net(void* driver, void* net);
+void lyra_rt_logic16_driver_drive_from_net(void* driver, void* net);
+void lyra_rt_logic32_driver_drive_from_net(void* driver, void* net);
+void lyra_rt_logic64_driver_drive_from_net(void* driver, void* net);
+void lyra_rt_logic_wide_driver_drive_from_net(void* driver, void* net);
+void lyra_rt_tuple_driver_drive_from_net(void* driver, void* net);
+void lyra_rt_union_driver_drive_from_net(void* driver, void* net);
+void lyra_rt_unpackedarray_driver_drive_from_net(void* driver, void* net);
+void lyra_rt_logic8_driver_drive_from_reference(void* driver, void* reference);
+void lyra_rt_logic16_driver_drive_from_reference(void* driver, void* reference);
+void lyra_rt_logic32_driver_drive_from_reference(void* driver, void* reference);
+void lyra_rt_logic64_driver_drive_from_reference(void* driver, void* reference);
+void lyra_rt_logic_wide_driver_drive_from_reference(
+    void* driver, void* reference);
+void lyra_rt_tuple_driver_drive_from_reference(void* driver, void* reference);
+void lyra_rt_union_driver_drive_from_reference(void* driver, void* reference);
+void lyra_rt_unpackedarray_driver_drive_from_reference(
+    void* driver, void* reference);
+auto lyra_rt_logic8_driver_show_source(void* driver) -> bool;
+auto lyra_rt_logic16_driver_show_source(void* driver) -> bool;
+auto lyra_rt_logic32_driver_show_source(void* driver) -> bool;
+auto lyra_rt_logic64_driver_show_source(void* driver) -> bool;
+auto lyra_rt_logic_wide_driver_show_source(void* driver) -> bool;
+auto lyra_rt_tuple_driver_show_source(void* driver) -> bool;
+auto lyra_rt_union_driver_show_source(void* driver) -> bool;
+auto lyra_rt_unpackedarray_driver_show_source(void* driver) -> bool;
+// What a wait on a net enrols on, as the word a place crosses in: the net's own
+// value or the object its one driver carries, reached through the member the
+// net shows its value by.
+auto lyra_rt_logic8_net_reports_to(void* net) -> void*;
+auto lyra_rt_logic16_net_reports_to(void* net) -> void*;
+auto lyra_rt_logic32_net_reports_to(void* net) -> void*;
+auto lyra_rt_logic64_net_reports_to(void* net) -> void*;
+auto lyra_rt_logic_wide_net_reports_to(void* net) -> void*;
+auto lyra_rt_tuple_net_reports_to(void* net) -> void*;
+auto lyra_rt_union_net_reports_to(void* net) -> void*;
+auto lyra_rt_unpackedarray_net_reports_to(void* net) -> void*;
 // The whole of what a write in progress was opened on, designated within it and
 // built in `out`.
 auto lyra_rt_designate_whole(void* write, void* out) -> void*;

@@ -90,7 +90,10 @@ void ErasedReference::Report(
             current_runtime().WakeParkedOn(
                 *variable, part.Join(within), change);
           },
-          [](GcObject* object) { object->PublishChange(); }},
+          [](GcObject* object) { object->PublishChange(); },
+          // What a net shows moves as the net resolves, and the net tells its
+          // own waits then; nothing writes it through a reference.
+          [](HeldByNet) {}},
       holder);
 }
 
@@ -101,7 +104,8 @@ auto ErasedReference::ReportsTo() const -> Observable* {
           [](VariableCell* variable) -> Observable* { return variable; },
           [](GcObject* object) -> Observable* {
             return &object->EventSource();
-          }},
+          },
+          [](HeldByNet held) -> Observable* { return held.net; }},
       holder);
 }
 
@@ -112,7 +116,7 @@ void ErasedReference::DriveContinuously() const {
           [](VariableCell* variable) {
             current_runtime().DriveContinuously(*variable);
           },
-          [](GcObject*) {}},
+          [](GcObject*) {}, [](HeldByNet) {}},
       holder);
 }
 

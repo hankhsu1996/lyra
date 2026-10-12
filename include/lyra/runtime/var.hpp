@@ -606,13 +606,23 @@ void StoreInto(T& storage, const T& value) {
   storage = value;
 }
 
+// The value a net shows of its own, held by that net (LRM 6.5). Only the net
+// changes it -- resolving, taking its one driver's value, or a forced one --
+// and the net tells its own waits when it does, so a wait reached through a
+// reference to it enrols on the net, and a write through one never happens.
+struct HeldByNet {
+  Observable* net;
+};
+
 // What holds the storage a reference names, which is what a write through the
 // reference is a write of (LRM 13.5.2): a variable something may wait on, the
-// object a class property belongs to (LRM 9.4.2), or nothing anyone is told
-// about -- a variable of a function, which nothing can wait on (LRM 13.4.4), a
-// closure's own copy of a variable, which no other process reaches, and an
-// element an index named none of.
-using StorageHolder = std::variant<std::monostate, VariableCell*, GcObject*>;
+// object a class property belongs to (LRM 9.4.2), a net, which nothing writes
+// through a reference, or nothing anyone is told about -- a variable of a
+// function, which nothing can wait on (LRM 13.4.4), a closure's own copy of a
+// variable, which no other process reaches, and an element an index named none
+// of.
+using StorageHolder =
+    std::variant<std::monostate, VariableCell*, GcObject*, HeldByNet>;
 
 // A reference in a form that names no type: where a value lies, and what holds
 // that storage. What a reference does that does not depend on the type of the
@@ -650,8 +660,11 @@ struct ErasedReference {
     if (VariableCell* const* variable = std::get_if<VariableCell*>(&holder)) {
       return (*variable)->Watched();
     }
-    GcObject* const* object = std::get_if<GcObject*>(&holder);
-    return object != nullptr && (*object)->Watched();
+    if (GcObject* const* object = std::get_if<GcObject*>(&holder)) {
+      return (*object)->Watched();
+    }
+    const HeldByNet* net = std::get_if<HeldByNet>(&holder);
+    return net != nullptr && net->net->HasMembers();
   }
 
   // The rest are defined in the library's own source: none depends on the type
@@ -765,8 +778,8 @@ class Ref {
   // 10.6.2), by the operations a variable itself answers: the reference is a
   // member of a scope standing for what its connection drives, and the
   // assignment gives it storage of its own to name until it ends.
-  auto BeginTakeover(std::int64_t level) const -> std::int64_t;
-  auto DriveTakeover(
+  [[nodiscard]] auto BeginTakeover(std::int64_t level) const -> std::int64_t;
+  [[nodiscard]] auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& new_val) const
       -> bool;
   void EndTakeover(std::int64_t level) const;
@@ -835,7 +848,8 @@ class Ref {
               throw SimulationError(
                   "a sampled value of a class property lent by reference is "
                   "not yet supported");
-            }},
+            },
+            [&](HeldByNet) -> const T& { return Storage(); }},
         erased_.holder);
   }
 
