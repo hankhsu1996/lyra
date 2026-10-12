@@ -726,6 +726,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "reference_reports_to",
           .declaration = RuntimeFunction("ReportsTo")};
+    case BuiltinFn::kNetReportsTo:
+      return {
+          .name = "reports_to", .declaration = RuntimeFunction("ReportsTo")};
     case BuiltinFn::kBindMember:
       return {
           .name = "bind_member", .declaration = RuntimeFunction("BindMember")};
@@ -735,6 +738,16 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("DrivesContinuously")};
     case BuiltinFn::kAttachDriver:
       return {.name = "attach_driver", .declaration = Method{"AttachDriver"}};
+    case BuiltinFn::kDriveFromVariable:
+      return {
+          .name = "drive_from_variable", .declaration = Method{"DriveFrom"}};
+    case BuiltinFn::kDriveFromNet:
+      return {.name = "drive_from_net", .declaration = Method{"DriveFrom"}};
+    case BuiltinFn::kDriveFromReference:
+      return {
+          .name = "drive_from_reference", .declaration = Method{"DriveFrom"}};
+    case BuiltinFn::kShowSource:
+      return {.name = "show_source", .declaration = Method{"ShowSource"}};
     case BuiltinFn::kNetJoin:
       return {.name = "net_join", .declaration = Method{"Join"}};
     case BuiltinFn::kBeginTakeover:

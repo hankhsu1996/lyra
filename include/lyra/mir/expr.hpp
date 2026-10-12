@@ -965,6 +965,35 @@ struct Expr {
       .type = driver_type};
 }
 
+// `driver.DriveFrom(object)` -- states that what a driver gives is the whole of
+// `object`, a borrowed pointer to a variable's cell or to a net; `entry` says
+// which of the two it is.
+[[nodiscard]] inline auto MakeDriveFromCallExpr(
+    ExprId driver, ExprId object, support::BuiltinFn entry, TypeId void_type)
+    -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = entry, .receiver = driver},
+              .arguments = {object}},
+      .type = void_type};
+}
+
+// `driver.ShowSource()` -- the driver's turn at time zero, yielding whether its
+// net shows the object the driver carries from here on.
+[[nodiscard]] inline auto MakeShowSourceCallExpr(
+    ExprId driver, TypeId bool_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kShowSource,
+                      .receiver = driver},
+              .arguments = {}},
+      .type = bool_type};
+}
+
 // `net.Join(other, here, there, width)` -- states that `width` positions of
 // `net` starting at `here`, and the same many of `other` starting at `there`,
 // are one physical net whose contributions resolve together (LRM 23.3.3.7,

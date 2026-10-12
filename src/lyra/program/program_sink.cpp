@@ -420,6 +420,76 @@ void BindWriteEntries(const auto& add) {
       &lyra_rt_union_driver_open_for_write);
   add("lyra_rt_unpackedarray_driver_open_for_write",
       &lyra_rt_unpackedarray_driver_open_for_write);
+  add("lyra_rt_logic8_driver_drive_from_variable",
+      &lyra_rt_logic8_driver_drive_from_variable);
+  add("lyra_rt_logic16_driver_drive_from_variable",
+      &lyra_rt_logic16_driver_drive_from_variable);
+  add("lyra_rt_logic32_driver_drive_from_variable",
+      &lyra_rt_logic32_driver_drive_from_variable);
+  add("lyra_rt_logic64_driver_drive_from_variable",
+      &lyra_rt_logic64_driver_drive_from_variable);
+  add("lyra_rt_logic_wide_driver_drive_from_variable",
+      &lyra_rt_logic_wide_driver_drive_from_variable);
+  add("lyra_rt_tuple_driver_drive_from_variable",
+      &lyra_rt_tuple_driver_drive_from_variable);
+  add("lyra_rt_union_driver_drive_from_variable",
+      &lyra_rt_union_driver_drive_from_variable);
+  add("lyra_rt_unpackedarray_driver_drive_from_variable",
+      &lyra_rt_unpackedarray_driver_drive_from_variable);
+  add("lyra_rt_logic8_driver_drive_from_net",
+      &lyra_rt_logic8_driver_drive_from_net);
+  add("lyra_rt_logic16_driver_drive_from_net",
+      &lyra_rt_logic16_driver_drive_from_net);
+  add("lyra_rt_logic32_driver_drive_from_net",
+      &lyra_rt_logic32_driver_drive_from_net);
+  add("lyra_rt_logic64_driver_drive_from_net",
+      &lyra_rt_logic64_driver_drive_from_net);
+  add("lyra_rt_logic_wide_driver_drive_from_net",
+      &lyra_rt_logic_wide_driver_drive_from_net);
+  add("lyra_rt_tuple_driver_drive_from_net",
+      &lyra_rt_tuple_driver_drive_from_net);
+  add("lyra_rt_union_driver_drive_from_net",
+      &lyra_rt_union_driver_drive_from_net);
+  add("lyra_rt_unpackedarray_driver_drive_from_net",
+      &lyra_rt_unpackedarray_driver_drive_from_net);
+  add("lyra_rt_logic8_driver_drive_from_reference",
+      &lyra_rt_logic8_driver_drive_from_reference);
+  add("lyra_rt_logic16_driver_drive_from_reference",
+      &lyra_rt_logic16_driver_drive_from_reference);
+  add("lyra_rt_logic32_driver_drive_from_reference",
+      &lyra_rt_logic32_driver_drive_from_reference);
+  add("lyra_rt_logic64_driver_drive_from_reference",
+      &lyra_rt_logic64_driver_drive_from_reference);
+  add("lyra_rt_logic_wide_driver_drive_from_reference",
+      &lyra_rt_logic_wide_driver_drive_from_reference);
+  add("lyra_rt_tuple_driver_drive_from_reference",
+      &lyra_rt_tuple_driver_drive_from_reference);
+  add("lyra_rt_union_driver_drive_from_reference",
+      &lyra_rt_union_driver_drive_from_reference);
+  add("lyra_rt_unpackedarray_driver_drive_from_reference",
+      &lyra_rt_unpackedarray_driver_drive_from_reference);
+  add("lyra_rt_logic8_net_reports_to", &lyra_rt_logic8_net_reports_to);
+  add("lyra_rt_logic16_net_reports_to", &lyra_rt_logic16_net_reports_to);
+  add("lyra_rt_logic32_net_reports_to", &lyra_rt_logic32_net_reports_to);
+  add("lyra_rt_logic64_net_reports_to", &lyra_rt_logic64_net_reports_to);
+  add("lyra_rt_logic_wide_net_reports_to", &lyra_rt_logic_wide_net_reports_to);
+  add("lyra_rt_tuple_net_reports_to", &lyra_rt_tuple_net_reports_to);
+  add("lyra_rt_union_net_reports_to", &lyra_rt_union_net_reports_to);
+  add("lyra_rt_unpackedarray_net_reports_to",
+      &lyra_rt_unpackedarray_net_reports_to);
+  add("lyra_rt_logic8_driver_show_source", &lyra_rt_logic8_driver_show_source);
+  add("lyra_rt_logic16_driver_show_source",
+      &lyra_rt_logic16_driver_show_source);
+  add("lyra_rt_logic32_driver_show_source",
+      &lyra_rt_logic32_driver_show_source);
+  add("lyra_rt_logic64_driver_show_source",
+      &lyra_rt_logic64_driver_show_source);
+  add("lyra_rt_logic_wide_driver_show_source",
+      &lyra_rt_logic_wide_driver_show_source);
+  add("lyra_rt_tuple_driver_show_source", &lyra_rt_tuple_driver_show_source);
+  add("lyra_rt_union_driver_show_source", &lyra_rt_union_driver_show_source);
+  add("lyra_rt_unpackedarray_driver_show_source",
+      &lyra_rt_unpackedarray_driver_show_source);
   add("lyra_rt_designate_whole", &lyra_rt_designate_whole);
   add("lyra_rt_dynarray_designate_element",
       &lyra_rt_dynarray_designate_element);

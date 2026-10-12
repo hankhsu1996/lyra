@@ -358,6 +358,9 @@ auto TupleRefSampledLoad(void* reference, void* out) -> void* {
             throw SimulationError(
                 "a sampled value of a class property lent by reference is not "
                 "yet supported");
+          },
+          [&](HeldByNet) -> void* {
+            return Emplace(out, Read<value::RuntimeTuple>(lent.storage));
           }},
       lent.holder);
 }
@@ -600,6 +603,11 @@ auto WideRefSampledLoad(void* reference, std::int64_t width, void* out)
             throw SimulationError(
                 "a sampled value of a class property lent by reference is not "
                 "yet supported");
+          },
+          [&](HeldByNet) -> void* {
+            const value::WideAt<T::kDomain> held = WideLentAt<T>(lent, width);
+            std::memcpy(out, held.bytes, held.ByteSize());
+            return out;
           }},
       lent.holder);
 }
@@ -710,6 +718,33 @@ auto DriverOf(void* driver) -> Driver<T>& {
 template <NetValue T>
 auto OpenDriverWrite(void* driver, void* out) -> void* {
   return std::construct_at(static_cast<OpenWrite*>(out), DriverOf<T>(driver));
+}
+
+// A driver told the object it carries the whole of, and asked at its turn
+// whether its net shows that object.
+template <NetValue T>
+void DriveFromVariable(void* driver, void* cell) {
+  DriverOf<T>(driver).DriveFrom(static_cast<Var<T>*>(cell));
+}
+
+template <NetValue T>
+void DriveFromNet(void* driver, void* net) {
+  DriverOf<T>(driver).DriveFrom(&NetOf<T>(net));
+}
+
+template <NetValue T>
+void DriveFromReference(void* driver, void* reference) {
+  DriverOf<T>(driver).DriveFrom(static_cast<Ref<T>*>(reference));
+}
+
+template <NetValue T>
+auto NetReportsTo(void* net) -> void* {
+  return ReportsTo(NetOf<T>(net)).Word();
+}
+
+template <NetValue T>
+auto ShowSource(void* driver) -> bool {
+  return DriverOf<T>(driver).ShowSource();
 }
 
 // The process a `process` handle names (LRM 9.7), recovered from the erased
@@ -1812,6 +1847,9 @@ using lyra::runtime::DelayReal;
 using lyra::runtime::DesignateElement;
 using lyra::runtime::DesignationAt;
 using lyra::runtime::DiagnosticDispatcher;
+using lyra::runtime::DriveFromNet;
+using lyra::runtime::DriveFromReference;
+using lyra::runtime::DriveFromVariable;
 using lyra::runtime::DriveOnForeignStack;
 using lyra::runtime::DriverOf;
 using lyra::runtime::Emplace;
@@ -1848,6 +1886,7 @@ using lyra::runtime::MakeForeignExecution;
 using lyra::runtime::MakeSharedCell;
 using lyra::runtime::NamedEvent;
 using lyra::runtime::NetOf;
+using lyra::runtime::NetReportsTo;
 using lyra::runtime::NumberAt;
 using lyra::runtime::ObjectDefinition;
 using lyra::runtime::Observable;
@@ -1897,6 +1936,7 @@ using lyra::runtime::SampledHistory;
 using lyra::runtime::Scope;
 using lyra::runtime::ShareClosure;
 using lyra::runtime::SharedPointer;
+using lyra::runtime::ShowSource;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
@@ -6838,6 +6878,133 @@ auto lyra_rt_union_driver_open_for_write(void* driver, void* out) -> void* {
 auto lyra_rt_unpackedarray_driver_open_for_write(void* driver, void* out)
     -> void* {
   return OpenDriverWrite<RuntimeUnpackedArray>(driver, out);
+}
+
+void lyra_rt_logic8_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Logic8>(driver, cell);
+}
+void lyra_rt_logic16_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Logic16>(driver, cell);
+}
+void lyra_rt_logic32_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Logic32>(driver, cell);
+}
+void lyra_rt_logic64_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<Logic64>(driver, cell);
+}
+void lyra_rt_logic_wide_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<LogicWide>(driver, cell);
+}
+void lyra_rt_tuple_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<RuntimeTuple>(driver, cell);
+}
+void lyra_rt_union_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<RuntimeUnion>(driver, cell);
+}
+void lyra_rt_unpackedarray_driver_drive_from_variable(
+    void* driver, void* cell) {
+  DriveFromVariable<RuntimeUnpackedArray>(driver, cell);
+}
+void lyra_rt_logic8_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Logic8>(driver, net);
+}
+void lyra_rt_logic16_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Logic16>(driver, net);
+}
+void lyra_rt_logic32_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Logic32>(driver, net);
+}
+void lyra_rt_logic64_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<Logic64>(driver, net);
+}
+void lyra_rt_logic_wide_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<LogicWide>(driver, net);
+}
+void lyra_rt_tuple_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<RuntimeTuple>(driver, net);
+}
+void lyra_rt_union_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<RuntimeUnion>(driver, net);
+}
+void lyra_rt_unpackedarray_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<RuntimeUnpackedArray>(driver, net);
+}
+void lyra_rt_logic8_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<Logic8>(driver, reference);
+}
+void lyra_rt_logic16_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<Logic16>(driver, reference);
+}
+void lyra_rt_logic32_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<Logic32>(driver, reference);
+}
+void lyra_rt_logic64_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<Logic64>(driver, reference);
+}
+void lyra_rt_logic_wide_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<LogicWide>(driver, reference);
+}
+void lyra_rt_tuple_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<RuntimeTuple>(driver, reference);
+}
+void lyra_rt_union_driver_drive_from_reference(void* driver, void* reference) {
+  DriveFromReference<RuntimeUnion>(driver, reference);
+}
+void lyra_rt_unpackedarray_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<RuntimeUnpackedArray>(driver, reference);
+}
+auto lyra_rt_logic8_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Logic8>(net);
+}
+auto lyra_rt_logic16_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Logic16>(net);
+}
+auto lyra_rt_logic32_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Logic32>(net);
+}
+auto lyra_rt_logic64_net_reports_to(void* net) -> void* {
+  return NetReportsTo<Logic64>(net);
+}
+auto lyra_rt_logic_wide_net_reports_to(void* net) -> void* {
+  return NetReportsTo<LogicWide>(net);
+}
+auto lyra_rt_tuple_net_reports_to(void* net) -> void* {
+  return NetReportsTo<RuntimeTuple>(net);
+}
+auto lyra_rt_union_net_reports_to(void* net) -> void* {
+  return NetReportsTo<RuntimeUnion>(net);
+}
+auto lyra_rt_unpackedarray_net_reports_to(void* net) -> void* {
+  return NetReportsTo<RuntimeUnpackedArray>(net);
+}
+auto lyra_rt_logic8_driver_show_source(void* driver) -> bool {
+  return ShowSource<Logic8>(driver);
+}
+auto lyra_rt_logic16_driver_show_source(void* driver) -> bool {
+  return ShowSource<Logic16>(driver);
+}
+auto lyra_rt_logic32_driver_show_source(void* driver) -> bool {
+  return ShowSource<Logic32>(driver);
+}
+auto lyra_rt_logic64_driver_show_source(void* driver) -> bool {
+  return ShowSource<Logic64>(driver);
+}
+auto lyra_rt_logic_wide_driver_show_source(void* driver) -> bool {
+  return ShowSource<LogicWide>(driver);
+}
+auto lyra_rt_tuple_driver_show_source(void* driver) -> bool {
+  return ShowSource<RuntimeTuple>(driver);
+}
+auto lyra_rt_union_driver_show_source(void* driver) -> bool {
+  return ShowSource<RuntimeUnion>(driver);
+}
+auto lyra_rt_unpackedarray_driver_show_source(void* driver) -> bool {
+  return ShowSource<RuntimeUnpackedArray>(driver);
 }
 
 auto lyra_rt_designate_whole(void* write, void* out) -> void* {

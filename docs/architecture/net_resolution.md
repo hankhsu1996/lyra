@@ -127,7 +127,15 @@ scope.
     name reaches. Which kind a net is, is settled per net over the elaborated design, once every
     driver has attached and every connection has joined, and never where a unit is compiled. Under a
     procedural continuous assignment the driver's contribution is kept beneath what the net shows,
-    and is what the net shows again once released (LRM 10.6.2).
+    and is what the net shows again once released (LRM 10.6.2). Where that one driver carries the
+    whole of a variable, another net, or a port declared as a variable, of the net's own type,
+    unchanged, the contribution is that object's value, so the net shows the object where it lies, a
+    wait on the net is a wait on the object, and nothing runs to carry it (LRM 23.3.3, 4.8). It
+    shows its own undriven value until the driver's turn at time zero, so the first value is a
+    change as any driver's first value is; a procedural continuous assignment puts it back on its
+    own storage, which never reaches the object; and a net that shows another net shows whatever
+    that one comes to show. A net names what it shows the way a port declared as a variable names
+    its source, so the two follow binding and forcing by one rule.
 
 ## Boundary to Adjacent Layers
 
@@ -242,7 +250,10 @@ of the same fold.
 A single-driver wire `assign w = e;` has one contribution; resolving one contribution yields that
 contribution's value, so `w` tracks `e`. What `w` shows is the N=1 reading of the general model, and
 because no fold changes a lone contribution, `w` holds that contribution as its value instead of
-resolving it (LRM 6.5, 6.6.1).
+resolving it (LRM 6.5, 6.6.1). Where `e` is the whole of a variable of `w`'s type, written
+`assign w = v;` or as the connection of an input port written with no data type, that contribution
+is `v`'s value, so `w` shows `v` where it lies and the assignment runs nothing after its turn at
+time zero.
 
 A multiply-driven net `assign w = e1; assign w = e2;` together with a child output connected to `w`
 has three contributions; the wire/tri resolver combines them per its truth table, yielding `x` where

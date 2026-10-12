@@ -372,6 +372,9 @@ enum class BuiltinFn : std::uint16_t {
   // property belongs to (LRM 13.5.2, 9.4.2) -- as an erased pointer, the form
   // an object's event source takes too.
   kReferenceReportsTo,
+  // The same for a wait on a net: whatever the net shows its value through,
+  // which is its own value or the object its one driver carries.
+  kNetReportsTo,
   // Binding a member that owns no storage to what its connection drives it
   // with (LRM 23.3.3): the member names that storage from then on, and is
   // recorded as bound from whatever member the bound reference came from.
@@ -386,6 +389,18 @@ enum class BuiltinFn : std::uint16_t {
   // attaches rather than restated on every update, because it is a property of
   // the source and not of the value it puts on the net.
   kAttachDriver,
+  // Stating, as the design is built, that what a driver gives is the whole of a
+  // variable, a net, or an input port declared as a variable, of its net's own
+  // type, unchanged: a `Driver` method taking the variable's cell, the net, or
+  // the port's reference. A net that driver alone decides shows that object
+  // where it lies (LRM 23.3.3, 4.8).
+  kDriveFromVariable,
+  kDriveFromNet,
+  kDriveFromReference,
+  // A driver's turn at time zero (LRM 4.9.1): a `Driver` method answering
+  // whether its net shows the object the driver carries from here on, which
+  // leaves the drive nothing to do.
+  kShowSource,
   // Joining two nets into one resolution (LRM 23.3.3.7): a `ResolvedNet`
   // method taking the other net, after which every driver of either is a
   // contribution to the same fold at the strength it drives at, and both nets

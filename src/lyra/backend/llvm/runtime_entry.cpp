@@ -18,7 +18,6 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
-#include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -274,8 +273,9 @@ constexpr std::array kInstalls{
         .wrapper = WrapperKind::kCell,
         .domains = kWideIntegral,
         .told = ToldHeldWidth{.after = 1}}};
-// A cell and a net hold the bytes of a value no wider than a word where
-// generated code reads them, so neither has an entry reading one.
+// A cell holds the bytes of a value no wider than a word where generated code
+// reads them, and a net the address of such bytes, so neither has an entry
+// reading one.
 constexpr std::array kLoads{
     ThroughWrapper{
         .wrapper = WrapperKind::kCell,
@@ -285,6 +285,11 @@ constexpr std::array kLoads{
         .domains = kAggregateNets | DomainSet{Domain::kLogicWide}},
     ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
     ThroughWrapper{.wrapper = WrapperKind::kRef, .domains = kVariableValues}};
+// What a driver is told of the object it carries, and asked at its turn.
+constexpr std::array kDrivesFromAnObject{
+    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues}};
+constexpr std::array kNetsWaitedOn{
+    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues}};
 constexpr std::array kArmings{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
     ThroughWrapper{.wrapper = WrapperKind::kRef, .domains = kVariableValues}};
@@ -1506,6 +1511,18 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kStore:
     case support::BuiltinFn::kOpenForWrite:
       return NamedByWrapper{.realized = kWholeWrites};
+    // A driver carrying the whole of an object is told so, and asked at its
+    // turn whether its net now shows that object; the driver it acts on names
+    // the entry.
+    case support::BuiltinFn::kDriveFromVariable:
+    case support::BuiltinFn::kDriveFromNet:
+    case support::BuiltinFn::kDriveFromReference:
+    case support::BuiltinFn::kShowSource:
+      return NamedByWrapper{.realized = kDrivesFromAnObject};
+    // Where a net keeps the member it shows its value through depends on the
+    // value's type, so the net's own representation names the entry.
+    case support::BuiltinFn::kNetReportsTo:
+      return NamedByWrapper{.realized = kNetsWaitedOn};
 
     // A driver is attached by the net that issues it, a fold is installed on
     // the net that applies it, and a join takes two nets that resolve in the

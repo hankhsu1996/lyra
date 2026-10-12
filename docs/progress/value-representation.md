@@ -200,7 +200,10 @@ that true of a packed value. These make it true of what holds one.
       names that other's storage, and no assignment runs.
 - [x] A net with one driver once the design is built shows that driver's value with nothing
       resolved, where its net type contributes nothing of its own and no connection joined it to
-      another net. The connection or assignment driving it still runs as a process.
+      another net. Where that driver is a connection or an assignment from the whole of a variable,
+      another net, or an input port declared as a variable, of the net's type, the net shows that
+      object and nothing runs; a wait on the net is a wait on the object, and a force on the net is
+      retargeted as one on a port declared as a variable is.
 - [ ] Every other connection moves only the range its source's write reached.
 - [x] A force on a sink retargets its reference and a release restores it, together with every port
       the sink is handed on to and every wait on them.
