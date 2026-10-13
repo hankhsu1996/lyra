@@ -205,6 +205,10 @@ auto LowerProceduralContinuousAssignStmt(
         "(LRM 10.6)");
   }
   const auto& assign = pa.assignment.as<slang::ast::AssignmentExpression>();
+  if (auto refused = RefuseTakingOverAnEvent(*assign.left().type, span);
+      !refused) {
+    return std::unexpected(std::move(refused.error()));
+  }
   auto target_or = proc.LowerExpr(assign.left(), frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   auto source_or = proc.LowerExpr(assign.right(), frame);
@@ -231,6 +235,9 @@ auto LowerProceduralContinuousEndStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::ProceduralDeassignStatement& pd, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
+  if (auto refused = RefuseTakingOverAnEvent(*pd.lvalue.type, span); !refused) {
+    return std::unexpected(std::move(refused.error()));
+  }
   auto target_or = proc.LowerExpr(pd.lvalue, frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   return hir::Stmt{

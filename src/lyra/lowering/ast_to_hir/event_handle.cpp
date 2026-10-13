@@ -26,4 +26,16 @@ auto RefuseReadingAnEventAsAValue(
       "reading an event as a value (LRM 15.5.5.3) is not yet supported");
 }
 
+auto RefuseTakingOverAnEvent(
+    const slang::ast::Type& target, diag::SourceSpan span)
+    -> diag::Result<void> {
+  if (!target.isEvent()) {
+    return {};
+  }
+  return diag::Fail(
+      span, diag::DiagCode::kUnsupportedStatementForm,
+      "a procedural continuous assignment to an event (LRM 10.6, 15.5.5) is "
+      "not yet supported");
+}
+
 }  // namespace lyra::lowering::ast_to_hir
