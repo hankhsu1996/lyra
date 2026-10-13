@@ -65,6 +65,10 @@ below LIR, at LIR-to-LLVM.
   value, or one whose value was ended before -- is an initialization, and every other write is a
   store into the value already there. Both are stated, so nothing below works out which a write is
   from the shape of its place, as SIL states `store [init]` beside `store [assign]`.
+- Who ends a value a pointer owns: a uniquely owning pointer is an owned value with no copy, moved
+  wherever it is handed on -- into a slot, to a caller, to a callee -- and ended by its last holder,
+  which ends what it points at and gives the storage back. Storage of dynamic duration is allocated
+  holding nothing, initialized there, given back if the initialization departs, and only then owned.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
 - The value-aggregate selector vocabulary: which subvalue of a view a step names -- the one member

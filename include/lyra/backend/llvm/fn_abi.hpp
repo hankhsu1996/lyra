@@ -67,23 +67,19 @@ struct QueueTypeArg {
 using TypeArg =
     std::variant<TypeConstantArg, TypeExtentArg, ElementTypeArg, QueueTypeArg>;
 
-// What a callee takes ahead of the arguments a call states. The host's
-// `operator new` is asked for the size of a complete object of the type it
-// allocates, an entry making storage for the words of a value wider than a
-// word is told how wide the values held there are, and one making storage for
-// a tuple or a fixed-size unpacked array is told its type.
+// What a callee takes ahead of the arguments a call states. An entry making
+// storage for the words of a value wider than a word is told how wide the
+// values held there are, and one making storage for a tuple or a fixed-size
+// unpacked array is told its type.
 struct NoImplicitArg {};
-struct CompleteObjectSizeArg {
-  lir::TypeId of;
-};
 struct WidthMetadataArg {
   lir::TypeId of;
 };
 struct TypeMetadataArg {
   lir::TypeId of;
 };
-using ImplicitArg = std::variant<
-    NoImplicitArg, CompleteObjectSizeArg, WidthMetadataArg, TypeMetadataArg>;
+using ImplicitArg =
+    std::variant<NoImplicitArg, WidthMetadataArg, TypeMetadataArg>;
 
 // One argument of a call as it is arranged, the role of rustc's `ArgAbi`: the
 // machine type its value crosses at, and what crosses with it.

@@ -126,32 +126,6 @@ auto OpensObjectWrite(
          types.Get(result_type).Is<mir::ObjectWriteType>();
 }
 
-// Whether this call brings an object into existence. A construction names the
-// type it builds and a managed reference is what a handle to an object is
-// (LRM 8.3), so the two together are the whole of the question. Which class it
-// builds is a second question, answered from the same type where the class is
-// needed.
-auto BuildsObject(
-    const mir::TypePool& types, const mir::CallExpr& call,
-    mir::TypeId result_type) -> bool {
-  return std::holds_alternative<mir::Construct>(call.callee) &&
-         types.Get(result_type).Is<mir::ManagedRefType>();
-}
-
-// Whether this call builds an instance of the design hierarchy. The owning
-// pointer the object tree takes is built for nothing else, so a construction
-// answering one is the whole of the question.
-auto BuildsScope(
-    const mir::TypePool& types, const mir::CallExpr& call,
-    mir::TypeId result_type) -> bool {
-  if (!std::holds_alternative<mir::Construct>(call.callee)) {
-    return false;
-  }
-  const auto* pointer = types.Get(result_type).As<mir::PointerType>();
-  return pointer != nullptr &&
-         pointer->ownership == mir::PointerOwnership::kUnique;
-}
-
 // The operators the executable IR realizes directly, which is every operator a
 // MIR node carries: one a library performs is lifted to a call where the node
 // would have been built, so none reaches here.
@@ -457,10 +431,15 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
             .type = type,
             .kind = lir::LocalKind::kParam});
     fn_.params.push_back(value);
+    // An argument with no copy is handed over rather than lent, so the body
+    // owns it from here.
+    if (unit_->Types().Get(type).IsMoveOnly()) {
+      OpenScope(ValueEnd{.value = value});
+    }
     // A parameter is a declared local whose first write is the incoming
-    // argument, so it binds exactly as any declaration does. The caller only
-    // lends the argument, so a slot owning its value takes a copy, which the
-    // body may then write (LRM 13.5.1) and ends on its way out.
+    // argument, so it binds exactly as any declaration does. An argument the
+    // caller only lends is copied into a slot owning its value, which the body
+    // may then write (LRM 13.5.1) and ends on its way out.
     if (const std::optional<lir::ValueId> owning =
             BindLocal(param, type, lir::Use{.value = value})) {
       OpenScope(SlotEnd{.slot = *owning});
@@ -711,6 +690,12 @@ auto FunctionLowerer::UnwindEntryAt(std::size_t index)
           [&](const EndPassedOn&) -> diag::Result<lir::BlockId> {
             return outer();
           },
+          [&](const StorageRelease& release) -> diag::Result<lir::BlockId> {
+            return owed_then_outward([&]() -> diag::Result<void> {
+              EmitScopeDrop(release);
+              return {};
+            });
+          },
           // The region's own test decides whether it claims the departure, so
           // this only hands the departure to it.
           [&](const RegionScope& region) -> diag::Result<lir::BlockId> {
@@ -868,6 +853,16 @@ void FunctionLowerer::EmitScopeDrop(const SlotEnd& end) {
   MarkStorage(lir::StorageInstr::Op::kDead, end.slot);
 }
 
+void FunctionLowerer::EmitScopeDrop(const StorageRelease& release) {
+  Emit(
+      unit_->TranslateType(unit_->Mir().builtins.void_type),
+      lir::CallInstr{
+          .target =
+              lir::DynamicStorageTarget{
+                  .op = lir::DynamicStorageTarget::Op::kDeallocate},
+          .args = {release.storage}});
+}
+
 auto FunctionLowerer::Initialize(lir::Place place, lir::Operand value)
     -> lir::Operand {
   const bool owned =
@@ -913,19 +908,28 @@ auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
       if (end == nullptr || end->value != use->value) {
         continue;
       }
-      scopes_[i].kind = EndPassedOn{};
-      // What was built while the value was owed goes on ending it, which is
-      // right for the calls made then; what is built from here on must not,
-      // so this scope and every one inside it build theirs afresh.
-      for (std::size_t j = i; j < scopes_.size(); ++j) {
-        scopes_[j].unwind_entry = std::nullopt;
-      }
+      PassEndAt(i);
       return value;
     }
+  }
+  if (unit_->Types().Get(type).IsMoveOnly()) {
+    throw InternalError(
+        "mir_to_lir: a value with no copy is handed on by a body that does not "
+        "own it -- please report this as a bug");
   }
   return HandOn(Emit(
       type, lir::CallInstr{
                 .target = lir::CopyValueTarget{}, .args = {std::move(value)}}));
+}
+
+void FunctionLowerer::PassEndAt(std::size_t index) {
+  scopes_[index].kind = EndPassedOn{};
+  // What was built while the end was owed goes on running it, which is right
+  // for the calls made then; what is built from here on must not, so this
+  // scope and every one inside it build theirs afresh.
+  for (std::size_t j = index; j < scopes_.size(); ++j) {
+    scopes_[j].unwind_entry = std::nullopt;
+  }
 }
 
 auto FunctionLowerer::CompletionCellType(lir::TypeId payload) -> lir::TypeId {
@@ -1500,6 +1504,10 @@ auto FunctionLowerer::RunCleanupsDownTo(std::size_t depth)
               return {};
             },
             [](const EndPassedOn&) -> diag::Result<void> { return {}; },
+            [&](const StorageRelease& release) -> diag::Result<void> {
+              EmitScopeDrop(release);
+              return {};
+            },
             // Leaving a region, or a cleanup's own code, by an ordinary way out
             // owes it nothing: a region's handler is only for a departure.
             [](const RegionScope&) -> diag::Result<void> { return {}; },
@@ -2366,6 +2374,9 @@ auto FunctionLowerer::LowerPlace(
           [&](const mir::CallExpr&) {
             return names_no_place("a call's result");
           },
+          [&](const mir::NewExpr&) {
+            return names_no_place("the owner of storage just allocated");
+          },
           [&](const mir::AddressOfExpr&) {
             return names_no_place("an address of storage");
           },
@@ -2411,7 +2422,13 @@ auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
   // the expression that produced the place.
   const lir::TypeId type = unit_->TranslateType(block.exprs.Get(id).type);
   if (!unit_->Types().Get(type).IsAddressOnly()) {
-    return LowerExpr(block, id);
+    // A value with no copy is handed to the callee, which owns it from there;
+    // every other value is lent for the call.
+    auto value = LowerExpr(block, id);
+    if (!value || !unit_->Types().Get(type).IsMoveOnly()) {
+      return value;
+    }
+    return HandOn(*std::move(value));
   }
   auto place = LowerPlace(block, id, Reach::kWhole);
   if (!place) {
@@ -2493,50 +2510,73 @@ auto FunctionLowerer::ObjectAddress(
               unit_->Mir().types, block.exprs.Get(reaches).type)));
 }
 
-auto FunctionLowerer::LowerObjectConstruction(
-    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+auto FunctionLowerer::LowerNew(
+    const mir::Block& block, const mir::NewExpr& allocation, mir::TypeId owner)
     -> diag::Result<lir::Operand> {
-  // A `new` allocates the object, runs its constructor on it, and only then
-  // hands it to the handle that owns it from there, as `std::shared_ptr` is
-  // given what a C++ `new` built.
-  const lir::TypeId handle_type = unit_->TranslateType(type);
-  const lir::TypeId object_type =
-      unit_->Types().Get(handle_type).Get<lir::ManagedRefType>().pointee;
-  auto allocated = EmitCallTo(
-      lir::ConstructTarget{}, {},
-      unit_->Types().Intern(
-          lir::Type{lir::PointerType{
-              .pointee = object_type,
-              .ownership = lir::PointerOwnership::kUnique,
-              .mutability = lir::Mutability::kMutable}}));
-  if (!allocated) {
-    return allocated;
+  // The storage is allocated as `operator new` allocates it, and what it is to
+  // hold is then evaluated into it, so a way out before that is done gives the
+  // storage back; only once it holds that is the owner made, as
+  // `std::unique_ptr` or `std::shared_ptr` is given what a C++ `new` built.
+  const mir::Expr& initializer = block.exprs.Get(allocation.initializer);
+  const lir::Operand storage = Emit(
+      AddressType(unit_->TranslateType(initializer.type)),
+      lir::CallInstr{
+          .target =
+              lir::DynamicStorageTarget{
+                  .op = lir::DynamicStorageTarget::Op::kAllocate},
+          .args = {}});
+  const std::size_t released_at = scopes_.size();
+  OpenScope(StorageRelease{.storage = storage});
+  if (auto initialized =
+          InitializeAllocated(block, allocation.initializer, storage);
+      !initialized) {
+    return std::unexpected(std::move(initialized.error()));
   }
-  const lir::Operand object = *std::move(allocated);
+  PassEndAt(released_at);
+  return EmitCallTo(
+      lir::ConstructTarget{}, {storage}, unit_->TranslateType(owner));
+}
 
-  // A construction carries every argument its constructor takes -- the source
+auto FunctionLowerer::InitializeAllocated(
+    const mir::Block& block, mir::ExprId id, const lir::Operand& storage)
+    -> diag::Result<void> {
+  const mir::Expr& initializer = block.exprs.Get(id);
+  // A value that has a value apart from where it lies is computed and moved
+  // in, as clang stores a scalar or an aggregate into the new storage.
+  if (!unit_->Types()
+           .Get(unit_->TranslateType(initializer.type))
+           .IsAddressOnly()) {
+    auto value = LowerExpr(block, id);
+    if (!value) {
+      return std::unexpected(std::move(value.error()));
+    }
+    Initialize(StorageAt(storage), *std::move(value));
+    return {};
+  }
+  // An object has none, so its constructor is entered on the storage. A
+  // construction carries every argument its constructor takes -- the source
   // wrote the call, so the front end bound it against the declaration and
   // filled in whatever it left to a default. So there is nothing to establish
   // about the arguments here, and nothing to read about the class beyond how
   // its constructor is named.
-  std::vector<lir::Operand> args;
-  args.reserve(call.arguments.size());
-  for (const mir::ExprId argument : call.arguments) {
+  const auto* construction = std::get_if<mir::CallExpr>(&initializer.data);
+  if (construction == nullptr ||
+      !std::holds_alternative<mir::Construct>(construction->callee)) {
+    return Unsupported(
+        "mir_to_lir: an object is initialized only by its constructor");
+  }
+  std::vector<lir::Operand> arguments;
+  arguments.reserve(construction->arguments.size());
+  for (const mir::ExprId argument : construction->arguments) {
     auto lowered = LowerArgument(block, argument);
     if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
-    args.push_back(*std::move(lowered));
+    arguments.push_back(*std::move(lowered));
   }
-  if (auto entered = EnterConstructor(
-          mir::ClassOfObject(
-              unit_->Mir().types,
-              unit_->Mir().types.Get(type).Get<mir::ManagedRefType>().pointee),
-          object, std::move(args));
-      !entered) {
-    return std::unexpected(std::move(entered.error()));
-  }
-  return EmitCallTo(lir::ConstructTarget{}, {object}, handle_type);
+  return EnterConstructor(
+      mir::ClassOfObject(unit_->Mir().types, initializer.type), storage,
+      std::move(arguments));
 }
 
 auto FunctionLowerer::EnterConstructor(
@@ -2565,38 +2605,6 @@ auto FunctionLowerer::EnterConstructor(
     return std::unexpected(std::move(entered.error()));
   }
   return {};
-}
-
-auto FunctionLowerer::LowerScopeConstruction(
-    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-    -> diag::Result<lir::Operand> {
-  std::vector<lir::Operand> arguments;
-  arguments.reserve(call.arguments.size());
-  for (const mir::ExprId argument : call.arguments) {
-    auto lowered = LowerArgument(block, argument);
-    if (!lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-    arguments.push_back(*std::move(lowered));
-  }
-  // The storage is allocated as for a value built with `new`, and the class's
-  // constructor then runs on it with every argument, building each part from
-  // the base up.
-  auto begun =
-      EmitCallTo(lir::ConstructTarget{}, {}, unit_->TranslateType(type));
-  if (!begun) {
-    return begun;
-  }
-  const lir::Operand scope = *std::move(begun);
-  if (auto entered = EnterConstructor(
-          mir::ClassOfObject(
-              unit_->Mir().types,
-              unit_->Mir().types.Get(type).Get<mir::PointerType>().pointee),
-          scope, std::move(arguments));
-      !entered) {
-    return std::unexpected(std::move(entered.error()));
-  }
-  return scope;
 }
 
 auto FunctionLowerer::LowerReferenceBind(
@@ -2740,16 +2748,6 @@ auto FunctionLowerer::LowerCall(
     return LowerObjectWriteOpening(block, call, type);
   }
 
-  // Bringing an object into existence and initializing it are two operations
-  // over one heap the runtime owns: it answers an object whose properties hold
-  // their storage's default, and the class's own constructor -- a body of this
-  // program, reached like any other -- is what runs on it (LRM 8.7).
-  if (BuildsObject(unit_->Mir().types, call, type)) {
-    return LowerObjectConstruction(block, call, type);
-  }
-  if (BuildsScope(unit_->Mir().types, call, type)) {
-    return LowerScopeConstruction(block, call, type);
-  }
   // Reached where nothing awaits the execution -- a process handed to the
   // scheduler. Such a body finishes with no value, so there is nothing for it
   // to complete into; the awaiting form supplies that storage itself. A library
@@ -3576,6 +3574,9 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             }
             return LowerCall(block, call, type);
           },
+          [&](const mir::NewExpr& allocation) -> diag::Result<lir::Operand> {
+            return LowerNew(block, allocation, type);
+          },
           [&](const mir::CastExpr& cast) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, cast.operand);
             if (!operand) {
@@ -3593,9 +3594,18 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                   unit_->TranslateType(type),
                   lir::HandleCastInstr{.operand = *std::move(operand)});
             }
-            return Emit(
-                unit_->TranslateType(type),
-                lir::CastInstr{.operand = *std::move(operand)});
+            // A value with no copy read as another type is the one value,
+            // whose end goes with it to the new type.
+            const lir::TypeId cast_to = unit_->TranslateType(type);
+            if (!unit_->Types().Get(cast_to).IsMoveOnly()) {
+              return Emit(
+                  cast_to, lir::CastInstr{.operand = *std::move(operand)});
+            }
+            const lir::Operand moved = Emit(
+                cast_to,
+                lir::CastInstr{.operand = HandOn(*std::move(operand))});
+            OpenScope(ValueEnd{.value = std::get<lir::Use>(moved).value});
+            return moved;
           },
           [&](const mir::DynamicCastExpr& cast) -> diag::Result<lir::Operand> {
             auto operand = LowerExpr(block, cast.operand);

@@ -169,10 +169,10 @@ auto CodeGenModule::FunctionTypeOf(
   for (const lir::TypeId param : params) {
     mapped.push_back(types_.Map(param));
   }
-  // A body answering a value its caller will own builds that value in storage
-  // the caller gives, handed over last, and answers with it -- the shape every
+  // A body answering a value that lies in storage builds it in storage the
+  // caller gives, handed over last, and answers with it -- the shape every
   // runtime entry answering one has.
-  if (unit_->types.Get(result).IsOwnedValue()) {
+  if (types_.LiesInStorage(result)) {
     mapped.push_back(types_.Ptr());
   }
   return llvm::FunctionType::get(types_.Map(result), mapped, false);
@@ -283,14 +283,6 @@ auto CodeGenModule::BuildCallArgs(
   auto led = std::visit(
       Overloaded{
           [](const NoImplicitArg&) -> diag::Result<void> { return {}; },
-          [&](const CompleteObjectSizeArg& allocated) -> diag::Result<void> {
-            auto size = CompleteObjectSize(allocated.of);
-            if (!size) {
-              return std::unexpected(std::move(size.error()));
-            }
-            args.push_back(llvm::ConstantInt::get(count, *size));
-            return {};
-          },
           [&](const WidthMetadataArg& held) -> diag::Result<void> {
             args.push_back(WidthArg(types_.RequiredIntegralShapeOf(held.of)));
             return {};
@@ -987,6 +979,10 @@ auto CodeGenModule::RecordOf(lir::TypeId type)
 
 auto CodeGenModule::CompleteObjectSize(lir::TypeId type)
     -> diag::Result<std::uint64_t> {
+  // A value no declaration lays out takes what its type lays it out in.
+  if (!unit_->types.Get(type).Declaration().has_value()) {
+    return types_.LayoutOf(type).size;
+  }
   auto whole = WholeLayOut(DeclarationOf(type));
   if (!whole) {
     return std::unexpected(std::move(whole.error()));
@@ -1034,11 +1030,10 @@ auto CodeGenModule::MemberLayout(
 // A member holding no value of the program's holds none.
 auto CodeGenModule::ValuesHeldByMember(lir::TypeId type) const
     -> std::optional<lir::TypeId> {
-  const lir::Type& member = unit_->types.Get(type);
-  if (member.IsOwnedValue()) {
+  if (types_.LiesInStorage(type)) {
     return type;
   }
-  return ValuesHeldBy(member);
+  return ValuesHeldBy(unit_->types.Get(type));
 }
 
 // A value held as its bytes has none until one is copied in, which is how the

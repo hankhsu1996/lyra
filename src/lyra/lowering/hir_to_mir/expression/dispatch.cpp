@@ -7,7 +7,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/expr.hpp"
@@ -28,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -169,9 +169,8 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, a, result_type);
           },
           [&](const hir::ClassNewExpr& n) -> diag::Result<mir::Expr> {
-            // `new` allocates a managed object and runs its constructor: a
-            // construction whose result type (a managed reference) names what
-            // to build; the actuals flow to the constructor's formals.
+            // `new` allocates an object and initializes it by its constructor,
+            // to which the actuals flow; the handle owns it from there.
             std::vector<mir::ExprId> args;
             args.reserve(n.arguments.size() + 1);
             // A class declared in a structural scope is a type of that scope's
@@ -189,12 +188,13 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
               args.push_back(
                   frame.current_block->exprs.Add(*std::move(arg_or)));
             }
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = mir::Construct{},
-                        .arguments = std::move(args)},
-                .type = result_type};
+            const mir::TypeId object_type =
+                *mir::AllocatedType(lowerer.Owner().Unit().types, result_type);
+            return mir::MakeNewExpr(
+                frame.current_block->exprs.Add(
+                    mir::MakeObjectConstructionExpr(
+                        object_type, std::move(args))),
+                result_type);
           },
           [&](const hir::TaggedUnionExpr& t) -> diag::Result<mir::Expr> {
             return LowerHirTaggedUnionExpr(

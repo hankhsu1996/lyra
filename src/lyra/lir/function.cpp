@@ -45,6 +45,16 @@ auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
   throw InternalError("lir: unknown control-effect operation");
 }
 
+auto DynamicStorageOpName(DynamicStorageTarget::Op op) -> std::string_view {
+  switch (op) {
+    case DynamicStorageTarget::Op::kAllocate:
+      return "allocate";
+    case DynamicStorageTarget::Op::kDeallocate:
+      return "deallocate";
+  }
+  throw InternalError("lir: unknown dynamic-storage operation");
+}
+
 auto StorageOpName(StorageInstr::Op op) -> std::string_view {
   switch (op) {
     case StorageInstr::Op::kLive:
@@ -105,6 +115,7 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
           },
           [](const EndValueTarget&) { return CallEnding::kReturns; },
           [](const CopyValueTarget&) { return CallEnding::kReturns; },
+          [](const DynamicStorageTarget&) { return CallEnding::kReturns; },
           [](const ControlEffectTarget& effect) {
             switch (effect.op) {
               case ControlEffectTarget::Op::kTakeDepartureIfDue:

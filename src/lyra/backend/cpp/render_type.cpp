@@ -610,18 +610,20 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
   };
   unit.types.Get(type_id).Visit(
       Overloaded{
-          // An owning pointer is made by the function that allocates and
-          // constructs the pointee, `std::make_unique<T>(args)`. A borrowed
-          // pointer points at storage that already exists and is never
-          // constructed.
+          // A shared pointer is made by the function that allocates and
+          // constructs what it holds, `std::make_shared<T>(args)`. Storage a
+          // unique pointer or a class handle owns is allocated by a
+          // new-expression, and a borrowed pointer points at storage that
+          // already exists, so neither is constructed.
           [&](const mir::PointerType& p) {
             switch (p.ownership) {
-              case mir::PointerOwnership::kUnique:
-                Write(out, "std::make_unique<", CppType(unit, p.pointee), ">");
-                return;
               case mir::PointerOwnership::kShared:
                 Write(out, "std::make_shared<", CppType(unit, p.pointee), ">");
                 return;
+              case mir::PointerOwnership::kUnique:
+                throw InternalError(
+                    "backend::cpp: what a unique pointer owns is allocated by "
+                    "a new-expression, so none is constructed");
               case mir::PointerOwnership::kBorrowed:
                 throw InternalError(
                     "backend::cpp: a borrowed pointer is bound to storage "
@@ -629,11 +631,10 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
             }
             throw InternalError("backend::cpp: unknown PointerOwnership");
           },
-          [&](const mir::ManagedRefType& m) {
-            Write(
-                out, "lyra::runtime::GcNew<",
-                CppClassRef(unit, mir::ClassOfObject(unit.types, m.pointee)),
-                ">");
+          [](const mir::ManagedRefType&) {
+            throw InternalError(
+                "backend::cpp: the object a class handle owns is allocated by "
+                "a new-expression, so no handle is constructed");
           },
           // A sequence is built by the library function that takes its
           // elements, since the container type takes no element list.
@@ -686,6 +687,15 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::LoopBlocksType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },
       });
+}
+
+void WriteOne(TargetText& out, const CppNewOwner& owner) {
+  const mir::Type& type = owner.of.Unit().types.Get(owner.of.Type());
+  if (type.Is<mir::ManagedRefType>()) {
+    out += "lyra::runtime::AdoptObject";
+    return;
+  }
+  Write(out, owner.of);
 }
 
 void WriteOne(TargetText& out, const CppTupleComponents& components) {

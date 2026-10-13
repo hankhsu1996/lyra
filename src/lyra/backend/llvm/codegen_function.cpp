@@ -24,6 +24,8 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/runtime/object_layout.hpp"
@@ -141,14 +143,14 @@ auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
 }
 
 auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
-  if (!module_->Unit().types.Get(type).IsOwnedValue()) {
+  if (!module_->Types().LiesInStorage(type)) {
     return nullptr;
   }
   return LaidOutStorage(module_->Types().LayoutOf(type));
 }
 
 auto CodeGenFunction::NeedsHeapStorage(lir::TypeId type) const -> bool {
-  return module_->Unit().types.Get(type).IsOwnedValue() &&
+  return module_->Types().LiesInStorage(type) &&
          module_->Types().LayoutOf(type).size > value::kMaxInlineBytes;
 }
 
@@ -261,6 +263,28 @@ auto CodeGenFunction::BuildInto(
 
 auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
     -> diag::Result<void> {
+  // A pointer owning what it points at ends that where it lies and gives the
+  // storage back, as Rust drops the value in a `Box` and then frees it.
+  const lir::Type& ended = module_->Unit().types.Get(type);
+  if (ended.IsMoveOnly()) {
+    const lir::TypeId pointee = *ended.Pointee();
+    if (!module_->Types().LiesInStorage(pointee)) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedExpressionForm,
+          "llvm codegen: ending an object a unique pointer owns is not yet "
+          "supported");
+    }
+    if (auto inner = EndValue(pointee, value); !inner) {
+      return inner;
+    }
+    auto size = module_->CompleteObjectSize(pointee);
+    if (!size) {
+      return std::unexpected(std::move(size.error()));
+    }
+    builder_.CreateCall(
+        module_->SizedOperatorDelete(), {value, builder_.getInt64(*size)});
+    return {};
+  }
   if (module_->Types().LayoutOf(type).ends_with_nothing_to_do) {
     return {};
   }
@@ -271,6 +295,11 @@ auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
 auto CodeGenFunction::CopyValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
+  if (module_->Unit().types.Get(type).IsMoveOnly()) {
+    throw InternalError(
+        "llvm codegen: a value with no copy is copied -- please report this "
+        "as a bug");
+  }
   const std::array<llvm::Value*, 2> args{value, out};
   auto copied =
       module_->EmitLifecycle(builder_, type, LifecycleStep::kCopy, args);
@@ -463,9 +492,9 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             if (!value) {
               return std::unexpected(std::move(value.error()));
             }
-            // An owned answer is built in the storage the caller gave, which
-            // the body answers with as an entry does.
-            if (module_->Unit().types.Get(fn_->result_type).IsOwnedValue()) {
+            // An answer lying in storage is built in the storage the caller
+            // gave, which the body answers with as an entry does.
+            if (module_->Types().LiesInStorage(fn_->result_type)) {
               llvm::Value* out = value_->getArg(value_->arg_size() - 1);
               auto relocated = RelocateValue(fn_->result_type, *value, out);
               if (!relocated) {

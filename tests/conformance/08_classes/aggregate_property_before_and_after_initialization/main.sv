@@ -1,10 +1,10 @@
 // A property of an unpacked structure or array type is initialized like any
 // other, in declaration order, and its value before that is undefined (LRM
-// 8.7): an initializer reading a property declared after it reads that
-// value, which is still a value of the property's type, members and elements
-// of every type included. Once initialized the property holds what its
-// declaration gives, a whole write replaces it, and a write to one member or
-// one element changes that part alone (LRM 7.2, 7.4).
+// 8.7): an initializer calling a method that reads a property declared after
+// it reads that value, which is still a value of the property's type, members
+// and elements of every type included. Once initialized the property holds
+// what its declaration gives, a whole write replaces it, and a write to one
+// member or one element changes that part alone (LRM 7.2, 7.4).
 module Top;
   typedef struct {
     int n;
@@ -18,12 +18,22 @@ module Top;
   } deep_t;
 
   class Box;
-    string early_text = $sformatf("%0d %s", later.n, later.s);
-    int early_count = deep.q.size() + deep.d.size();
-    string early_row = row[1].s;
+    string early_text = Described();
+    int early_count = Counted();
+    string early_row = RowText();
     pair_t later = '{5, "x"};
     deep_t deep = '{k: 3, q: '{"a", "b"}, d: '{4, 5, 6}, p: '{1, "y"}};
     pair_t row[3];
+
+    function string Described();
+      return $sformatf("%0d %s", later.n, later.s);
+    endfunction
+    function int Counted();
+      return deep.q.size() + deep.d.size();
+    endfunction
+    function string RowText();
+      return row[1].s;
+    endfunction
   endclass
 
   int later_n;
@@ -42,7 +52,8 @@ module Top;
   int other_n;
 
   initial begin
-    Box b = new;
+    Box b;
+    b = new;
     later_n = b.later.n;
     later_s = b.later.s;
     deep_q = b.deep.q.size();

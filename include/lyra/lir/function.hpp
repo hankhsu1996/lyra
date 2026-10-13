@@ -324,6 +324,20 @@ struct EndValueTarget {};
 
 struct CopyValueTarget {};
 
+// Storage of dynamic duration for one value: allocating it, which answers a
+// borrowed pointer to storage holding no value yet, and giving back storage so
+// allocated while it holds none, as C++'s allocation and deallocation functions
+// do ([basic.stc.dynamic]). What is allocated is the pointee of the pointer
+// answered or given back. A new-expression allocates, initializes what the
+// storage is to hold, and only then makes the pointer owning it; one whose
+// initialization departs gives the storage back instead.
+//
+// A LIR-only target with no MIR twin: MIR states the new-expression whole.
+struct DynamicStorageTarget {
+  enum class Op : std::uint8_t { kAllocate, kDeallocate };
+  Op op;
+};
+
 // An operation on the control effect that leaves an execution (LRM 9.6.2, 9.7).
 // The effect crosses as the target it names, since naming one is all an effect
 // does, and a departure naming none is one no region may claim.
@@ -388,6 +402,7 @@ struct CoroutineTarget {
 auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view;
 auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
+auto DynamicStorageOpName(DynamicStorageTarget::Op op) -> std::string_view;
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
@@ -395,12 +410,14 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // computed, a value constructor named by the call's result type, the
 // constructor of a library class, a body of this program or a foreign symbol
 // the host resolves, a value-cell operation, the end or copy of an owned value,
-// a control-effect operation, or an operation of the coroutine protocol.
+// storage of dynamic duration allocated or given back, a control-effect
+// operation, or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
     ConstructTarget, LibraryConstructorTarget, SymbolTarget, ForeignTarget,
     ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget, EndValueTarget,
-    CopyValueTarget, ControlEffectTarget, CoroutineTarget>;
+    CopyValueTarget, DynamicStorageTarget, ControlEffectTarget,
+    CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands
@@ -582,10 +599,10 @@ struct StoreInstr {
   Operand value;
 };
 
-// Moves `value` into a frame slot holding no value until then: one a
-// declaration introduces, or one whose value was ended before. What is moved
-// in is the slot's value from there on, and it is ended where the slot's value
-// is. Yields no value.
+// Moves `value` into storage holding no value until then: a frame slot a
+// declaration introduces, or one whose value was ended before, or storage of
+// dynamic duration just allocated. What is moved in is the storage's value from
+// there on, and it is ended where that storage's value is. Yields no value.
 struct InitializeInstr {
   Place place;
   Operand value;

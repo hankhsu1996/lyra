@@ -561,13 +561,15 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // hands it on.
           [](const ClosureType&) -> Held { return LibraryObject::kClosure; },
           // A shared pointer is a hold on storage that outlives the scope
-          // asking for it, and letting the hold go is what ends it; the other
-          // two name storage somebody else ends.
+          // asking for it, and letting the hold go is what ends it; a unique
+          // one owns what it points at, and its end ends that and gives the
+          // storage back; a borrowed one names storage somebody else ends.
           [](const PointerType& pointer) -> Held {
             switch (pointer.ownership) {
               case PointerOwnership::kShared:
                 return LibraryObject::kSharedPointer;
               case PointerOwnership::kUnique:
+                return OwnedStorageAddress{};
               case PointerOwnership::kBorrowed:
                 return std::nullopt;
             }
@@ -677,6 +679,11 @@ auto Type::HeldAs() const -> std::optional<Holding> {
 
 auto Type::IsOwnedValue() const -> bool {
   return HeldAs().has_value();
+}
+
+auto Type::IsMoveOnly() const -> bool {
+  const std::optional<Holding> held = HeldAs();
+  return held.has_value() && std::holds_alternative<OwnedStorageAddress>(*held);
 }
 
 auto Type::IsProduct() const -> bool {

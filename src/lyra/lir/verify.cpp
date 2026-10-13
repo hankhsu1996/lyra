@@ -109,8 +109,48 @@ void RequireCallWellFormed(
   RequireBitsStoreWellFormed(unit, fn, bits->value, bits->parts, args.back());
 }
 
+// The values that name storage of dynamic duration just allocated, by value
+// id: storage holding no value yet, as a frame slot is before its first.
+auto AllocatedStorage(const Function& fn) -> std::vector<bool> {
+  std::vector<bool> allocated(fn.values.size(), false);
+  for (const BasicBlock& block : fn.blocks) {
+    for (const Instr& instr : block.instrs) {
+      const auto* call = std::get_if<CallInstr>(&instr.data);
+      const auto* storage =
+          call != nullptr ? std::get_if<DynamicStorageTarget>(&call->target)
+                          : nullptr;
+      if (storage == nullptr) {
+        continue;
+      }
+      switch (storage->op) {
+        case DynamicStorageTarget::Op::kAllocate:
+          allocated.at(instr.result.value) = true;
+          break;
+        case DynamicStorageTarget::Op::kDeallocate:
+          break;
+      }
+    }
+  }
+  return allocated;
+}
+
+// Whether `place` is storage holding no value until it is initialized: a frame
+// slot, or what storage just allocated holds.
+auto HoldsNothingYet(
+    const Function& fn, const std::vector<bool>& allocated, const Place& place)
+    -> bool {
+  if (place.chain.empty()) {
+    return IsPlaceLocal(fn, place.base);
+  }
+  const auto* base = std::get_if<Use>(&place.base);
+  return base != nullptr && allocated.at(base->value.value) &&
+         place.chain.size() == 1 &&
+         std::holds_alternative<DerefProjection>(place.chain.front());
+}
+
 void VerifyInstr(
-    const CompilationUnit& unit, const Function& fn, const Instr& instr) {
+    const CompilationUnit& unit, const Function& fn,
+    const std::vector<bool>& allocated, const Instr& instr) {
   const TypeId result_type = fn.values.Get(instr.result).type;
   // A store and an initialization each put a value of the place's type into
   // storage that can hold one, and yield nothing.
@@ -156,11 +196,10 @@ void VerifyInstr(
             write_into(store.place, store.value, "store");
           },
           [&](const InitializeInstr& initialize) {
-            if (!IsPlaceLocal(fn, initialize.place.base) ||
-                !initialize.place.chain.empty()) {
+            if (!HoldsNothingYet(fn, allocated, initialize.place)) {
               throw InternalError(
                   "lir verify: an initialization names storage other than a "
-                  "frame slot");
+                  "frame slot or storage just allocated");
             }
             write_into(initialize.place, initialize.value, "initialization");
           },
@@ -309,9 +348,10 @@ void VerifyLandings(const Function& fn) {
 void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
   const auto in_function = diag::FailureContext::InFunction(fn.name);
   const bool is_coroutine = unit.types.Get(fn.result_type).Is<CoroutineType>();
+  const std::vector<bool> allocated = AllocatedStorage(fn);
   for (const BasicBlock& block : fn.blocks) {
     for (const Instr& instr : block.instrs) {
-      VerifyInstr(unit, fn, instr);
+      VerifyInstr(unit, fn, allocated, instr);
     }
     if (const auto* call =
             std::get_if<DepartingCallInstr>(&block.terminator.data)) {

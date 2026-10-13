@@ -5934,11 +5934,8 @@ void lyra_rt_unpackedarray_net_arm_sampling(void* net) {
   NetOf<RuntimeFixedArray>(net).ArmSampling();
 }
 
-auto lyra_rt_unpackedarray_net_sampled_load(
-    void* net, const void* answer_type, void* out) -> void* {
-  ArrayTypeAt(answer_type)
-      .Copy(NetOf<RuntimeFixedArray>(net).SampledGet().Bytes(), out);
-  return out;
+auto lyra_rt_unpackedarray_net_sampled_load(void* net, void* out) -> void* {
+  return Emplace(out, NetOf<RuntimeFixedArray>(net).SampledGet());
 }
 
 auto lyra_rt_unpackedarray_attach_driver(void* net, std::int64_t strength)

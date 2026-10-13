@@ -363,11 +363,14 @@ auto PublishObjectEntry(
     mir::CompilationUnit& unit, mir::ClassId root, mir::ClassId published,
     std::span<const ConstructionValue> handed,
     const ConstructionTableSource& table) -> mir::CallableId {
+  const auto object_of = [&](mir::ClassId cls) {
+    return unit.types.Intern(
+        mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{cls}}});
+  };
   const auto owning_pointer = [&](mir::ClassId cls) {
     return unit.types.Intern(
         mir::Type{mir::PointerType{
-            .pointee = unit.types.Intern(
-                mir::Type{mir::ObjectType{.of = mir::IntraUnitClassRef{cls}}}),
+            .pointee = object_of(cls),
             .ownership = mir::PointerOwnership::kUnique}});
   };
   // What it makes is the class that realizes the object; what it answers with
@@ -413,12 +416,11 @@ auto PublishObjectEntry(
         body.exprs.Add(mir::MakeLocalRefExpr(param, value.type)));
   }
   const mir::ExprId built = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = std::move(arguments)},
-          .type = made});
+      mir::MakeNewExpr(
+          body.exprs.Add(
+              mir::MakeObjectConstructionExpr(
+                  object_of(root), std::move(arguments))),
+          made));
   body.AppendStmt(mir::ReturnStmt{.value = ObjectAs(body, built, owning)});
 
   return unit.callables.Add(

@@ -872,6 +872,10 @@ class MirDumper {
                   "CallExpr callee={} args=[{}]", FormatCallee(c.callee),
                   FormatExprList(c.arguments));
             },
+            [](const NewExpr& n) -> std::string {
+              return std::format(
+                  "NewExpr initializer=Expr[{}]", n.initializer.value);
+            },
             [](const FieldAccessExpr& m) -> std::string {
               return std::format(
                   "FieldAccessExpr receiver=Expr[{}] field={}",

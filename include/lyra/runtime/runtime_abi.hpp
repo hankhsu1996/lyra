@@ -1640,8 +1640,7 @@ auto lyra_rt_unpackedarray_net_drive_takeover(
     -> bool;
 void lyra_rt_unpackedarray_net_end_takeover(void* net, std::int64_t level);
 void lyra_rt_unpackedarray_net_arm_sampling(void* net);
-auto lyra_rt_unpackedarray_net_sampled_load(
-    void* net, const void* answer_type, void* out) -> void*;
+auto lyra_rt_unpackedarray_net_sampled_load(void* net, void* out) -> void*;
 auto lyra_rt_unpackedarray_attach_driver(void* net, std::int64_t strength)
     -> void*;
 auto lyra_rt_unpackedarray_driver_get(void* driver) -> const void*;

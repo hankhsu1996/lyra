@@ -1807,12 +1807,13 @@ auto BuildOwnedChildHandle(
     ctor_call_args.push_back(arm_block.exprs.Add(std::move(value)));
   }
   const mir::ExprId ctor_call_id = arm_block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = std::move(ctor_call_args)},
-          .type = child_ptr_type});
+      mir::MakeNewExpr(
+          arm_block.exprs.Add(
+              mir::MakeObjectConstructionExpr(
+                  *mir::AllocatedType(
+                      unit_lowerer.Unit().types, child_ptr_type),
+                  std::move(ctor_call_args))),
+          child_ptr_type));
 
   // The runtime tree owns the child (AddOwnedChild consumes the freshly built
   // unique pointer); ownership transfers after the child's constructor commits,

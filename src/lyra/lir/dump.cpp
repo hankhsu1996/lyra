@@ -454,6 +454,9 @@ class LirDumper {
             },
             [](const EndValueTarget&) -> std::string { return "end"; },
             [](const CopyValueTarget&) -> std::string { return "copy"; },
+            [](const DynamicStorageTarget& d) -> std::string {
+              return std::string{DynamicStorageOpName(d.op)};
+            },
             [](const ControlEffectTarget& c) -> std::string {
               return std::string{ControlEffectOpName(c.op)};
             },

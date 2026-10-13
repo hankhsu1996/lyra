@@ -232,8 +232,9 @@ class CodeGenModule {
   // declaration: its own members after the whole of what it extends.
   auto RecordOf(lir::TypeId type) -> diag::Result<const RecordLayout*>;
 
-  // The size of a complete object of the declaration `type` names, which is
-  // what `operator new` is asked for where one is built.
+  // The size of a complete object of `type` -- the whole layout of the
+  // declaration it names, or what any other value is laid out in -- which is
+  // what `operator new` is asked for and sized `operator delete` told.
   auto CompleteObjectSize(lir::TypeId type) -> diag::Result<std::uint64_t>;
 
   // Members of the types `members`, each in the slot `role` asks for, laid out

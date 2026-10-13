@@ -130,6 +130,13 @@ the detail lives in the entry itself.
   tuple's bytes state nothing of its type. What the library keeps for itself stays a value of its
   own. A library object standing for the value in the holder, and a family instantiated per type,
   are rejected.
+- [a-new-expression-allocates-then-initializes](a-new-expression-allocates-then-initializes.md) -- a
+  class `new`, an instance and a box are one MIR node that allocates storage and evaluates its
+  initializer into it, as clang's `CXXNewExpr`; a construction never yields what owns storage. In
+  the execution IR a uniquely owning pointer is an owned value with no copy, moved wherever it is
+  handed on and ended by its last holder, and a new-expression gives its storage back if
+  initialization departs. Handing the initializer to the owner's construction, a box realized as a
+  slot below MIR, and a lent argument the callee empties are rejected.
 - [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
   element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A

@@ -492,7 +492,7 @@ auto CallArranger::ReturnOf(
     return built;
   }
   if (lir::CallMakesValue(call.target) &&
-      module_->Unit().types.Get(result_type).IsOwnedValue()) {
+      module_->Types().LiesInStorage(result_type)) {
     return built;
   }
   return ReturnDirect{.type = module_->Types().Map(result_type)};
@@ -794,25 +794,20 @@ auto CallArranger::ConstructionOf(
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
           },
-          // A wrapper that owns storage brings that storage into existence with
-          // itself, and which entry does that is what the ownership says. A
-          // sole owner is storage `operator new` allocates for a complete
-          // object of the class, which the class's constructor then runs on, as
-          // a `new` does. A shared owner instead answers with a hold, because
-          // what it brings into existence outlives the scope that asked for it
-          // and ends with the last holder rather than at any one exit (LRM
-          // 6.21); a hold makes an empty variable's cell, so it takes nothing
-          // and is named by the domain the cell holds. A borrowed pointer is
+          // A shared owner answers with a hold, because what it brings into
+          // existence outlives the scope that asked for it and ends with the
+          // last holder rather than at any one exit (LRM 6.21); a hold makes an
+          // empty variable's cell, so it takes nothing and is named by the
+          // domain the cell holds. A sole owner is the address of the storage
+          // it takes over, which no entry builds, and a borrowed pointer is
           // bound to storage that already exists, so nothing constructs one.
           [&](const lir::PointerType& p) -> Built {
             switch (p.ownership) {
               case lir::PointerOwnership::kUnique:
-                return Construction{
-                    .symbol = std::string(kOperatorNew),
-                    .operands = {},
-                    .told = ToldNothing{},
-                    .answer_told = support::AnswerTold::kNothing,
-                    .implicit_arg = CompleteObjectSizeArg{.of = p.pointee}};
+                throw InternalError(
+                    "llvm codegen: a unique pointer is the address of the "
+                    "storage it takes over, which no entry builds -- please "
+                    "report this as a bug");
               case lir::PointerOwnership::kShared: {
                 const auto* cell =
                     types.Get(p.pointee).As<lir::ObservableType>();
@@ -1063,6 +1058,7 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
           },
           [&](const lir::EndValueTarget&) { return as_stated(); },
           [&](const lir::CopyValueTarget&) { return as_stated(); },
+          [&](const lir::DynamicStorageTarget&) { return as_stated(); },
           [&](const lir::ControlEffectTarget&) { return as_stated(); },
           [&](const lir::CoroutineTarget&) { return as_stated(); }},
       call.target);

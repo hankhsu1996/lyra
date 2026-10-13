@@ -5,7 +5,7 @@
 
 namespace {
 
-using lyra::runtime::GcNew;
+using lyra::runtime::AdoptObject;
 using lyra::runtime::GcObject;
 using lyra::runtime::SelfHandle;
 using lyra::runtime::ViewAs;
@@ -34,7 +34,7 @@ class ObjectRefTest : public ::testing::Test {
 
 TEST_F(ObjectRefTest, LastReferenceDropReleasesObject) {
   {
-    auto a = GcNew<Counted>();
+    auto a = AdoptObject(new Counted());
     EXPECT_EQ(Counted::alive, 1);
   }
   EXPECT_EQ(Counted::alive, 0);
@@ -42,7 +42,7 @@ TEST_F(ObjectRefTest, LastReferenceDropReleasesObject) {
 
 TEST_F(ObjectRefTest, ReferenceCopyRetainsObject) {
   {
-    auto a = GcNew<Counted>();
+    auto a = AdoptObject(new Counted());
     {
       auto b = a;
       EXPECT_EQ(Counted::alive, 1);
@@ -53,15 +53,15 @@ TEST_F(ObjectRefTest, ReferenceCopyRetainsObject) {
 }
 
 TEST_F(ObjectRefTest, ReassignmentReleasesPrevious) {
-  auto a = GcNew<Counted>();
-  a = GcNew<Counted>();
+  auto a = AdoptObject(new Counted());
+  a = AdoptObject(new Counted());
   EXPECT_EQ(Counted::alive, 1);
 }
 
 TEST_F(ObjectRefTest, IdentityByObject) {
-  auto a = GcNew<Counted>();
+  auto a = AdoptObject(new Counted());
   auto b = a;
-  auto c = GcNew<Counted>();
+  auto c = AdoptObject(new Counted());
   EXPECT_EQ(a, b);
   EXPECT_NE(a, c);
 }
@@ -70,7 +70,7 @@ TEST_F(ObjectRefTest, NullReferenceEquality) {
   ObjectRef a;
   ObjectRef b(nullptr);
   EXPECT_EQ(a, b);
-  auto c = GcNew<Counted>();
+  auto c = AdoptObject(new Counted());
   EXPECT_NE(a, c);
   c = nullptr;
   EXPECT_EQ(c, a);
@@ -91,8 +91,8 @@ struct Node {
 };
 
 TEST_F(ObjectRefTest, SelfReferentialAcyclicChainReclaims) {
-  auto head = GcNew<Node>();
-  auto tail = GcNew<Node>();
+  auto head = AdoptObject(new Node());
+  auto tail = AdoptObject(new Node());
   head.Deref<Node>().value = 1;
   tail.Deref<Node>().value = 2;
   head.Deref<Node>().next = tail;
@@ -169,27 +169,27 @@ class PlainConforming : public PlainRoot, public Contract {
 };
 
 TEST_F(ObjectRefTest, IdentitySurvivesABaseView) {
-  auto heir = GcNew<PlainHeir>();
+  auto heir = AdoptObject(new PlainHeir());
   EXPECT_EQ((ViewAs<PlainHeir, PlainRoot>(heir)), heir);
 
-  auto conforming = GcNew<Conforming>();
+  auto conforming = AdoptObject(new Conforming());
   EXPECT_EQ((ViewAs<Conforming, VirtualRoot>(conforming)), conforming);
 }
 
 TEST_F(ObjectRefTest, IdentitySurvivesAContractView) {
-  auto conforming = GcNew<Conforming>();
+  auto conforming = AdoptObject(new Conforming());
   EXPECT_EQ((ViewAs<Conforming, Contract>(conforming)), conforming);
 
-  auto plain = GcNew<PlainConforming>();
+  auto plain = AdoptObject(new PlainConforming());
   EXPECT_EQ((ViewAs<PlainConforming, Contract>(plain)), plain);
 }
 
 TEST_F(ObjectRefTest, AContractViewStillReachesTheContract) {
-  auto conforming = GcNew<Conforming>();
+  auto conforming = AdoptObject(new Conforming());
   const ObjectRef as_contract = ViewAs<Conforming, Contract>(conforming);
   EXPECT_EQ(as_contract.Deref<Contract>().Level(), 7);
 
-  auto plain = GcNew<PlainConforming>();
+  auto plain = AdoptObject(new PlainConforming());
   const ObjectRef plain_contract = ViewAs<PlainConforming, Contract>(plain);
   EXPECT_EQ(plain_contract.Deref<Contract>().Level(), 9);
 }
@@ -201,13 +201,13 @@ TEST_F(ObjectRefTest, AContractViewStillReachesTheContract) {
 // reached with objects of either answer, and the answer is whether the result
 // refers to anything.
 TEST_F(ObjectRefTest, AViewTheTypesDoNotProveIsTheObjectsToAnswer) {
-  auto root = GcNew<PlainRoot>();
+  auto root = AdoptObject(new PlainRoot());
   const ObjectRef as_heir = ViewAs<PlainRoot, PlainHeir>(root);
   EXPECT_EQ(as_heir.View<PlainHeir>(), nullptr);
   EXPECT_FALSE(static_cast<bool>(as_heir));
   EXPECT_TRUE(static_cast<bool>(root));
 
-  auto plain = GcNew<PlainConforming>();
+  auto plain = AdoptObject(new PlainConforming());
   const ObjectRef as_root = ViewAs<PlainConforming, PlainRoot>(plain);
   const ObjectRef as_heir_of_conforming = ViewAs<PlainRoot, PlainHeir>(as_root);
   EXPECT_EQ(as_heir_of_conforming.View<PlainHeir>(), nullptr);
@@ -220,21 +220,21 @@ TEST_F(ObjectRefTest, AViewTheTypesDoNotProveIsTheObjectsToAnswer) {
 }
 
 TEST_F(ObjectRefTest, SelfHandleNamesTheObjectItsBodyRunsOn) {
-  auto heir = GcNew<PlainHeir>();
+  auto heir = AdoptObject(new PlainHeir());
   EXPECT_EQ(heir.Deref<PlainHeir>().Myself(), heir);
 
-  auto conforming = GcNew<Conforming>();
+  auto conforming = AdoptObject(new Conforming());
   EXPECT_EQ(conforming.Deref<Conforming>().Myself(), conforming);
 
   // The one that fails if identity is taken from a base subobject: the object
   // conforms to a contract, so its common root is displaced from the object's
   // own address.
-  auto plain = GcNew<PlainConforming>();
+  auto plain = AdoptObject(new PlainConforming());
   EXPECT_EQ(plain.Deref<PlainConforming>().Myself(), plain);
 }
 
 TEST_F(ObjectRefTest, SelfHandleAgreesWithAViewOfTheSameObject) {
-  auto plain = GcNew<PlainConforming>();
+  auto plain = AdoptObject(new PlainConforming());
   const ObjectRef as_contract = ViewAs<PlainConforming, Contract>(plain);
   EXPECT_EQ(plain.Deref<PlainConforming>().Myself(), as_contract);
 }
@@ -260,7 +260,7 @@ class Diamond : public VirtualRoot,
 };
 
 TEST_F(ObjectRefTest, AnInterfaceReachedAlongTwoPathsIsOnePart) {
-  auto diamond = GcNew<Diamond>();
+  auto diamond = AdoptObject(new Diamond());
   const ObjectRef direct = ViewAs<Diamond, Contract>(diamond);
   const ObjectRef as_refined = ViewAs<Diamond, Refined>(diamond);
   const ObjectRef through = ViewAs<Refined, Contract>(as_refined);

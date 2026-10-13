@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -62,6 +63,12 @@ auto IsErasedFunction(const TypePool& types, TypeId id) -> bool;
 // drift apart. Reading it as something takes a conversion, which is the step
 // that says what was assumed.
 auto ErasedPointer(const TypePool& types) -> TypeId;
+
+// What a new-expression yielding `owner` allocates: the pointee of a uniquely
+// owning pointer, or the object a class handle refers to. Nothing for a type no
+// new-expression yields.
+auto AllocatedType(const TypePool& types, TypeId owner)
+    -> std::optional<TypeId>;
 
 // The definition every object of one class carries, which the unit declaring
 // the class emits as a constant, whichever class it is of, and the address of

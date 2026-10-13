@@ -190,7 +190,7 @@ auto CodeGenFunction::LowerLoad(
           PlaceValueCellDomain(load.place, result_type)) {
     return ValueCellContents(*cell, *address);
   }
-  if (module_->Unit().types.Get(result_type).HeldAs().has_value()) {
+  if (module_->Types().LiesInStorage(result_type)) {
     return *address;
   }
   return builder_.CreateLoad(result, *address);
@@ -327,7 +327,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     }
     // A store writes into a value that is already there, so whatever names
     // that storage goes on naming it.
-    if (module_->Unit().types.Get(stored).IsOwnedValue()) {
+    if (module_->Types().LiesInStorage(stored)) {
       auto written = AssignValue(stored, *value, *address);
       if (!written) {
         return std::unexpected(std::move(written.error()));
@@ -378,7 +378,7 @@ auto CodeGenFunction::LowerInitialize(const lir::InitializeInstr& initialize)
     return std::unexpected(std::move(address.error()));
   }
   const lir::TypeId initialized = OperandType(initialize.value);
-  if (module_->Unit().types.Get(initialized).IsOwnedValue()) {
+  if (module_->Types().LiesInStorage(initialized)) {
     auto moved = RelocateValue(initialized, *value, *address);
     if (!moved) {
       return std::unexpected(std::move(moved.error()));
@@ -1351,7 +1351,50 @@ auto CodeGenFunction::LowerCall(
           [&](const lir::FunctionTarget& t) { return called(t); },
           [&](const lir::IndirectTarget& t) { return called(t); },
           [&](const lir::DispatchTarget& t) { return called(t); },
-          [&](const lir::ConstructTarget& t) { return called(t); },
+          // A unique pointer is the address of the storage it takes over, as a
+          // Rust `Box` is; every other construction is its type's entry.
+          [&](const lir::ConstructTarget& t) -> Lowered {
+            if (!module_->Unit().types.Get(result_type).IsMoveOnly()) {
+              return called(t);
+            }
+            return LowerOperand(call.args.at(0));
+          },
+          // Storage of dynamic duration comes from the host's allocation
+          // function and goes back to its sized deallocation function, each
+          // told the size of a complete object of what the storage holds, as
+          // a C++ new-expression asks them.
+          [&](const lir::DynamicStorageTarget& storage) -> Lowered {
+            switch (storage.op) {
+              case lir::DynamicStorageTarget::Op::kAllocate: {
+                auto size = module_->CompleteObjectSize(
+                    *module_->Unit().types.Get(result_type).Pointee());
+                if (!size) {
+                  return std::unexpected(std::move(size.error()));
+                }
+                return builder_.CreateCall(
+                    module_->OperatorNew(), {builder_.getInt64(*size)});
+              }
+              case lir::DynamicStorageTarget::Op::kDeallocate: {
+                auto given = LowerOperand(call.args.at(0));
+                if (!given) {
+                  return std::unexpected(std::move(given.error()));
+                }
+                auto size = module_->CompleteObjectSize(
+                    *module_->Unit()
+                         .types.Get(OperandType(call.args.at(0)))
+                         .Pointee());
+                if (!size) {
+                  return std::unexpected(std::move(size.error()));
+                }
+                builder_.CreateCall(
+                    module_->SizedOperatorDelete(),
+                    {*given, builder_.getInt64(*size)});
+                return nullptr;
+              }
+            }
+            throw InternalError(
+                "llvm codegen: unknown dynamic-storage operation");
+          },
           [&](const lir::LibraryConstructorTarget& t) { return called(t); },
           [&](const lir::SymbolTarget& t) { return called(t); },
           [&](const lir::ForeignTarget& t) { return called(t); },
@@ -1632,6 +1675,13 @@ auto CodeGenFunction::ResolveCallee(
             throw InternalError(
                 "llvm codegen: copying a value is emitted where the call is "
                 "lowered, and names no callee -- please report this as a bug");
+          },
+          [&](const lir::DynamicStorageTarget&)
+              -> diag::Result<llvm::FunctionCallee> {
+            throw InternalError(
+                "llvm codegen: storage of dynamic duration is allocated or "
+                "given back where the call is lowered, and names no callee -- "
+                "please report this as a bug");
           },
           [&](const lir::ControlEffectTarget& t)
               -> diag::Result<llvm::FunctionCallee> {
@@ -2148,7 +2198,7 @@ auto CodeGenFunction::LowerClosure(
     const lir::TypeId type = (*record)->types.at(i);
     llvm::Value* slot = builder_.CreateConstInBoundsGEP1_64(
         builder_.getInt8Ty(), closure, (*record)->offsets.at(i));
-    if (module_->Unit().types.Get(type).IsOwnedValue()) {
+    if (module_->Types().LiesInStorage(type)) {
       auto copied = CopyValue(type, *value, slot);
       if (!copied) {
         return copied;

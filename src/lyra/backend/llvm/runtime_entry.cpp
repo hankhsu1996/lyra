@@ -715,7 +715,12 @@ auto HeldObjectOf(const lir::Type& type)
             return value::IntegralDomainFor(shape.width, shape.domain);
           },
           [](support::ValueDomain domain) -> Object { return domain; },
-          [](support::LibraryObject object) -> Object { return object; }},
+          [](support::LibraryObject object) -> Object { return object; },
+          // The address of storage a pointer owns is the pointer itself, an
+          // object of no entry's.
+          [](const lir::OwnedStorageAddress&) -> Object {
+            return std::nullopt;
+          }},
       *held);
 }
 

@@ -151,7 +151,6 @@ auto CodeGenTypes::GetFunctionType(const FnAbi& abi) -> llvm::FunctionType* {
   std::visit(
       Overloaded{
           [](const NoImplicitArg&) {},
-          [&](const CompleteObjectSizeArg&) { params.push_back(count); },
           [&](const WidthMetadataArg&) { params.push_back(count); },
           [&](const TypeMetadataArg&) { params.push_back(ptr_ty_); }},
       abi.implicit_arg);
@@ -243,6 +242,12 @@ auto CodeGenTypes::IntegralShapeOf(lir::TypeId type) const
     return std::nullopt;
   }
   return ShapeOf(*integral);
+}
+
+auto CodeGenTypes::LiesInStorage(lir::TypeId type) const -> bool {
+  const std::optional<lir::Holding> held = unit_->types.Get(type).HeldAs();
+  return held.has_value() &&
+         !std::holds_alternative<lir::OwnedStorageAddress>(*held);
 }
 
 auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {

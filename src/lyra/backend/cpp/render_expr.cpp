@@ -584,6 +584,15 @@ void RenderExpr(
           [&](const mir::CallExpr& call) {
             RenderCallExpr(view, call, expr.type, out);
           },
+          // The initializer is formed in the storage `new` allocates, which
+          // C++ guarantees where it is a value of the type allocated
+          // ([dcl.init.general]/16.6.1), whatever that type's constructors.
+          [&](const mir::NewExpr& n) {
+            Write(
+                view, out, CppNewOwner{.of = CppType(view.Unit(), expr.type)},
+                "(new ", CppType(view.Unit(), view.Expr(n.initializer).type),
+                "(", n.initializer, "))");
+          },
           [&](const mir::DerefExpr& d) { RenderDerefExpr(view, d, out); },
           [&](const mir::AddressOfExpr& a) {
             const Enclosure enclosure(out, Precedence::kPrefix, at_least);

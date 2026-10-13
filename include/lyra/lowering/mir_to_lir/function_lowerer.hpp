@@ -76,6 +76,13 @@ class FunctionLowerer {
     lir::ValueId slot;
   };
   struct EndPassedOn {};
+  // Storage a new-expression allocated, while what it is to hold is still
+  // being initialized there: a way out gives the storage back and ends
+  // nothing, since nothing whole lies in it yet, as clang's new-expression
+  // calls `operator delete` when a constructor throws.
+  struct StorageRelease {
+    lir::Operand storage;
+  };
 
   // A region a departure may be claimed at: the block that runs its handler,
   // and the storage the departure is bound to for the handler to read.
@@ -97,7 +104,7 @@ class FunctionLowerer {
   // handler -- built the first time something needs it and shared by every
   // landing and every scope nested inside after that.
   using ScopeKind = std::variant<
-      CleanupScope, ValueEnd, SlotEnd, EndPassedOn, RegionScope,
+      CleanupScope, ValueEnd, SlotEnd, EndPassedOn, StorageRelease, RegionScope,
       TerminateScope>;
   struct UnwindScope {
     ScopeKind kind;
@@ -178,6 +185,10 @@ class FunctionLowerer {
   // passes its end along with it; one it was only lent is copied, so what is
   // handed on is always one this body owned.
   auto HandOn(lir::Operand value) -> lir::Operand;
+  // What the scope at `index` owed is owed no longer, from here on: its value
+  // went to whoever holds it now, or the storage it was to give back holds
+  // what it was allocated for.
+  void PassEndAt(std::size_t index);
   // Whether this body made `value` and still owes its end.
   [[nodiscard]] auto OwesItsEnd(const lir::Operand& value) const -> bool;
   // States the end of an owned value, and of the one a frame slot holds.
@@ -190,6 +201,7 @@ class FunctionLowerer {
   // end, and its bytes going out of use.
   void EmitScopeDrop(const ValueEnd& end);
   void EmitScopeDrop(const SlotEnd& end);
+  void EmitScopeDrop(const StorageRelease& release);
   // Brings a slot's bytes into use with the first value it is to own.
   void InitializeSlot(lir::ValueId slot, lir::Operand value);
   // Initializes storage holding no value with a value it is to own, handing it
@@ -429,21 +441,17 @@ class FunctionLowerer {
   auto EnterCoroutine(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
       std::optional<lir::Operand> completion) -> diag::Result<lir::Operand>;
-  // Brings an object into existence and enters the construction the program
-  // asked for on it (LRM 8.3, 8.7). The heap is the runtime's, so what it
-  // answers is an object whose properties hold their storage's default; the
-  // body that brings them to their initial values is this program's own and is
-  // entered like any other.
-  auto LowerObjectConstruction(
-      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
-  // Brings an instance of the design hierarchy into existence and enters its
-  // class's constructor on it, the same two operations: the part every scope
-  // shares is the runtime's, built from what the instance is built against,
-  // and the rest is this program's own constructor.
-  auto LowerScopeConstruction(
-      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
+  // Allocates the storage a new-expression owns, initializes it from the
+  // initializer, and hands it to `owner`, the type that owns it from there
+  // (LRM 8.3, 8.7).
+  auto LowerNew(
+      const mir::Block& block, const mir::NewExpr& allocation,
+      mir::TypeId owner) -> diag::Result<lir::Operand>;
+  // Evaluates a new-expression's initializer `id` into the storage `storage`
+  // points at, which holds nothing yet.
+  auto InitializeAllocated(
+      const mir::Block& block, mir::ExprId id, const lir::Operand& storage)
+      -> diag::Result<void>;
   // A reference is the address of the storage its referent lives in, carrying
   // which of the two kinds that storage is. One built over a reference denotes
   // the storage at the end of the chain rather than binding afresh, so it

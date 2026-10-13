@@ -427,6 +427,16 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
+// Allocates storage for one value of the pointee type and initializes it from
+// `initializer`, whose value is formed in that storage rather than handed over
+// as an argument: C++'s `new T(init)`, and SV's `new` (LRM 8.7). `Expr::type`
+// is what owns the storage from there -- a uniquely owning pointer, or a class
+// handle -- and `initializer` has the pointee's type. An object's initializer
+// is the construction of that object from its constructor's arguments.
+struct NewExpr {
+  ExprId initializer;
+};
+
 // Names the place its operand stands for: the object a borrowed pointer or a
 // managed handle refers to, or the storage a capability wrapper represents.
 // This is place formation rather than an operation -- reading it loads the
@@ -659,7 +669,7 @@ struct ReferenceExpr {
 using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
-    DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, CallExpr,
+    DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr,
     DerefExpr, AddressOfExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
     CompositeExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
 
@@ -753,6 +763,24 @@ struct Expr {
               .callee = Direct{.target = support::BuiltinFn::kCurrentRuntime},
               .arguments = {}},
       .type = effects};
+}
+
+// `new T(initializer)`, owned by `owner`.
+[[nodiscard]] inline auto MakeNewExpr(ExprId initializer, TypeId owner)
+    -> Expr {
+  return Expr{.data = NewExpr{.initializer = initializer}, .type = owner};
+}
+
+// The construction of an object of `object_type` by its constructor, which a
+// new-expression initializes the storage it allocates with.
+[[nodiscard]] inline auto MakeObjectConstructionExpr(
+    TypeId object_type, std::vector<ExprId> constructor_arguments) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Construct{},
+              .arguments = std::move(constructor_arguments)},
+      .type = object_type};
 }
 
 // `*place` -- names the storage `place` stands for. `referent_type` is what

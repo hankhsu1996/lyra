@@ -131,6 +131,7 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
               reach(argument);
             }
           },
+          [&](const NewExpr& e) { reach(e.initializer); },
           [&](const DerefExpr& e) { reach(e.pointer); },
           [&](const AddressOfExpr& e) { reach(e.operand); },
           [&](const MoveExpr& e) { reach(e.operand); },
@@ -216,6 +217,7 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const BlockExpr&) { return false; },
           [](const AssignExpr&) { return false; },
           [](const CallExpr&) { return false; },
+          [](const NewExpr&) { return false; },
           [](const MoveExpr&) { return false; },
           [](const ClosureExpr&) { return false; },
           [](const CompositeExpr&) { return false; },
@@ -260,6 +262,7 @@ auto Describe(const ExprData& data) -> std::string {
                                            support::RuntimeEntryOf(*entry).name)
                                      : std::string{"a call"};
           },
+          [](const NewExpr&) -> std::string { return "a new"; },
           [](const DerefExpr&) -> std::string { return "a dereference"; },
           [](const AddressOfExpr&) -> std::string { return "an address-of"; },
           [](const MoveExpr&) -> std::string { return "a move"; },
@@ -822,15 +825,52 @@ void VerifyConstantsAreFolded(
             [](const MachineFloatLiteral&) {}, [](const ReferenceExpr&) {},
             [](const DynamicCastExpr&) {}, [](const ConditionalExpr&) {},
             [](const BlockExpr&) {}, [](const AssignExpr&) {},
-            [](const DerefExpr&) {}, [](const AddressOfExpr&) {},
-            [](const MoveExpr&) {}, [](const FieldAccessExpr&) {},
-            [](const ClosureExpr&) {}, [](const CompositeExpr&) {},
-            [](const AwaitExpr&) {}, [](const WaitExpr&) {},
-            [](const VectorGetExpr&) {}},
+            [](const NewExpr&) {}, [](const DerefExpr&) {},
+            [](const AddressOfExpr&) {}, [](const MoveExpr&) {},
+            [](const FieldAccessExpr&) {}, [](const ClosureExpr&) {},
+            [](const CompositeExpr&) {}, [](const AwaitExpr&) {},
+            [](const WaitExpr&) {}, [](const VectorGetExpr&) {}},
         expr.data);
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyConstantsAreFolded(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// Storage a uniquely owning pointer or a class handle owns comes into existence
+// only by a new-expression, whose initializer is evaluated into that storage
+// and so has the type allocated.
+void VerifyAllocations(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  const auto refuse = [&](ExprId id, std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} holds {} (expression {} of its block), which {} -- "
+            "please report this as a bug",
+            describe(), Describe(block.exprs.Get(id).data), id.value, what));
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    const std::optional<TypeId> allocated =
+        AllocatedType(unit.types, expr.type);
+    if (const auto* call = std::get_if<CallExpr>(&expr.data);
+        call != nullptr && std::holds_alternative<Construct>(call->callee) &&
+        allocated.has_value()) {
+      refuse(id, "constructs what only a new-expression allocates");
+    }
+    const auto* allocation = std::get_if<NewExpr>(&expr.data);
+    if (allocation == nullptr) {
+      continue;
+    }
+    if (!allocated.has_value()) {
+      refuse(id, "yields a type that owns no storage it allocates");
+    }
+    if (block.exprs.Get(allocation->initializer).type != *allocated) {
+      refuse(id, "initializes its storage from a value of another type");
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyAllocations(unit, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -850,6 +890,7 @@ void VerifyCode(
   VerifyOrdinals(unit, *code.body, describe);
   VerifyEntryDeclarations(unit, *code.body, describe);
   VerifyConstantsAreFolded(unit, *code.body, describe);
+  VerifyAllocations(unit, *code.body, describe);
   if (!Suspends(unit, *code.body, describe) ||
       unit.types.Get(code.result_type).Is<CoroutineType>()) {
     return;

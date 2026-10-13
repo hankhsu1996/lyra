@@ -89,6 +89,9 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::DerefExpr& d) {
             return TargetOutlivesDeferredUpdate(block, d.pointer);
           },
+          // Storage a new-expression allocates belongs to what holds the
+          // pointer it yields, never to the stretch that allocated it.
+          [](const mir::NewExpr&) { return true; },
           // A call in target position names a place through the object it
           // dispatches on.
           [&](const mir::CallExpr& c) {

@@ -420,10 +420,14 @@ using TypeDeclaration =
 // What a value is held as: an integral value as the bits its type declares,
 // whose layout this layer does not state; any other value of the design as an
 // object of its value domain, which is never a domain of an integral layout
-// here; and what the library builds for its own use as that object.
+// here; what the library builds for its own use as that object; and a pointer
+// owning what it points at as the address of that storage, which its end gives
+// back, as Rust's `Box` is held.
 struct IntegralBits {};
-using Holding =
-    std::variant<IntegralBits, support::ValueDomain, support::LibraryObject>;
+struct OwnedStorageAddress {};
+using Holding = std::variant<
+    IntegralBits, support::ValueDomain, support::LibraryObject,
+    OwnedStorageAddress>;
 
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
@@ -497,15 +501,21 @@ class Type {
   // Any other value of the design is its domain's object; an object a call
   // builds for one use -- what a print is assembled from, what a wait
   // registers, the storage a closure captures into, a counted hold on a value
-  // -- is the library's own. Each of those names a logical shape only, whose
-  // size is a physical fact decided below this layer too.
+  // -- is the library's own. A pointer owning what it points at is the address
+  // of that storage. Each of those names a logical shape only, whose size is a
+  // physical fact decided below this layer too.
   [[nodiscard]] auto HeldAs() const -> std::optional<Holding>;
 
-  // True for a value its holder owns and has to end, which is a value held as
-  // a runtime object. One of these ends where the lowering that made it says,
-  // the way a C++ temporary ends with its full-expression and a local with its
-  // block.
+  // True for a value its holder owns and has to end. One of these ends where
+  // the lowering that made it says, the way a C++ temporary ends with its
+  // full-expression and a local with its block.
   [[nodiscard]] auto IsOwnedValue() const -> bool;
+
+  // True for an owned value that has no copy: a pointer owning what it points
+  // at, which two holders would each give back. Wherever one is handed on --
+  // to a slot, to a caller, to a callee, as another type -- its end goes with
+  // it, as Rust moves a value that is not `Copy`.
+  [[nodiscard]] auto IsMoveOnly() const -> bool;
 
   // True for a value made of all its components at once, each reached by its
   // position -- a tuple, or a struct a declaration names. What the components

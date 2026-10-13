@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include "lyra/base/overloaded.hpp"
@@ -89,6 +90,19 @@ auto ErasedPointer(const TypePool& types) -> TypeId {
       Type{PointerType{
           .pointee = types.Intern(Type{VoidType{}}),
           .ownership = PointerOwnership::kBorrowed}});
+}
+
+auto AllocatedType(const TypePool& types, TypeId owner)
+    -> std::optional<TypeId> {
+  const Type& type = types.Get(owner);
+  if (const auto* handle = type.As<ManagedRefType>()) {
+    return handle->pointee;
+  }
+  const auto* pointer = type.As<PointerType>();
+  if (pointer == nullptr || pointer->ownership != PointerOwnership::kUnique) {
+    return std::nullopt;
+  }
+  return pointer->pointee;
 }
 
 auto ClassDefinitionType(const TypePool& types) -> TypeId {

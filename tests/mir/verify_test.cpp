@@ -594,6 +594,40 @@ TEST(MirVerifyTest, AnOperationOverConstantsIsStatedAsItsConstant) {
       "an operation over constants");
 }
 
+// Storage a unique pointer owns comes into existence only by a new-expression,
+// and the value it is initialized from has the type allocated; a construction
+// of the pointer itself is refused.
+TEST(MirVerifyTest, OwnedStorageIsAllocatedOnlyByANewExpression) {
+  const auto allocating = [](bool by_new, bool same_type) {
+    return UnitWithBody([by_new, same_type](CompilationUnit& u, Block& body) {
+      const TypeId owner = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.int_type,
+              .ownership = PointerOwnership::kUnique}});
+      const ExprId value = body.exprs.Add(
+          Expr{
+              .data = NullLiteral{},
+              .type = same_type ? u.builtins.int_type : u.builtins.string});
+      const Expr allocation =
+          by_new
+              ? MakeNewExpr(value, owner)
+              : Expr{
+                    .data =
+                        CallExpr{.callee = Construct{}, .arguments = {value}},
+                    .type = owner};
+      body.AppendStmt(ExprStmt{.expr = body.exprs.Add(allocation)});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(allocating(true, true)));
+  ExpectRefused(
+      allocating(false, true),
+      "constructs what only a new-expression allocates");
+  ExpectRefused(
+      allocating(true, false),
+      "initializes its storage from a value of another type");
+}
+
 // What a position of an array holds before anything is written to it is asked
 // of the element type alone (LRM 7.4.5), so a unit states exactly one default
 // for each type its arrays have as their element, answering a value of that

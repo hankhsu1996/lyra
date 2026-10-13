@@ -98,14 +98,22 @@ class CppEnumTableLiteral {
 void WriteOne(TargetText& out, const CppEnumTableLiteral& literal);
 
 // What a construction call names before its argument list. Usually the type
-// itself, `T(args)`; for an owning pointer the function that allocates and
-// constructs, `std::make_unique<T>(args)`; for a sequence the library function
-// that takes the elements, since the container type takes no element list.
+// itself, `T(args)`; for a sequence the library function that takes the
+// elements, since the container type takes no element list.
 struct CppConstructorName {
   CppType of;
 };
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor);
+
+// What takes ownership of the storage a `new` allocated, applied to the
+// pointer `new` yields: `std::unique_ptr<T>(new T(init))` for a uniquely
+// owning pointer, `lyra::runtime::AdoptObject(new C(init))` for a class handle.
+struct CppNewOwner {
+  CppType of;
+};
+
+void WriteOne(TargetText& out, const CppNewOwner& owner);
 
 // The library's product of a product type's components, `Tuple<Ts...>`: what a
 // tuple is spelled as, and what the type a unit defines for a struct is built

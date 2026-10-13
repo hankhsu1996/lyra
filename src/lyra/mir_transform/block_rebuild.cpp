@@ -173,6 +173,10 @@ auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
             e.arguments = each(std::move(e.arguments));
             return e;
           },
+          [&](mir::NewExpr e) -> mir::ExprData {
+            e.initializer = Expr(e.initializer);
+            return e;
+          },
           [&](mir::DerefExpr e) -> mir::ExprData {
             e.pointer = Expr(e.pointer);
             return e;

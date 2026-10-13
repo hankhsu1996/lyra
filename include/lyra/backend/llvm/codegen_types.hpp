@@ -72,6 +72,10 @@ class CodeGenTypes {
   // width and states out in; a machine integer's is that integer's; every
   // other owned value is one runtime object, whose storage the library states.
   auto LayoutOf(lir::TypeId type) -> support::ObjectLayout;
+  // Whether a value of `type` lies in storage of its own, which an operand of
+  // it then names by address. Every owned value does but a pointer owning what
+  // it points at, which is that address itself, as a Rust `Box` is.
+  [[nodiscard]] auto LiesInStorage(lir::TypeId type) const -> bool;
   // An integral type as the value layer states one, or nothing for a type that
   // is not integral.
   [[nodiscard]] auto IntegralShapeOf(lir::TypeId type) const
