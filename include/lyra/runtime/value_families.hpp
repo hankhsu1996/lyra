@@ -57,17 +57,17 @@ extern template class CellRareState<ValueStorageCore<value::Real>>;
 extern template class CellRareState<ValueStorageCore<value::ShortReal>>;
 extern template class CellRareState<ValueStorageCore<value::ObjectRef>>;
 
-extern template class Ref<value::String>;
-extern template class Ref<value::Real>;
-extern template class Ref<value::ShortReal>;
-extern template class Ref<value::Chandle>;
-extern template class Ref<value::ObjectRef>;
+extern template class VariableRef<value::String>;
+extern template class VariableRef<value::Real>;
+extern template class VariableRef<value::ShortReal>;
+extern template class VariableRef<value::Chandle>;
+extern template class VariableRef<value::ObjectRef>;
 
-extern template class ScopedMutation<Ref<value::String>>;
-extern template class ScopedMutation<Ref<value::Real>>;
-extern template class ScopedMutation<Ref<value::ShortReal>>;
-extern template class ScopedMutation<Ref<value::Chandle>>;
-extern template class ScopedMutation<Ref<value::ObjectRef>>;
+extern template class ScopedMutation<VariableRef<value::String>>;
+extern template class ScopedMutation<VariableRef<value::Real>>;
+extern template class ScopedMutation<VariableRef<value::ShortReal>>;
+extern template class ScopedMutation<VariableRef<value::Chandle>>;
+extern template class ScopedMutation<VariableRef<value::ObjectRef>>;
 
 extern template class Takeovers<value::String>;
 extern template class Takeovers<value::Real>;

@@ -189,6 +189,13 @@ class FunctionLowerer {
   // went to whoever holds it now, or the storage it was to give back holds
   // what it was allocated for.
   void PassEndAt(std::size_t index);
+  // `value` as what an assignment puts where it goes, as rustc's
+  // `consume_by_copy_or_move`: one this body made is moved, and one it was only
+  // lent is copied, so what is put there is a value of its own.
+  auto ConsumeByCopyOrMove(lir::Operand value) -> lir::Rvalue;
+  // `value` put where `destination` says, consumed; one moved out leaves the
+  // bytes it was made in behind.
+  void AssignFrom(lir::Destination destination, lir::Operand value);
   // Whether this body made `value` and still owes its end.
   [[nodiscard]] auto OwesItsEnd(const lir::Operand& value) const -> bool;
   // States the end of an owned value, and of the one a frame slot holds.
@@ -204,10 +211,6 @@ class FunctionLowerer {
   void EmitScopeDrop(const StorageRelease& release);
   // Brings a slot's bytes into use with the first value it is to own.
   void InitializeSlot(lir::ValueId slot, lir::Operand value);
-  // Initializes storage holding no value with a value it is to own, handing it
-  // on, and leaves the bytes it was made in out of use: the storage holds it
-  // from here.
-  auto Initialize(lir::Place place, lir::Operand value) -> lir::Operand;
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
   auto LowerForInto(const mir::Block& block, const mir::ForStmt& stmt)
@@ -259,10 +262,11 @@ class FunctionLowerer {
   // as well as where it returns. Every such call names one, including where
   // nothing here claims or owes anything: a landing is also how a frame says
   // the departure is passing through it, and a frame that says nothing is one
-  // the platform will not look at.
+  // the platform will not look at. What the call answers goes where
+  // `destination` says.
   auto EmitDepartingCall(
       lir::CallTarget target, std::vector<lir::Operand> args,
-      lir::TypeId result_type) -> diag::Result<lir::Operand>;
+      lir::Destination destination) -> diag::Result<void>;
   // The landing the call about to be made here unwinds to: it receives the
   // departure into the frame's one slot for it and continues where the
   // innermost open scope takes one. Each call has a landing of its own,
@@ -286,10 +290,24 @@ class FunctionLowerer {
   auto DepartureSlot() -> lir::ValueId;
   auto CurrentRuntime() -> lir::Operand;
 
-  // Reads a value out of an expression. An expression naming storage that has
-  // no value of its own -- a cell -- has no reading, and is rejected here.
+  // Reads a value out of an expression, as rustc's `as_operand`. An expression
+  // naming storage that has no value of its own -- a cell -- has no reading,
+  // and is rejected here.
   auto LowerExpr(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
+  // What computes an expression's value, as rustc's `as_rvalue`: the one step
+  // that makes it, or the value read or made elsewhere, consumed.
+  struct TypedRvalue {
+    lir::TypeId type;
+    lir::Rvalue value;
+  };
+  auto LowerRvalue(const mir::Block& block, mir::ExprId id)
+      -> diag::Result<TypedRvalue>;
+  // An expression's value put where `destination` says, as rustc's
+  // `expr_into_dest`: a call and the step that makes a value make it there.
+  auto LowerExprInto(
+      const mir::Block& block, mir::ExprId id,
+      const lir::Destination& destination) -> diag::Result<void>;
   // The readings of `ids`, in order. An instruction taking a list of them
   // composes these operands; the walk over the list is not each caller's.
   auto LowerEachExpr(const mir::Block& block, std::span<const mir::ExprId> ids)
@@ -318,6 +336,9 @@ class FunctionLowerer {
   // What reaching a part asks of the value holding it: reading a part reads
   // the holder, and writing a part, whole or in part, writes into the holder.
   static auto HolderReach(Reach part) -> Reach;
+  // What binding a reference asks of its referent: one read through reads it,
+  // and one written through reaches the whole of it.
+  static auto BorrowReach(mir::Mutability mutability) -> Reach;
   // Whether the access writes into what the storage holds, which is what a
   // cell reporting its writes has to be opened for.
   static auto WritesInto(Reach reach) -> bool;
@@ -361,14 +382,6 @@ class FunctionLowerer {
       -> diag::Result<lir::Place>;
   // The address of storage holding a value of `value`.
   auto AddressType(lir::TypeId value) -> lir::TypeId;
-  // How an expression names a part of a value that holds its parts as storage
-  // of their own, where it names one.
-  [[nodiscard]] auto StorageSelection(const mir::Block& block, mir::ExprId id)
-      const -> std::optional<support::PartSelection>;
-  // The access an expression makes to a part that is storage of its own, where
-  // it is one.
-  [[nodiscard]] auto StoragePartAccess(
-      const mir::Block& block, mir::ExprId id) const -> const mir::CallExpr*;
   // The place a part that is storage of its own names: the place holding the
   // value it is part of, one step further. Reaching the part for any write is
   // writing into that place.
@@ -399,9 +412,10 @@ class FunctionLowerer {
   auto LowerCondition(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
 
-  auto LowerCall(
-      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
+  // A call, what it answers put where `destination` says.
+  auto LowerCallInto(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
+      const lir::Destination& destination) -> diag::Result<void>;
   // Resolves the callee and emits the call over arguments already lowered.
   // The result type is passed rather than read off the MIR expression, because
   // a caller partway through building a compound shape has the type in hand
@@ -416,6 +430,11 @@ class FunctionLowerer {
   auto EmitCallTo(
       lir::CallTarget target, std::vector<lir::Operand> args,
       lir::TypeId result_type) -> diag::Result<lir::Operand>;
+  // The same, with what the call answers put where `destination` says, as a
+  // call in rustc's MIR names its `destination`.
+  auto CallInto(
+      lir::CallTarget target, std::vector<lir::Operand> args,
+      lir::Destination destination) -> diag::Result<void>;
   // Says what a call reaches. A callee named outright resolves to its identity
   // with nothing evaluated; one that is a code address the program computed
   // resolves by lowering that address, which is why this reaches the block.
@@ -599,8 +618,22 @@ class FunctionLowerer {
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;
 
-  auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
-  auto Append(lir::TypeId type, lir::InstrData data) -> lir::Operand;
+  // `value` computed and put where `destination` says, as rustc's
+  // `push_assign`; a transient holding an owned value owes its end here.
+  void Assign(lir::Destination destination, lir::Rvalue value);
+  // The transient an owned value made into `destination` owes its end in, or
+  // nothing where the value goes into storage, whose holder owns it.
+  [[nodiscard]] auto OwningTransient(
+      const lir::Destination& destination, bool makes_value) const
+      -> std::optional<lir::ValueId>;
+  auto NewTransient(lir::TypeId type) -> lir::ValueId;
+  // `value` computed into a new transient of `type`, as rustc's `as_temp`.
+  auto Emit(lir::TypeId type, lir::Rvalue value) -> lir::Operand;
+  // A step that yields nothing: a write, or a frame's bytes coming into or
+  // going out of use.
+  void EmitStatement(lir::InstrData statement);
+  // What a step yielding nothing stands as where a value is wanted.
+  auto VoidValue() -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
   // Answers the frame slot the local became where that slot owns its value,
   // for the caller to end with the extent the local belongs to.

@@ -167,7 +167,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const DiagnosticType&) {},
           [&](const RuntimeLibraryType& t) { HashEnum(seed, t.kind); },
           [&](const CoroutineType& t) { HashId(seed, t.payload); },
-          [&](const RefType& t) {
+          [&](const VariableRefType& t) {
             HashId(seed, t.pointee);
             HashEnum(seed, t.mutability);
           },
@@ -178,6 +178,10 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const PointerType& t) {
             HashId(seed, t.pointee);
             HashEnum(seed, t.ownership);
+            HashEnum(seed, t.mutability);
+          },
+          [&](const ReferenceType& t) {
+            HashId(seed, t.referent);
             HashEnum(seed, t.mutability);
           },
           [&](const ManagedRefType& t) { HashId(seed, t.pointee); },
@@ -232,19 +236,19 @@ auto Type::IsAliasHandle() const -> bool {
 }
 
 auto Type::IsCapabilityWrapper() const -> bool {
-  return Is<ObservableType>() || IsReference() || Is<ResolvedType>() ||
+  return Is<ObservableType>() || IsVariableRef() || Is<ResolvedType>() ||
          Is<DriverType>();
 }
 
-auto Type::IsReference() const -> bool {
-  return Is<RefType>() || Is<ReferenceWrapperType>();
+auto Type::IsVariableRef() const -> bool {
+  return Is<VariableRefType>() || Is<ReferenceWrapperType>();
 }
 
 auto Type::WrappedValueType() const -> TypeId {
   if (const auto* observable = As<ObservableType>()) {
     return observable->value;
   }
-  if (const auto* reference = As<RefType>()) {
+  if (const auto* reference = As<VariableRefType>()) {
     return reference->pointee;
   }
   if (const auto* wrapper = As<ReferenceWrapperType>()) {
@@ -309,9 +313,10 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // An address whose value is the address: what it names lives for its
           // own reasons and ends for them, so nothing about holding the address
           // keeps it or loses it.
-          [](const RefType&) { return false; },
+          [](const VariableRefType&) { return false; },
           [](const ReferenceWrapperType&) { return false; },
           [](const PointerType&) { return false; },
+          [](const ReferenceType&) { return false; },
           [](const VectorType&) { return false; },
           [](const DriverType&) { return false; },
           [](const CoroutineType&) { return false; },
@@ -383,9 +388,10 @@ auto Type::PartsAreStorage() const -> bool {
           [](const MachineFloatType&) { return false; },
           [](const MachineArrayType&) { return false; },
           [](const MachineFunctionType&) { return false; },
-          [](const RefType&) { return false; },
+          [](const VariableRefType&) { return false; },
           [](const ReferenceWrapperType&) { return false; },
           [](const PointerType&) { return false; },
+          [](const ReferenceType&) { return false; },
           [](const VectorType&) { return false; },
           [](const DriverType&) { return false; },
           [](const CoroutineType&) { return false; },
@@ -475,9 +481,10 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // These refer to a value living elsewhere rather than holding one,
           // so a container reached through one is reached by dereferencing it
           // first.
-          [](const RefType&) -> Element { return std::nullopt; },
+          [](const VariableRefType&) -> Element { return std::nullopt; },
           [](const ReferenceWrapperType&) -> Element { return std::nullopt; },
           [](const PointerType&) -> Element { return std::nullopt; },
+          [](const ReferenceType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },
           [](const MachineFunctionType&) -> Element { return std::nullopt; },

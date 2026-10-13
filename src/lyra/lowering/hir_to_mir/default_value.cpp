@@ -301,6 +301,10 @@ auto BuildDefaultValueExpr(
           [&](const mir::PointerType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
           },
+          // A reference is bound where it is declared and is never null.
+          [&](const mir::ReferenceType&) -> mir::Expr {
+            return holds_no_declared_value("a reference");
+          },
           // LRM 8.4 / Table 7-1: an uninitialized class handle defaults to
           // null.
           [&](const mir::ManagedRefType&) -> mir::Expr {
@@ -415,7 +419,7 @@ auto BuildDefaultValueExpr(
           [&](const mir::ClosureType&) -> mir::Expr {
             return holds_no_declared_value("a closure");
           },
-          [&](const mir::RefType&) -> mir::Expr {
+          [&](const mir::VariableRefType&) -> mir::Expr {
             return holds_no_declared_value("a reference to a cell");
           },
           [&](const mir::ReferenceWrapperType&) -> mir::Expr {

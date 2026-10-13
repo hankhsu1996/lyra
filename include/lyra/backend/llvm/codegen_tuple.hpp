@@ -111,6 +111,10 @@ class CodeGenTuples {
   // storage for a value of the integral type `stated`, which the method takes
   // or answers.
   struct ThunkBody;
+  // The type of the value the struct method `method` takes its parameter
+  // `index` as a reference to.
+  [[nodiscard]] auto ParamReferent(
+      lir::FunctionId method, std::size_t index) const -> lir::TypeId;
   auto OpenThunkBody(
       lir::TypeId tuple, std::string_view slot,
       const VirtualSignature& stands_in_for, lir::TypeId stated) -> ThunkBody;

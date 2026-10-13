@@ -494,23 +494,23 @@ enum class Mutability : std::uint8_t {
 
 // A reference value aliasing a storage cell of `pointee` type (LRM 13.5.2
 // pass-by-reference; a fork branch / `$sscanf` / with-clause body sharing
-// enclosing storage). The runtime wrapper `lyra::runtime::Ref<T>` routes reads
-// through `Get` and writes through the cell's `Set` (its update-event path), so
-// a value of this type is read and written like an observable cell. A read-only
-// `mutability` marks a `const ref` formal (LRM 13.5.2). A library wrapper, like
-// ObservableType; constructing one from a cell is an explicit MIR operation,
-// not a backend-synthesized wrap.
-struct RefType {
+// enclosing storage). The runtime wrapper `lyra::runtime::VariableRef<T>`
+// routes reads through `Get` and writes through the cell's `Set` (its
+// update-event path), so a value of this type is read and written like an
+// observable cell. A read-only `mutability` marks a `const ref` formal
+// (LRM 13.5.2). A library wrapper, like ObservableType; constructing one from a
+// cell is an explicit MIR operation, not a backend-synthesized wrap.
+struct VariableRefType {
   TypeId pointee;
   Mutability mutability;
 
-  auto operator==(const RefType&) const -> bool = default;
+  auto operator==(const VariableRefType&) const -> bool = default;
 };
 
 // A reference held as a member and bound after the object holding it is built
-// (C++ `std::reference_wrapper`), where a `RefType` is bound once, as it is
+// (C++ `std::reference_wrapper`), where a `VariableRefType` is bound once, as it is
 // created. Reading, writing and waiting through one reach what it names as
-// through a `RefType`; only a binding makes one name other storage, never an
+// through a `VariableRefType`; only a binding makes one name other storage, never an
 // assignment. A port is such a
 // member: its connection binds it while the design's references are resolved
 // (LRM 23.3.3), and a connection may name a port of an instance resolved later.
@@ -541,6 +541,20 @@ struct PointerType {
   Mutability mutability = Mutability::kMutable;
 
   auto operator==(const PointerType&) const -> bool = default;
+};
+
+// A reference: another name for an object that exists elsewhere, bound once
+// and never null, as `&T` in Rust and `T&` in C++. Unlike a borrowed pointer it
+// cannot be rebound or tested, so holding one says only that its referent is
+// reached without being copied; `mutability` says whether it may be written
+// through. A whole-value operation takes its operands this way, as Rust's
+// `PartialEq::eq(&self, other: &Self)` does, so that a value is read where it
+// lies rather than copied in to be asked about.
+struct ReferenceType {
+  TypeId referent;
+  Mutability mutability;
+
+  auto operator==(const ReferenceType&) const -> bool = default;
 };
 
 // A managed reference (LRM 8.3 class handle): a traced edge to a
@@ -748,12 +762,11 @@ class Type {
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
       VoidType, ObjectType, RuntimeClassType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
-      ReferenceWrapperType, PointerType, ManagedRefType, VectorType, TupleType,
+      DiagnosticType, RuntimeLibraryType, CoroutineType, VariableRefType,
+      ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType, VectorType, TupleType,
       UnionType, TaggedUnionType, EmptyType, ObservableType, ResolvedType,
       DriverType, OpenWriteType, DesignationType, ObjectWriteType,
-      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, StructType,
-      ClosureType>;
+      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, StructType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -790,7 +803,7 @@ class Type {
   // True for a reference to storage elsewhere, whether bound as it is created
   // or held and bound later: what is read, written or waited on through either
   // is what it names.
-  [[nodiscard]] auto IsReference() const -> bool;
+  [[nodiscard]] auto IsVariableRef() const -> bool;
 
   // True for a type whose value lives in storage the runtime owns, so whatever
   // holds such a value holds a handle onto that storage rather than the value

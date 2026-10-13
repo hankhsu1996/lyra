@@ -298,6 +298,9 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           [&](const mir::AddressOfExpr& e) -> mir::ExprData {
             return mir::AddressOfExpr{.operand = again(e.operand)};
           },
+          [&](const mir::BorrowExpr& e) -> mir::ExprData {
+            return mir::BorrowExpr{.operand = again(e.operand)};
+          },
           [&](const mir::FieldAccessExpr& e) -> mir::ExprData {
             return mir::FieldAccessExpr{
                 .receiver = again(e.receiver), .field = e.field};
@@ -483,7 +486,7 @@ auto PathReference(
     reference = TakeStep(
         unit, block, step, StepUse::kLend, reference,
         unit.types.Intern(
-            mir::Type{mir::RefType{
+            mir::Type{mir::VariableRefType{
                 .pointee = value, .mutability = mir::Mutability::kMutable}}));
   }
   return reference;
@@ -566,11 +569,13 @@ auto SettledPlace(
   }
   // By value: forming the settled place appends to the pool this views.
   const mir::Expr node = block.exprs.Get(place);
-  // A pointer a computation yields is a value, and holding it in a local names
-  // the same object. Any other value a computation yields names no storage a
-  // place could be formed over again, and no path is rooted at one.
+  // A pointer or a reference a computation yields is a value, and holding it in
+  // a local names the same object. Any other value a computation yields names
+  // no storage a place could be formed over again, and no path is rooted at
+  // one.
   const auto computed = [&]() -> mir::ExprId {
-    if (unit_lowerer.Unit().types.Get(node.type).Is<mir::PointerType>()) {
+    const mir::Type& yielded = unit_lowerer.Unit().types.Get(node.type);
+    if (yielded.Is<mir::PointerType>() || yielded.Is<mir::ReferenceType>()) {
       return EvaluatedOnce(frame, place);
     }
     throw InternalError(
@@ -612,6 +617,7 @@ auto SettledPlace(
           [&](const mir::MachineFloatLiteral&) { return computed(); },
           [&](const mir::ReferenceExpr&) { return computed(); },
           [&](const mir::AddressOfExpr&) { return computed(); },
+          [&](const mir::BorrowExpr&) { return computed(); },
           [&](const mir::UnaryExpr&) { return computed(); },
           [&](const mir::BinaryExpr&) { return computed(); },
           [&](const mir::CastExpr&) { return computed(); },

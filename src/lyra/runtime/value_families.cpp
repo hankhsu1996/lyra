@@ -25,17 +25,17 @@ template class CellRareState<ValueStorageCore<value::Real>>;
 template class CellRareState<ValueStorageCore<value::ShortReal>>;
 template class CellRareState<ValueStorageCore<value::ObjectRef>>;
 
-template class Ref<value::String>;
-template class Ref<value::Real>;
-template class Ref<value::ShortReal>;
-template class Ref<value::Chandle>;
-template class Ref<value::ObjectRef>;
+template class VariableRef<value::String>;
+template class VariableRef<value::Real>;
+template class VariableRef<value::ShortReal>;
+template class VariableRef<value::Chandle>;
+template class VariableRef<value::ObjectRef>;
 
-template class ScopedMutation<Ref<value::String>>;
-template class ScopedMutation<Ref<value::Real>>;
-template class ScopedMutation<Ref<value::ShortReal>>;
-template class ScopedMutation<Ref<value::Chandle>>;
-template class ScopedMutation<Ref<value::ObjectRef>>;
+template class ScopedMutation<VariableRef<value::String>>;
+template class ScopedMutation<VariableRef<value::Real>>;
+template class ScopedMutation<VariableRef<value::ShortReal>>;
+template class ScopedMutation<VariableRef<value::Chandle>>;
+template class ScopedMutation<VariableRef<value::ObjectRef>>;
 
 template class Takeovers<value::String>;
 template class Takeovers<value::Real>;

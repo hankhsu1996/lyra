@@ -380,8 +380,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_enclosing_scope", &lyra_rt_enclosing_scope);
   add("lyra_rt_loop_blocks_add", &lyra_rt_loop_blocks_add);
   add("lyra_rt_loop_blocks_at", &lyra_rt_loop_blocks_at);
-  add("lyra_rt_alloc_bytes", &lyra_rt_alloc_bytes);
-  add("lyra_rt_dealloc_bytes", &lyra_rt_dealloc_bytes);
   add("lyra_rt_insert_bits", &lyra_rt_insert_bits);
   add("lyra_rt_run_program", &lyra_rt_run_program);
 }

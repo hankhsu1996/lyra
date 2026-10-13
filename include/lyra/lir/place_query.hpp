@@ -44,13 +44,14 @@ auto PlaceType(
 // which reaches storage only through a dereference.
 auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool;
 
-// Whether an instruction brings a value into existence rather than naming one
+// Whether computing a value brings one into existence rather than naming one
 // that already exists. A load names the value its place holds, where it lies; a
 // cast reads a value as another type; and a library entry that answers with
 // storage it was handed names that storage. Every call, build, update and
-// operator makes a value of its own. Where that value's type is an owned one,
-// what made it owes its end.
-auto MakesValue(const InstrData& instr) -> bool;
+// operator makes a value of its own, and a value moved in is one too, as far as
+// where it goes is concerned. Where that value's type is an owned one, what
+// holds it owes its end.
+auto MakesValue(const Rvalue& value) -> bool;
 
 // The same question of a call, which its target alone answers -- asked of a
 // call that may depart as much as of one that returns.

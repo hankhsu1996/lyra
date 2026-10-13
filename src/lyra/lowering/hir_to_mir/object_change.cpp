@@ -66,7 +66,7 @@ auto PropertyReference(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId receiver,
     const mir::ClassFieldTarget& property, mir::TypeId type) -> mir::ExprId {
   const mir::TypeId reference = unit.types.Intern(
-      mir::Type{mir::RefType{
+      mir::Type{mir::VariableRefType{
           .pointee = type, .mutability = mir::Mutability::kMutable}});
   return Call(
       block, support::BuiltinFn::kReferProperty, property, {receiver},

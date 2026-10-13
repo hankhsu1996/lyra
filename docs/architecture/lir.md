@@ -61,16 +61,22 @@ below LIR, at LIR-to-LLVM.
   dereference step.
 - When the bytes a frame keeps for a value are in use: from where a slot's first value is stored or
   a value is made, to a point stated on every way out of the extent it belongs to.
-- Whether a write initializes or assigns: a value moved into storage holding none -- a slot's first
-  value, or one whose value was ended before -- is an initialization, and every other write is a
-  store into the value already there. Both are stated, so nothing below works out which a write is
-  from the shape of its place, as SIL states `store [init]` beside `store [assign]`.
+- Whether a write initializes or assigns: a value put into storage holding none -- a slot's first
+  value, or one whose value was ended before -- is an assignment naming that storage as its
+  destination, made there or moved in, and every other write is a store into the value already
+  there. Both are stated, so nothing below works out which a write is from the shape of its place,
+  as SIL states `store [init]` beside `store [assign]`.
 - Who ends a value a pointer owns: a uniquely owning pointer is an owned value with no copy, moved
   wherever it is handed on -- into a slot, to a caller, to a callee -- and ended by its last holder,
   which ends what it points at and gives the storage back. Storage of dynamic duration is allocated
   holding nothing, initialized there, given back if the initialization departs, and only then owned.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
+- Where every computed value goes, stated on the step that computes it as Rust's MIR states an
+  assignment's place and a call's `destination`: a transient the step defines, or storage holding
+  nothing yet that the value is made in and whose holder then owns it. A step that yields nothing --
+  a store, an initialization, a frame's bytes coming into or going out of use -- names no
+  destination, and an evaluation yielding nothing stands as the void value where one is wanted.
 - The value-aggregate selector vocabulary: which subvalue of a view a step names -- the one member
   an active-member value holds at a time, a runtime coordinate, a fixed-width window. One extract
   and one update carry every step; the selector never says how the step is realized.
@@ -167,8 +173,9 @@ identity is the suspect, not the analysis.
 9. The end of a value and the end of its storage's use are two statements. A value handed on leaves
    behind the bytes it was made in while it goes on existing, and a slot's bytes hold one value
    after another, so neither end implies the other. The statement says only how long a frame's bytes
-   are needed. _Machine-execution consequence: where those bytes are kept is the layout derivation's
-   answer from their size, and no node records it._
+   are needed. _Machine-execution consequence: those bytes are the frame's, because a value too
+   large for a frame never reaches one -- MIR holds it through storage the program allocates -- so
+   no layer below decides from a value's size where it is kept._
 10. A write states what it writes and nothing wider. Bits written within a packed value that lies
     somewhere a write can land -- at a place, or within a write in progress -- are one statement
     naming where the value lies, the parts the bits are reached through, and the bits. No node

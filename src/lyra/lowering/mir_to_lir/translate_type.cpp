@@ -230,15 +230,15 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           // to (LRM 13.5.2). A body taking a reference is lowered once for
           // every caller, so the type cannot say which of the two it was
           // handed: what it states is the values that storage holds.
-          [&](const mir::RefType& r) -> lir::Type {
-            return lir::Type{lir::RefType{
+          [&](const mir::VariableRefType& r) -> lir::Type {
+            return lir::Type{lir::VariableRefType{
                 .pointee = TranslateType(r.pointee),
                 .mutability = TranslateMutability(r.mutability)}};
           },
           // Bound later than a reference created bound, and named through
           // alike, so LIR carries either as one reference.
           [&](const mir::ReferenceWrapperType& r) -> lir::Type {
-            return lir::Type{lir::RefType{
+            return lir::Type{lir::VariableRefType{
                 .pointee = TranslateType(r.pointee),
                 .mutability = TranslateMutability(r.mutability)}};
           },
@@ -247,6 +247,16 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .pointee = TranslateType(pt.pointee),
                 .ownership = TranslatePointerOwnership(pt.ownership),
                 .mutability = TranslateMutability(pt.mutability)}};
+          },
+          // Executed, a reference is the address of its referent, as a C++
+          // reference is to clang's code generation: what sets it apart from a
+          // borrowed pointer -- bound once, never null -- is a rule its holder
+          // keeps, not something the address carries.
+          [&](const mir::ReferenceType& r) -> lir::Type {
+            return lir::Type{lir::PointerType{
+                .pointee = TranslateType(r.referent),
+                .ownership = lir::PointerOwnership::kBorrowed,
+                .mutability = TranslateMutability(r.mutability)}};
           },
           [&](const mir::ManagedRefType& mr) -> lir::Type {
             return lir::Type{

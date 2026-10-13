@@ -275,18 +275,18 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::CoroutineType& c) {
             Write(out, "lyra::runtime::Coroutine<", type(c.payload), ">");
           },
-          [&](const mir::RefType& r) {
+          [&](const mir::VariableRefType& r) {
             if (r.mutability == mir::Mutability::kReadOnly) {
               out += "const ";
             }
-            Write(out, "lyra::runtime::Ref<", type(r.pointee), ">");
+            Write(out, "lyra::runtime::VariableRef<", type(r.pointee), ">");
           },
           // The runtime's reference is re-seatable, so it holds a reference
           // bound after its object is built as well. Binding writes the
           // wrapper itself, so it is never a const object whatever it may
           // write through.
           [&](const mir::ReferenceWrapperType& r) {
-            Write(out, "lyra::runtime::Ref<", type(r.pointee), ">");
+            Write(out, "lyra::runtime::VariableRef<", type(r.pointee), ">");
           },
           [&](const mir::VoidType&) { out += "void"; },
           [&](const mir::PointerType& p) {
@@ -307,6 +307,17 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 return;
             }
             throw InternalError("backend::cpp: unknown PointerOwnership");
+          },
+          [&](const mir::ReferenceType& r) {
+            switch (r.mutability) {
+              case mir::Mutability::kReadOnly:
+                Write(out, "const ", type(r.referent), "&");
+                return;
+              case mir::Mutability::kMutable:
+                Write(out, type(r.referent), "&");
+                return;
+            }
+            throw InternalError("backend::cpp: unknown Mutability");
           },
           // Every object reference is one type, whatever class it is seen as.
           // The class is written where the reference is used, because two
@@ -449,9 +460,12 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::PointerType&) -> DerefSpelling {
             return DerefByOperator{};
           },
+          [&](const mir::ReferenceType&) -> DerefSpelling {
+            return DerefImplicit{};
+          },
           // A `ref` is dereferenced like a pointer, which reaches the cell it
           // is bound to (LRM 23.3.3.2).
-          [&](const mir::RefType&) -> DerefSpelling {
+          [&](const mir::VariableRefType&) -> DerefSpelling {
             return DerefByOperator{};
           },
           [&](const mir::ReferenceWrapperType&) -> DerefSpelling {
@@ -636,6 +650,11 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
                 "backend::cpp: the object a class handle owns is allocated by "
                 "a new-expression, so no handle is constructed");
           },
+          [](const mir::ReferenceType&) {
+            throw InternalError(
+                "backend::cpp: a reference is bound to what already exists, so "
+                "none is constructed");
+          },
           // A sequence is built by the library function that takes its
           // elements, since the container type takes no element list.
           [&](const mir::VectorType& v) {
@@ -669,7 +688,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::DiagnosticType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeLibraryType& t) { by_naming_itself(t); },
           [&](const mir::CoroutineType& t) { by_naming_itself(t); },
-          [&](const mir::RefType& t) { by_naming_itself(t); },
+          [&](const mir::VariableRefType& t) { by_naming_itself(t); },
           [&](const mir::ReferenceWrapperType& t) { by_naming_itself(t); },
           [&](const mir::VoidType& t) { by_naming_itself(t); },
           [&](const mir::TupleType& t) { by_naming_itself(t); },

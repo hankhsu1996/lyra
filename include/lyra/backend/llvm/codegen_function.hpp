@@ -6,6 +6,7 @@
 #include <span>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include <llvm/ADT/STLFunctionalExtras.h>
@@ -55,11 +56,45 @@ class CodeGenFunction {
   struct ResolvedCall {
     llvm::FunctionCallee callee;
     std::vector<llvm::Value*> args;
+    // The storage the callee builds its return value in, handed to it last,
+    // or nothing where its convention returns the value directly.
+    llvm::Value* return_slot;
   };
 
   // The LLVM argument each of the body's parameters reads, one for one.
   auto BindParameters() -> void;
-  auto LowerInstr(const lir::Instr& instr) -> diag::Result<llvm::Value*>;
+  auto LowerInstrInto(const lir::Instr& instr) -> diag::Result<void>;
+  // An assignment: its value computed and put where its destination says.
+  auto LowerAssignInto(const lir::AssignInstr& assign) -> diag::Result<void>;
+  // What this target makes of a LIR destination, named as rustc's codegen
+  // names what it makes of a MIR place, operand or local (`PlaceRef`,
+  // `OperandRef`, `LocalRef`): a transient whose value is not kept in storage,
+  // still to be defined, as rustc's `LocalRef::PendingOperand`; or storage
+  // lying at `address` that holds a value of `type`, as rustc's `PlaceRef`.
+  struct PendingOperand {
+    lir::ValueId value;
+  };
+  struct PlaceRef {
+    llvm::Value* address;
+    lir::TypeId type;
+  };
+  using DestinationRef = std::variant<PendingOperand, PlaceRef>;
+  auto ResolveDestination(const lir::Destination& destination)
+      -> diag::Result<DestinationRef>;
+  // The type of the value `destination` holds.
+  [[nodiscard]] auto TypeOf(const DestinationRef& destination) const
+      -> lir::TypeId;
+  // The storage a value lying in storage is built in: the place `destination`
+  // names, or storage of its own for a transient, made only by the step that
+  // builds a value there, as clang's `EnsureDest` makes a temporary only when
+  // handed no slot -- a transient that reads or moves in a value already made
+  // is that value and takes none. Nothing for a value computed as itself.
+  auto EnsureDestination(const DestinationRef& destination) -> llvm::Value*;
+  // What an rvalue computes, built in what `EnsureDestination` answers where
+  // it is built in storage, as rustc's `codegen_rvalue` and
+  // `codegen_rvalue_operand` do for a place and for an operand.
+  auto LowerRvalue(const lir::Rvalue& value, const DestinationRef& destination)
+      -> diag::Result<llvm::Value*>;
 
   // Storage in the body's own frame, allocated where the body opens: every
   // path reaching an instruction then names the same storage, and a loop
@@ -76,28 +111,12 @@ class CodeGenFunction {
   // as clang builds a class-type result through `sret`, and is ended by the end
   // LIR states for it.
   auto StorageFor(lir::TypeId type) -> llvm::Value*;
-  // The storage the instruction's result `made` is built in: in the frame
-  // while its bytes are few enough to lie there, and otherwise bytes allocated
-  // here, where the value is made, which the frame keeps only the address of.
-  auto StorageForResult(lir::ValueId made, lir::TypeId type) -> llvm::Value*;
-  // Whether a value of `type` this body makes or declares has its bytes kept
-  // apart from the frame: a frame is taken from a stack whose size no design
-  // chose, so it keeps a value's bytes only up to the size the value library
-  // keeps one in place.
-  [[nodiscard]] auto NeedsHeapStorage(lir::TypeId type) const -> bool;
-  // Gives every value this body makes or declares whose bytes are kept apart
-  // the frame slot that holds their address, holding none until they are
-  // obtained. All of them exist before any code is generated, because a way
-  // out that gives one's bytes back may be generated ahead of the instruction
-  // that obtains them.
-  void DeclareHeapPointers();
-  // Obtains the bytes of `of` and keeps their address, and gives them back
-  // where any are held.
-  auto AllocateBytes(lir::ValueId of) -> llvm::Value*;
-  void DeallocateBytes(lir::ValueId of);
-  // Where the value `id` names is: what generating it answered, or the bytes
-  // kept apart for it.
-  auto AddressOf(lir::ValueId id) -> llvm::Value*;
+  // Leaves what was computed where `destination` says, as rustc's
+  // `store_return`: a pending transient becomes that value, and a value not
+  // built in storage is stored into its place.
+  void StoreInto(
+      const DestinationRef& destination, llvm::Value* value,
+      llvm::IRBuilderBase& at);
   // `count` arguments that are each an address this target computed.
   [[nodiscard]] auto Addresses(std::size_t count) const -> std::vector<ArgAbi>;
   // Calls the library entry `symbol` on this target's own account, handing it
@@ -185,16 +204,21 @@ class CodeGenFunction {
   auto ComponentAddress(
       lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value*;
 
+  // The call settled against its convention, which alone decides whether the
+  // callee builds its return value in a return slot, as clang's `EmitCall`
+  // and rustc's `make_return_dest` read the return's ABI; `return_slot` is
+  // asked for one only where it does.
   auto ResolveCall(
-      const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
+      const lir::CallInstr& call, lir::TypeId result_type,
+      llvm::function_ref<llvm::Value*()> return_slot)
       -> diag::Result<ResolvedCall>;
-  // What a call answers with: the answer the callee builds in `out` where the
-  // call makes a value, the callee's own answer otherwise, and nothing for a
-  // call that answers nothing. Whether a target is entered as a callee or
+  // What the call answers with: the value the callee builds in storage -- the
+  // place `destination` names, or storage of its own for a transient -- the
+  // callee's own answer otherwise, and nothing for a call that answers
+  // nothing. Whether a target is entered as a callee or
   // realized as instructions of this body is decided by the target's kind and
   // the types it states, never by the values in hand.
-  auto LowerCall(
-      const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
+  auto LowerCall(const lir::CallInstr& call, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
   // Opens a landing: the pad the platform transfers to, and the target the
   // departure names, which is what the body's own test reads.
@@ -229,7 +253,7 @@ class CodeGenFunction {
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
-  auto LowerInitialize(const lir::InitializeInstr& initialize)
+  auto LowerUse(const lir::UseInstr& use, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
   // Bits written into the integral value at a place, where it lies: the
   // insertion as instructions where the value, every part and the bits each
@@ -328,6 +352,9 @@ class CodeGenFunction {
   // default and changes nothing, and a write to one allocates or discards it by
   // the container's own rule.
   enum class Access : std::uint8_t { kRead, kWrite };
+  // What an address of `address_type` may be used for: a read-only pointer
+  // only reads, and every other address may be written through.
+  auto AccessGranted(lir::TypeId address_type) const -> Access;
   // The planes of `position`, which has to be stated as the position type
   // every ordinal of the layer above is brought to.
   auto LoadPosition(const OperandRef& position) -> Planes;
@@ -439,9 +466,6 @@ class CodeGenFunction {
   // depart; nothing while what is lowered continues in place.
   std::optional<InvokeDest> invoke_dest_;
   std::unordered_map<lir::ValueId, llvm::Value*> values_;
-  // For each value whose bytes are allocated rather than taken from the
-  // frame, the frame's pointer to them.
-  std::unordered_map<lir::ValueId, llvm::AllocaInst*> heap_pointers_;
   std::vector<llvm::BasicBlock*> blocks_;
   // Where frame storage is allocated: the end of the code the body opens with,
   // ahead of its first statement.

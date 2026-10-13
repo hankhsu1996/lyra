@@ -26,8 +26,10 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -134,6 +136,7 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           [&](const NewExpr& e) { reach(e.initializer); },
           [&](const DerefExpr& e) { reach(e.pointer); },
           [&](const AddressOfExpr& e) { reach(e.operand); },
+          [&](const BorrowExpr& e) { reach(e.operand); },
           [&](const MoveExpr& e) { reach(e.operand); },
           [&](const FieldAccessExpr& e) { reach(e.receiver); },
           [&](const ClosureExpr& e) {
@@ -208,6 +211,7 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const ReferenceExpr&) { return true; },
           [](const DerefExpr&) { return true; },
           [](const AddressOfExpr&) { return true; },
+          [](const BorrowExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
           [](const UnaryExpr&) { return false; },
           [](const BinaryExpr&) { return false; },
@@ -265,6 +269,7 @@ auto Describe(const ExprData& data) -> std::string {
           [](const NewExpr&) -> std::string { return "a new"; },
           [](const DerefExpr&) -> std::string { return "a dereference"; },
           [](const AddressOfExpr&) -> std::string { return "an address-of"; },
+          [](const BorrowExpr&) -> std::string { return "a reference"; },
           [](const MoveExpr&) -> std::string { return "a move"; },
           [](const FieldAccessExpr&) -> std::string {
             return "a field access";
@@ -429,7 +434,7 @@ void VerifyMemberReceivers(
       const Type& receiver =
           unit.types.Get(block.exprs.Get(access->receiver).type);
       if (receiver.Is<PointerType>() || receiver.Is<ManagedRefType>() ||
-          receiver.Is<ObjectWriteType>() || receiver.IsReference()) {
+          receiver.Is<ObjectWriteType>() || receiver.IsVariableRef()) {
         refuse(id);
       }
     }
@@ -462,7 +467,7 @@ void VerifyReferenceBindings(
   for (const ExprId id : block.exprs.Ids()) {
     const ExprData& data = block.exprs.Get(id).data;
     if (const auto* assign = std::get_if<AssignExpr>(&data)) {
-      if (unit.types.Get(block.exprs.Get(assign->target).type).IsReference()) {
+      if (unit.types.Get(block.exprs.Get(assign->target).type).IsVariableRef()) {
         refuse(id, "stores into a reference, which only a binding names");
       }
     }
@@ -615,7 +620,7 @@ void VerifyOrdinals(
 auto ValueNamedBy(const TypePool& types, TypeId operand) -> const Type& {
   const Type* reached = &types.Get(operand);
   for (;;) {
-    if (reached->IsReference()) {
+    if (reached->IsVariableRef()) {
       reached = &types.Get(reached->WrappedValueType());
     } else if (const auto* pointer = reached->As<PointerType>()) {
       reached = &types.Get(pointer->pointee);
@@ -826,10 +831,11 @@ void VerifyConstantsAreFolded(
             [](const DynamicCastExpr&) {}, [](const ConditionalExpr&) {},
             [](const BlockExpr&) {}, [](const AssignExpr&) {},
             [](const NewExpr&) {}, [](const DerefExpr&) {},
-            [](const AddressOfExpr&) {}, [](const MoveExpr&) {},
-            [](const FieldAccessExpr&) {}, [](const ClosureExpr&) {},
-            [](const CompositeExpr&) {}, [](const AwaitExpr&) {},
-            [](const WaitExpr&) {}, [](const VectorGetExpr&) {}},
+            [](const AddressOfExpr&) {}, [](const BorrowExpr&) {},
+            [](const MoveExpr&) {}, [](const FieldAccessExpr&) {},
+            [](const ClosureExpr&) {}, [](const CompositeExpr&) {},
+            [](const AwaitExpr&) {}, [](const WaitExpr&) {},
+            [](const VectorGetExpr&) {}},
         expr.data);
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -874,12 +880,126 @@ void VerifyAllocations(
   }
 }
 
+// Whether a node, read as a value, reads one where it lies -- a name, a
+// dereference, a field, a part of storage, what an execution completed with --
+// rather than making one.
+auto ReadsWhereItLies(
+    const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
+  const auto reads = [](const auto&) { return true; };
+  const auto makes = [](const auto&) { return false; };
+  return std::visit(
+      Overloaded{
+          [&](const ReferenceExpr& e) { return reads(e); },
+          [&](const DerefExpr& e) { return reads(e); },
+          [&](const FieldAccessExpr& e) { return reads(e); },
+          [&](const AwaitExpr& e) { return reads(e); },
+          [&](const CallExpr&) {
+            return mir::ReadsWhereItLies(unit.types, block, id);
+          },
+          [&](const StringLiteral& e) { return makes(e); },
+          [&](const NullLiteral& e) { return makes(e); },
+          [&](const MachineBoolLiteral& e) { return makes(e); },
+          [&](const MachineIntLiteral& e) { return makes(e); },
+          [&](const MachineFloatLiteral& e) { return makes(e); },
+          [&](const UnaryExpr& e) { return makes(e); },
+          [&](const BinaryExpr& e) { return makes(e); },
+          [&](const CastExpr& e) { return makes(e); },
+          [&](const DynamicCastExpr& e) { return makes(e); },
+          [&](const ConditionalExpr& e) { return makes(e); },
+          [&](const BlockExpr& e) { return makes(e); },
+          [&](const AssignExpr& e) { return makes(e); },
+          [&](const NewExpr& e) { return makes(e); },
+          [&](const AddressOfExpr& e) { return makes(e); },
+          [&](const BorrowExpr& e) { return makes(e); },
+          [&](const MoveExpr& e) { return makes(e); },
+          [&](const ClosureExpr& e) { return makes(e); },
+          [&](const CompositeExpr& e) { return makes(e); },
+          [&](const WaitExpr& e) { return makes(e); },
+          [&](const VectorGetExpr& e) { return makes(e); }},
+      block.exprs.Get(id).data);
+}
+
+// A value too large for a frame is made only in the storage a new-expression
+// allocates for it, and is otherwise only read where it lies; a body answering
+// one by its caller's convention answers it from there.
+void VerifyLargeValuesLieInStorage(
+    const CompilationUnit& unit, const Block& block, bool answers_large,
+    const auto& describe) {
+  std::vector<bool> made_in_storage(block.exprs.size(), false);
+  // What a write lands on names where it lands, and makes nothing: the target
+  // and each part it is reached through, outermost last.
+  const auto mark_target = [&](ExprId target) {
+    std::optional<ExprId> reached = target;
+    while (reached.has_value()) {
+      made_in_storage.at(reached->value) = true;
+      const auto* part = std::get_if<CallExpr>(&block.exprs.Get(*reached).data);
+      reached = part != nullptr && SelectionOf(*part).has_value()
+                    ? CalleeReceiver(part->callee)
+                    : std::nullopt;
+    }
+  };
+  for (const Expr& expr : block.exprs) {
+    if (const auto* allocation = std::get_if<NewExpr>(&expr.data)) {
+      made_in_storage.at(allocation->initializer.value) = true;
+    }
+    if (const auto* write = std::get_if<AssignExpr>(&expr.data)) {
+      mark_target(write->target);
+    }
+  }
+  if (answers_large) {
+    for (const Stmt& stmt : block.stmts) {
+      if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data);
+          returned != nullptr && returned->value.has_value()) {
+        made_in_storage.at(returned->value->value) = true;
+      }
+    }
+  }
+  for (const ExprId id : block.exprs.Ids()) {
+    if (made_in_storage.at(id.value) ||
+        !IsTooLargeForAFrame(unit, block.exprs.Get(id).type) ||
+        ReadsWhereItLies(unit, block, id)) {
+      continue;
+    }
+    throw InternalError(
+        std::format(
+            "mir verify: {} makes {} too large for a frame outside the storage "
+            "a new-expression allocates -- please report this as a bug",
+            describe(), Describe(block.exprs.Get(id).data)));
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyLargeValuesLieInStorage(
+        unit, block.child_scopes.Get(id), answers_large, describe);
+  }
+}
+
+// No body keeps a value too large for a frame in one: every such local is held
+// through a box.
+void VerifyFramesHoldNoLargeValue(
+    const CompilationUnit& unit, const CallableCode& code,
+    const auto& describe) {
+  for (const LocalDecl& local : code.locals) {
+    if (IsTooLargeForAFrame(unit, local.type)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} declares a local too large for a frame -- please "
+              "report this as a bug",
+              describe()));
+    }
+  }
+  if (code.body.has_value()) {
+    VerifyLargeValuesLieInStorage(
+        unit, *code.body, IsTooLargeForAFrame(unit, code.result_type),
+        describe);
+  }
+}
+
 // `describe` names the body, and is asked only once there is something to
 // report: the check runs over every body of every unit, and composing a name
 // for each one costs more than the check itself.
 void VerifyCode(
     const CompilationUnit& unit, const CallableCode& code,
     const auto& describe) {
+  VerifyFramesHoldNoLargeValue(unit, code, describe);
   if (!code.body.has_value()) {
     return;
   }

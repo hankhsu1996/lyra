@@ -3047,6 +3047,14 @@ enough to warrant its own focused review.
       static members the compiler's expansion of the body reaches, which is the first thing to
       check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
       silencing the check. Not blocked.
+- [ ] R223 -- The pass that holds large values through a box carries its state by hand: the unit,
+      the block being rebuilt and the boxes of each closure's captures are handed to every step of
+      the rewrite, and which locals of a body are boxed and whether the body answers a box are
+      captured by closures. Each body's rewrite also takes its code by value, so a struct's methods,
+      which are rewritten before any struct is replaced, are copied first. Target: one rewrite of a
+      body holding that state, with a step per node, statement and kind of operand, as rustc's MIR
+      passes are visitors over one body; a body is read where it lies and only the rewritten one is
+      built. Not blocked.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

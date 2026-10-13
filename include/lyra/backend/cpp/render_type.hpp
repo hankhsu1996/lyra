@@ -171,20 +171,25 @@ void WriteOne(TargetText& out, const CppBaseClass& base);
 // An object reference declares neither, being one type whatever class it
 // refers to, so it is opened through its view as the class the code assumes,
 // which is also where a null reference is caught (LRM 8.4). Any other type
-// reaches nothing to dereference and is refused.
+// reaches nothing to dereference and is refused. A reference is already its
+// referent wherever C++ names it ([expr.type]), so opening one writes nothing.
 struct DerefByOperator {};
 
 struct DerefThroughView {
   mir::TypeId pointee;
 };
 
-using DerefSpelling = std::variant<DerefByOperator, DerefThroughView>;
+struct DerefImplicit {};
+
+using DerefSpelling =
+    std::variant<DerefByOperator, DerefThroughView, DerefImplicit>;
 
 [[nodiscard]] auto DerefSpellingAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> DerefSpelling;
 
 // C++'s indirection over a value of `pointer_type`, `(*p)` ([expr.unary.op]),
-// or `r.Deref<T>()` where the dereference goes through a view. `write_pointer`
+// `r.Deref<T>()` where the dereference goes through a view, or `r` itself for a
+// reference. `write_pointer`
 // writes the pointer and is told the precedence its position needs.
 template <typename WritePointer>
 void WriteDeref(
@@ -200,14 +205,16 @@ void WriteDeref(
           [&](const DerefThroughView& view) {
             write_pointer(Precedence::kPostfix);
             Write(out, ".Deref<", CppType(unit, view.pointee), ">()");
-          }},
+          },
+          [&](DerefImplicit) { write_pointer(Precedence::kPostfix); }},
       DerefSpellingAsCpp(unit, pointer_type));
 }
 
 // A member access through what `pointer_type` designates, up to the member's
-// name: `p->`, which C++ defines as `(*p).` ([expr.ref]), or `r.Deref<T>().`
-// where the dereference goes through a view. `write_pointer` writes the
-// pointer and is told the precedence its position needs.
+// name: `p->`, which C++ defines as `(*p).` ([expr.ref]), `r.Deref<T>().`
+// where the dereference goes through a view, or `r.` for a reference.
+// `write_pointer` writes the pointer and is told the precedence its position
+// needs.
 template <typename WritePointer>
 void WriteArrowAccess(
     TargetText& out, const mir::CompilationUnit& unit, mir::TypeId pointer_type,
@@ -218,7 +225,8 @@ void WriteArrowAccess(
           [&](DerefByOperator) { out += "->"; },
           [&](const DerefThroughView& view) {
             Write(out, ".Deref<", CppType(unit, view.pointee), ">().");
-          }},
+          },
+          [&](DerefImplicit) { out += "."; }},
       DerefSpellingAsCpp(unit, pointer_type));
 }
 

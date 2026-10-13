@@ -398,6 +398,32 @@ auto CodeGenModule::BuildCallArg(
       mode);
 }
 
+auto CodeGenModule::EndOwnedStorage(
+    llvm::IRBuilderBase& builder, lir::TypeId owner, llvm::Value* storage)
+    -> diag::Result<void> {
+  const lir::TypeId pointee = *unit_->types.Get(owner).Pointee();
+  if (!types_.LiesInStorage(pointee)) {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedExpressionForm,
+        "llvm codegen: ending an object a unique pointer owns is not yet "
+        "supported");
+  }
+  if (!types_.LayoutOf(pointee).ends_with_nothing_to_do) {
+    const std::array<llvm::Value*, 1> args{storage};
+    if (auto ended =
+            EmitLifecycle(builder, pointee, LifecycleStep::kDestroy, args);
+        !ended) {
+      return ended;
+    }
+  }
+  auto size = CompleteObjectSize(pointee);
+  if (!size) {
+    return std::unexpected(std::move(size.error()));
+  }
+  builder.CreateCall(SizedOperatorDelete(), {storage, builder.getInt64(*size)});
+  return {};
+}
+
 auto CodeGenModule::EmitLifecycle(
     llvm::IRBuilderBase& builder, lir::TypeId type, LifecycleStep step,
     std::span<llvm::Value* const> args) -> diag::Result<void> {
@@ -405,6 +431,24 @@ auto CodeGenModule::EmitLifecycle(
   if (ty.IsProduct()) {
     builder.CreateCall(tuples_.Function(type, step), args);
     return {};
+  }
+  // A pointer owning what it points at lies where it is held as that address,
+  // and has no copy.
+  if (ty.IsMoveOnly()) {
+    switch (step) {
+      case LifecycleStep::kDestroy:
+        return EndOwnedStorage(
+            builder, type, builder.CreateLoad(types_.Ptr(), args[0]));
+      case LifecycleStep::kMove:
+        builder.CreateStore(builder.CreateLoad(types_.Ptr(), args[0]), args[1]);
+        return {};
+      case LifecycleStep::kCopy:
+      case LifecycleStep::kAssign:
+        throw InternalError(
+            "llvm codegen: a value with no copy is copied -- please report "
+            "this as a bug");
+    }
+    throw InternalError("llvm codegen: unknown lifecycle step");
   }
   const support::ObjectLayout storage = types_.LayoutOf(type);
   // An integral value, and a fixed-size unpacked array that ends with nothing
@@ -996,7 +1040,7 @@ auto CodeGenModule::HoldsItsBytesInline(
   switch (storage.kind) {
     case support::MemberStorageKind::kInlineValue:
       return held.IsProduct() || held.Is<lir::MachineIntType>() ||
-             held.Is<lir::UnpackedArrayType>() ||
+             held.Is<lir::UnpackedArrayType>() || held.IsMoveOnly() ||
              types_.IntegralShapeOf(type).has_value();
     case support::MemberStorageKind::kObservableCell:
     case support::MemberStorageKind::kResolvedNet:

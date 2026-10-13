@@ -1660,7 +1660,7 @@ class Driver {
     RequireUnsettled(Net().decision_);
     Net().showing_.Record(&source->Member());
   }
-  void DriveFrom(Ref<T>* source) const {
+  void DriveFrom(VariableRef<T>* source) const {
     RequireUnsettled(Net().decision_);
     Net().showing_.Record(&source->AsMember());
   }

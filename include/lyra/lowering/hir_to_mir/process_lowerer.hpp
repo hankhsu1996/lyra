@@ -37,8 +37,8 @@ namespace lyra::lowering::hir_to_mir {
 
 struct AutomaticVarBinding {
   // The slot's declared MIR type. A `ref` / `const ref` formal's slot is a
-  // `RefType`, so a reference to it reaches the place that reference stands for
-  // rather than reading the slot as a value. The binding's
+  // `VariableRefType`, so a reference to it reaches the place that reference
+  // stands for rather than reading the slot as a value. The binding's
   // cross-body identity is its HIR procedural-var id, materialized through the
   // callable's binding context, not stored here.
   mir::TypeId type;

@@ -462,6 +462,16 @@ struct AddressOfExpr {
   ExprId operand;
 };
 
+// Binds a reference to its operand, as Rust's `&operand` does: `Expr::type` is
+// a `ReferenceType` to the operand's type. A place is referred to where it
+// lies. A value names no place, so it is held for the reference in storage
+// that lasts to the end of the full-expression, as a C++ reference bound to a
+// temporary holds it (clang's `MaterializeTemporaryExpr`). Reading through the
+// reference is a `DerefExpr` over it.
+struct BorrowExpr {
+  ExprId operand;
+};
+
 // A consuming (transfer) read of the operand: the operand's contents flow
 // into the enclosing expression as the last use of that operand's storage,
 // and no subsequent read of the same storage is valid. `Expr::type` is the
@@ -670,8 +680,8 @@ using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr,
-    DerefExpr, AddressOfExpr, MoveExpr, FieldAccessExpr, ClosureExpr,
-    CompositeExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
+    DerefExpr, AddressOfExpr, BorrowExpr, MoveExpr, FieldAccessExpr,
+    ClosureExpr, CompositeExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
 
 struct Expr {
   ExprData data;

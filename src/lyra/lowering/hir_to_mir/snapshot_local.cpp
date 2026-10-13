@@ -60,8 +60,8 @@ auto SnapshotIntoClosure(
   // The site uniquely identifies this synthesized carrier, so several snapshots
   // in one outer body never collide on origin. The temp initializes directly
   // from the snapshotted expression (not a default-then-assign), so a carrier
-  // with no default value -- a `Ref<T>` over the target cell -- is materialized
-  // correctly.
+  // with no default value -- a `VariableRef<T>` over the target cell -- is
+  // materialized correctly.
   const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
   const BindingOriginId origin = BindingOriginId::Synthesized(site, 0);
   const mir::LocalId temp = outer_frame.bindings->Declare(origin, type);

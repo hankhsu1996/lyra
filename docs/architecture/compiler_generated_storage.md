@@ -65,7 +65,7 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
 
 3. **A closure's invoke reads captures through a read-only receiver.** The receiver is a
    `Borrowed<ClosureType>` (the invoke body's `locals[0]`); a captured read is field access over it.
-   A write to captured state is a write through a captured `RefType` or through a captured
+   A write to captured state is a write through a captured `VariableRefType` or through a captured
    `Shared<cell>`, never a write to the capture slot itself.
 
 4. **Value-versus-reference for a lifted local is the wrapper, not a bespoke type.** The cell is
@@ -74,8 +74,8 @@ Stated positively: each fixes one rule, and what is allowed or forbidden follows
    `make_shared<T>()` makes one, and the local's declaration then initializes the cell.
 
 5. **A captured field is a snapshot, a live-place alias, or a retained cell -- by its type.** A
-   value-typed field is a snapshot; a `RefType` field is a live alias of an observable cell; a
-   `Shared<cell>` field retains a lifted local. The capture form is the field's type, never a
+   value-typed field is a snapshot; a `VariableRefType` field is a live alias of an observable cell;
+   a `Shared<cell>` field retains a lifted local. The capture form is the field's type, never a
    separate axis.
 
 6. **A captured field's identity is not its emission order and not its physical layout.** The
@@ -107,7 +107,8 @@ implicit erasure of a concrete `ClosureType`.
 ## Boundary to Adjacent Layers
 
 - **`mir.md`** owns the value/reference wrappers and the categories. This doc composes them: a
-  closure is a `ClosureType`; a retained field is a `Shared<cell>`; an alias field is a `RefType`.
+  closure is a `ClosureType`; a retained field is a `Shared<cell>`; an alias field is a
+  `VariableRefType`.
 - **`callable.md`** owns the callable concept and the receiver rule. This doc owns the closure's
   captured fields; the closure body's receiver is the `ClosureType` value itself.
 - **`binding_and_capture.md`** owns origin identity and capture forwarding. This doc states that the
@@ -126,8 +127,8 @@ Each follows from an invariant above.
   `is_closure` flag. (Invariant 1.)
 - A lifted local with a read, a write, a reference or a wait of its own beside the cell's.
   (Invariant 2.)
-- A closure capture written as a write to the capture slot rather than through a captured `RefType`
-  / `Shared<cell>`. (Invariant 3.)
+- A closure capture written as a write to the capture slot rather than through a captured
+  `VariableRefType` / `Shared<cell>`. (Invariant 3.)
 - A reference-aggregate type category minted for lifted locals; reference is the wrapper. (Invariant
   4.)
 - A closure-specific capture id space, a capture-read node distinct from field access, or a

@@ -69,13 +69,13 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
       fewer instructions than before, 227 against 270, but an XOR and an XNOR reduction of a
       four-state value cost 18 each against 15 and 16, and a right shift of a value of several words
       is a call where it was inline.
-- [x] A value past a fixed size owns its words apart from what holds it, and a frame keeps the
-      address of a value's bytes past that size, so what a call takes from the stack does not follow
-      a declared width. The widest packed type accepted is the front end's, 16,777,215 bits (LRM
-      6.9.1 and 7.4.1 set the floor at 65,536): a design declaring one, adding to it, shifting it,
-      writing a part of it and passing it through a function builds and runs on both backends,
-      started directly under an 8 MiB stack. One bit wider is refused by the front end, which names
-      the limit.
+- [x] A value past a fixed size owns its words apart from what holds it, and a value too large for a
+      frame is held through a box, so what a call takes from the stack does not follow a declared
+      width. The widest packed type accepted is the front end's, 16,777,215 bits (LRM 6.9.1 and
+      7.4.1 set the floor at 65,536): a design declaring one, adding to it, shifting it, writing a
+      part of it and passing it through a function builds and runs on both backends, started
+      directly under an 8 MiB stack. One bit wider is refused by the front end, which names the
+      limit.
 - [x] The size past which a value owns its words is decided by what a frame may hold and not by
       speed. Counted under clang at `-O2`, a temporary that owns its words costs 60 to 70
       instructions more than one lying in place, the same at every width, so no size makes owning
@@ -97,6 +97,28 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
 - [ ] A fill or an extension of a type that owns its words is carried out each time it is evaluated,
       a pass over the value, where naming a constant was a copy of the same length. What that costs
       a design evaluating one often is not measured.
+- [x] A local, a parameter taken by value, and an argument handed to one, of a type too large for a
+      frame, is held through a box the compiler states in MIR before either backend reads it, so
+      both keep the value off the stack by translating what they are given
+      (`../decisions/a-new-expression-allocates-then-initializes.md`).
+- [x] A value of such a type that an expression makes is made in a box and read through it, one a
+      condition chooses is chosen as its box, and a subroutine or a method answering one answers its
+      box. A value a box is built from is made in the box's storage on the execution backend, never
+      in a frame first. What a suspending call completes with already lands in storage its awaiter
+      is handed.
+- [x] A closure capturing such a value holds it through a box, which the closure owns and ends.
+- [x] A structure's operations on its whole value -- equality, case equality, the unknown tests, the
+      stream conversions, a net's resolution -- refer to the structure they are asked of and to
+      every operand of the same type where it lies, as Rust's comparison operators borrow theirs; an
+      operand the program computes is held for the reference to the end of the full-expression, in a
+      box where it is too large for a frame, and the operations' own bodies keep what they hold by
+      the same rule as any body.
+- [x] The execution backend keeps no value apart from the frame on its own account, and the compiler
+      refuses a body that leaves a value too large for a frame unboxed. A receiver an operation is
+      asked of is boxed as any operand is, while what a write lands on is carried as the place it
+      names.
+- [ ] Every type is laid out flat at every size on both backends, and no operation of the value
+      library builds a whole value of its own on the stack.
 - [x] A wait on part of an unpacked aggregate is passed over by a write that reached another part of
       it, and a write visits only the waits on what it reached: 4,096 `always_comb` stages chained
       through one array and driven 200 times run in 0.12 s on the execution backend, `--release`.

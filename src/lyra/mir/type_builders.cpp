@@ -169,7 +169,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const ChandleType&) { return wrap(); },
           // Not value storage, so its own declaration shape is its storage and
           // it is not wrapped: a handle onto storage of another lifetime
-          // (pointer, borrowed reference, vector), an object (a class instance
+          // (pointer, reference, vector), an object (a class instance
           // or an instantiated child), a named event (LRM 15 -- it carries its
           // own subscribe mechanism), a runtime facade (effects, files,
           // diagnostics, a runtime-library type), a coroutine result, a machine
@@ -194,9 +194,10 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const DiagnosticType&) { return bare(); },
           [&](const RuntimeLibraryType&) { return bare(); },
           [&](const CoroutineType&) { return bare(); },
-          [&](const RefType&) { return bare(); },
+          [&](const VariableRefType&) { return bare(); },
           [&](const ReferenceWrapperType&) { return bare(); },
           [&](const PointerType&) { return bare(); },
+          [&](const ReferenceType&) { return bare(); },
           [&](const VectorType&) { return bare(); },
           [&](const ObservableType&) { return bare(); },
           [&](const ResolvedType&) { return bare(); },

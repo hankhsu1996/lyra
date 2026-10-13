@@ -69,6 +69,8 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
                 p.mutability == mir::Mutability::kReadOnly ? "const " : "",
                 RenderTypeAsC(types, p.pointee));
           },
+          // C has no references (LRM 35.5.6 passes by pointer).
+          [&](const mir::ReferenceType&) { return crosses_no_boundary(); },
           [](const mir::RuntimeLibraryType& r) -> std::string {
             if (r.kind == mir::RuntimeLibraryKind::kDpiBitChunk) {
               return "svBitVecVal";
@@ -115,7 +117,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::FilesType&) { return crosses_no_boundary(); },
           [&](const mir::DiagnosticType&) { return crosses_no_boundary(); },
           [&](const mir::CoroutineType&) { return crosses_no_boundary(); },
-          [&](const mir::RefType&) { return crosses_no_boundary(); },
+          [&](const mir::VariableRefType&) { return crosses_no_boundary(); },
           [&](const mir::ReferenceWrapperType&) {
             return crosses_no_boundary();
           },

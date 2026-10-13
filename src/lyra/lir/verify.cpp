@@ -22,10 +22,6 @@ namespace lyra::lir {
 
 namespace {
 
-auto IsVoid(const CompilationUnit& unit, TypeId type) -> bool {
-  return unit.types.Get(type).Is<VoidType>();
-}
-
 // What the storage at a place holds, for a place a reference is taken over.
 // LRM 13.5.2 admits a variable, a class property, a member of an unpacked
 // structure and an element of an unpacked array, and bars a net -- so such a
@@ -115,16 +111,21 @@ auto AllocatedStorage(const Function& fn) -> std::vector<bool> {
   std::vector<bool> allocated(fn.values.size(), false);
   for (const BasicBlock& block : fn.blocks) {
     for (const Instr& instr : block.instrs) {
-      const auto* call = std::get_if<CallInstr>(&instr.data);
+      const auto* assign = std::get_if<AssignInstr>(&instr.data);
+      const auto* call =
+          assign != nullptr ? std::get_if<CallInstr>(&assign->value) : nullptr;
       const auto* storage =
           call != nullptr ? std::get_if<DynamicStorageTarget>(&call->target)
                           : nullptr;
-      if (storage == nullptr) {
+      const auto* defined = assign != nullptr
+                                ? std::get_if<Transient>(&assign->destination)
+                                : nullptr;
+      if (storage == nullptr || defined == nullptr) {
         continue;
       }
       switch (storage->op) {
         case DynamicStorageTarget::Op::kAllocate:
-          allocated.at(instr.result.value) = true;
+          allocated.at(defined->value.value) = true;
           break;
         case DynamicStorageTarget::Op::kDeallocate:
           break;
@@ -148,12 +149,27 @@ auto HoldsNothingYet(
          std::holds_alternative<DerefProjection>(place.chain.front());
 }
 
+// The type of the value an assignment puts where `destination` says.
+auto DestinationType(
+    const CompilationUnit& unit, const Function& fn,
+    const Destination& destination) -> TypeId {
+  return std::visit(
+      Overloaded{
+          [&](const Transient& defined) {
+            return fn.values.Get(defined.value).type;
+          },
+          [&](const Place& place) { return PlaceType(unit, fn, place); }},
+      destination);
+}
+
+void VerifyRvalue(
+    const CompilationUnit& unit, const Function& fn, const Rvalue& value,
+    TypeId result_type);
+
 void VerifyInstr(
     const CompilationUnit& unit, const Function& fn,
     const std::vector<bool>& allocated, const Instr& instr) {
-  const TypeId result_type = fn.values.Get(instr.result).type;
-  // A store and an initialization each put a value of the place's type into
-  // storage that can hold one, and yield nothing.
+  // A store puts a value of the place's type into storage that can hold one.
   const auto write_into = [&](const Place& place, const Operand& value,
                               std::string_view what) {
     const TypeId place_type = PlaceType(unit, fn, place);
@@ -171,10 +187,65 @@ void VerifyInstr(
               "(value Type[{}], place Type[{}])",
               what, value_type.value, place_type.value));
     }
-    if (!IsVoid(unit, result_type)) {
-      throw InternalError(std::format("lir verify: {} must yield void", what));
-    }
   };
+  std::visit(
+      Overloaded{
+          // A value is put into storage only where it is made, and only into
+          // storage holding nothing yet, which it initializes.
+          [&](const AssignInstr& assign) {
+            std::visit(
+                Overloaded{
+                    [](const Transient&) {},
+                    [&](const Place& place) {
+                      if (!MakesValue(assign.value) ||
+                          !HoldsNothingYet(fn, allocated, place)) {
+                        throw InternalError(
+                            "lir verify: a value is put into storage where "
+                            "nothing is made, or where the storage already "
+                            "holds one");
+                      }
+                      if (unit.types.Get(PlaceType(unit, fn, place))
+                              .IsAddressOnly()) {
+                        throw InternalError(
+                            "lir verify: a value is put into storage that is "
+                            "only addressable");
+                      }
+                    }},
+                assign.destination);
+            VerifyRvalue(
+                unit, fn, assign.value,
+                DestinationType(unit, fn, assign.destination));
+          },
+          [&](const StoreInstr& store) {
+            write_into(store.place, store.value, "store");
+          },
+          [&](const BitsStoreInstr& store) {
+            RequireBitsStoreWellFormed(
+                unit, fn, PlaceType(unit, fn, store.place), store.parts,
+                store.bits);
+          },
+          [&](const StorageInstr& storage) {
+            // A made value's bytes come into use with the instruction that
+            // makes it, so only a slot is stated to.
+            switch (storage.op) {
+              case StorageInstr::Op::kLive:
+                if (!fn.values.Get(storage.of).NamesStorage()) {
+                  throw InternalError(
+                      "lir verify: storage is stated to come into use for a "
+                      "value that is not a slot");
+                }
+                break;
+              case StorageInstr::Op::kDead:
+                break;
+            }
+          },
+          [](const CloseVariablesInstr&) {}},
+      instr.data);
+}
+
+void VerifyRvalue(
+    const CompilationUnit& unit, const Function& fn, const Rvalue& value,
+    TypeId result_type) {
   std::visit(
       Overloaded{
           [&](const LoadInstr& load) {
@@ -192,45 +263,6 @@ void VerifyInstr(
                       result_type.value, place_type.value));
             }
           },
-          [&](const StoreInstr& store) {
-            write_into(store.place, store.value, "store");
-          },
-          [&](const InitializeInstr& initialize) {
-            if (!HoldsNothingYet(fn, allocated, initialize.place)) {
-              throw InternalError(
-                  "lir verify: an initialization names storage other than a "
-                  "frame slot or storage just allocated");
-            }
-            write_into(initialize.place, initialize.value, "initialization");
-          },
-          [&](const BitsStoreInstr& store) {
-            RequireBitsStoreWellFormed(
-                unit, fn, PlaceType(unit, fn, store.place), store.parts,
-                store.bits);
-            if (!IsVoid(unit, result_type)) {
-              throw InternalError(
-                  "lir verify: a store of bits must yield void");
-            }
-          },
-          [&](const StorageInstr& storage) {
-            if (!IsVoid(unit, result_type)) {
-              throw InternalError(
-                  "lir verify: a statement of storage use must yield void");
-            }
-            // A made value's bytes come into use with the instruction that
-            // makes it, so only a slot is stated to.
-            switch (storage.op) {
-              case StorageInstr::Op::kLive:
-                if (!fn.values.Get(storage.of).NamesStorage()) {
-                  throw InternalError(
-                      "lir verify: storage is stated to come into use for a "
-                      "value that is not a slot");
-                }
-                break;
-              case StorageInstr::Op::kDead:
-                break;
-            }
-          },
           [&](const AddrOfInstr& addr) {
             const TypeId place_type = PlaceType(unit, fn, addr.place);
             const Type& result = unit.types.Get(result_type);
@@ -240,7 +272,7 @@ void VerifyInstr(
             // subscribable variable or storage nothing subscribes to, and the
             // body holding it is lowered once for both (LRM 13.5.2). Every
             // other address names the storage it points at.
-            const TypeId named = result.Is<RefType>()
+            const TypeId named = result.Is<VariableRefType>()
                                      ? LentValues(unit, place_type)
                                      : place_type;
             if (!pointee || *pointee != named) {
@@ -292,15 +324,21 @@ void VerifyInstr(
           // Where it may stand is a property of the block rather than of the
           // instruction, so it is held where the blocks are walked.
           [](const ReceiveDepartureInstr&) {}, [](const OpenVariablesInstr&) {},
+          [&](const UseInstr& use) {
+            if (OperandType(fn, use.operand) != result_type) {
+              throw InternalError(
+                  "lir verify: a value moved in is of another type than where "
+                  "it goes");
+            }
+          },
           [&](const VariableAddressInstr& reached) {
             if (reached.position.value >= fn.variables.size()) {
               throw InternalError(
                   "lir verify: a variable is reached at a position the body "
                   "stated no variable at");
             }
-          },
-          [](const CloseVariablesInstr&) {}},
-      instr.data);
+          }},
+      value);
 }
 
 // A landing is a block one departing call names and that opens by receiving
@@ -309,6 +347,12 @@ void VerifyInstr(
 // opens this way and is named by nothing would never run, and one that is named
 // and does not would run with the departure unread. It is one call's alone,
 // because what a target owes on the way out of that call is that call's.
+auto ReceivesDeparture(const Instr& instr) -> bool {
+  const auto* assign = std::get_if<AssignInstr>(&instr.data);
+  return assign != nullptr &&
+         std::holds_alternative<ReceiveDepartureInstr>(assign->value);
+}
+
 void VerifyLandings(const Function& fn) {
   std::vector<std::size_t> named(fn.blocks.size(), 0);
   for (const BasicBlock& block : fn.blocks) {
@@ -320,7 +364,7 @@ void VerifyLandings(const Function& fn) {
   for (std::size_t index = 0; index < fn.blocks.size(); ++index) {
     const std::vector<Instr>& instrs = fn.blocks[index].instrs;
     for (std::size_t at = 0; at < instrs.size(); ++at) {
-      if (!std::holds_alternative<ReceiveDepartureInstr>(instrs[at].data)) {
+      if (!ReceivesDeparture(instrs[at])) {
         continue;
       }
       if (at != 0) {
@@ -329,9 +373,7 @@ void VerifyLandings(const Function& fn) {
             "start of a landing");
       }
     }
-    const bool receives =
-        !instrs.empty() &&
-        std::holds_alternative<ReceiveDepartureInstr>(instrs[0].data);
+    const bool receives = !instrs.empty() && ReceivesDeparture(instrs[0]);
     if (receives != (named[index] != 0)) {
       throw InternalError(
           receives ? "lir verify: a landing no departing call names"
@@ -355,6 +397,13 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
     }
     if (const auto* call =
             std::get_if<DepartingCallInstr>(&block.terminator.data)) {
+      if (const auto* place = std::get_if<Place>(&call->destination);
+          place != nullptr && (!CallMakesValue(call->target) ||
+                               !HoldsNothingYet(fn, allocated, *place))) {
+        throw InternalError(
+            "lir verify: a call puts a value into storage where it makes none, "
+            "or where the storage already holds one");
+      }
       RequireCallWellFormed(unit, fn, call->target, call->args);
     }
     // Only a body whose call protocol is the coroutine one can hand control

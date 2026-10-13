@@ -122,10 +122,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "insert_bits";
     case RuntimeOp::kInsertDesignatedBits:
       return "insert_designated_bits";
-    case RuntimeOp::kAllocBytes:
-      return "alloc_bytes";
-    case RuntimeOp::kDeallocBytes:
-      return "dealloc_bytes";
     case RuntimeOp::kElementDefault:
       return "element_default";
     case RuntimeOp::kDiscardedWrite:
@@ -926,12 +922,14 @@ auto MemberStorageKindOf(
           [&](const lir::VectorType& t) { return borrowed(t); },
           // A reference names storage living elsewhere too, and it is more than
           // an address: the variable that storage belongs to travels with it.
-          [](const lir::RefType&) -> std::optional<support::MemberStorageKind> {
+          [](const lir::VariableRefType&)
+              -> std::optional<support::MemberStorageKind> {
             return support::MemberStorageKind::kReference;
           },
           [&](const lir::MachineFunctionType& t) { return borrowed(t); },
-          // A pointer is the one whose ownership decides the answer. A unique
-          // or borrowed one likewise names storage somebody else ends, while a
+          // A pointer is the one whose ownership decides the answer. A borrowed
+          // one likewise names storage somebody else ends; a unique one is a
+          // value its holder owns, filled once and ended with the holder; a
           // shared one is a hold: it keeps what it names in existence and the
           // storage ends once no holder is left, which is how a scope outlives
           // the control flow that left it (LRM 6.21).
@@ -939,6 +937,7 @@ auto MemberStorageKindOf(
               -> std::optional<support::MemberStorageKind> {
             switch (pointer.ownership) {
               case lir::PointerOwnership::kUnique:
+                return support::MemberStorageKind::kInlineValue;
               case lir::PointerOwnership::kBorrowed:
                 return support::MemberStorageKind::kBorrowedHandle;
               case lir::PointerOwnership::kShared:
@@ -1241,8 +1240,6 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kStreamRead:
     case RuntimeOp::kStreamBuild:
     case RuntimeOp::kTupleBuildDefault:
-    case RuntimeOp::kAllocBytes:
-    case RuntimeOp::kDeallocBytes:
     case RuntimeOp::kFromElements:
     case RuntimeOp::kElementDefault:
     case RuntimeOp::kDiscardedWrite:
@@ -1310,8 +1307,6 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kStreamWrite:
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kInsertDesignatedBits:
-    case RuntimeOp::kAllocBytes:
-    case RuntimeOp::kDeallocBytes:
     case RuntimeOp::kFromElements:
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
@@ -1419,8 +1414,6 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kTupleBuildDefault:
     case RuntimeOp::kStreamRead:
     case RuntimeOp::kInsertBits:
-    case RuntimeOp::kAllocBytes:
-    case RuntimeOp::kDeallocBytes:
     case RuntimeOp::kElementDefault:
     case RuntimeOp::kDiscardedWrite:
     case RuntimeOp::kConstruct:

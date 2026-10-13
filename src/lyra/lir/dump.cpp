@@ -268,18 +268,62 @@ class LirDumper {
       Indent();
       const BasicBlock& block = fn.blocks[b];
       for (const Instr& instr : block.instrs) {
-        Line(
-            std::format(
-                "%{} = {} : {}", instr.result.value, FormatInstr(instr.data),
-                FormatType(fn.values.Get(instr.result).type)));
+        Line(FormatInstr(fn, instr.data));
       }
-      Line(FormatTerminator(block.terminator));
+      Line(FormatTerminator(fn, block.terminator));
       Dedent();
     }
     Dedent();
   }
 
-  [[nodiscard]] auto FormatInstr(const InstrData& data) const -> std::string {
+  // `%N: T` for a transient, or the place a value initializes.
+  [[nodiscard]] auto FormatDestination(
+      const Function& fn, const Destination& destination) const -> std::string {
+    return std::visit(
+        Overloaded{
+            [&](const Transient& defined) -> std::string {
+              return std::format(
+                  "%{}: {}", defined.value.value,
+                  FormatType(fn.values.Get(defined.value).type));
+            },
+            [&](const Place& place) -> std::string {
+              return std::format("init {}", FormatPlace(place));
+            }},
+        destination);
+  }
+
+  [[nodiscard]] auto FormatInstr(
+      const Function& fn, const InstrData& data) const -> std::string {
+    return std::visit(
+        Overloaded{
+            [&](const AssignInstr& assign) -> std::string {
+              return std::format(
+                  "{} = {}", FormatDestination(fn, assign.destination),
+                  FormatRvalue(assign.value));
+            },
+            [&](const CloseVariablesInstr& closed) -> std::string {
+              return std::format(
+                  "close variables {}", FormatOperand(closed.variables));
+            },
+            [&](const StoreInstr& store) -> std::string {
+              return std::format(
+                  "store {} = {}", FormatPlace(store.place),
+                  FormatOperand(store.value));
+            },
+            [&](const BitsStoreInstr& store) -> std::string {
+              return std::format(
+                  "store_bits {}{} = {}", FormatPlace(store.place),
+                  FormatBitsParts(store.parts), FormatOperand(store.bits));
+            },
+            [&](const StorageInstr& storage) -> std::string {
+              return std::format(
+                  "{} {}", StorageOpName(storage.op),
+                  FormatOperand(Use{.value = storage.of}));
+            }},
+        data);
+  }
+
+  [[nodiscard]] auto FormatRvalue(const Rvalue& value) const -> std::string {
     return std::visit(
         Overloaded{
             [&](const CallInstr& call) -> std::string {
@@ -300,10 +344,6 @@ class LirDumper {
               return std::format(
                   "variable {}[{}]", FormatOperand(reached.variables),
                   reached.position.value);
-            },
-            [&](const CloseVariablesInstr& closed) -> std::string {
-              return std::format(
-                  "close variables {}", FormatOperand(closed.variables));
             },
             [&](const ClosureInstr& built) -> std::string {
               return std::format("closure({})", FormatOperands(built.captures));
@@ -336,25 +376,8 @@ class LirDumper {
             [&](const LoadInstr& load) -> std::string {
               return std::format("load {}", FormatPlace(load.place));
             },
-            [&](const StoreInstr& store) -> std::string {
-              return std::format(
-                  "store {} = {}", FormatPlace(store.place),
-                  FormatOperand(store.value));
-            },
-            [&](const InitializeInstr& initialize) -> std::string {
-              return std::format(
-                  "initialize {} = {}", FormatPlace(initialize.place),
-                  FormatOperand(initialize.value));
-            },
-            [&](const BitsStoreInstr& store) -> std::string {
-              return std::format(
-                  "store_bits {}{} = {}", FormatPlace(store.place),
-                  FormatBitsParts(store.parts), FormatOperand(store.bits));
-            },
-            [&](const StorageInstr& storage) -> std::string {
-              return std::format(
-                  "{} {}", StorageOpName(storage.op),
-                  FormatOperand(Use{.value = storage.of}));
+            [&](const UseInstr& use) -> std::string {
+              return std::format("move {}", FormatOperand(use.operand));
             },
             [&](const AddrOfInstr& addr) -> std::string {
               return std::format("addrof {}", FormatPlace(addr.place));
@@ -368,11 +391,11 @@ class LirDumper {
               return std::format(
                   "{} {}", UnaryOpName(un.op), FormatOperand(un.operand));
             }},
-        data);
+        value);
   }
 
-  [[nodiscard]] auto FormatTerminator(const Terminator& term) const
-      -> std::string {
+  [[nodiscard]] auto FormatTerminator(
+      const Function& fn, const Terminator& term) const -> std::string {
     return std::visit(
         Overloaded{
             [&](const ReturnTerm& ret) -> std::string {
@@ -401,7 +424,8 @@ class LirDumper {
             [](const UnreachableTerm&) -> std::string { return "unreachable"; },
             [&](const DepartingCallInstr& call) -> std::string {
               return std::format(
-                  "%{} = call {}({}) -> bb{} departs bb{}", call.result.value,
+                  "{} = call {}({}) -> bb{} departs bb{}",
+                  FormatDestination(fn, call.destination),
                   FormatCallTarget(call.target), FormatOperands(call.args),
                   call.returned.value, call.landing.value);
             }},
@@ -556,6 +580,7 @@ class LirDumper {
             [](const BoolConst& c) -> std::string {
               return std::format("bool:{}", c.value ? "true" : "false");
             },
+            [](const VoidConst&) -> std::string { return "void"; },
             [](const EnumTableRef& c) -> std::string {
               return std::format("enumtable:{}", c.table.value);
             },

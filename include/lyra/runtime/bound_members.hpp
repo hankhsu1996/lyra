@@ -106,13 +106,13 @@ class BoundMembers {
 
 // What generated code calls to bind a member, on the engine it runs under.
 template <value::LyraValue T>
-void BindMember(Ref<T>& member, const Ref<T>& bound) {
+void BindMember(VariableRef<T>& member, const VariableRef<T>& bound) {
   current_runtime().Bound().Bind(member.AsMember(), bound.Erased());
 }
 
 // What generated code calls to bind a `ref` port, on the engine it runs under.
 template <value::LyraValue T>
-void BindAlias(Ref<T>& alias, const Ref<T>& bound) {
+void BindAlias(VariableRef<T>& alias, const VariableRef<T>& bound) {
   current_runtime().Bound().Alias(alias.AsMember(), bound.Erased());
 }
 
@@ -195,7 +195,7 @@ void EndTakeoverThrough(const ErasedReference& reference, std::int64_t level) {
 }
 
 template <value::LyraValue T>
-auto Ref<T>::BeginTakeover(std::int64_t level) const -> std::int64_t {
+auto VariableRef<T>::BeginTakeover(std::int64_t level) const -> std::int64_t {
   return BeginTakeoverThrough<Var<T>>(
       erased_, level,
       [](const Var<T>& showing) {
@@ -203,11 +203,11 @@ auto Ref<T>::BeginTakeover(std::int64_t level) const -> std::int64_t {
         forced->Initialize(showing.Get());
         return forced;
       },
-      [](Var<T>& forced) { return Ref<T>{forced}.Erased(); });
+      [](Var<T>& forced) { return VariableRef<T>{forced}.Erased(); });
 }
 
 template <value::LyraValue T>
-auto Ref<T>::DriveTakeover(
+auto VariableRef<T>::DriveTakeover(
     std::int64_t level, std::int64_t generation, const T& new_val) const
     -> bool {
   return DriveTakeoverThrough<Var<T>>(
@@ -219,7 +219,7 @@ auto Ref<T>::DriveTakeover(
 }
 
 template <value::LyraValue T>
-void Ref<T>::EndTakeover(std::int64_t level) const {
+void VariableRef<T>::EndTakeover(std::int64_t level) const {
   EndTakeoverThrough<Var<T>>(erased_, level);
 }
 

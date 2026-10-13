@@ -81,7 +81,7 @@ auto BodyVariableSource(
     const mir::ExprId storage = block.exprs.Add(*std::move(lowered));
     const mir::TypeId storage_type = block.exprs.Get(storage).type;
     const mir::Type& storage_form = unit.types.Get(storage_type);
-    if (storage_form.IsReference()) {
+    if (storage_form.IsVariableRef()) {
       return ReferenceReportsTo(unit, block, storage);
     }
     // A closure's snapshot of a variable is the closure's own copy, which no

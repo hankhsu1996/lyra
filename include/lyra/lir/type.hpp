@@ -268,11 +268,11 @@ struct CoroutineType {
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
-struct RefType {
+struct VariableRefType {
   TypeId pointee;
   Mutability mutability;
 
-  auto operator==(const RefType&) const -> bool = default;
+  auto operator==(const VariableRefType&) const -> bool = default;
 };
 
 struct PointerType {
@@ -447,10 +447,11 @@ class Type {
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
       VoidType, EmptyType, ObjectType, CrossUnitClassType, RuntimeClassType,
       ClosureType, RuntimeEffectsType, FilesType, DiagnosticType,
-      RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
-      VectorType, TupleType, StructType, UnionType, TaggedUnionType,
-      ResolvedType, DriverType, ObservableType, SampledHistoryType,
-      EvaluationAttemptsType, LoopBlocksType, OpenWriteType, DesignationType>;
+      RuntimeLibraryType, CoroutineType, VariableRefType, PointerType,
+      ManagedRefType, VectorType, TupleType, StructType, UnionType,
+      TaggedUnionType, ResolvedType, DriverType, ObservableType,
+      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, OpenWriteType,
+      DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

@@ -1,0 +1,38 @@
+#pragma once
+
+#include <optional>
+
+#include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/support/builtin_fn.hpp"
+
+namespace lyra::mir {
+
+// How a call names the part it reaches, and nothing for a call that reaches
+// none. The entry's own declaration says, so reading and writing one part
+// answer alike.
+auto SelectionOf(const CallExpr& call) -> std::optional<support::PartSelection>;
+
+// How an expression of `block` names a part of a value that holds its parts as
+// storage of their own (LRM 7.2, 7.4), where it names one.
+auto StorageSelection(const TypePool& types, const Block& block, ExprId id)
+    -> std::optional<support::PartSelection>;
+
+// The access an expression makes to a part that is storage of its own, where
+// it is one: an element or a component, which names a place as a field access
+// does, and is never a value made.
+auto StoragePartAccess(const TypePool& types, const Block& block, ExprId id)
+    -> const CallExpr*;
+
+// The wrapper a read of what one holds is made on, where `expr` is such a
+// read: the value it answers lies in the storage the wrapper represents.
+auto WrapperRead(const Expr& expr) -> std::optional<ExprId>;
+
+// Whether an expression reads a value where it lies -- a part that is storage
+// of its own, or what a wrapper holds -- so that reading it makes no value.
+auto ReadsWhereItLies(const TypePool& types, const Block& block, ExprId id)
+    -> bool;
+
+}  // namespace lyra::mir

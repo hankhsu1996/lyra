@@ -131,18 +131,43 @@ auto CallOf(
           .type = result});
 }
 
+// How a struct's method takes each value it is asked about, the struct itself
+// and every other operand: by a read-only reference, as Rust's comparison
+// operators borrow theirs, so a value is read where it lies rather than copied
+// in.
+auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> mir::TypeId {
+  return unit.types.Intern(
+      mir::Type{mir::ReferenceType{
+          .referent = type, .mutability = mir::Mutability::kReadOnly}});
+}
+
+auto Borrow(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand)
+    -> mir::ExprId {
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::BorrowExpr{.operand = operand},
+          .type = ReferenceTo(unit, block.exprs.Get(operand).type)});
+}
+
 // A call of the method the struct `declaration` names answers `answers` with.
 auto StructMethodCall(
-    mir::Block& block, mir::TypeDeclarationRef declaration,
-    support::ValueOperation answers, std::optional<mir::ExprId> receiver,
-    std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId {
+    const mir::CompilationUnit& unit, mir::Block& block,
+    mir::TypeDeclarationRef declaration, support::ValueOperation answers,
+    std::optional<mir::ExprId> receiver, std::vector<mir::ExprId> operands,
+    mir::TypeId result) -> mir::ExprId {
+  for (mir::ExprId& operand : operands) {
+    operand = Borrow(unit, block, operand);
+  }
   return CallOf(
       block,
       mir::Direct{
           .target =
               mir::StructMethodTarget{
                   .declaration = std::move(declaration), .answers = answers},
-          .receiver = receiver},
+          .receiver = receiver.transform(
+              [&](mir::ExprId object) { return Borrow(unit, block, object); })},
       std::move(operands), result);
 }
 
@@ -225,14 +250,14 @@ class Synthesizer {
   // The method answering `answers`, taking parameters of `params` and
   // answering `result`, whose one statement returns what `answer` builds from
   // the parameters' locals. Where the operation is asked of a value, the first
-  // parameter is that value.
+  // parameter is that value. Each is taken by reference and read through it.
   template <typename Answer>
   auto Method(
       support::ValueOperation answers, std::vector<mir::TypeId> params,
       mir::TypeId result, Answer answer) -> mir::StructMethod {
     mir::CallableCode code = mir::CallableCode::Defined();
     for (const mir::TypeId param : params) {
-      code.params.push_back(code.AddLocal(param));
+      code.params.push_back(code.AddLocal(ReferenceTo(Unit(), param)));
     }
     if (support::ReachesAReceiver(answers)) {
       code.receiver = code.params.front();
@@ -251,12 +276,23 @@ class Synthesizer {
       mir::Block& block, support::ValueOperation answers, mir::ExprId receiver,
       std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId {
     return StructMethodCall(
-        block, declaration_, answers, receiver, std::move(operands), result);
+        Unit(), block, declaration_, answers, receiver, std::move(operands),
+        result);
   }
 
-  static auto Read(mir::Block& block, mir::LocalId local, mir::TypeId type)
+  // The value of `type` the parameter `local` refers to.
+  auto Read(mir::Block& block, mir::LocalId local, mir::TypeId type)
       -> mir::ExprId {
-    return block.exprs.Add(mir::MakeLocalRefExpr(local, type));
+    return block.exprs.Add(
+        mir::MakeDerefExpr(
+            block.exprs.Add(
+                mir::MakeLocalRefExpr(local, ReferenceTo(Unit(), type))),
+            type));
+  }
+
+  // The struct the parameter `local` refers to.
+  auto Whole(mir::Block& block, mir::LocalId local) -> mir::ExprId {
+    return Read(block, local, structure_);
   }
 
   // Member `i` of the struct parameter `local`.
@@ -264,7 +300,7 @@ class Synthesizer {
       -> mir::ExprId {
     return block.exprs.Add(
         mir::MakeComponentExpr(
-            Read(block, local, structure_),
+            Whole(block, local),
             base::ComponentIndex{static_cast<std::uint32_t>(i)}, members_[i]));
   }
 
@@ -315,9 +351,8 @@ auto Synthesizer::Inequality() -> mir::StructMethod {
       support::ValueOperator::kInequality, {structure_, structure_},
       answer_type, [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId equal = OwnMethod(
-            block, support::ValueOperator::kEquality,
-            Read(block, p[0], structure_), {Read(block, p[1], structure_)},
-            answer_type);
+            block, support::ValueOperator::kEquality, Whole(block, p[0]),
+            {Whole(block, p[1])}, answer_type);
         return BuildLogicalNot(Unit(), block, equal);
       });
 }
@@ -374,8 +409,8 @@ auto Synthesizer::IsUnknown() -> mir::StructMethod {
       support::BuiltinFn::kIsUnknown, {structure_}, bit,
       [&](mir::Block& block, const std::vector<mir::LocalId>& p) {
         const mir::ExprId holds_unknown = OwnMethod(
-            block, support::BuiltinFn::kHasUnknown,
-            Read(block, p[0], structure_), {}, Unit().builtins.machine_bool);
+            block, support::BuiltinFn::kHasUnknown, Whole(block, p[0]), {},
+            Unit().builtins.machine_bool);
         return block.exprs.Add(MakeBuiltinCall(
             Unit(), block, support::BuiltinFn::kFromBool, std::nullopt,
             {holds_unknown}, bit));
@@ -615,8 +650,8 @@ auto BuildValueOperation(
   if (std::optional<mir::TypeDeclarationRef> structure =
           DeclarationOfStruct(unit, deciding)) {
     return StructMethodCall(
-        block, *std::move(structure), entry, receiver, std::move(operands),
-        result);
+        unit, block, *std::move(structure), entry, receiver,
+        std::move(operands), result);
   }
   return block.exprs.Add(MakeBuiltinCall(
       unit, block, entry, receiver, std::move(operands), result));
@@ -634,7 +669,7 @@ auto BuildStructComparison(
         "BuildStructComparison: an operand is no struct the source declared");
   }
   return StructMethodCall(
-      block, *std::move(structure), comparison, lhs, {rhs},
+      unit, block, *std::move(structure), comparison, lhs, {rhs},
       OneBitAnswerType(unit, *mir::ProductElements(unit, type)));
 }
 

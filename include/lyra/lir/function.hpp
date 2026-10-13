@@ -101,6 +101,12 @@ struct BoolConst {
   TypeId type;
 };
 
+// The one value of the void type, as rustc's MIR writes `()`: what an
+// evaluation yielding nothing stands as where an operand is wanted.
+struct VoidConst {
+  TypeId type;
+};
+
 // An enumeration's member table, named by the entry holding it. Its contents
 // are data the unit states and an operand is a leaf, so what the operand
 // carries is which table it is.
@@ -149,8 +155,8 @@ struct FunctionRef {
 // operand rather than a value of its own because it has no dataflow origin to
 // name -- it is materialized at the use site.
 using Operand = std::variant<
-    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, EnumTableRef,
-    IntegralConstantRef, StaticRef, DefinitionRef, FunctionRef>;
+    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, VoidConst,
+    EnumTableRef, IntegralConstantRef, StaticRef, DefinitionRef, FunctionRef>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the
@@ -592,20 +598,18 @@ struct LoadInstr {
   Place place;
 };
 
-// Writes `value` into the value `place` holds. The store yields no value; its
-// instruction result is an unused void.
+// Writes `value` into the value `place` holds, which goes on being that value.
 struct StoreInstr {
   Place place;
   Operand value;
 };
 
-// Moves `value` into storage holding no value until then: a frame slot a
-// declaration introduces, or one whose value was ended before, or storage of
-// dynamic duration just allocated. What is moved in is the storage's value from
-// there on, and it is ended where that storage's value is. Yields no value.
-struct InitializeInstr {
-  Place place;
-  Operand value;
+// `operand` moved to where the assignment puts it, as rustc's MIR writes
+// `Rvalue::Use(Operand::Move)`: put in storage holding no value yet -- a frame
+// slot, or storage of dynamic duration just allocated -- it initializes that
+// storage, and is ended where that storage's value is.
+struct UseInstr {
+  Operand operand;
 };
 
 // Writes `bits` over some bits of the integral value held at `place`, where
@@ -740,17 +744,40 @@ struct CloseVariablesInstr {
   Operand variables;
 };
 
-using InstrData = std::variant<
+// What computes a value, as rustc's MIR names the right-hand side of an
+// assignment: every instruction that yields one, a call to a callee answering
+// nothing included, whose value is the void one.
+using Rvalue = std::variant<
     CallInstr, TupleInstr, ClosureInstr, ArrayInstr, AggregateExtractInstr,
-    AggregateUpdateInstr, LoadInstr, StoreInstr, InitializeInstr,
-    BitsStoreInstr, StorageInstr, AddrOfInstr, BinaryInstr, UnaryInstr,
+    AggregateUpdateInstr, LoadInstr, AddrOfInstr, BinaryInstr, UnaryInstr,
     CastInstr, HandleCastInstr, DynamicCastInstr, ReceiveDepartureInstr,
-    OpenVariablesInstr, VariableAddressInstr, CloseVariablesInstr>;
+    OpenVariablesInstr, VariableAddressInstr, UseInstr>;
 
-// One instruction: it defines `result` (whose type lives on the function's
-// value arena) from `data`.
+// A value computed once and consumed where it is used, with a pure dataflow
+// origin and no storage of its own to name.
+struct Transient {
+  ValueId value;
+};
+
+// Where a computed value goes, as rustc's MIR states the place an assignment
+// writes and a call's `destination`: a transient it defines, or storage
+// holding nothing yet that it initializes and whose holder then owns it. Which
+// one is always stated, never worked out from how the value is used.
+using Destination = std::variant<Transient, Place>;
+
+// A value computed and put where `destination` says.
+struct AssignInstr {
+  Destination destination;
+  Rvalue value;
+};
+
+// One step of a block: an assignment, or a statement that yields nothing --
+// a write into a value already there, or a frame's bytes coming into or going
+// out of use.
+using InstrData = std::variant<
+    AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, CloseVariablesInstr>;
+
 struct Instr {
-  ValueId result;
   InstrData data;
 };
 
@@ -819,9 +846,10 @@ struct UnreachableTerm {};
 // through it either way, which is what a terminator means here; both of this
 // IR's peers say it the same way. Only a callee that can depart takes this
 // form, which is every callee but one declared not to; a call to one that
-// cannot stays an instruction.
+// cannot stays an instruction. Where its value goes is stated as an
+// assignment's is, as a call in rustc's MIR names its `destination`.
 struct DepartingCallInstr {
-  ValueId result;
+  Destination destination;
   CallTarget target;
   std::vector<Operand> args;
   BlockId returned;

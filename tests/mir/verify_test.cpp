@@ -407,7 +407,7 @@ TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
   const auto binding = [](bool through_store, bool of_member) {
     return UnitWithBody([=](CompilationUnit& u, Block& body) {
       const TypeId reference_type = u.types.Intern(
-          Type{RefType{
+          Type{VariableRefType{
               .pointee = u.builtins.int_type,
               .mutability = Mutability::kMutable}});
       const TypeId target_type =

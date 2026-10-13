@@ -49,7 +49,7 @@ inline constexpr std::size_t kMostOperands = support::IntegralOperands::kMost;
 struct Handed {
   std::array<HandedOperand, kMostOperands> operands{};
   std::array<ToldType, kMostOperands> told{};
-  void* answer_storage = nullptr;
+  void* return_slot = nullptr;
   ToldType answer_told;
 };
 
@@ -268,7 +268,7 @@ void Take(Handed& handed, ArgumentCppType<row, at> argument) {
   } else {
     static_assert(
         std::holds_alternative<AnswerStorageArgument>(kArgumentAt<row, at>));
-    handed.answer_storage = argument;
+    handed.return_slot = argument;
   }
 }
 
@@ -349,12 +349,12 @@ auto CarryOut(const Handed& handed, std::index_sequence<operand...>)
         operands, value::IntegralView{});
   }
   value::WrittenWords answer = value::WrittenWords::ZeroedAt(
-      handed.answer_storage,
+      handed.return_slot,
       value::IntegralShape{.width = extent->width, .domain = extent->domain});
   value::MachineAnswer machine =
       value::ApplyIntegralOperation<kOperationAt<row>>(
           operands, answer.MutableView());
-  answer.StoreTo(handed.answer_storage);
+  answer.StoreTo(handed.return_slot);
   return machine;
 }
 

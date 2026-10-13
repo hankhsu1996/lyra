@@ -168,7 +168,7 @@ template <class Sink>
 class ScopedMutation;
 
 template <value::LyraValue T>
-class Ref;
+class VariableRef;
 
 template <value::LyraValue T>
 class Var;
@@ -555,7 +555,7 @@ class Var final : public Cell<ValueStorageCore<T>> {
   // written in the cell as it lies and the cell is told once whether it
   // changed. The write is non-copyable and non-movable, so keeping it past the
   // statement is rejected at compile time.
-  auto Mutate() -> ScopedMutation<Ref<T>>;
+  auto Mutate() -> ScopedMutation<VariableRef<T>>;
 };
 
 // A variable whose value lies after it, held as `HeldAs` holds it -- the
@@ -828,23 +828,24 @@ auto WholeReference(TailCell<HeldAs>& variable) -> ErasedReference {
 // moment it lands (LRM 4.3). Copyable, so a ref formal can be forwarded as a
 // ref argument to a nested call.
 template <value::LyraValue T>
-class Ref {
+class VariableRef {
  public:
   using ValueType = T;
 
   // A null view, default-constructed as a member and bound before first use:
   // a `ref` port's child-side member is declared with the child and filled by
   // the parent during elaboration (LRM 23.3.3.2), before simulation reads it.
-  Ref() = default;
-  explicit Ref(Var<T>& cell)
+  VariableRef() = default;
+  explicit VariableRef(Var<T>& cell)
       : erased_{
             .holder = static_cast<VariableCell*>(&cell),
             .storage = &cell.Storage(),
             .whole = true} {
   }
-  explicit Ref(T& storage) : erased_{.holder = {}, .storage = &storage} {
+  explicit VariableRef(T& storage)
+      : erased_{.holder = {}, .storage = &storage} {
   }
-  explicit Ref(const ErasedReference& erased) : erased_(erased) {
+  explicit VariableRef(const ErasedReference& erased) : erased_(erased) {
   }
 
   [[nodiscard]] auto Erased() const -> const ErasedReference& {
@@ -861,8 +862,9 @@ class Ref {
     return Storage();
   }
 
-  // Const: a `Ref` is a view, so `Set` writes the referenced storage, not the
-  // handle's own pointers -- as `*p = v` is allowed through a `T* const p`.
+  // Const: a `VariableRef` is a view, so `Set` writes the referenced storage,
+  // not the handle's own pointers -- as `*p = v` is allowed through a `T* const
+  // p`.
   void Set(const T& new_val) const {
     if (!erased_.Admits()) {
       if (T* beneath = DisplacedStorage()) {
@@ -885,7 +887,7 @@ class Ref {
   // Opens a write into the referenced storage, as an observable cell itself
   // does; only storage that belongs to a variable has anyone to tell what the
   // write did.
-  [[nodiscard]] auto Mutate() const -> ScopedMutation<Ref<T>>;
+  [[nodiscard]] auto Mutate() const -> ScopedMutation<VariableRef<T>>;
 
   // A procedural continuous assignment on a name that owns no storage (LRM
   // 10.6.2), by the operations a variable itself answers: the reference is a
@@ -904,15 +906,16 @@ class Ref {
     erased_.AdmitStep();
     value::Formation formed{};
     auto& element = Storage().ElementRef(key, formed);
-    return Ref<std::remove_reference_t<decltype(element)>>{
+    return VariableRef<std::remove_reference_t<decltype(element)>>{
         erased_.Part(&element, formed, RetainedStepTo<T>(key))};
   }
 
   template <std::size_t I>
   [[nodiscard]] auto ReferComponent() const {
     auto& component = Storage().template ComponentRef<I>();
-    return Ref<std::remove_reference_t<decltype(component)>>{erased_.Part(
-        &component, value::Formation::kExisting, PartPath::Child(I))};
+    return VariableRef<std::remove_reference_t<decltype(component)>>{
+        erased_.Part(
+            &component, value::Formation::kExisting, PartPath::Child(I))};
   }
 
   // The `MutationSink` surface. Storage that belongs to no variable has no
@@ -1011,18 +1014,19 @@ struct MemberOf<T C::*> {
 // design's own failure.
 template <auto Property>
 auto ReferProperty(typename MemberOf<decltype(Property)>::Class* object)
-    -> Ref<typename MemberOf<decltype(Property)>::Value> {
+    -> VariableRef<typename MemberOf<decltype(Property)>::Value> {
   if (object == nullptr) {
     value::RaiseNullObjectHandleAccess();
   }
-  return Ref<typename MemberOf<decltype(Property)>::Value>{ErasedReference{
-      .holder = static_cast<GcObject*>(object),
-      .storage = &(object->*Property)}};
+  return VariableRef<typename MemberOf<decltype(Property)>::Value>{
+      ErasedReference{
+          .holder = static_cast<GcObject*>(object),
+          .storage = &(object->*Property)}};
 }
 
 template <auto Property>
 auto ReferProperty(const value::ObjectRef& handle)
-    -> Ref<typename MemberOf<decltype(Property)>::Value> {
+    -> VariableRef<typename MemberOf<decltype(Property)>::Value> {
   return ReferProperty<Property>(
       handle.View<typename MemberOf<decltype(Property)>::Class>());
 }
@@ -1030,14 +1034,14 @@ auto ReferProperty(const value::ObjectRef& handle)
 // What a wait on the storage `reference` names enrols on (LRM 13.5.2): what
 // a write through the reference is told to, never the reference itself.
 template <value::LyraValue T>
-auto ReportsTo(const Ref<T>& reference) -> WatchedPlace {
+auto ReportsTo(const VariableRef<T>& reference) -> WatchedPlace {
   return WatchedPlace::Through(reference.Erased());
 }
 
 // States that a continuous assignment drives the storage `reference` names
 // (LRM 10.3), once, as the design is built.
 template <value::LyraValue T>
-void DrivesContinuously(const Ref<T>& reference) {
+void DrivesContinuously(const VariableRef<T>& reference) {
   reference.Erased().DriveContinuously();
 }
 
@@ -1507,15 +1511,15 @@ class ScopedMutation {
 };
 
 template <value::LyraValue T>
-auto Var<T>::Mutate() -> ScopedMutation<Ref<T>> {
-  return ScopedMutation<Ref<T>>{Ref<T>{*this}};
+auto Var<T>::Mutate() -> ScopedMutation<VariableRef<T>> {
+  return ScopedMutation<VariableRef<T>>{VariableRef<T>{*this}};
 }
 
 template <value::LyraValue T>
-auto Ref<T>::Mutate() const -> ScopedMutation<Ref<T>> {
-  return ScopedMutation<Ref<T>>{*this};
+auto VariableRef<T>::Mutate() const -> ScopedMutation<VariableRef<T>> {
+  return ScopedMutation<VariableRef<T>>{*this};
 }
 
-static_assert(MutationSink<Ref<value::Logic>>);
+static_assert(MutationSink<VariableRef<value::Logic>>);
 
 }  // namespace lyra::runtime

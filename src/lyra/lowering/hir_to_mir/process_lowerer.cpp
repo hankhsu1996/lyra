@@ -385,7 +385,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
 
     // A `ref` formal names its actual's storage, which reports its own writes
     // (LRM 13.5.2), so it is the parameter itself.
-    if (unit.types.Get(*param_type).Is<mir::RefType>()) {
+    if (unit.types.Get(*param_type).Is<mir::VariableRefType>()) {
       const mir::LocalId mir_var =
           bindings.DeclareProcedural(origin, hir_var.name, *param_type);
       MapProceduralVar(param.var, AutomaticVarBinding{.type = *param_type});

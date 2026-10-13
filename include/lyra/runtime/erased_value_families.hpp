@@ -70,21 +70,22 @@ extern template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
 extern template class CellRareState<
     ValueStorageCore<value::RuntimeAssociativeArray>>;
 
-extern template class Ref<value::WideBitVector>;
-extern template class Ref<value::WideLogicVector>;
-extern template class Ref<value::RuntimeUnion>;
-extern template class Ref<value::RuntimeTaggedUnion>;
-extern template class Ref<value::RuntimeDynamicArray>;
-extern template class Ref<value::RuntimeQueue>;
-extern template class Ref<value::RuntimeAssociativeArray>;
+extern template class VariableRef<value::WideBitVector>;
+extern template class VariableRef<value::WideLogicVector>;
+extern template class VariableRef<value::RuntimeUnion>;
+extern template class VariableRef<value::RuntimeTaggedUnion>;
+extern template class VariableRef<value::RuntimeDynamicArray>;
+extern template class VariableRef<value::RuntimeQueue>;
+extern template class VariableRef<value::RuntimeAssociativeArray>;
 
-extern template class ScopedMutation<Ref<value::WideBitVector>>;
-extern template class ScopedMutation<Ref<value::WideLogicVector>>;
-extern template class ScopedMutation<Ref<value::RuntimeUnion>>;
-extern template class ScopedMutation<Ref<value::RuntimeTaggedUnion>>;
-extern template class ScopedMutation<Ref<value::RuntimeDynamicArray>>;
-extern template class ScopedMutation<Ref<value::RuntimeQueue>>;
-extern template class ScopedMutation<Ref<value::RuntimeAssociativeArray>>;
+extern template class ScopedMutation<VariableRef<value::WideBitVector>>;
+extern template class ScopedMutation<VariableRef<value::WideLogicVector>>;
+extern template class ScopedMutation<VariableRef<value::RuntimeUnion>>;
+extern template class ScopedMutation<VariableRef<value::RuntimeTaggedUnion>>;
+extern template class ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
+extern template class ScopedMutation<VariableRef<value::RuntimeQueue>>;
+extern template class ScopedMutation<
+    VariableRef<value::RuntimeAssociativeArray>>;
 
 extern template class Takeovers<value::WideBitVector>;
 extern template class Takeovers<value::WideLogicVector>;
@@ -183,23 +184,23 @@ extern template class CellRareState<ValueStorageCore<value::LogicVector<16>>>;
 extern template class CellRareState<ValueStorageCore<value::LogicVector<32>>>;
 extern template class CellRareState<ValueStorageCore<value::LogicVector<64>>>;
 
-extern template class Ref<value::BitVector<8>>;
-extern template class Ref<value::BitVector<16>>;
-extern template class Ref<value::BitVector<32>>;
-extern template class Ref<value::BitVector<64>>;
-extern template class Ref<value::LogicVector<8>>;
-extern template class Ref<value::LogicVector<16>>;
-extern template class Ref<value::LogicVector<32>>;
-extern template class Ref<value::LogicVector<64>>;
+extern template class VariableRef<value::BitVector<8>>;
+extern template class VariableRef<value::BitVector<16>>;
+extern template class VariableRef<value::BitVector<32>>;
+extern template class VariableRef<value::BitVector<64>>;
+extern template class VariableRef<value::LogicVector<8>>;
+extern template class VariableRef<value::LogicVector<16>>;
+extern template class VariableRef<value::LogicVector<32>>;
+extern template class VariableRef<value::LogicVector<64>>;
 
-extern template class ScopedMutation<Ref<value::BitVector<8>>>;
-extern template class ScopedMutation<Ref<value::BitVector<16>>>;
-extern template class ScopedMutation<Ref<value::BitVector<32>>>;
-extern template class ScopedMutation<Ref<value::BitVector<64>>>;
-extern template class ScopedMutation<Ref<value::LogicVector<8>>>;
-extern template class ScopedMutation<Ref<value::LogicVector<16>>>;
-extern template class ScopedMutation<Ref<value::LogicVector<32>>>;
-extern template class ScopedMutation<Ref<value::LogicVector<64>>>;
+extern template class ScopedMutation<VariableRef<value::BitVector<8>>>;
+extern template class ScopedMutation<VariableRef<value::BitVector<16>>>;
+extern template class ScopedMutation<VariableRef<value::BitVector<32>>>;
+extern template class ScopedMutation<VariableRef<value::BitVector<64>>>;
+extern template class ScopedMutation<VariableRef<value::LogicVector<8>>>;
+extern template class ScopedMutation<VariableRef<value::LogicVector<16>>>;
+extern template class ScopedMutation<VariableRef<value::LogicVector<32>>>;
+extern template class ScopedMutation<VariableRef<value::LogicVector<64>>>;
 
 extern template class Takeovers<value::BitVector<8>>;
 extern template class Takeovers<value::BitVector<16>>;

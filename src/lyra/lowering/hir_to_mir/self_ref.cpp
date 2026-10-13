@@ -181,23 +181,23 @@ auto BuildReferenceArg(
     mir::TypeId pointee) -> mir::ExprId {
   const auto& pointee_ty = unit.types.Get(pointee);
   // Referencing a value that is itself a reference seals to the same final
-  // cell: a `Ref<T>` taken over a `Ref<T>` aliases what that reference aliases,
-  // never nesting into `Ref<Ref<T>>` (LRM 23.3.3.2). The argument is the
-  // existing reference itself, as a C++ reference initialized from a reference
-  // binds what that one binds.
+  // cell: a `VariableRef<T>` taken over a `VariableRef<T>` aliases what that
+  // reference aliases, never nesting into `VariableRef<VariableRef<T>>`
+  // (LRM 23.3.3.2). The argument is the existing reference itself, as a C++
+  // reference initialized from a reference binds what that one binds.
   // A reference held as a member is lent the same way, itself, so a `ref`
   // port bound from it is bound to it rather than to what it names now.
-  if (pointee_ty.IsReference()) {
+  if (pointee_ty.IsVariableRef()) {
     return cell;
   }
-  // The reference aliases the cell's value, not its storage wrapper: a `Ref<T>`
-  // over an observable cell binds the underlying `Var<T>`, so the pointee is
-  // the value type, not the `ObservableType`.
+  // The reference aliases the cell's value, not its storage wrapper: a
+  // `VariableRef<T>` over an observable cell binds the underlying `Var<T>`, so
+  // the pointee is the value type, not the `ObservableType`.
   if (pointee_ty.Is<mir::ObservableType>()) {
     pointee = pointee_ty.Get<mir::ObservableType>().value;
   }
   const mir::TypeId ref_type = unit.types.Intern(
-      mir::Type{mir::RefType{
+      mir::Type{mir::VariableRefType{
           .pointee = pointee, .mutability = mir::Mutability::kMutable}});
   return block.exprs.Add(
       mir::Expr{

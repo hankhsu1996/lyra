@@ -62,7 +62,7 @@ auto WrapperOf(const lir::Type& type)
   // address whose storage may be subscribable or not, and only the operation
   // performed through it can tell which (LRM 13.5.2). So it is classified
   // where it stands, before anything strips it to look at what it points at.
-  if (const auto* reference = type.As<lir::RefType>()) {
+  if (const auto* reference = type.As<lir::VariableRefType>()) {
     return std::pair{WrapperKind::kRef, reference->pointee};
   }
   return std::nullopt;
@@ -113,7 +113,7 @@ auto CallArranger::StorageReached(lir::TypeId operand) const
   // A reference is a handle naming storage someone else owns, so it reaches
   // that storage by being what it is rather than by pointing at it: what it
   // states is the values the storage holds, which is not the storage.
-  if (carried.Is<lir::RefType>()) {
+  if (carried.Is<lir::VariableRefType>()) {
     return carried;
   }
   const std::optional<lir::TypeId> pointee = carried.Pointee();
@@ -902,7 +902,7 @@ auto CallArranger::ConstructionOf(
 
           // A reference is bound to storage that already exists, naming it
           // rather than bringing it about, so nothing constructs one.
-          [&](const lir::RefType&) -> Built { return no_construct(); },
+          [&](const lir::VariableRefType&) -> Built { return no_construct(); },
 
           // Storage an owner holds, which comes into existence with the owner
           // and is reached by address.

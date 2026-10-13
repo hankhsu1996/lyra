@@ -265,7 +265,8 @@ auto CodeGenFunction::IntegralEmitter::ResolveEntryCall(
   return ResolvedCall{
       .callee = llvm::FunctionCallee(
           llvm::FunctionType::get(answered, parameters, false), EntryOf(op)),
-      .args = std::move(args)};
+      .args = std::move(args),
+      .return_slot = shapes.answer.has_value() ? out : nullptr};
 }
 
 auto CodeGenFunction::IntegralEmitter::Lower(
@@ -292,7 +293,7 @@ auto CodeGenFunction::IntegralEmitter::Lower(
       ResolveEntryCall(op, operands, shapes, answer_type, out);
   llvm::Value* const answered =
       function_->EmitCallOrInvoke(entry.callee, entry.args);
-  return shapes.answer.has_value() ? out : answered;
+  return entry.return_slot != nullptr ? entry.return_slot : answered;
 }
 
 auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
@@ -321,7 +322,7 @@ auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
             further_shapes.end());
         const std::array<Planes, 2> leading{target, start};
         const auto planes = [&](std::size_t index) -> Planes {
-          return index < leading.size() ? leading[index]
+          return index < leading.size() ? leading.at(index)
                                         : further[index - leading.size()];
         };
         const std::optional<PlaneAnswer> answered = LowerOnPlanes(

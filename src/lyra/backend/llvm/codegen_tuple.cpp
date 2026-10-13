@@ -509,6 +509,16 @@ auto CodeGenTuples::ReadOutOfStream(
       operands, laid_out);
 }
 
+// The type of the value a structure's function takes its parameter `index` as
+// a reference to, which is how it takes every value it is asked about.
+auto CodeGenTuples::ParamReferent(
+    lir::FunctionId method, std::size_t index) const -> lir::TypeId {
+  const lir::Function& fn = unit_->functions.Get(method);
+  return unit_->types.Get(fn.values.Get(fn.params.at(index)).type)
+      .Get<lir::PointerType>()
+      .pointee;
+}
+
 // The function answers a comparison as a value of the one-bit type its own
 // code states, laid out in storage it is handed last, and the body answers the
 // scalar that value holds.
@@ -564,9 +574,8 @@ auto CodeGenTuples::StreamReadBody(
   llvm::Function* const body = DeclareBody(tuple, slot, stands_in_for);
   llvm::IRBuilder<> b(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
-  const lir::Function& fn = unit_->functions.Get(method);
   const value::IntegralShape stream =
-      types_->RequiredIntegralShapeOf(fn.values.Get(fn.params.at(0)).type);
+      types_->RequiredIntegralShapeOf(ParamReferent(method, 0));
   b.CreateRet(ForwardToEntry(
       b, RuntimeOp::kStreamBuild, b.getInt64Ty(),
       {owner_->UnitFunction(method), body->getArg(1), body->getArg(2),
@@ -601,9 +610,8 @@ auto CodeGenTuples::ControlReadBody(
     lir::TypeId tuple, std::string_view slot,
     const VirtualSignature& stands_in_for, lir::FunctionId method)
     -> llvm::Constant* {
-  const lir::Function& fn = unit_->functions.Get(method);
-  const ThunkBody thunk = OpenThunkBody(
-      tuple, slot, stands_in_for, fn.values.Get(fn.params.at(1)).type);
+  const ThunkBody thunk =
+      OpenThunkBody(tuple, slot, stands_in_for, ParamReferent(method, 1));
   llvm::IRBuilder<> b(&thunk.function->getEntryBlock());
   ReadOutOfStream(
       b, thunk.args[1], b.getInt64(0), thunk.storage, thunk.value_type);

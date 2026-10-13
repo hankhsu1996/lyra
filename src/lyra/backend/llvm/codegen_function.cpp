@@ -24,8 +24,6 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
-#include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/runtime/object_layout.hpp"
@@ -83,10 +81,9 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
   builder_.SetInsertPoint(entry);
   frame_storage_point_ =
       builder_.CreateAlloca(builder_.getInt8Ty(), nullptr, "frame.storage");
-  DeclareHeapPointers();
   for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
-    if (!local.NamesStorage() || NeedsHeapStorage(local.type)) {
+    if (!local.NamesStorage()) {
       continue;
     }
     llvm::Value* owned = StorageFor(local.type);
@@ -107,11 +104,10 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
     builder_.SetInsertPoint(blocks_[i]);
     const lir::BasicBlock& block = fn_->blocks[i];
     for (const lir::Instr& instr : block.instrs) {
-      auto lowered = LowerInstr(instr);
+      auto lowered = LowerInstrInto(instr);
       if (!lowered) {
         return std::unexpected(std::move(lowered.error()));
       }
-      values_.emplace(instr.result, *lowered);
     }
     auto terminated = LowerTerminatorInto(block.terminator);
     if (!terminated) {
@@ -149,87 +145,66 @@ auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
   return LaidOutStorage(module_->Types().LayoutOf(type));
 }
 
-auto CodeGenFunction::NeedsHeapStorage(lir::TypeId type) const -> bool {
-  return module_->Types().LiesInStorage(type) &&
-         module_->Types().LayoutOf(type).size > value::kMaxInlineBytes;
+auto CodeGenFunction::ResolveDestination(const lir::Destination& destination)
+    -> diag::Result<DestinationRef> {
+  return std::visit(
+      Overloaded{
+          [&](const lir::Transient& defined) -> diag::Result<DestinationRef> {
+            return PendingOperand{.value = defined.value};
+          },
+          [&](const lir::Place& place) -> diag::Result<DestinationRef> {
+            auto address = ResolvePlaceAddress(place, Access::kWrite);
+            if (!address) {
+              return std::unexpected(std::move(address.error()));
+            }
+            return PlaceRef{
+                .address = *address,
+                .type = ReachedType(place, std::ssize(place.chain))};
+          }},
+      destination);
 }
 
-void CodeGenFunction::DeclareHeapPointers() {
-  const auto declare = [&](lir::ValueId id) {
-    llvm::IRBuilder<> at(frame_storage_point_);
-    llvm::AllocaInst* const pointer = at.CreateAlloca(module_->Types().Ptr());
-    at.CreateStore(
-        llvm::ConstantPointerNull::get(module_->Types().Ptr()), pointer);
-    heap_pointers_.emplace(id, pointer);
-  };
-  for (const lir::ValueId id : fn_->values.Ids()) {
-    const lir::Local& local = fn_->values.Get(id);
-    if (local.NamesStorage() && NeedsHeapStorage(local.type)) {
-      declare(id);
-    }
-  }
-  for (const lir::BasicBlock& block : fn_->blocks) {
-    for (const lir::Instr& instr : block.instrs) {
-      if (lir::MakesValue(instr.data) &&
-          NeedsHeapStorage(fn_->values.Get(instr.result).type)) {
-        declare(instr.result);
-      }
-    }
-    if (const auto* call =
-            std::get_if<lir::DepartingCallInstr>(&block.terminator.data);
-        call != nullptr && lir::CallMakesValue(call->target) &&
-        NeedsHeapStorage(fn_->values.Get(call->result).type)) {
-      declare(call->result);
-    }
-  }
+auto CodeGenFunction::TypeOf(const DestinationRef& destination) const
+    -> lir::TypeId {
+  return std::visit(
+      Overloaded{
+          [&](const PendingOperand& pending) {
+            return fn_->values.Get(pending.value).type;
+          },
+          [](const PlaceRef& place) { return place.type; }},
+      destination);
 }
 
-auto CodeGenFunction::StorageForResult(lir::ValueId made, lir::TypeId type)
+auto CodeGenFunction::EnsureDestination(const DestinationRef& destination)
     -> llvm::Value* {
-  return NeedsHeapStorage(type) ? AllocateBytes(made) : StorageFor(type);
+  return std::visit(
+      Overloaded{
+          [&](const PendingOperand& pending) {
+            return StorageFor(fn_->values.Get(pending.value).type);
+          },
+          [&](const PlaceRef& place) -> llvm::Value* {
+            if (!module_->Types().LiesInStorage(place.type)) {
+              return nullptr;
+            }
+            return place.address;
+          }},
+      destination);
 }
 
-auto CodeGenFunction::AllocateBytes(lir::ValueId of) -> llvm::Value* {
-  const auto kept = heap_pointers_.find(of);
-  if (kept == heap_pointers_.end()) {
-    throw InternalError(
-        "llvm codegen: bytes are obtained for a value that was given no "
-        "pointer "
-        "to keep their address in -- please report this as a bug");
-  }
-  const std::array<llvm::Value*, 1> args{builder_.getInt64(
-      module_->Types().LayoutOf(fn_->values.Get(of).type).size)};
-  llvm::Value* const bytes = CallEntry(
-      RuntimeSymbol(RuntimeOp::kAllocBytes), module_->Types().Ptr(),
-      {CallArranger::Direct(builder_.getInt64Ty())}, args);
-  builder_.CreateStore(bytes, kept->second);
-  return bytes;
-}
-
-void CodeGenFunction::DeallocateBytes(lir::ValueId of) {
-  const auto kept = heap_pointers_.find(of);
-  if (kept == heap_pointers_.end()) {
-    return;
-  }
-  const std::array<llvm::Value*, 2> args{
-      builder_.CreateLoad(module_->Types().Ptr(), kept->second),
-      builder_.getInt64(
-          module_->Types().LayoutOf(fn_->values.Get(of).type).size)};
-  CallEntry(
-      RuntimeSymbol(RuntimeOp::kDeallocBytes), builder_.getVoidTy(),
-      {CallArranger::Direct(module_->Types().Ptr()),
-       CallArranger::Direct(builder_.getInt64Ty())},
-      args);
-  builder_.CreateStore(
-      llvm::ConstantPointerNull::get(module_->Types().Ptr()), kept->second);
-}
-
-auto CodeGenFunction::AddressOf(lir::ValueId id) -> llvm::Value* {
-  const auto kept = heap_pointers_.find(id);
-  if (kept != heap_pointers_.end()) {
-    return builder_.CreateLoad(module_->Types().Ptr(), kept->second);
-  }
-  return values_.at(id);
+void CodeGenFunction::StoreInto(
+    const DestinationRef& destination, llvm::Value* value,
+    llvm::IRBuilderBase& at) {
+  std::visit(
+      Overloaded{
+          [&](const PendingOperand& pending) {
+            values_.emplace(pending.value, value);
+          },
+          [&](const PlaceRef& place) {
+            if (!module_->Types().LiesInStorage(place.type)) {
+              at.CreateStore(value, place.address);
+            }
+          }},
+      destination);
 }
 
 auto CodeGenFunction::Addresses(std::size_t count) const
@@ -263,27 +238,9 @@ auto CodeGenFunction::BuildInto(
 
 auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
     -> diag::Result<void> {
-  // A pointer owning what it points at ends that where it lies and gives the
-  // storage back, as Rust drops the value in a `Box` and then frees it.
-  const lir::Type& ended = module_->Unit().types.Get(type);
-  if (ended.IsMoveOnly()) {
-    const lir::TypeId pointee = *ended.Pointee();
-    if (!module_->Types().LiesInStorage(pointee)) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedExpressionForm,
-          "llvm codegen: ending an object a unique pointer owns is not yet "
-          "supported");
-    }
-    if (auto inner = EndValue(pointee, value); !inner) {
-      return inner;
-    }
-    auto size = module_->CompleteObjectSize(pointee);
-    if (!size) {
-      return std::unexpected(std::move(size.error()));
-    }
-    builder_.CreateCall(
-        module_->SizedOperatorDelete(), {value, builder_.getInt64(*size)});
-    return {};
+  // A pointer owning what it points at is that address where it is an operand.
+  if (module_->Unit().types.Get(type).IsMoveOnly()) {
+    return module_->EndOwnedStorage(builder_, type, value);
   }
   if (module_->Types().LayoutOf(type).ends_with_nothing_to_do) {
     return {};
@@ -500,11 +457,6 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
               if (!relocated) {
                 return relocated;
               }
-              // The bytes the answer was made in go out of use with the
-              // return, once the answer lies where the caller reads it.
-              if (const auto* made = std::get_if<lir::Use>(&*ret.value)) {
-                DeallocateBytes(made->value);
-              }
               builder_.CreateRet(out);
               return {};
             }
@@ -566,22 +518,24 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             return {};
           },
           [&](const lir::DepartingCallInstr& call) -> diag::Result<void> {
-            const lir::TypeId result_type = fn_->values.Get(call.result).type;
-            llvm::Value* const out =
-                lir::CallMakesValue(call.target)
-                    ? StorageForResult(call.result, result_type)
-                    : nullptr;
+            auto destination = ResolveDestination(call.destination);
+            if (!destination) {
+              return std::unexpected(std::move(destination.error()));
+            }
             const lir::CallInstr stated{
                 .target = call.target, .args = call.args};
             invoke_dest_ = InvokeDest{
                 .normal = blocks_[call.returned.value],
                 .unwind = blocks_[call.landing.value]};
-            auto answered = LowerCall(stated, result_type, out);
+            auto answered = LowerCall(stated, *destination);
             invoke_dest_.reset();
             if (!answered) {
               return std::unexpected(std::move(answered.error()));
             }
-            values_[call.result] = *answered;
+            // An answer exists only where the call returned to, so that is
+            // where it is put.
+            llvm::IRBuilder<> at(blocks_[call.returned.value]);
+            StoreInto(*destination, *answered, at);
             // A call emitted as instructions of this body departs from
             // nowhere, so control goes on to where the call returns.
             if (!builder_.GetInsertBlock()->hasTerminator()) {

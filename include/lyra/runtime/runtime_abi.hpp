@@ -759,11 +759,6 @@ void lyra_rt_insert_bits(
     LyraSpan outer_parts, const void* start, const void* bits,
     std::int64_t bits_width, bool bits_are_four_state);
 
-// The bytes a body keeps apart from its frame for one value: `size` of them,
-// aligned for a word, holding whatever was last left in them, and those bytes
-// given back. Giving back none is nothing.
-auto lyra_rt_alloc_bytes(std::uint64_t size) -> void*;
-void lyra_rt_dealloc_bytes(void* bytes, std::uint64_t size);
 
 // The sequence of handles a declaration standing for several objects builds,
 // in the order its coordinates count, and the handle at a position in one. A

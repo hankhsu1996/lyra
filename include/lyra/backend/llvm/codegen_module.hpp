@@ -186,6 +186,12 @@ class CodeGenModule {
   auto BuildCallArg(
       const PassMode& mode, llvm::Value* value, std::vector<llvm::Value*>& args)
       -> diag::Result<void>;
+  // Ends what the pointer `storage`, of the uniquely owning type `owner`,
+  // owns: the value where it lies, and then the storage, given back to the
+  // host's sized deallocation function, as Rust drops a `Box`.
+  auto EndOwnedStorage(
+      llvm::IRBuilderBase& builder, lir::TypeId owner, llvm::Value* storage)
+      -> diag::Result<void>;
   // One step of the life of a value of `type`, emitted where `builder`
   // stands: a copy or a move takes the value and the storage it is built in,
   // an assignment the storage written into and the value, an end the value.

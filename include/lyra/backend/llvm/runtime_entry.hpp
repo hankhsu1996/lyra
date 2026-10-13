@@ -231,10 +231,6 @@ enum class RuntimeOp : std::uint8_t {
   // that value is held in.
   kInsertBits,
   kInsertDesignatedBits,
-  // The bytes a body keeps apart from its frame for one value, obtained and
-  // given back.
-  kAllocBytes,
-  kDeallocBytes,
   // What a position of a fixed-size unpacked array naming no element reaches
   // (LRM 7.4.5), which the element type answers since no array is asked: the
   // default a read yields, and storage no read reaches for a write to land in.

@@ -185,6 +185,10 @@ auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
             e.operand = Expr(e.operand);
             return e;
           },
+          [&](mir::BorrowExpr e) -> mir::ExprData {
+            e.operand = Expr(e.operand);
+            return e;
+          },
           [&](mir::MoveExpr e) -> mir::ExprData {
             e.operand = Expr(e.operand);
             return e;

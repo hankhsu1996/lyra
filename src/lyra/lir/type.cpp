@@ -195,7 +195,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const DiagnosticType&) {},
           [&](const RuntimeLibraryType& t) { Combine(seed, t.kind); },
           [&](const CoroutineType& t) { Combine(seed, t.payload); },
-          [&](const RefType& t) {
+          [&](const VariableRefType& t) {
             Combine(seed, t.pointee);
             Combine(seed, t.mutability);
           },
@@ -264,7 +264,7 @@ auto Type::KindName() const -> std::string_view {
             return RuntimeLibraryKindName(t.kind);
           },
           [](const CoroutineType&) { return "coroutine"; },
-          [](const RefType&) { return "reference"; },
+          [](const VariableRefType&) { return "reference"; },
           [](const PointerType&) { return "pointer"; },
           [](const ManagedRefType&) { return "managed reference"; },
           [](const VectorType&) { return "vector"; },
@@ -344,7 +344,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const DiagnosticType&) { return names_none(); },
           [&](const RuntimeLibraryType&) { return names_none(); },
           [&](const CoroutineType&) { return names_none(); },
-          [&](const RefType&) { return names_none(); },
+          [&](const VariableRefType&) { return names_none(); },
           [&](const PointerType&) { return names_none(); },
           [&](const ManagedRefType&) { return names_none(); },
           [&](const VectorType&) { return names_none(); }});
@@ -408,7 +408,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // These refer to a value living elsewhere rather than holding one,
           // so a container reached through one is reached by dereferencing it
           // first.
-          [](const RefType&) -> Element { return std::nullopt; },
+          [](const VariableRefType&) -> Element { return std::nullopt; },
           [](const PointerType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },
@@ -433,7 +433,7 @@ auto Type::Pointee() const -> std::optional<TypeId> {
   if (const auto* pointer = As<PointerType>()) {
     return pointer->pointee;
   }
-  if (const auto* reference = As<RefType>()) {
+  if (const auto* reference = As<VariableRefType>()) {
     return reference->pointee;
   }
   if (const auto* managed = As<ManagedRefType>()) {
@@ -674,7 +674,9 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // Where a value lies and the variable, if any, it belongs to, so a
           // write through it is told to whoever waits on that variable. The
           // storage it names is somebody else's, so ending it ends nothing.
-          [](const RefType&) -> Held { return LibraryObject::kReference; }});
+          [](const VariableRefType&) -> Held {
+            return LibraryObject::kReference;
+          }});
 }
 
 auto Type::IsOwnedValue() const -> bool {

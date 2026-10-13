@@ -10,7 +10,6 @@
 #include <deque>
 #include <exception>
 #include <format>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -253,8 +252,8 @@ void BuildAt(void* storage, const Told&... told) {
 }
 
 template <value::LyraValue T>
-auto LentAt(const void* reference) -> Ref<T> {
-  return Ref<T>{ErasedAt(reference)};
+auto LentAt(const void* reference) -> VariableRef<T> {
+  return VariableRef<T>{ErasedAt(reference)};
 }
 
 auto BuildReference(void* out, const ErasedReference& reference) -> void* {
@@ -308,7 +307,8 @@ auto RefGet(void* reference) -> const void* {
 template <value::LyraValue T>
 auto OpenCellWrite(void* cell, void* out) -> void* {
   return std::construct_at(
-      static_cast<OpenWrite*>(out), Ref<T>{*static_cast<Var<T>*>(cell)});
+      static_cast<OpenWrite*>(out),
+      VariableRef<T>{*static_cast<Var<T>*>(cell)});
 }
 
 template <value::LyraValue T>
@@ -900,7 +900,7 @@ void DriveFromNet(void* driver, void* net) {
 
 template <NetValue T>
 void DriveFromReference(void* driver, void* reference) {
-  DriverOf<T>(driver).DriveFrom(static_cast<Ref<T>*>(reference));
+  DriverOf<T>(driver).DriveFrom(static_cast<VariableRef<T>*>(reference));
 }
 
 template <NetValue T>
@@ -1302,15 +1302,6 @@ auto IntegralFormatArg(const void* value, value::IntegralShape shape)
 // region takes it rather than borrowing it.
 auto TakeClosure(void* closure) -> OwnedCall {
   return [held = TakeOwner(closure)] { held->Invoke(); };
-}
-
-// A closure kept and handed to a region again each time it is due -- a
-// concurrent assertion's action, submitted once per attempt that settles --
-// so every submission shares it rather than one of them owning it.
-auto ShareClosure(void* closure) -> std::function<void()> {
-  return [held = std::shared_ptr<ClosureValue>(TakeOwner(closure))] {
-    held->Invoke();
-  };
 }
 
 // Whether an `iff` qualifier holds (LRM 12.4), which is the whole of what an
@@ -2164,7 +2155,6 @@ using lyra::runtime::RuntimeProcess;
 using lyra::runtime::SampledHistory;
 using lyra::runtime::ScalarPropagationDelay;
 using lyra::runtime::Scope;
-using lyra::runtime::ShareClosure;
 using lyra::runtime::SharedPointer;
 using lyra::runtime::ShowSource;
 using lyra::runtime::SimTimeInUnit;
@@ -3241,16 +3231,6 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void* {
       std::unique_ptr<Scope>(static_cast<Scope*>(child)));
 }
 
-auto lyra_rt_alloc_bytes(std::uint64_t size) -> void* {
-  return lyra::value::AllocateWords(lyra::value::WordCountForBits(size * 8U));
-}
-
-void lyra_rt_dealloc_bytes(void* bytes, std::uint64_t size) {
-  lyra::value::DeallocateWords(
-      static_cast<std::uint64_t*>(bytes),
-      lyra::value::WordCountForBits(size * 8U));
-}
-
 void lyra_rt_insert_bits(
     void* whole, std::int64_t whole_width, bool whole_is_four_state,
     LyraSpan outer_parts, const void* start, const void* bits,
@@ -4042,7 +4022,7 @@ void lyra_rt_evaluation_attempts_install(
     void* pass_action, void* fail_action) {
   static_cast<EvaluationAttempts*>(attempts)->Install(
       *static_cast<RuntimeEffects*>(effects), words, pending_holds,
-      ShareClosure(pass_action), ShareClosure(fail_action));
+      TakeClosure(pass_action), TakeClosure(fail_action));
 }
 
 void lyra_rt_evaluation_attempts_seed_word(

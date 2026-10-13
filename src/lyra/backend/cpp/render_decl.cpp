@@ -62,14 +62,14 @@ void WriteReceiverBinding(
       CppLocalName(code.named_locals, receiver), " = ", from..., ";\n");
 }
 
-// Whether a body receives the object it runs against as a value rather than
-// through a pointer, which is how a struct's method receives its struct: it
-// runs against a copy, so it cannot change the object it is called on.
-auto ReceivesAValue(
+// Whether a body refers to the object it runs against by reference rather
+// than through a pointer, which is how a struct's method receives its struct:
+// it reads the struct where it lies and cannot change it.
+auto ReceivesAReference(
     const mir::CompilationUnit& unit, const mir::CallableCode& code) -> bool {
   return code.TakesReceiver() &&
-         !unit.types.Get(code.locals.Get(*code.receiver).type)
-              .Is<mir::PointerType>();
+         unit.types.Get(code.locals.Get(*code.receiver).type)
+             .Is<mir::ReferenceType>();
 }
 
 // `static ` for a member function entered on no object (LRM 8.10), or handed
@@ -79,15 +79,15 @@ auto StaticPrefix(const mir::CallableCode& code) -> std::string_view {
 }
 
 // What a member function's declaration and its definition share after its
-// name, `(params) -> R`, with `const` for a body receiving its object as a
-// value.
+// name, `(params) -> R`, with `const` for a body referring to its object by a
+// read-only reference.
 void WriteMemberSignatureTail(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
     TargetText& out) {
   out += "(";
   WriteParameters(unit, code, code.ParamsAfterReceiver(), out);
   Write(
-      out, ")", ReceivesAValue(unit, code) ? " const" : "", " -> ",
+      out, ")", ReceivesAReference(unit, code) ? " const" : "", " -> ",
       CppType(unit, code.result_type));
 }
 
@@ -97,7 +97,7 @@ void WriteMemberSignatureTail(
 // outside its type so the body can use any type of the unit as a complete one.
 // The body starts by binding its receiver, because MIR reaches the object
 // through a parameter like any other: `C* self = this;` for an object reached
-// through a pointer, `S self = *this;` for a struct received as a value.
+// through a pointer, `const S& self = *this;` for a struct referred to.
 template <typename Owner, typename Member>
 void RenderMemberFunctionDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
@@ -109,7 +109,7 @@ void RenderMemberFunctionDef(
   WriteBody(out, [&] {
     if (code.TakesReceiver()) {
       WriteReceiverBinding(
-          unit, code, out, ReceivesAValue(unit, code) ? "*this" : "this");
+          unit, code, out, ReceivesAReference(unit, code) ? "*this" : "this");
     }
     RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
   });

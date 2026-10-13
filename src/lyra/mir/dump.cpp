@@ -490,9 +490,9 @@ class MirDumper {
             [](const ClosureType& c) -> std::string {
               return std::format("Closure[{}]", c.closure_id.value);
             },
-            [](const RefType& r) -> std::string {
+            [](const VariableRefType& r) -> std::string {
               return std::format(
-                  "Ref({}pointee=Type[{}])",
+                  "VariableRef({}pointee=Type[{}])",
                   r.mutability == Mutability::kReadOnly ? "readonly, " : "",
                   r.pointee.value);
             },
@@ -501,6 +501,12 @@ class MirDumper {
                   "ReferenceWrapper({}pointee=Type[{}])",
                   r.mutability == Mutability::kReadOnly ? "readonly, " : "",
                   r.pointee.value);
+              },
+            [](const ReferenceType& r) -> std::string {
+              return std::format(
+                  "Reference({}referent=Type[{}])",
+                  r.mutability == Mutability::kReadOnly ? "readonly, " : "",
+                  r.referent.value);
             },
             [](const PointerType& p) -> std::string {
               const std::string_view ro =
@@ -834,6 +840,10 @@ class MirDumper {
             [](const AddressOfExpr& a) -> std::string {
               return std::format(
                   "AddressOfExpr operand=Expr[{}]", a.operand.value);
+            },
+            [](const BorrowExpr& b) -> std::string {
+              return std::format(
+                  "BorrowExpr operand=Expr[{}]", b.operand.value);
             },
             [](const MoveExpr& m) -> std::string {
               return std::format("MoveExpr operand=Expr[{}]", m.operand.value);

@@ -65,101 +65,118 @@ constexpr std::int64_t kNoCastHint = -1;
 
 }  // namespace
 
-auto CodeGenFunction::LowerInstr(const lir::Instr& instr)
-    -> diag::Result<llvm::Value*> {
-  const lir::TypeId result_type = fn_->values.Get(instr.result).type;
-  llvm::Value* const out = lir::MakesValue(instr.data)
-                               ? StorageForResult(instr.result, result_type)
-                               : nullptr;
+auto CodeGenFunction::LowerInstrInto(const lir::Instr& instr)
+    -> diag::Result<void> {
+  using Done = diag::Result<void>;
+  // A statement's lowering answers no value, so only whether it failed is
+  // kept.
+  const auto done = [](diag::Result<llvm::Value*> lowered) -> Done {
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    return {};
+  };
   return std::visit(
       Overloaded{
-          [&](const lir::CallInstr& call) -> diag::Result<llvm::Value*> {
-            return LowerCall(call, result_type, out);
+          [&](const lir::AssignInstr& assign) -> Done {
+            return LowerAssignInto(assign);
           },
-          [&](const lir::ReceiveDepartureInstr&) -> diag::Result<llvm::Value*> {
-            return LowerReceiveDeparture();
+          [&](const lir::StoreInstr& store) -> Done {
+            return done(LowerStore(store));
           },
-          [&](const lir::TupleInstr& tuple) -> diag::Result<llvm::Value*> {
-            return LowerTuple(tuple, result_type, out);
-          },
-          [&](const lir::ClosureInstr& built) -> diag::Result<llvm::Value*> {
-            return LowerClosure(built, result_type, out);
-          },
-          [&](const lir::ArrayInstr& array) -> diag::Result<llvm::Value*> {
-            return LowerArray(array, result_type);
-          },
-          [&](const lir::AggregateExtractInstr& extract)
-              -> diag::Result<llvm::Value*> {
-            return LowerAggregateExtract(extract, result_type, out);
-          },
-          [&](const lir::AggregateUpdateInstr& update)
-              -> diag::Result<llvm::Value*> {
-            return LowerAggregateUpdate(update, out);
-          },
-          [&](const lir::LoadInstr& load) -> diag::Result<llvm::Value*> {
-            return LowerLoad(load, result_type);
-          },
-          [&](const lir::StoreInstr& store) -> diag::Result<llvm::Value*> {
-            return LowerStore(store);
-          },
-          [&](const lir::InitializeInstr& initialize)
-              -> diag::Result<llvm::Value*> {
-            return LowerInitialize(initialize);
-          },
-          [&](const lir::BitsStoreInstr& store) -> diag::Result<llvm::Value*> {
-            return LowerBitsStore(store);
+          [&](const lir::BitsStoreInstr& store) -> Done {
+            return done(LowerBitsStore(store));
           },
           // Bytes a frame keeps for a value come into use and go out of it
-          // with nothing to do where they lie in the frame; where they are
-          // allocated, coming into use allocates them and going out of use
-          // gives them back. Storage that comes into use while it is in use
-          // is given back first, and going out of use twice does nothing, so
-          // neither order of the two statements leaks or frees twice.
-          [&](const lir::StorageInstr& storage) -> diag::Result<llvm::Value*> {
-            if (!NeedsHeapStorage(fn_->values.Get(storage.of).type)) {
-              return nullptr;
-            }
-            switch (storage.op) {
-              case lir::StorageInstr::Op::kLive:
-                DeallocateBytes(storage.of);
-                AllocateBytes(storage.of);
-                return nullptr;
-              case lir::StorageInstr::Op::kDead:
-                DeallocateBytes(storage.of);
-                return nullptr;
-            }
-            throw InternalError("llvm codegen: unknown storage operation");
-          },
-          [&](const lir::AddrOfInstr& addr) -> diag::Result<llvm::Value*> {
-            return LowerAddrOf(addr, result_type, out);
-          },
-          [&](const lir::BinaryInstr& binary) -> diag::Result<llvm::Value*> {
-            return LowerBinary(binary, result_type, out);
-          },
-          [&](const lir::UnaryInstr& unary) -> diag::Result<llvm::Value*> {
-            return LowerUnary(unary, result_type, out);
-          },
-          [&](const lir::CastInstr& cast) -> diag::Result<llvm::Value*> {
-            return LowerCast(cast, result_type);
-          },
-          [&](const lir::HandleCastInstr& cast) -> diag::Result<llvm::Value*> {
-            return LowerHandleCast(cast, result_type, out);
-          },
-          [&](const lir::DynamicCastInstr& cast) -> diag::Result<llvm::Value*> {
-            return LowerDynamicCast(cast, result_type, out);
-          },
-          [&](const lir::OpenVariablesInstr&) -> diag::Result<llvm::Value*> {
-            return LowerOpenVariables();
-          },
-          [&](const lir::VariableAddressInstr& reached)
-              -> diag::Result<llvm::Value*> {
-            return LowerVariableAddress(reached);
-          },
-          [&](const lir::CloseVariablesInstr& closed)
-              -> diag::Result<llvm::Value*> {
-            return LowerCloseVariables(closed);
+          // with nothing to do where they lie in the frame.
+          [](const lir::StorageInstr&) -> Done { return {}; },
+          [&](const lir::CloseVariablesInstr& closed) -> Done {
+            return done(LowerCloseVariables(closed));
           }},
       instr.data);
+}
+
+auto CodeGenFunction::LowerAssignInto(const lir::AssignInstr& assign)
+    -> diag::Result<void> {
+  auto destination = ResolveDestination(assign.destination);
+  if (!destination) {
+    return std::unexpected(std::move(destination.error()));
+  }
+  auto made = LowerRvalue(assign.value, *destination);
+  if (!made) {
+    return std::unexpected(std::move(made.error()));
+  }
+  StoreInto(*destination, *made, builder_);
+  return {};
+}
+
+auto CodeGenFunction::LowerRvalue(
+    const lir::Rvalue& value, const DestinationRef& destination)
+    -> diag::Result<llvm::Value*> {
+  using Lowered = diag::Result<llvm::Value*>;
+  const lir::TypeId result_type = TypeOf(destination);
+  return std::visit(
+      Overloaded{
+          [&](const lir::CallInstr& call) -> Lowered {
+            return LowerCall(call, destination);
+          },
+          [&](const lir::UseInstr& use) -> Lowered {
+            return LowerUse(use, destination);
+          },
+          [&](const lir::ReceiveDepartureInstr&) -> Lowered {
+            return LowerReceiveDeparture();
+          },
+          [&](const lir::TupleInstr& tuple) -> Lowered {
+            return LowerTuple(
+                tuple, result_type, EnsureDestination(destination));
+          },
+          [&](const lir::ClosureInstr& built) -> Lowered {
+            return LowerClosure(
+                built, result_type, EnsureDestination(destination));
+          },
+          [&](const lir::ArrayInstr& array) -> Lowered {
+            return LowerArray(array, result_type);
+          },
+          [&](const lir::AggregateExtractInstr& extract) -> Lowered {
+            return LowerAggregateExtract(
+                extract, result_type, EnsureDestination(destination));
+          },
+          [&](const lir::AggregateUpdateInstr& update) -> Lowered {
+            return LowerAggregateUpdate(update, EnsureDestination(destination));
+          },
+          [&](const lir::LoadInstr& load) -> Lowered {
+            return LowerLoad(load, result_type);
+          },
+          [&](const lir::AddrOfInstr& addr) -> Lowered {
+            return LowerAddrOf(
+                addr, result_type, EnsureDestination(destination));
+          },
+          [&](const lir::BinaryInstr& binary) -> Lowered {
+            return LowerBinary(
+                binary, result_type, EnsureDestination(destination));
+          },
+          [&](const lir::UnaryInstr& unary) -> Lowered {
+            return LowerUnary(
+                unary, result_type, EnsureDestination(destination));
+          },
+          [&](const lir::CastInstr& cast) -> Lowered {
+            return LowerCast(cast, result_type);
+          },
+          [&](const lir::HandleCastInstr& cast) -> Lowered {
+            return LowerHandleCast(
+                cast, result_type, EnsureDestination(destination));
+          },
+          [&](const lir::DynamicCastInstr& cast) -> Lowered {
+            return LowerDynamicCast(
+                cast, result_type, EnsureDestination(destination));
+          },
+          [&](const lir::OpenVariablesInstr&) -> Lowered {
+            return LowerOpenVariables();
+          },
+          [&](const lir::VariableAddressInstr& reached) -> Lowered {
+            return LowerVariableAddress(reached);
+          }},
+      value);
 }
 
 // Reading a place answers with the value it holds, where it lies, whatever
@@ -365,27 +382,31 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
       std::move(arranged), std::move(wrapper_args), readings, told, *value);
 }
 
-// Storage holding no value takes the value whole: one of an owned type moves
-// in, and nothing is left behind where it was built.
-auto CodeGenFunction::LowerInitialize(const lir::InitializeInstr& initialize)
+// A value moved where an assignment puts it: into a transient it is the one
+// value still, as rustc moves an operand into an SSA local; into storage, one
+// lying in storage moves there and nothing is left behind where it was made,
+// and any other is stored there as the assignment puts it.
+auto CodeGenFunction::LowerUse(
+    const lir::UseInstr& use, const DestinationRef& destination)
     -> diag::Result<llvm::Value*> {
-  auto value = LowerOperand(initialize.value);
+  auto value = LowerOperand(use.operand);
   if (!value) {
-    return std::unexpected(std::move(value.error()));
+    return value;
   }
-  auto address = ResolvePlaceAddress(initialize.place, Access::kWrite);
-  if (!address) {
-    return std::unexpected(std::move(address.error()));
-  }
-  const lir::TypeId initialized = OperandType(initialize.value);
-  if (module_->Types().LiesInStorage(initialized)) {
-    auto moved = RelocateValue(initialized, *value, *address);
-    if (!moved) {
-      return std::unexpected(std::move(moved.error()));
-    }
-    return nullptr;
-  }
-  return builder_.CreateStore(*value, *address);
+  return std::visit(
+      Overloaded{
+          [&](const PendingOperand&) { return value; },
+          [&](const PlaceRef& place) -> diag::Result<llvm::Value*> {
+            if (!module_->Types().LiesInStorage(place.type)) {
+              return value;
+            }
+            auto moved = RelocateValue(place.type, *value, place.address);
+            if (!moved) {
+              return std::unexpected(std::move(moved.error()));
+            }
+            return place.address;
+          }},
+      destination);
 }
 
 // A place resolves to an address. A place local's storage is its frame slot;
@@ -433,7 +454,7 @@ auto CodeGenFunction::ResolvePlaceAddress(
 
   const auto* use = std::get_if<lir::Use>(&place.base);
   if (lir::IsPlaceLocal(*fn_, place.base)) {
-    address = AddressOf(use->value);
+    address = values_.at(use->value);
   } else {
     // A value base refers to storage, so opening it is what the base value
     // already answers; the dereference is the step that says the storage is
@@ -676,6 +697,21 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
   return CallEntry(*opening, module_->Types().Ptr(), Addresses(1), args);
 }
 
+auto CodeGenFunction::AccessGranted(lir::TypeId address_type) const -> Access {
+  const auto* pointer =
+      module_->Unit().types.Get(address_type).As<lir::PointerType>();
+  if (pointer == nullptr) {
+    return Access::kWrite;
+  }
+  switch (pointer->mutability) {
+    case lir::Mutability::kReadOnly:
+      return Access::kRead;
+    case lir::Mutability::kMutable:
+      return Access::kWrite;
+  }
+  throw InternalError("llvm codegen: unknown mutability");
+}
+
 // Taking the address of a place. What that address is, is the place's own
 // answer; what it becomes depends on what is being built. A reference names
 // storage that may belong to a subscribable variable or not, and the body
@@ -683,11 +719,13 @@ auto CodeGenFunction::OpenedReferent(llvm::Value* reference, lir::TypeId type)
 // lent (LRM 13.5.2) -- which is why the variable is recorded here, where the
 // place it came from still answers. Every other address is the address itself.
 // Either way what is addressed is the value where it lies, which a value cell
-// hands out through its own access.
+// hands out through its own access. An address granting only reading reaches
+// the storage the way a read does, which for a wrapper is where it keeps its
+// contents.
 auto CodeGenFunction::LowerAddrOf(
     const lir::AddrOfInstr& addr, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  auto address = ResolvePlaceAddress(addr.place, Access::kWrite);
+  auto address = ResolvePlaceAddress(addr.place, AccessGranted(result_type));
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
@@ -699,7 +737,7 @@ auto CodeGenFunction::LowerAddrOf(
     storage = ValueCellContents(*held, storage);
   }
   const lir::TypePool& types = module_->Unit().types;
-  if (!types.Get(result_type).Is<lir::RefType>()) {
+  if (!types.Get(result_type).Is<lir::VariableRefType>()) {
     return storage;
   }
   if (const auto* cell = types.Get(reached_type).As<lir::ObservableType>()) {
@@ -1157,7 +1195,8 @@ auto CodeGenFunction::LowerReceiveDeparture() -> diag::Result<llvm::Value*> {
 }
 
 auto CodeGenFunction::ResolveCall(
-    const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
+    const lir::CallInstr& call, lir::TypeId result_type,
+    llvm::function_ref<llvm::Value*()> return_slot)
     -> diag::Result<ResolvedCall> {
   std::vector<llvm::Value*> operands;
   operands.reserve(call.args.size());
@@ -1178,24 +1217,20 @@ auto CodeGenFunction::ResolveCall(
   }
   // Storage for what the callee builds goes last, whichever kind of callee it
   // is: an entry of the library and a body of this program take it alike.
-  const bool builds_its_answer = std::visit(
+  llvm::Value* const slot = std::visit(
       Overloaded{
-          [](const ReturnDirect&) { return false; },
-          [](const ReturnIndirect&) { return true; }},
+          [](const ReturnDirect&) -> llvm::Value* { return nullptr; },
+          [&](const ReturnIndirect&) { return return_slot(); }},
       abi->ret);
-  if (builds_its_answer != (out != nullptr)) {
-    throw InternalError(
-        "llvm codegen: a call is given storage for its answer exactly where "
-        "it is arranged to build one -- please report this as a bug");
-  }
-  if (builds_its_answer) {
-    args->push_back(out);
+  if (slot != nullptr) {
+    args->push_back(slot);
   }
   auto callee = ResolveCallee(call, result_type, *abi, *args);
   if (!callee) {
     return std::unexpected(std::move(callee.error()));
   }
-  return ResolvedCall{.callee = *callee, .args = *std::move(args)};
+  return ResolvedCall{
+      .callee = *callee, .args = *std::move(args), .return_slot = slot};
 }
 
 auto CodeGenFunction::LowerOperandRefs(std::span<const lir::Operand> operands)
@@ -1245,27 +1280,34 @@ auto CodeGenFunction::EmitCallOrInvoke(
 }
 
 auto CodeGenFunction::LowerCall(
-    const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
+    const lir::CallInstr& call, const DestinationRef& destination)
     -> diag::Result<llvm::Value*> {
   using Lowered = diag::Result<llvm::Value*>;
-  // The call made on what the target names, which builds what it answers with
-  // in `into` where it is given storage.
-  const auto called_into = [&](llvm::Value* into) -> Lowered {
-    auto resolved = ResolveCall(call, result_type, into);
+  const lir::TypeId result_type = TypeOf(destination);
+  // The call made on what the target names. An execution is built in storage
+  // of its own. Nothing ends that here: whoever drives it takes it out of the
+  // storage, the moment it is made.
+  const auto called = [&](const auto&) -> Lowered {
+    auto resolved = ResolveCall(call, result_type, [&] {
+      return std::visit(
+          Overloaded{
+              // A transient answered in storage is given storage of its own,
+              // as rustc gives an operand local storage for an indirect
+              // return; an execution lies in the library's own object.
+              [&](const PendingOperand&) {
+                return lir::CallBuildsExecution(call.target)
+                           ? ObjectStorage(support::LibraryObject::kExecution)
+                           : EnsureDestination(destination);
+              },
+              [](const PlaceRef& place) { return place.address; }},
+          destination);
+    });
     if (!resolved) {
       return std::unexpected(std::move(resolved.error()));
     }
     llvm::Value* const answered =
         EmitCallOrInvoke(resolved->callee, resolved->args);
-    return into != nullptr ? into : answered;
-  };
-  // An execution is built in storage of its own. Nothing ends that here:
-  // whoever drives it takes it out of the storage, the moment it is made.
-  const auto called = [&](const auto&) -> Lowered {
-    return called_into(
-        lir::CallBuildsExecution(call.target)
-            ? ObjectStorage(support::LibraryObject::kExecution)
-            : out);
+    return resolved->return_slot != nullptr ? resolved->return_slot : answered;
   };
   return std::visit(
       Overloaded{
@@ -1278,7 +1320,8 @@ auto CodeGenFunction::LowerCall(
               return called(builtin);
             }
             return LowerIntegralCall(
-                *integral, builtin, call, result_type, out);
+                *integral, builtin, call, result_type,
+                EnsureDestination(destination));
           },
           // Ending a value and copying one are steps of its life, which its
           // type says how to carry out.
@@ -1298,7 +1341,8 @@ auto CodeGenFunction::LowerCall(
             if (!copied) {
               return std::unexpected(std::move(copied.error()));
             }
-            return CopyValue(result_type, *copied, out);
+            return CopyValue(
+                result_type, *copied, EnsureDestination(destination));
           },
           // A cell whose value lies where the library states is read and
           // written there; only one keeping an object of the library's own is
@@ -2025,7 +2069,7 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
   return std::visit(
       Overloaded{
           [&](const lir::Use& use) -> diag::Result<llvm::Value*> {
-            return AddressOf(use.value);
+            return values_.at(use.value);
           },
           [&](const lir::IntConst& c) -> diag::Result<llvm::Value*> {
             return LowerIntConst(c);
@@ -2043,6 +2087,10 @@ auto CodeGenFunction::LowerOperand(const lir::Operand& operand)
             return llvm::ConstantInt::get(
                 llvm::Type::getInt1Ty(module_->Context()),
                 static_cast<std::uint64_t>(c.value));
+          },
+          // The void value has no bits, so nothing stands for it.
+          [](const lir::VoidConst&) -> diag::Result<llvm::Value*> {
+            return nullptr;
           },
           // A member table is data of the module, named by its address.
           [&](const lir::EnumTableRef& c) -> diag::Result<llvm::Value*> {

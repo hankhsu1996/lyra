@@ -60,24 +60,27 @@ what the construct means.
 - The type system: value types (integral, real, string, event, ...); one object type, naming a class
   by its identity, which is one of two forms -- an intra-unit class (a class of this unit, however
   the name reaching it was written) and an external-unit class (a class another compilation unit
-  published, named by that unit and the class); two composing wrappers, pointer and vector, a
-  pointer stating its ownership -- unique, shared or borrowed, the last two written `Shared<T>` and
-  `Borrowed<T>` in these docs; and four categories: the **tuple**, the structural product
-  (positional; interned by its components, so two with the same components are one type); the
-  **struct**, the nominal product (positional like the tuple, but its identity is its declaration,
-  so two with the same components are two types); the **closure**, an anonymous concrete callable
-  value (capture fields plus one invoke body, a distinct type per site); and the **object**
-  (`mir::Class`), the rich nominal object with methods and dispatch. The tuple and the struct are
-  the two products, and a component of either is reached the same way: by its position, with an
-  operation on the value, whether the value is stored, computed or behind a pointer. The closure and
-  the object share a **field substrate** -- a field declaration, a field id keyed within one
-  declaration, and one access node -- while staying distinct types; an access names the declaration
-  it reaches into, so what the substrate shares is the vocabulary and never the identity. Structural
-  versus nominal, and storage versus callable, are the ordinary generic-language distinctions
-  (C++/Rust/LLVM carry them).
+  published, named by that unit and the class); three composing wrappers, pointer, reference and
+  vector, a pointer stating its ownership -- unique, shared or borrowed, the last two written
+  `Shared<T>` and `Borrowed<T>` in these docs -- and a reference, as in Rust and C++, being bound
+  once to a referent that exists elsewhere and never null, so holding one says only that the
+  referent is read where it lies rather than copied; and four categories: the **tuple**, the
+  structural product (positional; interned by its components, so two with the same components are
+  one type); the **struct**, the nominal product (positional like the tuple, but its identity is its
+  declaration, so two with the same components are two types); the **closure**, an anonymous
+  concrete callable value (capture fields plus one invoke body, a distinct type per site); and the
+  **object** (`mir::Class`), the rich nominal object with methods and dispatch. The tuple and the
+  struct are the two products, and a component of either is reached the same way: by its position,
+  with an operation on the value, whether the value is stored, computed or behind a pointer. The
+  closure and the object share a **field substrate** -- a field declaration, a field id keyed within
+  one declaration, and one access node -- while staying distinct types; an access names the
+  declaration it reaches into, so what the substrate shares is the vocabulary and never the
+  identity. Structural versus nominal, and storage versus callable, are the ordinary
+  generic-language distinctions (C++/Rust/LLVM carry them).
 - A struct is an unpacked structure the source declared (LRM 7.2). It carries the name another unit
   reaches it by and a method for each operation the language defines on its whole value, which every
-  unit naming it calls through the declaration; another unit holds it by that name. A local a scope
+  unit naming it calls through the declaration, handing it each value it asks about by reference, as
+  Rust's comparison operators borrow theirs; another unit holds it by that name. A local a scope
   keeps past its end (LRM 6.21) is no struct: it is its own cell, reached through a `Shared<>`
   wrapper. A closure is not a struct-with-invoke but its own callable-value category.
 - Every other aggregate the **source declared** is the generic type its value is: an unpacked union
@@ -116,11 +119,13 @@ what the construct means.
   nothing, and it has no control-flow effect, so control never leaves from among its steps -- member
   access through an explicit receiver expression, value-build primitives for the literals that spell
   an aggregate, and the new-expression, which allocates storage a pointer or a class handle owns and
-  evaluates its initializer into that storage rather than handing it over as an argument. Reaching a
-  part of a value is not among them: it is an ordinary call, so a descent of any depth is calls
-  composed through the receiver and no node names a part. The set is closed under what a generic
-  programming-language AST needs to express; it does not grow to model a particular backend's
-  storage realization or runtime library shape.
+  evaluates its initializer into that storage rather than handing it over as an argument, and the
+  borrow, which binds a reference to a place, or to a value it holds to the end of the
+  full-expression as a C++ reference bound to a temporary does. Reaching a part of a value is not
+  among them: it is an ordinary call, so a descent of any depth is calls composed through the
+  receiver and no node names a part. The set is closed under what a generic programming-language AST
+  needs to express; it does not grow to model a particular backend's storage realization or runtime
+  library shape.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is

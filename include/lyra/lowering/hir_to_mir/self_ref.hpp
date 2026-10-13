@@ -126,7 +126,7 @@ auto BuildStructuralFieldAccessExpr(
     mir::TypeId field_type) -> mir::Expr;
 
 // A reference to the cell `cell` denotes (LRM 13.5.2): a reference
-// construction added to `block`, whose result type is a `RefType` over
+// construction added to `block`, whose result type is a `VariableRefType` over
 // `pointee` -- or `cell` itself where it already is a reference of either
 // kind. The body that
 // holds the resulting reference reads / writes the live cell through it. Used

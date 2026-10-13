@@ -600,6 +600,11 @@ void RenderExpr(
                 view, out, "&",
                 Operand{.expr = a.operand, .at_least = Precedence::kPostfix});
           },
+          // A C++ reference binds to what it is initialized from, a temporary
+          // included ([dcl.init.ref]), so the operand is the whole spelling.
+          [&](const mir::BorrowExpr& b) {
+            Write(view, out, Operand{.expr = b.operand, .at_least = at_least});
+          },
           [&](const mir::MoveExpr& m) {
             Write(view, out, "std::move(", m.operand, ")");
           },

@@ -158,7 +158,7 @@ auto CallBuildsExecution(const CallTarget& target) -> bool {
   throw InternalError("lir: unknown entry answer");
 }
 
-auto MakesValue(const InstrData& instr) -> bool {
+auto MakesValue(const Rvalue& value) -> bool {
   return std::visit(
       Overloaded{
           [](const CallInstr& call) { return CallMakesValue(call.target); },
@@ -177,15 +177,13 @@ auto MakesValue(const InstrData& instr) -> bool {
           [](const UnaryInstr&) { return true; },
           [](const ArrayInstr&) { return true; },
           [](const AddrOfInstr&) { return true; },
-          [](const StoreInstr&) { return false; },
-          [](const InitializeInstr&) { return false; },
-          [](const BitsStoreInstr&) { return false; },
-          [](const StorageInstr&) { return false; },
           [](const ReceiveDepartureInstr&) { return true; },
           [](const OpenVariablesInstr&) { return true; },
           [](const VariableAddressInstr&) { return true; },
-          [](const CloseVariablesInstr&) { return false; }},
-      instr);
+          // A value moved in is one the destination owns from there on, as one
+          // made there would be.
+          [](const UseInstr&) { return true; }},
+      value);
 }
 
 auto PlaceType(

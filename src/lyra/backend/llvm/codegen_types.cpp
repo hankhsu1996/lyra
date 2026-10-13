@@ -124,7 +124,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::RuntimeLibraryType& t) { return address(t); },
           [&](const lir::OpenWriteType& t) { return address(t); },
           [&](const lir::DesignationType& t) { return address(t); },
-          [&](const lir::RefType& t) { return address(t); },
+          [&](const lir::VariableRefType& t) { return address(t); },
 
           // A value that already is an address: a handle onto storage of some
           // other lifetime, an execution's own frame, or -- for a chandle (LRM
@@ -269,6 +269,14 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
     const std::uint32_t bytes = lir::BitsOf(machine->width) / 8U;
     return support::ObjectLayout{
         .size = bytes, .align = bytes, .ends_with_nothing_to_do = true};
+  }
+  // A pointer owning what it points at is that address, and ending it ends
+  // what it points at.
+  if (ty.IsMoveOnly()) {
+    return support::ObjectLayout{
+        .size = sizeof(void*),
+        .align = alignof(void*),
+        .ends_with_nothing_to_do = false};
   }
   const std::optional<support::RuntimeObject> object = HeldObjectOf(ty);
   if (!object.has_value()) {
