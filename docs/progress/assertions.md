@@ -84,8 +84,11 @@ The IDs are stable references and do not imply execution order beyond the depend
       expression is evaluated where the statement is reached and the default report is held to
       Reactive (`#0`) or Postponed (`final`), and it is withdrawn before it matures if the process
       re-executes, if the assertion's own label is disabled, or if the procedure's outermost scope
-      is (LRM 16.4.2, 16.4.4). What remains is the action block -- a single subroutine call whose
-      by-value actuals are captured at encounter and whose reference actuals bind rather than copy.
+      is (LRM 16.4.2, 16.4.4). One written outside procedural code runs as the `always_comb`
+      procedure LRM 16.4.3 makes of it, in a module, an interface and a generate block alike, so it
+      is evaluated again whenever what it reads changes and withdrawn when that procedure resumes.
+      What remains is the action block -- a single subroutine call whose by-value actuals are
+      captured at encounter and whose reference actuals bind rather than copy.
 - [ ] AS3 -- The deferred cover statement (LRM 16.7 with a timing qualifier). The immediate form
       rides on AS1: the disposition is inverted, a cover with no user action records a hit, and the
       hits are reported one line per cover statement at the end of a run. What is left is the same
