@@ -18,6 +18,7 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_value.hpp"
+#include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/format.hpp"
 
@@ -121,6 +122,10 @@ void RuntimeEffects::RecordCoverage(const value::String& site, bool succeeded) {
 void RuntimeEffects::Schedule(
     SimTime when, Region region, Activation* activation) {
   activation->Queue(AsRuntime(*this).SlotAt(when)[region].activations);
+}
+
+void RuntimeEffects::Schedule(SimTime when, Region region, Timer& timer) {
+  AsRuntime(*this).SlotAt(when)[region].timers.PushBack(timer.Place());
 }
 
 void RuntimeEffects::Wake(Activation* activation) {

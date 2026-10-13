@@ -1405,7 +1405,7 @@ auto BindInputPort(
             .source_type = member.type,
             .span = source.span};
       },
-      source, support::StrengthLevel::kStrong, data.sensitivity);
+      source, support::StrengthLevel::kStrong, std::nullopt, data.sensitivity);
   if (!drive) return std::unexpected(std::move(drive.error()));
   AppendProcessRegistration(
       unit_lowerer, activate_frame, mir_class.callables.Add(*std::move(drive)),
@@ -1516,6 +1516,7 @@ auto InstallPortConnections(
         .lhs = is_input ? cell.cell : *data.peer,
         .rhs = is_input ? *data.peer : cell.cell,
         .strength = support::StrengthLevel::kStrong,
+        .delay = std::nullopt,
         .sensitivity_list = data.sensitivity};
     auto method_or = LowerContinuousAssign(
         lowerer, frame, resolve_frame, init_frame, assign);

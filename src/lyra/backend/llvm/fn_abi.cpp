@@ -742,10 +742,10 @@ auto CallArranger::ConstructionOf(
               // open-array handle, a control effect and an observation are what
               // some other entry answers with, and so are a read report and a
               // held wait; a chunk is the element type a canonical buffer's
-              // pointer addresses rather than a value; a cancellation target
-              // and a channel's joint cancel state are storage the owner holds
-              // and reaches by address; and a write into an object is opened
-              // by the entry that opens it.
+              // pointer addresses rather than a value; a cancellation target,
+              // a timer and a channel's joint cancel state are storage the
+              // owner holds and reaches by address; and a write into an object
+              // is opened by the entry that opens it.
               case lir::RuntimeLibraryKind::kPrintItem:
               case lir::RuntimeLibraryKind::kTimeFormat:
               case lir::RuntimeLibraryKind::kDpiBitChunk:
@@ -757,6 +757,7 @@ auto CallArranger::ConstructionOf(
               case lir::RuntimeLibraryKind::kWait:
               case lir::RuntimeLibraryKind::kObjectWrite:
               case lir::RuntimeLibraryKind::kCancellationTarget:
+              case lir::RuntimeLibraryKind::kTimer:
               case lir::RuntimeLibraryKind::kChannelCancellation:
               // A class's definition, what a definition is made of, and an
               // enumeration's member table are constants the unit emits, so a

@@ -1211,6 +1211,23 @@ void VerifyScope(
   for (const ContinuousAssign& assign : scope.continuous_assigns) {
     from_assign(assign.lhs, Slot::kOperand);
     from_assign(assign.rhs, Slot::kOperand);
+    if (assign.delay.has_value()) {
+      std::visit(
+          Overloaded{
+              [&](const SingleDelay& d) {
+                from_assign(d.amount, Slot::kOperand);
+              },
+              [&](const RiseFallDelay& d) {
+                from_assign(d.rise, Slot::kOperand);
+                from_assign(d.fall, Slot::kOperand);
+              },
+              [&](const RiseFallTurnOffDelay& d) {
+                from_assign(d.rise, Slot::kOperand);
+                from_assign(d.fall, Slot::kOperand);
+                from_assign(d.turn_off, Slot::kOperand);
+              }},
+          *assign.delay);
+    }
     ReachSensitivity(assign.sensitivity_list, from_assign);
   }
   for (const Generate& generate : scope.generates) {

@@ -29,6 +29,7 @@ class VariableCell;
 class EvaluationAttempts;
 class Observable;
 class RuntimeProcess;
+class Timer;
 
 // The runtime capability surface reachable from generated code. Every side
 // effect an emitted body performs -- I/O, scheduler verbs, time queries,
@@ -55,6 +56,8 @@ class RuntimeEffects {
   // resumed when that region runs. Naming the placement is the whole of what a
   // suspending construct tells the engine; nothing here says what it waits for.
   void Schedule(SimTime when, Region region, Activation* activation);
+  // The same for a timer, which fires when that region runs.
+  void Schedule(SimTime when, Region region, Timer& timer);
 
   // The wait that parked `activation` is satisfied, so it becomes runnable in
   // the Active region of the current slot (LRM 4.5). Ending the wait belongs to

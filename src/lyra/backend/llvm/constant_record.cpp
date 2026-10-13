@@ -166,6 +166,7 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
     case lir::RuntimeLibraryKind::kWait:
     case lir::RuntimeLibraryKind::kObjectWrite:
     case lir::RuntimeLibraryKind::kCancellationTarget:
+    case lir::RuntimeLibraryKind::kTimer:
     case lir::RuntimeLibraryKind::kControlEffect:
       break;
   }

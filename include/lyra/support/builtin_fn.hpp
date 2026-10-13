@@ -217,6 +217,12 @@ enum class BuiltinFn : std::uint16_t {
   kEvaluationAttemptsStep,
   kEvaluationAttemptsSeed,
   kEvaluationAttemptsSettle,
+  // LRM 10.3.3 the timer a delayed continuous assignment propagates through.
+  // `Bind` names, once, what firing does and the precision its delays count
+  // in; `Arm` schedules the one event pending, some steps from now, in place of
+  // the one before.
+  kTimerBind,
+  kTimerArm,
   // LRM 20.9 / 21.3.4.3. 2-state packed types return false; downstream
   // constant-folds those calls.
   kIsUnknown,
@@ -619,6 +625,15 @@ enum class BuiltinFn : std::uint16_t {
   // their own, and a real expression, which can name a fraction of a unit.
   kDelay,
   kDelayReal,
+  // The same amounts as a count of the scope's precision steps, for a delay
+  // that is compared with others before it is due -- the rise, fall and
+  // turn-off delays of a continuous assignment (LRM 10.3.3, 28.16) -- and the
+  // one of those a change to a value takes, by the rule of a scalar net or of a
+  // vector one.
+  kDelayTicks,
+  kDelayTicksReal,
+  kScalarPropagationDelay,
+  kVectorPropagationDelay,
   // What decides whether reaching a wait is an event for it (LRM 9.4.2), built
   // where the wait begins and held for as long as it lasts. Two halves, each
   // present exactly where the source put one: an event control watches an

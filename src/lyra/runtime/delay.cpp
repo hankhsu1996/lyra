@@ -1,9 +1,14 @@
 #include "lyra/runtime/delay.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <variant>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -76,12 +81,15 @@ class DelayAwaiter final : public Awaiter {
 };
 
 // A `#0` delay: the process gives way to everything already active in this
-// time step and resumes in the Inactive region (LRM 4.4.2.3, 9.4.1). Started
-// again after being stopped, its time has already come.
+// time step and resumes later in it (LRM 4.4.2.3, 9.4.1). Started again after
+// being stopped, its time has already come.
 class ZeroDelayAwaiter final : public Awaiter {
  public:
+  explicit ZeroDelayAwaiter(LaterInThisTimeStep due) : due_(due) {
+  }
+
   auto Begin() -> Resumption override {
-    return LaterInThisTimeStep{.region = Region::kInactive};
+    return due_;
   }
 
   auto Again() -> Resumption override {
@@ -92,6 +100,9 @@ class ZeroDelayAwaiter final : public Awaiter {
   [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
     return false;
   }
+
+ private:
+  LaterInThisTimeStep due_;
 };
 
 // A wait of `ticks` steps of `precision_power` from now. The two delay entries
@@ -99,28 +110,50 @@ class ZeroDelayAwaiter final : public Awaiter {
 auto DelayForTicks(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
     -> Wait {
-  if (ticks == 0) {
-    return MakeWait<ZeroDelayAwaiter>();
+  return std::visit(
+      Overloaded{
+          [](LaterInThisTimeStep due) {
+            return MakeWait<ZeroDelayAwaiter>(due);
+          },
+          [](AtTime due) { return MakeWait<DelayAwaiter>(due.when); }},
+      DueAfter(runtime, ticks, precision_power));
+}
+
+// Whether every one of `bits`' positions holds the scalar whose planes are
+// `value_bit` and `unknown_bit`.
+auto EveryBitIs(
+    const value::ConstIntegralView& bits, bool value_bit, bool unknown_bit)
+    -> bool {
+  const std::size_t words = value::WordCountForBits(bits.width);
+  for (std::size_t i = 0; i < words; ++i) {
+    const std::uint64_t mask = value::ValidBitsMask(i, bits.width);
+    const std::uint64_t value_word = value::WordAt(bits.value, i) & mask;
+    const std::uint64_t unknown_word =
+        bits.IsFourState() ? value::WordAt(bits.unknown, i) & mask : 0;
+    if (value_word != (value_bit ? mask : 0) ||
+        unknown_word != (unknown_bit ? mask : 0)) {
+      return false;
+    }
   }
-  return MakeWait<DelayAwaiter>(DelayDeadline(runtime, ticks, precision_power));
+  return true;
 }
 
 }  // namespace
 
 auto DelayTicks(
-    const value::ConstIntegralView& duration, std::int8_t unit_power,
-    std::int8_t precision_power) -> SimDuration {
+    const value::ConstIntegralView& duration, std::int64_t unit_power,
+    std::int64_t precision_power) -> SimDuration {
   if (value::HasUnknown(duration)) {
     return 0;
   }
   return ScaleByPowerOfTen(
       static_cast<SimDuration>(value::ToInt64(duration)),
-      unit_power - precision_power);
+      static_cast<int>(unit_power - precision_power));
 }
 
 auto DelayTicksReal(
-    const value::Real& duration, std::int8_t unit_power,
-    std::int8_t precision_power) -> SimDuration {
+    const value::Real& duration, std::int64_t unit_power,
+    std::int64_t precision_power) -> SimDuration {
   constexpr auto kWidest = std::numeric_limits<SimDuration>::max();
   const auto units = static_cast<long double>(duration.Value());
   if (!std::isfinite(units)) {
@@ -145,6 +178,46 @@ auto DelayDeadline(
       runtime.Now(),
       ScaleToGlobalTicks(
           ticks, precision_power, runtime.GlobalPrecisionPower()));
+}
+
+auto DueAfter(
+    RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
+    -> DelayDue {
+  if (ticks == 0) {
+    return LaterInThisTimeStep{.region = Region::kInactive};
+  }
+  return AtTime{.when = DelayDeadline(runtime, ticks, precision_power)};
+}
+
+auto ScalarPropagationDelay(
+    const value::ConstIntegralView& changed_to, SimDuration rise,
+    SimDuration fall, SimDuration turn_off) -> SimDuration {
+  switch (value::FourStateBitOf(
+      (value::WordAt(changed_to.value, 0) & 1U) != 0U,
+      changed_to.IsFourState() &&
+          (value::WordAt(changed_to.unknown, 0) & 1U) != 0U)) {
+    case value::FourStateBit::kOne:
+      return rise;
+    case value::FourStateBit::kZero:
+      return fall;
+    case value::FourStateBit::kHighImpedance:
+      return turn_off;
+    case value::FourStateBit::kUnknown:
+      return std::min({rise, fall, turn_off});
+  }
+  throw InternalError("ScalarPropagationDelay: a scalar is one of four");
+}
+
+auto VectorPropagationDelay(
+    const value::ConstIntegralView& changed_to, SimDuration rise,
+    SimDuration fall, SimDuration turn_off) -> SimDuration {
+  if (EveryBitIs(changed_to, false, false)) {
+    return fall;
+  }
+  if (EveryBitIs(changed_to, false, true)) {
+    return turn_off;
+  }
+  return rise;
 }
 
 auto Delay(

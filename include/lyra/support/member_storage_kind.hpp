@@ -49,13 +49,15 @@ enum class MemberStorageKind : std::uint8_t {
   kSharedPointer,
   // A named event (LRM 15.5), a scope's cancellation target (LRM 9.6.2), the
   // joint cancel state of the channels a deferred write targets (LRM 21.3.2),
-  // and what one concurrent assertion has in flight (LRM 16.14.1). Each is a
+  // what one concurrent assertion has in flight (LRM 16.14.1), and the timer a
+  // delayed continuous assignment propagates through (LRM 10.3.3). Each is a
   // runtime record the owner holds and reaches only through its address; none
   // is read out as a value, and none names a value domain.
   kNamedEvent,
   kCancellationTarget,
   kChannelCancellation,
   kEvaluationAttempts,
+  kTimer,
 };
 
 // The spelling the entries building and ending one member's storage carry.

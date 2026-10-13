@@ -29,6 +29,7 @@
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/shared_pointer.hpp"
+#include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/any_value.hpp"
@@ -287,6 +288,8 @@ auto LayoutOf(support::DeclaredMemberStorage storage) -> ObjectLayout {
       return Of<CancellationTarget>();
     case MemberStorageKind::kEvaluationAttempts:
       return Of<EvaluationAttempts>();
+    case MemberStorageKind::kTimer:
+      return Of<Timer>();
   }
   throw InternalError("object layout: unknown member storage kind");
 }
@@ -316,6 +319,7 @@ auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
     case MemberStorageKind::kNamedEvent:
     case MemberStorageKind::kCancellationTarget:
     case MemberStorageKind::kEvaluationAttempts:
+    case MemberStorageKind::kTimer:
       return std::nullopt;
   }
   throw InternalError("object layout: unknown member storage kind");

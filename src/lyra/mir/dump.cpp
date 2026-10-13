@@ -423,6 +423,8 @@ class MirDumper {
                   return "RuntimeLibrary(PrintValueItem)";
                 case RuntimeLibraryKind::kCancellationTarget:
                   return "RuntimeLibrary(CancellationTarget)";
+                case RuntimeLibraryKind::kTimer:
+                  return "RuntimeLibrary(Timer)";
                 case RuntimeLibraryKind::kControlEffect:
                   return "RuntimeLibrary(ControlEffect)";
                 case RuntimeLibraryKind::kFormatSpec:

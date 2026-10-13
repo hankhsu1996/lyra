@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <variant>
 
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -18,8 +19,15 @@ namespace lyra::runtime {
 // negative value is its own bits read as an unsigned integer the width of a
 // time variable, which is the widest wait the language can name.
 auto DelayTicks(
-    const value::ConstIntegralView& duration, std::int8_t unit_power,
-    std::int8_t precision_power) -> SimDuration;
+    const value::ConstIntegralView& duration, std::int64_t unit_power,
+    std::int64_t precision_power) -> SimDuration;
+
+template <value::IntegralValue T>
+auto DelayTicks(
+    const T& duration, std::int64_t unit_power, std::int64_t precision_power)
+    -> SimDuration {
+  return DelayTicks(duration.AsWords().View(), unit_power, precision_power);
+}
 
 // The same for a delay written as a real expression, which unlike an integral
 // one can name a fraction of a time unit finer than the precision records. LRM
@@ -31,8 +39,8 @@ auto DelayTicks(
 // wait no simulation reaches, so any amount below zero -- and any value with no
 // finite magnitude at all -- gets that wait directly.
 auto DelayTicksReal(
-    const value::Real& duration, std::int8_t unit_power,
-    std::int8_t precision_power) -> SimDuration;
+    const value::Real& duration, std::int64_t unit_power,
+    std::int64_t precision_power) -> SimDuration;
 
 // The absolute simulation time a delay of `ticks` steps of `precision_power`
 // reaches. The scope's steps scale up to the engine's global tick before they
@@ -41,6 +49,48 @@ auto DelayTicksReal(
 auto DelayDeadline(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
     -> SimTime;
+
+// Where a delay of `ticks` steps of `precision_power` from now is due. A delay
+// of no steps is an explicit `#0`, due later in this time step in the Inactive
+// region (LRM 4.4.2.3); any other is due at its deadline, in the Active region
+// (LRM 4.4.2.2). A process stopped at a delay and a propagation a continuous
+// assignment's delay schedules (LRM 10.3.3) are due there alike.
+using DelayDue = std::variant<LaterInThisTimeStep, AtTime>;
+auto DueAfter(
+    RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
+    -> DelayDue;
+
+// LRM 28.16 Table 28-9: the delay a change of a scalar net to `changed_to`
+// takes, given rise, fall and turn-off delays. It depends on the value changed
+// to alone: 1 takes the rise delay, 0 the fall delay, z the turn-off delay, and
+// x the least of the three. Given only two, the turn-off delay is the lesser of
+// them, which the caller passes.
+auto ScalarPropagationDelay(
+    const value::ConstIntegralView& changed_to, SimDuration rise,
+    SimDuration fall, SimDuration turn_off) -> SimDuration;
+
+template <value::IntegralValue T>
+auto ScalarPropagationDelay(
+    const T& changed_to, SimDuration rise, SimDuration fall,
+    SimDuration turn_off) -> SimDuration {
+  return ScalarPropagationDelay(
+      changed_to.AsWords().View(), rise, fall, turn_off);
+}
+
+// LRM 10.3.3: the same for a vector net, read over the whole value. A change
+// to all zeros takes the fall delay, to all z the turn-off delay, and every
+// other change the rise delay.
+auto VectorPropagationDelay(
+    const value::ConstIntegralView& changed_to, SimDuration rise,
+    SimDuration fall, SimDuration turn_off) -> SimDuration;
+
+template <value::IntegralValue T>
+auto VectorPropagationDelay(
+    const T& changed_to, SimDuration rise, SimDuration fall,
+    SimDuration turn_off) -> SimDuration {
+  return VectorPropagationDelay(
+      changed_to.AsWords().View(), rise, fall, turn_off);
+}
 
 // Waiting for a moment in simulation time. What is kept is the moment, not the
 // amount of time left to it, which is what LRM 9.7 asks for when a process

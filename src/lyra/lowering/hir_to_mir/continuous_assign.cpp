@@ -1,6 +1,7 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <span>
@@ -9,16 +10,26 @@
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/time.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/closure_builder.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -34,20 +45,24 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The driver a continuous assign drives its target net through. A field on the
-// enclosing class holds the handle; it is attached at Resolve, and every store
-// the assignment makes reaches the net through it. Until the first one the
-// driver contributes nothing, so the net holds what an undriven one does and
-// the first value is a change to it (LRM 4.9.1).
-struct AttachedDriver {
+// A field of the enclosing class a drive keeps: the driver a net target is
+// written through, and for a drive carrying a delay the value last scheduled
+// and the timer it propagates through.
+struct ClassField {
   mir::FieldId field;
   mir::TypeId type;
 };
 
-// The class field access reaching an attached driver from `frame`'s body.
-auto DriverAccess(
+auto AddField(mir::Class& mir_class, mir::TypeId type) -> ClassField {
+  return ClassField{
+      .field = mir_class.fields.Add(mir::FieldDecl{.type = type}),
+      .type = type};
+}
+
+// The access reaching `field` of the object `frame`'s body runs on.
+auto FieldOfSelf(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
-    const AttachedDriver& driver) -> mir::ExprId {
+    const ClassField& field) -> mir::ExprId {
   const mir::ExprId self = block.exprs.Add(
       MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
   return block.exprs.Add(
@@ -55,8 +70,18 @@ auto DriverAccess(
           BuildObjectDeref(unit, block, self),
           mir::ClassFieldTarget{
               .owner = mir::IntraUnitClassRef{frame.current_class_id},
-              .slot = driver.field},
-          driver.type));
+              .slot = field.field},
+          field.type));
+}
+
+// `target = value`, appended to `block`.
+void AppendAssign(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId target,
+    mir::ExprId value) {
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::MakeAssignExpr(unit.builtins, target, value))});
 }
 
 // Each place `lvalue` is made of, in the order the source wrote them.
@@ -118,6 +143,142 @@ auto CarriedObjectEntry(
       hir::CellOf(scope.routes.values.Get(named->id).leaf).storage);
 }
 
+// Whether `target` names the whole of a net declared with no packed
+// dimension, the one target whose changes take a gate's delays (LRM 10.3.3,
+// 28.16). A bit of a vector net is a scalar's worth of bits and still a part
+// of a vector net.
+auto IsScalarNet(
+    const UnitLowerer& owner, const hir::StructuralScope& scope,
+    const hir::Expr& target) -> bool {
+  const auto* primary = std::get_if<hir::PrimaryExpr>(&target.data);
+  const auto* named = primary == nullptr
+                          ? nullptr
+                          : std::get_if<hir::RoutedValueRef>(&primary->data);
+  return named != nullptr &&
+         std::holds_alternative<hir::NetStorage>(
+             hir::CellOf(scope.routes.values.Get(named->id).leaf).storage) &&
+         owner.Hir().types.Get(target.type).Is<hir::ScalarBitType>();
+}
+
+// The steps of the scope's precision one written delay amount is, read where
+// `frame` stands as a delay control reads it (LRM 9.4.1, 3.14.1). Which entry
+// reads it follows the amount's own type: an integral amount counts whole time
+// units, a real one may name a fraction of one.
+auto DelayTicksOf(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    hir::ExprId amount) -> diag::Result<mir::ExprId> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  auto lowered = lowerer.LowerExpr(lowerer.HirScope().exprs.Get(amount), frame);
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  mir::ExprId amount_id = block.exprs.Add(*std::move(lowered));
+  const mir::Type& amount_type =
+      unit.types.Get(block.exprs.Get(amount_id).type);
+  const bool is_real = amount_type.IsRealFamily();
+  if (amount_type.Is<mir::ShortRealType>()) {
+    // LRM 6.12.1: `real` and `realtime` are one type, and a `shortreal` differs
+    // from them only in host precision, so the entry takes the wider.
+    amount_id = ConvertToType(unit, block, amount_id, unit.builtins.real);
+  }
+  const TimeResolution resolution = lowerer.HirScope().time_resolution;
+  const mir::ExprId unit_power =
+      BuildMachineIntLiteral(unit, block, std::int64_t{resolution.unit_power});
+  const mir::ExprId precision_power = BuildMachineIntLiteral(
+      unit, block, std::int64_t{resolution.precision_power});
+  return block.exprs.Add(
+      mir::MakeCallExpr(
+          mir::Direct{
+              .target = is_real ? support::BuiltinFn::kDelayTicksReal
+                                : support::BuiltinFn::kDelayTicks},
+          {amount_id, unit_power, precision_power},
+          unit.builtins.machine_word));
+}
+
+// The delay a change of the drive to `changed_to` takes, of the delays it is
+// written with, where `frame` stands (LRM 10.3.3, 28.16). One delay is every
+// change's; of several, the value changed to picks, and given two the
+// turn-off delay is the lesser of them.
+auto PropagationDelayOf(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const DriveDelay& delay, mir::ExprId changed_to)
+    -> diag::Result<mir::ExprId> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  const auto ticks = [&](hir::ExprId amount) -> diag::Result<mir::ExprId> {
+    auto lowered = DelayTicksOf(lowerer, frame, amount);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    return EvaluatedOnce(frame, *lowered);
+  };
+  const auto pick = [&](mir::ExprId rise, mir::ExprId fall,
+                        mir::ExprId turn_off) -> mir::ExprId {
+    return block.exprs.Add(
+        mir::MakeCallExpr(
+            mir::Direct{.target = delay.propagation_delay},
+            {changed_to, rise, fall, turn_off}, unit.builtins.machine_word));
+  };
+  return std::visit(
+      Overloaded{
+          [&](const hir::SingleDelay& d) -> diag::Result<mir::ExprId> {
+            return DelayTicksOf(lowerer, frame, d.amount);
+          },
+          [&](const hir::RiseFallDelay& d) -> diag::Result<mir::ExprId> {
+            auto rise = ticks(d.rise);
+            if (!rise) return std::unexpected(std::move(rise.error()));
+            auto fall = ticks(d.fall);
+            if (!fall) return std::unexpected(std::move(fall.error()));
+            const mir::ExprId rise_is_lesser = block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::BinaryExpr{
+                            .op = mir::BinaryOp::kLessThan,
+                            .lhs = *rise,
+                            .rhs = *fall},
+                    .type = unit.builtins.machine_bool});
+            const mir::ExprId lesser = block.exprs.Add(
+                mir::Expr{
+                    .data =
+                        mir::ConditionalExpr{
+                            .condition = rise_is_lesser,
+                            .then_value = *rise,
+                            .else_value = *fall},
+                    .type = unit.builtins.machine_word});
+            return pick(*rise, *fall, lesser);
+          },
+          [&](const hir::RiseFallTurnOffDelay& d) -> diag::Result<mir::ExprId> {
+            auto rise = ticks(d.rise);
+            if (!rise) return std::unexpected(std::move(rise.error()));
+            auto fall = ticks(d.fall);
+            if (!fall) return std::unexpected(std::move(fall.error()));
+            auto turn_off = ticks(d.turn_off);
+            if (!turn_off) return std::unexpected(std::move(turn_off.error()));
+            return pick(*rise, *fall, *turn_off);
+          }},
+      delay.delay);
+}
+
+// Arms `timer` with the delay a change to `changed_to` takes, where `frame`
+// stands: the event pending is replaced by this one.
+auto AppendArm(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    const DriveDelay& delay, const ClassField& timer, mir::ExprId changed_to)
+    -> diag::Result<void> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Block& block = *frame.current_block;
+  auto ticks = PropagationDelayOf(lowerer, frame, delay, changed_to);
+  if (!ticks) return std::unexpected(std::move(ticks.error()));
+  const mir::ExprId runtime =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(lowerer.Owner()));
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kTimerArm,
+                      .receiver = FieldOfSelf(unit, frame, block, timer)},
+                  {runtime, *ticks}, unit.builtins.void_type))});
+  return {};
+}
+
 }  // namespace
 
 // LRM 10.3.2 (continuous assignment) and LRM 9.2.2.2.1 (always_comb) share a
@@ -146,12 +307,31 @@ auto LowerContinuousAssign(
     const hir::ContinuousAssign& src) -> diag::Result<mir::CallableDecl> {
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
   const hir::Expr& hir_lhs = hir_scope.exprs.Get(src.lhs);
+  std::optional<DriveDelay> delay;
+  if (src.delay.has_value()) {
+    // LRM 10.3.3 and 28.16 say which of several delays a change takes only of
+    // a scalar net and a vector net, both of which hold an integral value.
+    const bool chooses = !std::holds_alternative<hir::SingleDelay>(*src.delay);
+    if (chooses &&
+        !lowerer.Owner().Hir().types.Get(hir_lhs.type).IsIntegral()) {
+      return diag::Fail(
+          src.span, diag::DiagCode::kUnsupportedContinuousAssignForm,
+          "rise, fall and turn-off delays on a target that holds no integral "
+          "value are not supported (LRM 10.3.3 chooses among them only for a "
+          "scalar or a vector net)");
+    }
+    delay = DriveDelay{
+        .delay = *src.delay,
+        .propagation_delay = IsScalarNet(lowerer.Owner(), hir_scope, hir_lhs)
+                                 ? support::BuiltinFn::kScalarPropagationDelay
+                                 : support::BuiltinFn::kVectorPropagationDelay};
+  }
   return LowerContinuousDrive(
       lowerer, ctor_frame, resolve_frame, init_frame,
       [&](const WalkFrame& frame) {
         return LowerLvalue(lowerer, hir_lhs, frame);
       },
-      hir_scope.exprs.Get(src.rhs), src.strength, src.sensitivity_list);
+      hir_scope.exprs.Get(src.rhs), src.strength, delay, src.sensitivity_list);
 }
 
 auto LowerContinuousDrive(
@@ -159,6 +339,7 @@ auto LowerContinuousDrive(
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
     const DriveDestination& destination, const hir::Expr& source,
     support::StrengthLevel drive_strength,
+    const std::optional<DriveDelay>& delay,
     std::span<const hir::SensitivityEntry> sensitivity)
     -> diag::Result<mir::CallableDecl> {
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
@@ -169,11 +350,11 @@ auto LowerContinuousDrive(
   // in a field of the enclosing class, and a variable has none. The place's
   // root decides it: the source may have named a whole net or a part of one,
   // and a part of a net is still a net.
-  std::vector<std::optional<AttachedDriver>> drivers;
+  std::vector<std::optional<ClassField>> drivers;
   // The driver of a whole net this drive gives the whole of an object to,
   // which is told so as the design is built and asked at its turn whether its
   // net shows that object.
-  std::optional<AttachedDriver> carrying;
+  std::optional<ClassField> carrying;
   {
     mir::Block& resolve_block = *resolve_frame.current_block;
     auto named = destination(resolve_frame);
@@ -192,28 +373,25 @@ auto LowerContinuousDrive(
         return;
       }
       const mir::ExprId cell = *place;
-      const mir::TypeId driver_type =
-          unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}});
-      mir::Class& mir_class = *resolve_frame.current_class;
-      const AttachedDriver driver{
-          .field = mir_class.fields.Add(mir::FieldDecl{.type = driver_type}),
-          .type = driver_type};
+      const ClassField driver = AddField(
+          *resolve_frame.current_class,
+          unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}}));
       const mir::ExprId strength =
           BuildStrengthOperand(unit, resolve_block, drive_strength);
       const mir::ExprId attach = resolve_block.exprs.Add(
-          mir::MakeNetAttachDriverCallExpr(cell, strength, driver_type));
-      const mir::ExprId handle =
-          DriverAccess(unit, resolve_frame, resolve_block, driver);
-      resolve_block.AppendStmt(
-          mir::ExprStmt{
-              .expr = resolve_block.exprs.Add(
-                  mir::MakeAssignExpr(unit.builtins, handle, attach))});
+          mir::MakeNetAttachDriverCallExpr(cell, strength, driver.type));
+      AppendAssign(
+          unit, resolve_block,
+          FieldOfSelf(unit, resolve_frame, resolve_block, driver), attach);
       drivers.emplace_back(driver);
     });
 
+    // A drive carrying a delay gives what its source held a while ago, which
+    // is not what the source shows now, so no net shows its source in its
+    // place.
     const auto* whole = std::get_if<AccessPath>(&named->form);
     const std::optional<support::BuiltinFn> carried =
-        whole == nullptr || !whole->descent.empty() ||
+        delay.has_value() || whole == nullptr || !whole->descent.empty() ||
                 !drivers.front().has_value()
             ? std::nullopt
             : CarriedObjectEntry(
@@ -231,7 +409,7 @@ auto LowerContinuousDrive(
           mir::ExprStmt{
               .expr = resolve_block.exprs.Add(
                   mir::MakeDriveFromCallExpr(
-                      DriverAccess(
+                      FieldOfSelf(
                           unit, resolve_frame, resolve_block, *carrying),
                       resolve_block.exprs.Add(
                           mir::MakeAddressOfExpr(place, pointer_type)),
@@ -239,22 +417,20 @@ auto LowerContinuousDrive(
     }
   }
 
-  // One evaluation: the right-hand side read once and each place written its
-  // share, a net's re-rooted onto its driver's contribution.
-  const auto emit_stores = [&](const WalkFrame& frame) -> diag::Result<void> {
+  // Writes `value` to the target where `frame` stands: each place its share, a
+  // net's re-rooted onto its driver's contribution.
+  const auto store = [&](const WalkFrame& frame,
+                         mir::ExprId value) -> diag::Result<void> {
     mir::Block& block = *frame.current_block;
-    auto value_or = lowerer.LowerExpr(source, frame);
-    if (!value_or) return std::unexpected(std::move(value_or.error()));
-    const mir::ExprId value = block.exprs.Add(*std::move(value_or));
     auto named = destination(frame);
     if (!named) return std::unexpected(std::move(named.error()));
     auto shares = Shares(lowerer.Owner(), frame, *named, value);
     if (!shares) return std::unexpected(std::move(shares.error()));
     for (std::size_t i = 0; i < shares->size(); ++i) {
       Share& share = (*shares)[i];
-      const std::optional<AttachedDriver>& driver = drivers[i];
+      const std::optional<ClassField>& driver = drivers[i];
       if (driver.has_value()) {
-        share.place.owner = DriverAccess(unit, frame, block, *driver);
+        share.place.owner = FieldOfSelf(unit, frame, block, *driver);
       }
       block.AppendStmt(
           mir::ExprStmt{
@@ -262,6 +438,13 @@ auto LowerContinuousDrive(
                   BuildStoreExpr(unit, block, share.place, share.value))});
     }
     return {};
+  };
+  // The right-hand side, read where `frame` stands.
+  const auto evaluate =
+      [&](const WalkFrame& frame) -> diag::Result<mir::ExprId> {
+    auto value = lowerer.LowerExpr(source, frame);
+    if (!value) return std::unexpected(std::move(value.error()));
+    return frame.current_block->exprs.Add(*std::move(value));
   };
 
   // A variable shows, once nothing overrides it, what its continuous driver
@@ -284,19 +467,112 @@ auto LowerContinuousDrive(
   CallableBindings bindings(unit, code);
   const mir::LocalId self_id =
       bindings.Declare(BindingOriginId::Receiver(), self_ptr_type);
+  const WalkFrame entry_frame =
+      ctor_frame.WithBindings(&bindings).WithBlock(&code.Body());
 
   mir::Block body_block;
-  const WalkFrame body_frame =
-      ctor_frame.WithBindings(&bindings).WithBlock(&body_block);
+  const WalkFrame body_frame = entry_frame.WithBlock(&body_block);
 
-  if (auto stored = emit_stores(body_frame); !stored) {
-    return std::unexpected(std::move(stored.error()));
+  if (!delay.has_value()) {
+    auto value = evaluate(body_frame);
+    if (!value) return std::unexpected(std::move(value.error()));
+    if (auto stored = store(body_frame, *value); !stored) {
+      return std::unexpected(std::move(stored.error()));
+    }
+    auto waited =
+        BuildValueChangeWaitStmt(body_block, body_frame, lowerer, sensitivity);
+    if (!waited) return std::unexpected(std::move(waited.error()));
+    body_block.AppendStmt(*std::move(waited));
+  } else {
+    // LRM 10.3.3: each value computed reaches the target the delay it takes
+    // later, unless a different one is computed first. The value last
+    // scheduled is kept, and a timer holds the one propagation pending, which
+    // arming it again replaces; a change to the value already on its way puts
+    // nothing off. The timer's firing writes the kept value, which is always
+    // the pending one's, so it is bound once rather than handed a value per
+    // change.
+    mir::Block& entry = code.Body();
+    auto first = evaluate(entry_frame);
+    if (!first) return std::unexpected(std::move(first.error()));
+    mir::Class& mir_class = *ctor_frame.current_class;
+    const ClassField scheduled =
+        AddField(mir_class, entry.exprs.Get(*first).type);
+    const ClassField timer = AddField(
+        mir_class, unit.types.Intern(
+                       mir::Type{mir::RuntimeLibraryType{
+                           .kind = mir::RuntimeLibraryKind::kTimer}}));
+
+    ClosureBuilder propagation(unit, entry_frame);
+    if (auto stored = store(
+            propagation.Frame(),
+            FieldOfSelf(
+                unit, propagation.Frame(), propagation.Body(), scheduled));
+        !stored) {
+      return std::unexpected(std::move(stored.error()));
+    }
+    const mir::ExprId fire = entry.exprs.Add(propagation.BuildVoid());
+    const mir::ExprId precision_power = BuildMachineIntLiteral(
+        unit, entry,
+        std::int64_t{lowerer.HirScope().time_resolution.precision_power});
+    entry.AppendStmt(
+        mir::ExprStmt{
+            .expr = entry.exprs.Add(
+                mir::MakeCallExpr(
+                    mir::Direct{
+                        .target = support::BuiltinFn::kTimerBind,
+                        .receiver =
+                            FieldOfSelf(unit, entry_frame, entry, timer)},
+                    {fire, precision_power}, unit.builtins.void_type))});
+
+    // LRM 4.9.1: the evaluation at time zero is scheduled whatever it is, as
+    // an assignment with no delay stores it whatever it is. What it schedules
+    // that the driver already gives lands as no change.
+    AppendAssign(
+        unit, entry, FieldOfSelf(unit, entry_frame, entry, scheduled), *first);
+    if (auto armed = AppendArm(
+            lowerer, entry_frame, *delay, timer,
+            FieldOfSelf(unit, entry_frame, entry, scheduled));
+        !armed) {
+      return std::unexpected(std::move(armed.error()));
+    }
+
+    auto waited =
+        BuildValueChangeWaitStmt(body_block, body_frame, lowerer, sensitivity);
+    if (!waited) return std::unexpected(std::move(waited.error()));
+    body_block.AppendStmt(*std::move(waited));
+    auto value = evaluate(body_frame);
+    if (!value) return std::unexpected(std::move(value.error()));
+    const mir::TypeId value_type = scheduled.type;
+    const mir::LocalId changed_to = DeclareLocal(body_frame, *value);
+    // A value differs from the one scheduled where its bits do -- an unknown
+    // bit matching only the same unknown, a real its own pattern -- which is
+    // what decides whether a write changes a variable, too (LRM 4.3).
+    const mir::ExprId differs = BuildConditionNot(
+        unit, body_block,
+        BuildValueOperation(
+            unit, body_block, support::BuiltinFn::kBitIdentical,
+            body_block.exprs.Add(mir::MakeLocalRefExpr(changed_to, value_type)),
+            {FieldOfSelf(unit, body_frame, body_block, scheduled)},
+            unit.builtins.machine_bool));
+    mir::Block rescheduled;
+    const WalkFrame rescheduled_frame = body_frame.WithBlock(&rescheduled);
+    AppendAssign(
+        unit, rescheduled,
+        FieldOfSelf(unit, rescheduled_frame, rescheduled, scheduled),
+        rescheduled.exprs.Add(mir::MakeLocalRefExpr(changed_to, value_type)));
+    if (auto armed = AppendArm(
+            lowerer, rescheduled_frame, *delay, timer,
+            rescheduled.exprs.Add(
+                mir::MakeLocalRefExpr(changed_to, value_type)));
+        !armed) {
+      return std::unexpected(std::move(armed.error()));
+    }
+    body_block.AppendStmt(
+        mir::IfStmt{
+            .condition = differs,
+            .then_scope = body_block.child_scopes.Add(std::move(rescheduled)),
+            .else_scope = std::nullopt});
   }
-
-  auto waited =
-      BuildValueChangeWaitStmt(body_block, body_frame, lowerer, sensitivity);
-  if (!waited) return std::unexpected(std::move(waited.error()));
-  body_block.AppendStmt(*std::move(waited));
 
   // A drive carrying the whole of an object first asks, at its turn, whether
   // its net now shows that object, which leaves it nothing to do.
@@ -306,9 +582,7 @@ auto LowerContinuousDrive(
     leave.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
     const mir::ExprId shows = entry.exprs.Add(
         mir::MakeShowSourceCallExpr(
-            DriverAccess(
-                unit, ctor_frame.WithBindings(&bindings).WithBlock(&entry),
-                entry, *carrying),
+            FieldOfSelf(unit, entry_frame, entry, *carrying),
             unit.builtins.machine_bool));
     entry.AppendStmt(
         mir::IfStmt{

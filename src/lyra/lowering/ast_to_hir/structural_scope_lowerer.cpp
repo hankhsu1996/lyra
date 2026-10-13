@@ -624,14 +624,17 @@ auto StructuralScopeLowerer::PopulateNetMember(
   auto net_type = TranslateNetType(net.netType, span);
   if (!net_type) return std::unexpected(std::move(net_type.error()));
 
-  // A delay on a net declaration is the time a value change takes to reach it
-  // (LRM 10.3.3), and on a `trireg` its third component is how long a stored
-  // charge lasts (LRM 6.6.4.2). Neither is modelled, and dropping one answers
-  // at the wrong time rather than refusing.
-  if (net.getDelay() != nullptr) {
+  // A delay on a net declaration that does not assign is a net delay: the time
+  // a change any driver makes takes to reach the net (LRM 10.3.3, 28.16), and
+  // on a `trireg` its third component is how long a stored charge lasts (LRM
+  // 6.6.4.2). Neither is modelled, and dropping one answers at the wrong time
+  // rather than refusing. On a declaration that assigns, the delay is that
+  // assignment's own.
+  const auto* init = net.getInitializer();
+  if (net.getDelay() != nullptr && init == nullptr) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedTypeKind,
-        "a delay on a net declaration (LRM 10.3.3) is not yet supported");
+        "a net delay (LRM 28.16) is not yet supported");
   }
 
   frame.current_structural_scope->structural_data_objects.Define(
@@ -648,9 +651,8 @@ auto StructuralScopeLowerer::PopulateNetMember(
   // continuous driver of the net. slang carries it as the net's initializer
   // rather than a separate continuous-assignment item, so synthesize the
   // equivalent continuous assignment here; it lands on the same driver path an
-  // explicit `assign` does. The sensitivity is the read set of the driving
-  // expression, analyzed with the net as the containing symbol.
-  if (const auto* init = net.getInitializer(); init != nullptr) {
+  // explicit `assign` does, with the net as the symbol holding it.
+  if (init != nullptr) {
     auto strength = TranslateDriveStrength(net.getDriveStrength(), span);
     if (!strength) return std::unexpected(std::move(strength.error()));
     auto rhs_or = LowerExpr(*init, frame);
@@ -660,19 +662,11 @@ auto StructuralScopeLowerer::PopulateNetMember(
     auto net_ref =
         owner_->MakeRoutedValueRef(net, frame_, ScopeRoute::Enclosing({}));
     if (!net_ref) return std::unexpected(std::move(net_ref.error()));
-    const hir::ExprId lhs_id =
-        frame.Exprs().Add(hir::MakeRefExpr(*net_ref, *type_id_or, span));
-    const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
-    const auto& reads = owner_->Sensitivity().AnalyzeReads(*init, net);
-    auto sensitivity = owner_->SensitivityEntriesOf(*this, reads, frame);
-    if (!sensitivity) return std::unexpected(std::move(sensitivity.error()));
-    frame.current_structural_scope->continuous_assigns.Add(
-        hir::ContinuousAssign{
-            .span = span,
-            .lhs = lhs_id,
-            .rhs = rhs_id,
-            .strength = *strength,
-            .sensitivity_list = *std::move(sensitivity)});
+    auto assign = BuildContinuousAssign(
+        span, hir::MakeRefExpr(*net_ref, *type_id_or, span), *std::move(rhs_or),
+        *init, net, *strength, net.getDelay(), frame);
+    if (!assign) return std::unexpected(std::move(assign.error()));
+    frame.current_structural_scope->continuous_assigns.Add(*std::move(assign));
   }
   return {};
 }

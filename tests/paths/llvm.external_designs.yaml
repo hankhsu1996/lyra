@@ -26,6 +26,3 @@ OpenPiton:1x1:hello:
 OpenTitan:default:hello:
   stops: build
   says: no implicit conversion from 'logic' to 'mubi4_t'
-XuanTie-C910:default:hello:
-  stops: build
-  says: delay on continuous assignment is not yet supported

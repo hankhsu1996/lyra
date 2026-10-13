@@ -105,6 +105,8 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "object write";
     case RuntimeLibraryKind::kCancellationTarget:
       return "cancellation target";
+    case RuntimeLibraryKind::kTimer:
+      return "timer";
     case RuntimeLibraryKind::kControlEffect:
       return "control effect";
     case RuntimeLibraryKind::kObjectDefinition:
@@ -456,6 +458,41 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
 }
 
 auto Type::IsAddressOnly() const -> bool {
+  if (const auto* library = As<RuntimeLibraryType>()) {
+    switch (library->kind) {
+      // Storage an owner holds and reaches by its address: what a disable
+      // names, and what a delayed continuous assignment propagates through.
+      case RuntimeLibraryKind::kCancellationTarget:
+      case RuntimeLibraryKind::kTimer:
+        return true;
+      case RuntimeLibraryKind::kEnumeration:
+      case RuntimeLibraryKind::kPrintItem:
+      case RuntimeLibraryKind::kPrintLiteralItem:
+      case RuntimeLibraryKind::kPrintValueItem:
+      case RuntimeLibraryKind::kFormatSpec:
+      case RuntimeLibraryKind::kFormatArg:
+      case RuntimeLibraryKind::kChannelCancellation:
+      case RuntimeLibraryKind::kTimeFormat:
+      case RuntimeLibraryKind::kHierarchySegment:
+      case RuntimeLibraryKind::kDpiBitBuffer:
+      case RuntimeLibraryKind::kDpiLogicBuffer:
+      case RuntimeLibraryKind::kDpiBitChunk:
+      case RuntimeLibraryKind::kDpiLogicChunk:
+      case RuntimeLibraryKind::kDpiOpenArray:
+      case RuntimeLibraryKind::kDpiOpenArrayHandle:
+      case RuntimeLibraryKind::kTrigger:
+      case RuntimeLibraryKind::kObservation:
+      case RuntimeLibraryKind::kReadReport:
+      case RuntimeLibraryKind::kWait:
+      case RuntimeLibraryKind::kObjectWrite:
+      case RuntimeLibraryKind::kControlEffect:
+      case RuntimeLibraryKind::kObjectDefinition:
+      case RuntimeLibraryKind::kScopeInfo:
+      case RuntimeLibraryKind::kScopeCallable:
+        return false;
+    }
+    throw InternalError("lir: unknown runtime library kind");
+  }
   return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
          Is<CrossUnitClassType>() || Is<RuntimeClassType>() ||
          Is<EventType>() || Is<SampledHistoryType>() ||
@@ -574,13 +611,15 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               // Kept by the run -- an enumeration's members, a class's
               // record, the time format -- or reached inside something else --
               // a buffer's chunk, an image's handle, the effect a departure
-              // carries, the target a disable names.
+              // carries, the target a disable names, the timer a delayed
+              // continuous assignment propagates through.
               case RuntimeLibraryKind::kEnumeration:
               case RuntimeLibraryKind::kTimeFormat:
               case RuntimeLibraryKind::kDpiBitChunk:
               case RuntimeLibraryKind::kDpiLogicChunk:
               case RuntimeLibraryKind::kDpiOpenArrayHandle:
               case RuntimeLibraryKind::kCancellationTarget:
+              case RuntimeLibraryKind::kTimer:
               case RuntimeLibraryKind::kControlEffect:
               case RuntimeLibraryKind::kObjectDefinition:
               case RuntimeLibraryKind::kScopeInfo:

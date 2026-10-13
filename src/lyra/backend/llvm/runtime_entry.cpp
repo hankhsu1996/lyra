@@ -735,6 +735,7 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
+    case support::MemberStorageKind::kTimer:
       return Symbol(std::format("{}_{}", kind, RuntimeOpName(op)));
   }
   throw InternalError("llvm codegen: unknown member storage kind");
@@ -757,6 +758,7 @@ auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool {
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
+    case support::MemberStorageKind::kTimer:
       return false;
   }
   throw InternalError("llvm codegen: unknown member storage kind");
@@ -876,6 +878,8 @@ auto MemberStorageKindOf(
             switch (library.kind) {
               case lir::RuntimeLibraryKind::kCancellationTarget:
                 return support::MemberStorageKind::kCancellationTarget;
+              case lir::RuntimeLibraryKind::kTimer:
+                return support::MemberStorageKind::kTimer;
               case lir::RuntimeLibraryKind::kChannelCancellation:
                 return support::MemberStorageKind::kChannelCancellation;
               // An enumeration's member table, held once for the whole run, so
@@ -1033,6 +1037,7 @@ auto DeclaredStorageOf(
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
+    case support::MemberStorageKind::kTimer:
       return declared(support::ValueDomain::kEmpty);
   }
   throw InternalError("runtime abi: unknown member storage kind");
@@ -1742,6 +1747,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRunNullHostCommand:
     case support::BuiltinFn::kDelay:
     case support::BuiltinFn::kDelayReal:
+    case support::BuiltinFn::kDelayTicks:
+    case support::BuiltinFn::kDelayTicksReal:
+    case support::BuiltinFn::kScalarPropagationDelay:
+    case support::BuiltinFn::kVectorPropagationDelay:
     case support::BuiltinFn::kObservationOnReaching:
     case support::BuiltinFn::kObservationOfValue:
     case support::BuiltinFn::kObservationOfValueQualified:
@@ -1864,6 +1873,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEvaluationAttemptsStep:
     case support::BuiltinFn::kEvaluationAttemptsSeed:
     case support::BuiltinFn::kEvaluationAttemptsSettle:
+    // A delayed continuous assignment's timer holds a closure and a place in a
+    // queue, and no value of the design (LRM 10.3.3).
+    case support::BuiltinFn::kTimerBind:
+    case support::BuiltinFn::kTimerArm:
     // Reading the host representation a value carries. Only one domain carries
     // each of these -- a C string is a string's, a host pointer a chandle's --
     // so the operation's own name is the whole of what a symbol needs, where

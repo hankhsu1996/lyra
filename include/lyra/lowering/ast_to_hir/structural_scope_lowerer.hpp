@@ -7,6 +7,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/TimingControl.h>
 #include <slang/ast/symbols/BlockSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
@@ -22,6 +23,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/strength_level.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -127,6 +129,12 @@ class StructuralScopeLowerer {
       -> diag::Result<void>;
   auto LowerContinuousAssign(
       const slang::ast::ContinuousAssignSymbol& sym, WalkFrame frame)
+      -> diag::Result<hir::ContinuousAssign>;
+  auto BuildContinuousAssign(
+      diag::SourceSpan span, hir::Expr lhs, hir::Expr rhs,
+      const slang::ast::Expression& driving,
+      const slang::ast::Symbol& containing, support::StrengthLevel strength,
+      const slang::ast::TimingControl* delay, WalkFrame frame)
       -> diag::Result<hir::ContinuousAssign>;
   auto BuildGenerateFromArray(
       const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)

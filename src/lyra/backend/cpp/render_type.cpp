@@ -67,6 +67,8 @@ auto RuntimeLibraryCppType(mir::RuntimeLibraryKind kind) -> std::string_view {
       return "lyra::value::PrintValueItem";
     case mir::RuntimeLibraryKind::kCancellationTarget:
       return "lyra::runtime::CancellationTarget";
+    case mir::RuntimeLibraryKind::kTimer:
+      return "lyra::runtime::Timer";
     case mir::RuntimeLibraryKind::kControlEffect:
       return "lyra::runtime::ControlEffect";
     case mir::RuntimeLibraryKind::kFormatSpec:
