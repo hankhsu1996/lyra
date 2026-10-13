@@ -1,5 +1,4 @@
 #include <span>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -301,6 +300,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           },
           [](const mir::EvaluationAttemptsType&) -> lir::Type {
             return lir::Type{lir::EvaluationAttemptsType{}};
+          },
+          [](const mir::LoopBlocksType&) -> lir::Type {
+            return lir::Type{lir::LoopBlocksType{}};
           },
           [&](const mir::StructType& s) -> lir::Type {
             return lir::Type{lir::StructType{

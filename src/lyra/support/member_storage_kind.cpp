@@ -34,6 +34,8 @@ auto MemberStorageKindName(MemberStorageKind kind) -> std::string_view {
       return "evaluation_attempts";
     case MemberStorageKind::kTimer:
       return "timer";
+    case MemberStorageKind::kLoopBlocks:
+      return "loop_blocks";
   }
   throw InternalError("member storage kind: unknown kind");
 }

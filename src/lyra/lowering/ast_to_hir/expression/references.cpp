@@ -318,15 +318,12 @@ auto MakeEnumValueExpr(
 // A parameter read here is folded to the value one elaboration gave it. That
 // holds where the value varies only with the parameterization of the unit,
 // package or class declaring it, since a parameterization is an artifact of its
-// own. Some parameters vary with something else, and a simple name reaching
-// one resolves to its declaration instead: one a generate block declares,
-// which varies with the index; one a unit's instance is handed when it is built
-// (LRM 23.10.2), or works out from such a value, which varies per instance; and
-// a constant a subroutine or a procedural block declares from either, which its
-// body holds. A hierarchical name still folds them. Inside the unit, a
-// parameter read that way is kept in its specialization; from outside it, a
-// unit whose instances would read different values here lowers apart and is
-// not shared.
+// own. Some parameters vary with something else, and a name reaching one
+// resolves to its declaration instead: one a generate block declares, which
+// varies with the index; one a unit's instance is handed when it is built (LRM
+// 23.10.2), or works out from such a value, which varies per instance; and a
+// constant a subroutine or a procedural block declares from either, which its
+// body holds.
 auto MakeParameterConstantExpr(
     UnitLowerer& unit_lowerer, WalkFrame frame, const slang::ast::Symbol& sym,
     const slang::ast::Type& type, diag::SourceSpan span)
@@ -562,11 +559,27 @@ auto LowerHierarchicalValue(
     // reached the way every other name on that instance is.
     case Referent::kViewDefinedName:
       return LowerRoutedViewName(unit_lowerer, frame, hve, span);
-    // A hierarchically reached constant folds to its value; the path is not
-    // navigated because the value is fixed at elaboration.
-    case Referent::kParameterConstant:
+    // A constant the specialization of the unit holding it fixes folds to its
+    // value, which this unit's identity holds through where the name lands. One
+    // whose value differs between the objects built from its scope is held by
+    // each of them, and is reached there as a variable is.
+    case Referent::kParameterConstant: {
+      const auto& param = target.as<slang::ast::ParameterSymbol>();
+      if (const auto* holder = param.getParentScope();
+          holder != nullptr && holder->getContainingInstance() != nullptr &&
+          unit_lowerer.Specialization().ValueSourceOf(
+              InstanceHolding(*holder), param) !=
+              ParameterValueSource::kFixedBySpecialization) {
+        auto type_id = unit_lowerer.InternType(*hve.type, span);
+        if (!type_id) return std::unexpected(std::move(type_id.error()));
+        auto reached = unit_lowerer.ResolveValueTarget(
+            frame, target, unit_lowerer.StartOf(frame, hve.ref), span);
+        if (!reached) return std::unexpected(std::move(reached.error()));
+        return hir::MakeValueTargetRefExpr(*reached, *type_id, span);
+      }
       return MakeParameterConstantExpr(
           unit_lowerer, frame, target, *hve.type, span);
+    }
     case Referent::kEnumConstant:
       return MakeEnumConstantExpr(unit_lowerer, target, *hve.type, span);
     // A path through the design hierarchy ends at an object, and a property is

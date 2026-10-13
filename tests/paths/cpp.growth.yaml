@@ -48,7 +48,6 @@ loop_reaching_its_neighbour:
   - mir.fields
   - mir.integral constants
   - mir.types
-  - time lower units
 loop_sized_from_a_table:
   - bytes
   - mir.callables
@@ -63,6 +62,7 @@ loop_sizing_by_index:
   - mir.class constants
   - mir.classes
   - mir.constructors
+  - mir.coroutines
   - mir.fields
   - mir.integral constants
   - mir.types

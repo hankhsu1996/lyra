@@ -752,6 +752,13 @@ enum class BuiltinFn : std::uint16_t {
   // instance or a generate block, or past the topmost a top-level instance of
   // it. Called once per reference in the resolve phase.
   kEnclosingScope,
+  // The blocks one loop generate built, the receiver (LRM 27.4): filing the
+  // block built where the index stood at the value handed in, as the object
+  // holding the loop builds it, and the block a hierarchical name reaching
+  // that value asks for (LRM 23.6). Where a block stands among the loop's is
+  // the holding object's own answer, so a name carries only the value.
+  kLoopBlocksAdd,
+  kLoopBlocksAt,
   // Whether the receiver, a scope of the design hierarchy, is an object of the
   // class handed in or of one extending it. A class a unit published of a
   // scope may be realized by several classes of that unit, and a body entered

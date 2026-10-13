@@ -26,6 +26,16 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
+// A borrowed pointer to an object of the scope class `scope_class` records.
+auto ObjectPointerOf(
+    UnitLowerer& unit_lowerer, hir::ExternalScopeClassId scope_class)
+    -> mir::TypeId {
+  return unit_lowerer.Unit().types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = unit_lowerer.UnitObjectType(scope_class),
+          .ownership = mir::PointerOwnership::kBorrowed}});
+}
+
 // The field of the scope class `scope_class` records, on the object `object`
 // points at, at the place `place_of` reads out of where this unit's record of
 // the class laid out what its scope published. The access names the class, so
@@ -38,12 +48,8 @@ auto AccessPublishedSlot(
     hir::ExternalScopeClassId scope_class, PlaceOf place_of) -> mir::ExprId {
   const ScopeClassLayout& record = unit_lowerer.ScopeClassLayoutOf(scope_class);
   const mir::FieldId slot = place_of(record.published);
-  const mir::ExprId of_class = ObjectAs(
-      block, object,
-      unit_lowerer.Unit().types.Intern(
-          mir::Type{mir::PointerType{
-              .pointee = unit_lowerer.UnitObjectType(scope_class),
-              .ownership = mir::PointerOwnership::kBorrowed}}));
+  const mir::ExprId of_class =
+      ObjectAs(block, object, ObjectPointerOf(unit_lowerer, scope_class));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit_lowerer.Unit(), block, of_class),
@@ -94,7 +100,6 @@ auto StepThroughPublished(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
     const hir::ExternalScopeRef& names, std::span<const std::uint32_t> selects)
     -> mir::ExprId {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
   const auto selected = [&](mir::ExprId held) {
     return ApplyInstanceSelects(
                unit_lowerer, block,
@@ -111,22 +116,31 @@ auto StepThroughPublished(
                   return layout.members.Get(member.member);
                 }));
           },
-          // What a generate construct built holds the base every block of it
-          // extends, so the block reached is viewed as the class it was
-          // published as.
-          [&](const hir::ExternalGenerateRef& generate) {
-            const mir::ExprId held = AccessPublishedSlot(
-                unit_lowerer, block, object, generate.scope_class,
+          // A loop's block is asked of the loop's member by the value its index
+          // stood at, since which block that is was settled by the object
+          // running the loop, and is viewed as the class it was published as.
+          [&](const hir::ExternalGenerateLoopRef& loop) {
+            const mir::ExprId blocks = AccessPublishedSlot(
+                unit_lowerer, block, object, loop.scope_class,
                 [&](const PublishedScopeLayout& layout) {
-                  return layout.generates.Get(generate.generate);
+                  return layout.loops.Get(loop.loop);
                 });
             return ObjectAs(
-                block, selected(held),
-                unit.types.Intern(
-                    mir::Type{mir::PointerType{
-                        .pointee =
-                            unit_lowerer.UnitObjectType(generate.result_class),
-                        .ownership = mir::PointerOwnership::kBorrowed}}));
+                block, ReachLoopBlock(unit_lowerer, block, blocks, loop.index),
+                ObjectPointerOf(unit_lowerer, loop.result_class));
+          },
+          // What a construct building at most one block built holds the base
+          // every block of it extends, so the block reached is viewed as the
+          // class it was published as.
+          [&](const hir::ExternalGenerateBlockRef& chosen) {
+            const mir::ExprId held = AccessPublishedSlot(
+                unit_lowerer, block, object, chosen.scope_class,
+                [&](const PublishedScopeLayout& layout) {
+                  return layout.choices.Get(chosen.choice);
+                });
+            return ObjectAs(
+                block, held,
+                ObjectPointerOf(unit_lowerer, chosen.result_class));
           }},
       names);
 }

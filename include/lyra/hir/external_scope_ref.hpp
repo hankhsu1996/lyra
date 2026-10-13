@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <variant>
 
 #include "lyra/hir/external_scope_class.hpp"
@@ -23,24 +24,37 @@ struct ExternalMemberRef {
   auto operator==(const ExternalMemberRef&) const -> bool = default;
 };
 
-// A generate construct of a scope another unit published (LRM 27), by its
-// position among the scope's constructs, and `result_class`, this unit's record
-// of the class the block the path element reaches was published as. A loop
-// holds the blocks it counted out and the element's select picks one (LRM
-// 27.4); a construct that builds at most one holds that one, and the element
-// names it by its label with no select (LRM 27.5).
-struct ExternalGenerateRef {
+// The block of a loop generate of a scope another unit published whose index
+// stood at `index` (LRM 27.4): the loop by its position among the scope's
+// loops, and `result_class`, this unit's record of the class that block was
+// published as. Where among the loop's blocks it stands is the holding
+// object's to answer, since it is what ran the loop.
+struct ExternalGenerateLoopRef {
   ExternalScopeClassId scope_class;
-  PublishedGenerateId generate;
+  PublishedLoopId loop;
+  std::int64_t index = 0;
   ExternalScopeClassId result_class;
 
-  auto operator==(const ExternalGenerateRef&) const -> bool = default;
+  auto operator==(const ExternalGenerateLoopRef&) const -> bool = default;
+};
+
+// The one block a generate construct of a scope another unit published holds
+// when it builds at most one (LRM 27.5): the construct by its position among
+// the scope's constructs of that kind, and `result_class`, this unit's record
+// of the class that block was published as.
+struct ExternalGenerateBlockRef {
+  ExternalScopeClassId scope_class;
+  PublishedChoiceId choice;
+  ExternalScopeClassId result_class;
+
+  auto operator==(const ExternalGenerateBlockRef&) const -> bool = default;
 };
 
 // What a path element names on a scope class another unit published. What it
 // lands on is a published scope class as well, so the path goes on against
 // what that class published.
-using ExternalScopeRef = std::variant<ExternalMemberRef, ExternalGenerateRef>;
+using ExternalScopeRef = std::variant<
+    ExternalMemberRef, ExternalGenerateLoopRef, ExternalGenerateBlockRef>;
 
 // An element of a path through scope classes other units published. A descent
 // from the instance a virtual interface holds is made of these alone (LRM

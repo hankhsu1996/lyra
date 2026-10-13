@@ -192,6 +192,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const ObjectWriteType&) { return bare(); },
           [&](const SampledHistoryType&) { return bare(); },
           [&](const EvaluationAttemptsType&) { return bare(); },
+          [&](const LoopBlocksType&) { return bare(); },
           [&](const ClosureType&) { return bare(); },
       });
 }

@@ -51,10 +51,11 @@ struct ChildStructuralScopeBinding {
 };
 
 // What one generate construct settled: the member holding what it built, and
-// each scope it compiled to, reached by that scope's own id. The member holds
-// the base every scope extends -- one, or a sequence of them for a loop --
-// because which class a block was built as is the block's to say, and a step
-// reaching one views it as that class.
+// each scope it compiled to, reached by that scope's own id. A loop's member
+// holds its blocks by the value each one's index stood at; any other holds the
+// one block it built. Either holds the base every scope extends, because which
+// class a block was built as is the block's to say, and a step reaching one
+// views it as that class.
 struct GenerateBinding {
   mir::ClassFieldTarget handle;
   base::Translation<hir::StructuralScopeId, ChildStructuralScopeBinding> blocks;
@@ -72,17 +73,25 @@ struct ConstructionValue {
   mir::TypeId type;
 };
 
-// How a hierarchical route reaches an owned child: the parent's borrowed
-// handle on it, and the child's own lowerer. The handle's type carries the
-// declaration's multiplicity, so each select of the element naming the child
-// indexes the handle. `target_scope` is present when the artifact owns the
-// child's body -- the handle then holds the base every scope extends, the step
-// views what it reached as that scope's class, and whatever the route names
-// next resolves against that scope -- and absent when the child is another
-// compilation unit, whose objects are reached through what that unit
-// published, each access naming the class the route states it reaches.
+// A block of a loop generate: the member holding the loop's blocks, and the
+// value the block's index stood at, which that member answers for (LRM 27.4).
+struct LoopBlockAt {
+  mir::ClassFieldTarget blocks;
+  std::int64_t index = 0;
+};
+
+// How a hierarchical route reaches an owned child, and the child's own
+// lowerer. `reach` is the parent's borrowed handle on the child, whose type
+// carries the declaration's multiplicity so each select of the element naming
+// the child indexes it, or for a block of a loop the member the block is asked
+// of. `target_scope` is present when the artifact owns the child's body --
+// what the step reached is then the base every scope extends, the step views
+// it as that scope's class, and whatever the route names next resolves against
+// that scope -- and absent when the child is another compilation unit, whose
+// objects are reached through what that unit published, each access naming
+// the class the route states it reaches.
 struct OwnedChildAnchor {
-  mir::ClassFieldTarget borrowed_handle{};
+  std::variant<mir::ClassFieldTarget, LoopBlockAt> reach;
   const StructuralScopeLowerer* target_scope = nullptr;
 };
 
@@ -261,8 +270,7 @@ class StructuralScopeLowerer {
       -> const StructuralScopeLowerer& {
     const StructuralScopeLowerer* scope = &EnclosingScopeAtHops(hops);
     for (const hir::OwnedChildStep& step : descent) {
-      const OwnedChildAnchor anchor =
-          scope->TranslateOwnedChild(step.names, step.selects);
+      const OwnedChildAnchor anchor = scope->TranslateOwnedChild(step.names);
       if (anchor.target_scope == nullptr) {
         throw InternalError(
             "StructuralScopeLowerer::ScopeAt: a descent step reached an "
@@ -366,19 +374,15 @@ class StructuralScopeLowerer {
   }
 
   // Resolves a path element naming one of this scope's owned children to how
-  // the route reaches it: this scope's borrowed handle on it, and the child's
-  // own lowerer when the artifact owns the child's body.
-  [[nodiscard]] auto TranslateOwnedChild(
-      const hir::OwnedChildRef& names,
-      std::span<const std::uint32_t> selects) const -> OwnedChildAnchor {
+  // the route reaches it, and the child's own lowerer when the artifact owns
+  // the child's body.
+  [[nodiscard]] auto TranslateOwnedChild(const hir::OwnedChildRef& names) const
+      -> OwnedChildAnchor {
     // A path names a block; which compiled scope that is, is the construct's
     // own answer.
     const auto block_of = [&](hir::GenerateId generate,
                               hir::StructuralScopeId scope) {
-      const GenerateBinding& binding = generate_bindings_.Get(generate);
-      return OwnedChildAnchor{
-          .borrowed_handle = binding.handle,
-          .target_scope = binding.blocks.Get(scope).lowerer};
+      return generate_bindings_.Get(generate).blocks.Get(scope).lowerer;
     };
     return std::visit(
         Overloaded{
@@ -387,20 +391,33 @@ class StructuralScopeLowerer {
               // artifact lowers no scope for it; what the object holds is
               // reached through what that unit published.
               return OwnedChildAnchor{
-                  .borrowed_handle = instance_member_fields_.Get(id),
+                  .reach = instance_member_fields_.Get(id),
                   .target_scope = nullptr};
             },
+            // A loop's block is asked of the loop's member by the value its
+            // index stood at, since which block that is was settled by this
+            // scope running the loop (LRM 27.4).
             [&](const hir::GenerateLoopRef& loop) -> OwnedChildAnchor {
-              return block_of(
-                  loop.generate,
-                  hir::LoopBlockScopeOf(
-                      HirScope().generates.Get(loop.generate), selects));
+              return OwnedChildAnchor{
+                  .reach =
+                      LoopBlockAt{
+                          .blocks =
+                              generate_bindings_.Get(loop.generate).handle,
+                          .index = loop.index},
+                  .target_scope = block_of(
+                      loop.generate,
+                      hir::LoopBlockScopeOf(
+                          HirScope().generates.Get(loop.generate),
+                          loop.index))};
             },
             [&](const hir::GenerateBlockRef& block) -> OwnedChildAnchor {
-              return block_of(
-                  block.generate, hir::ChosenBlockScopeOf(
-                                      HirScope().generates.Get(block.generate),
-                                      block.alternative));
+              return OwnedChildAnchor{
+                  .reach = generate_bindings_.Get(block.generate).handle,
+                  .target_scope = block_of(
+                      block.generate,
+                      hir::ChosenBlockScopeOf(
+                          HirScope().generates.Get(block.generate),
+                          block.alternative))};
             },
         },
         names);
@@ -611,6 +628,15 @@ struct ReachedObject {
 auto ApplyInstanceSelects(
     UnitLowerer& unit_lowerer, mir::Block& block, ReachedObject reached,
     std::span<const std::uint32_t> selects) -> ReachedObject;
+
+// The block of a loop generate a hierarchical name reaches, asked of
+// `blocks`, the member holding the loop's blocks, by `index`, the value its
+// index stood at (LRM 23.6, 27.4): as a scope of the design hierarchy, which
+// the caller views as the class it knows the block to be. Which block that is
+// was settled by the object running the loop.
+auto ReachLoopBlock(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId blocks,
+    std::int64_t index) -> mir::ExprId;
 
 // From `object`, a pointer to the object of `scope`, down the owned children
 // `descent` names: each element the same descent a route makes, so the object

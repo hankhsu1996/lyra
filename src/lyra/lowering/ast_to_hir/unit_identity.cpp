@@ -481,22 +481,6 @@ auto OverrideInput(
 
 }  // namespace
 
-auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
-  return std::ranges::any_of(
-      scope.members(), [](const slang::ast::Symbol& member) {
-        if (member.kind == slang::ast::SymbolKind::ClassType ||
-            member.kind == slang::ast::SymbolKind::GenericClassDef) {
-          return true;
-        }
-        if (const auto* block =
-                member.as_if<slang::ast::GenerateBlockSymbol>()) {
-          return !block->isUninstantiated && DeclaresAClass(*block);
-        }
-        const auto* loop = member.as_if<slang::ast::GenerateBlockArraySymbol>();
-        return loop != nullptr && DeclaresAClass(*loop);
-      });
-}
-
 auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
     -> const slang::ast::InstanceSymbol& {
   if (body.parentInstance == nullptr) {
@@ -693,17 +677,13 @@ auto SpecializationPolicy::BlockStepOf(
   }
   SpecializationKey key{.definition = GenerateBlockLabel(block), .inputs = {}};
   if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block)) {
-    if (DeclaresAClass(block)) {
-      key.inputs.push_back(ParameterInput(*index, *this));
-    } else {
-      std::uint32_t place = 0;
-      for (const std::string& folded :
-           WhatItDecides(InstanceHolding(block), *index)) {
-        key.inputs.push_back(
-            SpecializationInput{
-                .name = std::format("{}#{}", index->name, place++),
-                .kind = FixedValue{.value = folded}});
-      }
+    std::uint32_t place = 0;
+    for (const std::string& folded :
+         WhatItDecides(InstanceHolding(block), *index)) {
+      key.inputs.push_back(
+          SpecializationInput{
+              .name = std::format("{}#{}", index->name, place++),
+              .kind = FixedValue{.value = folded}});
     }
   }
   for (const OverriddenBelow& overridden :

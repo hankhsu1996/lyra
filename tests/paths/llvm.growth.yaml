@@ -92,12 +92,12 @@ loop_sizing_by_index:
   - lir.constants
   - lir.functions
   - lir.integral constants
-  - lir.members
   - lir.types
   - mir.callables
   - mir.class constants
   - mir.classes
   - mir.constructors
+  - mir.coroutines
   - mir.fields
   - mir.integral constants
   - mir.types

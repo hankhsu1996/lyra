@@ -32,9 +32,10 @@ auto ReadPublishedMember(
 
 // Descends one path element (LRM 23.6) from the object `object` points at,
 // onto what its unit published under `names`: the member at the position that
-// unit's signature gave it, then one index per select. An instance (LRM 25.3,
-// 25.10) is reached as the pointer type its member holds; a generate block
-// (LRM 27) is viewed as the class the element says it was published as.
+// unit's signature gave it, then one index per select, or for a loop's block
+// the loop's member asked by its index. An instance (LRM 25.3, 25.10) is
+// reached as the pointer type its member holds; a generate block (LRM 27) is
+// viewed as the class the element says it was published as.
 auto StepThroughPublished(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId object,
     const hir::ExternalScopeRef& names, std::span<const std::uint32_t> selects)

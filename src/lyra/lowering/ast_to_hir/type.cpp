@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <set>
 #include <span>
@@ -12,7 +13,6 @@
 #include <vector>
 
 #include <slang/ast/Compilation.h>
-#include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
@@ -184,12 +184,13 @@ auto LowerPackedUnion(
   };
 }
 
-// LRM 7.2.2: a member declaration may carry a constant default value, used in
-// place of the member type's Table 7-1 default when the enclosing struct is
-// default-constructed. Slang has bound and constant-checked it; evaluate it and
-// fold it into the member's value-form metadata, the same shape an enum member
-// carries its value -- the default is a value the type holds, not an
-// expression.
+// LRM 7.2.2: a member declaration may carry a default value, a constant
+// expression used in place of the member type's Table 7-1 default when the
+// enclosing struct is default-constructed. It is held in the member's
+// value-form metadata, the shape an enum member carries its value in: the
+// default is a value the type holds, not an expression. The front end
+// evaluated it when the type was declared, which is what records the
+// parameters it was computed from, so the value read here is that one.
 auto LowerMemberDefault(
     const slang::ast::FieldSymbol& field, diag::SourceSpan span)
     -> diag::Result<std::optional<hir::ConstantValue>> {
@@ -197,9 +198,15 @@ auto LowerMemberDefault(
   if (init == nullptr) {
     return std::optional<hir::ConstantValue>{};
   }
-  slang::ast::EvalContext eval_context(field);
-  const slang::ConstantValue constant = init->eval(eval_context);
-  auto value_or = MakeConstantValue(constant, span);
+  const slang::ConstantValue* constant = init->getConstant();
+  if (constant == nullptr) {
+    throw InternalError(
+        std::format(
+            "LowerMemberDefault: the default of member '{}' was evaluated as "
+            "a constant where its type was declared, and kept nothing",
+            field.name));
+  }
+  auto value_or = MakeConstantValue(*constant, span);
   if (!value_or) {
     return std::unexpected(std::move(value_or.error()));
   }
@@ -1360,12 +1367,12 @@ auto UnitLowerer::ResolveClassRef(
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return it->second;
   }
-  const slang::ast::Symbol& home = UnitHomeOf(cls);
-  if (&home != home_) {
+  if (!Owns(cls)) {
     const auto [it, _] = class_cache_.emplace(
-        &cls, hir::ClassRef{hir::ExternalClassRef{
-                  .unit_name = CompilationUnitName(home, Specialization()),
-                  .class_path = DefPathOf(cls, Specialization())}});
+        &cls,
+        hir::ClassRef{hir::ExternalClassRef{
+            .unit_name = CompilationUnitName(UnitHomeOf(cls), Specialization()),
+            .class_path = DefPathOf(cls, Specialization())}});
     return it->second;
   }
   // A local class not yet minted (e.g. a class nested inside a generate
@@ -1388,8 +1395,18 @@ auto UnitLowerer::InternLocalClass(
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return std::get<hir::LocalClassRef>(it->second).class_id;
   }
+  // A class is one declaration of its unit wherever its text was elaborated: a
+  // class an instance declares is a type of that instance's own (LRM 8.25),
+  // and each block of a loop builds its own copy, yet every such copy at one
+  // path is the same text compiled once. So a copy at a path already declared
+  // is that class, built again here so what it names is named alike.
+  support::DefPath path = DefPathOf(cls, Specialization());
+  const auto declared = own_classes_by_path_.find(path);
   const hir::ClassId id =
-      unit_.classes.Declare(DefPathOf(cls, Specialization()));
+      declared == own_classes_by_path_.end()
+          ? unit_.classes.Declare(std::move(path))
+          : std::get<hir::LocalClassRef>(class_cache_.at(declared->second))
+                .class_id;
   class_cache_.emplace(&cls, hir::ClassRef{hir::LocalClassRef{.class_id = id}});
   own_classes_by_path_.emplace(unit_.classes.PathOf(id), &cls);
 
@@ -1892,7 +1909,20 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   }
   decl.constructor = std::move(constructor);
 
-  unit_.classes.Define(pending.id, std::move(*pending.decl));
+  // Every application of the unit builds the class at its path, each from its
+  // own copy of the text (LRM 8.25), and they agree on everything the class
+  // holds for the same reason their scopes agree: the lowering reads a value
+  // only through the unit's identity or as one the object is built with.
+  if (!unit_.classes.IsDefined(pending.id)) {
+    unit_.classes.Define(pending.id, std::move(*pending.decl));
+  } else if (!(unit_.classes.Get(pending.id) == *pending.decl)) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::PopulateClassBody: two applications of unit '{}' "
+            "build the class '{}' differently, so the lowering read a value "
+            "the unit's identity does not hold -- please report this as a bug",
+            unit_.name, support::DisplayOf(unit_.classes.PathOf(pending.id))));
+  }
   return {};
 }
 

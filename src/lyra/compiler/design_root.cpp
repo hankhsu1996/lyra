@@ -92,7 +92,8 @@ auto BuildDesignRootHir(
       .class_path = {},
       .members = {},
       .callables = {},
-      .generates = {},
+      .loops = {},
+      .choices = {},
       .disable_targets = {},
       .modports = {}};
   std::vector<hir::PublishedDecl> instances;
@@ -115,7 +116,7 @@ auto BuildDesignRootHir(
                       .instance_name = top.name_in_a_path,
                       .array_dims = {},
                       .alternatives = {hir::InstanceAlternative{
-                          .scope_class = scope_class, .arguments = {}}},
+                          .scope_class = scope_class, .assignments = {}}},
                       .taken = {0}});
     LeaveInputsUnconnected(root, signature, scope_class, instance);
     const std::array kind{hir::UnitObjectType{
@@ -131,7 +132,8 @@ auto BuildDesignRootHir(
   root.root_scope.published = hir::ScopePublication{
       .signature = std::move(published),
       .members = {instances.size(), std::move(instances)},
-      .generates = {},
+      .loops = {},
+      .choices = {},
       .disable_targets = {},
       .callables = {}};
   return root;

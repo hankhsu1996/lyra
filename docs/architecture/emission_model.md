@@ -304,9 +304,9 @@ ordinary MIR primitives in the emitted resolve code, not as type payload -- `bac
 keeps render mechanical.
 
 **A route through generate blocks.** `top.gen[2].child.x` from outside `top`: `top -> gen[2]` reads
-the loop construct's published entry at the block's position and views it as the block's published
-class, `gen[2] -> child` is the published member holding the child, and `child -> x` is a member of
-`child`'s published class. Every step is typed; the sealed endpoint is one access point.
+the loop construct's published entry for the block built at index 2 and views it as the block's
+published class, `gen[2] -> child` is the published member holding the child, and `child -> x` is a
+member of `child`'s published class. Every step is typed; the sealed endpoint is one access point.
 
 **Cross-unit package call.** `r = pkg::add_base(23);`, where `pkg` is a package the caller neither
 instantiates nor owns. Unlike the references above, this reaches no object and no per-instance cell:

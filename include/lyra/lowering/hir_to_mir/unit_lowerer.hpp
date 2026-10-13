@@ -63,7 +63,8 @@ struct PublishedField {
 // and one per disable target holding what a `disable` of it ends.
 struct PublishedScopeLayout {
   base::Translation<hir::PublishedMemberId, mir::FieldId> members;
-  base::Translation<hir::PublishedGenerateId, mir::FieldId> generates;
+  base::Translation<hir::PublishedLoopId, mir::FieldId> loops;
+  base::Translation<hir::PublishedChoiceId, mir::FieldId> choices;
   base::Translation<hir::PublishedDisableTargetId, mir::FieldId>
       disable_targets;
 };

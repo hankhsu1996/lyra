@@ -675,6 +675,15 @@ struct EvaluationAttemptsType {
   auto operator==(const EvaluationAttemptsType&) const -> bool = default;
 };
 
+// The blocks one loop generate built in one object, each under the value its
+// index stood at (LRM 27.4). The object holding the loop files each block as
+// it builds it, and a hierarchical name reaching one asks for it by that value
+// (LRM 23.6), so which blocks there are is not part of the type: two loops of
+// different counts are one type here and one realization below.
+struct LoopBlocksType {
+  auto operator==(const LoopBlocksType&) const -> bool = default;
+};
+
 // The drive capability for a net: a handle to one of a `ResolvedType` net's
 // contributions. A driver updates only its own contribution and never the
 // resolved value, which is the net's alone to arrive at.
@@ -743,7 +752,8 @@ class Type {
       ReferenceWrapperType, PointerType, ManagedRefType, VectorType, TupleType,
       UnionType, TaggedUnionType, EmptyType, ObservableType, ResolvedType,
       DriverType, OpenWriteType, DesignationType, ObjectWriteType,
-      SampledHistoryType, EvaluationAttemptsType, StructType, ClosureType>;
+      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, StructType,
+      ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

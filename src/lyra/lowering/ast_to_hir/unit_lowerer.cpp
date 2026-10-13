@@ -177,13 +177,18 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     if (!built) return std::unexpected(std::move(built.error()));
     one_body = one_body.has_value() ? OneBodyOf(*one_body, *built)
                                     : std::optional{*std::move(built)};
+    // Every application agrees on what the unit's identity holds, and the
+    // lowering reads a value only through that identity or as one the object
+    // is built with, so they differ in nothing but what their constructions
+    // built.
     if (!one_body.has_value()) {
       throw InternalError(
           std::format(
-              "UnitLowerer::LowerBodies: unit '{}' is lowered from "
-              "applications that were found to be one body, and '{}' is not "
-              "one with those before it",
-              unit_.name, application->asSymbol().getHierarchicalPath()));
+              "UnitLowerer::LowerBodies: '{}' is an application of unit '{}' "
+              "and lowers to something the applications before it do not, so "
+              "the lowering read a value the unit's identity does not hold -- "
+              "please report this as a bug",
+              application->asSymbol().getHierarchicalPath(), unit_.name));
     }
   }
   unit_.root_scope = *std::move(one_body);
@@ -191,15 +196,6 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
   ReadSignaturesOfNamedClasses();
   hir::Verify(unit_);
   return std::move(unit_);
-}
-
-auto UnitLowerer::LowerScopeBuiltBy(
-    const slang::ast::InstanceBodySymbol& application,
-    const hir::UnitSignatures& signatures)
-    -> diag::Result<hir::StructuralScope> {
-  signatures_ = &signatures;
-  const auto in_unit = diag::FailureContext::InUnit(unit_.name);
-  return LowerScopeOf(application);
 }
 
 auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
@@ -362,6 +358,20 @@ void UnitLowerer::DeclareMemberIdentities(
           ScopePublicationRecord::DataObject{.symbol = &value, .id = id});
       return;
     }
+    // A parameter whose value differs between the objects built from this
+    // scope is held by each of them, so a hierarchical name reaches it there
+    // as it reaches a variable (LRM 23.6). One the specialization fixes is a
+    // constant of the unit, which a name reaching it reads as one.
+    case SymbolKind::Parameter: {
+      const auto& param = member.as<slang::ast::ParameterSymbol>();
+      if (!DiffersPerObject(param)) return;
+      const hir::StructuralDataObjectId id =
+          decls.structural_data_objects.Declare();
+      MapStructuralDataObjectBinding(param, frame, id);
+      published.members.emplace_back(
+          ScopePublicationRecord::DataObject{.symbol = &param, .id = id});
+      return;
+    }
     // An interface port names an instance another unit builds and this one's
     // parent binds (LRM 25.3); its identity comes with the record of that
     // unit's object, which is reachable only once bodies lower.
@@ -422,7 +432,6 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::ForwardingTypedef:
     case SymbolKind::NetType:
     case SymbolKind::TypeParameter:
-    case SymbolKind::Parameter:
     case SymbolKind::Specparam:
     case SymbolKind::DefParam:
     case SymbolKind::Genvar:
@@ -514,14 +523,14 @@ void UnitLowerer::DeclareLoopGenerate(
   loop_generates_.emplace(&array, generate);
   published.generates.emplace_back(
       ScopePublicationRecord::Loop{.id = generate, .loop = &array});
-  std::uint32_t block = 0;
   for (const auto* entry : array.entries) {
     MapOwnedChildBinding(
         *entry, frame,
         hir::OwnedChildStep{
-            .names = hir::GenerateLoopRef{.generate = generate},
-            .selects = {block}});
-    ++block;
+            .names =
+                hir::GenerateLoopRef{
+                    .generate = generate, .index = LoopIndexOf(*entry)},
+            .selects = {}});
     DeclareBlockIdentities(*entry, published);
   }
 }
@@ -757,7 +766,7 @@ auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
 
 auto UnitLowerer::HeldByAnotherDesignElement(
     const slang::ast::ClassType& cls) const -> bool {
-  return BelongsToAnInstance(cls) && &UnitHomeOf(cls) != home_;
+  return BelongsToAnInstance(cls) && !Owns(cls);
 }
 
 auto UnitLowerer::TakesDeclaringInstance(
@@ -854,14 +863,19 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
         "UnitLowerer::TakePublication: the class a scope published is stated "
         "while the unit declares, and handed to its scope once");
   }
+  const std::size_t published_loops = stated->second.loops.size();
+  const std::size_t published_choices = stated->second.choices.size();
   hir::ScopePublication publication{
       .signature = std::move(stated->second),
       .members =
           base::Translation<hir::PublishedMemberId, hir::PublishedDecl>{
               published.members.size()},
-      .generates =
-          base::Translation<hir::PublishedGenerateId, hir::GenerateId>{
-              published.generates.size()},
+      .loops =
+          base::Translation<hir::PublishedLoopId, hir::GenerateId>{
+              published_loops},
+      .choices =
+          base::Translation<hir::PublishedChoiceId, hir::GenerateId>{
+              published_choices},
       .disable_targets =
           base::Translation<
               hir::PublishedDisableTargetId, hir::ProceduralScopeId>{
@@ -905,8 +919,15 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
   }
   for (const ScopePublicationRecord::Construct& construct :
        published.generates) {
-    publication.generates.Append(
-        std::visit([](const auto& built) { return built.id; }, construct));
+    std::visit(
+        Overloaded{
+            [&](const ScopePublicationRecord::Loop& loop) {
+              publication.loops.Append(loop.id);
+            },
+            [&](const ScopePublicationRecord::Choice& choice) {
+              publication.choices.Append(choice.id);
+            }},
+        construct);
   }
   for (const ScopePublicationRecord::DisableTarget& target :
        published.disable_targets) {

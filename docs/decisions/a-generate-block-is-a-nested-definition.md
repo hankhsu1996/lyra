@@ -97,10 +97,9 @@ conditional, since the construction chooses it and the class holds every alterna
 objects selected. What counts a loop's blocks out -- where its index starts, whether a block stands
 at it, how it reaches the next -- since the construction runs the loop (LRM 27.4) and how many
 blocks an object holds is no part of its class. And the code of a process, a continuous assignment
-or a subroutine, since it is no part of what the class declares. A place this reading misses is
-caught where the unit declares itself: block instances taken for one application that publish
-different classes have their definition declared again with every index deciding by its own value,
-and a remark says the sharing was lost.
+or a subroutine, since it is no part of what the class declares. A place this reading misses is this
+compiler's defect, and is reported as one where the unit declares itself: block instances taken for
+one application that publish different classes.
 
 **D5. Block instances of one application that lower apart are that class realized more than once.**
 Each such scope is a realizing class extending the one published class. A published subroutine is

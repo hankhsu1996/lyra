@@ -889,6 +889,7 @@ auto CallArranger::ConstructionOf(
           [&](const lir::EvaluationAttemptsType&) -> Built {
             return no_construct();
           },
+          [&](const lir::LoopBlocksType&) -> Built { return no_construct(); },
           [&](const lir::EventType&) -> Built { return no_construct(); },
           // A write is opened by the wrapper it writes through, which is an
           // operation on the wrapper rather than a value anything builds, and

@@ -95,7 +95,7 @@ struct PublishedMember {
           [](const StructuralReferenceDecl& reference) -> PublishedStorage {
             return ReferenceStorage{.binding = reference.binding};
           },
-          // The three below hold a value settled before the simulation runs,
+          // The four below hold a value settled before the simulation runs,
           // which nothing it does changes: not a driver's resolution and not
           // storage another declaration owns. So each takes a cell of its own,
           // the same storage a declared variable takes, over-provisioned only
@@ -103,10 +103,10 @@ struct PublishedMember {
           //
           // What differs among them is who may name one, which is a separate
           // question from what the storage is. A loop's index does not exist at
-          // simulation time so nothing answers its name at all; the other two
+          // simulation time so nothing answers its name at all; the others
           // answer the names the declaring scope and the scopes inside it read,
-          // while a hierarchical name reaching one from elsewhere folds to the
-          // value one elaboration gave it.
+          // and a hierarchical name reaching one from elsewhere, which reads
+          // the value the object holds as it reads a variable's.
           [](const StructuralGenvarDecl&) -> PublishedStorage {
             return VariableStorage{};
           },
@@ -114,6 +114,9 @@ struct PublishedMember {
             return VariableStorage{};
           },
           [](const StructuralParameterDecl&) -> PublishedStorage {
+            return VariableStorage{};
+          },
+          [](const StructuralLocalparamDecl&) -> PublishedStorage {
             return VariableStorage{};
           }},
       decl.kind);

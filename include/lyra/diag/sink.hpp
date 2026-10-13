@@ -22,7 +22,6 @@ class DiagnosticSink {
         break;
       case DiagKind::kWarning:
       case DiagKind::kNote:
-      case DiagKind::kRemark:
         break;
     }
     diagnostics_.push_back(std::move(diag));

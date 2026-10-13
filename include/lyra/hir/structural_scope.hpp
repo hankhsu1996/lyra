@@ -1,9 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <compare>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -163,7 +163,8 @@ using PublishedDecl = std::variant<
 struct ScopePublication {
   ScopeClassSignature signature;
   base::Translation<PublishedMemberId, PublishedDecl> members;
-  base::Translation<PublishedGenerateId, GenerateId> generates;
+  base::Translation<PublishedLoopId, GenerateId> loops;
+  base::Translation<PublishedChoiceId, GenerateId> choices;
   base::Translation<PublishedDisableTargetId, ProceduralScopeId>
       disable_targets;
   base::Translation<PublishedCallableId, StructuralSubroutineId> callables;
@@ -303,15 +304,28 @@ struct ConcurrentAssertionDecl {
   auto operator==(const ConcurrentAssertionDecl&) const -> bool = default;
 };
 
+// What an instantiation says of one parameter of the instance (LRM 23.10.2):
+// the value it assigned -- the expression this scope wrote, evaluated where the
+// object is built, or the constant a value given elsewhere settled to (LRM
+// 23.10.1, 33.4.3) -- or none, where it wrote nothing for the parameter or
+// wrote it with empty parentheses, which leaves the parameter to the default
+// its declaration states (LRM 23.10.2.2). The default is the child's own
+// expression, evaluated where the child declares it. `type` is the
+// parameter's, which the construction passes the value as.
+struct ParameterValueAssignment {
+  TypeId type;
+  std::optional<ExprId> value;
+
+  auto operator==(const ParameterValueAssignment&) const -> bool = default;
+};
+
 // One way the objects of an instance declaration are built: the unit they are
 // instances of, standing on this unit's record of the class that unit's
-// instances are, and what each is passed at construction, one per parameter
-// the unit takes there, in the order it declares them -- the expression this
-// scope wrote (LRM 23.10.2), evaluated where the object is built, or the
-// constant a value given elsewhere settled to (LRM 23.10.1, 33.4.3).
+// instances are, and what each instantiation says of each parameter the unit
+// takes at construction, in the order the unit declares them.
 struct InstanceAlternative {
   ExternalScopeClassId scope_class;
-  std::vector<ExprId> arguments;
+  std::vector<ParameterValueAssignment> assignments;
 
   auto operator==(const InstanceAlternative&) const -> bool = default;
 };
@@ -621,31 +635,30 @@ struct Generate {
 // How a path names a block and how many scopes the construct compiled to are
 // settled independently, so the two are paired here. A loop a construction
 // runs compiles every block to its one body, and blocks built on their own
-// each say which body they are, so `selects` -- the block the path picked, by
-// its place among those the loop counted out -- names the block either way. A
-// pairing the language does not have is a name that was resolved against a
-// different construct than the one it reached.
+// each say which body they are, so `index` -- the value the index of the block
+// the path picked stood at -- names the block either way. A pairing the
+// language does not have is a name that was resolved against a different
+// construct than the one it reached.
 [[nodiscard]] inline auto LoopBlockScopeOf(
-    const Generate& gen, std::span<const std::uint32_t> selects)
-    -> StructuralScopeId {
+    const Generate& gen, std::int64_t index) -> StructuralScopeId {
   const auto not_a_loop = [] -> StructuralScopeId {
     throw InternalError(
         "hir::LoopBlockScopeOf: a construct that counts out no blocks is "
         "named as a loop");
-  };
-  const auto position = [&] -> std::uint32_t {
-    if (selects.size() != 1) {
-      throw InternalError(
-          "hir::LoopBlockScopeOf: a block of a loop is reached by one select");
-    }
-    return selects.front();
   };
   return std::visit(
       Overloaded{
           [&](const SingleBlock&) { return not_a_loop(); },
           [&](const BlocksChoose&) { return not_a_loop(); },
           [&](const BlocksStandAlone& stand_alone) {
-            return stand_alone.counted.at(position()).body;
+            const auto block = std::ranges::find(
+                stand_alone.counted, index, &StandAloneBlock::index);
+            if (block == stand_alone.counted.end()) {
+              throw InternalError(
+                  "hir::LoopBlockScopeOf: a name reached a block of a loop "
+                  "that counted none at its index");
+            }
+            return block->body;
           },
           [&](const BlocksRepeat&) {
             if (gen.blocks.size() != 1) {

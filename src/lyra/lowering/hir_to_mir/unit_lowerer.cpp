@@ -1138,31 +1138,12 @@ auto UnitLowerer::ScopeClassLayoutOf(hir::ExternalScopeClassId hir_id) const
       ScopeClassIdentity(hir_id));
 }
 
-namespace {
-
-// The member holding what a generate construct built: one handle for a
-// construct that builds at most one block, and a sequence of them for a loop.
-// Each block is published under a class of its own, and which of them are one
-// body is decided by lowering the bodies, which a unit's publication does not
-// depend on -- an edit to a body never changes what a referrer compiles
-// against. So the handle holds the base every block extends, as a C++ header
-// keeps a pointer to a base whose derived classes its implementation defines.
-auto BlockHandles(const mir::CompilationUnit& unit, bool one_per_block)
-    -> mir::TypeId {
-  return one_per_block ? unit.types.Intern(
-                             mir::Type{mir::VectorType{
-                                 .element = unit.builtins.scope_ptr}})
-                       : unit.builtins.scope_ptr;
-}
-
-}  // namespace
-
 auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
     const -> std::vector<PublishedField> {
   std::vector<PublishedField> fields;
   fields.reserve(
-      signature.members.size() + signature.generates.size() +
-      signature.disable_targets.size());
+      signature.members.size() + signature.loops.size() +
+      signature.choices.size() + signature.disable_targets.size());
   for (const hir::PublishedMember& member : signature.members) {
     fields.push_back(
         PublishedField{
@@ -1170,16 +1151,23 @@ auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
             .type =
                 MemberCellType(TranslateType(member.type), member.storage)});
   }
-  for (const hir::PublishedGenerate& generate : signature.generates) {
-    const bool loop = std::visit(
-        Overloaded{
-            [](const hir::PublishedLoopOfOneClass&) { return true; },
-            [](const hir::PublishedLoopByIndex&) { return true; },
-            [](const hir::PublishedChoice&) { return false; }},
-        generate);
+  // The member holding the blocks a loop built, each under the value its
+  // index stood at, which is what a name reaching one asks for.
+  const mir::TypeId loop_blocks =
+      unit_.types.Intern(mir::Type{mir::LoopBlocksType{}});
+  for (std::size_t i = 0; i < signature.loops.size(); ++i) {
+    fields.push_back(PublishedField{.name = std::nullopt, .type = loop_blocks});
+  }
+  // The member holding the one block a construct building at most one built.
+  // Each block is published under a class of its own, and which of them are
+  // one body is decided by lowering the bodies, which a unit's publication
+  // does not depend on -- an edit to a body never changes what a referrer
+  // compiles against. So the handle holds the base every block extends, as a
+  // C++ header keeps a pointer to a base whose derived classes its
+  // implementation defines.
+  for (std::size_t i = 0; i < signature.choices.size(); ++i) {
     fields.push_back(
-        PublishedField{
-            .name = std::nullopt, .type = BlockHandles(unit_, loop)});
+        PublishedField{.name = std::nullopt, .type = unit_.builtins.scope_ptr});
   }
   const mir::TypeId cancellation_target = unit_.types.Intern(
       mir::Type{mir::RuntimeLibraryType{
@@ -1195,9 +1183,10 @@ auto UnitLowerer::PublishedLayoutAt(
     const hir::ScopeClassSignature& signature,
     std::span<const mir::FieldId> slots) -> PublishedScopeLayout {
   const std::size_t members = signature.members.size();
-  const std::size_t generates = signature.generates.size();
+  const std::size_t loops = signature.loops.size();
+  const std::size_t choices = signature.choices.size();
   const std::size_t disable_targets = signature.disable_targets.size();
-  if (slots.size() != members + generates + disable_targets) {
+  if (slots.size() != members + loops + choices + disable_targets) {
     throw InternalError(
         "UnitLowerer::PublishedLayoutAt: a published class holds one field "
         "per thing its scope published");
@@ -1209,9 +1198,10 @@ auto UnitLowerer::PublishedLayoutAt(
   };
   return PublishedScopeLayout{
       .members = {members, part(0, members)},
-      .generates = {generates, part(members, generates)},
+      .loops = {loops, part(members, loops)},
+      .choices = {choices, part(members + loops, choices)},
       .disable_targets = {
-          disable_targets, part(members + generates, disable_targets)}};
+          disable_targets, part(members + loops + choices, disable_targets)}};
 }
 
 auto UnitLowerer::TranslateClassPropertyTarget(

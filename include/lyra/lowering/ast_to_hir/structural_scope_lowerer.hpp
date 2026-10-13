@@ -71,6 +71,9 @@ class StructuralScopeLowerer {
  private:
   auto DeclareDifferingParameters(hir::StructuralScope& scope, WalkFrame frame)
       -> diag::Result<void>;
+  auto SuppliedDeclarationOf(
+      const slang::ast::ParameterSymbol& parameter, WalkFrame frame)
+      -> diag::Result<hir::StructuralDataObjectKind>;
   auto DeclareSettledValue(
       hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
       hir::StructuralDataObjectKind kind) -> diag::Result<void>;

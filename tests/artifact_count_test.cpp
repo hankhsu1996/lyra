@@ -25,7 +25,6 @@
 
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/hir/compilation_unit.hpp"
@@ -38,9 +37,9 @@ namespace {
 using LoweredUnits = std::vector<lyra::hir::CompilationUnit>;
 
 // The design `source` states, lowered to HIR through the same entries the
-// command line uses, reporting into `sink`.
-auto LowerDesignInto(std::string_view source, lyra::diag::DiagnosticSink& sink)
-    -> std::optional<LoweredUnits> {
+// command line uses.
+auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
+  lyra::diag::DiagnosticSink sink;
   const std::filesystem::path path =
       std::filesystem::temp_directory_path() /
       std::filesystem::path{
@@ -65,10 +64,7 @@ auto LowerDesignInto(std::string_view source, lyra::diag::DiagnosticSink& sink)
 
   auto design = lyra::compiler::DeclareUnits(
       std::move(front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{
-          .missed_sharing =
-              lyra::lowering::ast_to_hir::MissedSharing::kLookedFor},
-      sink);
+      lyra::compiler::LoweringPolicy{}, sink);
   EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
   if (!design.has_value()) return std::nullopt;
 
@@ -83,44 +79,6 @@ auto LowerDesignInto(std::string_view source, lyra::diag::DiagnosticSink& sink)
   EXPECT_FALSE(sink.HasErrors()) << "the probe design did not lower";
   if (sink.HasErrors()) return std::nullopt;
   return units;
-}
-
-// How many times the lowering made the remark `code`.
-auto RemarksOf(
-    const lyra::diag::DiagnosticSink& sink, lyra::diag::DiagCode code)
-    -> std::size_t {
-  std::size_t count = 0;
-  for (const lyra::diag::Diagnostic& reported : sink.Diagnostics()) {
-    if (reported.primary.code == code) ++count;
-  }
-  return count;
-}
-
-// How many times the lowering said it lost sharing.
-auto LostSharingRemarks(const lyra::diag::DiagnosticSink& sink) -> std::size_t {
-  return RemarksOf(sink, lyra::diag::DiagCode::kRemarkLostSharing);
-}
-
-// How many definitions the lowering said it compiled more often than their
-// instances need.
-auto MissedSharingRemarks(const lyra::diag::DiagnosticSink& sink)
-    -> std::size_t {
-  return RemarksOf(sink, lyra::diag::DiagCode::kRemarkMissedSharing);
-}
-
-// The design `source` states, held to lowering with nothing lost and nothing
-// missed. A count can come out right because the lowering caught a parameter
-// taken for a value that something read as more, and kept its definition
-// whole. That costs only sharing, and is still a defect in how parameters are
-// classified, so every probe here is held to needing none of it. A count of
-// units per value can come out as stated because a parameter was kept in a
-// unit's identity that decides nothing, and every probe is held to that too.
-auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
-  lyra::diag::DiagnosticSink sink;
-  auto design = LowerDesignInto(source, sink);
-  EXPECT_EQ(LostSharingRemarks(sink), 0U);
-  EXPECT_EQ(MissedSharingRemarks(sink), 0U);
-  return design;
 }
 
 // How many units `definition` was compiled into: one per specialization,
@@ -720,10 +678,11 @@ endmodule
 TEST(ArtifactCount, AValueThatDecidesTheChildIsCompiledPerValue) {
   // Each child is handed a value that decides what it is, in a different way:
   // a width at the scope or inside a procedural body, which settles a type; a
-  // read through its own hierarchical name, which reaches the value one
-  // elaboration gave (LRM 23.6); a parameter with no type, whose type is the
-  // value's (LRM 6.20.2); and a value handed on to a grandchild that sizes a
-  // declaration with it, which decides which grandchild is built.
+  // parameter with no type, whose type is the value's (LRM 6.20.2); and a value
+  // handed on to a grandchild that sizes a declaration with it, which decides
+  // which grandchild is built. A read through the module's own hierarchical
+  // name decides nothing: it reaches the value the object was built with, as
+  // the plain name does (LRM 23.6).
   const auto design = LowerDesign(R"(
 module ScopeWidth #(parameter int W = 1);
   logic [W-1:0] w;
@@ -769,10 +728,10 @@ endmodule
 )");
   ASSERT_TRUE(design.has_value());
   for (const std::string_view definition :
-       {"ScopeWidth", "ProcessWidth", "OwnName", "NoType", "HandedOn",
-        "Sized"}) {
+       {"ScopeWidth", "ProcessWidth", "NoType", "HandedOn", "Sized"}) {
     EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
   }
+  EXPECT_EQ(UnitsOf(*design, "OwnName"), 1U);
 }
 
 TEST(ArtifactCount, AValueInATypeASiteWritesIsSeenWhereItIsWritten) {
@@ -1026,13 +985,11 @@ endmodule
   }
 }
 
-TEST(ArtifactCount, AValueReadThroughAChildIsCaughtAndKeptApart) {
+TEST(ArtifactCount, AValueReadThroughAChildIsTheChildsOwn) {
   // The parent reads the value it handed its child back through the child's
-  // name. Nothing the parent wrote refers to its own parameter there, so it is
-  // taken for one only read as a value; the instances lower apart, and the
-  // parent is compiled once per value instead, which is said as a remark.
-  lyra::diag::DiagnosticSink sink;
-  const auto design = LowerDesignInto(
+  // name. The child takes that value when it is built, so the name reads it
+  // from the child, and the parent is one body for every value it is given.
+  const auto design = LowerDesign(
       R"(
 module Inner #(parameter int K = 0) (output int o);
   initial o = K;
@@ -1049,30 +1006,21 @@ module Top;
     Leaf #(.Q(i)) l (.o(o), .seen(seen));
   end
 endmodule
-)",
-      sink);
+)");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(LostSharingRemarks(sink), 1U);
-  EXPECT_EQ(UnitsOf(*design, "Leaf"), 3U);
+  EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
   EXPECT_EQ(UnitsOf(*design, "Inner"), 1U);
 }
 
-TEST(ArtifactCount, RealValuesDifferingOnlyInSignAreKeptApart) {
+TEST(ArtifactCount, RealValuesDifferingOnlyInSignAreTwoUnits) {
   // 0.0 and -0.0 are equal as numbers and still two values: dividing by each
-  // gives infinities of opposite sign (LRM 6.12, IEEE 754). Read back through
-  // the child's name, each is folded into the parent, so the parents have to be
-  // told apart by what they hold, bit for bit.
-  lyra::diag::DiagnosticSink sink;
-  const auto design = LowerDesignInto(
+  // gives infinities of opposite sign (LRM 6.12, IEEE 754). A parameter written
+  // with no type takes the type of its value (LRM 6.20.2), so the value is part
+  // of what the unit is, and the two units are told apart by it bit for bit.
+  const auto design = LowerDesign(
       R"(
-module Inner #(parameter real R = 1.0) (output real o);
-  initial o = R;
-endmodule
-
-module Leaf #(parameter real Q = 1.0) (output real seen);
-  real o;
-  Inner #(.R(Q)) u (.o(o));
-  initial seen = 1.0 / u.R;
+module Leaf #(parameter Q = 1.0) (output real seen);
+  initial seen = 1.0 / Q;
 endmodule
 
 module Top;
@@ -1080,10 +1028,8 @@ module Top;
   Leaf #(.Q(0.0)) a (.seen(pos));
   Leaf #(.Q(-0.0)) b (.seen(neg));
 endmodule
-)",
-      sink);
+)");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(LostSharingRemarks(sink), 1U);
   EXPECT_EQ(UnitsOf(*design, "Leaf"), 2U);
 }
 
@@ -1259,13 +1205,13 @@ endmodule
   EXPECT_EQ(UnitsOf(*design, "Sized"), 2U);
 }
 
-TEST(ArtifactCount, AModuleHoldingAClassIsToldApartByWhatItBuilds) {
-  // A class a module holds -- one it declares, or a specialization of a
-  // generic placed in it because it is specialized on a type of the module --
-  // is declared once per unit, from one instance's body, so such a unit holds
-  // what that instance built and no other. Where two instances build
-  // differently, what decides it names the unit, and nothing is lost or missed
-  // in saying so. Instances that build alike are still one unit.
+TEST(ArtifactCount, AClassAModuleHoldsIsOneClassOfItsUnit) {
+  // A class a module holds -- one it declares, one a generate block of it
+  // declares, or a specialization of a generic placed in it because it is
+  // specialized on a type of the module -- is a type of each instance's own
+  // (LRM 8.25), and the same text in every one. So it does not tell instances
+  // apart: those that select different alternatives, or count out different
+  // blocks, are one unit holding one class, as they are when they hold none.
   const auto design = LowerDesign(R"(
 package p;
   class Box #(type T = int);
@@ -1279,9 +1225,9 @@ module Declares #(parameter int P = 0) (output int o);
   endclass
   Counter c = new;
   if (P != 0) begin : on
-    initial o = 1;
+    initial begin c.n = 1; o = c.n; end
   end else begin : off
-    initial o = 2;
+    initial begin c.n = 2; o = c.n; end
   end
 endmodule
 
@@ -1289,64 +1235,61 @@ module Placed #(parameter int P = 0) (output int o);
   typedef struct { int a; } own_t;
   p::Box #(own_t) b = new;
   if (P != 0) begin : on
-    initial o = 1;
+    initial begin b.v.a = 1; o = b.v.a; end
   end else begin : off
-    initial o = 2;
+    initial begin b.v.a = 2; o = b.v.a; end
   end
 endmodule
 
-module BuildsAlike #(parameter int P = 1) (output int o);
-  class Counter;
-    int n;
-  endclass
-  Counter c = new;
-  if (P != 0) begin : on
-    initial o = P;
+module Counted #(parameter int N = 1) (output int o);
+  for (genvar i = 0; i < N; i++) begin : g
+    class Cell;
+      int v;
+    endclass
+    Cell c = new;
+    initial c.v = i;
   end
+  initial o = N;
 endmodule
 
 module Top;
   int d [2];
   int q [2];
-  int a [2];
+  int n [2];
   Declares #(.P(0)) declares_none (.o(d[0]));
   Declares #(.P(1)) declares_one (.o(d[1]));
   Placed #(.P(0)) placed_none (.o(q[0]));
   Placed #(.P(1)) placed_one (.o(q[1]));
-  BuildsAlike #(.P(1)) alike_one (.o(a[0]));
-  BuildsAlike #(.P(2)) alike_two (.o(a[1]));
+  Counted #(.N(1)) one_block (.o(n[0]));
+  Counted #(.N(3)) three_blocks (.o(n[1]));
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(UnitsOf(*design, "Declares"), 2U);
-  EXPECT_EQ(UnitsOf(*design, "Placed"), 2U);
-  EXPECT_EQ(UnitsOf(*design, "BuildsAlike"), 1U);
+  EXPECT_EQ(UnitsOf(*design, "Declares"), 1U);
+  EXPECT_EQ(UnitsOf(*design, "Placed"), 1U);
+  EXPECT_EQ(UnitsOf(*design, "Counted"), 1U);
 }
 
-TEST(ArtifactCount, AUnitPerValueThatDecidesNothingIsRemarkedOn) {
-  // A parameter in a declared range is held by the type, so each value is a
-  // unit of its own. Two values that size the same range leave two units that
-  // are one body, which changes no program and is said as a remark: the unit
-  // is told apart by the value where it differs by what the value sizes.
-  lyra::diag::DiagnosticSink sink;
-  const auto design = LowerDesignInto(
-      R"(
-module Halved #(parameter int P = 2) (output int o);
-  logic [P/2:0] held;
-  initial o = $bits(held);
+TEST(ArtifactCount, AParameterLeftToItsDefaultIsHandedLikeOneAssigned) {
+  // Whether an instantiation assigns a parameter the unit only reads, or leaves
+  // it to its default, is the instantiation's to say and decides nothing about
+  // what is compiled (LRM 6.20.1, 23.10): the unit evaluates the default
+  // itself, including one written from an earlier parameter.
+  const auto design = LowerDesign(R"(
+module Leaf #(parameter int W = 8, parameter int D = W * 2) (output int o);
+  initial o = W + D;
 endmodule
 
 module Top;
-  int x, y;
-  Halved #(.P(2)) even (.o(x));
-  Halved #(.P(3)) odd (.o(y));
+  int o [4];
+  Leaf #(.W(4), .D(100)) both (.o(o[0]));
+  Leaf #(.W(4)) width_only (.o(o[1]));
+  Leaf #(.D(3)) depth_only (.o(o[2]));
+  Leaf neither (.o(o[3]));
 endmodule
-)",
-      sink);
+)");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(UnitsOf(*design, "Halved"), 2U);
-  EXPECT_EQ(LostSharingRemarks(sink), 0U);
-  EXPECT_EQ(MissedSharingRemarks(sink), 1U);
+  EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
 }
 
 TEST(ArtifactCount, StringValuesThatSpellAlikeWhenJoinedAreToldApart) {

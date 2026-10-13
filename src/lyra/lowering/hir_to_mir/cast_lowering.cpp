@@ -370,6 +370,7 @@ auto BuildValueConversion(
           [&](const mir::ObjectWriteType& t) { return none(t); },
           [&](const mir::SampledHistoryType& t) { return none(t); },
           [&](const mir::EvaluationAttemptsType& t) { return none(t); },
+          [&](const mir::LoopBlocksType& t) { return none(t); },
           [&](const mir::StructType& t) { return none(t); },
           [&](const mir::ClosureType& t) { return none(t); },
       });

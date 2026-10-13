@@ -93,7 +93,8 @@ of either is virtual.
 leaf, and no part of it carries a string. A step is one element of the path the source wrote (LRM
 23.6): the declaration it names, and the selects written beside that name, one per dimension of what
 the name holds. A step onto an instance is the published member for it, selected; a step into a
-loop's block is the construct's entry, selected by the block's position and viewed as that block's
+loop's block names the loop and the value its index stood at, as the source does (LRM 27.4), the
+loop's entry answers which of the blocks the object built that is, and the block is viewed as its
 published class; a step into a block that stands alone or that a conditional chose names the block
 by its label, which needs no select (LRM 27.5), and views the construct's entry as that block's
 class. A leaf is a published member, a published disable target, or a direct call to a published

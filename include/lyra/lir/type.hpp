@@ -384,6 +384,13 @@ struct EvaluationAttemptsType {
   auto operator==(const EvaluationAttemptsType&) const -> bool = default;
 };
 
+// Storage holding the blocks one loop generate built, each under the value its
+// index stood at. It names no value, because what it holds is the blocks
+// themselves, which a name reaching one asks it for.
+struct LoopBlocksType {
+  auto operator==(const LoopBlocksType&) const -> bool = default;
+};
+
 // A write in progress into the storage a capability wrapper stands for, whose
 // contents are values of `value` (LRM 11.5.1). It is an object the writer holds
 // and owes the end of, and it names no place itself: the whole of those
@@ -444,7 +451,7 @@ class Type {
       RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
       VectorType, TupleType, StructType, UnionType, TaggedUnionType,
       ResolvedType, DriverType, ObservableType, SampledHistoryType,
-      EvaluationAttemptsType, OpenWriteType, DesignationType>;
+      EvaluationAttemptsType, LoopBlocksType, OpenWriteType, DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

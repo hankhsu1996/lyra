@@ -134,6 +134,7 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::EvaluationAttemptsType&) {
             return crosses_no_boundary();
           },
+          [&](const mir::LoopBlocksType&) { return crosses_no_boundary(); },
           [&](const mir::StructType&) { return crosses_no_boundary(); },
           [&](const mir::ClosureType&) { return crosses_no_boundary(); }});
 }

@@ -736,6 +736,7 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
+    case support::MemberStorageKind::kLoopBlocks:
       return Symbol(std::format("{}_{}", kind, RuntimeOpName(op)));
   }
   throw InternalError("llvm codegen: unknown member storage kind");
@@ -759,6 +760,7 @@ auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool {
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
+    case support::MemberStorageKind::kLoopBlocks:
       return false;
   }
   throw InternalError("llvm codegen: unknown member storage kind");
@@ -932,6 +934,10 @@ auto MemberStorageKindOf(
               -> std::optional<support::MemberStorageKind> {
             return support::MemberStorageKind::kEvaluationAttempts;
           },
+          [](const lir::LoopBlocksType&)
+              -> std::optional<support::MemberStorageKind> {
+            return support::MemberStorageKind::kLoopBlocks;
+          },
           // A class handle is a value the member holds rather than a pointer it
           // merely points with: the object stays alive because the member
           // refers to it (LRM 8.3), so a write copies the handle's share of
@@ -1040,6 +1046,7 @@ auto DeclaredStorageOf(
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
+    case support::MemberStorageKind::kLoopBlocks:
       return declared(support::ValueDomain::kEmpty);
   }
   throw InternalError("runtime abi: unknown member storage kind");
@@ -1793,6 +1800,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFinish:
     case support::BuiltinFn::kStop:
     case support::BuiltinFn::kEnclosingScope:
+    case support::BuiltinFn::kLoopBlocksAdd:
+    case support::BuiltinFn::kLoopBlocksAt:
     case support::BuiltinFn::kIsOfClass:
     case support::BuiltinFn::kAddOwnedChild:
     case support::BuiltinFn::kInstantiationEntry:

@@ -194,6 +194,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ObjectWriteType& t) { HashId(seed, t.object); },
           [&](const SampledHistoryType& t) { HashId(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
+          [](const LoopBlocksType&) {},
           [&](const StructType& t) {
             std::visit(
                 Overloaded{
@@ -331,6 +332,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const ObjectWriteType&) { return false; },
           [](const SampledHistoryType&) { return false; },
           [](const EvaluationAttemptsType&) { return false; },
+          [](const LoopBlocksType&) { return false; },
           [](const EventType&) { return false; },
           [](const RuntimeEffectsType&) { return false; },
           [](const FilesType&) { return false; },
@@ -397,6 +399,7 @@ auto Type::PartsAreStorage() const -> bool {
           [](const ObjectWriteType&) { return false; },
           [](const SampledHistoryType&) { return false; },
           [](const EvaluationAttemptsType&) { return false; },
+          [](const LoopBlocksType&) { return false; },
           [](const EventType&) { return false; },
           [](const RuntimeEffectsType&) { return false; },
           [](const FilesType&) { return false; },
@@ -467,6 +470,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const ObjectWriteType&) -> Element { return std::nullopt; },
           [](const SampledHistoryType&) -> Element { return std::nullopt; },
           [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
+          [](const LoopBlocksType&) -> Element { return std::nullopt; },
 
           // These refer to a value living elsewhere rather than holding one,
           // so a container reached through one is reached by dereferencing it

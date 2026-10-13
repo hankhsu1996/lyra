@@ -167,11 +167,7 @@ auto DesignOf(const CommandContext& ctx)
       std::move(ctx.elaborated->compilation),
       compiler::LoweringPolicy{
           .assertions = ctx.args->assertions,
-          .bodies_read = support::BodiesRead::kElaborated,
-          .missed_sharing =
-              ctx.args->remarks
-                  ? lowering::ast_to_hir::MissedSharing::kLookedFor
-                  : lowering::ast_to_hir::MissedSharing::kNotLookedFor},
+          .bodies_read = support::BodiesRead::kElaborated},
       *ctx.sink);
 }
 
@@ -610,7 +606,7 @@ auto RunProgram(const CommandContext& ctx) -> int {
 // Whether the compiler's warnings reach the terminal, the front end's and its
 // own alike. A program that is run owns its streams, so what the compiler had
 // to say about the source stays out of them unless it refused the source
-// outright. A remark was asked for, so it is not withheld.
+// outright.
 enum class CompilerWarnings : std::uint8_t { kShown, kWithheld };
 
 // The request resolved against the design's declaration: everything that is

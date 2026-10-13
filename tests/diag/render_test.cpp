@@ -60,8 +60,6 @@ class AsksRecorded final : public lyra::diag::SourceManager {
         return "warning";
       case DiagKind::kNote:
         return "note";
-      case DiagKind::kRemark:
-        return "remark";
     }
     std::unreachable();
   }
@@ -152,19 +150,11 @@ TEST(DiagRender, SinkSummaryAggregatesCounts) {
   EXPECT_TRUE(sink.HasErrors());
 }
 
-TEST(DiagRender, WarningsAndRemarksReachTheReportOnlyWhenShown) {
+// A warning left out is left out of the count as well.
+TEST(DiagRender, WarningsReachTheReportOnlyWhenShown) {
   lyra::diag::DiagnosticSink sink;
-  sink.Report(
-      lyra::diag::Make(DiagCode::kRemarkLostSharing, "could have shared"));
-  EXPECT_FALSE(sink.HasErrors());
-
-  EXPECT_EQ(Shown(sink), "");
-  EXPECT_EQ(
-      Shown(sink, RenderOptions{.show_remarks = true}),
-      "remark at 0..0: could have shared\n");
-
-  // A warning left out is left out of the count as well.
   sink.Report(lyra::diag::Make(DiagCode::kWarningPedantic, "pedantic"));
+  EXPECT_FALSE(sink.HasErrors());
   EXPECT_EQ(Shown(sink, RenderOptions{.show_warnings = false}), "");
 }
 
@@ -186,13 +176,11 @@ TEST(DiagRender, KindDerivesFromCode) {
       Make(DiagCode::kHostIoError, "x").primary.kind, DiagKind::kHostError);
   EXPECT_EQ(
       Make(DiagCode::kWarningPedantic, "x").primary.kind, DiagKind::kWarning);
-  EXPECT_EQ(
-      Make(DiagCode::kRemarkLostSharing, "x").primary.kind, DiagKind::kRemark);
 
   for (const DiagCode code :
        {DiagCode::kUnsupportedTypeKind,
         DiagCode::kErrorCaseEqualityOnRealOperand, DiagCode::kHostIoError,
-        DiagCode::kWarningPedantic, DiagCode::kRemarkLostSharing}) {
+        DiagCode::kWarningPedantic}) {
     EXPECT_EQ(Make(code, "x").primary.kind, DiagCodeKind(code));
   }
 }

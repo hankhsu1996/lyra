@@ -1109,12 +1109,12 @@ the detail lives in the entry itself.
   is built, so instances handed different values are one unit; only a reference where the front end
   settled a constant keeps it in the key. Read it for why a module boundary forces a prediction the
   loop record could decline -- the parent names the child without reading the child's body -- and
-  for how the prediction is kept from deciding correctness: every instance handed new values is
-  lowered and held against its unit, one body with it where they differ only in what their
-  constructions built, a difference keeping the definition whole. Read it also for why the list is
-  of where the front end folds and not of where this compiler evaluates, and for the remark on a
-  unit per value that decides nothing. It rejects naming a child by its body's hash, grouping by
-  comparing across the design, declaring every parameter, and reporting a miss as an error.
+  for why the prediction is read off the front end's record of which parameters each constant
+  evaluation read rather than written as a list of positions. Every instance handed new values is
+  lowered into its unit, which holds what each built, and a disagreement is a compiler defect; a
+  class the design element holds is one class of the unit, built from each instance's copy. It
+  rejects naming a child by its body's hash, grouping by comparing across the design, declaring
+  every parameter, and keeping a definition whole where its instances lower apart.
 - [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
   vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
   positions a connection joins -- is stated as the select the source wrote, so constructions

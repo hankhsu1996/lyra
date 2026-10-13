@@ -11,7 +11,6 @@ namespace lyra::diag {
 struct RenderOptions {
   bool use_color = true;
   bool show_warnings = true;
-  bool show_remarks = false;
 };
 
 // Every message is shown by `source_manager`, about a place in the source or

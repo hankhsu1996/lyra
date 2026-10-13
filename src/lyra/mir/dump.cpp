@@ -569,6 +569,7 @@ class MirDumper {
             [](const EvaluationAttemptsType&) -> std::string {
               return "EvaluationAttempts";
             },
+            [](const LoopBlocksType&) -> std::string { return "LoopBlocks"; },
         });
   }
 

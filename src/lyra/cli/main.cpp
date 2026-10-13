@@ -57,10 +57,7 @@ auto RunLyra(int argc, char** argv) -> int {
   const bool use_color = lyra::cli::UseColor(cli_options);
   const lyra::frontend::SlangSourceManager sources(driver.sourceManager);
   const lyra::cli::Reporter report{
-      lyra::diag::RenderOptions{
-          .use_color = use_color,
-          .show_remarks = cli_options.remarks.value_or(false)},
-      sources};
+      lyra::diag::RenderOptions{.use_color = use_color}, sources};
 
   if (!command) {
     // An empty message means the parser already printed its own account of

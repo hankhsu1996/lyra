@@ -142,6 +142,18 @@ auto FormatArguments(std::span<const ExprId> arguments) -> std::string {
   return std::format("arguments({})", out);
 }
 
+auto FormatAssignments(std::span<const ParameterValueAssignment> assignments)
+    -> std::string {
+  std::string out;
+  for (std::size_t i = 0; i < assignments.size(); ++i) {
+    if (i != 0) out += ", ";
+    out += assignments[i].value.has_value()
+               ? std::format("Expr[{}]", assignments[i].value->value)
+               : std::string{"default"};
+  }
+  return std::format("arguments({})", out);
+}
+
 // The identifier a declaration answers to, quoted, or nothing at all where the
 // source gave it none. Printing the absence as an empty string rather than a
 // stand-in is the point: what a reader learns from this dump is which
@@ -189,6 +201,13 @@ auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
             return std::string{" given at construction"};
           },
           [](const StructuralParameterDecl& parameter) {
+            return parameter.default_value.has_value()
+                       ? std::format(
+                             " given at construction default=Expr[{}]",
+                             parameter.default_value->value)
+                       : std::string{" given at construction"};
+          },
+          [](const StructuralLocalparamDecl& parameter) {
             return std::format(
                 " settled=Expr[{}]", parameter.initializer.value);
           }},
@@ -1649,7 +1668,10 @@ class HirDumper {
               }},
           decl));
     }
-    for (const GenerateId id : published.generates) {
+    for (const GenerateId id : published.loops) {
+      add(std::format("Generate[{}]", id.value));
+    }
+    for (const GenerateId id : published.choices) {
       add(std::format("Generate[{}]", id.value));
     }
     for (const ProceduralScopeId id : published.disable_targets) {
@@ -1668,7 +1690,8 @@ class HirDumper {
               return std::format("InstanceMember[{}]", id.value);
             },
             [](const GenerateLoopRef& loop) {
-              return std::format("Generate[{}]", loop.generate.value);
+              return std::format(
+                  "Generate[{}].index{}", loop.generate.value, loop.index);
             },
             [](const GenerateBlockRef& block) {
               return std::format(
@@ -1688,12 +1711,19 @@ class HirDumper {
                   "ExternalScopeClass[{}].member[{}]", member.scope_class.value,
                   member.member.value);
             },
-            [](const ExternalGenerateRef& generate) {
+            [](const ExternalGenerateLoopRef& loop) {
               return std::format(
-                  "ExternalScopeClass[{}].generate[{}] as "
+                  "ExternalScopeClass[{}].loop[{}].index{} as "
                   "ExternalScopeClass[{}]",
-                  generate.scope_class.value, generate.generate.value,
-                  generate.result_class.value);
+                  loop.scope_class.value, loop.loop.value, loop.index,
+                  loop.result_class.value);
+            },
+            [](const ExternalGenerateBlockRef& block) {
+              return std::format(
+                  "ExternalScopeClass[{}].choice[{}] as "
+                  "ExternalScopeClass[{}]",
+                  block.scope_class.value, block.choice.value,
+                  block.result_class.value);
             },
         },
         names);
@@ -1713,7 +1743,7 @@ class HirDumper {
             },
             [&](const GenerateLoopRef& loop) -> const StructuralScope& {
               const Generate& gen = owner.generates.Get(loop.generate);
-              return gen.blocks.Get(LoopBlockScopeOf(gen, step.selects)).scope;
+              return gen.blocks.Get(LoopBlockScopeOf(gen, loop.index)).scope;
             },
             [&](const GenerateBlockRef& block) -> const StructuralScope& {
               const Generate& gen = owner.generates.Get(block.generate);
@@ -1925,7 +1955,7 @@ class HirDumper {
         built_as += std::format(
             "{}ExternalScopeClass[{}] {}", built_as.empty() ? "" : " | ",
             alternative.scope_class.value,
-            FormatArguments(alternative.arguments));
+            FormatAssignments(alternative.assignments));
       }
       std::string taken;
       if (im.alternatives.size() > 1) {

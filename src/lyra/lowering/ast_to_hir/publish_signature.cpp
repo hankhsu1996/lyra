@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -312,20 +313,20 @@ auto EitherCounted(
 // has been heard: a loop whose blocks are all one class says that class and
 // nothing of where they stand.
 void StateLoopsOfOneClass(hir::ScopeClassSignature& cls) {
-  base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId> generates;
-  for (const hir::PublishedGenerate& generate : cls.generates) {
-    const auto* counted = std::get_if<hir::PublishedLoopByIndex>(&generate);
+  base::Arena<hir::PublishedLoop, hir::PublishedLoopId> loops;
+  for (const hir::PublishedLoop& loop : cls.loops) {
+    const auto* counted = std::get_if<hir::PublishedLoopByIndex>(&loop);
     if (counted == nullptr || counted->classes.size() > 1) {
-      generates.Add(generate);
+      loops.Add(loop);
       continue;
     }
     std::optional<support::DefPath> class_path;
     for (const support::DefPath& only : counted->classes) class_path = only;
-    generates.Add(
+    loops.Add(
         hir::PublishedLoopOfOneClass{
             .name = counted->name, .class_path = std::move(class_path)});
   }
-  cls.generates = std::move(generates);
+  cls.loops = std::move(loops);
 }
 
 // Adds to `into`, the class the block instances of one application published
@@ -338,39 +339,44 @@ void StateLoopsOfOneClass(hir::ScopeClassSignature& cls) {
 auto AddWhatWasBuilt(
     hir::ScopeClassSignature& into, const hir::ScopeClassSignature& built)
     -> bool {
-  if (into.generates.size() != built.generates.size()) return false;
-  base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId> generates;
-  for (const hir::PublishedGenerateId id : into.generates.Ids()) {
-    const hir::PublishedGenerate& theirs = built.generates.Get(id);
+  if (into.loops.size() != built.loops.size() ||
+      into.choices.size() != built.choices.size()) {
+    return false;
+  }
+  base::Arena<hir::PublishedLoop, hir::PublishedLoopId> loops;
+  for (const hir::PublishedLoopId id : into.loops.Ids()) {
+    const hir::PublishedLoop& theirs = built.loops.Get(id);
     auto one = std::visit(
         Overloaded{
             [](const hir::PublishedLoopOfOneClass&)
-                -> std::optional<hir::PublishedGenerate> {
+                -> std::optional<hir::PublishedLoopByIndex> {
               throw InternalError(
                   "PublishSignature: a loop was stated as one class before "
                   "every block instance of its application was heard");
             },
             [&](const hir::PublishedLoopByIndex& counted)
-                -> std::optional<hir::PublishedGenerate> {
+                -> std::optional<hir::PublishedLoopByIndex> {
               const auto* other =
                   std::get_if<hir::PublishedLoopByIndex>(&theirs);
               if (other == nullptr) return std::nullopt;
               return EitherCounted(counted, *other);
-            },
-            [&](const hir::PublishedChoice& choice)
-                -> std::optional<hir::PublishedGenerate> {
-              const auto* other = std::get_if<hir::PublishedChoice>(&theirs);
-              if (other == nullptr) return std::nullopt;
-              return EitherBuilt(choice, *other);
             }},
-        into.generates.Get(id));
+        into.loops.Get(id));
     if (!one.has_value()) return false;
-    generates.Add(*std::move(one));
+    loops.Add(*std::move(one));
+  }
+  base::Arena<hir::PublishedChoice, hir::PublishedChoiceId> choices;
+  for (const hir::PublishedChoiceId id : into.choices.Ids()) {
+    auto one = EitherBuilt(into.choices.Get(id), built.choices.Get(id));
+    if (!one.has_value()) return false;
+    choices.Add(*std::move(one));
   }
   hir::ScopeClassSignature rest = built;
-  rest.generates = into.generates;
+  rest.loops = into.loops;
+  rest.choices = into.choices;
   if (!(rest == into)) return false;
-  into.generates = std::move(generates);
+  into.loops = std::move(loops);
+  into.choices = std::move(choices);
   return true;
 }
 
@@ -381,10 +387,13 @@ void UnitLowerer::PublishClassSignatures() {
   // by its declarations (LRM 26.2), and a design element's through a
   // hierarchical name reaching an object of it (LRM 23.6). One a design element
   // declares is a type of each instance (LRM 6.22), which every instance of
-  // this unit declares alike, so what it publishes is one class.
+  // this unit declares alike, so what it publishes is one class, however many
+  // of its applications built it.
+  std::set<support::DefPath> published_paths;
   const auto publish_class = [&](const slang::ast::ClassType& cls) {
     const auto it = own_class_signatures_.find(&cls);
-    if (it == own_class_signatures_.end()) {
+    if (it == own_class_signatures_.end() ||
+        !published_paths.insert(it->second.class_path).second) {
       return;
     }
     hir::TypeImportMemo published;
@@ -669,6 +678,11 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // is published once, stating what any of them built. Each scope keeps the
   // class in this unit's own types as well, which is what its own published
   // class is laid out from.
+  //
+  // Two scopes are taken for objects of one class only where they agree on
+  // every value the unit's identity holds, and what a scope publishes reads no
+  // other, so the two publish one class but for what their constructions
+  // built.
   std::vector<hir::ScopeClassSignature> classes;
   std::map<support::DefPath, std::size_t> class_at;
   for (const slang::ast::Scope* scope : publishing_scopes_) {
@@ -679,11 +693,13 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     if (first) {
       classes.push_back(*std::move(own));
     } else if (!AddWhatWasBuilt(classes[known->second], *own)) {
-      if (own->class_path == root.class_path) {
-        applications_published_apart_ = true;
-      } else {
-        blocks_published_apart_ = true;
-      }
+      throw InternalError(
+          std::format(
+              "UnitLowerer::PublishSignature: '{}' and another scope of unit "
+              "'{}' were taken for objects of one class and publish different "
+              "ones, so a value the unit's identity does not hold reached what "
+              "it publishes -- please report this as a bug",
+              scope->asSymbol().getHierarchicalPath(), unit_.name));
     }
   }
   for (hir::ScopeClassSignature& cls : classes) StateLoopsOfOneClass(cls);
@@ -710,7 +726,8 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
       .class_path = published.class_path,
       .members = {},
       .callables = {},
-      .generates = {},
+      .loops = {},
+      .choices = {},
       .disable_targets = {},
       .modports = {}};
 
@@ -849,32 +866,28 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
 
   for (const ScopePublicationRecord::Construct& construct :
        published.generates) {
-    cls.generates.Add(
-        std::visit(
-            Overloaded{
-                [&](const ScopePublicationRecord::Loop& loop)
-                    -> hir::PublishedGenerate {
-                  std::map<std::int64_t, support::DefPath> at;
-                  for (const auto* entry : loop.loop->entries) {
-                    at.emplace(
-                        LoopIndexOf(*entry), PublicationOf(*entry).class_path);
-                  }
-                  return BlocksCounted(std::string{loop.loop->name}, at);
-                },
-                [&](const ScopePublicationRecord::Choice& choice)
-                    -> hir::PublishedGenerate {
-                  hir::PublishedChoice chosen{
-                      .construct = choice.construct, .blocks = {}};
-                  for (const auto* alternative : choice.built) {
-                    chosen.blocks.push_back(
-                        hir::PublishedAlternative{
-                            .position = AlternativePositionOf(*alternative),
-                            .class_path =
-                                PublicationOf(*alternative).class_path});
-                  }
-                  return chosen;
-                }},
-            construct));
+    std::visit(
+        Overloaded{
+            [&](const ScopePublicationRecord::Loop& loop) {
+              std::map<std::int64_t, support::DefPath> at;
+              for (const auto* entry : loop.loop->entries) {
+                at.emplace(
+                    LoopIndexOf(*entry), PublicationOf(*entry).class_path);
+              }
+              cls.loops.Add(BlocksCounted(std::string{loop.loop->name}, at));
+            },
+            [&](const ScopePublicationRecord::Choice& choice) {
+              hir::PublishedChoice chosen{
+                  .construct = choice.construct, .blocks = {}};
+              for (const auto* alternative : choice.built) {
+                chosen.blocks.push_back(
+                    hir::PublishedAlternative{
+                        .position = AlternativePositionOf(*alternative),
+                        .class_path = PublicationOf(*alternative).class_path});
+              }
+              cls.choices.Add(std::move(chosen));
+            }},
+        construct);
   }
 
   for (const ScopePublicationRecord::DisableTarget& target :

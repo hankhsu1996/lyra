@@ -23,8 +23,7 @@ namespace lyra::hir {
 // indices they stand at is what each construction of the holding scope counts
 // out, so the class says neither, and two objects of it may hold different
 // numbers of them. `class_path` is absent where no object of the holding class
-// counted a block. Its member holds one object per block, in the order the
-// loop counted them out.
+// counted a block.
 struct PublishedLoopOfOneClass {
   std::string name;
   std::optional<support::DefPath> class_path;
@@ -46,8 +45,7 @@ struct PublishedLoopBlock {
 // class stands at each index is part of what the holding class declares.
 // `blocks` lists every index any object of the holding class counted out, in
 // ascending order, and `classes` the applications in the order that list first
-// names them. Its member holds one object per block the object's own
-// construction counted out, in that order.
+// names them.
 struct PublishedLoopByIndex {
   std::string name;
   std::vector<support::DefPath> classes;
@@ -82,17 +80,28 @@ struct PublishedChoice {
   auto operator==(const PublishedChoice&) const -> bool = default;
 };
 
-// One generate construct a scope publishes, which a name steps through into
-// one of its blocks (LRM 23.6).
-using PublishedGenerate = std::variant<
-    PublishedLoopOfOneClass, PublishedLoopByIndex, PublishedChoice>;
+// A loop generate a scope publishes, which a name steps through into one of
+// its blocks (LRM 23.6, 27.4). Its member holds the blocks the object's own
+// construction built, each under the value its index stood at, so a name asks
+// for a block by that value: where it stands among the loop's blocks is the
+// object's to answer, since the object is what ran the loop.
+using PublishedLoop =
+    std::variant<PublishedLoopOfOneClass, PublishedLoopByIndex>;
 
-// Which of the generate constructs a scope published, by its position among
-// them.
-struct PublishedGenerateId {
+// Which of the loops a scope published, by its position among them.
+struct PublishedLoopId {
   std::uint32_t value = base::kUnassignedId;
 
-  auto operator<=>(const PublishedGenerateId&) const
+  auto operator<=>(const PublishedLoopId&) const
+      -> std::strong_ordering = default;
+};
+
+// Which of the constructs building at most one block a scope published, by its
+// position among them.
+struct PublishedChoiceId {
+  std::uint32_t value = base::kUnassignedId;
+
+  auto operator<=>(const PublishedChoiceId&) const
       -> std::strong_ordering = default;
 };
 
@@ -116,19 +125,21 @@ struct PublishedDisableTargetId {
 // generate blocks inside it (LRM 23.6 reaches a declaration of either by name):
 // which class of the unit it is, the members another unit may name on it, the
 // subroutines another unit may call on it, the generate constructs a name steps
-// through into its blocks, what a `disable` of one of its named blocks or tasks
-// ends, and, for an instance, the views it offers over those members. A unit's
-// name and the name of the class it builds are two facts, so a referrer reads
-// the class it reaches here rather than deriving it from the unit it reached
-// through. Every type here is one of the pool of whoever holds the record: the
-// unit's signature, the unit's own scope, or a referrer's record of it.
+// through into their blocks -- its loops, and the constructs that build at most
+// one block -- what a `disable` of one of its named blocks or tasks ends, and,
+// for an instance, the views it offers over those members. A unit's name and
+// the name of the class it builds are two facts, so a referrer reads the class
+// it reaches here rather than deriving it from the unit it reached through.
+// Every type here is one of the pool of whoever holds the record: the unit's
+// signature, the unit's own scope, or a referrer's record of it.
 //
-// The class places the members first, then one member per generate construct
-// holding what that construct built, then one per disable target, each list in
-// the order it is given here: the order is as much a part of what is published
-// as the names are, because a field's position is what fixes where its storage
-// sits, and the declaring unit and every referrer lay the class out from these
-// lists alone.
+// The class places the members first, then one member per loop, holding its
+// blocks by the value each one's index stood at, then one per construct
+// building at most one block, holding the block it built, then one per disable
+// target, each list in the order it is given here: the order is as much a part
+// of what is published as the names are, because a field's position is what
+// fixes where its storage sits, and the declaring unit and every referrer lay
+// the class out from these lists alone.
 //
 // `class_path` is where the class is declared: a generate block is a
 // declaration nested in the scope holding it (LRM 27.3), so its class is one
@@ -138,7 +149,8 @@ struct ScopeClassSignature {
   support::DefPath class_path;
   base::Arena<PublishedMember, PublishedMemberId> members;
   base::Arena<PublishedCallable, PublishedCallableId> callables;
-  base::Arena<PublishedGenerate, PublishedGenerateId> generates;
+  base::Arena<PublishedLoop, PublishedLoopId> loops;
+  base::Arena<PublishedChoice, PublishedChoiceId> choices;
   base::Arena<PublishedDisableTarget, PublishedDisableTargetId> disable_targets;
   std::vector<PublishedModport> modports;
 

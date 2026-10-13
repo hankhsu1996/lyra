@@ -365,6 +365,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::EvaluationAttemptsType&) {
             out += "lyra::runtime::EvaluationAttempts";
           },
+          [&](const mir::LoopBlocksType&) {
+            out += "lyra::runtime::LoopBlocks";
+          },
           [&](const mir::ClosureType& c) {
             Write(out, CppClosureName(c.closure_id));
           },
@@ -507,6 +510,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::DriverType&) { return reaches_nothing(); },
           [&](const mir::SampledHistoryType&) { return reaches_nothing(); },
           [&](const mir::EvaluationAttemptsType&) { return reaches_nothing(); },
+          [&](const mir::LoopBlocksType&) { return reaches_nothing(); },
           [&](const mir::StructType&) { return reaches_nothing(); },
           [&](const mir::ClosureType&) { return reaches_nothing(); },
       });
@@ -679,6 +683,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::ObjectWriteType& t) { by_naming_itself(t); },
           [&](const mir::SampledHistoryType& t) { by_naming_itself(t); },
           [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },
+          [&](const mir::LoopBlocksType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },
       });
 }

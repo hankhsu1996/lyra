@@ -62,9 +62,6 @@ struct ParsedArgs {
   std::optional<std::filesystem::path> store;
   // Build as though the store held nothing, and keep what was built.
   bool rebuild = false;
-  // Whether the caller asked for this compiler's remarks on its own work, which
-  // is when the checks that only produce a remark are worth running.
-  bool remarks = false;
   // The name of the library a declaration was read for, when one was.
   std::optional<std::string> library_name;
   // The simulation's own arguments, which is where LRM 21.6 plusargs land: the
@@ -91,7 +88,6 @@ struct CliOptions {
   std::optional<std::string> config;
   std::optional<std::string> cache_dir;
   std::optional<bool> rebuild;
-  std::optional<bool> remarks;
   std::optional<std::string> cxx;
   std::optional<int32_t> jobs;
   std::optional<std::string> out;

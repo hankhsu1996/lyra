@@ -378,6 +378,8 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_sequence_extend", &lyra_rt_sequence_extend);
   add("lyra_rt_sequence_element", &lyra_rt_sequence_element);
   add("lyra_rt_enclosing_scope", &lyra_rt_enclosing_scope);
+  add("lyra_rt_loop_blocks_add", &lyra_rt_loop_blocks_add);
+  add("lyra_rt_loop_blocks_at", &lyra_rt_loop_blocks_at);
   add("lyra_rt_alloc_bytes", &lyra_rt_alloc_bytes);
   add("lyra_rt_dealloc_bytes", &lyra_rt_dealloc_bytes);
   add("lyra_rt_insert_bits", &lyra_rt_insert_bits);
@@ -1518,6 +1520,7 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_timer_construct", &lyra_rt_timer_construct);
   add("lyra_rt_evaluation_attempts_construct",
       &lyra_rt_evaluation_attempts_construct);
+  add("lyra_rt_loop_blocks_construct", &lyra_rt_loop_blocks_construct);
   add("lyra_rt_channel_cancellation_construct",
       &lyra_rt_channel_cancellation_construct);
   add("lyra_rt_shared_pointer_construct", &lyra_rt_shared_pointer_construct);
@@ -1579,6 +1582,7 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_timer_destroy", &lyra_rt_timer_destroy);
   add("lyra_rt_evaluation_attempts_destroy",
       &lyra_rt_evaluation_attempts_destroy);
+  add("lyra_rt_loop_blocks_destroy", &lyra_rt_loop_blocks_destroy);
 }
 
 // The holders over each layout an integral value has: the eight no wider than

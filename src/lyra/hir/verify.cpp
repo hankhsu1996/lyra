@@ -1041,6 +1041,11 @@ void ReachFromDataObjects(ArenaReaches& reaches, const StructuralScope& scope) {
             [](const StructuralGenvarDecl&) {},
             [](const StructuralConstructionValueDecl&) {},
             [&](const StructuralParameterDecl& decl) {
+              if (decl.default_value.has_value()) {
+                from_parameter(*decl.default_value, Slot::kOperand);
+              }
+            },
+            [&](const StructuralLocalparamDecl& decl) {
               from_parameter(decl.initializer, Slot::kOperand);
             }},
         object.kind);
@@ -1099,8 +1104,10 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
       ReachFrom(reaches, std::nullopt, "an instance's construction");
   for (const InstanceMemberDecl& instance : scope.instance_members) {
     for (const InstanceAlternative& alternative : instance.alternatives) {
-      for (const ExprId argument : alternative.arguments) {
-        from_instance(argument, Slot::kOperand);
+      for (const ParameterValueAssignment& assigned : alternative.assignments) {
+        if (assigned.value.has_value()) {
+          from_instance(*assigned.value, Slot::kOperand);
+        }
       }
     }
   }

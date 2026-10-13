@@ -404,10 +404,8 @@ struct InUnitReach {
 
 // A hop of a descent this unit declares nothing about, as the front end says
 // the name reached it: an instance, with the coordinates the name wrote for
-// it; a block of a loop generate, by the label of the loop, the value its
-// index stood at, and its place among the blocks the loop counted out where
-// the name reached it (LRM 27.4); a block that stands alone or that a
-// conditional
+// it; a block of a loop generate, by the label of the loop and the value its
+// index stood at (LRM 27.4); a block that stands alone or that a conditional
 // chose, by where the source wrote its construct among those of its scope and
 // the block among that construct's alternatives, since a label does not tell
 // the alternatives of a conditional apart (LRM 27.5); or a named block or
@@ -421,7 +419,6 @@ struct InstanceHop {
 struct LoopBlockHop {
   std::string loop;
   std::int64_t index;
-  std::uint32_t position;
 };
 struct ChosenBlockHop {
   std::uint32_t construct;
@@ -598,24 +595,6 @@ class UnitLowerer {
   // ones it may read.
   [[nodiscard]] auto TakeSignature() -> hir::UnitSignature;
 
-  // Whether two block instances this unit took for one application of their
-  // definition published different classes, which its declaration phase finds.
-  // Something in the block held a value its index decided where the index was
-  // taken to be only read, so the unit's definition has to be declared again
-  // with every index deciding.
-  [[nodiscard]] auto BlocksPublishedApart() const -> bool {
-    return blocks_published_apart_;
-  }
-
-  // Whether two applications this unit is lowered from published a different
-  // class for the unit's own scope, which its declaration phase finds.
-  // Something they declare held a value one of them was handed where the value
-  // was taken to be only read, so the unit's definition has to be declared
-  // again with every parameter deciding.
-  [[nodiscard]] auto ApplicationsPublishedApart() const -> bool {
-    return applications_published_apart_;
-  }
-
   // The body phase: everything this unit executes, resolved against what the
   // design's units published. Which of those publications this unit ends up
   // depending on is the set it reads, so nothing decides that set in advance.
@@ -623,15 +602,6 @@ class UnitLowerer {
   // lowered from built.
   auto LowerBodies(const hir::UnitSignatures& signatures)
       -> diag::Result<hir::CompilationUnit>;
-
-  // The unit's own scope as the application whose body is `application` built
-  // it, lowered into this unit and held by nothing. Whoever asks holds the
-  // scopes of several applications against each other, which only scopes
-  // lowered into one unit allow, since each names the unit's types.
-  auto LowerScopeBuiltBy(
-      const slang::ast::InstanceBodySymbol& application,
-      const hir::UnitSignatures& signatures)
-      -> diag::Result<hir::StructuralScope>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
   // and builtins through this accessor; downstream consumers post-Run use the
@@ -1691,8 +1661,10 @@ class UnitLowerer {
       const slang::ast::ParameterSymbol& param) const -> bool;
 
   // Hands `visit` every declaration outside a body this unit holds, each before
-  // anything inside it: those its own scope declares, then each specialization
-  // placed in it from a generic another unit declares.
+  // anything inside it, in every application of the unit: those its scope
+  // declares, then each specialization placed in it from a generic another unit
+  // declares. Each application holds its own copy of a declaration, so one
+  // declaration may be handed over once per application that built it.
   template <typename Visit>
   auto WalkOwnDeclarations(Visit& visit)
       -> std::invoke_result_t<Visit&, const slang::ast::Symbol&>;
@@ -1766,8 +1738,6 @@ class UnitLowerer {
   // the signature states in its own and the walk lowering the scope hands on.
   std::unordered_map<const slang::ast::Scope*, hir::ScopeClassSignature>
       scope_classes_;
-  bool blocks_published_apart_ = false;
-  bool applications_published_apart_ = false;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the
@@ -1833,16 +1803,26 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
     return SpecializationName(cls, Specialization());
   };
   if constexpr (std::is_void_v<Result>) {
-    WalkDeclarationScopes(*scope_, owned, name_of);
-    for (const slang::ast::ClassType* spec : facts_.PlacedIn(*home_)) {
-      owned(*spec);
-      WalkDeclarationScopes(*spec, owned, name_of);
+    for (const slang::ast::Scope* application : applications_) {
+      WalkDeclarationScopes(*application, owned, name_of);
+      for (const slang::ast::ClassType* spec :
+           facts_.PlacedIn(application->asSymbol())) {
+        owned(*spec);
+        WalkDeclarationScopes(*spec, owned, name_of);
+      }
     }
   } else {
-    if (auto r = WalkDeclarationScopes(*scope_, owned, name_of); !r) return r;
-    for (const slang::ast::ClassType* spec : facts_.PlacedIn(*home_)) {
-      if (auto r = owned(*spec); !r) return r;
-      if (auto r = WalkDeclarationScopes(*spec, owned, name_of); !r) return r;
+    for (const slang::ast::Scope* application : applications_) {
+      if (auto r = WalkDeclarationScopes(*application, owned, name_of); !r) {
+        return r;
+      }
+      for (const slang::ast::ClassType* spec :
+           facts_.PlacedIn(application->asSymbol())) {
+        if (auto r = owned(*spec); !r) return r;
+        if (auto r = WalkDeclarationScopes(*spec, owned, name_of); !r) {
+          return r;
+        }
+      }
     }
     return {};
   }

@@ -59,11 +59,12 @@ resolution serves both accessing the target's value and observing its changes.
    elaboration time, and no part of a route carries a string. A step is one element of the path the
    source wrote (LRM 23.6), the declaration it names and the selects written beside that name, so
    every kind of step selects the same way. A step onto an instance is the published member holding
-   it, selected; a step into a loop's block is the construct's published entry, selected by the
-   block's position; a step into a block a conditional chose is the construct's entry, which holds
-   at most one object and takes no select. Either block step views what it reached as that block's
-   published class. A leaf is a published member, a published disable target, or a direct call to a
-   published subroutine.
+   it, selected; a step into a loop's block is the construct's published entry, asked for the block
+   built where the index stood at the value the source wrote (LRM 27.4), since how many blocks came
+   before it is the object's and not the referrer's; a step into a block a conditional chose is the
+   construct's entry, which holds at most one object and takes no select. Either block step views
+   what it reached as that block's published class. A leaf is a published member, a published
+   disable target, or a direct call to a published subroutine.
 
    A step's identity comes from one of two places, which changes nothing about its cost or its
    realization: an in-artifact member identity when the emitting artifact owns both classes, and the
@@ -213,7 +214,7 @@ declared is refused there too. Both seal to a cell, and the body and its sensiti
 endpoint.
 
 **A route through generate blocks and another unit.** In `top.gen[2].child.x`, `top -> gen[2]` is
-the loop construct's published entry selected at the block's position and viewed as the block's
+the loop construct's published entry asked for the block built at index 2 and viewed as the block's
 published class, `gen[2] -> child` is the published member holding the child instance, and
 `child -> x` is a member of `child`'s published class. Every step is typed, whether its class
 belongs to the referrer's own artifact or another unit published it.
