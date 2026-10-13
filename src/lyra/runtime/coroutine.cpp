@@ -50,10 +50,6 @@ void Activation::Withdraw() noexcept {
   }
 }
 
-auto Activation::initial_suspend() noexcept -> std::suspend_always {
-  return {};
-}
-
 auto Activation::ContinuationAfterCompletion() const noexcept
     -> std::coroutine_handle<> {
   if (continuation) {

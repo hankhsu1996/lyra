@@ -894,6 +894,42 @@ void lyra_rt_shortreal_cell_initialize(
 void lyra_rt_shortreal_cell_set(void* cell, const void* value);
 void lyra_rt_shortreal_cell_arm_sampling(void* cell);
 auto lyra_rt_shortreal_cell_sampled_load(void* cell, void* out) -> void*;
+auto lyra_rt_string_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_string_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool;
+void lyra_rt_string_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_string_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_string_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_string_ref_end_takeover(void* reference, std::int64_t level);
+auto lyra_rt_real_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_real_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool;
+void lyra_rt_real_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_real_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_real_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_real_ref_end_takeover(void* reference, std::int64_t level);
+auto lyra_rt_shortreal_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_shortreal_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool;
+void lyra_rt_shortreal_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_shortreal_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_shortreal_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_shortreal_ref_end_takeover(void* reference, std::int64_t level);
 
 // What the ticks of one clocking event settled for one expression (LRM
 // 16.9.3), reached only through the history's own address. The entry names the
@@ -1246,6 +1282,18 @@ void lyra_rt_managedref_cell_initialize(
 void lyra_rt_managedref_cell_set(void* cell, const void* value);
 void lyra_rt_managedref_cell_arm_sampling(void* cell);
 auto lyra_rt_managedref_cell_sampled_load(void* cell, void* out) -> void*;
+auto lyra_rt_managedref_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_managedref_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool;
+void lyra_rt_managedref_cell_end_takeover(void* cell, std::int64_t level);
+auto lyra_rt_managedref_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t;
+auto lyra_rt_managedref_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool;
+void lyra_rt_managedref_ref_end_takeover(void* reference, std::int64_t level);
 
 // The tuple domain, an unpacked struct (LRM 7.2) among them. A tuple is laid
 // out by the program that uses it, opening with its type's operation table, and

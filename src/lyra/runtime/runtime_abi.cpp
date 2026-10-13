@@ -308,6 +308,43 @@ auto RefSampledLoad(void* reference, void* out) -> void* {
   return Emplace(out, LentAt<T>(reference).SampledGet());
 }
 
+// A procedural continuous assignment on a whole variable (LRM 10.6), reached
+// through its cell or through storage a caller lent.
+template <value::LyraValue T>
+auto CellBeginTakeover(void* cell, std::int64_t level) -> std::int64_t {
+  return static_cast<Var<T>*>(cell)->BeginTakeover(level);
+}
+
+template <value::LyraValue T>
+auto CellDriveTakeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return static_cast<Var<T>*>(cell)->DriveTakeover(
+      level, generation, Read<T>(value));
+}
+
+template <value::LyraValue T>
+void CellEndTakeover(void* cell, std::int64_t level) {
+  static_cast<Var<T>*>(cell)->EndTakeover(level);
+}
+
+template <value::LyraValue T>
+auto RefBeginTakeover(void* reference, std::int64_t level) -> std::int64_t {
+  return LentAt<T>(reference).BeginTakeover(level);
+}
+
+template <value::LyraValue T>
+auto RefDriveTakeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return LentAt<T>(reference).DriveTakeover(level, generation, Read<T>(value));
+}
+
+template <value::LyraValue T>
+void RefEndTakeover(void* reference, std::int64_t level) {
+  LentAt<T>(reference).EndTakeover(level);
+}
+
 // A reference to the whole of a variable whose value a reference names as the
 // bytes its type lays out -- a tuple, an integral value wider than a word, a
 // fixed-size unpacked array. No object of the runtime's stands for such a value
@@ -2096,6 +2133,9 @@ using lyra::runtime::BuildReference;
 using lyra::runtime::BytesRefArmSampling;
 using lyra::runtime::CancellationTarget;
 using lyra::runtime::CellAt;
+using lyra::runtime::CellBeginTakeover;
+using lyra::runtime::CellDriveTakeover;
+using lyra::runtime::CellEndTakeover;
 using lyra::runtime::ChannelCancellation;
 using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
@@ -2183,6 +2223,9 @@ using lyra::runtime::ReadReport;
 using lyra::runtime::RealTimeInUnit;
 using lyra::runtime::ReceiveDeparture;
 using lyra::runtime::RefArmSampling;
+using lyra::runtime::RefBeginTakeover;
+using lyra::runtime::RefDriveTakeover;
+using lyra::runtime::RefEndTakeover;
 using lyra::runtime::ReferArrayElement;
 using lyra::runtime::ReferElement;
 using lyra::runtime::ReferToCell;
@@ -3682,6 +3725,96 @@ auto lyra_rt_shortreal_cell_sampled_load(void* cell, void* out) -> void* {
   return Emplace(out, static_cast<Var<ShortReal>*>(cell)->SampledGet());
 }
 
+auto lyra_rt_string_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellBeginTakeover<String>(cell, level);
+}
+
+auto lyra_rt_string_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellDriveTakeover<String>(cell, level, generation, value);
+}
+
+void lyra_rt_string_cell_end_takeover(void* cell, std::int64_t level) {
+  CellEndTakeover<String>(cell, level);
+}
+
+auto lyra_rt_string_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return RefBeginTakeover<String>(reference, level);
+}
+
+auto lyra_rt_string_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return RefDriveTakeover<String>(reference, level, generation, value);
+}
+
+void lyra_rt_string_ref_end_takeover(void* reference, std::int64_t level) {
+  RefEndTakeover<String>(reference, level);
+}
+
+auto lyra_rt_real_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellBeginTakeover<Real>(cell, level);
+}
+
+auto lyra_rt_real_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellDriveTakeover<Real>(cell, level, generation, value);
+}
+
+void lyra_rt_real_cell_end_takeover(void* cell, std::int64_t level) {
+  CellEndTakeover<Real>(cell, level);
+}
+
+auto lyra_rt_real_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return RefBeginTakeover<Real>(reference, level);
+}
+
+auto lyra_rt_real_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return RefDriveTakeover<Real>(reference, level, generation, value);
+}
+
+void lyra_rt_real_ref_end_takeover(void* reference, std::int64_t level) {
+  RefEndTakeover<Real>(reference, level);
+}
+
+auto lyra_rt_shortreal_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellBeginTakeover<ShortReal>(cell, level);
+}
+
+auto lyra_rt_shortreal_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellDriveTakeover<ShortReal>(cell, level, generation, value);
+}
+
+void lyra_rt_shortreal_cell_end_takeover(void* cell, std::int64_t level) {
+  CellEndTakeover<ShortReal>(cell, level);
+}
+
+auto lyra_rt_shortreal_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return RefBeginTakeover<ShortReal>(reference, level);
+}
+
+auto lyra_rt_shortreal_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return RefDriveTakeover<ShortReal>(reference, level, generation, value);
+}
+
+void lyra_rt_shortreal_ref_end_takeover(void* reference, std::int64_t level) {
+  RefEndTakeover<ShortReal>(reference, level);
+}
+
 void lyra_rt_string_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth) {
   static_cast<SampledHistory<String>*>(history)->Install(
@@ -4678,6 +4811,36 @@ void lyra_rt_managedref_cell_arm_sampling(void* cell) {
 
 auto lyra_rt_managedref_cell_sampled_load(void* cell, void* out) -> void* {
   return Emplace(out, static_cast<Var<ObjectRef>*>(cell)->SampledGet());
+}
+
+auto lyra_rt_managedref_cell_begin_takeover(void* cell, std::int64_t level)
+    -> std::int64_t {
+  return CellBeginTakeover<ObjectRef>(cell, level);
+}
+
+auto lyra_rt_managedref_cell_drive_takeover(
+    void* cell, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return CellDriveTakeover<ObjectRef>(cell, level, generation, value);
+}
+
+void lyra_rt_managedref_cell_end_takeover(void* cell, std::int64_t level) {
+  CellEndTakeover<ObjectRef>(cell, level);
+}
+
+auto lyra_rt_managedref_ref_begin_takeover(void* reference, std::int64_t level)
+    -> std::int64_t {
+  return RefBeginTakeover<ObjectRef>(reference, level);
+}
+
+auto lyra_rt_managedref_ref_drive_takeover(
+    void* reference, std::int64_t level, std::int64_t generation,
+    const void* value) -> bool {
+  return RefDriveTakeover<ObjectRef>(reference, level, generation, value);
+}
+
+void lyra_rt_managedref_ref_end_takeover(void* reference, std::int64_t level) {
+  RefEndTakeover<ObjectRef>(reference, level);
 }
 
 auto lyra_rt_tuple_cell_get(void* cell) -> const void* {
@@ -8009,28 +8172,27 @@ auto lyra_rt_bit8_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_bit8_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<Bit8>(cell).BeginTakeover(level);
+  return CellBeginTakeover<Bit8>(cell, level);
 }
 auto lyra_rt_bit8_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<Bit8>(cell).DriveTakeover(level, generation, Read<Bit8>(value));
+  return CellDriveTakeover<Bit8>(cell, level, generation, value);
 }
 void lyra_rt_bit8_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<Bit8>(cell).EndTakeover(level);
+  CellEndTakeover<Bit8>(cell, level);
 }
 auto lyra_rt_bit8_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
-  return lyra::runtime::LentAt<Bit8>(reference).BeginTakeover(level);
+  return RefBeginTakeover<Bit8>(reference, level);
 }
 auto lyra_rt_bit8_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return lyra::runtime::LentAt<Bit8>(reference).DriveTakeover(
-      level, generation, Read<Bit8>(value));
+  return RefDriveTakeover<Bit8>(reference, level, generation, value);
 }
 void lyra_rt_bit8_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::LentAt<Bit8>(reference).EndTakeover(level);
+  RefEndTakeover<Bit8>(reference, level);
 }
 auto lyra_rt_bit8_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit8>(cell, out);
@@ -8112,29 +8274,27 @@ auto lyra_rt_bit16_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_bit16_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<Bit16>(cell).BeginTakeover(level);
+  return CellBeginTakeover<Bit16>(cell, level);
 }
 auto lyra_rt_bit16_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<Bit16>(cell).DriveTakeover(
-      level, generation, Read<Bit16>(value));
+  return CellDriveTakeover<Bit16>(cell, level, generation, value);
 }
 void lyra_rt_bit16_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<Bit16>(cell).EndTakeover(level);
+  CellEndTakeover<Bit16>(cell, level);
 }
 auto lyra_rt_bit16_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
-  return lyra::runtime::LentAt<Bit16>(reference).BeginTakeover(level);
+  return RefBeginTakeover<Bit16>(reference, level);
 }
 auto lyra_rt_bit16_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return lyra::runtime::LentAt<Bit16>(reference).DriveTakeover(
-      level, generation, Read<Bit16>(value));
+  return RefDriveTakeover<Bit16>(reference, level, generation, value);
 }
 void lyra_rt_bit16_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::LentAt<Bit16>(reference).EndTakeover(level);
+  RefEndTakeover<Bit16>(reference, level);
 }
 auto lyra_rt_bit16_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit16>(cell, out);
@@ -8216,29 +8376,27 @@ auto lyra_rt_bit32_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_bit32_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<Bit32>(cell).BeginTakeover(level);
+  return CellBeginTakeover<Bit32>(cell, level);
 }
 auto lyra_rt_bit32_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<Bit32>(cell).DriveTakeover(
-      level, generation, Read<Bit32>(value));
+  return CellDriveTakeover<Bit32>(cell, level, generation, value);
 }
 void lyra_rt_bit32_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<Bit32>(cell).EndTakeover(level);
+  CellEndTakeover<Bit32>(cell, level);
 }
 auto lyra_rt_bit32_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
-  return lyra::runtime::LentAt<Bit32>(reference).BeginTakeover(level);
+  return RefBeginTakeover<Bit32>(reference, level);
 }
 auto lyra_rt_bit32_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return lyra::runtime::LentAt<Bit32>(reference).DriveTakeover(
-      level, generation, Read<Bit32>(value));
+  return RefDriveTakeover<Bit32>(reference, level, generation, value);
 }
 void lyra_rt_bit32_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::LentAt<Bit32>(reference).EndTakeover(level);
+  RefEndTakeover<Bit32>(reference, level);
 }
 auto lyra_rt_bit32_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit32>(cell, out);
@@ -8320,29 +8478,27 @@ auto lyra_rt_bit64_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_bit64_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<Bit64>(cell).BeginTakeover(level);
+  return CellBeginTakeover<Bit64>(cell, level);
 }
 auto lyra_rt_bit64_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<Bit64>(cell).DriveTakeover(
-      level, generation, Read<Bit64>(value));
+  return CellDriveTakeover<Bit64>(cell, level, generation, value);
 }
 void lyra_rt_bit64_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<Bit64>(cell).EndTakeover(level);
+  CellEndTakeover<Bit64>(cell, level);
 }
 auto lyra_rt_bit64_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
-  return lyra::runtime::LentAt<Bit64>(reference).BeginTakeover(level);
+  return RefBeginTakeover<Bit64>(reference, level);
 }
 auto lyra_rt_bit64_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return lyra::runtime::LentAt<Bit64>(reference).DriveTakeover(
-      level, generation, Read<Bit64>(value));
+  return RefDriveTakeover<Bit64>(reference, level, generation, value);
 }
 void lyra_rt_bit64_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::LentAt<Bit64>(reference).EndTakeover(level);
+  RefEndTakeover<Bit64>(reference, level);
 }
 auto lyra_rt_bit64_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Bit64>(cell, out);
@@ -8425,29 +8581,27 @@ auto lyra_rt_logic8_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_logic8_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<Logic8>(cell).BeginTakeover(level);
+  return CellBeginTakeover<Logic8>(cell, level);
 }
 auto lyra_rt_logic8_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<Logic8>(cell).DriveTakeover(
-      level, generation, Read<Logic8>(value));
+  return CellDriveTakeover<Logic8>(cell, level, generation, value);
 }
 void lyra_rt_logic8_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<Logic8>(cell).EndTakeover(level);
+  CellEndTakeover<Logic8>(cell, level);
 }
 auto lyra_rt_logic8_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
-  return lyra::runtime::LentAt<Logic8>(reference).BeginTakeover(level);
+  return RefBeginTakeover<Logic8>(reference, level);
 }
 auto lyra_rt_logic8_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return lyra::runtime::LentAt<Logic8>(reference).DriveTakeover(
-      level, generation, Read<Logic8>(value));
+  return RefDriveTakeover<Logic8>(reference, level, generation, value);
 }
 void lyra_rt_logic8_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::LentAt<Logic8>(reference).EndTakeover(level);
+  RefEndTakeover<Logic8>(reference, level);
 }
 auto lyra_rt_logic8_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic8>(cell, out);
@@ -8588,29 +8742,27 @@ auto lyra_rt_logic16_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_logic16_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<Logic16>(cell).BeginTakeover(level);
+  return CellBeginTakeover<Logic16>(cell, level);
 }
 auto lyra_rt_logic16_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<Logic16>(cell).DriveTakeover(
-      level, generation, Read<Logic16>(value));
+  return CellDriveTakeover<Logic16>(cell, level, generation, value);
 }
 void lyra_rt_logic16_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<Logic16>(cell).EndTakeover(level);
+  CellEndTakeover<Logic16>(cell, level);
 }
 auto lyra_rt_logic16_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
-  return lyra::runtime::LentAt<Logic16>(reference).BeginTakeover(level);
+  return RefBeginTakeover<Logic16>(reference, level);
 }
 auto lyra_rt_logic16_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return lyra::runtime::LentAt<Logic16>(reference).DriveTakeover(
-      level, generation, Read<Logic16>(value));
+  return RefDriveTakeover<Logic16>(reference, level, generation, value);
 }
 void lyra_rt_logic16_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::LentAt<Logic16>(reference).EndTakeover(level);
+  RefEndTakeover<Logic16>(reference, level);
 }
 auto lyra_rt_logic16_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic16>(cell, out);
@@ -8752,29 +8904,27 @@ auto lyra_rt_logic32_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_logic32_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<Logic32>(cell).BeginTakeover(level);
+  return CellBeginTakeover<Logic32>(cell, level);
 }
 auto lyra_rt_logic32_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<Logic32>(cell).DriveTakeover(
-      level, generation, Read<Logic32>(value));
+  return CellDriveTakeover<Logic32>(cell, level, generation, value);
 }
 void lyra_rt_logic32_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<Logic32>(cell).EndTakeover(level);
+  CellEndTakeover<Logic32>(cell, level);
 }
 auto lyra_rt_logic32_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
-  return lyra::runtime::LentAt<Logic32>(reference).BeginTakeover(level);
+  return RefBeginTakeover<Logic32>(reference, level);
 }
 auto lyra_rt_logic32_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return lyra::runtime::LentAt<Logic32>(reference).DriveTakeover(
-      level, generation, Read<Logic32>(value));
+  return RefDriveTakeover<Logic32>(reference, level, generation, value);
 }
 void lyra_rt_logic32_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::LentAt<Logic32>(reference).EndTakeover(level);
+  RefEndTakeover<Logic32>(reference, level);
 }
 auto lyra_rt_logic32_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic32>(cell, out);
@@ -8916,29 +9066,27 @@ auto lyra_rt_logic64_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_logic64_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<Logic64>(cell).BeginTakeover(level);
+  return CellBeginTakeover<Logic64>(cell, level);
 }
 auto lyra_rt_logic64_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return CellAt<Logic64>(cell).DriveTakeover(
-      level, generation, Read<Logic64>(value));
+  return CellDriveTakeover<Logic64>(cell, level, generation, value);
 }
 void lyra_rt_logic64_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<Logic64>(cell).EndTakeover(level);
+  CellEndTakeover<Logic64>(cell, level);
 }
 auto lyra_rt_logic64_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
-  return lyra::runtime::LentAt<Logic64>(reference).BeginTakeover(level);
+  return RefBeginTakeover<Logic64>(reference, level);
 }
 auto lyra_rt_logic64_ref_drive_takeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return lyra::runtime::LentAt<Logic64>(reference).DriveTakeover(
-      level, generation, Read<Logic64>(value));
+  return RefDriveTakeover<Logic64>(reference, level, generation, value);
 }
 void lyra_rt_logic64_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::LentAt<Logic64>(reference).EndTakeover(level);
+  RefEndTakeover<Logic64>(reference, level);
 }
 auto lyra_rt_logic64_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<Logic64>(cell, out);
@@ -9084,7 +9232,7 @@ auto lyra_rt_bit_wide_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_bit_wide_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<BitWide>(cell).BeginTakeover(level);
+  return CellBeginTakeover<BitWide>(cell, level);
 }
 auto lyra_rt_bit_wide_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
@@ -9092,7 +9240,7 @@ auto lyra_rt_bit_wide_cell_drive_takeover(
   return CellAt<BitWide>(cell).DriveTakeoverBytes(level, generation, value);
 }
 void lyra_rt_bit_wide_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<BitWide>(cell).EndTakeover(level);
+  CellEndTakeover<BitWide>(cell, level);
 }
 auto lyra_rt_bit_wide_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {
@@ -9209,7 +9357,7 @@ auto lyra_rt_logic_wide_cell_sampled_load(void* cell, void* out) -> void* {
 }
 auto lyra_rt_logic_wide_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
-  return CellAt<LogicWide>(cell).BeginTakeover(level);
+  return CellBeginTakeover<LogicWide>(cell, level);
 }
 auto lyra_rt_logic_wide_cell_drive_takeover(
     void* cell, std::int64_t level, std::int64_t generation, const void* value)
@@ -9217,7 +9365,7 @@ auto lyra_rt_logic_wide_cell_drive_takeover(
   return CellAt<LogicWide>(cell).DriveTakeoverBytes(level, generation, value);
 }
 void lyra_rt_logic_wide_cell_end_takeover(void* cell, std::int64_t level) {
-  CellAt<LogicWide>(cell).EndTakeover(level);
+  CellEndTakeover<LogicWide>(cell, level);
 }
 auto lyra_rt_logic_wide_ref_begin_takeover(void* reference, std::int64_t level)
     -> std::int64_t {

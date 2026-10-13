@@ -76,7 +76,10 @@ target and why a forced value is not a driver; this file does not restate it.
       for what its port connection drives it with is forced without what drives it being touched:
       it, every port it is handed on to, and every wait on either follow the forced value until the
       release, and show what drives it again from then. Such a port is forced as any variable is,
-      alone or as a member of a concatenation.
+      alone or as a member of a concatenation. A variable of every type a takeover may name is taken
+      over on both backends -- integral, `real`, `shortreal`, `string` and a class handle -- and the
+      same holds for `assign` and `deassign`. A `chandle` may not be named (LRM 6.14), and the front
+      end refuses it.
 
 - [x] PCA4 -- `force` and `release` on a net, overriding the resolution rather than contributing to
       it, and on release resolving the drivers immediately so the net takes their value in the same
@@ -86,11 +89,12 @@ target and why a forced value is not a driver; this file does not restate it.
 - [ ] PCA5 -- A constant bit-select or part-select of a vector net as a force target, which is what
       makes the range the unit of a takeover rather than the signal.
 
-- [ ] PCA6 -- A force naming a variable of an unpacked structure or a fixed-size unpacked array type
-      gets one answer on both backends. The variable a force may name is a singular one (LRM
-      10.6.2), which neither of those is (LRM 6.4). The front end accepts such a force, the C++
-      backend carries it out, and the execution backend ends the build as a failure of the
-      compiler's own.
+- [ ] PCA6 -- A `force` or an `assign` naming a whole variable of an unpacked structure, union or
+      array type -- fixed-size, dynamic, queue or associative -- is refused. The variable either may
+      name is a singular one (LRM 10.6.1, 10.6.2), which none of those is (LRM 6.4), and no open
+      simulator takes the text, so nothing argues for running it on request. The front end accepts
+      it today, which is its defect to correct; until then the C++ backend carries it out and the
+      execution backend ends the build as a failure of the compiler's own.
 
 - [ ] PCA7 -- A force on part of a variable, when the caller asks for it. The standard forbids it,
       but its meaning follows from the rules for a whole variable: a procedural write leaves the
@@ -99,6 +103,12 @@ target and why a forced value is not a driver; this file does not restate it.
       assignment that drives it. Built on PCA5's range, since this is the same range on a variable;
       a write to such a variable then keeps the forced part and stores the rest. Lyra refuses it
       today even when asked, and a design that leans on it stops there.
+
+- [ ] PCA8 -- A takeover of an `event` variable (LRM 10.6, 15.5.5). Refused where it is written, as
+      giving an event a value is.
+
+- [ ] PCA9 -- A force on a variable reached through a module's `ref` port. It ends the run as a
+      failure of the compiler's own on both backends, for an `int` and a `real` alike.
 
 ## What a read costs, settled
 

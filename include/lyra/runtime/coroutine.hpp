@@ -78,8 +78,6 @@ struct Activation {
   // resume it.
   void Withdraw() noexcept;
 
-  static auto initial_suspend() noexcept -> std::suspend_always;
-
   // What runs once this frame completes: the frame awaiting it (a task
   // returning to its caller), or nothing, so a process body suspends at its end
   // and the engine sees `done()`.
@@ -244,17 +242,21 @@ class Coroutine {
       return Coroutine{handle};
     }
 
+    // Lazy: the frame stops before its first statement, so whoever made it
+    // decides when it starts.
+    auto initial_suspend() noexcept -> std::suspend_always;
+
     // On completion, control transfers to what continues this frame. The frame
     // the language hands over is the one completing, so its promise is where
     // that is read.
     struct FinalAwaiter {
-      [[nodiscard]] static auto await_ready() noexcept -> bool;
-      [[nodiscard]] static auto await_suspend(
-          std::coroutine_handle<promise_type> completing) noexcept
+      [[nodiscard]] auto await_ready() const noexcept -> bool;
+      [[nodiscard]] auto await_suspend(
+          std::coroutine_handle<promise_type> completing) const noexcept
           -> std::coroutine_handle<>;
-      static void await_resume() noexcept;
+      void await_resume() const noexcept;
     };
-    static auto final_suspend() noexcept -> FinalAwaiter;
+    auto final_suspend() noexcept -> FinalAwaiter;
   };
 
   Coroutine() = default;
@@ -331,19 +333,26 @@ template <class T>
 Coroutine<T>::promise_type::~promise_type() = default;
 
 template <class T>
-auto Coroutine<T>::promise_type::FinalAwaiter::await_ready() noexcept -> bool {
+auto Coroutine<T>::promise_type::initial_suspend() noexcept
+    -> std::suspend_always {
+  return {};
+}
+
+template <class T>
+auto Coroutine<T>::promise_type::FinalAwaiter::await_ready() const noexcept
+    -> bool {
   return false;
 }
 
 template <class T>
 auto Coroutine<T>::promise_type::FinalAwaiter::await_suspend(
-    std::coroutine_handle<promise_type> completing) noexcept
+    std::coroutine_handle<promise_type> completing) const noexcept
     -> std::coroutine_handle<> {
   return completing.promise().ContinuationAfterCompletion();
 }
 
 template <class T>
-void Coroutine<T>::promise_type::FinalAwaiter::await_resume() noexcept {
+void Coroutine<T>::promise_type::FinalAwaiter::await_resume() const noexcept {
 }
 
 template <class T>

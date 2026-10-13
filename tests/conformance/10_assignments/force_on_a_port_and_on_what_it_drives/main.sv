@@ -9,7 +9,7 @@
 // initial value the port holds (LRM 23.3.3.2). A force is no part of the
 // process that made it, so it stays in effect, still following its expression,
 // when that process is ended. A port is forced like any variable: as one
-// member of a concatenation, and whatever its width.
+// member of a concatenation, whatever its width, and whatever its type.
 module Leaf (
     input logic [7:0] in
 );
@@ -26,11 +26,18 @@ module WideLeaf (
 );
 endmodule
 
+module RealLeaf (
+    input real in
+);
+endmodule
+
 module Top;
   logic [7:0] src;
   logic [7:0] own;
   logic [99:0] wide_src;
+  real real_src;
   WideLeaf wide_leaf (.in(wide_src));
+  RealLeaf real_leaf (.in(real_src));
   Mid mid (.in(src));
   Mid open (.in());
 
@@ -138,6 +145,20 @@ module Top;
     #1;
     if (wide_leaf.in !== {4'hD, 96'd2})
       $fatal(1, "a released wide port was %h", wide_leaf.in);
+
+    real_src = 1.5;
+    #1;
+    force real_leaf.in = 2.5;
+    #1;
+    if (real_leaf.in != 2.5)
+      $fatal(1, "a forced real port was %f, expected 2.5", real_leaf.in);
+    if (real_src != 1.5)
+      $fatal(1, "forcing a real port moved its source to %f", real_src);
+    real_src = 3.5;
+    release real_leaf.in;
+    #1;
+    if (real_leaf.in != 3.5)
+      $fatal(1, "a released real port was %f, expected 3.5", real_leaf.in);
 
     fork
       begin

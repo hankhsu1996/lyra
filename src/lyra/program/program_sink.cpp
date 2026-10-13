@@ -624,6 +624,32 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_shortreal_cell_arm_sampling);
   add("lyra_rt_shortreal_cell_sampled_load",
       &lyra_rt_shortreal_cell_sampled_load);
+  add("lyra_rt_string_cell_begin_takeover",
+      &lyra_rt_string_cell_begin_takeover);
+  add("lyra_rt_string_cell_drive_takeover",
+      &lyra_rt_string_cell_drive_takeover);
+  add("lyra_rt_string_cell_end_takeover", &lyra_rt_string_cell_end_takeover);
+  add("lyra_rt_string_ref_begin_takeover", &lyra_rt_string_ref_begin_takeover);
+  add("lyra_rt_string_ref_drive_takeover", &lyra_rt_string_ref_drive_takeover);
+  add("lyra_rt_string_ref_end_takeover", &lyra_rt_string_ref_end_takeover);
+  add("lyra_rt_real_cell_begin_takeover", &lyra_rt_real_cell_begin_takeover);
+  add("lyra_rt_real_cell_drive_takeover", &lyra_rt_real_cell_drive_takeover);
+  add("lyra_rt_real_cell_end_takeover", &lyra_rt_real_cell_end_takeover);
+  add("lyra_rt_real_ref_begin_takeover", &lyra_rt_real_ref_begin_takeover);
+  add("lyra_rt_real_ref_drive_takeover", &lyra_rt_real_ref_drive_takeover);
+  add("lyra_rt_real_ref_end_takeover", &lyra_rt_real_ref_end_takeover);
+  add("lyra_rt_shortreal_cell_begin_takeover",
+      &lyra_rt_shortreal_cell_begin_takeover);
+  add("lyra_rt_shortreal_cell_drive_takeover",
+      &lyra_rt_shortreal_cell_drive_takeover);
+  add("lyra_rt_shortreal_cell_end_takeover",
+      &lyra_rt_shortreal_cell_end_takeover);
+  add("lyra_rt_shortreal_ref_begin_takeover",
+      &lyra_rt_shortreal_ref_begin_takeover);
+  add("lyra_rt_shortreal_ref_drive_takeover",
+      &lyra_rt_shortreal_ref_drive_takeover);
+  add("lyra_rt_shortreal_ref_end_takeover",
+      &lyra_rt_shortreal_ref_end_takeover);
   add("lyra_rt_string_sampled_history_install",
       &lyra_rt_string_sampled_history_install);
   add("lyra_rt_string_sampled_history_push",
@@ -968,6 +994,18 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_managedref_cell_arm_sampling);
   add("lyra_rt_managedref_cell_sampled_load",
       &lyra_rt_managedref_cell_sampled_load);
+  add("lyra_rt_managedref_cell_begin_takeover",
+      &lyra_rt_managedref_cell_begin_takeover);
+  add("lyra_rt_managedref_cell_drive_takeover",
+      &lyra_rt_managedref_cell_drive_takeover);
+  add("lyra_rt_managedref_cell_end_takeover",
+      &lyra_rt_managedref_cell_end_takeover);
+  add("lyra_rt_managedref_ref_begin_takeover",
+      &lyra_rt_managedref_ref_begin_takeover);
+  add("lyra_rt_managedref_ref_drive_takeover",
+      &lyra_rt_managedref_ref_drive_takeover);
+  add("lyra_rt_managedref_ref_end_takeover",
+      &lyra_rt_managedref_ref_end_takeover);
   add("lyra_rt_managedref_eq", &lyra_rt_managedref_eq);
   add("lyra_rt_managedref_ne", &lyra_rt_managedref_ne);
   add("lyra_rt_managedref_case_equal", &lyra_rt_managedref_case_equal);

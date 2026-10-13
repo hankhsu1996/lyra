@@ -204,6 +204,11 @@ constexpr DomainSet kObjectsThatStateThemselves =
         Domain::kString, Domain::kChandle, Domain::kTuple, Domain::kManagedRef};
 constexpr DomainSet kVariableObjects = kObjectsThatStateThemselves | kArrays;
 constexpr DomainSet kVariableValues = kIntegral | kVariableObjects;
+// What a variable a procedural continuous assignment takes over may hold: a
+// singular value (LRM 10.6.1, 10.6.2, 6.4), but no chandle, which no
+// continuous assignment may name (LRM 6.14).
+constexpr DomainSet kVariableValuesTakenOver =
+    kIntegral | kReals | DomainSet{Domain::kString, Domain::kManagedRef};
 
 constexpr std::array kForAssociativeArrays{
     RealizedFor{.domains = {Domain::kAssocArray}}};
@@ -278,10 +283,14 @@ constexpr std::array kForIntegralNets{
     RealizedFor{.domains = kFourStateIntegral}};
 constexpr std::array kForAggregateNets{RealizedFor{.domains = kAggregateNets}};
 
+// A variable is taken over whether reached through its cell or through storage
+// lent for it.
 constexpr std::array kTakeovers{
-    ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kIntegral},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kCell, .domains = kVariableValuesTakenOver},
     ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
-    ThroughWrapper{.wrapper = WrapperKind::kRef, .domains = kIntegral}};
+    ThroughWrapper{
+        .wrapper = WrapperKind::kRef, .domains = kVariableValuesTakenOver}};
 // A variable's cell is installed with its declaration's value, which fixes how
 // wide a cell of words is.
 constexpr std::array kInstalls{

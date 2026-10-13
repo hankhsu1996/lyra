@@ -27,4 +27,10 @@ auto RefuseReadingAnEventAsAValue(
     const slang::ast::Type& operand, diag::SourceSpan span)
     -> diag::Result<void>;
 
+// Taking a variable of `target`'s type over by a procedural continuous
+// assignment, or ending one (LRM 10.6): what is taken over is the handle.
+auto RefuseTakingOverAnEvent(
+    const slang::ast::Type& target, diag::SourceSpan span)
+    -> diag::Result<void>;
+
 }  // namespace lyra::lowering::ast_to_hir
