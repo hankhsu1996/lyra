@@ -13,7 +13,7 @@ BlackParrot:1x1:hello:
   says: cannot be written to by any other process
 Caliptra:default:hello:
   stops: build
-  says: "'ref' arguments can only be used in 'automatic' subroutines"
+  says: cannot mix continuous and procedural assignments to variable
 HammerBlade:16x8:hello:
   stops: run
   says: did not end within
