@@ -83,8 +83,6 @@ struct CompilationUnit {
       : name(std::move(name)), builtins(MakeBuiltins(types)) {
   }
 
-  // Two units are one when every node below them is, which is what decides
-  // that instances lowered apart can share one artifact.
   auto operator==(const CompilationUnit&) const -> bool = default;
 
   // Whether a reference to the unit named `unit_name` is one to this unit: a

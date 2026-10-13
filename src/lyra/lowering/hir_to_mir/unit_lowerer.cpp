@@ -28,6 +28,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
@@ -543,18 +544,24 @@ auto UnitLowerer::SettlePublishedScope(
   // It is the unit's object as other units see it, so it is the same time
   // scope (LRM 3.14.2.2) as the classes extending it.
   shape.time_resolution = scope.time_resolution;
-  // Each published subroutine is a method of it, its identity reserved here at
-  // the position the signature gave the subroutine, so a body reaching another
-  // instance of this unit calls it by position before its body is built.
+  // Each published subroutine is a virtual method it introduces, its identity
+  // reserved here at the position the signature gave the subroutine, so a body
+  // reaching another instance of this unit calls it by position before any
+  // class realizing the scope is built. Which body runs is the answer of the
+  // class the object is, which it carries.
   shape.callable_signatures = {
       scope.published.callables.size(),
       std::vector<CallableSignature>(
           scope.published.callables.size(),
-          CallableSignature{.virtual_dispatch = std::nullopt})};
-  std::vector<std::string> subroutine_names;
-  subroutine_names.reserve(scope.published.callables.size());
+          CallableSignature{.virtual_dispatch = mir::IntroducesVirtualSlot{}})};
+  base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines{
+      scope.published.callables.size()};
   for (const hir::StructuralSubroutineId id : scope.published.callables) {
-    subroutine_names.push_back(scope.structural_subroutines.Get(id).name);
+    const hir::SubroutineDecl& decl = scope.structural_subroutines.Get(id);
+    subroutines.Append(
+        PublishedSubroutine{
+            .name = decl.name,
+            .prototype = PrototypeOf(*this, decl, shape.self_pointer_type)});
   }
 
   std::vector<mir::FieldId> slots;
@@ -575,20 +582,8 @@ auto UnitLowerer::SettlePublishedScope(
                   .cls = mir::IntraUnitClassRef{.class_id = published},
                   .field_types = std::move(field_types),
                   .published = PublishedLayoutAt(signature, slots)},
-          .subroutine_names = std::move(subroutine_names),
-          .realizations = {}});
+          .subroutines = std::move(subroutines)});
   return settled.first->second.layout.published;
-}
-
-void UnitLowerer::AddRealization(
-    mir::ClassId published, ScopeRealization realization) {
-  const auto settled = published_scopes_.find(published);
-  if (settled == published_scopes_.end()) {
-    throw InternalError(
-        "UnitLowerer::AddRealization: a scope realizes a class the unit "
-        "published, which was laid out when the scope's shape was declared");
-  }
-  settled->second.realizations.push_back(std::move(realization));
 }
 
 auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
@@ -1070,8 +1065,9 @@ auto UnitLowerer::RecordPublishedScopeClass(
   // fields. What the unit adds while lowering its bodies is placed after them
   // and named by nothing, so the record states none of it; no other unit
   // extends the class, and its own unit makes every object of it, so nothing
-  // here needs its size. A published subroutine is one of its methods, called
-  // directly.
+  // here needs its size. A published subroutine is a virtual method it
+  // introduces and leaves to the classes realizing the scope, in the order the
+  // signature gives them.
   mir::ExternalClass record{
       .unit_name = scope.unit_name,
       .class_path = class_path,
@@ -1094,6 +1090,11 @@ auto UnitLowerer::RecordPublishedScopeClass(
     }
     slots.push_back(slot);
     field_types.push_back(field.type);
+  }
+  for (const hir::PublishedCallableId id : scope.signature.callables.Ids()) {
+    record.behaviors.push_back(
+        mir::PublishedBehavior{
+            .name = scope.signature.callables.Get(id).name, .is_pure = true});
   }
   external_scope_layouts_.emplace(
       hir_id,
@@ -1281,22 +1282,21 @@ auto UnitLowerer::MakeNamespaceCallableTarget(
       .unit_name = ref.unit_name, .callable_name = ref.subroutine_name};
 }
 
-auto UnitLowerer::MakeExternalUnitMethodTarget(
+auto UnitLowerer::PublishedSubroutineSlot(
     hir::ExternalScopeClassId scope_class,
-    hir::PublishedCallableId callable) const -> mir::DirectTarget {
-  const hir::ExternalScopeClass& scope =
-      Hir().external_scope_classes.Get(scope_class);
+    hir::PublishedCallableId callable) const -> mir::VirtualSlot {
   return std::visit(
       Overloaded{
-          [&](const mir::IntraUnitClassRef& own) -> mir::DirectTarget {
-            return mir::CallableTarget{
-                .owner = own.class_id, .slot = PublishedMethodOf(callable)};
+          [&](const mir::IntraUnitClassRef& own) -> mir::VirtualSlot {
+            return mir::LocalVirtualSlot{
+                .owner_class = own.class_id,
+                .slot = PublishedMethodOf(callable)};
           },
-          [&](const mir::CrossUnitClassRef& other) -> mir::DirectTarget {
-            return mir::ExternalUnitClassMethodTarget{
+          [&](const mir::CrossUnitClassRef& other) -> mir::VirtualSlot {
+            return mir::ExternalVirtualSlot{
                 .unit_name = other.unit_name,
                 .class_path = other.class_path,
-                .method_name = scope.signature.callables.Get(callable).name};
+                .ordinal = mir::BehaviorOrdinal{callable.value}};
           }},
       ScopeClassIdentity(scope_class));
 }

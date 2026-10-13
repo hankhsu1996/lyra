@@ -281,9 +281,11 @@ object system.
 The post-construction lifecycle bodies are the class's own, stated by whichever class supplies them
 rather than carried on a reference to a base: what roots a value in the tree says nothing about how
 one runs, and a class rooted there supplying none is what a scope publishes of its object. The
-published class holds the published members first and one non-virtual method per subroutine that
-forwards to the body, and the realization extends it with what lowering adds; nothing a scope
-published is overridden, so a referrer reaching it dispatches nothing.
+published class holds the published members first and one virtual method per subroutine, which the
+realization overrides with the body, and the realization extends it with what lowering adds. A
+published class may be realized by several classes, one per body its code compiled to, so a referrer
+reaching a published subroutine calls it through the object, which answers with its own class's
+body.
 
 A static method is an associated function under the type, invoked without an instance. A static
 property is a single cell the type owns, observed identically from every instance. Neither is part

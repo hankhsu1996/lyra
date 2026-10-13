@@ -1,6 +1,6 @@
 # A loop generate's blocks are one body built at every index
 
-Date: 2026-09-17 Status: accepted
+Date: 2026-09-17 Status: accepted; D2 revised 2026-10-12
 
 ## Context
 
@@ -106,6 +106,22 @@ list but the observation that a procedural loop had already answered this, for a
 defines as a superset of this one's.
 
 ### D2. Whether the blocks are one body is read off the lowered blocks, and nothing predicts it
+
+**Revised 2026-10-12: which body a block is, is now named before any block lowers, and nothing is
+compared.** The front end came to record which parameters each constant evaluation read, so what a
+block's index fixed -- in what the block declares and in its code -- is known from the front end
+alone ([a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5).
+Blocks of one name are each lowered and taken into one body, which holds what their constructions
+chose and counted; blocks of one name lowering to anything else are a defect, reported as one. What
+follows is the decision as it stood, and the requirement it names -- a correct program is never
+refused for want of sharing -- still holds, because what the front end's record misses is this
+compiler's defect rather than a case the design leaves open. Comparing every block with the bodies
+found before it cost the square of the number of distinct bodies. A loop is now one form, the loop
+the source wrote with the body that stands at each value of its index, and blocks built on their own
+are gone. Of the two positions listed below as still kept in how a read is stated, a select whose
+position the front end finds out of bounds now puts its index in the block's name, which costs a
+body per such block and is accepted for a construct that rare. The other, a read inside a function a
+procedure calls, no longer tells blocks apart.
 
 The index reaches every block as a value its construction supplies rather than as a constant folded
 into it. That is what makes one body possible at all, and it is also what makes the blocks

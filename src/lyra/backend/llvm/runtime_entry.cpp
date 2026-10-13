@@ -1802,7 +1802,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEnclosingScope:
     case support::BuiltinFn::kLoopBlocksAdd:
     case support::BuiltinFn::kLoopBlocksAt:
-    case support::BuiltinFn::kIsOfClass:
     case support::BuiltinFn::kAddOwnedChild:
     case support::BuiltinFn::kInstantiationEntry:
     case support::BuiltinFn::kInstantiationTable:

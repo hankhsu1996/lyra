@@ -7,10 +7,12 @@
 // language requires a constant there -- a range, a width, a count, a value a
 // class specialization is handed -- and the front end evaluated it. Which
 // parameters each such evaluation read is the front end's own record, kept as
-// it evaluates, so no position is listed here and none can be missed. What a
-// construction evaluates to decide what it builds -- a generate's selection,
-// a loop's count (LRM 27.4, 27.5) -- holds nothing compiled; the front end
-// marks such a read, and it is passed over.
+// it evaluates, so no position of the language is listed here and none can be
+// missed. Two kinds of evaluation hold nothing compiled and are passed over:
+// what a construction evaluates to decide what it builds -- a generate's
+// selection, a loop's count (LRM 27.4, 27.5) -- which the front end marks; and
+// the few positions this compiler lowers as the source wrote them, which it
+// lists itself.
 
 #include <algorithm>
 #include <cstddef>
@@ -48,9 +50,6 @@ namespace lyra::lowering::ast_to_hir {
 namespace {
 
 using ParameterSet = std::unordered_set<const slang::ast::ParameterSymbol*>;
-using References = std::unordered_map<
-    const slang::ast::ParameterSymbol*,
-    std::unordered_set<const slang::ast::Expression*>>;
 
 // The value parameters `scope` declares anywhere inside it -- its own, header
 // ones included, and those its blocks and subroutines declare -- which are the
@@ -68,19 +67,18 @@ auto ValueParametersOf(const slang::ast::Scope& scope) -> ParameterSet {
   return out;
 }
 
-// Every reference to the body's own parameters, and the ones that decide what
-// is compiled without the front end's record of what it evaluated saying so:
-// those a design element declared inside this one writes. A child instance's
-// body names its own parameters, so what is collected of a child is what it is
-// handed, which is an expression of this body.
+// What the body builds, and the parameters of it that decide what is compiled
+// without the front end's record of what it evaluated saying so: those a
+// design element declared inside this one reads. A child instance's body names
+// its own parameters, so what is collected of a child is what it is handed,
+// which is an expression of this body.
 struct EveryReference
     : slang::ast::ASTVisitor<EveryReference, slang::ast::VisitFlags::AllGood> {
   explicit EveryReference(const ParameterSet& own) : own(&own) {
   }
 
   const ParameterSet* own;
-  References found;
-  std::unordered_set<const slang::ast::Expression*> deciding;
+  ParameterSet read_in_a_nested_element;
   // The instances this body builds, whose parameters are written from it.
   std::vector<const slang::ast::InstanceSymbol*> children;
   // The bodies of the design elements declared inside this one, wherever they
@@ -91,8 +89,7 @@ struct EveryReference
   void Note(const slang::ast::ValueExpressionBase& e) {
     const auto* param = e.symbol.as_if<slang::ast::ParameterSymbol>();
     if (param == nullptr || !own->contains(param)) return;
-    found[param].insert(&e);
-    if (in_a_nested_element) deciding.insert(&e);
+    if (in_a_nested_element) read_in_a_nested_element.insert(param);
   }
 
   void handle(const slang::ast::NamedValueExpression& e) {
@@ -135,10 +132,13 @@ struct EveryExpression
   }
 };
 
-// Collects into `code` every expression in the code of a process, a
-// continuous assignment or a subroutine `scope` holds, wherever in it the
-// expression sits. A child instance is no scope of this one, so its body,
-// which is none of this body's code, is not reached.
+// Collects into `code` every expression a statement holds in the code of a
+// process, a continuous assignment or a subroutine `scope` holds: what that
+// code runs, which is no part of what the scope declares. A subroutine's
+// signature and a process's static variables are declarations, the storage of
+// the object and what a caller sees (LRM 6.21, 13.4), so only statements are
+// reached. A class's methods are part of the class, which the scope declares,
+// and a child instance's body is none of this body's code; neither is reached.
 void CollectCodeOf(const slang::ast::Scope& scope, EveryExpression& code) {
   for (const auto& member : scope.members()) {
     if (const auto* process =
@@ -148,12 +148,13 @@ void CollectCodeOf(const slang::ast::Scope& scope, EveryExpression& code) {
         const auto* assign =
             member.as_if<slang::ast::ContinuousAssignSymbol>()) {
       assign->getAssignment().visit(code);
-    }
-    if (const auto* subroutine = member.as_if<slang::ast::SubroutineSymbol>()) {
+    } else if (
+        const auto* subroutine = member.as_if<slang::ast::SubroutineSymbol>()) {
       subroutine->getBody().visit(code);
-    }
-    if (const auto* inner = member.as_if<slang::ast::Scope>()) {
-      CollectCodeOf(*inner, code);
+    } else if (
+        member.kind == slang::ast::SymbolKind::GenerateBlock ||
+        member.kind == slang::ast::SymbolKind::GenerateBlockArray) {
+      CollectCodeOf(member.as<slang::ast::Scope>(), code);
     }
   }
 }
@@ -165,17 +166,22 @@ void CollectCodeOf(const slang::ast::Scope& scope, EveryExpression& code) {
 // it is left unconnected in evaluates (LRM 23.2.2.4). What the front end
 // settled any of them to is held by nothing compiled. A child instance's body
 // is the child's, so only what this body writes for it is reached.
+//
+// A select the front end found out of bounds is the exception: it reaches
+// nothing (LRM 11.5.1), which is what is compiled, so its position is no
+// position stated as written.
 struct StatedAsWritten
     : slang::ast::ASTVisitor<StatedAsWritten, slang::ast::VisitFlags::AllGood> {
   std::unordered_set<const slang::ast::Expression*> held;
 
   void handle(const slang::ast::ElementSelectExpression& e) {
-    held.insert(&e.selector());
+    if (!e.isOutOfBounds()) held.insert(&e.selector());
     visitDefault(e);
   }
 
   void handle(const slang::ast::RangeSelectExpression& e) {
-    if (e.getSelectionKind() != slang::ast::RangeSelectionKind::Simple) {
+    if (e.getSelectionKind() != slang::ast::RangeSelectionKind::Simple &&
+        !e.isOutOfBounds()) {
       held.insert(&e.left());
     }
     visitDefault(e);
@@ -190,25 +196,6 @@ struct StatedAsWritten
     child.visitExprs(*this);
   }
 };
-
-// Whether an evaluation in `scope` evaluated the code of a process or a
-// subroutine rather than a declaration of the block: a variable of automatic
-// lifetime exists only while its body runs (LRM 6.21), so what it is declared
-// as is part of that body's code.
-auto IsCodeScope(const slang::ast::Scope& scope) -> bool {
-  using slang::ast::SymbolKind;
-  for (const slang::ast::Scope* level = &scope; level != nullptr;
-       level = level->asSymbol().getParentScope()) {
-    const SymbolKind kind = level->asSymbol().kind;
-    if (kind == SymbolKind::StatementBlock || kind == SymbolKind::Subroutine) {
-      return true;
-    }
-    if (kind == SymbolKind::GenerateBlock || kind == SymbolKind::InstanceBody) {
-      return false;
-    }
-  }
-  return false;
-}
 
 // The parameters of `own` that `param`'s own value was evaluated from.
 auto DependenciesOf(
@@ -288,60 +275,117 @@ auto DeclaredInAClass(const slang::ast::ParameterSymbol& param) -> bool {
   return false;
 }
 
-// The parameters of a body whose value decides what is compiled, and for each
-// of them that is the index of a loop's block (LRM 27.4), what tells two of
-// its values apart: the constants the front end settled from it wherever it
-// decides, in the order the body states them, so two values that fold alike
-// everywhere are told apart by nothing. Where one of those places kept no
-// constant, or the index decides through another parameter written from it,
-// its own value is what is left.
-struct Deciding {
-  ParameterSet parameters;
-  std::unordered_map<
-      const slang::ast::ParameterSymbol*, std::vector<std::string>>
-      folded_to;
+// Whether an object built from the scope declaring `param` may be handed its
+// value: a parameter its instantiation may assign (LRM 23.10), or the index a
+// loop's block is built at (LRM 27.4). Every other parameter's value follows
+// from these and its own declaration.
+auto CanBeSupplied(const slang::ast::ParameterSymbol& param) -> bool {
+  if (param.isFromGenvar()) return true;
+  return !param.isLocalParam() && !DeclaredByAGenerateBlock(param) &&
+         !DeclaredInAClass(param);
+}
+
+// What the values an object may be supplied fixed about what is compiled: for
+// each, the constants the front end settled from it, each taken where the body
+// states it and once however often it was evaluated, so two values that fold
+// alike everywhere are told apart by nothing; and its own value where one of
+// those places kept no constant. The front end evaluates when something first
+// asks, so its record is in no order of the body's.
+class WhatSuppliedValuesFixed {
+ public:
+  void Settled(
+      const slang::ast::ParameterSymbol& supplied,
+      const slang::ast::Expression& where,
+      const slang::ConstantValue& constant) {
+    const slang::SourceLocation at = where.sourceRange.start();
+    settled_at_[&supplied].emplace_back(
+        std::pair{at.buffer().getId(), at.offset()}, ValueIdentity(constant));
+  }
+
+  void ByItsOwnValue(const slang::ast::ParameterSymbol& supplied) {
+    by_own_value_.insert(&supplied);
+  }
+
+  [[nodiscard]] auto Folded() && -> std::unordered_map<
+      const slang::ast::ParameterSymbol*, std::vector<std::string>> {
+    std::unordered_map<
+        const slang::ast::ParameterSymbol*, std::vector<std::string>>
+        out;
+    for (auto& [supplied, constants] : settled_at_) {
+      std::ranges::sort(constants);
+      const auto repeated = std::ranges::unique(constants, {}, &Place::first);
+      constants.erase(repeated.begin(), repeated.end());
+      for (Place& constant : constants) {
+        out[supplied].push_back(std::move(constant.second));
+      }
+    }
+    for (const slang::ast::ParameterSymbol* supplied : by_own_value_) {
+      out[supplied] = {ValueIdentity(supplied->getValue())};
+    }
+    return out;
+  }
+
+ private:
+  using Place = std::pair<std::pair<std::uint32_t, std::size_t>, std::string>;
+  std::unordered_map<const slang::ast::ParameterSymbol*, std::vector<Place>>
+      settled_at_;
+  ParameterSet by_own_value_;
 };
 
-// What decides for `body`: a parameter one of whose references sits where the
-// value is held by what is compiled, whose type is the type of its value, or
-// that a class declares; and what a deciding parameter is written from decides
-// with it.
+// What the values an object of a body may be supplied fixed in what the body
+// declares, and apart, in the code of its processes, continuous assignments
+// and subroutines, which is how that code is compiled and no part of what the
+// body declares.
+struct WhatTheyFix {
+  std::unordered_map<
+      const slang::ast::ParameterSymbol*, std::vector<std::string>>
+      in_declarations;
+  std::unordered_map<
+      const slang::ast::ParameterSymbol*, std::vector<std::string>>
+      in_code;
+};
+
+// What the values an object of `body` may be supplied fix in what is compiled.
+// Each place a constant is held is one the front end evaluated where it
+// required one, a parameter written into a value the object holds as compiled,
+// or a parameter whose value decides by its own: one a design element declared
+// inside this one reads, whose type is the type of its value, or that a class
+// declares. What the place fixes is fixed by every supplied value the
+// parameter it read was computed from, at the constant the place settled.
 //
-// So what selects an alternative of a conditional generate decides nothing:
-// the construction chooses it (LRM 27.5), and what is compiled holds every
+// So what selects an alternative of a conditional generate fixes nothing: the
+// construction chooses it (LRM 27.5), and what is compiled holds every
 // alternative any object selected. Nor does what counts a loop generate's
 // blocks out: the construction runs the loop (LRM 27.4), and how many blocks an
 // object holds is no part of what it is an object of.
-//
-// A parameter a generate block declares decides less still, because a block is
-// built once per object of its scope, each with its own value, and the blocks
-// of one text are objects of one class whose code may be compiled once per
-// block. So for such a parameter the code of a process, a continuous assignment
-// or a subroutine decides nothing wherever in it the parameter is read: it is
-// no part of what the class declares, and blocks whose code comes out different
-// are that class realized more than once.
-auto DecidingParametersOf(
+auto WhatSuppliedValuesFix(
     const slang::ast::InstanceBodySymbol& body, const ParameterSet& own,
     const ParameterEdges& written_from, const SpecializationPolicy& policy)
-    -> Deciding {
+    -> WhatTheyFix {
   EveryReference every(own);
   body.visit(every);
-
   EveryExpression code;
   CollectCodeOf(body, code);
-
-  // What the front end evaluated where it required a constant -- the place it
-  // settled one this body holds -- read off its own record of the evaluation.
-  // A read of a block's own parameter in the code of a process or a
-  // subroutine is a read of that class's code, which decides nothing about
-  // what the class declares.
   StatedAsWritten as_written;
   body.visit(as_written);
+
+  WhatSuppliedValuesFixed in_declarations;
+  WhatSuppliedValuesFixed in_code;
+  // Fixes, in `layer`, every supplied value `param` was computed from, the way
+  // `settle` says.
+  const auto fix = [&](WhatSuppliedValuesFixed& layer,
+                       const slang::ast::ParameterSymbol& param,
+                       const auto& settle) {
+    for (const slang::ast::ParameterSymbol* source : Reached(
+             ParameterSet{&param}, written_from,
+             [](const auto&) { return true; })) {
+      if (CanBeSupplied(*source)) settle(layer, *source);
+    }
+  };
 
   // A design element declared inside this one is handed none of this body's
   // parameters, so what its own evaluations read of them is held there too.
   const slang::ast::Compilation& compilation = body.getCompilation();
-  std::vector<slang::ast::ParameterRead> held;
   std::vector<const slang::ast::InstanceBodySymbol*> evaluated_in{&body};
   evaluated_in.insert(
       evaluated_in.end(), every.nested_bodies.begin(),
@@ -353,46 +397,17 @@ auto DecidingParametersOf(
           as_written.held.contains(read.root)) {
         continue;
       }
-      if (DeclaredByAGenerateBlock(*read.parameter) &&
-          (IsCodeScope(*read.scope) || code.held.contains(read.root))) {
-        continue;
-      }
-      held.push_back(read);
+      fix(code.held.contains(read.root) ? in_code : in_declarations,
+          *read.parameter, [&](auto& layer, const auto& supplied) {
+            if (const slang::ConstantValue* settled =
+                    read.root->getConstant()) {
+              layer.Settled(supplied, *read.root, *settled);
+            } else {
+              layer.ByItsOwnValue(supplied);
+            }
+          });
     }
   }
-
-  const auto decides_there = [&](const slang::ast::Expression* use) {
-    return every.deciding.contains(use);
-  };
-  const auto decides_somewhere = [&](const slang::ast::ParameterSymbol* param) {
-    const auto all = every.found.find(param);
-    if (all == every.found.end()) return false;
-    return std::ranges::any_of(all->second, decides_there);
-  };
-  ParameterSet roots;
-  for (const slang::ast::ParameterRead& read : held) {
-    roots.insert(read.parameter);
-  }
-  for (const slang::ast::ParameterSymbol* param : own) {
-    if (decides_somewhere(param) || TypeFollowsValue(*param) ||
-        DeclaredInAClass(*param)) {
-      roots.insert(param);
-    }
-  }
-  // Where a loop's index settled a constant: where the body states it, and the
-  // constant. The front end evaluates when something first asks, so the record
-  // is in no order of the body's; each constant is taken where the body states
-  // it, and once however often it was evaluated.
-  using Settled = std::pair<std::pair<std::uint32_t, std::size_t>, std::string>;
-  std::unordered_map<const slang::ast::ParameterSymbol*, std::vector<Settled>>
-      settled_at;
-  const auto settled_where = [&](const slang::ast::ParameterSymbol& index,
-                                 const slang::ast::Expression& where,
-                                 const slang::ConstantValue& constant) {
-    const slang::SourceLocation at = where.sourceRange.start();
-    settled_at[&index].emplace_back(
-        std::pair{at.buffer().getId(), at.offset()}, ValueIdentity(constant));
-  };
 
   // What each parameter of a child this body builds is handed, and whether the
   // child takes it at construction. Asking for the value is what has the front
@@ -410,65 +425,40 @@ auto DecidingParametersOf(
     }
   }
 
-  // A parameter read into another's value decides with it. Where that other
-  // is this body's own, the edge is followed below; where it is a child's that
-  // the child takes at construction, this body hands the value when it builds
-  // the child. Into anything else -- a child's parameter that decides there,
-  // and so which unit this body names; a class specialization's, which picks a
-  // type; a virtual interface's -- the value is held by what is compiled. An
-  // index of a loop's block so read is told apart by the value it gave.
+  // A parameter read into the value of one that is not this body's is held as
+  // the value it gave, unless that is a child's the child takes at
+  // construction, which this body hands when it builds the child. So a child's
+  // parameter that decides there, and so which unit this body names, a class
+  // specialization's, which picks a type, and a virtual interface's are each
+  // what is compiled.
   for (const slang::ast::ParameterSymbol* source : own) {
     for (const slang::ast::ParameterSymbol* reader :
          compilation.getParameterValueReaders(*source)) {
       if (own.contains(reader)) continue;
       const auto child = taken_at_construction.find(reader);
       if (child != taken_at_construction.end() && child->second) continue;
-      roots.insert(source);
-      if (source->isFromGenvar() && reader->getInitializer() != nullptr) {
-        settled_where(*source, *reader->getInitializer(), reader->getValue());
-      }
+      fix(in_declarations, *source, [&](auto& layer, const auto& supplied) {
+        if (reader->getInitializer() != nullptr) {
+          layer.Settled(
+              supplied, *reader->getInitializer(), reader->getValue());
+        } else {
+          layer.ByItsOwnValue(supplied);
+        }
+      });
     }
   }
-  Deciding deciding{
-      .parameters = Reached(
-          std::move(roots), written_from, [](const auto&) { return true; }),
-      .folded_to = {}};
 
-  // An index of a loop's block is told apart by the constant each read of it
-  // settled, and by its own value where it decides through another parameter
-  // or where nothing settled.
-  ParameterSet by_own_value;
-  for (const slang::ast::ParameterSymbol* param : deciding.parameters) {
-    for (const slang::ast::ParameterSymbol* source : written_from.at(param)) {
-      if (source->isFromGenvar()) by_own_value.insert(source);
+  for (const slang::ast::ParameterSymbol* param : own) {
+    if (every.read_in_a_nested_element.contains(param) ||
+        TypeFollowsValue(*param) || DeclaredInAClass(*param)) {
+      fix(in_declarations, *param, [](auto& layer, const auto& supplied) {
+        layer.ByItsOwnValue(supplied);
+      });
     }
   }
-  for (const auto& [param, uses] : every.found) {
-    if (param->isFromGenvar() && deciding.parameters.contains(param) &&
-        std::ranges::any_of(uses, decides_there)) {
-      by_own_value.insert(param);
-    }
-  }
-  for (const slang::ast::ParameterRead& read : held) {
-    if (!read.parameter->isFromGenvar()) continue;
-    if (const slang::ConstantValue* settled = read.root->getConstant()) {
-      settled_where(*read.parameter, *read.root, *settled);
-    } else {
-      by_own_value.insert(read.parameter);
-    }
-  }
-  for (auto& [index, constants] : settled_at) {
-    std::ranges::sort(constants);
-    const auto repeated = std::ranges::unique(constants, {}, &Settled::first);
-    constants.erase(repeated.begin(), repeated.end());
-    for (Settled& constant : constants) {
-      deciding.folded_to[index].push_back(std::move(constant.second));
-    }
-  }
-  for (const slang::ast::ParameterSymbol* index : by_own_value) {
-    deciding.folded_to[index] = {ValueIdentity(index->getValue())};
-  }
-  return deciding;
+  return WhatTheyFix{
+      .in_declarations = std::move(in_declarations).Folded(),
+      .in_code = std::move(in_code).Folded()};
 }
 
 }  // namespace
@@ -495,9 +485,9 @@ auto SpecializationPolicy::OfBody(
   }
   PerBody out{
       .own = ValueParametersOf(body),
-      .deciding = {},
       .written_into = {},
-      .folded_to = {}};
+      .fixed_in_declarations = {},
+      .fixed_in_code = {}};
   ParameterEdges written_from;
   for (const slang::ast::ParameterSymbol* param : out.own) {
     written_from.emplace(param, DependenciesOf(*param, out.own));
@@ -508,9 +498,9 @@ auto SpecializationPolicy::OfBody(
       out.written_into.at(source).insert(param);
     }
   }
-  Deciding deciding = DecidingParametersOf(body, out.own, written_from, *this);
-  out.deciding = std::move(deciding.parameters);
-  out.folded_to = std::move(deciding.folded_to);
+  WhatTheyFix fixed = WhatSuppliedValuesFix(body, out.own, written_from, *this);
+  out.fixed_in_declarations = std::move(fixed.in_declarations);
+  out.fixed_in_code = std::move(fixed.in_code);
   return per_body_.emplace(&body, std::move(out)).first->second;
 }
 
@@ -551,20 +541,24 @@ auto SpecializationPolicy::Classify(
   };
 
   PerInstance out;
-  out.folded_to = text.folded_to;
+  out.fixed_in_declarations = text.fixed_in_declarations;
+  out.fixed_in_code = text.fixed_in_code;
   // A top-level instance is built by the design root, which hands nothing, and
   // is the only instance of its unit, so a value it is given is compiled in.
   // Every other instance is handed, in the order its body declares them, each
-  // parameter an instantiation may assign that decides nothing about what is
+  // parameter an instantiation may assign that fixes nothing about what is
   // compiled -- assigned or left to its default, which the instantiation says
   // and the unit evaluates, so whether a value was written does not tell
-  // instances apart (LRM 6.20.1, 23.10).
+  // instances apart (LRM 6.20.1, 23.10). A unit is compiled to one body, so
+  // what a parameter fixes in its code names it as what it fixes in its
+  // declarations does.
   ParameterSet roots;
   if (!inst.isTopLevel()) {
     for (const slang::ast::ParameterSymbolBase* base : declared) {
       const auto* param = base->symbol.as_if<slang::ast::ParameterSymbol>();
       if (param == nullptr || param->isLocalParam() ||
-          text.deciding.contains(param)) {
+          text.fixed_in_declarations.contains(param) ||
+          text.fixed_in_code.contains(param)) {
         continue;
       }
       out.supplied.push_back(of_instance.at(param));
@@ -603,14 +597,24 @@ auto SpecializationPolicy::ValueSourceOf(
   return ParameterValueSource::kComputedAtConstruction;
 }
 
-auto SpecializationPolicy::WhatItDecides(
+auto SpecializationPolicy::WhatItFixesInDeclarations(
     const slang::ast::InstanceSymbol& inst,
     const slang::ast::ParameterSymbol& index) const
     -> std::span<const std::string> {
   const PerInstance& known = Of(inst);
-  const auto folded = known.folded_to.find(&index);
-  if (folded == known.folded_to.end()) return {};
+  const auto folded = known.fixed_in_declarations.find(&index);
+  if (folded == known.fixed_in_declarations.end()) return {};
   return folded->second;
+}
+
+auto SpecializationPolicy::WhatItFixesInCode(
+    const slang::ast::InstanceSymbol& inst,
+    const slang::ast::ParameterSymbol& index) const
+    -> std::span<const std::string> {
+  const PerInstance& known = Of(inst);
+  const auto fixed = known.fixed_in_code.find(&index);
+  if (fixed == known.fixed_in_code.end()) return {};
+  return fixed->second;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

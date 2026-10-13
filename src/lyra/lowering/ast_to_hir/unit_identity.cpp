@@ -669,6 +669,26 @@ auto SpecializationPolicy::ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn {
   };
 }
 
+namespace {
+
+// The inputs of a block's key that what its index fixed contributes, each
+// named by the index and its place among them.
+auto IndexInputs(
+    const slang::ast::ParameterSymbol& index,
+    std::span<const std::string> fixed) -> std::vector<SpecializationInput> {
+  std::vector<SpecializationInput> inputs;
+  std::uint32_t place = 0;
+  for (const std::string& value : fixed) {
+    inputs.push_back(
+        SpecializationInput{
+            .name = std::format("{}#{}", index.name, place++),
+            .kind = FixedValue{.value = value}});
+  }
+  return inputs;
+}
+
+}  // namespace
+
 auto SpecializationPolicy::BlockStepOf(
     const slang::ast::GenerateBlockSymbol& block) const
     -> support::GenerateBlockStep {
@@ -677,14 +697,8 @@ auto SpecializationPolicy::BlockStepOf(
   }
   SpecializationKey key{.definition = GenerateBlockLabel(block), .inputs = {}};
   if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block)) {
-    std::uint32_t place = 0;
-    for (const std::string& folded :
-         WhatItDecides(InstanceHolding(block), *index)) {
-      key.inputs.push_back(
-          SpecializationInput{
-              .name = std::format("{}#{}", index->name, place++),
-              .kind = FixedValue{.value = folded}});
-    }
+    key.inputs = IndexInputs(
+        *index, WhatItFixesInDeclarations(InstanceHolding(block), *index));
   }
   for (const OverriddenBelow& overridden :
        OverridesBelow(block, context_, ReadThroughItsOwnBody())) {
@@ -709,6 +723,17 @@ auto SpecializationPolicy::BlockStepOf(
   }
   block_steps_.emplace(&block, step);
   return step;
+}
+
+auto SpecializationPolicy::CodeArgumentsOf(
+    const slang::ast::GenerateBlockSymbol& block) const
+    -> std::optional<std::uint64_t> {
+  SpecializationKey key{.definition = GenerateBlockLabel(block), .inputs = {}};
+  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block)) {
+    key.inputs =
+        IndexInputs(*index, WhatItFixesInCode(InstanceHolding(block), *index));
+  }
+  return ArgumentsDigest(key);
 }
 
 void SpecializationPolicy::EnterNaming(

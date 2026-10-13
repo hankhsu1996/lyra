@@ -100,13 +100,14 @@ many of them it works on at a time.
    statically to it. The sealed endpoint is one access point however many steps the route contained.
 
 6. **A scope is two classes: the published part and the realization extending it.** The published
-   part holds the published members first, in the order the publication states, and one non-virtual
-   method per subroutine that forwards to its body; the realization adds what lowering adds -- a
-   slot per route, process state, the homes of closures. A referrer compiles against the published
-   part alone, reads a member at its offset there and calls a subroutine directly, and never needs
-   the object's size, because the element's own entry makes every object of it. Nothing about a
-   scope is answered by name at run time: a scope keeps its hierarchy segment for `%m` and a scope
-   class keeps its DPI-C export table, and neither is a lookup a route reaches.
+   part holds the published members first, in the order the publication states, and one virtual
+   method per subroutine, which the realization overrides with its body; the realization adds what
+   lowering adds -- a slot per route, process state, the homes of closures. A referrer compiles
+   against the published part alone, reads a member at its offset there and calls a subroutine
+   through the object, and never needs the object's size, because the element's own entry makes
+   every object of it. Nothing about a scope is answered by name at run time: a scope keeps its
+   hierarchy segment for `%m` and a scope class keeps its DPI-C export table, and neither is a
+   lookup a route reaches.
 7. **A change re-emits exactly the referrers whose consumed signature changed.** A change confined
    to a unit's bodies changes only its realization, so it changes no signature and re-emits no
    referrer. A change to a declaration changes what the unit publishes and re-emits every unit that
@@ -127,10 +128,10 @@ many of them it works on at a time.
    **A published class is named from declarations alone, and how many classes realize it is no
    referrer's concern.** A generate block is a definition nested in the scope holding it, and each
    block instance is an application of it; an application is one published class, named before any
-   body lowers. Block instances of one application whose bodies lower apart are that class realized
-   more than once, each realization extending it. A referrer names the published class and is
-   unaffected by how many realizations stand beneath it, so a body edit that changes the count
-   changes nothing a referrer read.
+   body lowers. Block instances of one application whose index fixed their code differently are that
+   class realized more than once, each realization extending it and named, like the class, before
+   any body lowers. A referrer names the published class and is unaffected by how many realizations
+   stand beneath it, so a body edit that changes the count changes nothing a referrer read.
 
 9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
    artifact nothing in the source declares -- the one whose construct elaborates the design by
@@ -186,11 +187,10 @@ many of them it works on at a time.
   carried by a route. It replaces a compile-time check with an unchecked cast, surfaces a misspelt
   name or a type that differs between instances at run time, and makes every instance pay a
   registration per declaration. The access is typed against the published class instead.
-- A virtual method on a scope's published part, or a referrer dispatching through one, to reach a
-  published subroutine or member. The language dispatches no such call, and a referrer that knows
-  the published class has nothing to dispatch on. A published subroutine's own method asking which
-  of its unit's classes realizes the object is not this shape: the referrer still calls one method
-  directly, and the question is one only the declaring unit can ask.
+- A referrer that has to know how many classes realize a published class, or which one an object is,
+  to reach a published subroutine. That count follows the bodies, so it would put a body edit in
+  every referrer's header; the referrer calls the published class's method on the object and the
+  object answers.
 - A published class whose name, or whose existence, depends on a comparison of lowered bodies. Which
   class a name reaches would then move with a body edit, and every referrer with it.
 - A signature artifact that also carries the unit's bodies, so that editing a body re-emits the

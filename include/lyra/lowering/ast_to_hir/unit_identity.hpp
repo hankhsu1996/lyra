@@ -240,17 +240,6 @@ class SpecializationPolicy {
       const slang::ast::InstanceSymbol& inst,
       const slang::ast::ParameterSymbol& param) const -> ParameterValueSource;
 
-  // What tells two values of `index` apart in what is compiled, for the index
-  // a loop's block inside `inst` declares (LRM 27.4): the constants the front
-  // end settled from it wherever its value decides something, in the order the
-  // body states them, or its own value where one of those places kept none.
-  // Nothing where it is only ever read as a value. So two blocks whose indices
-  // fold alike everywhere are told apart by nothing here.
-  [[nodiscard]] auto WhatItDecides(
-      const slang::ast::InstanceSymbol& inst,
-      const slang::ast::ParameterSymbol& index) const
-      -> std::span<const std::string>;
-
   // What follows for `inst` from where it stands, worked out once and kept.
   [[nodiscard]] auto ContextOf(const slang::ast::InstanceSymbol& inst) const
       -> const InstanceContext&;
@@ -271,6 +260,14 @@ class SpecializationPolicy {
   // fixed is stated beside the label as a digest, absent where nothing was.
   [[nodiscard]] auto BlockStepOf(const slang::ast::GenerateBlockSymbol& block)
       const -> support::GenerateBlockStep;
+
+  // Which body of its class the block instance `block` is compiled to: the
+  // digest of what its index fixed in its code, absent where it fixed nothing.
+  // Blocks of one class are objects of it whatever their code, so this tells
+  // apart only the bodies the class is realized by (LRM 27.4).
+  [[nodiscard]] auto CodeArgumentsOf(
+      const slang::ast::GenerateBlockSymbol& block) const
+      -> std::optional<std::uint64_t>;
 
   // The name of the specialization `inst` is an application of, folded from
   // what the design fixed for it: its parameters (LRM 6.20, 23.10), the
@@ -320,7 +317,10 @@ class SpecializationPolicy {
     std::unordered_set<const slang::ast::ParameterSymbol*> varying;
     std::unordered_map<
         const slang::ast::ParameterSymbol*, std::vector<std::string>>
-        folded_to;
+        fixed_in_declarations;
+    std::unordered_map<
+        const slang::ast::ParameterSymbol*, std::vector<std::string>>
+        fixed_in_code;
   };
 
   using InstanceBodies =
@@ -343,17 +343,19 @@ class SpecializationPolicy {
   using ParameterSet = std::unordered_set<const slang::ast::ParameterSymbol*>;
 
   // What a body's own text says of its value parameters, whichever instance
-  // it is read for: the ones whose value decides what is compiled, what tells
-  // two values of a loop's index apart, and which parameters each one's
-  // declaration is written into.
+  // it is read for: which parameters each one's declaration is written into,
+  // and what each value an object of it may be supplied fixes in what the body
+  // declares and in its code.
   struct PerBody {
     ParameterSet own;
-    ParameterSet deciding;
     std::unordered_map<const slang::ast::ParameterSymbol*, ParameterSet>
         written_into;
     std::unordered_map<
         const slang::ast::ParameterSymbol*, std::vector<std::string>>
-        folded_to;
+        fixed_in_declarations;
+    std::unordered_map<
+        const slang::ast::ParameterSymbol*, std::vector<std::string>>
+        fixed_in_code;
   };
 
   auto Of(const slang::ast::InstanceSymbol& inst) const -> const PerInstance&;
@@ -362,6 +364,25 @@ class SpecializationPolicy {
       -> const PerBody&;
   auto ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn;
   auto AnswersNow(const KeptName& kept) const -> bool;
+
+  // What tells two values of `index` apart in what its block declares, for the
+  // index a loop's block inside `inst` declares (LRM 27.4): the constants the
+  // front end settled from it there, in the order the body states them, or its
+  // own value where one of those places kept none. Nothing where it is only
+  // ever read as a value.
+  auto WhatItFixesInDeclarations(
+      const slang::ast::InstanceSymbol& inst,
+      const slang::ast::ParameterSymbol& index) const
+      -> std::span<const std::string>;
+
+  // The same for what the statements of that block's processes, continuous
+  // assignments and subroutines run. That code is how the block is compiled
+  // and no part of what it declares, so these tell apart the bodies one class
+  // of blocks is compiled to, never the class.
+  auto WhatItFixesInCode(
+      const slang::ast::InstanceSymbol& inst,
+      const slang::ast::ParameterSymbol& index) const
+      -> std::span<const std::string>;
 
   support::BodiesRead bodies_read_;
   mutable std::unordered_set<const slang::ast::InstanceSymbol*> read_anyway_;

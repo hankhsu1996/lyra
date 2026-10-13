@@ -2849,15 +2849,20 @@ class HirDumper {
         s.data);
   }
 
-  // The blocks a loop counted out that are built on their own, in that order:
-  // the value the index stood at, the body the block is, and what it is passed.
-  static auto FormatStandAloneBlocks(std::span<const StandAloneBlock> counted)
+  static auto FormatBodiesBuiltAt(std::span<const BodyBuiltAt> bodies)
       -> std::string {
     std::string out;
-    for (const StandAloneBlock& block : counted) {
+    for (const BodyBuiltAt& built : bodies) {
+      std::string indices;
+      for (const std::int64_t index : built.indices) {
+        indices += std::format("{}{}", indices.empty() ? "" : ",", index);
+      }
       out += std::format(
-          "{}{}:body{}{}", out.empty() ? "" : " ", block.index,
-          block.body.value, FormatArguments(block.arguments));
+          " body{}{}@[{}]", built.body.value,
+          built.code_arguments.has_value()
+              ? std::format("#{:016x}", *built.code_arguments)
+              : std::string{},
+          indices);
     }
     return out;
   }
@@ -2866,16 +2871,13 @@ class HirDumper {
     const std::string form = std::visit(
         Overloaded{
             [](const SingleBlock&) { return std::string{"single"}; },
-            [](const BlocksStandAlone& s) {
-              return std::format(
-                  "each [{}]", FormatStandAloneBlocks(s.counted));
-            },
             [](const BlocksRepeat& r) {
               return std::format(
                   "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
-                  "condition=Expr[{}] step=Expr[{}] {}",
+                  "condition=Expr[{}] step=Expr[{}] {}{}",
                   r.variable.value, r.initial.value, r.condition.value,
-                  r.step.value, FormatArguments(r.arguments));
+                  r.step.value, FormatArguments(r.arguments),
+                  FormatBodiesBuiltAt(r.bodies));
             },
             [](const BlocksChoose& c) {
               std::string chosen =

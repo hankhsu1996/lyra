@@ -305,12 +305,8 @@ auto PlanSubroutineCall(
             plan.completion = BuildCompletionLayout(
                 CalleeFormalsOf(unit_lowerer, published.interface),
                 result_type);
-            plan.form = NamedCallee{
-                .callee =
-                    mir::Direct{
-                        .target = unit_lowerer.MakeExternalUnitMethodTarget(
-                            ref.scope_class, ref.callable)},
-                .handle = std::visit(
+            plan.form = DispatchedCallee{
+                .receiver = std::visit(
                     Overloaded{
                         [](const hir::RoutedObjectRef& routed) {
                           return AmbientHandle{
@@ -319,7 +315,9 @@ auto PlanSubroutineCall(
                         [](const hir::InterfaceInstanceAccessExpr& held) {
                           return AmbientHandle{HeldInterface{.access = held}};
                         }},
-                    ref.receiver)};
+                    ref.receiver),
+                .slot = unit_lowerer.PublishedSubroutineSlot(
+                    ref.scope_class, ref.callable)};
             return plan;
           },
           [&](const hir::MethodCallRef& ref) -> Planned {

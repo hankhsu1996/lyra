@@ -26,6 +26,7 @@
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -69,24 +70,15 @@ struct PublishedScopeLayout {
       disable_targets;
 };
 
-// The method of a scope's published class that enters the subroutine the scope
-// published at `published`: the class reserves one per published subroutine,
-// at the position the signature gave it. The declaring scope builds the method
-// there and a body of the same unit calls it there, so both read it from
-// here.
+// The virtual method of a scope's published class the subroutine the scope
+// published at `published` is: the class introduces one per published
+// subroutine, at the position the signature gave it, and leaves it to each
+// class realizing the scope. A realizing class overrides it there and a call
+// names it there, so both read it from here.
 [[nodiscard]] inline auto PublishedMethodOf(hir::PublishedCallableId published)
     -> mir::CallableId {
   return mir::CallableId{published.value};
 }
-
-// One class realizing a class the unit published of its scopes: what a scope
-// lowered to, extending the published class with what the lowering adds, and
-// its body for each subroutine the class published, by the position the
-// signature gave the subroutine.
-struct ScopeRealization {
-  mir::ClassId id{};
-  base::Translation<hir::PublishedCallableId, mir::CallableId> subroutines;
-};
 
 // What this unit knows of a scope class some unit published: the class, the
 // type each of its fields holds, and where it placed each thing the scope
@@ -97,16 +89,21 @@ struct ScopeClassLayout {
   PublishedScopeLayout published;
 };
 
+// A subroutine a scope published, as the class it published states it: the
+// identifier a referrer spells it by, and what a call of it passes and yields.
+struct PublishedSubroutine {
+  std::string name;
+  mir::CallableCode prototype;
+};
+
 // A class this unit published of its scopes. Several scopes may be published
-// as one class -- the block instances of one application of a generate block
-// that lowered apart (LRM 27.3) -- so what the signature fixes is held once:
-// where it placed what was published, and the identifier a referrer spells
-// each published subroutine by, in the order the signature gave them. The
-// classes realizing it follow, in the order their scopes were lowered.
+// as one class -- the bodies of one generate block whose code its index fixed
+// differently (LRM 27.3) -- so what the signature fixes is held once: where it
+// placed what was published, and each subroutine it published, in the order
+// the signature gave them.
 struct PublishedScope {
   ScopeClassLayout layout;
-  std::vector<std::string> subroutine_names;
-  std::vector<ScopeRealization> realizations;
+  base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines;
 };
 
 // Lowers one HIR compilation unit into one MIR compilation unit, holding that
@@ -220,10 +217,6 @@ class UnitLowerer {
   auto SettlePublishedScope(
       mir::ClassId published, const hir::StructuralScope& scope)
       -> const PublishedScopeLayout&;
-
-  // Records that `realization` realizes the class `published`, once its own
-  // class is settled in the unit.
-  void AddRealization(mir::ClassId published, ScopeRealization realization);
 
   // Every class the unit published of its scopes.
   [[nodiscard]] auto PublishedScopes() const
@@ -392,14 +385,14 @@ class UnitLowerer {
       -> mir::DirectTarget;
 
   // A subroutine a unit published on the object its instances are (LRM 23.6,
-  // 25.7): a method of that unit's published class, called directly, since the
-  // unit an instance is of is settled where the call compiles. A method of
-  // this unit's own class is named by its position, as any of its callables
-  // is; another unit's by what that unit published. Reaching the object is
-  // already the dependency, so nothing further is recorded here.
-  [[nodiscard]] auto MakeExternalUnitMethodTarget(
+  // 25.7): a virtual method of that unit's published class, which the class
+  // the object is answers. A slot of this unit's own class is named by its
+  // position, as any of its callables is; another unit's by the position its
+  // signature gave the subroutine. Reaching the object is already the
+  // dependency, so nothing further is recorded here.
+  [[nodiscard]] auto PublishedSubroutineSlot(
       hir::ExternalScopeClassId scope_class,
-      hir::PublishedCallableId callable) const -> mir::DirectTarget;
+      hir::PublishedCallableId callable) const -> mir::VirtualSlot;
 
   // Mints a fresh owner-site id for a synthesized binding origin -- a carrier a
   // lowering creates that has no source-level variable (an activation handle, a

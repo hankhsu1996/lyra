@@ -43,11 +43,12 @@ child they make are one body, and what a value decides is a question about the c
 not part of the key. The standard agrees -- a parameter is fixed before the run (LRM 6.20, 23.10),
 and nothing requires the compiled class to hold it. What stood in the way was two things.
 
-**The name comes before the comparison.** Inside a unit, blocks are compared after they are lowered
-and nobody had to name them first. Across units the parent writes the child's name while it lowers,
-and it may read the child's declarations but not its body. So the split between what enters the key
-and what is handed at construction is a fact the parent computes from the child's instantiation, by
-the same function the child uses for itself -- a prediction, where the loop record could compare.
+**The name comes before the comparison.** Inside a unit, blocks were then compared after they were
+lowered and nobody had to name them first. Across units the parent writes the child's name while it
+lowers, and it may read the child's declarations but not its body. So the split between what enters
+the key and what is handed at construction is a fact the parent computes from the child's
+instantiation, by the same function the child uses for itself -- a prediction, where the loop record
+then compared.
 
 **A prediction is a list, and a list of how SystemVerilog lets a value reach a class has no end.**
 What made the loop record sound was declining to predict. Here the prediction cannot be declined, so
@@ -86,7 +87,10 @@ some evaluation read stays in the key, unless the read only decides blocks, or s
 lowering states the expression itself -- an element select's index and an indexed part select's
 base, which name a position rather than a shape (LRM 11.5.1, 11.5.3), and an input port's default,
 which each object evaluates (LRM 23.2.2.4). Nothing here names the positions the language requires a
-constant at, so none can be missed.
+constant at, so none can be missed. A select's position the front end found out of bounds is the
+exception: such a select reaches nothing, which is what is compiled, so the front end records the
+position as a required constant and it decides. Two blocks of one loop that differ only there are
+two bodies; the select is rare and warned of, so no more than that is done for it.
 
 A value given elsewhere -- by a `defparam` (LRM 23.10.1) or a configuration (LRM 33.4.3) -- is
 classified the same way as the instantiation's own, since LRM 23.10 makes the three ways of altering

@@ -3340,11 +3340,6 @@ auto lyra_rt_loop_blocks_at(const void* blocks, std::int64_t index) -> void* {
   return static_cast<const LoopBlocks*>(blocks)->At(index);
 }
 
-auto lyra_rt_is_of_class(void* self, const void* definition) -> bool {
-  return static_cast<Scope*>(self)->IsOfClass(
-      static_cast<const ObjectDefinition*>(definition));
-}
-
 auto lyra_rt_sequence_make(LyraSpan handles) -> void* {
   const std::span<void* const> raw(
       static_cast<void* const*>(handles.data), handles.count);

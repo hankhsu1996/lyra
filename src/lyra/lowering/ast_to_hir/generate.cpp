@@ -1,7 +1,8 @@
 #include <algorithm>
-#include <cstddef>
+#include <array>
 #include <cstdint>
 #include <expected>
+#include <format>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -9,15 +10,14 @@
 #include <vector>
 
 #include <slang/ast/symbols/BlockSymbols.h>
-#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
 #include <slang/ast/types/Type.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/lowering/ast_to_hir/constant_value.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/one_body.hpp"
@@ -32,8 +32,8 @@ namespace {
 // Lowers one generate block -- a loop iteration, an `if` / `case` arm, or a
 // bare block -- into a fresh concrete structural scope. The source label is
 // settled here, on the scope itself; the hierarchy index is not, because a
-// loop's blocks differ in it by definition and the scopes are compared with
-// each other before anything knows which of them survives.
+// loop's blocks differ in it by definition and one scope serves every block
+// its loop builds of it.
 auto LowerGenerateScope(
     UnitLowerer& unit_lowerer, const slang::ast::GenerateBlockSymbol& block,
     std::string_view source_name, WalkFrame frame)
@@ -48,7 +48,8 @@ auto LowerGenerateScope(
 // Whether the loop the source wrote survived elaboration as something a
 // construction can run: a block it counted out declares the index it is built
 // with, it is named, and it has the three expressions that carry the index
-// from one block to the next. How the step is written is not among the
+// from one block to the next. Every loop the front end elaborated without an
+// error has all of these. How the step is written is not among the
 // conditions, because every form LRM 27.4 admits for one states where the
 // index goes next and is carried down as written. Nor is how many blocks it
 // counted: a loop that counted none is the same loop run no times.
@@ -117,62 +118,8 @@ auto BuildTheLoop(
       .initial = *initial,
       .condition = *condition,
       .step = *step,
-      .arguments = {index_read}};
-}
-
-// A loop built at every index it counts out, each construction receiving the
-// loop's index as it then stands. `body` is absent for a loop that counted no
-// block, which has nothing to lower one from.
-auto BuildRepeatedGenerate(
-    StructuralScopeLowerer& lowerer,
-    const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame,
-    std::optional<hir::StructuralScope> body) -> diag::Result<hir::Generate> {
-  auto counting = BuildTheLoop(lowerer, array, frame);
-  if (!counting) return std::unexpected(std::move(counting.error()));
-
-  hir::Generate gen{};
-  if (body.has_value()) {
-    gen.blocks.Add(hir::GenerateBlock{.scope = *std::move(body)});
-  }
-  gen.counting = *std::move(counting);
-  return gen;
-}
-
-// A loop no one body serves: each block is a child in its own right, built as
-// the body `bodies` says it is, and the hierarchy index it was elaborated at
-// is what tells it from the others. Each receives the value its own index
-// holds.
-auto BuildStandAloneGenerate(
-    UnitLowerer& unit_lowerer,
-    const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame,
-    LoopBodies bodies) -> diag::Result<hir::Generate> {
-  hir::Generate gen{};
-  for (hir::StructuralScope& body : bodies.bodies) {
-    gen.blocks.Add(hir::GenerateBlock{.scope = std::move(body)});
-  }
-  hir::BlocksStandAlone stand_alone;
-  stand_alone.counted.reserve(array.entries.size());
-  for (std::size_t at = 0; at < array.entries.size(); ++at) {
-    const slang::ast::GenerateBlockSymbol& entry = *array.entries[at];
-    std::vector<hir::ExprId> arguments;
-    if (const slang::ast::ParameterSymbol* index =
-            LoopIndexParameterOf(entry)) {
-      const auto span = frontend::PointSpanOf(index->location);
-      auto type = unit_lowerer.InternType(index->getType(), span);
-      if (!type) return std::unexpected(std::move(type.error()));
-      auto value = MakeConstantValueExpr(
-          unit_lowerer.Unit(), frame, index->getValue(), *type, span);
-      if (!value) return std::unexpected(std::move(value.error()));
-      arguments.push_back(frame.Exprs().Add(*std::move(value)));
-    }
-    stand_alone.counted.push_back(
-        hir::StandAloneBlock{
-            .index = LoopIndexOf(entry),
-            .body = hir::StructuralScopeId{bodies.taken[at]},
-            .arguments = std::move(arguments)});
-  }
-  gen.counting = std::move(stand_alone);
-  return gen;
+      .arguments = {index_read},
+      .bodies = {}};
 }
 
 }  // namespace
@@ -180,26 +127,35 @@ auto BuildStandAloneGenerate(
 auto StructuralScopeLowerer::BuildGenerateFromArray(
     const slang::ast::GenerateBlockArraySymbol& array, WalkFrame frame)
     -> diag::Result<hir::Generate> {
-  // Every block is lowered, and the index reaches each one as a value its
-  // construction supplies rather than as a constant folded into it. That is
-  // what lets one body serve many indices, and it is also what makes the
-  // blocks comparable: two that differ in nothing else then lower to the same
-  // scope, and which blocks one scope serves is what the lowered scopes say.
-  std::vector<hir::StructuralScope> blocks;
-  blocks.reserve(array.entries.size());
+  if (!LoopSurvivedElaboration(array)) {
+    throw InternalError(
+        std::format(
+            "StructuralScopeLowerer: the loop generate '{}' reached lowering "
+            "without what a construction runs -- please report this as a bug",
+            array.getExternalName()));
+  }
+  auto loop = BuildTheLoop(*this, array, frame);
+  if (!loop) return std::unexpected(std::move(loop.error()));
+
+  // Each block is lowered and taken into the body of its name; the index
+  // reaches it as a value its construction supplies.
+  LoopBodies bodies;
   for (const auto* entry : array.entries) {
     auto scope_or = LowerGenerateScope(*owner_, *entry, array.name, frame);
     if (!scope_or) return std::unexpected(std::move(scope_or.error()));
-    blocks.push_back(*std::move(scope_or));
+    const std::array index{LoopIndexOf(*entry)};
+    if (!bodies.Take(
+            *std::move(scope_or),
+            owner_->Specialization().CodeArgumentsOf(*entry), index)) {
+      throw InternalError(
+          std::format(
+              "StructuralScopeLowerer: the block of loop generate '{}' at {} "
+              "lowers to something the blocks of its name before it do not "
+              "-- please report this as a bug",
+              array.getExternalName(), index[0]));
+    }
   }
-
-  LoopBodies bodies = BodiesOf(blocks);
-  if (LoopSurvivedElaboration(array) && bodies.bodies.size() <= 1) {
-    std::optional<hir::StructuralScope> body;
-    if (!bodies.bodies.empty()) body = std::move(bodies.bodies.front());
-    return BuildRepeatedGenerate(*this, array, frame, std::move(body));
-  }
-  return BuildStandAloneGenerate(*owner_, array, frame, std::move(bodies));
+  return std::move(bodies).Build(*std::move(loop));
 }
 
 auto StructuralScopeLowerer::BuildGenerateFromBlock(

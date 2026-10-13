@@ -548,7 +548,9 @@ specializations, not with instance count.
       afterwards, the others' names kept as further names of one class, so the C++ backend wrote a
       file per block and a module's forward header changed when one body did. A block instance is
       now an application of its block, named from the source: one published class per application,
-      and blocks of one application whose code differs are that class realized more than once. A
+      and blocks of one application whose code differs are that class realized more than once, each
+      realization named from what the index fixed in the block's code before any block lowers, so
+      no block is compared with another to find which body it is. A
       child naming the block that holds it is one unit where it was one per block, and a struct a
       block declares is one type where it was one per block. On the C++ backend the classes of a
       module's scopes are nested classes in the one header that carries the module's name, so file

@@ -83,11 +83,15 @@ signature names the scope it belongs to. The publication is derived from the uni
 and never waits for a body.
 
 **D2. A scope is two classes: the published part, and the realization extending it.** The published
-part holds the published members first, in the order the publication states, and one method per
-subroutine that forwards to the body. The realization adds what lowering adds (fact 4). A referrer
-compiles against the published part alone and never needs the object's size, since the element's own
-entry makes every object of it; an edit to a body changes the realization and no header. No method
-of either is virtual.
+part holds the published members first, in the order the publication states, and one virtual method
+per subroutine, which the realization overrides with the body. The realization adds what lowering
+adds (fact 4). A referrer compiles against the published part alone and never needs the object's
+size, since the element's own entry makes every object of it; an edit to a body changes the
+realization and no header. Revised 2026-10-12 by
+[a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md): this said no
+method of either is virtual, because a referrer knows the class; it knows the published class and
+not which of the classes realizing it the object is, and once a published class may be realized more
+than once that is the object's to answer.
 
 **D3. A referrer reaches another element by typed steps only.** A route is an anchor, steps and a
 leaf, and no part of it carries a string. A step is one element of the path the source wrote (LRM
@@ -115,7 +119,8 @@ instances whose upward names land on different classes are different units (fact
 published under its own name, with the names of blocks found to compile alike kept as aliases of one
 class, made the set of names depend on a comparison of bodies, so a body edit changed a header --
 the requirement above, failed. A block instance is an application of its block, named from the front
-end alone, and blocks of one application that lower apart are that class realized more than once.
+end alone, and which realization of that class a block is, is named from the front end as well, by
+what its index fixed in its code.
 
 **D6. Nothing resolves a hierarchical name while the design runs.** No scope registers a signal, a
 static or a disable target by name, no scope or class carries a table of subroutine or member names,

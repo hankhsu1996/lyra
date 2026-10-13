@@ -155,6 +155,32 @@ auto SubroutineCallTypeOf(
       CalleeFormalsOf(unit_lowerer, interface));
 }
 
+auto PrototypeOf(
+    UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl,
+    mir::TypeId self) -> mir::CallableCode {
+  mir::CallableCode code;
+  CallableBindings bindings(unit_lowerer.Unit(), code);
+  std::vector<mir::LocalId> params{
+      bindings.Declare(BindingOriginId::Receiver(), self)};
+  params.reserve(decl.params.size() + 2);
+  for (const hir::SubroutineParam& param : decl.params) {
+    const hir::ProceduralVarDecl& var =
+        decl.body.procedural_vars.Get(param.var);
+    const std::optional<mir::TypeId> type =
+        ParamTypeOf(unit_lowerer, var.type, param.direction);
+    if (!type.has_value()) continue;
+    params.push_back(bindings.DeclareProcedural(
+        BindingOriginId::Procedural(param.var), var.name, *type));
+  }
+  if (const std::optional<mir::TypeId> report =
+          ReportParamTypeOf(unit_lowerer.Unit(), decl.kind)) {
+    params.push_back(bindings.DeclareAnonymous(*report));
+  }
+  code.params = std::move(params);
+  code.result_type = SubroutineCallTypeOf(unit_lowerer, decl);
+  return code;
+}
+
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
     base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId {

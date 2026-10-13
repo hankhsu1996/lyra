@@ -325,13 +325,14 @@ the detail lives in the entry itself.
   application of it, named from the front end by the function that names a unit: one published class
   per application, a loop an array of them, a child naming the block that holds it one unit. Read it
   for what an index decides -- the constants the front end settled from it, and nothing where it is
-  only read, selects an alternative, or sits in a body's code -- for why blocks of one application
-  that lower apart are one class realized more than once, with a published subroutine entering the
-  body of whichever realization the object is, for why a class of a unit is identified by a path of
-  steps and never by a composed name, and for why a unit's scope classes are nested in one another
-  and written in the file that carries the unit's name. A file per class with its name shortened by
-  a digest, deciding by comparing published classes, and a virtual method per published subroutine
-  are rejected.
+  only read, selects an alternative, or sits in what a body's statements run -- for why blocks of
+  one application whose index fixed their code differently are one class realized more than once,
+  each realization named from the front end before any body lowers and nothing compared, with a
+  published subroutine a virtual method each realization overrides, for why a class of a unit is
+  identified by a path of steps and never by a composed name, and for why a unit's scope classes are
+  nested in one another and written in the file that carries the unit's name. A file per class with
+  its name shortened by a digest, deciding by comparing published classes, and a non-virtual method
+  asking which realization the object is are rejected.
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) -- one semantic shape per
   hierarchical reference; per-segment classification by layout visibility; sealed endpoint on the
   hot path. **Its D2 is reversed by
@@ -1127,13 +1128,13 @@ the detail lives in the entry itself.
 - [one-body-built-at-every-index](one-body-built-at-every-index.md) -- the loop axis of that record,
   with its default inverted: a loop generate's blocks are one compiled class the constructor builds
   once per index, because the index reaches the block as a value construction supplies rather than
-  as a constant folded into it. Read it for the shape that makes that safe -- one mechanism decides
-  which blocks qualify and a second proves the decision by lowering the rest and comparing, so a
-  hole in the first costs a build rather than a wrong program -- and for why a question asked of the
-  source can never be completed. The measurement that removed speed from the argument is there too,
-  as is what a scope's construction receives: one entry for every class, because the constructing
-  site may hold only the definition -- except a unit's own entry, which takes its values typed,
-  since a parent works out that prototype from the child's instantiation.
+  as a constant folded into it. Read it for the comparison of lowered blocks it first decided by,
+  and why that was revised: which body a block is, is now named from the front end's record of what
+  its index fixed, before any block lowers, and nothing is compared. The measurement that removed
+  speed from the argument is there too, as is what a scope's construction receives: one entry for
+  every class, because the constructing site may hold only the definition -- except a unit's own
+  entry, which takes its values typed, since a parent works out that prototype from the child's
+  instantiation.
 - [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
   -- the entry above completed for the commonest reason a loop's blocks differ, which is a
   conditional written inside it: the construct holds the conditionals the source wrote, nested as

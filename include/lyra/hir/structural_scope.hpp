@@ -159,7 +159,8 @@ using PublishedDecl = std::variant<
 // The signature's class path is the one a referrer reaches the class by.
 // Several scopes of a unit may state one class: the block instances of one
 // application of a generate block are objects of one class (LRM 27.3), and
-// those of them that lowered apart are that class realized by a scope each.
+// those whose index fixed their code differently are that class realized by a
+// scope each.
 struct ScopePublication {
   ScopeClassSignature signature;
   base::Translation<PublishedMemberId, PublishedDecl> members;
@@ -479,33 +480,25 @@ struct SingleBlock {
   auto operator==(const SingleBlock&) const -> bool = default;
 };
 
-// One block a loop counted out, built on its own: the value the index stood
-// at, which with the source label is the block's hierarchy segment (LRM 27.4);
-// which of the construct's bodies it is; and what its construction passes that
-// body, one expression per value the body receives.
-struct StandAloneBlock {
-  std::int64_t index = 0;
+// One of a loop's bodies, and the values its index stood at where an
+// elaboration built a block of that body (LRM 27.4), in ascending order. A
+// block is named by what its index fixed about what it compiles to -- in what
+// it declares, which is the class it is an object of, and in its code,
+// `code_arguments`, which is which body of that class it is -- so blocks
+// standing at different values may be different bodies, and which one stands
+// at a value is what the construction looks up when it builds there.
+struct BodyBuiltAt {
   StructuralScopeId body;
-  std::vector<ExprId> arguments;
+  std::optional<std::uint64_t> code_arguments;
+  std::vector<std::int64_t> indices;
 
-  auto operator==(const StandAloneBlock&) const -> bool = default;
+  auto operator==(const BodyBuiltAt&) const -> bool = default;
 };
 
-// The blocks of a loop no one body serves: blocks that lower apart, or a loop
-// that did not survive elaboration as one a construction can run. Each is
-// built once, in the order the loop counted them out, and blocks that lower
-// alike are one body.
-struct BlocksStandAlone {
-  std::vector<StandAloneBlock> counted;
-
-  auto operator==(const BlocksStandAlone&) const -> bool = default;
-};
-
-// One body, built at every index the loop counts out (LRM 27.4). What makes
-// one body serve every index is that the index reaches the block as a value
-// construction supplies rather than as a constant folded into its body. How
-// many blocks there are is what running the loop says, so nothing here follows
-// that count, and a loop that counted none states the same loop and no body.
+// A loop the construction runs, building a block at every index it counts out
+// (LRM 27.4). How many blocks there are is what running the loop says, so
+// nothing here follows that count, and a loop that counted none states the
+// same loop and no body.
 //
 // `variable` is the loop's index, declared by the scope holding the generate,
 // and the three expressions are the loop's own: where the index starts,
@@ -513,13 +506,16 @@ struct BlocksStandAlone {
 // are values the loop reads; the step is written for its effect on the index
 // and its own value is discarded, the same way a loop written among statements
 // states its step. `arguments` are what each construction passes the body,
-// evaluated where the index then stands.
+// evaluated where the index then stands. `bodies` holds every body a block of
+// the loop is, each with where it stands; a loop whose index fixes nothing it
+// compiles to has one.
 struct BlocksRepeat {
   StructuralDataObjectId variable;
   ExprId initial;
   ExprId condition;
   ExprId step;
   std::vector<ExprId> arguments;
+  std::vector<BodyBuiltAt> bodies;
 
   auto operator==(const BlocksRepeat&) const -> bool = default;
 };
@@ -622,8 +618,8 @@ struct GenerateBlock;
 // how many objects a scope stands for is what `counting` says.
 struct Generate {
   base::Arena<GenerateBlock, StructuralScopeId> blocks;
-  std::variant<SingleBlock, BlocksStandAlone, BlocksRepeat, BlocksChoose>
-      counting = SingleBlock{};
+  std::variant<SingleBlock, BlocksRepeat, BlocksChoose> counting =
+      SingleBlock{};
 
   auto operator==(const Generate&) const -> bool = default;
 };
@@ -632,44 +628,24 @@ struct Generate {
 // consumer of a path asks this and nothing else about a generate, so the
 // answer is stated once here rather than re-derived at each of them.
 //
-// How a path names a block and how many scopes the construct compiled to are
-// settled independently, so the two are paired here. A loop a construction
-// runs compiles every block to its one body, and blocks built on their own
-// each say which body they are, so `index` -- the value the index of the block
-// the path picked stood at -- names the block either way. A pairing the
-// language does not have is a name that was resolved against a different
-// construct than the one it reached.
+// A path names a loop's block by `index`, the value the index of the block it
+// picked stood at (LRM 23.6, 27.4), and the loop says which of its bodies
+// stands there. A pairing the language does not have is a name that was
+// resolved against a different construct than the one it reached.
 [[nodiscard]] inline auto LoopBlockScopeOf(
     const Generate& gen, std::int64_t index) -> StructuralScopeId {
-  const auto not_a_loop = [] -> StructuralScopeId {
+  const auto* repeat = std::get_if<BlocksRepeat>(&gen.counting);
+  if (repeat == nullptr) {
     throw InternalError(
         "hir::LoopBlockScopeOf: a construct that counts out no blocks is "
         "named as a loop");
-  };
-  return std::visit(
-      Overloaded{
-          [&](const SingleBlock&) { return not_a_loop(); },
-          [&](const BlocksChoose&) { return not_a_loop(); },
-          [&](const BlocksStandAlone& stand_alone) {
-            const auto block = std::ranges::find(
-                stand_alone.counted, index, &StandAloneBlock::index);
-            if (block == stand_alone.counted.end()) {
-              throw InternalError(
-                  "hir::LoopBlockScopeOf: a name reached a block of a loop "
-                  "that counted none at its index");
-            }
-            return block->body;
-          },
-          [&](const BlocksRepeat&) {
-            if (gen.blocks.size() != 1) {
-              throw InternalError(
-                  "hir::LoopBlockScopeOf: a name reached a block of a loop "
-                  "that states no body");
-            }
-            return StructuralScopeId{0};
-          },
-      },
-      gen.counting);
+  }
+  for (const BodyBuiltAt& built : repeat->bodies) {
+    if (std::ranges::binary_search(built.indices, index)) return built.body;
+  }
+  throw InternalError(
+      "hir::LoopBlockScopeOf: a name reached a block of a loop that counted "
+      "none at its index");
 }
 
 // The same for the one block a construct building at most one holds: a block
@@ -685,7 +661,6 @@ struct Generate {
   return std::visit(
       Overloaded{
           [](const SingleBlock&) { return StructuralScopeId{0}; },
-          [&](const BlocksStandAlone&) { return a_loop(); },
           [&](const BlocksRepeat&) { return a_loop(); },
           [&](const BlocksChoose& chosen) -> StructuralScopeId {
             if (alternative >= chosen.alternatives.size() ||

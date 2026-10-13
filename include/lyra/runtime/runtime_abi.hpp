@@ -756,10 +756,6 @@ void lyra_rt_insert_bits(
 auto lyra_rt_alloc_bytes(std::uint64_t size) -> void*;
 void lyra_rt_dealloc_bytes(void* bytes, std::uint64_t size);
 
-// Whether the scope `self` is an object of the class `definition` describes or
-// of one extending it.
-auto lyra_rt_is_of_class(void* self, const void* definition) -> bool;
-
 // The sequence of handles a declaration standing for several objects builds,
 // in the order its coordinates count, and the handle at a position in one. A
 // sequence is held by address for the rest of the run, which is what lets a

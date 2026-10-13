@@ -152,4 +152,11 @@ auto SubroutineCallTypeOf(
     UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface,
     hir::TypeId result_type) -> mir::TypeId;
 
+// `decl` as a method of an object `self` points at that declares it and leaves
+// it to what extends it (LRM 8.21): its receiver, its parameters and what a
+// call of it yields, with no body.
+auto PrototypeOf(
+    UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl,
+    mir::TypeId self) -> mir::CallableCode;
+
 }  // namespace lyra::lowering::hir_to_mir

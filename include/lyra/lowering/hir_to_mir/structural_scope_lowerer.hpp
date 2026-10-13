@@ -158,10 +158,9 @@ class StructuralScopeLowerer {
     return published_class_id_;
   }
 
-  // Settles every class `unit_lowerer`'s unit published of its scopes, once
-  // every class realizing one is settled: its published members, and a method
-  // per published subroutine entering the body of whichever realizing class
-  // the object is.
+  // Settles every class `unit_lowerer`'s unit published of its scopes: its
+  // published members, and a virtual method per published subroutine, which
+  // each class realizing it overrides.
   static void DefinePublishedClasses(UnitLowerer& unit_lowerer);
 
   // The values whoever builds this scope hands it, in the order they are
@@ -537,16 +536,12 @@ class StructuralScopeLowerer {
   std::vector<ConstructionValue> construction_values_;
   // What the unit published of the object this scope is -- an instance of the
   // unit, or a generate block inside one: what it published as its first
-  // fields, in the order the signature states them, and a method per published
-  // subroutine. The class above extends it with everything the lowering adds. A
-  // referrer compiles against this one and holds nothing else, so what the unit
-  // adds while lowering its bodies moves no field a referrer reads.
+  // fields, in the order the signature states them, and a virtual method per
+  // published subroutine, which the class above overrides. The class above
+  // extends it with everything the lowering adds. A referrer compiles against
+  // this one and holds nothing else, so what the unit adds while lowering its
+  // bodies moves no field a referrer reads.
   mir::ClassId published_class_id_{};
-  // This scope's body for each subroutine it published, by the position its
-  // signature gave the subroutine. Settled while the shape is declared, where
-  // a subroutine's identity is taken; read where the published class is built.
-  base::Translation<hir::PublishedCallableId, mir::CallableId>
-      published_subroutines_;
   // The lowering of each block of each generate construct this scope holds,
   // by the construct's position and then the block's, built with this one.
   std::vector<std::vector<std::unique_ptr<StructuralScopeLowerer>>>

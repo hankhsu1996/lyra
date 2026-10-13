@@ -1,5 +1,6 @@
 #include "lyra/lowering/ast_to_hir/one_body.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -71,36 +72,37 @@ auto MergeChoices(
 }
 
 // One loop a construction runs, as two blocks left it. The loop is the
-// source's, so both state the same one; what differs is how many blocks each
-// of them counted out of it, which is no part of what either states. One that
-// counted none has no body, and the loop keeps the body the other has; where
-// both have one, the two have to be one body in their turn.
-auto MergeLoops(const hir::Generate& a, const hir::Generate& b)
+// source's, so both state the same one; what differs is which blocks each of
+// them counted out of it, which is no part of what either states, so the
+// bodies of both are taken into one.
+auto MergeLoops(
+    const hir::Generate& a, const hir::BlocksRepeat& loop_a,
+    const hir::Generate& b, const hir::BlocksRepeat& loop_b)
     -> std::optional<hir::Generate> {
-  if (a.counting != b.counting) return std::nullopt;
+  hir::BlocksRepeat merged_loop = loop_a;
+  merged_loop.bodies.clear();
+  hir::BlocksRepeat bare_b = loop_b;
+  bare_b.bodies.clear();
+  if (merged_loop != bare_b) return std::nullopt;
 
-  hir::Generate merged{};
-  merged.counting = a.counting;
-  std::optional<hir::StructuralScope> body;
-  for (const hir::GenerateBlock& ours : a.blocks) body = ours.scope;
-  for (const hir::GenerateBlock& theirs : b.blocks) {
-    body = body.has_value() ? OneBodyOf(*body, theirs.scope)
-                            : std::optional{theirs.scope};
-    if (!body.has_value()) return std::nullopt;
+  LoopBodies bodies;
+  for (const auto& [gen, loop] :
+       {std::pair{&a, &loop_a}, std::pair{&b, &loop_b}}) {
+    for (const hir::BodyBuiltAt& built : loop->bodies) {
+      if (!bodies.Take(
+              gen->blocks.Get(built.body).scope, built.code_arguments,
+              built.indices)) {
+        return std::nullopt;
+      }
+    }
   }
-  if (body.has_value()) {
-    merged.blocks.Add(hir::GenerateBlock{.scope = *std::move(body)});
-  }
-  return merged;
+  return std::move(bodies).Build(std::move(merged_loop));
 }
 
-// One construct that neither selects nor runs, as two blocks left it: blocks
-// built on their own, or a single block. Both state the same scopes in the
-// same positions, counted out and supplied the same way, so each scope is
-// merged with the one standing where it does. A selection can sit at any depth
-// beneath them, which is why agreeing here is asked of what the scopes hold
-// rather than of the scopes whole.
-auto MergeBlockForBlock(const hir::Generate& a, const hir::Generate& b)
+// A block no loop and no conditional produced, as two blocks left it. A
+// selection can sit at any depth beneath it, which is why agreeing here is
+// asked of what the block holds rather than of the block whole.
+auto MergeSingleBlocks(const hir::Generate& a, const hir::Generate& b)
     -> std::optional<hir::Generate> {
   if (a.counting != b.counting || a.blocks.size() != b.blocks.size()) {
     return std::nullopt;
@@ -126,14 +128,13 @@ auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
             if (chosen_b == nullptr) return std::nullopt;
             return MergeChoices(a, chosen_a, b, *chosen_b);
           },
-          [&](const hir::BlocksRepeat&) -> std::optional<hir::Generate> {
-            return MergeLoops(a, b);
-          },
-          [&](const hir::BlocksStandAlone&) -> std::optional<hir::Generate> {
-            return MergeBlockForBlock(a, b);
+          [&](const hir::BlocksRepeat& loop_a) -> std::optional<hir::Generate> {
+            const auto* loop_b = std::get_if<hir::BlocksRepeat>(&b.counting);
+            if (loop_b == nullptr) return std::nullopt;
+            return MergeLoops(a, loop_a, b, *loop_b);
           },
           [&](const hir::SingleBlock&) -> std::optional<hir::Generate> {
-            return MergeBlockForBlock(a, b);
+            return MergeSingleBlocks(a, b);
           }},
       a.counting);
 }
@@ -167,24 +168,41 @@ auto OneBodyOf(const hir::StructuralScope& a, const hir::StructuralScope& b)
   return merged;
 }
 
-auto BodiesOf(std::span<const hir::StructuralScope> blocks) -> LoopBodies {
-  LoopBodies out;
-  out.taken.reserve(blocks.size());
-  for (const hir::StructuralScope& block : blocks) {
-    bool merged = false;
-    for (std::size_t at = 0; at < out.bodies.size() && !merged; ++at) {
-      if (auto body = OneBodyOf(out.bodies[at], block)) {
-        out.bodies[at] = *std::move(body);
-        out.taken.push_back(static_cast<std::uint32_t>(at));
-        merged = true;
-      }
-    }
-    if (!merged) {
-      out.taken.push_back(static_cast<std::uint32_t>(out.bodies.size()));
-      out.bodies.push_back(block);
-    }
+auto LoopBodies::Take(
+    hir::StructuralScope scope, std::optional<std::uint64_t> code_arguments,
+    std::span<const std::int64_t> indices) -> bool {
+  const auto [named, first] = named_.try_emplace(
+      std::pair{scope.published.signature.class_path, code_arguments},
+      bodies_.size());
+  const std::size_t body = named->second;
+  if (first) {
+    bodies_.push_back(std::move(scope));
+    code_arguments_.push_back(code_arguments);
+  } else {
+    auto one = OneBodyOf(bodies_[body], scope);
+    if (!one.has_value()) return false;
+    bodies_[body] = *std::move(one);
   }
-  return out;
+  return std::ranges::all_of(indices, [&](std::int64_t index) {
+    return standing_at_.try_emplace(index, body).first->second == body;
+  });
+}
+
+auto LoopBodies::Build(hir::BlocksRepeat loop) && -> hir::Generate {
+  hir::Generate gen{};
+  for (std::size_t at = 0; at < bodies_.size(); ++at) {
+    loop.bodies.push_back(
+        hir::BodyBuiltAt{
+            .body = gen.blocks.Add(
+                hir::GenerateBlock{.scope = std::move(bodies_[at])}),
+            .code_arguments = code_arguments_[at],
+            .indices = {}});
+  }
+  for (const auto& [index, body] : standing_at_) {
+    loop.bodies[body].indices.push_back(index);
+  }
+  gen.counting = std::move(loop);
+  return gen;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

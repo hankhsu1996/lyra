@@ -383,7 +383,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_alloc_bytes", &lyra_rt_alloc_bytes);
   add("lyra_rt_dealloc_bytes", &lyra_rt_dealloc_bytes);
   add("lyra_rt_insert_bits", &lyra_rt_insert_bits);
-  add("lyra_rt_is_of_class", &lyra_rt_is_of_class);
   add("lyra_rt_run_program", &lyra_rt_run_program);
 }
 

@@ -9,7 +9,9 @@
 Accepted. Reverses
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) D5,
 and narrows its D2 and D4. Revises fact 5 of that record and what
-[one-body-built-at-every-index](one-body-built-at-every-index.md) decides by comparing blocks.
+[one-body-built-at-every-index](one-body-built-at-every-index.md) decides by comparing blocks. D5
+and fact 6 revised 2026-10-12: which body a block is, is named before any body lowers. D4 narrowed,
+D5's dispatch and the rejection of a virtual method per published subroutine reversed the same day.
 
 ## Requirement
 
@@ -35,7 +37,10 @@ the source and uses the source's names.
 4. A type declared inside an instance is a type of that instance (LRM 6.22), and the clause says the
    same of a generate block and of a module.
 5. A unit is named before any body lowers, by every party that names it, from the front end alone.
-6. Which blocks lower to the same scope is known only after every body lowered.
+6. What an index fixed, in what its block declares and in its block's code, is read off the front
+   end's own record of which parameters each constant evaluation read, before any body lowers. This
+   fact used to say the opposite -- that which blocks lower to one scope is known only once every
+   body has -- which was true while nothing recorded what an evaluation read.
 
 ## What was wrong
 
@@ -96,16 +101,33 @@ places decide nothing for an index. What a run evaluates. What selects an altern
 conditional, since the construction chooses it and the class holds every alternative any of its
 objects selected. What counts a loop's blocks out -- where its index starts, whether a block stands
 at it, how it reaches the next -- since the construction runs the loop (LRM 27.4) and how many
-blocks an object holds is no part of its class. And the code of a process, a continuous assignment
-or a subroutine, since it is no part of what the class declares. A place this reading misses is this
-compiler's defect, and is reported as one where the unit declares itself: block instances taken for
-one application that publish different classes.
+blocks an object holds is no part of its class. And what the statements of a process, a continuous
+assignment or a subroutine run, since that is no part of what the class declares; what the index
+fixes there names the body the class is realized by (D5). A subroutine's arguments and result, and a
+variable a process keeps for the whole run, are what the class declares: a caller passes the one and
+a name reaches the other (LRM 13.4, 6.21, 23.6). This used to say "the code of a process, a
+continuous assignment or a subroutine", and read that way a static variable of a named block and an
+argument sized by the index each published a different class under one name. A place this reading
+misses is this compiler's defect, and is reported as one where the unit declares itself: block
+instances taken for one application that publish different classes.
 
-**D5. Block instances of one application that lower apart are that class realized more than once.**
-Each such scope is a realizing class extending the one published class. A published subroutine is
-one method of the published class that enters the body of whichever realizing class the object is,
-which it asks of the object's own class record; a class realized one way asks nothing. No referrer
-sees how many realizations there are, so a body edit that changes the count changes no header.
+**D5. Block instances of one application whose index fixed their code differently are that class
+realized more than once.** Which body a block is, is named before any body lowers, from the
+constants the front end settled from its index in its code (fact 6), as its application is named
+from those settled in what the block declares. Blocks of one name are one body: each is lowered and
+taken into it, which is how the body comes to hold every alternative and every loop body their
+constructions built, and blocks of one name that lower to anything else are this compiler's defect,
+reported as one. Nothing a lowered block holds is compared with another to find which body it is.
+Each body is a realizing class extending the one published class. A published subroutine is a
+virtual method the published class introduces and each realizing class overrides with its body, so a
+call reaches the body of the class the object is however many realize it, as a virtual call does in
+C++ and a call through a trait object does in Rust. No referrer sees how many realizations there
+are, so a body edit that changes the count changes no header.
+
+This decision first found the realizations by lowering every block and comparing each with the
+bodies found before it, which cost the square of the number of distinct bodies and was most of the
+work of lowering a loop whose blocks each read a neighbour. Naming the body from the front end's
+record is the same answer with the comparison removed.
 
 **D6. An upward name starts at the scope it landed on, which may be a generate block.** The anchor
 is the nearest enclosing scope of the class of that scope, an instance or a block, and that class
@@ -170,18 +192,21 @@ every scope extends, so no header needs another unit's scope class and none is n
   is after units are named (fact 5).
 - **A file per class with the name shortened to a prefix and a digest when it does not fit.** It
   keeps the flattened name and patches its length. The name was the defect.
-- **A virtual method per published subroutine.** A referrer would then call through a table. The
-  referrer knows the class; only the declaring unit can ask which of its own classes realizes the
-  object, so the question is asked inside the method the referrer already calls directly.
+- **A non-virtual method per published subroutine that asks which realization the object is.** This
+  stood here as the decision, and a virtual method as the rejected alternative, on the ground that
+  only the declaring unit can ask which of its classes realizes the object. The object carries its
+  class, and its class's table answers that in one step; asking inside a forwarding method was a
+  test per realization, each an out-of-line call walking the class's bases, and the method itself
+  only forwarded. Reversed 2026-10-12.
 
 ## Revises
 
 - [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) D5
   is reversed by D2 and D5 here. Its fact 5 stands as a fact about bodies and no longer decides a
-  name. Its D2 gave "no method of either is virtual" the reason that a referrer knows the class;
-  that reason holds, and D5 here adds the one question a referrer cannot ask. Its D4 named the
-  anchor an enclosing instance; D6 widens it to an enclosing scope.
-- [one-body-built-at-every-index](one-body-built-at-every-index.md) keeps its D2: blocks are still
-  lowered and compared, and a hole in what was predicted still costs a build and never a wrong
-  program. What the comparison decides is how many realizations a class has, and no longer how many
-  classes there are.
+  name. Its D2 gave "no method of either is virtual" the reason that a referrer knows the class; the
+  referrer knows the published class and not which class realizes the object, so D5 here makes each
+  published subroutine virtual. Its D4 named the anchor an enclosing instance; D6 widens it to an
+  enclosing scope.
+- [one-body-built-at-every-index](one-body-built-at-every-index.md) D2: blocks are still lowered,
+  each into the body of its name, and are no longer compared to find which body they are (D5). A
+  hole in what the front end's record shows is reported as a defect rather than absorbed.

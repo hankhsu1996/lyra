@@ -759,11 +759,6 @@ enum class BuiltinFn : std::uint16_t {
   // the holding object's own answer, so a name carries only the value.
   kLoopBlocksAdd,
   kLoopBlocksAt,
-  // Whether the receiver, a scope of the design hierarchy, is an object of the
-  // class handed in or of one extending it. A class a unit published of a
-  // scope may be realized by several classes of that unit, and a body entered
-  // on the object as the published class asks which of them it is.
-  kIsOfClass,
   // A constructor hands a freshly-built child to its parent to own: this
   // consumes the built child (a unique pointer) and returns the parent-owned
   // handle -- the child's own `Segment()` supplies the LRM display form, so the
