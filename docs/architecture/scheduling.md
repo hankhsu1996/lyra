@@ -122,6 +122,20 @@ NBA region of this same time slot regardless of where the process is by then.
 **Forbidden:** routing deferred writes into per-signal queues. Every closure is submitted to one
 region queue, so commit order is the region's, not a function of which signal a write targets.
 
+**An effect a later event can take back is a timer, held by whoever owns it.** A continuous
+assignment carrying a delay schedules each new value to propagate, and a different value computed
+before it lands deschedules it (LRM 10.3.3). So that propagation is one event at most, which arming
+again replaces: the owner holds a timer that is itself the queue node, linked into the region queue
+of the slot it is due in and unlinked when replaced, as a stopped activation is withdrawn. A slot
+left holding nothing is then passed over as any slot whose events were taken back is (LRM 4.5). This
+is the timer of an event loop -- Linux's `mod_timer`, asio's `expires_after` -- rather than a
+counter the generated body compares, because taking an event back is the engine's business and not
+the program's. The timer is bound once to what firing does, which reads its owner rather than a
+value captured per change, and the delay a value takes among rise, fall and turn-off delays (LRM
+28.16, 10.3.3) is a function of the runtime, so a net's own delay can reach the same rule from
+inside the net. Where a delay of some steps is due -- the Inactive region now for none, the Active
+region of its deadline otherwise -- is one answer, shared with a process stopped at a delay.
+
 ## Region structure
 
 A time slot runs regions in LRM 4.4 order: Preponed, Active, Inactive, NBA, Observed, Reactive,

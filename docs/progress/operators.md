@@ -220,6 +220,9 @@ merged node.
       bounded by the stack the compiler follows it on: a run of three thousand operands is held by a
       test of its own and one of ten thousand compiles, while one of forty thousand ends the
       compiler, which says that it ran out of stack.
+- [x] W19 -- A min:typ:max expression (LRM 11.11) is the one of its three expressions the front end
+      was told to use, typical unless an option names another, wherever an expression stands: in a
+      delay and in any other expression alike. Only that one is evaluated.
 
 ## Cross-references
 

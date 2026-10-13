@@ -298,6 +298,12 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_submit_deferred_final", &lyra_rt_submit_deferred_final);
   add("lyra_rt_delay", &lyra_rt_delay);
   add("lyra_rt_delay_real", &lyra_rt_delay_real);
+  add("lyra_rt_delay_ticks", &lyra_rt_delay_ticks);
+  add("lyra_rt_delay_ticks_real", &lyra_rt_delay_ticks_real);
+  add("lyra_rt_scalar_propagation_delay", &lyra_rt_scalar_propagation_delay);
+  add("lyra_rt_vector_propagation_delay", &lyra_rt_vector_propagation_delay);
+  add("lyra_rt_timer_bind", &lyra_rt_timer_bind);
+  add("lyra_rt_timer_arm", &lyra_rt_timer_arm);
   add("lyra_rt_make_trigger", &lyra_rt_make_trigger);
   add("lyra_rt_observation_on_reaching", &lyra_rt_observation_on_reaching);
   add("lyra_rt_observation_of_value", &lyra_rt_observation_of_value);
@@ -1505,6 +1511,7 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_named_event_construct", &lyra_rt_named_event_construct);
   add("lyra_rt_cancellation_target_construct",
       &lyra_rt_cancellation_target_construct);
+  add("lyra_rt_timer_construct", &lyra_rt_timer_construct);
   add("lyra_rt_evaluation_attempts_construct",
       &lyra_rt_evaluation_attempts_construct);
   add("lyra_rt_channel_cancellation_construct",
@@ -1565,6 +1572,7 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_named_event_destroy", &lyra_rt_named_event_destroy);
   add("lyra_rt_cancellation_target_destroy",
       &lyra_rt_cancellation_target_destroy);
+  add("lyra_rt_timer_destroy", &lyra_rt_timer_destroy);
   add("lyra_rt_evaluation_attempts_destroy",
       &lyra_rt_evaluation_attempts_destroy);
 }

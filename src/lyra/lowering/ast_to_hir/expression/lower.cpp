@@ -363,10 +363,12 @@ auto LowerExprImpl(
           span, diag::DiagCode::kUnsupportedExpressionForm,
           "an omitted subroutine argument is not yet supported");
 
+    // LRM 11.11: a min:typ:max expression is the one of its three the tool was
+    // told to use, and the front end has already chosen it.
     case slang::ast::ExpressionKind::MinTypMax:
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedExpressionForm,
-          "a min:typ:max expression is not yet supported");
+      return LowerExprImpl(
+          lowerer, frame,
+          expr.as<slang::ast::MinTypMaxExpression>().selected());
 
     case slang::ast::ExpressionKind::CopyClass:
       return diag::Fail(

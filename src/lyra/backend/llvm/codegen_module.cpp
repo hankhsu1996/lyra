@@ -975,6 +975,7 @@ auto CodeGenModule::HoldsItsBytesInline(
     case support::MemberStorageKind::kCancellationTarget:
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
+    case support::MemberStorageKind::kTimer:
       return false;
   }
   throw InternalError("llvm codegen: unknown member storage kind");

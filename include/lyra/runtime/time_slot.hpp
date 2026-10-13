@@ -9,21 +9,23 @@
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
+#include "lyra/runtime/timer.hpp"
 
 namespace lyra::runtime {
 
-// What one region of one time slot holds pending, in the two kinds an event can
-// be. LRM 4.5 fixes no order between the events of one region, so each kind is
-// kept in the container that suits it: an activation is reached through the
-// place in a queue it owns, which is what keeps taking a queued one off a
-// constant-time unlink, and a deferred effect owns nothing and is held until
-// the region runs.
+// What one region of one time slot holds pending, in the three kinds an event
+// can be. LRM 4.5 fixes no order between the events of one region, so each kind
+// is kept in the container that suits it: an activation and a timer are each
+// reached through the place in a queue it owns, which is what keeps taking a
+// queued one off a constant-time unlink, and a deferred effect owns nothing and
+// is held until the region runs.
 struct RegionQueue {
   IntrusiveList<QueuePlace> activations;
+  IntrusiveList<TimerPlace> timers;
   std::vector<OwnedCall> effects;
 
   [[nodiscard]] auto Empty() const noexcept -> bool {
-    return activations.Empty() && effects.empty();
+    return activations.Empty() && timers.Empty() && effects.empty();
   }
 };
 

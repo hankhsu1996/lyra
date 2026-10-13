@@ -167,9 +167,11 @@ This workstream reasons from these and does not restate them:
   are also what makes a resolved net's own strength observable -- a switch passes it on, and a
   three-state gate with an unknown control produces a range of strengths rather than one -- so both
   arrive together with an ambiguous-strength representation the current model does not carry.
-- A net declaration's delay (LRM 10.3.3), including the charge decay a `trireg` specifies as its
-  third delay (LRM 6.6.4.2). Refused by name rather than dropped, because dropping one answers at
-  the wrong time instead of refusing.
+- A net delay: a delay on a net declaration that does not assign, which every driver's change waits
+  out before the net shows it (LRM 10.3.3, 28.16), including the charge decay a `trireg` specifies
+  as its third delay (LRM 6.6.4.2). Refused by name rather than dropped, because dropping one
+  answers at the wrong time instead of refusing. A declaration that assigns carries its delay as
+  that assignment's, which runs (`processes.md`).
 - `interconnect` nets (LRM 6.6.8) and user-defined nettypes (LRM 6.6.7), each refused by name. A
   nettype declared with no resolution function admits one driver, which is the same rule `uwire`
   states and the same front-end check answers.

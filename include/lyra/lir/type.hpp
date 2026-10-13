@@ -71,6 +71,7 @@ enum class RuntimeLibraryKind : std::uint8_t {
   kWait,
   kObjectWrite,
   kCancellationTarget,
+  kTimer,
   kControlEffect,
   // The definition every object of one class carries. A body names it to ask
   // the class a question, and forwards its address without reading inside it,

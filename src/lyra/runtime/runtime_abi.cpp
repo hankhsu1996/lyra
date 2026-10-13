@@ -58,6 +58,7 @@
 #include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/sim_time.hpp"
 #include "lyra/runtime/simulation_entry.hpp"
+#include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/value_change_wait.hpp"
 #include "lyra/runtime/value_families.hpp"
 #include "lyra/runtime/value_handle.hpp"
@@ -2147,6 +2148,8 @@ using lyra::runtime::CurrentExportScope;
 using lyra::runtime::CurrentForeignProcess;
 using lyra::runtime::Delay;
 using lyra::runtime::DelayReal;
+using lyra::runtime::DelayTicks;
+using lyra::runtime::DelayTicksReal;
 using lyra::runtime::DesignateArrayElement;
 using lyra::runtime::DesignateElement;
 using lyra::runtime::DesignationAt;
@@ -2245,6 +2248,7 @@ using lyra::runtime::RunNullHostCommand;
 using lyra::runtime::RuntimeEffects;
 using lyra::runtime::RuntimeProcess;
 using lyra::runtime::SampledHistory;
+using lyra::runtime::ScalarPropagationDelay;
 using lyra::runtime::Scope;
 using lyra::runtime::ShareClosure;
 using lyra::runtime::SharedPointer;
@@ -2257,11 +2261,13 @@ using lyra::runtime::TakeClosure;
 using lyra::runtime::TakeCondition;
 using lyra::runtime::TakeOwner;
 using lyra::runtime::TestPlusargs;
+using lyra::runtime::Timer;
 using lyra::runtime::Trigger;
 using lyra::runtime::TriggerHandles;
 using lyra::runtime::TupleRefSampledLoad;
 using lyra::runtime::TupleRefSet;
 using lyra::runtime::Var;
+using lyra::runtime::VectorPropagationDelay;
 using lyra::runtime::ViewOf;
 using lyra::runtime::Wait;
 using lyra::runtime::WaitFork;
@@ -2752,6 +2758,53 @@ auto lyra_rt_delay_real(
       out, DelayReal(
                *static_cast<RuntimeEffects*>(runtime), Read<Real>(duration),
                unit_power, precision_power));
+}
+
+auto lyra_rt_delay_ticks(
+    const void* duration, std::int64_t duration_width, bool duration_is_signed,
+    bool duration_is_four_state, std::int64_t unit_power,
+    std::int64_t precision_power) -> std::uint64_t {
+  const lyra::value::LoadedWords amount = NumberAt(
+      duration, duration_width, duration_is_signed, duration_is_four_state);
+  return DelayTicks(
+      amount.View(), static_cast<std::int8_t>(unit_power),
+      static_cast<std::int8_t>(precision_power));
+}
+
+auto lyra_rt_delay_ticks_real(
+    const void* duration, std::int64_t unit_power, std::int64_t precision_power)
+    -> std::uint64_t {
+  return DelayTicksReal(
+      Read<Real>(duration), static_cast<std::int8_t>(unit_power),
+      static_cast<std::int8_t>(precision_power));
+}
+
+auto lyra_rt_scalar_propagation_delay(
+    const void* value, std::int64_t value_width, bool value_is_four_state,
+    std::uint64_t rise, std::uint64_t fall, std::uint64_t turn_off)
+    -> std::uint64_t {
+  const lyra::value::LoadedWords changed_to =
+      NumberAt(value, value_width, false, value_is_four_state);
+  return ScalarPropagationDelay(changed_to.View(), rise, fall, turn_off);
+}
+
+auto lyra_rt_vector_propagation_delay(
+    const void* value, std::int64_t value_width, bool value_is_four_state,
+    std::uint64_t rise, std::uint64_t fall, std::uint64_t turn_off)
+    -> std::uint64_t {
+  const lyra::value::LoadedWords changed_to =
+      NumberAt(value, value_width, false, value_is_four_state);
+  return VectorPropagationDelay(changed_to.View(), rise, fall, turn_off);
+}
+
+void lyra_rt_timer_bind(
+    void* timer, void* closure, std::int64_t precision_power) {
+  static_cast<Timer*>(timer)->Bind(TakeClosure(closure), precision_power);
+}
+
+void lyra_rt_timer_arm(void* timer, void* runtime, std::uint64_t ticks) {
+  static_cast<Timer*>(timer)->Arm(
+      *static_cast<RuntimeEffects*>(runtime), ticks);
 }
 
 // What crosses is the place's one word. For a place reached by itself that is
@@ -8020,6 +8073,9 @@ void lyra_rt_cancellation_target_construct(void* storage) {
 void lyra_rt_evaluation_attempts_construct(void* storage) {
   BuildAt<EvaluationAttempts>(storage);
 }
+void lyra_rt_timer_construct(void* storage) {
+  BuildAt<Timer>(storage);
+}
 void lyra_rt_channel_cancellation_construct(void* storage) {
   BuildAt<ChannelCancellation>(storage);
 }
@@ -8145,6 +8201,9 @@ void lyra_rt_cancellation_target_destroy(void* storage) {
 }
 void lyra_rt_evaluation_attempts_destroy(void* storage) {
   std::destroy_at(static_cast<EvaluationAttempts*>(storage));
+}
+void lyra_rt_timer_destroy(void* storage) {
+  std::destroy_at(static_cast<Timer*>(storage));
 }
 
 // The holders over each layout an integral value no wider than a word has. A

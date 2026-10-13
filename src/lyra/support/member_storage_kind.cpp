@@ -32,6 +32,8 @@ auto MemberStorageKindName(MemberStorageKind kind) -> std::string_view {
       return "channel_cancellation";
     case MemberStorageKind::kEvaluationAttempts:
       return "evaluation_attempts";
+    case MemberStorageKind::kTimer:
+      return "timer";
   }
   throw InternalError("member storage kind: unknown kind");
 }

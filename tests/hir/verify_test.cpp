@@ -63,6 +63,7 @@ void Assign(
           .lhs = lhs,
           .rhs = rhs,
           .strength = support::StrengthLevel::kStrong,
+          .delay = std::nullopt,
           .sensitivity_list = std::move(sensitivity)});
 }
 

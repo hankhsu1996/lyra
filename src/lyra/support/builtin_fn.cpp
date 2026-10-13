@@ -508,6 +508,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "evaluation_attempts_settle",
           .declaration = Method{"Settle"}};
+    case BuiltinFn::kTimerBind:
+      return {.name = "timer_bind", .declaration = Method{"Bind"}};
+    case BuiltinFn::kTimerArm:
+      return {
+          .name = "timer_arm",
+          .declaration = Method{"Arm"},
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kIsUnknown:
       return {
           .name = "is_unknown",
@@ -975,6 +982,25 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "delay_real",
           .declaration = RuntimeFunction("DelayReal"),
           .takes_the_runtime_handle = true};
+    case BuiltinFn::kDelayTicks:
+      return {
+          .name = "delay_ticks",
+          .declaration = RuntimeFunction("DelayTicks"),
+          .operands = {kNumber}};
+    case BuiltinFn::kDelayTicksReal:
+      return {
+          .name = "delay_ticks_real",
+          .declaration = RuntimeFunction("DelayTicksReal")};
+    case BuiltinFn::kScalarPropagationDelay:
+      return {
+          .name = "scalar_propagation_delay",
+          .declaration = RuntimeFunction("ScalarPropagationDelay"),
+          .operands = {kBits}};
+    case BuiltinFn::kVectorPropagationDelay:
+      return {
+          .name = "vector_propagation_delay",
+          .declaration = RuntimeFunction("VectorPropagationDelay"),
+          .operands = {kBits}};
     case BuiltinFn::kObservationOnReaching:
       return {
           .name = "observation_on_reaching",

@@ -26,6 +26,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
+#include "lyra/runtime/timer.hpp"
 
 namespace lyra::runtime {
 
@@ -419,9 +420,16 @@ void Runtime::RunRegion(TimeSlot& slot, Region region) {
   // them. LRM 4.5 fixes no order between the events of one region.
   std::vector<OwnedCall> effects = std::move(queue.effects);
   queue.effects.clear();
+  IntrusiveList<TimerPlace> due;
+  queue.timers.SpliceBackOnto(due);
   queue.activations.SpliceBackOnto(draining_);
   for (OwnedCall& effect : effects) {
     effect();
+  }
+  // A timer comes off its queue as it fires, so arming it again from what the
+  // firing wakes queues a new event rather than moving this one.
+  while (TimerPlace* fired = due.PopFront()) {
+    fired->timer->Fire();
   }
   while (QueuePlace* queued = draining_.PopFront()) {
     Activation* activation = queued->activation;

@@ -405,6 +405,11 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // scope, which the region naming that scope binds and consumes.
   kCancellationTarget,
   kControlEffect,
+  // LRM 10.3.3 the one future event a continuous assignment carrying a delay
+  // propagates through: `lyra::runtime::Timer`, held by the scope that owns the
+  // assignment, bound once to what it fires and armed again in place of the
+  // event pending whenever the right-hand side changes to a new value.
+  kTimer,
   // What every object of one class carries, so the object answers what its
   // class extends and what a class of the design hierarchy states of its
   // instances: `lyra::runtime::ObjectDefinition`. The class's unit emits it as

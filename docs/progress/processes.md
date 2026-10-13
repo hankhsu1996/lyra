@@ -148,10 +148,16 @@ under each item, and the conformance gaps at the end.
   - [ ] A non-blocking assignment whose target is an automatic-lifetime procedural local (LRM
         13.3.2) is rejected; the deferred-commit closure would outlive the local's activation.
 - [x] P7 -- Continuous assignment `assign x = y;` (LRM 10.3). Read set is precomputed by slang's
-      flow analysis (LRM 10.3.2 reads identical to LRM 9.2.2.2.1). Drive strength (LRM 10.3.4) and
-      `assign #N` (LRM 10.3.3) are diagnosed; concat LHS rides on the procedural side.
-  - [ ] A delay on a continuous assignment (`assign #N x = y;`, LRM 10.3.3) is rejected; the net's
-        drivers update without the specified inertial / transport delay.
+      flow analysis (LRM 10.3.2 reads identical to LRM 9.2.2.2.1). Drive strength (LRM 10.3.4) is
+      honoured on a net target; concat LHS rides on the procedural side.
+  - [x] A delay on a continuous assignment, written on the `assign` or on a net declaration that
+        assigns (LRM 10.3.3). Each value the right-hand side takes reaches the target that long
+        after the change, and one replaced by a different value before then never arrives, so a
+        pulse shorter than the delay does not propagate; a change to the value already on its way
+        does not put it off. Given rise, fall and turn-off delays, a scalar net takes the one Table
+        28-9 names for the value changed to and a vector net the one 10.3.3's rule names. Each
+        amount is read when the change happens, integral or real, and a zero delay lands in the
+        Inactive region of the same time slot (LRM 4.4.2.3).
   - [ ] A continuous-assignment form beyond the plain `assign` and net-declaration assignment (the
         remaining LRM 10.3 forms) is rejected.
   - [x] The pure value queries in a continuous-assignment right-hand side: a time read (`$time` /

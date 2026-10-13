@@ -2238,10 +2238,30 @@ class HirDumper {
   }
 
   void DumpContinuousAssign(const ContinuousAssign& ca) {
+    std::string delay;
+    if (ca.delay.has_value()) {
+      delay = std::visit(
+          Overloaded{
+              [](const SingleDelay& d) {
+                return std::format(" delay=Expr[{}]", d.amount.value);
+              },
+              [](const RiseFallDelay& d) {
+                return std::format(
+                    " delay=(rise Expr[{}], fall Expr[{}])", d.rise.value,
+                    d.fall.value);
+              },
+              [](const RiseFallTurnOffDelay& d) {
+                return std::format(
+                    " delay=(rise Expr[{}], fall Expr[{}], turn-off Expr[{}])",
+                    d.rise.value, d.fall.value, d.turn_off.value);
+              }},
+          *ca.delay);
+    }
     Line(
         std::format(
-            "ContinuousAssign lhs=Expr[{}] rhs=Expr[{}] strength={}",
-            ca.lhs.value, ca.rhs.value, StrengthLevelLabel(ca.strength)));
+            "ContinuousAssign lhs=Expr[{}] rhs=Expr[{}] strength={}{}",
+            ca.lhs.value, ca.rhs.value, StrengthLevelLabel(ca.strength),
+            delay));
     Indent();
     if (!ca.sensitivity_list.empty()) {
       Line("SensitivityList:");

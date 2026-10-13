@@ -455,6 +455,35 @@ auto lyra_rt_delay_real(
     void* runtime, const void* duration, std::int64_t unit_power,
     std::int64_t precision_power, void* out) -> void*;
 
+// How many steps of the scope's precision a delay amount is, read as a delay
+// control reads it (LRM 9.4.1, 3.14.1): what a continuous assignment's delays
+// are compared and scheduled in (LRM 10.3.3).
+auto lyra_rt_delay_ticks(
+    const void* duration, std::int64_t duration_width, bool duration_is_signed,
+    bool duration_is_four_state, std::int64_t unit_power,
+    std::int64_t precision_power) -> std::uint64_t;
+auto lyra_rt_delay_ticks_real(
+    const void* duration, std::int64_t unit_power, std::int64_t precision_power)
+    -> std::uint64_t;
+
+// The delay a change of a scalar or a vector net to `value` takes, of the rise,
+// fall and turn-off delays given in steps (LRM 28.16, 10.3.3).
+auto lyra_rt_scalar_propagation_delay(
+    const void* value, std::int64_t value_width, bool value_is_four_state,
+    std::uint64_t rise, std::uint64_t fall, std::uint64_t turn_off)
+    -> std::uint64_t;
+auto lyra_rt_vector_propagation_delay(
+    const void* value, std::int64_t value_width, bool value_is_four_state,
+    std::uint64_t rise, std::uint64_t fall, std::uint64_t turn_off)
+    -> std::uint64_t;
+
+// A delayed continuous assignment's timer (LRM 10.3.3): what it fires, bound
+// once with its scope's precision, and its one pending event, armed `ticks`
+// steps from now in place of the one before.
+void lyra_rt_timer_bind(
+    void* timer, void* closure, std::int64_t precision_power);
+void lyra_rt_timer_arm(void* timer, void* runtime, std::uint64_t ticks);
+
 // Builds one leaf of a wait: the place it watches, what decides whether what
 // happens there is an event -- which the leaves watching for one event share --
 // which part of the place it watches, as the steps that reach the part (an
@@ -2607,6 +2636,7 @@ void lyra_rt_managedref_sampled_history_construct(void* storage);
 void lyra_rt_named_event_construct(void* storage);
 void lyra_rt_cancellation_target_construct(void* storage);
 void lyra_rt_evaluation_attempts_construct(void* storage);
+void lyra_rt_timer_construct(void* storage);
 void lyra_rt_channel_cancellation_construct(void* storage);
 void lyra_rt_shared_pointer_construct(void* storage);
 void lyra_rt_string_cell_destroy(void* storage);
@@ -2647,6 +2677,7 @@ void lyra_rt_managedref_sampled_history_destroy(void* storage);
 void lyra_rt_named_event_destroy(void* storage);
 void lyra_rt_cancellation_target_destroy(void* storage);
 void lyra_rt_evaluation_attempts_destroy(void* storage);
+void lyra_rt_timer_destroy(void* storage);
 
 // The holders over each layout an integral value no wider than a word has: the
 // storage unit one plane takes -- 8, 16, 32 or 64 bits -- and whether an
