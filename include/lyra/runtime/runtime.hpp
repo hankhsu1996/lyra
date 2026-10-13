@@ -23,6 +23,7 @@
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/mem_file.hpp"
 #include "lyra/runtime/observable.hpp"
+#include "lyra/runtime/owned_processes.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
@@ -74,7 +75,8 @@ inline constexpr std::size_t kStartTurnCount =
 
 // The concrete simulation runtime. Owns every mutable piece of simulator
 // state -- time, region queues, execution ambient, I/O sinks, the attached
-// design, the process registry -- and drives the resolve walk and the run.
+// design, the executions no process started -- and drives the resolve walk and
+// the run.
 // Generated code sees only the `RuntimeEffects` view; the host boundary here
 // (BindDesign, Run) is not visible through that view.
 class Runtime final : public RuntimeEffects {
@@ -123,14 +125,10 @@ class Runtime final : public RuntimeEffects {
   void ReportSimulationControl(
       std::string_view task, std::string_view origin, int level);
 
-  // Push `process` onto the primary registry and the by-scope index in
-  // lockstep. The by-scope index is a set of raw back-pointers keyed by the
-  // owning scope; every hierarchical query (LRM 9.7 `disable`, LRM 9.6.1
-  // `wait fork` descendant walk, scope teardown, `%m` attribution) reaches
-  // it here. Called by process registration (the `Register...` free
-  // functions) and by the fork spawn path. Public because the free
-  // registration functions live outside this class.
-  void RegisterProcessInRegistry(std::shared_ptr<RuntimeProcess> process);
+  // Keeps `process`, which no process started: a procedure, or the carrier of
+  // an update. It is kept for as long as it or anything it started runs.
+  // Public because the free registration functions live outside this class.
+  void AdoptProcess(std::shared_ptr<RuntimeProcess> process);
 
   // LRM 9.2.3: a `final` procedure waits for the end of simulation, after the
   // last slot, rather than in any slot.
@@ -270,7 +268,9 @@ class Runtime final : public RuntimeEffects {
   Observable every_object_;
   BoundMembers bound_members_;
   std::unordered_set<const VariableCell*> driven_continuously_;
-  std::vector<std::shared_ptr<RuntimeProcess>> processes_;
+  // The executions no process started. Released before the queues above, which
+  // a running one is still placed in.
+  OwnedProcesses roots_{nullptr};
   // The process running now. Atomic, as the current time is, because a run
   // stopped from outside is asked where it is from a signal handler, which may
   // read nothing else.

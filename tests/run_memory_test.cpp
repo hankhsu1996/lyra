@@ -2,7 +2,8 @@
 // resumes at, a record for each place it watches, and a few words of everything
 // else a process has. What is held here is that a design of many waiting
 // processes runs inside an address limit set by that, and so that nothing a
-// process rarely uses is paid for by every one of them.
+// process rarely uses is paid for by every one of them. And what it holds for
+// one that has ended: nothing, once nothing can reach it any more.
 //
 // How much a program asks for belongs to the build of the runtime, so this is a
 // statement about the program as it is shipped.
@@ -64,13 +65,43 @@ endmodule
 // this.
 constexpr int kAddressLimitKib = 96'000;
 
-TEST(RunMemory, AWaitingProcessHoldsWhatItHas) {
+// Two hundred thousand steps, each starting a process that ends at once (LRM
+// 9.3.2) and an update that waits for the next edge (LRM 9.4.5), so no more
+// than one of either is alive at a time.
+constexpr std::string_view kEndedExecutions = R"(
+module Test;
+  logic clk = 0;
+  int spawned = 0;
+  int landed = 0;
+  initial begin
+    repeat (200000) begin
+      fork
+        spawned++;
+      join_none
+      landed <= @(posedge clk) landed + 1;
+      #1 clk = 1;
+      #1 clk = 0;
+    end
+    #1;
+    if (spawned != 200000 || landed != 200000)
+      $fatal(1, "spawned %0d and landed %0d", spawned, landed);
+  end
+endmodule
+)";
+
+// The run needs about twenty-four thousand kibibytes with nothing left over
+// from the executions it ended, and would ask for nearly two hundred thousand
+// more were each of them kept.
+constexpr int kEndedAddressLimitKib = 48'000;
+
+// Builds `design` on the execution backend and runs it under `limit_kib`.
+void RunsInside(std::string_view design, int limit_kib) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
   const auto src = *tmp_or / "test.sv";
-  std::ofstream(src) << kDesign;
+  std::ofstream(src) << design;
   const auto program = *tmp_or / "sim";
 
   const std::vector<std::string> build = {
@@ -88,10 +119,18 @@ TEST(RunMemory, AWaitingProcessHoldsWhatItHas) {
   ASSERT_EQ(built.termination, TerminationKind::kExitedNormally)
       << built.stdout_text << built.stderr_text;
 
-  const auto ran = RunUnderAddressLimit(program, {}, kAddressLimitKib);
+  const auto ran = RunUnderAddressLimit(program, {}, limit_kib);
   EXPECT_EQ(ran.termination, TerminationKind::kExitedNormally)
-      << "under " << kAddressLimitKib << " KiB the program said:\n"
+      << "under " << limit_kib << " KiB the program said:\n"
       << ran.stderr_text;
+}
+
+TEST(RunMemory, AWaitingProcessHoldsWhatItHas) {
+  RunsInside(kDesign, kAddressLimitKib);
+}
+
+TEST(RunMemory, AnEndedExecutionIsLetGo) {
+  RunsInside(kEndedExecutions, kEndedAddressLimitKib);
 }
 
 }  // namespace

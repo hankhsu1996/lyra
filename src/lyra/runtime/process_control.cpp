@@ -10,7 +10,6 @@
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
-#include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -49,8 +48,8 @@ class ProcessTerminationAwaiter final : public StateAwaiter {
            ProcessExecutionState::kTerminated;
   }
 
-  // Pins the target across the suspension, so a kill that detaches it from the
-  // lineage while the caller is parked cannot free the node before resume.
+  // Holds the target across the suspension: once it has ended, whoever started
+  // it releases it, and this wait still reads it after that.
   value::ObjectRef target_;
 };
 
@@ -89,16 +88,9 @@ void ProcessKill(const value::ObjectRef& self, RuntimeEffects& runtime) {
     RaiseUnclaimableEffect();
   }
   target.TerminateSubtreeKilled(runtime);
-  // `self` still pins the target, so detaching it from the lineage cannot free
-  // it mid-call. Killing the target may have satisfied a `wait fork` its parent
-  // is parked on (LRM 9.6.1), and may leave a terminated ancestor with no live
-  // descendant left to retain it.
-  RuntimeProcess* parent = target.Parent();
-  target.DetachFromParent();
-  if (parent != nullptr) {
-    runtime.WakeParkedOn(parent->WaitForkCondition(), Change::Whole());
-    RuntimeProcess::ReleaseTerminatedLineage(*parent);
-  }
+  // `self` still pins the target, so releasing it cannot free it mid-call. The
+  // kill may leave a terminated ancestor with nothing under it to retain it.
+  RuntimeProcess::ReleaseTerminatedLineage(target);
 }
 
 auto ProcessAwait(const value::ObjectRef& self, RuntimeEffects& runtime)

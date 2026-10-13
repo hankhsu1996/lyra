@@ -293,9 +293,8 @@ void Runtime::ResolveGlobalTimePrecision() {
   time_format_.units_power = global_precision_power_;
 }
 
-void Runtime::RegisterProcessInRegistry(
-    std::shared_ptr<RuntimeProcess> process) {
-  processes_.push_back(std::move(process));
+void Runtime::AdoptProcess(std::shared_ptr<RuntimeProcess> process) {
+  roots_.Adopt(std::move(process));
 }
 
 void Runtime::QueueFinal(Activation* top) {
@@ -477,14 +476,10 @@ void Runtime::RunProcess(Activation* activation) {
   if (!process.ResumeWith(*this, activation)) {
     return;
   }
-  // The terminal transition already woke what awaits this process (LRM 9.3.2,
-  // 9.7). Its parent's `wait fork` may hold now that it has one live child
-  // fewer (LRM 9.6.1), which is asked while the node is still linked.
-  if (RuntimeProcess* parent = process.Parent(); parent != nullptr) {
-    WakeParkedOn(parent->WaitForkCondition(), Change::Whole());
-  }
-  // Releasing destroys `process` and every ancestor the release leaves with no
-  // lineage to retain, so no statement may follow it here.
+  // The terminal transition already woke what awaits this process and its
+  // parent's `wait fork` (LRM 9.3.2, 9.7, 9.6.1). Releasing destroys `process`
+  // and every ancestor the release leaves with nothing under it, so no
+  // statement may follow it here.
   RuntimeProcess::ReleaseTerminatedLineage(process);
 }
 
@@ -498,7 +493,7 @@ void RegisterStartingProcess(
       owning_scope, std::move(coroutine),
       unit_instance->InitializationSeeds().Split(), written_at);
   rt.QueueStart(kind, process->TopActivation());
-  rt.RegisterProcessInRegistry(std::move(process));
+  rt.AdoptProcess(std::move(process));
 }
 
 }  // namespace
@@ -543,7 +538,7 @@ void RegisterFinalProcess(
       owning_scope, std::move(coroutine),
       unit_instance->InitializationSeeds().Split(), written_at);
   rt.QueueFinal(process->TopActivation());
-  rt.RegisterProcessInRegistry(std::move(process));
+  rt.AdoptProcess(std::move(process));
 }
 
 void EnterScopeStaticInit(RuntimeEffects& runtime, Scope* unit_instance) {

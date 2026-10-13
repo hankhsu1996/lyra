@@ -1,8 +1,6 @@
 #include "lyra/runtime/runtime_process.hpp"
 
-#include <algorithm>
 #include <coroutine>
-#include <cstddef>
 #include <exception>
 #include <memory>
 #include <utility>
@@ -43,7 +41,7 @@ auto RuntimeProcess::TopActivation() const -> Activation* {
 }
 
 auto RuntimeProcess::Parent() const -> RuntimeProcess* {
-  return parent_;
+  return owned_by_ != nullptr ? owned_by_->Owner() : nullptr;
 }
 
 auto RuntimeProcess::ParkAt(RuntimeEffects& services, Awaiter& awaiter)
@@ -170,21 +168,16 @@ void RuntimeProcess::Resume(RuntimeEffects& effects) {
   }
 }
 
-auto RuntimeProcess::HasNoLiveChild() const -> bool {
-  return std::ranges::all_of(children_, [](const auto& child) {
-    return child->execution_state_ == ProcessExecutionState::kTerminated;
-  });
+void RuntimeProcess::DisableDescendants(RuntimeEffects& services) {
+  children_.ForEach(
+      [&services](RuntimeProcess& child) { child.Dismantle(services); });
 }
 
-void RuntimeProcess::DisableDescendants(RuntimeEffects& services) {
-  for (const std::shared_ptr<RuntimeProcess>& child : children_) {
-    // Sever the upward link before the recursion severs the downward ones, so a
-    // handle-held child left behind by the clear below is a parent-less orphan
-    // rather than a node pointing into freed storage.
-    child->parent_ = nullptr;
-    child->TerminateSubtreeKilled(services);
+void RuntimeProcess::Dismantle(RuntimeEffects& services) {
+  TerminateSubtreeKilled(services);
+  if (IsReleasable()) {
+    Release();
   }
-  children_.clear();
 }
 
 void RuntimeProcess::SettleOrRequestKilled(RuntimeEffects& services) {
@@ -212,17 +205,15 @@ void RuntimeProcess::TerminateSubtreeKilled(RuntimeEffects& services) {
 
 void RuntimeProcess::TerminateSubtreeDeferringRunning(
     RuntimeProcess& running, RuntimeEffects& services) {
-  // Off-path children are killed and severed synchronously; the one child on
-  // the path down to `running` is kept linked and recursed into, so the chain
-  // that owns `running` survives until `running` settles at its safe boundary.
-  std::erase_if(children_, [&](const std::shared_ptr<RuntimeProcess>& child) {
-    if (child->IsSelfOrAncestorOf(running)) {
-      child->TerminateSubtreeDeferringRunning(running, services);
-      return false;
+  // Off-path children are killed and dismantled synchronously; the one child on
+  // the path down to `running` is kept and recursed into, so the chain that
+  // owns `running` survives until `running` settles at its safe boundary.
+  children_.ForEach([&](RuntimeProcess& child) {
+    if (child.IsSelfOrAncestorOf(running)) {
+      child.TerminateSubtreeDeferringRunning(running, services);
+      return;
     }
-    child->parent_ = nullptr;
-    child->TerminateSubtreeKilled(services);
-    return true;
+    child.Dismantle(services);
   });
   if (this == &running) {
     RequestTermination(ProcessTerminationCause::kKilled);
@@ -234,7 +225,7 @@ void RuntimeProcess::TerminateSubtreeDeferringRunning(
 auto RuntimeProcess::IsSelfOrAncestorOf(const RuntimeProcess& other) const
     -> bool {
   for (const RuntimeProcess* node = &other; node != nullptr;
-       node = node->parent_) {
+       node = node->Parent()) {
     if (node == this) {
       return true;
     }
@@ -242,40 +233,23 @@ auto RuntimeProcess::IsSelfOrAncestorOf(const RuntimeProcess& other) const
   return false;
 }
 
-void RuntimeProcess::DetachFromParent() {
-  if (parent_ == nullptr) {
-    return;
-  }
-  RuntimeProcess* parent = parent_;
-  parent_ = nullptr;
-  parent->EraseChild(*this);
-}
-
 auto RuntimeProcess::IsReleasable() const -> bool {
   return execution_state_ == ProcessExecutionState::kTerminated &&
-         children_.empty();
+         children_.Empty();
 }
 
-void RuntimeProcess::AdoptChild(std::shared_ptr<RuntimeProcess> child) {
-  child->parent_ = this;
-  children_.push_back(std::move(child));
-}
-
-void RuntimeProcess::EraseChild(RuntimeProcess& child) {
-  const std::size_t erased = std::erase_if(
-      children_, [&](const std::shared_ptr<RuntimeProcess>& node) {
-        return node.get() == &child;
-      });
-  if (erased != 1) {
-    throw InternalError("RuntimeProcess::EraseChild: child is not ours");
-  }
+void RuntimeProcess::Release() {
+  owned_place_.Unlink();
+  owned_by_ = nullptr;
+  const std::shared_ptr<RuntimeProcess> last = std::move(owned_place_.held);
 }
 
 void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
   RuntimeProcess* node = &process;
-  while (node->parent_ != nullptr && node->IsReleasable()) {
-    RuntimeProcess* parent = node->parent_;
-    parent->EraseChild(*node);
+  while (node != nullptr && node->owned_by_ != nullptr &&
+         node->IsReleasable()) {
+    RuntimeProcess* parent = node->Parent();
+    node->Release();
     node = parent;
   }
 }
@@ -352,9 +326,13 @@ void RuntimeProcess::SettleTerminated(
     coroutine_ = Coroutine<void>{};
     current_leaf_ = nullptr;
   }
-  // Settling and waking what awaits it are one step, so no terminal path can
-  // leave one of them parked forever (LRM 9.3.2, 9.7).
   services.WakeParkedOn(termination_, Change::Whole());
+  if (owned_by_ == nullptr) {
+    throw InternalError(
+        "RuntimeProcess::SettleTerminated: a process that has just ended is "
+        "kept by nothing -- please report this as a bug");
+  }
+  owned_by_->Ended(*this, services);
 }
 
 auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)

@@ -10,6 +10,7 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/runtime/owned_processes.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/wait.hpp"
@@ -45,29 +46,28 @@ enum class ProcessTerminationCause : std::uint8_t {
 
 // One run -- one execution pass -- of a process's pending deferred reports: the
 // deferred assertion reports of LRM 16.4.1 and the unique / priority violation
-// reports of LRM 12.4.2.1, which share the one per-process queue. It stands for
-// nothing but its own existence, and a flush point retires it, which is what
-// withdraws that pass's reports together without any of them being found.
-// Termination is not a flush point, so a report queued before the body ended
-// still matures.
-struct DeferredReportEpoch {};
+// reports of LRM 12.4.2.1, which share the one per-process queue. A flush point
+// marks it withdrawn, which withdraws that pass's reports together without any
+// of them being found. Termination is not a flush point, so a report queued
+// before the body ended still matures, however soon the process itself goes.
+struct DeferredReportEpoch {
+  bool withdrawn = false;
+};
 
 // What a pending deferred report recorded where it was created, and the whole
 // of what it asks before it acts: it acts only if every source it recorded
 // still stands (LRM 16.4.1, 16.4.2, 16.4.4).
 //
-// The two kinds are recorded differently, and the reason is lifetime rather
-// than taste. A disable target is per-instance storage that outlives every
-// report holding it, so a report keeps it and re-reads its generation. A
-// process is not, and a pending report may outlive one, so its pass is held
-// weakly and that hold is itself the answer -- a report never reaches for a
-// process that is gone.
+// Each source is held by the report itself, so asking never reaches the
+// process that queued it, which may be gone by then: a disable target is
+// per-instance storage that outlives every report holding it, and the pass is
+// kept alive by the reports that recorded it.
 struct DeferredReportValidity {
-  std::weak_ptr<DeferredReportEpoch> pass;
+  std::shared_ptr<const DeferredReportEpoch> pass;
   std::vector<CapturedTarget> targets;
 
   [[nodiscard]] auto Holds() const -> bool {
-    return !pass.expired() &&
+    return !pass->withdrawn &&
            std::ranges::all_of(targets, [](const CapturedTarget& captured) {
              return captured.Holds();
            });
@@ -80,13 +80,12 @@ struct DeferredReportValidity {
 // survives for as long as any descendant is still alive. LRM 9.6.3 demands the
 // separation -- `disable fork` terminates the descendants of subprocesses that
 // have already terminated, so a terminated process stays reachable from its
-// parent. The child list consequently holds terminated nodes alongside running
-// ones.
+// parent.
 //
 // A process's children are those it spawned itself, whether directly or from a
 // task or function it called (LRM 9.6.1): a subroutine call runs in the
-// caller's thread and creates no process of its own. The list therefore
-// accumulates across every fork the process executes.
+// caller's thread and creates no process of its own. They therefore accumulate
+// across every fork the process executes.
 class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
  public:
   // `owning_scope` is the scope this process was registered against -- the
@@ -95,9 +94,8 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // attribution: an unqualified-case runtime warning, an NBA or postponed
   // submit, a `%m` hierarchical name. A fork branch inherits its parent
   // process's owning scope so a side effect the branch performs attributes
-  // to the same scope the outer body's would. The registration site owns
-  // the process's shared handle; the process's `owning_scope_` is a
-  // borrowed pointer whose lifetime is that of the owning scope.
+  // to the same scope the outer body's would. The scope is borrowed, and
+  // outlives the process.
   // `rng` is this process's own generator. LRM 18.14.1 fixes where it comes
   // from by how the process was created: a dynamically created one takes it
   // out of the process that created it, a static one out of the initialization
@@ -116,7 +114,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // Non-movable: the coroutine promise stores a back-pointer to this
   // RuntimeProcess, and so does every child node, so its address must stay
   // stable for as long as either can name it. A node is retained by shared
-  // ownership -- its parent's lineage while a descendant is live, and any
+  // ownership -- whoever started it while it or a descendant is live, and any
   // user-visible `process` handle (LRM 9.7) -- so its lifetime is reachability,
   // not a single owner.
   RuntimeProcess(RuntimeProcess&&) noexcept = delete;
@@ -182,20 +180,16 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // once the body has terminated.
   [[nodiscard]] auto TopActivation() const -> Activation*;
 
-  // Takes `child` into this process's lineage. A fork's parallel statement is a
-  // thread of the process that executed the fork (LRM 9.5), which is the
-  // process running when the branch is spawned, not the frame that spawned it.
-  void AdoptChild(std::shared_ptr<RuntimeProcess> child);
-
-  [[nodiscard]] auto Parent() const -> RuntimeProcess*;
-
-  // This process's `wait fork` condition (LRM 9.6.1): what a `wait fork` this
-  // thread executes enrols on. The frame parked there is the one that executed
-  // it -- in a task, the task's frame, not this process's own body -- so
-  // process identity and the parked activation are deliberately distinct.
-  [[nodiscard]] auto WaitForkCondition() -> IntrusiveList<WaitMembership>& {
-    return wait_fork_condition_;
+  // The processes this one started. A fork's parallel statement is a thread of
+  // the process that executed the fork (LRM 9.5), which is the process running
+  // when the branch is spawned, not the frame that spawned it.
+  [[nodiscard]] auto Children() -> OwnedProcesses& {
+    return children_;
   }
+
+  // The process that started this one, while it keeps this one; null for one
+  // no process started, and for one released.
+  [[nodiscard]] auto Parent() const -> RuntimeProcess*;
 
   // This process's termination (LRM 9.3.2 `join`, 9.7 `await`): what a wait
   // for it enrols on. Whatever is parked there is asked once this process
@@ -349,7 +343,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // LRM 16.4.2 / 12.4.2.1: reaching a flush point clears this process's
   // deferred report queue, discarding every report still pending.
   void FlushDeferredReports() noexcept {
-    deferred_report_epoch_.reset();
+    if (deferred_report_epoch_ != nullptr) {
+      deferred_report_epoch_->withdrawn = true;
+      deferred_report_epoch_.reset();
+    }
   }
 
   // The disable targets a report queued right now records (LRM 16.4.4). Two of
@@ -371,44 +368,37 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     return recorded;
   }
 
-  // True when no immediate child is still executing: the whole live set has
-  // reached a terminal state, or there were none. Terminated children retained
-  // for their own live descendants (LRM 9.6.3) do not count as live. This is
-  // the `wait fork` condition.
-  [[nodiscard]] auto HasNoLiveChild() const -> bool;
-
   // Bulk subtree termination (`kill` and `disable fork`) dismantles the whole
-  // subtree, waking what awaits each node's termination as that node settles;
-  // the caller then stabilizes the surviving lineage boundary (the one parent
-  // whose child set shrank) and asks its `wait fork` there. Waking only queues
-  // -- nothing runs until the region the activation was queued in does, which
-  // is after the dismantling is over -- and an activation woken here whose own
-  // frame a later step of the dismantling releases leaves its queue with that
-  // frame, so nothing is left to resume it.
+  // subtree, waking what awaits each node's termination, and its parent's
+  // `wait fork`, as that node settles. Waking only queues -- nothing runs until
+  // the region the activation was queued in does, which is after the
+  // dismantling is over -- and an activation woken here whose own frame a later
+  // step of the dismantling releases leaves its queue with that frame, so
+  // nothing is left to resume it.
   //
   // Forcibly terminates every descendant of this process -- not only its
   // immediate children, and including the descendants of subprocesses that have
   // already terminated (LRM 9.6.3 `disable fork`). This process itself keeps
   // running. Shares the kill primitive: each newly-terminated descendant is
-  // marked KILLED and its frame released, so no queue or wait can name it. A
-  // descendant kept alive by a `process` handle survives as a parent-less
-  // terminal node reporting KILLED; the rest are reclaimed.
+  // marked KILLED and its frame released, so no queue or wait can name it, and
+  // leaves this lineage once nothing under it is left. A descendant kept alive
+  // by a `process` handle survives that as a parent-less terminal node
+  // reporting KILLED; the rest are reclaimed. One whose kill could only be
+  // requested stays in place until it settles.
   void DisableDescendants(RuntimeEffects& services);
 
   // Forcibly terminates this process and its whole subtree (LRM 9.7 `kill`):
   // each node not already terminal is marked KILLED and its frame released, and
-  // the lineage links inside the subtree are severed so a handle-held node
-  // becomes a parent-less terminal orphan and the rest are reclaimed. On return
-  // this node is severed from its own children but still linked to its parent;
-  // the caller drops that link.
+  // every descendant is dismantled as `disable fork` dismantles them. This node
+  // itself stays with whoever started it; the caller lets the lineage go.
   void TerminateSubtreeKilled(RuntimeEffects& services);
 
   // Terminates this subtree (LRM 9.7 `kill` / LRM 9.6 `disable`) when it
   // contains `running` -- the calling process, whose frame is executing and so
   // cannot be destroyed synchronously. Every off-path subtree is killed and
-  // severed synchronously as usual; the single chain of nodes from this one
-  // down to `running` is settled but kept linked, so `running` stays owned
-  // until it unwinds to its safe boundary. `running` itself is only
+  // dismantled synchronously as usual; the single chain of nodes from this one
+  // down to `running` is settled but kept, so `running` stays owned until it
+  // unwinds to its safe boundary. `running` itself is only
   // termination-requested (phase 1), not settled: its terminal state is
   // published, and the whole retained chain released, when its body reaches the
   // resume boundary. The caller unwinds `running` after this returns.
@@ -436,24 +426,18 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // or terminated process is a no-op.
   void RequestTermination(ProcessTerminationCause cause);
 
-  // Unlinks this process from its parent's lineage, dropping the parent's
-  // ownership of it (a surviving `process` handle keeps the node alive as a
-  // parent-less orphan). A process with no parent is owned by its scope and is
-  // left in place. The caller must keep its own reference across the call, as
-  // the parent's may have been the last.
-  void DetachFromParent();
-
-  // Releases `process`, whose body has just terminated, along with every
-  // ancestor the release leaves with no lineage to retain, walking upward from
-  // the leaf. Deliberately not a call on the released node: the release
-  // destroys it. A process with no parent is owned by its scope and is never
-  // released here.
+  // Releases `process` where it has terminated with nothing under it, then each
+  // ancestor that release leaves the same way, walking upward, so each is
+  // destroyed unless a `process` handle (LRM 9.7) still holds it. Deliberately
+  // not a call on the released node: the release destroys it.
   static void ReleaseTerminatedLineage(RuntimeProcess& process);
 
  private:
   // The guard is the sole writer of the ambient foreign-execution vehicle,
   // which it sets and restores around a foreign call.
   friend class ForeignExecutionGuard;
+  // The set that keeps a process is what places and moves it.
+  friend class OwnedProcesses;
 
   // One disable target this execution is inside (LRM 9.6.2): the generation it
   // captured entering, and its membership on the target, which stands for as
@@ -482,10 +466,9 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // terminal state: a body can never be marked terminated while it still owns
   // the frame it ran in, nor terminated without what awaits it being asked.
   // Sets terminal state + cause, releases the frame (which ends every wait it
-  // held and its place in any queue), and wakes what awaits this process's
-  // termination. Split-off variants that settle without waking are
-  // deliberately absent -- that separation was the footgun this primitive
-  // removes.
+  // held and its place in any queue), wakes what awaits this process's
+  // termination, and tells whoever keeps it that it has ended, which asks that
+  // owner's `wait fork` (LRM 9.6.1).
   void SettleTerminated(
       ProcessTerminationCause cause, RuntimeEffects& services);
   // Ends this node, or -- where its execution holds a foreign call that has yet
@@ -500,7 +483,14 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
       RuntimeEffects& services, Activation* leaf, Awaiter& awaiter,
       const Resumption& resumption) -> bool;
   [[nodiscard]] auto IsReleasable() const -> bool;
-  void EraseChild(RuntimeProcess& child);
+  // Has whoever keeps this process stop keeping it, which destroys it where
+  // nothing else holds it; so nothing may touch this process after the call.
+  void Release();
+  // Kills this process with its subtree, and releases it where that leaves
+  // nothing under it. Only this process is released, never an ancestor: the
+  // caller is walking its own children, as is every ancestor above it, and
+  // each releases its child once that walk returns.
+  void Dismantle(RuntimeEffects& services);
 
   Scope* owning_scope_;
   const char* written_at_;
@@ -549,17 +539,17 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // Set when a deferred termination is requested (phase 1) and consumed at the
   // resume boundary (phase 2): pending while the body unwinds.
   bool termination_requested_ = false;
-  RuntimeProcess* parent_ = nullptr;
-  std::vector<std::shared_ptr<RuntimeProcess>> children_;
+  // Where whoever keeps this process holds it, and which set that is; null
+  // once this process has left it.
+  OwnedPlace owned_place_;
+  OwnedProcesses* owned_by_ = nullptr;
+  OwnedProcesses children_{this};
   // The disable targets enclosing this execution, outermost first: those
   // inherited from the spawner, then those entered by this execution's own
   // frames. Entering a target pushes it and leaving pops it. Each is on its
   // own because its target's list points at the membership it holds, and most
   // processes are inside none.
   std::list<EnclosingTarget> enclosing_targets_;
-  // The `wait fork` condition: every `wait fork` wait this thread holds enrols
-  // here, and only the one it is stopped at is parked.
-  IntrusiveList<WaitMembership> wait_fork_condition_;
   // Every wait for this process to terminate -- a `join` of the fork that
   // spawned it, an `await` of it (LRM 9.3.2, 9.7) -- asked when this process
   // settles a terminal state.

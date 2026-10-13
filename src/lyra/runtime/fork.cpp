@@ -61,7 +61,7 @@ class WaitForkAwaiter final : public StateAwaiter {
  public:
   explicit WaitForkAwaiter(RuntimeProcess& process)
       : StateAwaiter(1), process_(&process) {
-    EnrolOn(process.WaitForkCondition());
+    EnrolOn(process.Children().AllEndedCondition());
   }
 
   // `wait fork` is a wait statement (LRM 9.6.1), one of the two forms
@@ -72,7 +72,7 @@ class WaitForkAwaiter final : public StateAwaiter {
 
  private:
   [[nodiscard]] auto Holds() const -> bool override {
-    return process_->HasNoLiveChild();
+    return process_->Children().AllEnded();
   }
 
   RuntimeProcess* process_;
