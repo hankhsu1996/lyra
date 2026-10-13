@@ -89,20 +89,20 @@ class IntrusiveList {
     return node;
   }
 
-  // Moves every node onto the back of `other`, in order, leaving this list
-  // empty.
-  void SpliceBackOnto(IntrusiveList& other) noexcept {
-    if (Empty()) {
+  // Moves every node of `other` onto the back of this list, in order, leaving
+  // `other` empty.
+  void Append(IntrusiveList& other) noexcept {
+    if (other.Empty()) {
       return;
     }
-    Node* first = sentinel_.next;
-    Node* last = sentinel_.prev;
-    first->prev = other.sentinel_.prev;
-    last->next = &other.sentinel_;
-    other.sentinel_.prev->next = first;
-    other.sentinel_.prev = last;
-    sentinel_.prev = &sentinel_;
-    sentinel_.next = &sentinel_;
+    Node* first = other.sentinel_.next;
+    Node* last = other.sentinel_.prev;
+    first->prev = sentinel_.prev;
+    last->next = &sentinel_;
+    sentinel_.prev->next = first;
+    sentinel_.prev = last;
+    other.sentinel_.prev = &other.sentinel_;
+    other.sentinel_.next = &other.sentinel_;
   }
 
   void Clear() noexcept {

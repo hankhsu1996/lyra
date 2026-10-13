@@ -189,11 +189,19 @@ class Runtime final : public RuntimeEffects {
     auto operator<=>(const NotedProcedure&) const = default;
   };
 
-  // The slot at `when`, created on first use. LRM 4.4 has the simulator never
-  // go backwards in time, so work placed in a slot earlier than the current one
-  // would be lost with nothing to show for it, which is why naming one faults
-  // here instead.
-  auto SlotAt(SimTime when) -> TimeSlot&;
+  // The slot at `when`. Asked on every wake and every nonblocking update, so
+  // the current slot is answered inline and only a later one costs a call.
+  auto SlotAt(SimTime when) -> TimeSlot& {
+    return when == now_ ? current_slot_ : FutureSlotAt(when);
+  }
+  // A later slot, created on first use. The current slot is held apart, and an
+  // earlier one would never run because the simulator never goes backwards in
+  // time (LRM 4.4), so naming either faults here rather than placing work where
+  // it would run out of order or be lost.
+  auto FutureSlotAt(SimTime when) -> TimeSlot&;
+  // LRM 4.4: moves time to the earliest later slot that holds something and
+  // makes its events the current slot's, or answers false where none is left.
+  auto AdvanceToNextSlot() -> bool;
 
   void EnsureReadyToRun();
   // LRM 3.14.3: design-global tick is the minimum declared precision across
@@ -211,8 +219,8 @@ class Runtime final : public RuntimeEffects {
   // LRM 4.5: Preponed, then regions taken in order until nothing in Active
   // through Re-NBA remains, then Postponed. Work a region produces lands back
   // in the slot, so the middle step repeats until the slot settles.
-  void ExecuteTimeSlot(TimeSlot& slot);
-  void RunRegion(TimeSlot& slot, Region region);
+  void ExecuteTimeSlot();
+  void RunRegion(Region region);
   // The fatal report of a slot that met the bound on its passes, and what its
   // last passes ran, a procedure once for each time it ran.
   void ReportUnsettledSlot(std::span<const NotedProcedure> ran);
@@ -234,16 +242,17 @@ class Runtime final : public RuntimeEffects {
   CoverageLog coverage_;
   CurrentRuntimeGuard current_runtime_guard_{*this};
   std::unique_ptr<Design> design_;
-  // Every time slot with something pending, earliest first -- LRM 4.4's first
-  // division of the event set, by time, with each slot holding the second
-  // division, by region. A slot exists exactly while something is pending in
-  // it, so having any at all is the whole of "the simulation has work left".
-  // The slot at `now_` is the one running; naming a later time creates that
-  // slot, which is what lets a nonblocking assignment carrying a delay reach
-  // the NBA region of a future slot (LRM 4.4.2.4, 10.4.2). Node-based because
-  // a slot runs as a reference into here while its own execution creates the
-  // later slots it schedules into.
-  std::map<SimTime, TimeSlot> slots_;
+  // LRM 4.4 divides the event set first by time, into the current slot and
+  // later ones, and each slot by region. Nearly every event -- a wake, a
+  // nonblocking update with no delay -- is placed in the current slot, so it is
+  // held for the whole run and its queues keep their storage from one slot to
+  // the next.
+  TimeSlot current_slot_;
+  // Every later slot something was placed in, earliest first. Naming a later
+  // time creates its slot, which is what lets a nonblocking assignment carrying
+  // a delay reach the NBA region of a future slot (LRM 4.4.2.4, 10.4.2). One
+  // whose every event was taken back stays until time passes it over.
+  std::map<SimTime, TimeSlot> future_slots_;
   // Final processes wait here rather than in any slot: LRM 9.2.3 runs them
   // after the last one, when no slot is left to hold them.
   IntrusiveList<QueuePlace> finals_;
@@ -252,9 +261,10 @@ class Runtime final : public RuntimeEffects {
   // Every concurrent assertion the design activated, so an attempt no tick
   // settled can be answered before the finals run.
   std::vector<EvaluationAttempts*> concurrent_assertions_;
-  // The activations a region drain is working through, held apart from the
-  // region they came out of.
-  IntrusiveList<QueuePlace> draining_;
+  // What a region pass is working through, held apart from the region it came
+  // out of, which meanwhile collects the next pass's work (LRM 9.3.2). Held for
+  // the whole run so its storage outlives each pass.
+  RegionQueue draining_;
   // Reached by a write to a property of any object, for the waits nothing
   // narrower covers.
   Observable every_object_;

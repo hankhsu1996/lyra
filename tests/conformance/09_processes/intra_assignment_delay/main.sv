@@ -31,6 +31,14 @@ module Top;
     #4 stepped_at_eight = stepped;
   end
 
+  // LRM 4.6: updates are performed in the order they were placed, so one placed
+  // at time zero for time 20 lands before one placed at time 20 itself.
+  int ordered = 0;
+  initial begin
+    ordered <= #20 1;
+    #20 ordered <= 2;
+  end
+
   // Rewriting the operand while the delays are under way reaches no update,
   // because every right-hand side was read at time zero.
   initial #5 source = 99;
@@ -48,6 +56,8 @@ module Top;
       $fatal(1, "at time 10 the variable held %0d, expected 2", stepped_at_eight);
     if (stepped !== 3)
       $fatal(1, "the last update left %0d, expected 3", stepped);
+    if (ordered !== 2)
+      $fatal(1, "an update placed earlier for one slot landed after one placed in it: %0d", ordered);
     $display("All checks passed");
   end
 endmodule

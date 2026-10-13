@@ -160,9 +160,7 @@ flowchart TB
 That one step is LRM 4.5's loop. The reference algorithm writes it as moving the earliest nonempty
 region's events into Active and running Active again; running the region where it stands reaches the
 same order, since a region later in the list is reached only once everything before it is empty, and
-whatever it schedules earlier is found first on the next look. The same loop moves time only to the
-earliest nonempty slot: a slot whose every event was taken back -- the delay of a process stopped or
-killed before its time came -- is passed over, and the time it named never becomes the time.
+whatever it schedules earlier is found first on the next look.
 
 Two consequences carry the weight. A process woken by a blocking write runs while the active set
 drains, before the NBA region commits the nonblocking writes issued beside it -- deferring it past
@@ -179,6 +177,17 @@ action blocks of concurrent assertions, and the report a matured deferred immedi
 already-pending active work finish first, then come back at this same simulation time. Pushing
 `#0`-suspended processes to the back of Active would let them re-enter ahead of work that arrived
 earlier, defeating the intent.
+
+LRM 4.4 gives every event one time, the current one or a later one, and the engine holds the two
+apart. Nearly every event -- a wake, a nonblocking write with no delay -- lands in the current slot,
+which lasts the whole run and is reached without looking anything up, so its queues keep their
+storage from one slot to the next. The later slots are kept in time order, and time moves only to
+the earliest of them that holds something (LRM 4.5): a slot whose every event was taken back -- the
+delay of a process stopped or killed before its time came -- is passed over, and the time it named
+never becomes the time. Moving there hands that slot's events to the current slot, empty by then, in
+the order they were placed -- which is the order its nonblocking writes are performed in (LRM 4.6).
+This is how SystemC's kernel and an async runtime such as Tokio hold what runs now apart from their
+timed events.
 
 ## How a run ends
 
