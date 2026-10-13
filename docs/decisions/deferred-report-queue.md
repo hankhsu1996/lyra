@@ -171,12 +171,20 @@ named block, so an assertion's label is already such a target and needs nothing 
 second cancellation mechanism appears beside that one, and a `disable` withdraws a report through
 the single act it already performs -- advancing its target's generation.
 
-**D4. The process source is recorded differently, and the reason is lifetime, not taste.** A
+**D4. The process source is a token the reports hold, and a flush point marks it withdrawn.** A
 cancellation source is per-instance storage and outlives every report that captures it, so a report
 may hold it and read it later. A process is not: a report can still be pending when its process is
-released. The process source is therefore a token whose liveness is the validity, held strongly by
-the process and weakly by the report, so a report never reaches for a process that is gone. Two
-representations, one rule -- a report acts when every source it recorded still stands.
+released, which is ordinary, since termination is not a flush point (R4) and a report queued just
+before a body ends still matures. So the pass is a token of its own, created by the process and held
+by every report that recorded it, and the process's flush point marks it withdrawn; the process
+going away withdraws nothing. A report never reaches for the process, and its validity never depends
+on how long the process lives. Two representations, one rule -- a report acts when every source it
+recorded still stands.
+
+This decision first held the token weakly from the report, its liveness being the validity, and that
+withdrew a pending report the moment its process was released. It went unseen while every process
+was kept until the run ended; once an ended process was released, a deferred assertion and a
+violation report queued in a procedure's last pass were silently dropped.
 
 **D5. Maturity is the commit point and it discards what it validated.** In the maturity region the
 report tests its recorded sources once; if they all hold, it is committed to its action region and

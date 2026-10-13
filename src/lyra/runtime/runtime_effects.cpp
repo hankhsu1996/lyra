@@ -47,8 +47,7 @@ auto CurrentRuntimeSlot() -> RuntimeEffects*& {
 auto ViolationReportValidity(RuntimeProcess& process)
     -> DeferredReportValidity {
   return DeferredReportValidity{
-      .pass = std::weak_ptr(process.CurrentDeferredReportEpoch()),
-      .targets = {}};
+      .pass = process.CurrentDeferredReportEpoch(), .targets = {}};
 }
 
 // What a deferred assertion report records: the same pass, and in addition the
@@ -58,7 +57,7 @@ auto ViolationReportValidity(RuntimeProcess& process)
 auto AssertionReportValidity(RuntimeProcess& process)
     -> DeferredReportValidity {
   return DeferredReportValidity{
-      .pass = std::weak_ptr(process.CurrentDeferredReportEpoch()),
+      .pass = process.CurrentDeferredReportEpoch(),
       .targets = process.DeferredReportTargets()};
 }
 
@@ -323,8 +322,7 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
   // rebuilding it once it starts running: it is spawned already enclosed, and a
   // `disable` landing before its first resumption still reaches it.
   child->InheritEnclosingTargets(parent);
-  parent.AdoptChild(child);
-  rt.RegisterProcessInRegistry(child);
+  parent.Children().Adopt(child);
   Schedule(Now(), Region::kActive, activation);
   return child;
 }
@@ -347,9 +345,8 @@ void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
   Activation* const activation = carrier->TopActivation();
   // No lineage and no disable membership: the standard makes no process of the
   // update this carries out, so nothing that names processes may find it. What
-  // keeps it alive is therefore the runtime's own registry, which every
-  // execution created during simulation is held by.
-  rt.RegisterProcessInRegistry(std::move(carrier));
+  // keeps it alive until it ends is therefore the runtime itself.
+  rt.AdoptProcess(std::move(carrier));
   Schedule(Now(), Region::kActive, activation);
 }
 

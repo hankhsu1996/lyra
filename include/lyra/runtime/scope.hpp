@@ -25,9 +25,9 @@ namespace lyra::runtime {
 // through. The members its class declares are the class's own, placed after
 // this part by whatever laid the class out. The runtime walks this same tree;
 // there is no parallel topology. Every dynamic scheduler concern -- queues,
-// process registry, deferred-effect attribution, ambient identity -- lives on
-// the Runtime, so beyond being a value of its class a scope contributes
-// structural identity and nothing else.
+// the processes it keeps, deferred-effect attribution, ambient identity --
+// lives on the Runtime, so beyond being a value of its class a scope
+// contributes structural identity and nothing else.
 class Scope : public GcObject {
  public:
   using ChildVisitor = std::function<void(Scope&)>;

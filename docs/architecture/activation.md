@@ -121,7 +121,7 @@ the awaiter consumes, not of the scheduler.
    a task gets a typed result with no per-call special handling._
 
 6. **The activity taxonomy is a fixed set of activations with different consumers; a deferred effect
-   is not an activation.** A process is owned by its scope, has process identity, completes `Void`,
+   is not an activation.** A process is owned by the run, has process identity, completes `Void`,
    and is observed by the engine (no continuation). A task activation inherits the enabler's process
    identity, completes with a typed payload, and resumes the enabler. A fork branch has its own
    process identity, is owned by the spawning process's lineage, completes `Void`, and is waited for
