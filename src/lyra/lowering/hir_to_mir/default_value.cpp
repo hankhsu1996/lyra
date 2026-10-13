@@ -415,6 +415,9 @@ auto BuildDefaultValueExpr(
           [&](const mir::RefType&) -> mir::Expr {
             return holds_no_declared_value("a reference to a cell");
           },
+          [&](const mir::ReferenceWrapperType&) -> mir::Expr {
+            return holds_no_declared_value("a reference to a cell");
+          },
 
           // LRM 7.3.2's `void` member occupies a value slot and is carried as
           // the type holding no information, which answers above. Everywhere

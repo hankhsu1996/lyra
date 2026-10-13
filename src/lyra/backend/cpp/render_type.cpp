@@ -277,6 +277,13 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             }
             Write(out, "lyra::runtime::Ref<", type(r.pointee), ">");
           },
+          // The runtime's reference is re-seatable, so it holds a reference
+          // bound after its object is built as well. Binding writes the
+          // wrapper itself, so it is never a const object whatever it may
+          // write through.
+          [&](const mir::ReferenceWrapperType& r) {
+            Write(out, "lyra::runtime::Ref<", type(r.pointee), ">");
+          },
           [&](const mir::VoidType&) { out += "void"; },
           [&](const mir::PointerType& p) {
             switch (p.ownership) {
@@ -438,6 +445,9 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           // A `ref` is dereferenced like a pointer, which reaches the cell it
           // is bound to (LRM 23.3.3.2).
           [&](const mir::RefType&) -> DerefSpelling {
+            return DerefByOperator{};
+          },
+          [&](const mir::ReferenceWrapperType&) -> DerefSpelling {
             return DerefByOperator{};
           },
           // A place designated within a write is dereferenced like a pointer,
@@ -651,6 +661,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::RuntimeLibraryType& t) { by_naming_itself(t); },
           [&](const mir::CoroutineType& t) { by_naming_itself(t); },
           [&](const mir::RefType& t) { by_naming_itself(t); },
+          [&](const mir::ReferenceWrapperType& t) { by_naming_itself(t); },
           [&](const mir::VoidType& t) { by_naming_itself(t); },
           [&](const mir::TupleType& t) { by_naming_itself(t); },
           [&](const mir::UnionType& t) { by_naming_itself(t); },

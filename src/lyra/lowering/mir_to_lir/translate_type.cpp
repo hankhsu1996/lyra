@@ -236,6 +236,13 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .pointee = TranslateType(r.pointee),
                 .mutability = TranslateMutability(r.mutability)}};
           },
+          // Bound later than a reference created bound, and named through
+          // alike, so LIR carries either as one reference.
+          [&](const mir::ReferenceWrapperType& r) -> lir::Type {
+            return lir::Type{lir::RefType{
+                .pointee = TranslateType(r.pointee),
+                .mutability = TranslateMutability(r.mutability)}};
+          },
           [&](const mir::PointerType& pt) -> lir::Type {
             return lir::Type{lir::PointerType{
                 .pointee = TranslateType(pt.pointee),

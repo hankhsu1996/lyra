@@ -88,6 +88,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const RuntimeLibraryType&) { return not_an_object(); },
           [&](const CoroutineType&) { return not_an_object(); },
           [&](const RefType&) { return not_an_object(); },
+          [&](const ReferenceWrapperType&) { return not_an_object(); },
           [&](const PointerType&) { return not_an_object(); },
           [&](const ManagedRefType&) { return not_an_object(); },
           [&](const VectorType&) { return not_an_object(); },

@@ -24,6 +24,8 @@ BoundMembers::~BoundMembers() = default;
 
 void BoundMembers::Bind(ErasedReference& member, const ErasedReference& bound) {
   member.member = &member;
+  const Followers followers = Following(member);
+  NameAliases(followers, member);
   // A reference that names nothing yet is itself a member whose own binding
   // has not run: the order scopes bind in is the hierarchy's, and a connection
   // may name a member of a scope bound later. What is bound from it follows
@@ -37,7 +39,38 @@ void BoundMembers::Bind(ErasedReference& member, const ErasedReference& bound) {
   }
   // A member that already names storage -- a net's, which names its own value
   // until its driver's turn -- has waits through it, which follow.
-  Move(Following(member), member.ReportsTo(), bound);
+  Move(followers, member.ReportsTo(), bound);
+}
+
+void BoundMembers::Alias(ErasedReference& alias, const ErasedReference& bound) {
+  // Where `bound` names a member, the alias is a name of that member: it is
+  // kept naming what the member names, and a takeover through it is the
+  // member's. Where `bound` is not bound yet, the alias waits on it and learns
+  // what it is a name of once `bound` is bound.
+  if (bound.storage == nullptr) {
+    members_[&bound].bound_from_it.push_back(&alias);
+    return;
+  }
+  alias.member = bound.member;
+  if (bound.member != nullptr) {
+    members_[bound.member].bound_from_it.push_back(&alias);
+  }
+  const Followers followers = Following(alias);
+  if (alias.member != nullptr) {
+    NameAliases(followers, *alias.member);
+  }
+  Move(followers, alias.ReportsTo(), bound);
+}
+
+void BoundMembers::NameAliases(
+    const Followers& followers, ErasedReference& member) {
+  // A member names itself from its own binding, so a follower not yet named is
+  // an alias made before what it follows was bound.
+  for (ErasedReference* follower : followers.naming) {
+    if (follower->member == nullptr) {
+      follower->member = &member;
+    }
+  }
 }
 
 auto BoundMembers::Forced(const ErasedReference& member) const -> bool {

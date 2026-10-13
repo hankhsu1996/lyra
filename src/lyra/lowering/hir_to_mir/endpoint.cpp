@@ -16,9 +16,9 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-// The endpoint a member gives wherever it is. A `ref` port's internal name owns
-// no cell: it stands for the connected variable's storage (LRM 23.3.3.2). Every
-// other member is the cell.
+// The endpoint a member gives wherever it is. A port's member that owns no cell
+// names the storage its connection binds it to (LRM 23.3.3). Every other member
+// is the cell.
 auto EndpointAt(const mir::CompilationUnit& unit, MemberPlace place)
     -> BoundEndpoint {
   const mir::TypeId member_type = std::visit(
@@ -28,9 +28,8 @@ auto EndpointAt(const mir::CompilationUnit& unit, MemberPlace place)
       place);
   return BoundEndpoint{
       .place = place,
-      .kind = unit.types.Get(member_type).Is<mir::RefType>()
-                  ? MemberKind::kReference
-                  : MemberKind::kCell};
+      .kind = unit.types.Get(member_type).IsReference() ? MemberKind::kReference
+                                                        : MemberKind::kCell};
 }
 
 // The endpoint a route of parent edges gives: the member it ends at, reached

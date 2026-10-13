@@ -604,24 +604,29 @@ auto PositionNamedAt(const void* position) -> std::optional<std::int64_t> {
 // many of them the value is, so an access that has to know is told how wide
 // the value is.
 //
-// A procedural continuous assignment on a member that names a wide value (LRM
-// 10.6.2) gives the member storage that is named the same way.
+// A procedural continuous assignment through a reference to a wide value acts
+// on what it names, as one through any reference does; a member is given
+// storage that is named the same way (LRM 10.6.2).
 template <value::HeldAsWords T>
 auto WideRefBeginTakeover(void* reference, std::int64_t level) -> std::int64_t {
-  return BeginMemberTakeover<T>(ErasedAt(reference), level, [](Var<T>& forced) {
-    return ErasedReference{
-        .holder = static_cast<VariableCell*>(&forced),
-        .storage = HandleTo(forced.Storage()),
-        .whole = true};
-  });
+  return BeginTakeoverThrough<T>(
+      ErasedAt(reference), level, [](Var<T>& forced) {
+        return ErasedReference{
+            .holder = static_cast<VariableCell*>(&forced),
+            .storage = HandleTo(forced.Storage()),
+            .whole = true};
+      });
 }
 
 template <value::HeldAsWords T>
 auto WideRefDriveTakeover(
     void* reference, std::int64_t level, std::int64_t generation,
     const void* value) -> bool {
-  return DriveMemberTakeover<T>(
+  return DriveTakeoverThrough<T>(
       ErasedAt(reference), level, generation,
+      [&](Var<T>& variable) {
+        return variable.DriveTakeoverBytes(level, generation, value);
+      },
       [&](Var<T>& forced) { forced.SetBytes(value); });
 }
 
@@ -3445,6 +3450,11 @@ auto lyra_rt_reference_reports_to(const void* reference) -> void* {
 void lyra_rt_bind_member(void* member, const void* bound) {
   lyra::runtime::current_runtime().Bound().Bind(
       *static_cast<ErasedReference*>(member), ErasedAt(bound));
+}
+
+void lyra_rt_bind_alias(void* alias, const void* bound) {
+  lyra::runtime::current_runtime().Bound().Alias(
+      *static_cast<ErasedReference*>(alias), ErasedAt(bound));
 }
 
 void lyra_rt_drives_continuously(const void* reference) {
@@ -9312,7 +9322,7 @@ auto lyra_rt_bit_wide_ref_drive_takeover(
       reference, level, generation, value);
 }
 void lyra_rt_bit_wide_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::EndMemberTakeover<BitWide>(
+  lyra::runtime::EndTakeoverThrough<BitWide>(
       lyra::runtime::ErasedAt(reference), level);
 }
 auto lyra_rt_bit_wide_cell_refer(void* cell, void* out) -> void* {
@@ -9437,7 +9447,7 @@ auto lyra_rt_logic_wide_ref_drive_takeover(
       reference, level, generation, value);
 }
 void lyra_rt_logic_wide_ref_end_takeover(void* reference, std::int64_t level) {
-  lyra::runtime::EndMemberTakeover<LogicWide>(
+  lyra::runtime::EndTakeoverThrough<LogicWide>(
       lyra::runtime::ErasedAt(reference), level);
 }
 auto lyra_rt_logic_wide_cell_refer(void* cell, void* out) -> void* {

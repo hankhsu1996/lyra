@@ -536,6 +536,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_refer_property", &lyra_rt_refer_property);
   add("lyra_rt_reference_reports_to", &lyra_rt_reference_reports_to);
   add("lyra_rt_bind_member", &lyra_rt_bind_member);
+  add("lyra_rt_bind_alias", &lyra_rt_bind_alias);
   add("lyra_rt_drives_continuously", &lyra_rt_drives_continuously);
   add("lyra_rt_string_cell_refer", &lyra_rt_string_cell_refer);
   add("lyra_rt_real_cell_refer", &lyra_rt_real_cell_refer);

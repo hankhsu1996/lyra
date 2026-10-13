@@ -426,7 +426,7 @@ void VerifyMemberReceivers(
       const Type& receiver =
           unit.types.Get(block.exprs.Get(access->receiver).type);
       if (receiver.Is<PointerType>() || receiver.Is<ManagedRefType>() ||
-          receiver.Is<ObjectWriteType>() || receiver.Is<RefType>()) {
+          receiver.Is<ObjectWriteType>() || receiver.IsReference()) {
         refuse(id);
       }
     }
@@ -440,6 +440,44 @@ void VerifyMemberReceivers(
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyMemberReceivers(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// A reference is bound once, as it is created, and never re-seated; a
+// reference held as a member is bound after its object is built, and again,
+// only by the operations that bind one. So no store names a reference of
+// either kind, and a binding names only a reference held as a member.
+void VerifyReferenceBindings(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  const auto refuse = [&](ExprId id, std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} {} (expression {} of its block) -- please report "
+            "this as a bug",
+            describe(), what, id.value));
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const ExprData& data = block.exprs.Get(id).data;
+    if (const auto* assign = std::get_if<AssignExpr>(&data)) {
+      if (unit.types.Get(block.exprs.Get(assign->target).type).IsReference()) {
+        refuse(id, "stores into a reference, which only a binding names");
+      }
+    }
+    const auto* call = std::get_if<CallExpr>(&data);
+    if (call == nullptr) continue;
+    const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
+    if (entry != support::BuiltinFn::kBindMember &&
+        entry != support::BuiltinFn::kBindAlias) {
+      continue;
+    }
+    if (call->arguments.empty() ||
+        !unit.types.Get(block.exprs.Get(call->arguments.front()).type)
+             .Is<ReferenceWrapperType>()) {
+      refuse(id, "binds something other than a reference held as a member");
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyReferenceBindings(unit, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -574,8 +612,8 @@ void VerifyOrdinals(
 auto ValueNamedBy(const TypePool& types, TypeId operand) -> const Type& {
   const Type* reached = &types.Get(operand);
   for (;;) {
-    if (const auto* reference = reached->As<RefType>()) {
-      reached = &types.Get(reference->pointee);
+    if (reached->IsReference()) {
+      reached = &types.Get(reached->WrappedValueType());
     } else if (const auto* pointer = reached->As<PointerType>()) {
       reached = &types.Get(pointer->pointee);
     } else if (const auto* designation = reached->As<DesignationType>()) {
@@ -807,6 +845,7 @@ void VerifyCode(
   }
   VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
+  VerifyReferenceBindings(unit, *code.body, describe);
   VerifyTypeArguments(*code.body, describe);
   VerifyOrdinals(unit, *code.body, describe);
   VerifyEntryDeclarations(unit, *code.body, describe);

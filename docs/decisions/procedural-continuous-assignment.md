@@ -183,8 +183,11 @@ read to choose between.
    its connection drives it with holds nothing a takeover could be state on, and a takeover on the
    storage it names would force its source as well. Beginning one gives it storage of the takeover's
    own to name, driving writes that storage, and ending it names what drives it again:
-   [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) D3. So the statement is
-   lowered one way whatever its target is, and its evaluation ends the one way D3 gives.
+   [a-port-shares-its-sources-storage](a-port-shares-its-sources-storage.md) D3. A takeover reached
+   through a reference acts on what the reference names: such a port, or a variable, which is what a
+   `ref` port connected to a variable names (LRM 23.3.3.2). Which one it is follows from how each
+   instance is connected, so it is the reference's own fact, and the statement is lowered one way
+   whatever its target.
 
 ## Consequences
 

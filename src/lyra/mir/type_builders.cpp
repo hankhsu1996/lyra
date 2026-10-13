@@ -168,6 +168,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const RuntimeLibraryType&) { return bare(); },
           [&](const CoroutineType&) { return bare(); },
           [&](const RefType&) { return bare(); },
+          [&](const ReferenceWrapperType&) { return bare(); },
           [&](const PointerType&) { return bare(); },
           [&](const VectorType&) { return bare(); },
           [&](const ObservableType&) { return bare(); },

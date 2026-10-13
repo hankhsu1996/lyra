@@ -171,6 +171,10 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashId(seed, t.pointee);
             HashEnum(seed, t.mutability);
           },
+          [&](const ReferenceWrapperType& t) {
+            HashId(seed, t.pointee);
+            HashEnum(seed, t.mutability);
+          },
           [&](const PointerType& t) {
             HashId(seed, t.pointee);
             HashEnum(seed, t.ownership);
@@ -227,8 +231,12 @@ auto Type::IsAliasHandle() const -> bool {
 }
 
 auto Type::IsCapabilityWrapper() const -> bool {
-  return Is<ObservableType>() || Is<RefType>() || Is<ResolvedType>() ||
+  return Is<ObservableType>() || IsReference() || Is<ResolvedType>() ||
          Is<DriverType>();
+}
+
+auto Type::IsReference() const -> bool {
+  return Is<RefType>() || Is<ReferenceWrapperType>();
 }
 
 auto Type::WrappedValueType() const -> TypeId {
@@ -237,6 +245,9 @@ auto Type::WrappedValueType() const -> TypeId {
   }
   if (const auto* reference = As<RefType>()) {
     return reference->pointee;
+  }
+  if (const auto* wrapper = As<ReferenceWrapperType>()) {
+    return wrapper->pointee;
   }
   if (const auto* resolved = As<ResolvedType>()) {
     return resolved->value;
@@ -298,6 +309,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // own reasons and ends for them, so nothing about holding the address
           // keeps it or loses it.
           [](const RefType&) { return false; },
+          [](const ReferenceWrapperType&) { return false; },
           [](const PointerType&) { return false; },
           [](const VectorType&) { return false; },
           [](const DriverType&) { return false; },
@@ -370,6 +382,7 @@ auto Type::PartsAreStorage() const -> bool {
           [](const MachineArrayType&) { return false; },
           [](const MachineFunctionType&) { return false; },
           [](const RefType&) { return false; },
+          [](const ReferenceWrapperType&) { return false; },
           [](const PointerType&) { return false; },
           [](const VectorType&) { return false; },
           [](const DriverType&) { return false; },
@@ -459,6 +472,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // so a container reached through one is reached by dereferencing it
           // first.
           [](const RefType&) -> Element { return std::nullopt; },
+          [](const ReferenceWrapperType&) -> Element { return std::nullopt; },
           [](const PointerType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },

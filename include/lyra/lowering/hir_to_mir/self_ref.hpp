@@ -127,22 +127,12 @@ auto BuildStructuralFieldAccessExpr(
 
 // A reference to the cell `cell` denotes (LRM 13.5.2): a reference
 // construction added to `block`, whose result type is a `RefType` over
-// `pointee` -- or `cell` itself where it already is a reference. The body that
+// `pointee` -- or `cell` itself where it already is a reference of either
+// kind. The body that
 // holds the resulting reference reads / writes the live cell through it. Used
 // for a `ref` / `const ref` actual and for a by-reference closure capture.
 auto BuildReferenceArg(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cell,
     mir::TypeId pointee) -> mir::ExprId;
-
-// Binds a reference-typed lvalue (LRM 23.3.3.2 / 13.5.2): stores `reference`,
-// a reference value, into `ref_lvalue`. This is the one canonical
-// `Ref<T>`-member alias store -- a `ref` port binds the child's reference
-// member, and any future reference member fills the same way. It is the
-// lvalue-store placement only; a `ref` formal's call-argument placement and a
-// closure's field-init placement share the reference-value construction but not
-// this store. Returns the store expression for the caller to sequence.
-auto BindReferenceSlot(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
-    mir::ExprId reference) -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

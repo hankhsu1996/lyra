@@ -74,7 +74,14 @@ back; so whoever waits on the sink is told of the force and of the release exact
 shows changed. These are the three operations a procedural continuous assignment has on any target
 ([procedural-continuous-assignment](procedural-continuous-assignment.md) decision 6).
 
-`inout` ports are already one resolved net, and `ref` ports already share storage; neither changes.
+`inout` ports are already one resolved net and do not change. A `ref` port is no sink: a name of it
+is a name of what it is connected to (23.3.3.2, p.747). Where that is a variable, a force on the
+port is a force on the variable, which every reader of it sees. Where it is a sink -- an input port,
+a value of its own -- the `ref` port is another name of the sink: it follows the sink as what the
+sink drives does, and a force through it is the sink's force, retargeting the sink and leaving its
+source alone. One compiled body serves every instance, and which of the two a `ref` port is
+connected to differs between them, so it is not decided where the force is compiled: the reference
+records whether it names a sink, and a force through it acts on what it names.
 
 **D4. An input port written with no data type is a net (LRM 23.2.2.3), and it shares its source's
 storage at run time rather than where a unit compiles.** A second driver may reach such a port from
