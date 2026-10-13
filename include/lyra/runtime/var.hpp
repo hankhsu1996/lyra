@@ -588,8 +588,9 @@ struct ErasedReference {
   // The member of a scope this reference was bound into, where it was: a port
   // that stands for what its connection drives (LRM 23.3.3). The member is what
   // a force acts on (LRM 10.6.2), and a copy of the reference -- one handed on
-  // to a child's port, one a wait was built from -- still says which member it
-  // is a copy of. None for a reference bound into no member.
+  // to a child's port, a `ref` port bound to it, one a wait was built from --
+  // still says which member it is a copy of. None for a reference bound into no
+  // member.
   ErasedReference* member = nullptr;
   // Which part of what holds it the storage is: the path the reference was
   // formed by, from the whole.

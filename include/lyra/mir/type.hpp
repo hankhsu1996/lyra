@@ -501,6 +501,20 @@ struct RefType {
   auto operator==(const RefType&) const -> bool = default;
 };
 
+// A reference held as a member and bound after the object holding it is built
+// (C++ `std::reference_wrapper`), where a `RefType` is bound once, as it is
+// created. Reading, writing and waiting through one reach what it names as
+// through a `RefType`; only a binding makes one name other storage, never an
+// assignment. A port is such a
+// member: its connection binds it while the design's references are resolved
+// (LRM 23.3.3), and a connection may name a port of an instance resolved later.
+struct ReferenceWrapperType {
+  TypeId pointee;
+  Mutability mutability;
+
+  auto operator==(const ReferenceWrapperType&) const -> bool = default;
+};
+
 enum class PointerOwnership {
   kUnique,
   kShared,
@@ -719,11 +733,11 @@ class Type {
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
       VoidType, ObjectType, RuntimeClassType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType, PointerType,
-      ManagedRefType, VectorType, TupleType, UnionType, TaggedUnionType,
-      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
-      DesignationType, ObjectWriteType, SampledHistoryType,
-      EvaluationAttemptsType, StructType, ClosureType>;
+      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
+      ReferenceWrapperType, PointerType, ManagedRefType, VectorType, TupleType,
+      UnionType, TaggedUnionType, EmptyType, ObservableType, ResolvedType,
+      DriverType, OpenWriteType, DesignationType, ObjectWriteType,
+      SampledHistoryType, EvaluationAttemptsType, StructType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -756,6 +770,11 @@ class Type {
   // rather than being that value: the observable cell, a procedural reference,
   // a net's resolved cell, a net driver's handle.
   [[nodiscard]] auto IsCapabilityWrapper() const -> bool;
+
+  // True for a reference to storage elsewhere, whether bound as it is created
+  // or held and bound later: what is read, written or waited on through either
+  // is what it names.
+  [[nodiscard]] auto IsReference() const -> bool;
 
   // True for a type whose value lives in storage the runtime owns, so whatever
   // holds such a value holds a handle onto that storage rather than the value

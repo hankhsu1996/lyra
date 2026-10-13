@@ -2042,7 +2042,7 @@ auto FunctionLowerer::WrapperContentsPlace(
   // is what the reference states; which of the two forms that storage is, is
   // the reference's own to answer, so every access through this place is one
   // of its operations rather than a load or a store of an address.
-  if (wrapper_ty.Is<mir::RefType>()) {
+  if (wrapper_ty.IsReference()) {
     return StorageAt(*std::move(pointer));
   }
   return lir::Place{
@@ -3675,7 +3675,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 opened != nullptr &&
                 unit_->Mir()
                     .types.Get(block.exprs.Get(opened->pointer).type)
-                    .Is<mir::RefType>()) {
+                    .IsReference()) {
               throw InternalError(
                   "mir_to_lir: an address was taken through a reference, where "
                   "the reference's own operations reach its storage");

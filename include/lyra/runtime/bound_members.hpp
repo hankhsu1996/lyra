@@ -18,9 +18,9 @@ namespace lyra::runtime {
 // a force on one needs (LRM 10.6.2).
 //
 // A port that stands for what its connection drives is such a member. Binding
-// it records nothing but which members were bound from it in turn -- a port
-// handed on to a child's port -- so a design that forces nothing keeps a list
-// per port handed on and nothing else.
+// it records nothing but what was bound from it in turn -- a port handed on to
+// a child's port, or a `ref` port connected to it -- so a design that forces
+// nothing keeps a list per port handed on and nothing else.
 //
 // A force gives a member storage of the force's own to name, together with
 // every member bound from it and every wait enrolled through any of them, so
@@ -41,6 +41,12 @@ class BoundMembers {
   // `member` before `member` itself was. Where `bound` is a member not bound
   // yet, `member` takes what it names once it is.
   void Bind(ErasedReference& member, const ErasedReference& bound);
+
+  // Binds `alias` to what `bound` names, as another name of it rather than a
+  // member of its own (LRM 23.3.3.2): where `bound` names a member, the alias
+  // goes on naming whatever that member names, and a takeover through it acts
+  // on that member.
+  void Alias(ErasedReference& alias, const ErasedReference& bound);
 
   // Whether a force is in effect on `member`.
   [[nodiscard]] auto Forced(const ErasedReference& member) const -> bool;
@@ -70,7 +76,7 @@ class BoundMembers {
 
  private:
   struct Member {
-    // The members bound from this one.
+    // The members and the `ref` ports bound from this one.
     std::vector<ErasedReference*> bound_from_it;
     // What the member named before a force made it name other storage; the
     // force is in effect exactly while this holds one.
@@ -90,6 +96,9 @@ class BoundMembers {
   };
   [[nodiscard]] auto Following(ErasedReference& member) const -> Followers;
 
+  // Makes every alias among `followers` not yet named a name of `member`.
+  static void NameAliases(const Followers& followers, ErasedReference& member);
+
   // Makes each follower name what `names` does, and enrols there every wait
   // enrolled on `from` through a member that now names it.
   static void Move(
@@ -105,34 +114,56 @@ void BindMember(Ref<T>& member, const Ref<T>& bound) {
   current_runtime().Bound().Bind(member.AsMember(), bound.Erased());
 }
 
+// What generated code calls to bind a `ref` port, on the engine it runs under.
+template <value::LyraValue T>
+void BindAlias(Ref<T>& alias, const Ref<T>& bound) {
+  current_runtime().Bound().Alias(alias.AsMember(), bound.Erased());
+}
+
+// Whether a procedural continuous assignment through `reference` acts on a
+// member rather than on the variable it names. A member is a port standing for
+// what its connection drives, a value of its own (LRM 23.3.3.2), so a takeover
+// through it, or through a `ref` port connected to it, re-points the member and
+// leaves its source alone. Which of the two a reference is follows from how
+// each instance is connected, so it is answered here, per reference.
+[[nodiscard]] inline auto NamesAMember(const ErasedReference& reference)
+    -> bool {
+  return reference.member != nullptr;
+}
+
 // The member a procedural continuous assignment at `level` on `reference`
 // acts on: the one the reference is, or is a copy of. Only a force reaches a
-// name that owns no storage, and only a member can be such a name, so anything
-// else reached here by a lowering defect.
+// name that owns no storage, so anything else arrives here only by a lowering
+// defect.
 [[nodiscard]] auto ForcedMember(
     const ErasedReference& reference, std::int64_t level) -> ErasedReference&;
 
-// The variable `member` names, as the one of `T` it is: a member is bound to
-// the whole of a variable, its own connection's or the force's.
+// The variable a port's reference names, as the one of `T` it is: it is bound
+// to the whole of a variable, its connection's or a force's.
 template <value::LyraValue T>
-[[nodiscard]] auto VariableNamedBy(const ErasedReference& member) -> Var<T>& {
-  if (!member.whole || !std::holds_alternative<VariableCell*>(member.holder)) {
+[[nodiscard]] auto VariableNamedBy(const ErasedReference& reference)
+    -> Var<T>& {
+  if (!reference.whole ||
+      !std::holds_alternative<VariableCell*>(reference.holder)) {
     throw InternalError(
-        "VariableNamedBy: a bound member names something other than the whole "
-        "of a variable");
+        "VariableNamedBy: a port's reference names something other than the "
+        "whole of a variable");
   }
-  return WholeVariable<T>(member);
+  return WholeVariable<T>(reference);
 }
 
-// The three operations of a procedural continuous assignment (LRM 10.6), on a
-// name that owns no storage. `refer` forms the reference that names the
-// force's storage, in whichever form the references of the running program
-// take.
+// The three operations of a procedural continuous assignment (LRM 10.6)
+// through a reference, on what it names: a variable is taken over where it
+// lies, and a member is given storage of the assignment's own to name, which
+// `refer` forms in whichever form the references of the running program take.
 
 template <value::LyraValue T, class Refer>
-auto BeginMemberTakeover(
+auto BeginTakeoverThrough(
     const ErasedReference& reference, std::int64_t level, Refer refer)
     -> std::int64_t {
+  if (!NamesAMember(reference)) {
+    return VariableNamedBy<T>(reference).BeginTakeover(level);
+  }
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
   if (!bound.Forced(member)) {
@@ -145,23 +176,33 @@ auto BeginMemberTakeover(
   return bound.NextGeneration(member);
 }
 
-template <value::LyraValue T, class Drive>
-auto DriveMemberTakeover(
+// `drive` states the evaluation's value to a variable under its own takeover,
+// answering whether that evaluation is still in effect; `write` writes it to
+// the storage a member's force gave it, as any write.
+template <value::LyraValue T, class Drive, class Write>
+auto DriveTakeoverThrough(
     const ErasedReference& reference, std::int64_t level,
-    std::int64_t generation, Drive drive) -> bool {
+    std::int64_t generation, Drive drive, Write write) -> bool {
+  if (!NamesAMember(reference)) {
+    return drive(VariableNamedBy<T>(reference));
+  }
   const ErasedReference& member = ForcedMember(reference, level);
   if (!current_runtime().Bound().StillForcing(member, generation)) {
     return false;
   }
-  drive(VariableNamedBy<T>(member));
+  write(VariableNamedBy<T>(member));
   return true;
 }
 
-// The member shows what drives it from here on, so the force's storage takes
+// A member shows what drives it from here on, so the force's storage takes
 // that value first, as any write, and whoever waits on the member is told
 // exactly when the release changed what it shows.
 template <value::LyraValue T>
-void EndMemberTakeover(const ErasedReference& reference, std::int64_t level) {
+void EndTakeoverThrough(const ErasedReference& reference, std::int64_t level) {
+  if (!NamesAMember(reference)) {
+    VariableNamedBy<T>(reference).EndTakeover(level);
+    return;
+  }
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
   if (bound.Forced(member)) {
@@ -173,7 +214,7 @@ void EndMemberTakeover(const ErasedReference& reference, std::int64_t level) {
 
 template <value::LyraValue T>
 auto Ref<T>::BeginTakeover(std::int64_t level) const -> std::int64_t {
-  return BeginMemberTakeover<T>(
+  return BeginTakeoverThrough<T>(
       erased_, level, [](Var<T>& forced) { return Ref<T>{forced}.Erased(); });
 }
 
@@ -181,13 +222,17 @@ template <value::LyraValue T>
 auto Ref<T>::DriveTakeover(
     std::int64_t level, std::int64_t generation, const T& new_val) const
     -> bool {
-  return DriveMemberTakeover<T>(
-      erased_, level, generation, [&](Var<T>& forced) { forced.Set(new_val); });
+  return DriveTakeoverThrough<T>(
+      erased_, level, generation,
+      [&](Var<T>& variable) {
+        return variable.DriveTakeover(level, generation, new_val);
+      },
+      [&](Var<T>& forced) { forced.Set(new_val); });
 }
 
 template <value::LyraValue T>
 void Ref<T>::EndTakeover(std::int64_t level) const {
-  EndMemberTakeover<T>(erased_, level);
+  EndTakeoverThrough<T>(erased_, level);
 }
 
 }  // namespace lyra::runtime

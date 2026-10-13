@@ -1419,9 +1419,9 @@ auto BindInputPort(
 // process a scope-level `assign` produces, registered as a process; when the
 // driven side is a net the edge attaches a driver rather than writing the cell.
 // A `ref` port carries no edge and is emitted into the resolve block instead,
-// binding the child's reference member -- reached by the route to it -- to the
-// connected variable's cell: one statement, with no second cell and no
-// continuous assignment.
+// binding the child's reference member -- reached by the route to it -- as
+// another name of what the connection names: one statement, with no second
+// cell and no continuous assignment.
 //
 // A bidirectional port carries no data in either direction and states no
 // direction at all, so it is not one of these; what it states is which
@@ -1463,10 +1463,11 @@ auto InstallPortConnections(
             "it never reaches the connection switch");
       case hir::PortDirection::kRef: {
         // A `ref` port reaches the child's reference member by the same route
-        // navigation any value reference uses, then binds it to the peer's cell
-        // through the one canonical reference-store primitive. It holds no
+        // navigation any value reference uses, then binds it as another name of
+        // what the peer names (LRM 23.3.3.2): where the peer is an input port,
+        // the `ref` port goes on naming whatever that port names. It holds no
         // persistent slot -- a `ref` needs no simulation-time reach, so the
-        // member is reached once here in the resolve phase (LRM 23.3.3.2).
+        // member is reached once here in the resolve phase.
         const auto& route = std::get<hir::ValueRoute>(data.endpoint);
         const hir::DataCell member = hir::CellOf(route.leaf);
         const mir::TypeId ref_type = unit_lowerer.MemberCellType(
@@ -1489,10 +1490,15 @@ auto InstallPortConnections(
               "a ref port connected to an element or a member of a variable "
               "is not yet supported");
         }
-        const mir::ExprId bind = BindReferenceSlot(
-            unit_lowerer.Unit(), resolve_block, target,
-            PathReference(unit_lowerer.Unit(), resolve_block, *peer_or));
-        resolve_block.AppendStmt(mir::ExprStmt{.expr = bind});
+        resolve_block.AppendStmt(
+            mir::ExprStmt{
+                .expr = resolve_block.exprs.Add(
+                    mir::MakeCallExpr(
+                        mir::Direct{.target = support::BuiltinFn::kBindAlias},
+                        {target,
+                         PathReference(
+                             unit_lowerer.Unit(), resolve_block, *peer_or)},
+                        unit_lowerer.Unit().builtins.void_type))});
         continue;
       }
       // A unit publishes every direction the language admits, and AST-to-HIR

@@ -745,6 +745,9 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kBindMember:
       return {
           .name = "bind_member", .declaration = RuntimeFunction("BindMember")};
+    case BuiltinFn::kBindAlias:
+      return {
+          .name = "bind_alias", .declaration = RuntimeFunction("BindAlias")};
     case BuiltinFn::kDrivesContinuously:
       return {
           .name = "drives_continuously",

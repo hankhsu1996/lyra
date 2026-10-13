@@ -492,6 +492,12 @@ class MirDumper {
                   r.mutability == Mutability::kReadOnly ? "readonly, " : "",
                   r.pointee.value);
             },
+            [](const ReferenceWrapperType& r) -> std::string {
+              return std::format(
+                  "ReferenceWrapper({}pointee=Type[{}])",
+                  r.mutability == Mutability::kReadOnly ? "readonly, " : "",
+                  r.pointee.value);
+            },
             [](const PointerType& p) -> std::string {
               const std::string_view ro =
                   p.mutability == Mutability::kReadOnly ? ", readonly" : "";

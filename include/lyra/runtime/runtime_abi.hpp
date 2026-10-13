@@ -797,6 +797,8 @@ auto lyra_rt_reference_reports_to(const void* reference) -> void*;
 // A member that owns no storage bound to what drives it, and a force on one
 // (LRM 23.3.3, 10.6.2). Each names the member by a reference to it.
 void lyra_rt_bind_member(void* member, const void* bound);
+// A `ref` port bound to what its connection names (LRM 23.3.3.2).
+void lyra_rt_bind_alias(void* alias, const void* bound);
 
 // States that a continuous assignment drives the storage `reference` names
 // (LRM 10.3).

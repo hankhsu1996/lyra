@@ -185,7 +185,9 @@ auto BuildReferenceArg(
   // never nesting into `Ref<Ref<T>>` (LRM 23.3.3.2). The argument is the
   // existing reference itself, as a C++ reference initialized from a reference
   // binds what that one binds.
-  if (pointee_ty.Is<mir::RefType>()) {
+  // A reference held as a member is lent the same way, itself, so a `ref`
+  // port bound from it is bound to it rather than to what it names now.
+  if (pointee_ty.IsReference()) {
     return cell;
   }
   // The reference aliases the cell's value, not its storage wrapper: a `Ref<T>`
@@ -202,13 +204,6 @@ auto BuildReferenceArg(
           .data =
               mir::CallExpr{.callee = mir::Construct{}, .arguments = {cell}},
           .type = ref_type});
-}
-
-auto BindReferenceSlot(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId ref_lvalue,
-    mir::ExprId reference) -> mir::ExprId {
-  return block.exprs.Add(
-      mir::MakeAssignExpr(unit.builtins, ref_lvalue, reference));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

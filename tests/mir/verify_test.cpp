@@ -400,6 +400,43 @@ void ExpectRefused(const CompilationUnit& unit, std::string_view why) {
   }
 }
 
+// A reference is never re-seated by a store, and only a reference held as a
+// member is bound after it is created, so a store into either kind and a
+// binding of a reference bound as it was created are refused.
+TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
+  const auto binding = [](bool through_store, bool of_member) {
+    return UnitWithBody([=](CompilationUnit& u, Block& body) {
+      const TypeId reference_type = u.types.Intern(
+          Type{RefType{
+              .pointee = u.builtins.int_type,
+              .mutability = Mutability::kMutable}});
+      const TypeId target_type =
+          of_member ? u.types.Intern(
+                          Type{ReferenceWrapperType{
+                              .pointee = u.builtins.int_type,
+                              .mutability = Mutability::kMutable}})
+                    : reference_type;
+      const ExprId target =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = target_type});
+      const ExprId bound =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = reference_type});
+      const ExprId operation =
+          through_store
+              ? body.exprs.Add(MakeAssignExpr(u.builtins, target, bound))
+              : body.exprs.Add(MakeCallExpr(
+                    Direct{.target = support::BuiltinFn::kBindAlias},
+                    {target, bound}, u.builtins.void_type));
+      body.AppendStmt(ExprStmt{.expr = operation});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(binding(false, true)));
+  ExpectRefused(binding(true, true), "stores into a reference");
+  ExpectRefused(
+      binding(false, false),
+      "binds something other than a reference held as a member");
+}
+
 // An element of a numbered container is named by a position, so an index left
 // in the type the source wrote it in is refused; the entry reaching an
 // associative array takes a value of its index type, which is no ordinal (LRM

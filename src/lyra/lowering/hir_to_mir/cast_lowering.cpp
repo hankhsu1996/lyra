@@ -355,6 +355,7 @@ auto BuildValueConversion(
           [&](const mir::RuntimeLibraryType& t) { return none(t); },
           [&](const mir::CoroutineType& t) { return none(t); },
           [&](const mir::RefType& t) { return none(t); },
+          [&](const mir::ReferenceWrapperType& t) { return none(t); },
           [&](const mir::PointerType& t) { return none(t); },
           [&](const mir::VectorType& t) { return none(t); },
           [&](const mir::TupleType& t) { return none(t); },

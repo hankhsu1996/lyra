@@ -388,6 +388,11 @@ enum class BuiltinFn : std::uint16_t {
   // with (LRM 23.3.3): the member names that storage from then on, and is
   // recorded as bound from whatever member the bound reference came from.
   kBindMember,
+  // Binding a `ref` port to what its connection names (LRM 23.3.3.2): another
+  // name of that, so where it names an input port's member the port goes on
+  // naming whatever that member names, and a takeover through it acts on that
+  // member.
+  kBindAlias,
   // Stating, as the design is built, that a continuous assignment drives the
   // storage a reference names (LRM 10.3), which decides what a variable shows
   // once nothing overrides it (LRM 10.6.2).
@@ -416,8 +421,9 @@ enum class BuiltinFn : std::uint16_t {
   // show what that fold produces. It states no direction, because the
   // connection it realizes has none (LRM 23.3.3).
   kNetJoin,
-  // Putting a cell under a procedural continuous assignment and taking it back
-  // out (LRM 10.6). Beginning one answers with the generation its evaluation
+  // Putting a variable or a net, reached through its cell or a reference naming
+  // it, under a procedural continuous assignment and taking it back out (LRM
+  // 10.6). Beginning one answers with the generation its evaluation
   // carries; driving states what that evaluation produced and answers whether
   // it is still the one in effect, which is how an evaluation superseded by a
   // later takeover, or ended by a `deassign` or `release`, learns to stop.

@@ -107,8 +107,10 @@ target and why a forced value is not a driver; this file does not restate it.
 - [ ] PCA8 -- A takeover of an `event` variable (LRM 10.6, 15.5.5). Refused where it is written, as
       giving an event a value is.
 
-- [ ] PCA9 -- A force on a variable reached through a module's `ref` port. It ends the run as a
-      failure of the compiler's own on both backends, for an `int` and a `real` alike.
+- [x] PCA9 -- A force on a module's `ref` port, from inside the module or by a hierarchical name and
+      through any number of `ref` ports, is a force on what the port is connected to (LRM 23.3.3.2),
+      on both backends: a variable, which every reader of it then sees, or an input port, which the
+      `ref` port follows and whose source a force through it leaves alone.
 
 ## What a read costs, settled
 
