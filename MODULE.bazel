@@ -75,11 +75,11 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 """,
-    commit = "75fc4ce73f5bd366368ff4215ae1e61914a4cf90",
+    commit = "6d4c52f1a756a74af52e1531313150c2282350c8",
     patch_strip = 1,
     patches = [
         "//third_party/rtlmeter:caliptra_leading_underscore.patch",
-        "//third_party/rtlmeter:openpiton_string_cast.patch",
+        "//third_party/rtlmeter:caliptra_read_line_automatic.patch",
     ],
     remote = "https://github.com/verilator/rtlmeter.git",
 )

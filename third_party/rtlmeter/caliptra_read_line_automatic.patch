@@ -1,0 +1,16 @@
+Caliptra's testbench services declare read_line with a ref argument and no
+lifetime, in a module that gives none, so the function is static (IEEE
+1800-2023 13.4.2). 13.5.2 says "It shall be illegal to use argument passing by
+reference for subroutines with a lifetime of static". Declare it automatic;
+each call sets every local before reading it, so the behavior is the same.
+
+The text is Caliptra's own, reported as
+https://github.com/chipsalliance/caliptra-rtl/issues/1440 and fixed there in
+https://github.com/chipsalliance/caliptra-rtl/pull/1441. Sent to the suite as
+https://github.com/verilator/rtlmeter/pull/61
+
+--- a/designs/Caliptra/src/caliptra-rtl/caliptra_top_tb_services.sv
++++ b/designs/Caliptra/src/caliptra-rtl/caliptra_top_tb_services.sv
+@@ -3219 +3219 @@
+-function void read_line(int fd, int bit_length_words, ref bit [31:0] array []);
++function automatic void read_line(int fd, int bit_length_words, ref bit [31:0] array []);
