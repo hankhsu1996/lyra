@@ -77,21 +77,28 @@ auto ProcessLowerer::Run(
 auto ProcessLowerer::KindOf(
     const slang::ast::ProceduralBlockSymbol& proc, const WalkFrame& frame,
     diag::SourceSpan span) -> diag::Result<hir::ProcessKind> {
+  const auto always_comb = [&]() -> diag::Result<hir::ProcessKind> {
+    auto reads = ReadsOfProcedure(*this, frame, proc, span);
+    if (!reads) return std::unexpected(std::move(reads.error()));
+    return hir::ProcessKind{
+        hir::AlwaysCombProcess{.implicit_reads = *std::move(reads)}};
+  };
   switch (proc.procedureKind) {
     case slang::ast::ProceduralBlockKind::Initial:
       return hir::ProcessKind{hir::InitialProcess{}};
     case slang::ast::ProceduralBlockKind::Final:
       return hir::ProcessKind{hir::FinalProcess{}};
     case slang::ast::ProceduralBlockKind::Always:
+      // A deferred immediate assertion written outside procedural code is
+      // treated as if it were contained in an always_comb procedure (LRM
+      // 16.4.3), and the front end presents it as an `always` it marks as made
+      // for that assertion.
+      if (proc.isFromAssertion) return always_comb();
       return hir::ProcessKind{hir::AlwaysProcess{}};
     case slang::ast::ProceduralBlockKind::AlwaysFF:
       return hir::ProcessKind{hir::AlwaysFfProcess{}};
-    case slang::ast::ProceduralBlockKind::AlwaysComb: {
-      auto reads = ReadsOfProcedure(*this, frame, proc, span);
-      if (!reads) return std::unexpected(std::move(reads.error()));
-      return hir::ProcessKind{
-          hir::AlwaysCombProcess{.implicit_reads = *std::move(reads)}};
-    }
+    case slang::ast::ProceduralBlockKind::AlwaysComb:
+      return always_comb();
     case slang::ast::ProceduralBlockKind::AlwaysLatch: {
       auto reads = ReadsOfProcedure(*this, frame, proc, span);
       if (!reads) return std::unexpected(std::move(reads.error()));
