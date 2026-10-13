@@ -133,26 +133,11 @@ void Runtime::RunSimulation() {
     RunAsLanding(*this, [this] { WalkActivate(design_->Root()); });
     StartFrom(0);
 
-    // LRM 4.4: slots run in time order and the simulator never goes backwards,
-    // so the earliest pending slot is always the next one. Time moves only to a
-    // slot that holds something (LRM 4.5): one whose every event was taken back
-    // -- the delay of a process stopped or killed before its time came -- is
-    // passed over where it stands.
     while (std::holds_alternative<Running>(state_)) {
-      auto slot = slots_.begin();
-      if (slot == slots_.end()) {
+      ExecuteTimeSlot();
+      if (!std::holds_alternative<Running>(state_) || !AdvanceToNextSlot()) {
         break;
       }
-      if (slot->second.Empty()) {
-        slots_.erase(slot);
-        continue;
-      }
-      now_ = slot->first;
-      ExecuteTimeSlot(slot->second);
-      if (!std::holds_alternative<Running>(state_)) {
-        break;
-      }
-      slots_.erase(slot);
     }
 
     // LRM 9.2.3: a final procedure occurs at the end of simulation time, which
@@ -344,7 +329,7 @@ void Runtime::StartFrom(std::size_t turn) {
   if (turn == starting_.size()) {
     return;
   }
-  starting_.at(turn).SpliceBackOnto(SlotAt(now_)[Region::kActive].activations);
+  current_slot_[Region::kActive].activations.Append(starting_.at(turn));
   // The Inactive region is reached once the Active one is empty (LRM 4.4.2.3),
   // which is when every process of this turn has run to its first wait.
   Submit(now_, Region::kInactive, [this, turn] { StartFrom(turn + 1); });
@@ -367,17 +352,32 @@ void Runtime::LeaveStaticInit() {
   displacing_.pop_back();
 }
 
-auto Runtime::SlotAt(SimTime when) -> TimeSlot& {
-  if (when < now_) {
+auto Runtime::FutureSlotAt(SimTime when) -> TimeSlot& {
+  if (when <= now_) {
     throw InternalError(
-        "Runtime::SlotAt: a time slot earlier than the current one can never "
-        "run");
+        "Runtime::FutureSlotAt: only a time after the current one has a future "
+        "slot -- please report this as a bug");
   }
-  return slots_[when];
+  return future_slots_[when];
 }
 
-void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
-  RunRegion(slot, Region::kPreponed);
+auto Runtime::AdvanceToNextSlot() -> bool {
+  // Time moves only to a slot that holds something (LRM 4.5): one whose every
+  // event was taken back -- the delay of a process stopped or killed before its
+  // time came -- is passed over where it stands.
+  while (!future_slots_.empty()) {
+    auto next = future_slots_.extract(future_slots_.begin());
+    if (!next.mapped().Empty()) {
+      now_ = next.key();
+      current_slot_.Append(next.mapped());
+      return true;
+    }
+  }
+  return false;
+}
+
+void Runtime::ExecuteTimeSlot() {
+  RunRegion(Region::kPreponed);
   std::size_t passes = 0;
   std::vector<NotedProcedure> ran;
   // LRM 4.5: take the earliest region that has anything, run it, and look
@@ -386,7 +386,7 @@ void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
   // empty, and work it schedules back into Active is found first on the next
   // look.
   while (std::optional<Region> region =
-             slot.FirstPending(Region::kActive, Region::kReNba)) {
+             current_slot_.FirstPending(Region::kActive, Region::kReNba)) {
     if (++passes > kMaxRegionPassesPerSlot) {
       ReportUnsettledSlot(ran);
       return;
@@ -395,43 +395,45 @@ void Runtime::ExecuteTimeSlot(TimeSlot& slot) {
       // What a pass runs is what its region holds as the pass begins, and a
       // procedure is noted from there because its run may be the one that ends
       // it.
-      slot[*region].activations.ForEach([&ran](const QueuePlace& queued) {
-        const RuntimeProcess& process = queued.activation->Process();
-        ran.push_back(
-            NotedProcedure{
-                .written_at = process.WrittenAt(),
-                .scope = process.OwningScope()});
-      });
+      current_slot_[*region].activations.ForEach(
+          [&ran](const QueuePlace& queued) {
+            const RuntimeProcess& process = queued.activation->Process();
+            ran.push_back(
+                NotedProcedure{
+                    .written_at = process.WrittenAt(),
+                    .scope = process.OwningScope()});
+          });
     }
-    RunRegion(slot, *region);
+    RunRegion(*region);
   }
-  RunRegion(slot, Region::kPostponed);
-  if (std::holds_alternative<Running>(state_) && !slot.Empty()) {
+  RunRegion(Region::kPostponed);
+  if (std::holds_alternative<Running>(state_) && !current_slot_.Empty()) {
     ReportDesignError(
         "the postponed region scheduled work back into the time slot that "
         "ends with it (LRM 4.4.2.9)");
   }
 }
 
-void Runtime::RunRegion(TimeSlot& slot, Region region) {
-  RegionQueue& queue = slot[region];
+void Runtime::RunRegion(Region region) {
+  RegionQueue& queue = current_slot_[region];
   // LRM 9.3.2: work arriving while this pass runs belongs to the next pass, so
-  // both snapshots move out of the region and new arrivals accumulate behind
-  // them. LRM 4.5 fixes no order between the events of one region.
-  std::vector<OwnedCall> effects = std::move(queue.effects);
-  queue.effects.clear();
-  IntrusiveList<TimerPlace> due;
-  queue.timers.SpliceBackOnto(due);
-  queue.activations.SpliceBackOnto(draining_);
-  for (OwnedCall& effect : effects) {
+  // what the region holds moves out of it and new arrivals accumulate behind.
+  // The effects trade storage with the pass, so both keep what they grew to
+  // from one pass and one slot to the next.
+  draining_.activations.Append(queue.activations);
+  draining_.timers.Append(queue.timers);
+  std::swap(queue.effects, draining_.effects);
+  // LRM 4.6: nonblocking updates are performed in the order they were placed.
+  for (OwnedCall& effect : draining_.effects) {
     effect();
   }
+  draining_.effects.clear();
   // A timer comes off its queue as it fires, so arming it again from what the
   // firing wakes queues a new event rather than moving this one.
-  while (TimerPlace* fired = due.PopFront()) {
+  while (TimerPlace* fired = draining_.timers.PopFront()) {
     fired->timer->Fire();
   }
-  while (QueuePlace* queued = draining_.PopFront()) {
+  while (QueuePlace* queued = draining_.activations.PopFront()) {
     Activation* activation = queued->activation;
     ConsumeWait(activation);
     RunProcess(activation);
