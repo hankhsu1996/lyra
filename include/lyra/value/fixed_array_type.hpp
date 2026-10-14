@@ -8,7 +8,6 @@
 
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/reduction.hpp"
 #include "lyra/value/value_type.hpp"
@@ -18,29 +17,23 @@ namespace lyra::value {
 class String;
 
 // How a fixed-size unpacked array is laid out: how far apart two neighbouring
-// elements lie, whether the elements lie where the array does, and the size
-// and alignment of what holds the array.
+// elements lie, and the size and alignment of the array.
 struct FixedArrayLayout {
   std::size_t stride;
-  bool in_place;
   std::size_t size;
   std::size_t align;
 };
 
 // The layout of `count` elements of `element_size` bytes aligned to
-// `element_align`. Generated code places an element by this and the library
-// walks one by it, so it is stated once for both.
+// `element_align`, one after another. Generated code places an element by this
+// and the library walks one by it, so it is stated once for both.
 [[nodiscard]] constexpr auto FixedArrayLayoutOf(
     std::size_t element_size, std::size_t element_align, std::size_t count)
     -> FixedArrayLayout {
   const std::size_t stride =
       (element_size + element_align - 1) / element_align * element_align;
-  const bool in_place = stride * count <= kMaxInlineBytes;
   return FixedArrayLayout{
-      .stride = stride,
-      .in_place = in_place,
-      .size = in_place ? stride * count : sizeof(void*),
-      .align = in_place ? element_align : alignof(void*)};
+      .stride = stride, .size = stride * count, .align = element_align};
 }
 
 // The type of a fixed-size unpacked array (LRM 7.4.2) as code compiled before
@@ -49,11 +42,8 @@ struct FixedArrayLayout {
 // whole array is that operation on each element in turn, carried out here once
 // for every array type.
 //
-// An array of at most `kMaxInlineBytes` lies where the array does. A larger one
-// is the address of a run it owns, so that the size of whatever holds an array
-// never follows the size a design declared; an array that was moved from holds
-// no run until it is assigned. Either way an element keeps its address across
-// every assignment (LRM 13.5.2 has a reference to one go on naming it).
+// The elements lie in the array, and an element keeps its address across every
+// assignment (LRM 13.5.2 has a reference to one go on naming it).
 //
 // Generated code states one of these for each array type it hands a value of
 // to such code, as constant data of this class, so its layout is part of what
@@ -68,8 +58,6 @@ class FixedArrayType final : public ValueType {
   [[nodiscard]] auto ElementType() const -> const value::ElementType& {
     return *element_;
   }
-
-  [[nodiscard]] auto LiesInPlace() const -> bool;
 
   // The element at storage position `position`, counted from the left, of the
   // array lying at `array`.
@@ -193,8 +181,7 @@ class FixedArrayType final : public ValueType {
   };
 
   // An array being built element by element in storage that holds none yet.
-  // Whatever was built is ended, and a run that was obtained given back,
-  // unless the build finishes.
+  // Whatever was built is ended unless the build finishes.
   class Building {
    public:
     Building(const FixedArrayType& type, void* out);
@@ -213,17 +200,11 @@ class FixedArrayType final : public ValueType {
    private:
     const FixedArrayType* type_;
     void* out_;
-    void* run_;
     std::size_t built_ = 0;
     bool finished_ = false;
   };
 
   [[nodiscard]] auto Layout() const -> FixedArrayLayout;
-  // Where the elements of the array lying at `array` begin.
-  [[nodiscard]] auto RunOf(const void* array) const -> const void*;
-  [[nodiscard]] auto RunOf(void* array) const -> void*;
-  [[nodiscard]] auto ObtainRun() const -> void*;
-  void GiveBackRun(void* run) const noexcept;
 
   using Fold =
       void (ValueType::*)(const void* lhs, const void* rhs, void* out) const;

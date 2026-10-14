@@ -72,11 +72,6 @@ auto StateDomainOf(IntegralStateKind state) -> value::StateDomain {
   throw InternalError("mir: unknown integral state kind");
 }
 
-auto UsesHeapWords(const IntegralType& integral) -> bool {
-  return value::UsesHeapWords(
-      integral.bit_width, StateDomainOf(integral.state_kind));
-}
-
 auto BlankIntegralConstant(const IntegralType& integral) -> IntegralConstant {
   const std::size_t words = value::WordCountForBits(integral.bit_width);
   switch (integral.state_kind) {

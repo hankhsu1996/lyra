@@ -27,6 +27,7 @@
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
+#include "lyra/value/small_box.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::value {
@@ -236,8 +237,14 @@ template <class HeldAs>
 class CellRareState final : public RareWriteState {
  public:
   using Owned = typename HeldAs::Owned;
-  // The variable's value as its sampled value takes it: a copy of its own.
-  using Copied = ReadThrough<HeldAs, &HeldAs::Copy>;
+
+  // Assigns what the variable holds to `out`, a value of the owned type, as its
+  // sampled value takes it.
+  void TakeHeldInto(Owned& out) const {
+    out = storage_->AsOwned();
+  }
+  using TakenHeld =
+      TakenFrom<CellRareState, Owned, &CellRareState::TakeHeldInto>;
 
   explicit CellRareState(const HeldAs& storage) : storage_(&storage) {
   }
@@ -258,11 +265,11 @@ class CellRareState final : public RareWriteState {
     if (sampled_ != nullptr) {
       return;
     }
-    sampled_ = std::make_unique<SampledValueOf<Copied>>(
-        Copied(*storage_), storage_->Copy(),
+    sampled_ = std::make_unique<SampledValueOf<TakenHeld>>(
+        TakenHeld(*this), [&] -> Owned { return storage_->AsOwned(); },
         Trigger(&variable, Observation{}, {}, 0, 0));
   }
-  [[nodiscard]] auto Sampled() const -> const SampledValueOf<Copied>* {
+  [[nodiscard]] auto Sampled() const -> const SampledValueOf<TakenHeld>* {
     return sampled_.get();
   }
 
@@ -278,7 +285,7 @@ class CellRareState final : public RareWriteState {
 
  private:
   const HeldAs* storage_;
-  std::unique_ptr<SampledValueOf<Copied>> sampled_;
+  std::unique_ptr<SampledValueOf<TakenHeld>> sampled_;
   std::unique_ptr<runtime::Takeovers<Owned>> takeovers_;
 };
 
@@ -335,7 +342,7 @@ class Cell : public VariableCell {
   void SetFrom(const Cell& other) {
     if (TakenOver()) {
       if (Owned* beneath = DisplacedStorage()) {
-        *beneath = other.storage_.Copy();
+        *beneath = other.storage_.AsOwned();
       }
       return;
     }
@@ -541,7 +548,14 @@ class Var final : public Cell<ValueStorageCore<T>> {
   // does not match the installed one is the lowering defect and is what
   // refuses, and so is a store into such a cell before any declaration ran,
   // which the store path refuses.
-  void Initialize(T prototype) {
+  void Initialize(const T& prototype) {
+    if (!this->Held().IsInstalled()) {
+      this->Held().Install(prototype);
+      return;
+    }
+    this->Held().Overwrite(prototype);
+  }
+  void Initialize(T&& prototype) {
     if (!this->Held().IsInstalled()) {
       this->Held().Install(std::move(prototype));
       return;
@@ -614,7 +628,9 @@ auto MakeTailCell(const Told& told) -> std::shared_ptr<TailCell<HeldAs>> {
 }
 
 // What a write keeps of the part it lands on, to tell afterwards what it did
-// to it: a copy, of which nothing but whether it moved can be shown.
+// to it: a copy, of which nothing but whether it moved can be shown. The write
+// lies in the frame of whatever writes, so the copy is kept as a frame keeps a
+// value aside.
 template <class Part>
 class KeptPart {
  public:
@@ -623,14 +639,14 @@ class KeptPart {
 
   // What the write did to `part`, none where it left it as it was.
   [[nodiscard]] auto ChangeTo(const Part& part) -> std::optional<Change> {
-    if (before_.IsBitIdentical(part)) {
+    if (before_->IsBitIdentical(part)) {
       return std::nullopt;
     }
     return Change::Whole();
   }
 
  private:
-  Part before_;
+  value::SmallBox<Part> before_;
 };
 
 // A bit-addressed part keeps only the words it lies in, as a change reaching
@@ -1133,7 +1149,7 @@ auto Cell<HeldAs>::RecordTakeover(
   // what that driver last produced, which is what the cell shows again once
   // nothing covers it (LRM 10.6.2).
   if (!was_covered && current_runtime().DrivenContinuously(*this)) {
-    takeovers->KeepBeneath(storage_.Copy());
+    takeovers->KeepBeneath(storage_.AsOwned());
   }
   // A level that just recorded always leaves something showing, and it is this
   // value only where no higher level covers it. Storing whatever shows needs
@@ -1161,9 +1177,7 @@ void Cell<HeldAs>::EndTakeover(std::int64_t level) {
     Store(*showing);
     return;
   }
-  if (const std::optional<Owned> beneath = takeovers->TakeBeneath()) {
-    Store(*beneath);
-  }
+  takeovers->TakeBeneath([&](const Owned& beneath) { Store(beneath); });
 }
 
 // One write in progress into what a sink stands for, and what it has learned
@@ -1199,7 +1213,7 @@ class WriteBracket {
     } else if (ValueType* kept = sink_.DisplacedStorage()) {
       storage_ = kept;
     } else {
-      storage_ = &discarded_.emplace(sink_.MutationStorage());
+      storage_ = &*discarded_.emplace(sink_.MutationStorage());
     }
   }
 
@@ -1298,7 +1312,9 @@ class WriteBracket {
   // The elements of that part a slice write moved, none in particular where
   // the write changed the part by forming one.
   value::BitPositions moved_{};
-  std::optional<ValueType> discarded_;
+  // A copy of the storage for a write turned away to land in, kept as a frame
+  // keeps a value aside, since the write lies in the frame of whatever writes.
+  std::optional<value::SmallBox<ValueType>> discarded_;
 };
 
 template <class Sink, class Slice>

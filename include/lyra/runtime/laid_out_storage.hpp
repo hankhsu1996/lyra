@@ -74,15 +74,16 @@ class LaidOutStorage : public TailValue<LaidOutStorage<OwnedValue>> {
     return this->Bytes();
   }
 
-  // Whether the value at `bytes` is the one held, taking it, a copy of the
-  // value held, and a copy of the one at `bytes`.
+  // Whether the value at `bytes` is the one held, taking it, the value held as
+  // the owned type, which this holder keeps only as bytes and so copies, and a
+  // copy of the one at `bytes`.
   [[nodiscard]] auto IsBitIdenticalTo(const void* bytes) const -> bool {
     return type_->BitIdentical(this->Bytes(), bytes);
   }
   void AssignBytes(const void* bytes) {
     type_->Assign(this->Bytes(), bytes);
   }
-  [[nodiscard]] auto Copy() const -> Owned {
+  [[nodiscard]] auto AsOwned() const -> Owned {
     return ToOwned(this->Bytes());
   }
   [[nodiscard]] auto ToOwned(const void* bytes) const -> Owned {

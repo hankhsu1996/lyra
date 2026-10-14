@@ -188,12 +188,41 @@ class OpenWrite {
     KeptPart<Part> kept;
   };
 
+  // A part whose type the library is handed keeps its value from before the
+  // write in the landing's own room where it fits there, and in storage of its
+  // own past that, as the C++ backend's write keeps a part of a type it knows.
   struct LaidOutLanding {
     LaidOutLanding(const value::ValueType& type, void* landed)
-        : part(landed), before(value::AnyValue::CopyOf(type, landed)) {
+        : type(&type), part(landed) {
+      if (KeptHere(type)) {
+        type.Copy(landed, here.data());
+      } else {
+        apart = value::AnyValue::CopyOf(type, landed);
+      }
     }
+    LaidOutLanding(const LaidOutLanding&) = delete;
+    auto operator=(const LaidOutLanding&) -> LaidOutLanding& = delete;
+    LaidOutLanding(LaidOutLanding&&) = delete;
+    auto operator=(LaidOutLanding&&) -> LaidOutLanding& = delete;
+    ~LaidOutLanding() {
+      if (KeptHere(*type)) {
+        type->Destroy(here.data());
+      }
+    }
+
+    [[nodiscard]] auto Before() const -> const void* {
+      return KeptHere(*type) ? here.data() : apart.Bytes();
+    }
+
+    static constexpr std::size_t kRoom = 128;
+    [[nodiscard]] static auto KeptHere(const value::ValueType& type) -> bool {
+      return type.Size() <= kRoom && type.Align() <= alignof(void*);
+    }
+
+    const value::ValueType* type;
     void* part;
-    value::AnyValue before;
+    alignas(void*) std::array<std::byte, kRoom> here{};
+    value::AnyValue apart;
   };
 
   template <value::HeldAsWords Wide>
@@ -231,8 +260,7 @@ class OpenWrite {
   static constexpr ResolveBitRange kLaidOutLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
         auto* landing = Landing<LaidOutLanding>(room);
-        if (!landing->before.Type().BitIdentical(
-                landing->before.Bytes(), landing->part)) {
+        if (!landing->type->BitIdentical(landing->Before(), landing->part)) {
           bracket_of.landed(bracket, Change::Whole());
         }
         std::destroy_at(landing);

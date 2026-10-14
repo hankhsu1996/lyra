@@ -77,6 +77,9 @@ below LIR, at LIR-to-LLVM.
   nothing yet that the value is made in and whose holder then owns it. A step that yields nothing --
   a store, an initialization, a frame's bytes coming into or going out of use -- names no
   destination, and an evaluation yielding nothing stands as the void value where one is wanted.
+- Where a callable's answer goes: its return place, storage of the answer's type that every way out
+  makes the answer in before returning, as Rust's MIR writes `_0`, whose value the caller then owns.
+  Whether that storage is the caller's or the frame's is the target's convention for answering.
 - The value-aggregate selector vocabulary: which subvalue of a view a step names -- the one member
   an active-member value holds at a time, a runtime coordinate, a fixed-width window. One extract
   and one update carry every step; the selector never says how the step is realized.
@@ -268,17 +271,18 @@ the enclosing class reached through `self` as a place. The bulk of a program's s
 storage reached through receivers, not locals on a frame.
 
 LIR is not an SSA form. A local is either a transient -- computed once, consumed, with a pure
-dataflow origin -- or a place, which is storage on the frame. Which one a local is follows a
+dataflow origin -- or a place, which is named storage: the frame's, or for the callable's return
+place, wherever the target's convention for answering puts it. Which one a local is follows a
 canonical lowering rule, not the source language's notion of a variable: a local is a place exactly
 when the canonical lowering needs an address for it -- its address is taken, it is assigned after
-its initialization, or it holds a control-flow join. Everything else is a transient. So there is no
-phi and none is needed: a value produced on more than one path is a place each path writes, a
-conditional expression writes its result into a place from each arm, and a loop-carried variable is
-a place the body updates. A parameter arrives as a transient (the incoming argument) and becomes a
-place only when the body assigns it or takes its address, in which case the entry block copies the
-argument into that place. Recovering a register where the address is never truly needed is a
-target-side derivation, not a property LIR must establish: LIR states the storage topology, it does
-not minimize it.
+its initialization, it holds a control-flow join, or it is the callable's return place. Everything
+else is a transient. So there is no phi and none is needed: a value produced on more than one path
+is a place each path writes, a conditional expression writes its result into a place from each arm,
+and a loop-carried variable is a place the body updates. A parameter arrives as a transient (the
+incoming argument) and becomes a place only when the body assigns it or takes its address, in which
+case the entry block copies the argument into that place. Recovering a register where the address is
+never truly needed is a target-side derivation, not a property LIR must establish: LIR states the
+storage topology, it does not minimize it.
 
 A closure lowers to a value of its declaration, built from its captures by an instruction of its
 own; its one body is entered with that value as `self`. `self` is the first argument, supplied like

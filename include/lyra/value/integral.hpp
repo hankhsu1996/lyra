@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -18,9 +17,9 @@
 #include "lyra/base/fixed_array.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral_fwd.hpp"  // IWYU pragma: export
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/word_recycler.hpp"
 
 namespace lyra::value {
 
@@ -52,18 +51,6 @@ namespace lyra::value {
 [[nodiscard]] constexpr auto IntegralAlignFor(std::uint64_t width)
     -> std::size_t {
   return std::min<std::size_t>(PlaneBytesFor(width), 8);
-}
-
-// The most bytes a value may be and still lie in whatever holds it. A value
-// in an expression lies in the frame of the function evaluating it, so a value
-// whose size followed its declared width would make a frame's size follow it
-// too, and a frame is taken from a stack whose size no design chose. A wider
-// value owns its words apart from itself, and a frame holds a pointer for it.
-inline constexpr std::size_t kMaxInlineBytes = 1024;
-
-[[nodiscard]] constexpr auto UsesHeapWords(
-    std::uint64_t width, StateDomain domain) -> bool {
-  return IntegralBytesFor(width, domain) > kMaxInlineBytes;
 }
 
 // An integral type as code compiled once for every integral type is handed it:
@@ -365,13 +352,12 @@ using PlaneOf = std::conditional_t<
         std::conditional_t<
             PlaneBytesFor(kWidth) == 4, std::uint32_t, std::uint64_t>>>;
 
-// What a value holds while it is small enough to lie in whatever holds it:
-// the words of its value plane and then, where it can hold x or z, those of
-// its unknown plane, every position clear until written. A value no wider
-// than 64 bits has one word per plane, the smallest machine integer that
-// holds its width, and a wider one has 64-bit words.
+// What a value holds: the words of its value plane and then, where it can hold
+// x or z, those of its unknown plane, every position clear until written. A
+// value no wider than 64 bits has one word per plane, the smallest machine
+// integer that holds its width, and a wider one has 64-bit words.
 template <PlaneWord WordArg, std::size_t kWords, bool kFourState>
-struct InlineWords {
+struct PlaneWords {
   using Word = WordArg;
   static constexpr std::size_t kUnknownWords = kFourState ? kWords : 0;
 
@@ -401,7 +387,7 @@ struct InlineWords {
   // Whether two hold the same words, asked a word at a time. Asked of the
   // array as a whole, a host library may compare it as a run of bytes through
   // a call, which every store into a variable would then make.
-  constexpr auto operator==(const InlineWords& other) const -> bool {
+  constexpr auto operator==(const PlaneWords& other) const -> bool {
     const std::span<const Word> mine(words);
     const std::span<const Word> theirs(other.words);
     bool same = true;
@@ -410,81 +396,6 @@ struct InlineWords {
     }
     return same;
   }
-};
-
-// What a value holds past the size that lies in a frame: its words owned
-// apart from it, the value plane's and then the unknown plane's where there
-// is one, every position clear until written. Moving one hands its words on,
-// and what it was moved from is good only for being assigned or ended.
-template <std::size_t kWords, bool kFourState>
-class HeapWords {
- public:
-  using Word = std::uint64_t;
-  static constexpr std::size_t kUnknownWords = kFourState ? kWords : 0;
-
-  HeapWords() : words_(AllocateWords(kCount)) {
-    std::ranges::fill(All(), std::uint64_t{0});
-  }
-  HeapWords(const HeapWords& other) : words_(AllocateWords(kCount)) {
-    std::ranges::copy(other.All(), words_);
-  }
-  HeapWords(HeapWords&& other) noexcept
-      : words_(std::exchange(other.words_, nullptr)) {
-  }
-  auto operator=(const HeapWords& other) -> HeapWords& {
-    if (this == &other) {
-      return *this;
-    }
-    if (words_ == nullptr) {
-      words_ = AllocateWords(kCount);
-    }
-    std::ranges::copy(other.All(), words_);
-    return *this;
-  }
-  auto operator=(HeapWords&& other) noexcept -> HeapWords& {
-    std::swap(words_, other.words_);
-    return *this;
-  }
-  ~HeapWords() {
-    DeallocateWords(words_, kCount);
-  }
-
-  [[nodiscard]] auto Value() const -> std::span<const std::uint64_t, kWords> {
-    return All().template first<kWords>();
-  }
-  [[nodiscard]] auto Value() -> std::span<std::uint64_t, kWords> {
-    return All().template first<kWords>();
-  }
-  [[nodiscard]] auto Unknown() const
-      -> std::span<const std::uint64_t, kUnknownWords> {
-    return All().template last<kUnknownWords>();
-  }
-  [[nodiscard]] auto Unknown() -> std::span<std::uint64_t, kUnknownWords> {
-    return All().template last<kUnknownWords>();
-  }
-
-  [[nodiscard]] auto Bytes() const -> const void* {
-    return words_;
-  }
-  [[nodiscard]] auto Bytes() -> void* {
-    return words_;
-  }
-
-  auto operator==(const HeapWords& other) const -> bool {
-    return std::ranges::equal(All(), other.All());
-  }
-
- private:
-  static constexpr std::size_t kCount = kWords + kUnknownWords;
-
-  [[nodiscard]] auto All() const -> std::span<const std::uint64_t> {
-    return {words_, kCount};
-  }
-  [[nodiscard]] auto All() -> std::span<std::uint64_t> {
-    return {words_, kCount};
-  }
-
-  std::uint64_t* words_;
 };
 
 [[nodiscard]] constexpr auto CombinedDomain(StateDomain a, StateDomain b)
@@ -508,22 +419,17 @@ class HeapWords {
 // width clear, and nothing about it is looked up while the program runs; each
 // operation is the language's operator over its words at this width. Up to a
 // word a plane is the machine integer of its size. Above one the planes are
-// words, the value plane's and then the unknown plane's when four-state: lying
-// in the value while the value is small enough to lie in a frame, and owned
-// apart from it past that, which the type decides.
+// words, the value plane's and then the unknown plane's when four-state, lying
+// in the value.
 template <
     std::uint64_t kWidthArg, Signedness kSignednessArg, StateDomain kDomainArg>
 class Integral {
   static_assert(kWidthArg >= 1, "an integral value has at least one bit");
 
   // What the value holds, which its type decides and nothing outside reads.
-  using Storage = std::conditional_t<
-      UsesHeapWords(kWidthArg, kDomainArg),
-      detail::HeapWords<
-          WordCountForBits(kWidthArg), kDomainArg == StateDomain::kFourState>,
-      detail::InlineWords<
-          detail::PlaneOf<kWidthArg>, WordCountForBits(kWidthArg),
-          kDomainArg == StateDomain::kFourState>>;
+  using Storage = detail::PlaneWords<
+      detail::PlaneOf<kWidthArg>, WordCountForBits(kWidthArg),
+      kDomainArg == StateDomain::kFourState>;
 
  public:
   static constexpr std::uint64_t kWidth = kWidthArg;
@@ -541,7 +447,7 @@ class Integral {
 
   // A value with every position clear in both planes.
   [[nodiscard]] static constexpr auto Zero() -> Integral {
-    return Integral{Storage{}};
+    return Filled(FourStateBit::kZero);
   }
 
   // The planes as a constant states them, value then unknown -- the second
@@ -576,9 +482,7 @@ class Integral {
   // it, and what a driver contributes where it does not drive (LRM 6.6). A
   // two-state value holds an x or z as 0.
   [[nodiscard]] static constexpr auto Filled(FourStateBit bit) -> Integral {
-    Integral out = Zero();
-    FillScalar(out.MutableView(), bit);
-    return out;
+    return Integral{bit};
   }
 
   // The value where it lies, read and written. A write that reaches part of a
@@ -909,7 +813,12 @@ class Integral {
   }
 
  private:
-  explicit constexpr Integral(Storage&& held) : storage_(std::move(held)) {
+  // Every position holding `fill`, written where the value is kept. The words
+  // start clear, so a clear fill has nothing to write.
+  explicit constexpr Integral(FourStateBit fill) {
+    if (fill != FourStateBit::kZero) {
+      FillScalar(MutableView(), fill);
+    }
   }
 
   [[nodiscard]] constexpr auto Reduced(ReductionOp op) const
@@ -927,12 +836,13 @@ class Integral {
   Storage storage_;
 };
 
-// A value held in place is exactly the bytes its type lays it out in, which is
-// what lets code compiled without its type read and write one where it lies. A
-// value that owns its words is the pointer to them, whatever its width.
+// A value is exactly the bytes its type lays it out in, at every width, which
+// is what lets code compiled without its type read and write one where it lies.
 static_assert(
-    sizeof(LogicVector<8 * kMaxInlineBytes>) == sizeof(void*) &&
-    sizeof(LogicVector<1U << 24U>) == sizeof(void*));
+    sizeof(LogicVector<8 * kMaxInlineBytes>) ==
+        IntegralBytesFor(8 * kMaxInlineBytes, StateDomain::kFourState) &&
+    sizeof(LogicVector<1U << 24U>) ==
+        IntegralBytesFor(1U << 24U, StateDomain::kFourState));
 static_assert(sizeof(Bit) == IntegralBytesFor(1, StateDomain::kTwoState));
 static_assert(sizeof(Logic) == IntegralBytesFor(1, StateDomain::kFourState));
 static_assert(sizeof(Int) == IntegralBytesFor(32, StateDomain::kTwoState));
@@ -1151,16 +1061,17 @@ constexpr auto WriteToStream(
   return filled + T::kWidth;
 }
 
-// LRM 11.4.14.3: the value of `T` a stream holds below its `taken` most
-// significant positions, which a two-state `T` reads with each x or z as 0.
+// LRM 11.4.14.3: the value a stream holds below its `taken` most significant
+// positions, read into `out` at its own width, which a two-state `out` holds
+// with each x or z as 0. Answers how many positions are taken after it.
 template <IntegralValue T>
-[[nodiscard]] constexpr auto ReadFromStream(
-    AnyConstIntegralView auto stream, std::uint64_t taken) -> T {
-  T out = T::Zero();
+constexpr auto ReadFromStream(
+    AnyConstIntegralView auto stream, std::uint64_t taken, T& out)
+    -> std::uint64_t {
   Extract(
       out.MutableView(), stream,
       static_cast<std::int64_t>(stream.width - taken - T::kWidth));
-  return out;
+  return taken + T::kWidth;
 }
 
 // LRM 5.9: text taken as a value of `R`, its last character the least
@@ -1172,17 +1083,14 @@ template <IntegralValue R>
   return out;
 }
 
-// LRM 21.4: a word of digits read as a value of `R`; none where a character is
-// no digit of the radix, or there is no digit at all.
-template <IntegralValue R>
-[[nodiscard]] auto FromDigits(DigitRadix radix, std::string_view digits)
-    -> std::optional<R> {
-  R out = R::Zero();
-  if (!lyra::value::FromDigits(
-          out.AsMutableWords().MutableView(), radix, digits)) {
-    return std::nullopt;
-  }
-  return out;
+// LRM 21.4: a word of digits read into `out`, which is left as it was where a
+// character is no digit of the radix or there is no digit at all. Answers
+// whether the word was one.
+template <IntegralValue T>
+[[nodiscard]] auto FromDigits(T& out, DigitRadix radix, std::string_view digits)
+    -> bool {
+  return lyra::value::FromDigits(
+      out.AsMutableWords().MutableView(), radix, digits);
 }
 
 // A value's bytes, most significant first, the top one holding whatever the

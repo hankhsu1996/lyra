@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -131,18 +133,32 @@ class ValueWatchOf final : public ValueWatch {
   }
 
   void Arm() override {
-    baseline_.emplace(evaluate_());
+    evaluations_.at(baseline_).emplace(Evaluation{&evaluate_});
   }
 
+  // The new evaluation is made where the baseline is not and becomes the
+  // baseline after, so neither value is copied or moved.
   [[nodiscard]] auto TakeTransition() -> bool override {
-    Value current = evaluate_();
-    const bool moved = Moved(*baseline_, current);
-    baseline_ = std::move(current);
+    const std::size_t current = 1 - baseline_;
+    evaluations_.at(current).emplace(Evaluation{&evaluate_});
+    const bool moved =
+        Moved(*evaluations_.at(baseline_), *evaluations_.at(current));
+    baseline_ = current;
     return moved;
   }
 
  private:
   using Value = std::invoke_result_t<Evaluate&>;
+
+  // An evaluation of the expression, which converts to the value it answers.
+  // Building a value from it initializes the value from that answer, so the
+  // value is made where it is kept rather than made elsewhere and moved in.
+  struct Evaluation {
+    Evaluate* evaluate;
+    explicit operator Value() const {
+      return (*evaluate)();
+    }
+  };
 
   // An edge is a transition of one bit, so the expression it watches is a
   // packed value; the front end admits no other operand under an edge
@@ -163,7 +179,9 @@ class ValueWatchOf final : public ValueWatch {
   }
 
   Evaluate evaluate_;
-  std::optional<Value> baseline_;
+  std::array<std::optional<Value>, 2> evaluations_;
+  // Which evaluation the next transition is measured from.
+  std::size_t baseline_ = 0;
   support::EventEdge edge_;
 };
 

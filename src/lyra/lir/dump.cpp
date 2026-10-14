@@ -277,8 +277,8 @@ class LirDumper {
   }
 
   // `%N: T` for a transient, or the place a value initializes.
-  [[nodiscard]] auto FormatDestination(
-      const Function& fn, const Destination& destination) const -> std::string {
+  [[nodiscard]] static auto FormatDestination(
+      const Function& fn, const Destination& destination) -> std::string {
     return std::visit(
         Overloaded{
             [&](const Transient& defined) -> std::string {
@@ -398,12 +398,7 @@ class LirDumper {
       const Function& fn, const Terminator& term) const -> std::string {
     return std::visit(
         Overloaded{
-            [&](const ReturnTerm& ret) -> std::string {
-              if (ret.value.has_value()) {
-                return std::format("return {}", FormatOperand(*ret.value));
-              }
-              return "return";
-            },
+            [](const ReturnTerm&) -> std::string { return "return"; },
             [](const BranchTerm& br) -> std::string {
               return std::format("br bb{}", br.target.value);
             },

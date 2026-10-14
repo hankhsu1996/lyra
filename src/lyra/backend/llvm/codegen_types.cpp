@@ -250,6 +250,31 @@ auto CodeGenTypes::LiesInStorage(lir::TypeId type) const -> bool {
          !std::holds_alternative<lir::OwnedStorageAddress>(*held);
 }
 
+auto CodeGenTypes::IsReadAsView(lir::TypeId type) const -> bool {
+  return unit_->types.Get(type).Is<lir::MachineArrayType>();
+}
+
+auto CodeGenTypes::MachineValueLayout(lir::TypeId type)
+    -> support::ObjectLayout {
+  llvm::Type* const mapped = Map(type);
+  if (mapped->isPointerTy()) {
+    return support::ObjectLayout{
+        .size = sizeof(void*),
+        .align = alignof(void*),
+        .ends_with_nothing_to_do = true};
+  }
+  if (!mapped->isIntegerTy() && !mapped->isFloatingPointTy()) {
+    throw InternalError(
+        "llvm codegen: an element of a sequence of machine values is an "
+        "address, an integer or a floating-point number -- please report this "
+        "as a bug");
+  }
+  const auto bytes = static_cast<std::uint32_t>(
+      (mapped->getPrimitiveSizeInBits().getFixedValue() + 7U) / 8U);
+  return support::ObjectLayout{
+      .size = bytes, .align = bytes, .ends_with_nothing_to_do = true};
+}
+
 auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
   const lir::Type& ty = unit_->types.Get(type);
   if (ty.IsProduct()) {
@@ -270,6 +295,15 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
     return support::ObjectLayout{
         .size = bytes, .align = bytes, .ends_with_nothing_to_do = true};
   }
+  // A sequence of machine values is the values one after another, and ends
+  // none of them.
+  if (const auto* sequence = ty.As<lir::MachineArrayType>()) {
+    const support::ObjectLayout element = MachineValueLayout(sequence->element);
+    return support::ObjectLayout{
+        .size = static_cast<std::uint32_t>(element.size * sequence->size),
+        .align = element.align,
+        .ends_with_nothing_to_do = true};
+  }
   // A pointer owning what it points at is that address, and ending it ends
   // what it points at.
   if (ty.IsMoveOnly()) {
@@ -288,9 +322,7 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
 }
 
 // The library walks every whole array by the layout it states, so that
-// statement is the one read here. Elements lying where the array does end as
-// they would anywhere; an array holding them apart owns the run they lie in,
-// so ending it always has that to give back.
+// statement is the one read here. An array ends as its elements do.
 auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
   if (const auto found = arrays_.find(array); found != arrays_.end()) {
     return found->second;
@@ -313,12 +345,10 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
               .element = element_type,
               .count = count,
               .stride = laid.stride,
-              .in_place = laid.in_place,
               .storage =
                   {.size = static_cast<std::uint32_t>(laid.size),
                    .align = static_cast<std::uint32_t>(laid.align),
-                   .ends_with_nothing_to_do =
-                       laid.in_place && element.ends_with_nothing_to_do}})
+                   .ends_with_nothing_to_do = element.ends_with_nothing_to_do}})
       .first->second;
 }
 

@@ -10,6 +10,7 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/small_box.hpp"
 
 namespace lyra::value {
 
@@ -46,13 +47,27 @@ concept ElementPolicy =
       { p.HasUnknown(in) } -> std::same_as<bool>;
     };
 
+// A type whose default is the one its declaration states (LRM 7.2.2) rather
+// than what building one from nothing makes: a structure, and an array of
+// them. C++ builds that default only from the function stating it, since a
+// constructor handing on to another builds a copy first.
+template <typename T>
+concept HasDeclaredDefault = requires { T::DeclaredDefault(); };
+
 namespace detail {
 
 // The two below are of the element type alone, so every array of one element
-// type shares them.
+// type shares them. A type with a declared default is built at it where it is
+// kept; every other type's is what its own default construction builds.
 template <typename T>
 [[nodiscard]] auto DefaultOf() -> const T& {
-  static const T element_default{};
+  static const T element_default = [] {
+    if constexpr (HasDeclaredDefault<T>) {
+      return T::DeclaredDefault();
+    } else {
+      return T{};
+    }
+  }();
   return element_default;
 }
 
@@ -65,8 +80,7 @@ template <typename T>
 
 }  // namespace detail
 
-// The element is the C++ type `T`, whose default is what its own default
-// construction builds.
+// The element is the C++ type `T`.
 template <LyraValue T>
 class StaticElem {
  public:
@@ -142,14 +156,14 @@ class StaticElem {
   // answers in `out`.
   static void Resolve(
       NetResolution fold, const void* lhs, const void* rhs, void* out) {
-    Build(out, lyra::value::Resolve(fold, Of(lhs), Of(rhs)));
+    Build(out, [&] { return lyra::value::Resolve(fold, Of(lhs), Of(rhs)); });
   }
   static void Dominating(const void* stronger, const void* weaker, void* out) {
-    Build(out, Of(stronger).Dominating(Of(weaker)));
+    Build(out, [&] { return Of(stronger).Dominating(Of(weaker)); });
   }
   template <IntegralValue Fill>
   static void FilledLike(const void* prototype, const Fill& fill, void* out) {
-    Build(out, FilledAs(Of(prototype), fill));
+    Build(out, [&] { return FilledAs(Of(prototype), fill); });
   }
 
   // The element written into a stream below its `filled` most significant
@@ -171,24 +185,27 @@ class StaticElem {
   }
 
   // The inverse: the element a stream holds below its `taken` most significant
-  // positions, built in `out`, `T` stating how wide it is. Answers how many
-  // are taken after it.
+  // positions, read into the element `out` where it lies, `T` stating how wide
+  // it is. Answers how many are taken after it.
   static auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, void* out)
+      const ConstIntegralView& stream, std::uint64_t taken, T& out)
       -> std::uint64_t {
     if constexpr (IntegralValue<T>) {
-      Build(out, lyra::value::ReadFromStream<T>(stream, taken));
-      return taken + T::kWidth;
-    } else if constexpr (requires { T::ReadFromStream(stream, taken); }) {
-      auto [element, after] = T::ReadFromStream(stream, taken);
-      Build(out, std::move(element));
-      return after;
+      return lyra::value::ReadFromStream(stream, taken, out);
+    } else if constexpr (requires { out.ReadFromStream(stream, taken); }) {
+      return out.ReadFromStream(stream, taken);
     } else {
+      // A structure's stream is as wide as the structure, so its bits are kept
+      // as a frame keeps a value aside, and the structure they make is built
+      // where the element lies. Nothing on the way can fail: storage that
+      // cannot be had ends the run.
       using Bits = decltype(std::declval<const T&>().ToBitstream());
-      Build(
-          out,
-          T::FromBitstream(lyra::value::ReadFromStream<Bits>(stream, taken)));
-      return taken + Bits::kWidth;
+      SmallBox<Bits> bits;
+      const std::uint64_t after =
+          lyra::value::ReadFromStream(stream, taken, *bits);
+      std::destroy_at(&out);
+      Build(&out, [&] { return T::FromBitstream(*bits); });
+      return after;
     }
   }
 
@@ -196,8 +213,11 @@ class StaticElem {
   [[nodiscard]] static auto Of(const void* value) -> const T& {
     return *static_cast<const T*>(value);
   }
-  static void Build(void* out, T value) {
-    std::construct_at(static_cast<T*>(out), std::move(value));
+  // Builds in `out`, storage holding nothing yet, the value `make` answers,
+  // which is made there rather than made elsewhere and moved in.
+  template <typename Make>
+  static void Build(void* out, Make make) {
+    ::new (out) T(make());
   }
 };
 

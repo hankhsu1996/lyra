@@ -330,9 +330,8 @@ auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
             PlaneOperands{.planes = planes, .machine = no_machine_operand});
         if (!answered.has_value()) {
           throw InternalError(
-              "llvm codegen: a part of a value lying in place does not lie in "
-              "place -- "
-              "please report this as a bug");
+              "llvm codegen: a part of a value stated on its planes is not "
+              "stated on planes -- please report this as a bug");
         }
         return std::get<Planes>(*answered);
       };
@@ -360,12 +359,12 @@ auto CodeGenFunction::IntegralEmitter::StoreBitsOfPlace(
     OperandRef bits) -> bool {
   const value::IntegralShape lying =
       module_->Types().RequiredIntegralShapeOf(whole);
-  const auto lies_in_place = [&](lir::TypeId type) {
-    return LiesInPlace(module_->Types().RequiredIntegralShapeOf(type));
+  const auto on_planes = [&](lir::TypeId type) {
+    return IsStatedOnPlanes(module_->Types().RequiredIntegralShapeOf(type));
   };
-  if (!lies_in_place(whole) || !lies_in_place(bits.type) ||
+  if (!on_planes(whole) || !on_planes(bits.type) ||
       !std::ranges::all_of(parts, [&](const BitsPartRef& part) {
-        return lies_in_place(part.type) && lies_in_place(part.start.type);
+        return on_planes(part.type) && on_planes(part.start.type);
       })) {
     return false;
   }

@@ -42,12 +42,13 @@ struct BlockId {
 
 // How a value is realized. A parameter arrives in the callable's signature; a
 // temporary is a transient computed once and consumed. A place local is named
-// storage on the frame. Which one a local is follows a canonical lowering rule,
-// not the source notion of a variable: a local is a place exactly when the
-// lowering names it as storage -- a declared local, a value a part is reached
-// in, or a result that control-flow paths join at. LIR is not SSA, so a value
-// produced on several paths is a place each path writes, not a merge of
-// transients.
+// storage: the frame's, or, for the answer, wherever the backend's convention
+// for answering puts it. Which one a local is follows a canonical lowering
+// rule, not the source notion of a variable: a local is a place exactly when
+// the lowering names it as storage -- a declared local, a value a part is
+// reached in, a result that control-flow paths join at, or the answer. LIR is
+// not SSA, so a value produced on several paths is a place each path writes,
+// not a merge of transients.
 enum class LocalKind : std::uint8_t { kParam, kTemp, kPlace };
 
 struct Local {
@@ -639,10 +640,10 @@ struct BitsStoreInstr {
 // of the extent it was introduced in, a departure included -- and where a call
 // that would have made the value departs instead, in that call's landing. A
 // value handed on takes its bytes out of use with it, which is what a return
-// does with the value it returns. How
-// long a frame's bytes are needed is all this states: whether a frame is where
-// they are kept is decided below, from how large they are. The statement
-// yields no value; its instruction result is an unused void.
+// does with the value it returns. How long a frame's bytes are needed is all
+// this states; none of them is a value too large for a frame, which MIR keeps
+// in a box. The statement yields no value; its instruction result is an unused
+// void.
 //
 // A LIR-only statement with no MIR twin: a target whose own language places
 // its values states none of this. It is the pair rustc's MIR states as
@@ -781,12 +782,10 @@ struct Instr {
   InstrData data;
 };
 
-// Returns from the callable; the value, when present, rides the result. Whether
-// this is a coroutine completion or a plain return is the callable's result
-// type, not a property of the terminator.
-struct ReturnTerm {
-  std::optional<Operand> value;
-};
+// Returns from the callable, whose answer, where it has one, is already in its
+// return place. Whether this is a coroutine completion or a plain return is the
+// callable's result type, not a property of the terminator.
+struct ReturnTerm {};
 
 // Transfers to `target` unconditionally.
 struct BranchTerm {
@@ -890,6 +889,11 @@ struct Function {
   std::vector<ValueId> params;
   std::vector<TypeId> variables;
   TypeId result_type;
+  // The storage the answer is put in, as rustc's return place: a place local
+  // every way out initializes before it returns, whose value the caller then
+  // owns. None where the callable answers nothing, and for a coroutine, which
+  // completes into storage it is handed.
+  std::optional<ValueId> return_place;
   std::vector<BasicBlock> blocks;
   Linkage linkage = Linkage::kExternal;
 };

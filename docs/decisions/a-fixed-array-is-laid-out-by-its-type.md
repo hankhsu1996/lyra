@@ -20,9 +20,9 @@ they are built.
 ## Context
 
 A fixed-size unpacked array (LRM 7.4.2) has a count its type fixes and elements of one type. On the
-C++ backend it is `UnpackedArray<T, N>`: the elements in place up to 1,024 bytes, one address of a
-run the array owns past that, every whole-array algorithm instantiated by the host compiler for the
-element type and the count ([unpacked-array-representation](unpacked-array-representation.md)).
+C++ backend it is `UnpackedArray<T, N>`: the elements in place at every size, every whole-array
+algorithm instantiated by the host compiler for the element type and the count
+([unpacked-array-representation](unpacked-array-representation.md)).
 
 The execution backend held the same array as an object of the prebuilt library's: a run of elements
 on the heap, each held beside a witness of its type, with the element type and the element's default
@@ -81,12 +81,13 @@ element's size apart, rounded up to its alignment. The array holds no count, no 
 default and no header. Its layout is one rule over the element's size, the element's alignment and
 the count, stated once in the library and read by the code generator, so the two cannot disagree.
 
-**D2. An array of at most 1,024 bytes lies in whatever holds it; a larger one is one address of a
-run it owns.** The bound and the rule are the C++ type's, so the two backends lay one array out
-alike, and a frame's size never follows a declared size
+**D2. An array is its elements one after another where it lies, at every size.** The rule is the C++
+type's, so the two backends lay one array out alike; a frame's size never follows a declared size
+because an array too large for a frame is held through a box MIR states
 ([a-packed-value-is-its-words](a-packed-value-is-its-words.md) holds why a frame may not). An
-assignment writes each element where it lies and never takes another array's run, which is what
-keeps an element's address. An array that was moved from holds no run until it is assigned.
+assignment writes each element where it lies, which is what keeps an element's address. **Amended
+2026-10-13:** an array past 1,024 bytes was one address of a run it owned; the box now states that
+once, in MIR.
 
 **D3. An element is reached by address arithmetic in generated code.** The position is an ordinal
 and whether it names an element, so a read or a write that names one is a bounds test, a multiply

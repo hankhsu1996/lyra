@@ -30,9 +30,22 @@ auto StoragePartAccess(const TypePool& types, const Block& block, ExprId id)
 // read: the value it answers lies in the storage the wrapper represents.
 auto WrapperRead(const Expr& expr) -> std::optional<ExprId>;
 
+// What a write landing on `target` reaches the part it lands on through, where
+// `target` selects a part of a whole, and nothing where `target` names where
+// it lands itself. A selection is reached through its whole, so a chain of
+// them is followed to the storage the write lands in.
+auto SelectedFrom(const Block& block, ExprId target) -> std::optional<ExprId>;
+
 // Whether an expression reads a value where it lies -- a part that is storage
 // of its own, or what a wrapper holds -- so that reading it makes no value.
 auto ReadsWhereItLies(const TypePool& types, const Block& block, ExprId id)
+    -> bool;
+
+// Whether an expression of `block`, read as a value, reads one that lies
+// somewhere -- a name, a dereference, a field, a part of storage, what an
+// execution completed with -- rather than making one, as rustc's place
+// expressions are read where they are and every other is made.
+auto IsPlaceExpression(const TypePool& types, const Block& block, ExprId id)
     -> bool;
 
 }  // namespace lyra::mir

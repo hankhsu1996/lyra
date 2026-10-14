@@ -149,6 +149,20 @@ auto RequireStringDestination(
           std::string{name}));
 }
 
+// How many a read reached, as the `integer` the call is: the entry answers it
+// at the type `layout` gives the result, and the front end types `$fgets`,
+// `$ferror` and `$fread` as the `integer` the code of LRM 21.3.4 is read into.
+auto ReadCount(
+    mir::CompilationUnit& unit, mir::Block& block, mir::LocalId completion,
+    const CompletionLayout& layout) -> mir::ExprId {
+  return ConvertToType(
+      unit, block,
+      ProjectCompletionComponent(
+          block, completion, CompletionPayloadType(unit, layout.components),
+          kCompletionResult, layout.components.at(kCompletionResult.value)),
+      unit.builtins.integer);
+}
+
 // Emits the call, stores the component it settles for the destination into the
 // place the source named, and yields the count it settled for itself -- the
 // steps of one block expression, so a read that writes back stands wherever the
@@ -162,11 +176,10 @@ auto BuildTextRead(
     std::vector<mir::ExprId> operands, Lvalue destination,
     mir::TypeId destination_type) -> diag::Result<mir::Expr> {
   auto& unit = process.Owner().Unit();
-  const mir::TypeId count_type = unit.builtins.int_type;
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{
           .direction = hir::ParamDirection::kOutput, .type = destination_type}},
-      count_type);
+      unit.builtins.int_type);
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const std::array writebacks{CompletionWriteback{
       .target = std::move(destination),
@@ -178,8 +191,7 @@ auto BuildTextRead(
           process, steps.Frame(), builtin_fn, std::move(operands), payload),
       payload, writebacks);
   if (!completion) return std::unexpected(std::move(completion.error()));
-  return steps.Build(ProjectCompletionComponent(
-      steps.Body(), *completion, payload, kCompletionResult, count_type));
+  return steps.Build(ReadCount(unit, steps.Body(), *completion, layout));
 }
 
 // $fgets(str, fd) -- LRM 21.3.4.2.
@@ -304,8 +316,7 @@ auto LowerFileReadCall(
           std::move(operands), payload),
       payload, writebacks);
   if (!completion) return std::unexpected(std::move(completion.error()));
-  return steps.Build(ProjectCompletionComponent(
-      body, *completion, payload, kCompletionResult, unit.builtins.int_type));
+  return steps.Build(ReadCount(unit, body, *completion, layout));
 }
 
 // $ferror(fd, str) -- LRM 21.3.7.

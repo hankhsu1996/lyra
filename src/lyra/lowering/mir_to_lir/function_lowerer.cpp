@@ -387,6 +387,15 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   fn_.result_type = unit_->TranslateType(code_->result_type);
   const bool is_coroutine =
       unit_->Mir().types.Get(code_->result_type).Is<mir::CoroutineType>();
+  const bool answers_nothing =
+      fn_.result_type == unit_->TranslateType(unit_->Mir().builtins.void_type);
+  if (!is_coroutine && !answers_nothing) {
+    fn_.return_place = fn_.values.Add(
+        lir::Local{
+            .name = "return",
+            .type = fn_.result_type,
+            .kind = lir::LocalKind::kPlace});
+  }
 
   // The body's variables, in declaration order. A declaration is what gives a
   // variable storage, so nothing about what the body does with one is read
@@ -492,9 +501,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // coroutine body -- an implicit return -- or is a join control never reaches.
   // A value-returning body reaches its returns explicitly, so its open blocks
   // are the latter.
-  const bool falls_through_to_return =
-      is_coroutine ||
-      fn_.result_type == unit_->TranslateType(unit_->Mir().builtins.void_type);
+  const bool falls_through_to_return = is_coroutine || answers_nothing;
   // Falling off the end is a way out like any other, and the one no statement
   // of the body spells, so what it owes is settled here rather than where the
   // statements are walked.
@@ -516,10 +523,9 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   for (OpenBlock& block : blocks_) {
     if (!block.terminator.has_value()) {
       block.terminator = lir::Terminator{
-          .data =
-              falls_through_to_return
-                  ? lir::TerminatorData{lir::ReturnTerm{.value = std::nullopt}}
-                  : lir::TerminatorData{lir::UnreachableTerm{}}};
+          .data = falls_through_to_return
+                      ? lir::TerminatorData{lir::ReturnTerm{}}
+                      : lir::TerminatorData{lir::UnreachableTerm{}}};
     }
     fn_.blocks.push_back(
         lir::BasicBlock{
@@ -1285,36 +1291,7 @@ auto FunctionLowerer::LowerStmtInto(
             return LowerContinueInto();
           },
           [&](const mir::ReturnStmt& s) -> diag::Result<void> {
-            std::optional<lir::Operand> value;
-            if (s.value.has_value()) {
-              auto lowered = LowerExpr(block, *s.value);
-              if (!lowered) {
-                return std::unexpected(std::move(lowered.error()));
-              }
-              value = *std::move(lowered);
-            }
-            // An execution answers through its completion rather than to a
-            // caller standing below it: nothing is on the stack to receive a
-            // returned value, and what awaits it runs later. A caller that
-            // does stand below takes the value, and its end with it.
-            if (completion_cell_.has_value() && value.has_value()) {
-              StoreActivationValue(
-                  completion_cell_->cell, *std::move(value),
-                  completion_cell_->type);
-              value.reset();
-            } else if (value.has_value()) {
-              value = HandOn(*std::move(value));
-            }
-            // Returning leaves every guarded body between here and the frame's
-            // edge, so each of their cleanups runs -- after the returned value
-            // is settled, which a cleanup must not change.
-            auto cleaned = RunCleanupsDownTo(0);
-            if (!cleaned) {
-              return std::unexpected(std::move(cleaned.error()));
-            }
-            CloseVariables();
-            Terminate(lir::ReturnTerm{.value = std::move(value)});
-            return {};
+            return LowerReturnInto(block, s);
           }},
       stmt.data);
 }
@@ -3944,11 +3921,18 @@ auto FunctionLowerer::LowerExprInto(
   const mir::Expr& expr = block.exprs.Get(id);
   using Lowered = diag::Result<void>;
   // Every other form computes its value by one step put where it goes, as
-  // rustc's `expr_into_dest` assigns what `as_rvalue` answers.
+  // rustc's `expr_into_dest` assigns what `as_rvalue` answers. A step that
+  // reads a value rather than making one puts it in storage only as a value of
+  // the storage's own, copied or moved in.
   const auto assigned = [&]() -> Lowered {
     auto value = LowerRvalue(block, id);
     if (!value) {
       return std::unexpected(std::move(value.error()));
+    }
+    if (std::holds_alternative<lir::Place>(destination) &&
+        !lir::MakesValue(value->value)) {
+      AssignFrom(destination, Emit(value->type, std::move(value->value)));
+      return {};
     }
     Assign(destination, std::move(value->value));
     return {};
@@ -3996,6 +3980,47 @@ auto FunctionLowerer::LowerExprInto(
           [&](const mir::WaitExpr&) { return assigned(); },
       },
       expr.data);
+}
+
+// An execution answers through its completion rather than to a caller standing
+// below it: nothing is on the stack to receive a returned value, and what
+// awaits it runs later. Any other body makes its answer in its return place, as
+// rustc's `expr_into_dest` builds into `_0`, and the caller takes it there with
+// its end.
+auto FunctionLowerer::LowerReturnInto(
+    const mir::Block& block, const mir::ReturnStmt& stmt)
+    -> diag::Result<void> {
+  if (stmt.value.has_value()) {
+    if (completion_cell_.has_value()) {
+      auto value = LowerExpr(block, *stmt.value);
+      if (!value) {
+        return std::unexpected(std::move(value.error()));
+      }
+      StoreActivationValue(
+          completion_cell_->cell, *std::move(value), completion_cell_->type);
+    } else {
+      if (!fn_.return_place.has_value()) {
+        throw InternalError(
+            "mir_to_lir: a body answering nothing returns a value -- please "
+            "report this as a bug");
+      }
+      auto made =
+          LowerExprInto(block, *stmt.value, LocalPlace(*fn_.return_place));
+      if (!made) {
+        return made;
+      }
+    }
+  }
+  // Returning leaves every guarded body between here and the frame's edge, so
+  // each of their cleanups runs -- after the returned value is settled, which
+  // a cleanup must not change.
+  auto cleaned = RunCleanupsDownTo(0);
+  if (!cleaned) {
+    return std::unexpected(std::move(cleaned.error()));
+  }
+  CloseVariables();
+  Terminate(lir::ReturnTerm{});
+  return {};
 }
 
 }  // namespace lyra::lowering::mir_to_lir

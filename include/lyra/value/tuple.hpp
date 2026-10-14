@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <utility>
 
@@ -27,9 +28,10 @@ struct TupleComponents<std::index_sequence<Is...>, Ts...>
     : TupleComponent<Is, Ts>... {
   TupleComponents() = default;
 
-  explicit TupleComponents(Ts... values)
-    requires(sizeof...(Ts) > 0)
-      : TupleComponent<Is, Ts>{std::move(values)}... {
+  template <typename... Us>
+    requires(sizeof...(Us) == sizeof...(Ts) && sizeof...(Ts) > 0)
+  explicit TupleComponents(Us&&... values)
+      : TupleComponent<Is, Ts>{std::forward<Us>(values)}... {
   }
 };
 
@@ -65,12 +67,16 @@ class Tuple {
  public:
   Tuple() = default;
 
-  // A product of no components is a value like any other and its only form is
-  // the default one, so the constructor that takes components is declared only
-  // where there are components to take.
-  explicit Tuple(Ts... values)
-    requires(sizeof...(Ts) > 0)
-      : data_(std::move(values)...) {
+  // Each component is built where it lies, copied or moved from what it is
+  // handed, so a large one is never first made a copy of its own on the way
+  // in. A product of no components is a value like any other and its only form
+  // is the default one, so the constructor that takes components is declared
+  // only where there are components to take.
+  template <typename... Us>
+    requires(
+        sizeof...(Us) == sizeof...(Ts) && sizeof...(Ts) > 0 &&
+        (std::constructible_from<Ts, Us &&> && ...))
+  explicit Tuple(Us&&... values) : data_(std::forward<Us>(values)...) {
   }
 
   // Component `I`'s value, by declaration-order index: a reference to read it

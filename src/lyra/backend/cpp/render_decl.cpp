@@ -31,7 +31,6 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
-#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::backend::cpp {
@@ -569,13 +568,6 @@ void RenderStruct(
   Write(declared, "using ", base, " = ", components, ";\n");
   declared.OpenLine();
   Write(declared, "using ", base, "::", base, ";\n");
-  // A struct built from nothing is the one its declaration states (LRM Table
-  // 7-1, 7.2.2), which is what makes the default of an array of them, and of
-  // anything else holding one, the default of the type.
-  declared.OpenLine();
-  Write(
-      declared, name, "() : ", name, "(",
-      CppStructMethodName(support::BuiltinFn::kDeclaredDefault), "()) {}\n");
   for (const mir::StructMethod& method : decl.methods) {
     const VerbatimName member = CppStructMethodName(method.answers);
     declared.OpenLine();

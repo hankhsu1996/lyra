@@ -48,13 +48,6 @@ struct IntegralType {
 // The states a bit of a type holds, as the value library names them.
 [[nodiscard]] auto StateDomainOf(IntegralStateKind state) -> value::StateDomain;
 
-// Whether a value of `integral` owns its words apart from where it is held,
-// which the value library decides from how many bytes the type lays one out in.
-// A value held in place is small enough to be carried as data wherever it is a
-// constant; one that owns its words is as large as its type says, so a unit
-// states one as data only where the source wrote that much data.
-[[nodiscard]] auto UsesHeapWords(const IntegralType& integral) -> bool;
-
 // The planes a value of `integral` is held in, every position clear: one word
 // per 64 bits of its width, and an unknown plane only where a bit of the type
 // can be x or z.
@@ -439,10 +432,10 @@ struct RuntimeLibraryType {
 // site must await or spawn, and awaiting it produces a value of `payload` --
 // the completion payload (a task's output pack, or `Void` when the completion
 // yields nothing). A fork branch (LRM 9.3.2) is a closure whose result type is
-// this. `payload` is a MIR-level type; the C++ backend realizes every coroutine
-// as one monomorphic `lyra::runtime::Coroutine` and transports the payload
-// through a caller-owned completion slot, so the scheduler holds a single
-// coroutine-handle type regardless of `payload`.
+// this. What an execution completes with lands in storage of its own that its
+// awaiter is handed, never in the frame that made it, so `payload` is never
+// boxed, whatever its size. The scheduler holds a single coroutine-handle type
+// regardless of `payload`.
 struct CoroutineType {
   TypeId payload;
 

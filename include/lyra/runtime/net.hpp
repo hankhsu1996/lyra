@@ -721,19 +721,20 @@ class ResolvedNet<T> : public ConnectableNet {
     if (sampled_ != nullptr) {
       return;
     }
-    sampled_ = std::make_unique<SampledValueOf<ReadShown>>(
-        ReadShown(*this), FilledOver<T>(count_, value::FourStateBit::kUnknown),
+    sampled_ = std::make_unique<SampledValueOf<TakenShown>>(
+        TakenShown(*this),
+        [&] { return FilledOver<T>(count_, value::FourStateBit::kUnknown); },
         Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
   }
   [[nodiscard]] auto SampledGet() const -> const T& {
     return SampledOf(sampled_.get());
   }
-  // What the net shows, as a value of its own, which its sampled value takes.
-  [[nodiscard]] auto ShownValue() const -> T {
+  // Assigns what the net shows to `out`, as its sampled value takes it.
+  void TakeShownInto(T& out) const {
     if constexpr (value::HeldAsWords<T>) {
-      return held_.ToOwned(showing_.Shown());
+      out = held_.ToOwned(showing_.Shown());
     } else {
-      return Get();
+      out = Get();
     }
   }
 
@@ -940,7 +941,7 @@ class ResolvedNet<T> : public ConnectableNet {
         break;
       case NetDecision::kOneDriver:
         if (kept_beneath_ == nullptr) {
-          kept_beneath_ = std::make_unique<T>(held_.Copy());
+          kept_beneath_ = std::make_unique<T>(held_.AsOwned());
         }
         break;
       case NetDecision::kShowsSource:
@@ -1118,9 +1119,9 @@ class ResolvedNet<T> : public ConnectableNet {
   // Growth therefore must not move what has already been handed out.
   std::deque<Driver<T>> drivers_;
   // What the net's sampled value takes what the net shows through.
-  using ReadShown = ReadThrough<ResolvedNet, &ResolvedNet::ShownValue>;
+  using TakenShown = TakenFrom<ResolvedNet, T, &ResolvedNet::TakeShownInto>;
   // The net's sampled value, absent until something samples it.
-  std::unique_ptr<SampledValueOf<ReadShown>> sampled_;
+  std::unique_ptr<SampledValueOf<TakenShown>> sampled_;
   // The net's own value, last, so words it lays out after itself lie where
   // the net ends.
   HeldAs held_;
@@ -1204,21 +1205,23 @@ class ResolvedNet<T> : public Observable {
     if (sampled_ != nullptr) {
       return;
     }
-    sampled_ = std::make_unique<SampledValueOf<ReadShown>>(
-        ReadShown(*this),
-        T::FilledLike(
-            nondriving_, value::Logic::Filled(value::FourStateBit::kUnknown)),
+    sampled_ = std::make_unique<SampledValueOf<TakenShown>>(
+        TakenShown(*this),
+        [&] {
+          return T::FilledLike(
+              nondriving_, value::Logic::Filled(value::FourStateBit::kUnknown));
+        },
         Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
   }
   [[nodiscard]] auto SampledGet() const -> const T& {
     return SampledOf(sampled_.get());
   }
-  // What the net shows, as a value of its own, which its sampled value takes.
-  [[nodiscard]] auto ShownValue() const -> T {
+  // Assigns what the net shows to `out`, as its sampled value takes it.
+  void TakeShownInto(T& out) const {
     if constexpr (value::LaidOutByType<T>) {
-      return ToOwned(showing_.Shown());
+      out = ToOwned(showing_.Shown());
     } else {
-      return *static_cast<const T*>(showing_.Shown());
+      out = *static_cast<const T*>(showing_.Shown());
     }
   }
 
@@ -1280,12 +1283,12 @@ class ResolvedNet<T> : public Observable {
       // that driver produced meanwhile (LRM 10.6.2), where an override ever
       // gave a value at all.
       case NetDecision::kOneDriver:
-        if (const std::optional<T> kept = takeovers_->TakeBeneath()) {
+        takeovers_->TakeBeneath([&](const T& kept) {
           ShowDriverValue(
               runtime, *this, held_.Get(),
-              [&] { return held_.IsBitIdentical(*kept); },
-              [&] { held_.Assign(*kept); });
-        }
+              [&] { return held_.IsBitIdentical(kept); },
+              [&] { held_.Assign(kept); });
+        });
         return;
       // The object its driver carries is what such a net shows once nothing
       // covers it, from the driver's turn on; before that it shows what an
@@ -1331,7 +1334,7 @@ class ResolvedNet<T> : public Observable {
         case NetDecision::kResolution:
           break;
         case NetDecision::kOneDriver:
-          takeovers_->KeepBeneath(held_.Copy());
+          takeovers_->KeepBeneath(held_.AsOwned());
           break;
         case NetDecision::kShowsSource:
           showing_.Cover();
@@ -1554,9 +1557,9 @@ class ResolvedNet<T> : public Observable {
   // The handles this net has issued, which growth must not move.
   std::deque<Driver<T>> drivers_;
   // What the net's sampled value takes what the net shows through.
-  using ReadShown = ReadThrough<ResolvedNet, &ResolvedNet::ShownValue>;
+  using TakenShown = TakenFrom<ResolvedNet, T, &ResolvedNet::TakeShownInto>;
   // The net's sampled value, absent until something samples it.
-  std::unique_ptr<SampledValueOf<ReadShown>> sampled_;
+  std::unique_ptr<SampledValueOf<TakenShown>> sampled_;
   // The net's own value, last, so a value it lays out after itself lies where
   // the net ends.
   HeldAs held_;

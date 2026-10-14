@@ -126,8 +126,8 @@ type is compiled, an author with no say, and a compiler that places by size.
 
 ## Decision
 
-**D1. One layout for one type on each backend, storage is clean, and a value past a fixed size owns
-its words.**
+**D1. One layout for one type on each backend, storage is clean, and a value is its words at every
+size.**
 
 ```
 unit(N)             N <= 8: 1 byte; <= 16: 2; <= 32: 4; <= 64: 8; else ceil(N / 64) words of 8
@@ -143,28 +143,30 @@ changes how the bits are read and none of the bits, and a write decides whether 
 comparing storage. A two-state value has no unknown plane at all, so `int` occupies four bytes,
 `logic [7:0]` two and `logic [99:0]` thirty-two.
 
-A value of at most 1024 bytes lies in whatever holds it and is exactly those bytes, so it is
-trivially copyable and code compiled without its type reads and writes it where it lies. A value
-past that size -- a four-state type above 4,096 bits, a two-state one above 8,192 -- is the same
-words in the same order, owned apart from whatever holds the value. The type decides which, where
-the unit is compiled, so on one backend a type has one representation wherever it appears and
-nothing tests a value's size while the program runs. On the C++ backend the value type itself owns
-the words, so a value of such a type is the address of its words in an expression, a local, a
-structure's member and an array's element alike. Copying one copies the words and moving one hands
-them on. On the execution backend a value's bytes are its words wherever they lie, and what is kept
-apart is what a frame would otherwise hold
-([a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)).
+A value is exactly its words at every width, so it is trivially copyable and code compiled without
+its type reads and writes it where it lies. What a frame may not keep is a value whose size follows
+a declared width: a value past 1024 bytes -- a four-state type above 4,096 bits, a two-state one
+above 8,192 -- is held through a box MIR states before either backend reads it, and both backends
+translate that box
+([a-new-expression-allocates-then-initializes](a-new-expression-allocates-then-initializes.md)); a
+holder keeps one apart likewise
+([a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md)). **Amended
+2026-10-13:** the C++ value type no longer owns its words past the bound. Owning them put where a
+value lies in the library, decided by size, beside the box MIR states, so one fact was stated twice
+and every temporary of such a type allocated; with the box stating it once, the library lays every
+value out flat.
 
-Holding every value in place fails the requirement that a program the compiler accepts runs at every
-width it accepts. What one call takes from the stack would follow the widths a design declares, and
-the stack's size is not the design's to choose. A value of 2^24 - 1 four-state bits is 4 MiB, and an
-expression holds several at once. Below the size nothing is added to a value of a word or a few,
-which is where a design spends its time.
+Keeping every value in the frame that uses it fails the requirement that a program the compiler
+accepts runs at every width it accepts. What one call takes from the stack would follow the widths a
+design declares, and the stack's size is not the design's to choose. A value of 2^24 - 1 four-state
+bits is 4 MiB, and an expression holds several at once. Below the size nothing is added to a value
+of a word or a few, which is where a design spends its time.
 
-A design makes and ends wide values many times in a time step, at the few sizes its types fix. So a
-run of words given back is kept for the next value that long instead of being returned to the
-system, per thread, and how much is kept beyond what is in use is bounded by two constants and the
-design's own widths.
+On the execution backend a holder of a wide value obtains its run of words where it is built, and a
+design builds and ends such holders many times, at the few sizes its types fix. So a run of words
+given back is kept for the next holder that long instead of being returned to the system, per
+thread, and how much is kept beyond what is in use is bounded by two constants and the design's own
+widths.
 
 **D2. MIR states an integral type as exactly its width, signedness and state domain, and an
 operation as the language's operator on that type.** It states no words, planes, masks or storage
@@ -178,10 +180,10 @@ out as the machine integer a runtime entry takes -- is folded where it is built,
 the lowering makes its operators, its casts and its own calls on an integral entry through.
 
 Folding states as data what its operands already state as data, and makes none. An operation over
-constants is folded when its answer is small enough to lie in place (D1), or is no wider than the
+constants is folded when its answer is no larger than the size D1 bounds, or is no wider than the
 operands it was computed from together. Otherwise it stays the operation it is, and MIR's own check
 asks the same builder, so it holds an operation to being folded exactly where the builder would fold
-it. A value of a type that owns its words can also reach the lowering already a value: a fill
+it. A value of a type too large for a frame can also reach the lowering already a value: a fill
 literal, a declared default, a parameter. It is stated as the extension of its narrowest low part,
 which is an operation MIR already has, wherever that part takes fewer words than the type. A table
 the source writes out in full is that many distinct words and stays a constant of that size. The
@@ -272,31 +274,31 @@ widths on both sides of a machine word, and compares both planes of their answer
 corpus, which runs every case on both backends, stands beside it.
 
 **D5. The execution backend states an operation itself wherever every value it takes and answers is
-within the in-place size and its work is linear in the width, and calls otherwise.** A value's
-planes are bytes an integer of its width is loaded from, so each formula of D4 is written once for
-every width, on two such integers, and LLVM's type legalization turns it into operations on the
-words that width has. A product, a quotient and a remainder are stated that way up to 64 bits and
-are calls past it, because their work grows with the square of the width. A power, a count of bits,
-a logarithm, and whatever reads text or a foreign buffer are calls at every width. An operation over
-a value past the in-place size (D1) is a call.
+within the size a frame keeps (D1) and its work is linear in the width, and calls otherwise.** A
+value's planes are bytes an integer of its width is loaded from, so each formula of D4 is written
+once for every width, on two such integers, and LLVM's type legalization turns it into operations on
+the words that width has. A product, a quotient and a remainder are stated that way up to 64 bits
+and are calls past it, because their work grows with the square of the width. A power, a count of
+bits, a logarithm, and whatever reads text or a foreign buffer are calls at every width. An
+operation over a value past the size a frame keeps (D1) is a call.
 
 The line is drawn by two requirements together. An operation costs the bits it touches: measured on
 a concatenation of 32 bytes into 256 bits, optimized, a call into the library for each step ran
 411,000 times a second and the operation stated in place 22,000,000, against 20,000,000 on the C++
 backend. And what a unit's code holds for one operation is bounded: a formula stated in place is
 straight-line code that follows the width, about a byte a bit a plane unoptimized, so it is stated
-only up to a fixed size. That size is the in-place size, so one figure bounds both things a declared
-width could otherwise be followed by, a frame and the code of one site; Verilator uses one figure
-for the same two questions, whether a wide operation is expanded per word and whether a value may be
-a function's local. Measured with clang 20 on one plane at 8,192 bits, unoptimized: an and, an add
-and an equality are each about 8.5 KB and compile in under 40 ms, where a product is 717 KB and
-takes 7.4 s and a quotient is 145 KB. A dozen operations on a four-state value of 4,096 bits add
+only up to a fixed size. That size is the size a frame keeps, so one figure bounds both things a
+declared width could otherwise be followed by, a frame and the code of one site; Verilator uses one
+figure for the same two questions, whether a wide operation is expanded per word and whether a value
+may be a function's local. Measured with clang 20 on one plane at 8,192 bits, unoptimized: an and,
+an add and an equality are each about 8.5 KB and compile in under 40 ms, where a product is 717 KB
+and takes 7.4 s and a quotient is 145 KB. A dozen operations on a four-state value of 4,096 bits add
 about 130 KB to an unoptimized program and a quarter of a second to its build.
 
 This entry first drew the line at 64 bits, on the ground that legalization's code follows the width
 at every site. The premise holds and is the bound above; the line it drew left every operation
-between 65 bits and the in-place size paying a call of some hundreds of instructions for work of a
-few words.
+between 65 bits and the size a frame keeps paying a call of some hundreds of instructions for work
+of a few words.
 
 **D6. What holds a packed value reads only its layout.** A cell, a net, a sampled history, a
 reference and a shared cell copy, compare and store a value's bytes and never interpret them. Up to
@@ -466,14 +468,14 @@ And beside them:
   backend, and writes into a subroutine's own local 2, 2 and 3 ms on the execution backend and 2, 2
   and 2 ms on the C++ backend. While the execution backend rebuilt a local to change part of it, the
   same writes into a local took 7, 42 and 638 ms there.
-- A fill or an extension of a type that owns its words is carried out each time it is evaluated, a
+- A fill or an extension of a type too large for a frame is carried out each time it is evaluated, a
   pass over the value, where naming a constant was a copy of the same length.
-- The size past which a value owns its words, 1024 bytes, is the figure Verilator uses for whether a
-  value may be a function's local (`--localize-max-size`). No measurement moves it: counted under
-  clang at `-O2`, a temporary that owns its words costs 60 to 70 instructions more than one lying in
-  place at every width, so the bound on a frame is what decides the size. Neither it nor the number
-  of word runs kept has been measured against the benchmark corpus; this entry was accepted without
-  that.
+- The size past which a value is kept out of a frame, 1024 bytes, is the figure Verilator uses for
+  whether a value may be a function's local (`--localize-max-size`). No measurement moves it:
+  counted under clang at `-O2`, while a value past it owned its words, a temporary that owned them
+  cost 60 to 70 instructions more than one lying in place at every width, so the bound on a frame is
+  what decides the size. Neither it nor the number of word runs kept has been measured against the
+  benchmark corpus; this entry was accepted without that.
 - The earlier entries that describe a packed value as one runtime type carrying its shape --
   [integral-representation](integral-representation.md),
   [runtime-shape-and-default-value](runtime-shape-and-default-value.md),

@@ -245,56 +245,36 @@ class CountedElementType final : public ValueType {
   Lifecycle* counts_;
 };
 
-TEST(FixedArrayType, ASmallArrayLiesWhereItIs) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 4);
-  EXPECT_TRUE(type.LiesInPlace());
-  EXPECT_EQ(type.Size(), 4 * sizeof(Element));
-  EXPECT_EQ(type.Align(), alignof(Element));
+// An array is its elements one after another where the array lies, whatever
+// its size; a copy is elements of its own, and a move leaves values behind.
+TEST(FixedArrayType, AnArrayIsItsElementsWhereItLiesAtEverySize) {
+  for (const std::uint32_t count : {4U, 4000U}) {
+    const FixedArrayType type(ElementTypeOf<Element>(), count);
+    EXPECT_EQ(type.Size(), count * sizeof(Element));
+    EXPECT_EQ(type.Align(), alignof(Element));
 
-  const Storage array(type);
-  BuildCounting(type, array.Bytes(), 10);
-  EXPECT_EQ(type.ElementAt(array.Bytes(), 0), array.Bytes());
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 3), 13);
-  type.Destroy(array.Bytes());
+    const Storage array(type);
+    BuildCounting(type, array.Bytes(), 10);
+    EXPECT_EQ(type.ElementAt(array.Bytes(), 0), array.Bytes());
+    EXPECT_EQ(NumberAt(type, array.Bytes(), 3), 13);
+
+    const Storage copy(type);
+    type.Copy(array.Bytes(), copy.Bytes());
+    EXPECT_EQ(type.ElementAt(copy.Bytes(), 0), copy.Bytes());
+    EXPECT_EQ(NumberAt(type, copy.Bytes(), 3), 13);
+
+    const Storage moved(type);
+    type.Move(copy.Bytes(), moved.Bytes());
+    EXPECT_EQ(NumberAt(type, moved.Bytes(), 3), 13);
+
+    type.Destroy(copy.Bytes());
+    type.Destroy(moved.Bytes());
+    type.Destroy(array.Bytes());
+  }
 }
 
-TEST(FixedArrayType, ALargeArrayIsOneAddress) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 4000);
-  EXPECT_FALSE(type.LiesInPlace());
-  EXPECT_EQ(type.Size(), sizeof(void*));
-
-  const Storage array(type);
-  BuildCounting(type, array.Bytes(), 0);
-  const Storage copy(type);
-  type.Copy(array.Bytes(), copy.Bytes());
-  EXPECT_NE(type.ElementAt(copy.Bytes(), 0), type.ElementAt(array.Bytes(), 0));
-  EXPECT_EQ(NumberAt(type, copy.Bytes(), 100), 100);
-
-  const void* run = type.ElementAt(copy.Bytes(), 0);
-  const Storage moved(type);
-  type.Move(copy.Bytes(), moved.Bytes());
-  EXPECT_EQ(type.ElementAt(moved.Bytes(), 0), run);
-  EXPECT_EQ(NumberAt(type, moved.Bytes(), 100), 100);
-  EXPECT_EQ(*static_cast<void* const*>(copy.Bytes()), nullptr);
-
-  // What was moved from holds no run, and is assigned and ended like any
-  // other: the assignment obtains a run of its own.
-  type.Assign(copy.Bytes(), array.Bytes());
-  EXPECT_NE(type.ElementAt(copy.Bytes(), 0), type.ElementAt(moved.Bytes(), 0));
-  EXPECT_EQ(NumberAt(type, copy.Bytes(), 7), 7);
-
-  const Storage ended(type);
-  type.Move(copy.Bytes(), ended.Bytes());
-  type.Destroy(copy.Bytes());
-
-  type.Destroy(ended.Bytes());
-  type.Destroy(moved.Bytes());
-  type.Destroy(array.Bytes());
-}
-
-TEST(FixedArrayType, AnArrayLyingInPlaceMovesElementByElement) {
+TEST(FixedArrayType, AnArrayMovesElementByElement) {
   const FixedArrayType type(ElementTypeOf<String>(), 3);
-  ASSERT_TRUE(type.LiesInPlace());
   // Long enough that each element owns storage of its own, which the move has
   // to hand over.
   const std::string text(200, 'm');

@@ -1,4 +1,4 @@
-#include "lyra/value/word_recycler.hpp"
+#include "lyra/runtime/word_recycler.hpp"
 
 #include <array>
 #include <bit>
@@ -8,7 +8,7 @@
 #include <memory>
 #include <type_traits>
 
-namespace lyra::value {
+namespace lyra::runtime {
 
 namespace {
 
@@ -26,7 +26,7 @@ constexpr std::size_t kBucketCount = 61;
 // The buffers freed on this thread and not yet handed out again, as free lists
 // by length. A kept buffer holds the address of the next one of its length in
 // its first word, so keeping one allocates nothing. It ends without giving its
-// buffers back: a value that lives as long as the program frees its buffer
+// buffers back: a holder that lives as long as the program frees its buffer
 // after every object of the thread has ended, and has to find this still
 // standing.
 class WordRecycler {
@@ -42,7 +42,7 @@ class WordRecycler {
     return words;
   }
 
-  // Answers whether the run was bucket.
+  // Answers whether the buffer was kept.
   [[nodiscard]] auto Push(std::uint64_t* words, std::size_t count) noexcept
       -> bool {
     Bucket& bucket = BucketFor(count);
@@ -96,4 +96,4 @@ void DeallocateWords(std::uint64_t* words, std::size_t count) noexcept {
   std::allocator<std::uint64_t>{}.deallocate(words, count);
 }
 
-}  // namespace lyra::value
+}  // namespace lyra::runtime

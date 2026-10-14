@@ -152,8 +152,7 @@ ownership, or native in-frame layout) for every value.
       one write of the variable, and neither rebuilds the array; this is the mutating-container
       protocol the queue and associative array reuse.
 - [x] **The fixed-size unpacked array** (LRM 7.4.2) -- realized on the execution backend as its
-      elements laid out by its type, one after another where the array lies, an array past the
-      in-place size owning its elements apart from whatever holds it
+      elements laid out by its type, one after another where the array lies, at every size
       (`../decisions/a-fixed-array-is-laid-out-by-its-type.md`). It default-constructs element by
       element, builds from an enumerated element list and from a replicated pattern through one path
       that lays a unit of elements down until the array is full, copies with value semantics, takes

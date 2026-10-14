@@ -135,7 +135,7 @@ auto CodeGenFunction::LowerRvalue(
                 built, result_type, EnsureDestination(destination));
           },
           [&](const lir::ArrayInstr& array) -> Lowered {
-            return LowerArray(array, result_type);
+            return LowerArray(array, destination);
           },
           [&](const lir::AggregateExtractInstr& extract) -> Lowered {
             return LowerAggregateExtract(
@@ -209,6 +209,13 @@ auto CodeGenFunction::LowerLoad(
   }
   if (module_->Types().LiesInStorage(result_type)) {
     return *address;
+  }
+  if (module_->Types().IsReadAsView(result_type)) {
+    return ViewOver(
+        *address, module_->Unit()
+                      .types.Get(result_type)
+                      .Get<lir::MachineArrayType>()
+                      .size);
   }
   return builder_.CreateLoad(result, *address);
 }
@@ -397,6 +404,12 @@ auto CodeGenFunction::LowerUse(
       Overloaded{
           [&](const PendingOperand&) { return value; },
           [&](const PlaceRef& place) -> diag::Result<llvm::Value*> {
+            if (module_->Types().IsReadAsView(place.type)) {
+              throw InternalError(
+                  "llvm codegen: a sequence of machine values is built where "
+                  "it is kept, never moved into storage -- please report this "
+                  "as a bug");
+            }
             if (!module_->Types().LiesInStorage(place.type)) {
               return value;
             }
@@ -595,10 +608,8 @@ auto CodeGenFunction::ArrayElementAddress(
   builder_.CreateCondBr(names_one, there, nowhere);
 
   builder_.SetInsertPoint(there);
-  llvm::Value* const run =
-      layout.in_place ? array : builder_.CreateLoad(ptr, array);
   llvm::Value* const lying = builder_.CreateInBoundsGEP(
-      builder_.getInt8Ty(), run,
+      builder_.getInt8Ty(), array,
       builder_.CreateMul(
           builder_.CreateZExtOrTrunc(named.value, builder_.getInt64Ty()),
           builder_.getInt64(layout.stride)));
@@ -1738,35 +1749,41 @@ auto CodeGenFunction::ResolveCallee(
       call.target);
 }
 
-// A {pointer, length} span over a scratch buffer this function fills with
-// `values`. The element type is the caller's to state: the machine element a
-// LIR type names where the span carries plain data, and an address where it
-// carries a sequence of objects the library defines. Nothing here reads
-// what the values mean, so nothing depends on which entry the span feeds.
+// A {pointer, length} span over `storage`, which this fills with `values`. The
+// element type is the caller's to state: the machine element a LIR type names
+// where the span carries plain data, and an address where it carries a
+// sequence of objects the library defines. Nothing here reads what the values
+// mean, so nothing depends on which entry the span feeds.
 auto CodeGenFunction::SpanOver(
-    std::span<llvm::Value* const> values, llvm::Type* element) -> llvm::Value* {
+    std::span<llvm::Value* const> values, llvm::Type* element,
+    llvm::Value* storage) -> llvm::Value* {
   auto* storage_ty = llvm::ArrayType::get(element, values.size());
-  llvm::Value* storage = FrameStorage(storage_ty);
   for (std::uint32_t i = 0; i < values.size(); ++i) {
     llvm::Value* slot =
         builder_.CreateConstInBoundsGEP2_64(storage_ty, storage, 0, i);
     builder_.CreateStore(values[i], slot);
   }
+  return ViewOver(storage, values.size());
+}
+
+auto CodeGenFunction::ViewOver(llvm::Value* storage, std::uint64_t count)
+    -> llvm::Value* {
   llvm::Value* span = llvm::UndefValue::get(module_->Types().Span());
   span = builder_.CreateInsertValue(span, storage, {0});
   return builder_.CreateInsertValue(
       span,
-      llvm::ConstantInt::get(
-          llvm::Type::getInt64Ty(module_->Context()),
-          static_cast<std::uint64_t>(values.size())),
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(module_->Context()), count),
       {1});
 }
 
+// The values are built where the sequence is kept: in the frame for one the
+// body holds as a transient, and in the storage that holds it otherwise -- a
+// box made for a sequence too large for a frame.
 auto CodeGenFunction::LowerArray(
-    const lir::ArrayInstr& array, lir::TypeId result_type)
+    const lir::ArrayInstr& array, const DestinationRef& destination)
     -> diag::Result<llvm::Value*> {
   const lir::TypeId element_type = module_->Unit()
-                                       .types.Get(result_type)
+                                       .types.Get(TypeOf(destination))
                                        .Get<lir::MachineArrayType>()
                                        .element;
   std::vector<llvm::Value*> elements;
@@ -1778,7 +1795,15 @@ auto CodeGenFunction::LowerArray(
     }
     elements.push_back(*lowered);
   }
-  return SpanOver(elements, module_->Types().Map(element_type));
+  llvm::Type* const element = module_->Types().Map(element_type);
+  llvm::Value* const storage = std::visit(
+      Overloaded{
+          [&](const PendingOperand&) {
+            return FrameStorage(llvm::ArrayType::get(element, elements.size()));
+          },
+          [&](const PlaceRef& place) { return place.address; }},
+      destination);
+  return SpanOver(elements, element, storage);
 }
 
 // A tuple value is laid out in place: each component is built where the type's

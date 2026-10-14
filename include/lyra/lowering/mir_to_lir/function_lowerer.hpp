@@ -221,6 +221,8 @@ class FunctionLowerer {
       -> diag::Result<void>;
   auto LowerBreakInto(const mir::BreakStmt& stmt) -> diag::Result<void>;
   auto LowerContinueInto() -> diag::Result<void>;
+  auto LowerReturnInto(const mir::Block& block, const mir::ReturnStmt& stmt)
+      -> diag::Result<void>;
   auto LowerTryInto(const mir::Block& block, const mir::TryStmt& stmt)
       -> diag::Result<void>;
   auto LowerFinallyInto(const mir::Block& block, const mir::FinallyStmt& stmt)

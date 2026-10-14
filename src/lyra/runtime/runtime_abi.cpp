@@ -97,7 +97,6 @@
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/wide.hpp"
-#include "lyra/value/word_recycler.hpp"
 
 namespace lyra::runtime {
 
@@ -1567,13 +1566,8 @@ auto EmplaceEnumerationMember(
 // one arrives as that copy, the entry having made it of the caller's bytes.
 auto StoreMemoryWord(
     value::MemoryWord word, std::string_view token, unsigned base) -> bool {
-  value::WrittenWords parsed =
-      value::WrittenWords::CopyOf(word.bytes, word.type->Shape());
-  if (!value::FromDigits(parsed.MutableView(), MemoryRadix(base), token)) {
-    return false;
-  }
-  parsed.StoreTo(word.bytes);
-  return true;
+  value::ScopedWordsWrite parsed(word.bytes, word.type->Shape());
+  return value::FromDigits(parsed.MutableView(), MemoryRadix(base), token);
 }
 
 auto RenderedWord(value::ConstMemoryWord word, unsigned base) -> std::string {

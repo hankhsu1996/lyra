@@ -247,14 +247,13 @@ operation is a call into a separately compiled runtime, and the optimizer cannot
       `--release` asks for, and whether an invoker names the level. Not measured: a benchmark
       design's build time and rate at each level under clang and under gcc.
 
-- [x] On the execution backend an operation on a value within the in-place size is instructions at
-      the value's own width, where past 64 bits it was a call into the library at a width the
-      library learned from its arguments. A wide concatenation now runs at the C++ backend's rate,
-      where through the library it ran far below it.
+- [x] On the execution backend an operation on a value no larger than a frame keeps is instructions
+      at the value's own width, where past 64 bits it was a call into the library at a width the
+      library learned from its arguments, and it runs at the rate the C++ backend's does.
 
 - [ ] What is still a call on the execution backend past 64 bits: a product, a quotient, a remainder
       and a power, whose work grows with the square of the width, and every operation over a value
-      past the in-place size. Each call lays its operands and its answer out around the work. Not
+      larger than a frame keeps. Each call lays its operands and its answer out around the work. Not
       measured on a design that spends its time there.
 
 - [ ] A concatenation of several operands is carried out two at a time on both backends. An
@@ -472,17 +471,17 @@ specializations, not with instance count.
 - [x] What a design costs to build and to start no longer follows the width of a packed type it
       declares. This was a wall and not a cost, on three counts. A value lay in the frame of
       whatever evaluated it, so a program declaring a vector of some millions of bits ended on a
-      fault with no message, and at the width every tool must take (LRM 6.9.1) a body of five
-      hundred statements did the same on the C++ backend. A fill, a default and a small number
-      widened were each folded into data as large as the type, so a module of twenty lines took
-      minutes to build at a width of some millions of bits. And an integer parameter was spelled
-      into a unit's name as digits, which cost the square of its width.
+      fault with no message, and at the width every tool must take (LRM 6.9.1) a long body did the
+      same on the C++ backend. A fill, a default and a small number widened were each folded into
+      data as large as the type, so a short module of a wide type took minutes to build on either
+      backend. And an integer parameter was spelled into a unit's name as digits, which cost the
+      square of its width.
 
-      A value past a fixed size now owns its words and a frame keeps their address, folding makes
-      no data the source did not write, and a parameter is spelled from its words. The growth check
-      holds a design that fills a vector, adds to it and writes part of it, and its build time and
-      program size no longer follow the width. `../decisions/a-packed-value-is-its-words.md` holds
-      why the line is drawn by size and what folding declines.
+      A value too large for a frame is now kept apart from it, folding makes no data the source did
+      not write, and a parameter is spelled from its words. On the design the growth check holds, a
+      vector filled, added to and written in part, the build time and the program's size no longer
+      follow the vector's width. `../decisions/a-packed-value-is-its-words.md` holds why the line is
+      drawn by size and what folding declines.
 
 - [x] A process that waits only at the head of its loop is no longer compiled as a coroutine. A
       continuous assignment, a port connection, an `always_comb` and an `always @(...)` or

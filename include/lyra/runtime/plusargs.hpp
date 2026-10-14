@@ -67,11 +67,14 @@ auto ValuePlusargsInto(
 
 template <value::IntegralValue T>
 auto ValuePlusargs(
-    RuntimeEffects& runtime, const value::String& user_string, T out)
+    RuntimeEffects& runtime, const value::String& user_string, const T& out)
     -> value::Tuple<value::Int, T> {
-  const value::Int matched = ValuePlusargsInto(
-      runtime, user_string, out.AsMutableWords().MutableView());
-  return value::Tuple<value::Int, T>{matched, std::move(out)};
+  // The destination is written where the answer keeps it.
+  value::Tuple<value::Int, T> answer(value::Int{}, out);
+  answer.template ComponentRef<0>() = ValuePlusargsInto(
+      runtime, user_string,
+      answer.template ComponentRef<1>().AsMutableWords().MutableView());
+  return answer;
 }
 
 }  // namespace lyra::runtime

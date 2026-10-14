@@ -880,50 +880,11 @@ void VerifyAllocations(
   }
 }
 
-// Whether a node, read as a value, reads one where it lies -- a name, a
-// dereference, a field, a part of storage, what an execution completed with --
-// rather than making one.
-auto ReadsWhereItLies(
-    const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
-  const auto reads = [](const auto&) { return true; };
-  const auto makes = [](const auto&) { return false; };
-  return std::visit(
-      Overloaded{
-          [&](const ReferenceExpr& e) { return reads(e); },
-          [&](const DerefExpr& e) { return reads(e); },
-          [&](const FieldAccessExpr& e) { return reads(e); },
-          [&](const AwaitExpr& e) { return reads(e); },
-          [&](const CallExpr&) {
-            return mir::ReadsWhereItLies(unit.types, block, id);
-          },
-          [&](const StringLiteral& e) { return makes(e); },
-          [&](const NullLiteral& e) { return makes(e); },
-          [&](const MachineBoolLiteral& e) { return makes(e); },
-          [&](const MachineIntLiteral& e) { return makes(e); },
-          [&](const MachineFloatLiteral& e) { return makes(e); },
-          [&](const UnaryExpr& e) { return makes(e); },
-          [&](const BinaryExpr& e) { return makes(e); },
-          [&](const CastExpr& e) { return makes(e); },
-          [&](const DynamicCastExpr& e) { return makes(e); },
-          [&](const ConditionalExpr& e) { return makes(e); },
-          [&](const BlockExpr& e) { return makes(e); },
-          [&](const AssignExpr& e) { return makes(e); },
-          [&](const NewExpr& e) { return makes(e); },
-          [&](const AddressOfExpr& e) { return makes(e); },
-          [&](const BorrowExpr& e) { return makes(e); },
-          [&](const MoveExpr& e) { return makes(e); },
-          [&](const ClosureExpr& e) { return makes(e); },
-          [&](const CompositeExpr& e) { return makes(e); },
-          [&](const WaitExpr& e) { return makes(e); },
-          [&](const VectorGetExpr& e) { return makes(e); }},
-      block.exprs.Get(id).data);
-}
-
 // A value too large for a frame is made only in the storage a new-expression
-// allocates for it, and is otherwise only read where it lies; a body answering
-// one by its caller's convention answers it from there.
+// allocates for it, or, where a body answers its caller, in the storage the
+// caller takes its answer in; it is otherwise only read where it lies.
 void VerifyLargeValuesLieInStorage(
-    const CompilationUnit& unit, const Block& block, bool answers_large,
+    const CompilationUnit& unit, const Block& block, bool answers_caller,
     const auto& describe) {
   std::vector<bool> made_in_storage(block.exprs.size(), false);
   // What a write lands on names where it lands, and makes nothing: the target
@@ -932,10 +893,7 @@ void VerifyLargeValuesLieInStorage(
     std::optional<ExprId> reached = target;
     while (reached.has_value()) {
       made_in_storage.at(reached->value) = true;
-      const auto* part = std::get_if<CallExpr>(&block.exprs.Get(*reached).data);
-      reached = part != nullptr && SelectionOf(*part).has_value()
-                    ? CalleeReceiver(part->callee)
-                    : std::nullopt;
+      reached = SelectedFrom(block, *reached);
     }
   };
   for (const Expr& expr : block.exprs) {
@@ -946,7 +904,7 @@ void VerifyLargeValuesLieInStorage(
       mark_target(write->target);
     }
   }
-  if (answers_large) {
+  if (answers_caller) {
     for (const Stmt& stmt : block.stmts) {
       if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data);
           returned != nullptr && returned->value.has_value()) {
@@ -957,7 +915,7 @@ void VerifyLargeValuesLieInStorage(
   for (const ExprId id : block.exprs.Ids()) {
     if (made_in_storage.at(id.value) ||
         !IsTooLargeForAFrame(unit, block.exprs.Get(id).type) ||
-        ReadsWhereItLies(unit, block, id)) {
+        IsPlaceExpression(unit.types, block, id)) {
       continue;
     }
     throw InternalError(
@@ -968,7 +926,7 @@ void VerifyLargeValuesLieInStorage(
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyLargeValuesLieInStorage(
-        unit, block.child_scopes.Get(id), answers_large, describe);
+        unit, block.child_scopes.Get(id), answers_caller, describe);
   }
 }
 
@@ -988,7 +946,7 @@ void VerifyFramesHoldNoLargeValue(
   }
   if (code.body.has_value()) {
     VerifyLargeValuesLieInStorage(
-        unit, *code.body, IsTooLargeForAFrame(unit, code.result_type),
+        unit, *code.body, !unit.types.Get(code.result_type).Is<CoroutineType>(),
         describe);
   }
 }

@@ -65,13 +65,6 @@ using MemoryLoad = value::Tuple<Memory>;
   return base == 2U ? value::DigitRadix::kBinary : value::DigitRadix::kHex;
 }
 
-// A token read as a word of `T`, at radix `base`; none where it is not one.
-template <value::IntegralValue T>
-[[nodiscard]] auto ParsedMemoryWord(std::string_view token, unsigned base)
-    -> std::optional<T> {
-  return value::FromDigits<T>(MemoryRadix(base), token);
-}
-
 // A word written out at full width in radix `base`, x and z per digit (LRM
 // 21.5.1), as `%h` / `%b` display it.
 [[nodiscard]] auto RenderedMemoryWord(
@@ -224,12 +217,7 @@ template <typename T>
 template <value::IntegralValue T>
 [[nodiscard]] auto StoreParsed(T& slot, std::string_view token, unsigned base)
     -> bool {
-  const std::optional<T> word = ParsedMemoryWord<T>(token, base);
-  if (!word) {
-    return false;
-  }
-  slot = *word;
-  return true;
+  return value::FromDigits(slot, MemoryRadix(base), token);
 }
 
 // A dynamic array or queue is a 0-based memory whose address range is
@@ -332,23 +320,26 @@ void WriteMemMultidim(
 
 template <value::IntegralValue T>
 auto ReadMem(
-    RuntimeEffects& runtime, value::DynamicArray<T> dest,
+    RuntimeEffects& runtime, const value::DynamicArray<T>& memory,
     const value::String& filename, std::int64_t base, std::int64_t start)
     -> MemoryLoad<value::DynamicArray<T>> {
+  MemoryLoad<value::DynamicArray<T>> load(memory);
   detail::ReadMemZeroBased(
-      runtime, dest, filename, static_cast<unsigned>(base), start,
-      std::nullopt);
-  return MemoryLoad<value::DynamicArray<T>>{std::move(dest)};
+      runtime, load.template ComponentRef<0>(), filename,
+      static_cast<unsigned>(base), start, std::nullopt);
+  return load;
 }
 
 template <value::IntegralValue T>
 auto ReadMemWithin(
-    RuntimeEffects& runtime, value::DynamicArray<T> dest,
+    RuntimeEffects& runtime, const value::DynamicArray<T>& memory,
     const value::String& filename, std::int64_t base, std::int64_t start,
     std::int64_t finish) -> MemoryLoad<value::DynamicArray<T>> {
+  MemoryLoad<value::DynamicArray<T>> load(memory);
   detail::ReadMemZeroBased(
-      runtime, dest, filename, static_cast<unsigned>(base), start, finish);
-  return MemoryLoad<value::DynamicArray<T>>{std::move(dest)};
+      runtime, load.template ComponentRef<0>(), filename,
+      static_cast<unsigned>(base), start, finish);
+  return load;
 }
 
 template <value::IntegralValue T>
@@ -370,23 +361,26 @@ void WriteMemWithin(
 
 template <value::IntegralValue T, std::int64_t kBound>
 auto ReadMem(
-    RuntimeEffects& runtime, value::Queue<T, kBound> dest,
+    RuntimeEffects& runtime, const value::Queue<T, kBound>& memory,
     const value::String& filename, std::int64_t base, std::int64_t start)
     -> MemoryLoad<value::Queue<T, kBound>> {
+  MemoryLoad<value::Queue<T, kBound>> load(memory);
   detail::ReadMemZeroBased(
-      runtime, dest, filename, static_cast<unsigned>(base), start,
-      std::nullopt);
-  return MemoryLoad<value::Queue<T, kBound>>{std::move(dest)};
+      runtime, load.template ComponentRef<0>(), filename,
+      static_cast<unsigned>(base), start, std::nullopt);
+  return load;
 }
 
 template <value::IntegralValue T, std::int64_t kBound>
 auto ReadMemWithin(
-    RuntimeEffects& runtime, value::Queue<T, kBound> dest,
+    RuntimeEffects& runtime, const value::Queue<T, kBound>& memory,
     const value::String& filename, std::int64_t base, std::int64_t start,
     std::int64_t finish) -> MemoryLoad<value::Queue<T, kBound>> {
+  MemoryLoad<value::Queue<T, kBound>> load(memory);
   detail::ReadMemZeroBased(
-      runtime, dest, filename, static_cast<unsigned>(base), start, finish);
-  return MemoryLoad<value::Queue<T, kBound>>{std::move(dest)};
+      runtime, load.template ComponentRef<0>(), filename,
+      static_cast<unsigned>(base), start, finish);
+  return load;
 }
 
 template <value::IntegralValue T, std::int64_t kBound>
@@ -408,23 +402,26 @@ void WriteMemWithin(
 
 template <value::IntegralValue K, value::IntegralValue T>
 auto ReadMem(
-    RuntimeEffects& runtime, value::AssociativeArray<K, T> dest,
+    RuntimeEffects& runtime, const value::AssociativeArray<K, T>& memory,
     const value::String& filename, std::int64_t base, std::int64_t start)
     -> MemoryLoad<value::AssociativeArray<K, T>> {
+  MemoryLoad<value::AssociativeArray<K, T>> load(memory);
   detail::ReadMemAssociative(
-      runtime, dest, filename, static_cast<unsigned>(base), start,
-      std::nullopt);
-  return MemoryLoad<value::AssociativeArray<K, T>>{std::move(dest)};
+      runtime, load.template ComponentRef<0>(), filename,
+      static_cast<unsigned>(base), start, std::nullopt);
+  return load;
 }
 
 template <value::IntegralValue K, value::IntegralValue T>
 auto ReadMemWithin(
-    RuntimeEffects& runtime, value::AssociativeArray<K, T> dest,
+    RuntimeEffects& runtime, const value::AssociativeArray<K, T>& memory,
     const value::String& filename, std::int64_t base, std::int64_t start,
     std::int64_t finish) -> MemoryLoad<value::AssociativeArray<K, T>> {
+  MemoryLoad<value::AssociativeArray<K, T>> load(memory);
   detail::ReadMemAssociative(
-      runtime, dest, filename, static_cast<unsigned>(base), start, finish);
-  return MemoryLoad<value::AssociativeArray<K, T>>{std::move(dest)};
+      runtime, load.template ComponentRef<0>(), filename,
+      static_cast<unsigned>(base), start, finish);
+  return load;
 }
 
 template <value::IntegralValue K, value::IntegralValue T>
@@ -451,27 +448,31 @@ void WriteMemWithin(
 template <typename Inner, std::size_t N>
   requires detail::IsMemoryLevel<Inner>::value
 auto ReadMem(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner, N> dest,
+    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& memory,
     const value::String& filename, std::span<const std::int64_t> bounds,
     std::int64_t base, std::int64_t start)
     -> MemoryLoad<value::UnpackedArray<Inner, N>> {
+  MemoryLoad<value::UnpackedArray<Inner, N>> load(memory);
   detail::ReadMemMultidim(
-      runtime, dest, filename, value::UnpackedRangesOf(bounds),
-      static_cast<unsigned>(base), start, std::nullopt);
-  return MemoryLoad<value::UnpackedArray<Inner, N>>{std::move(dest)};
+      runtime, load.template ComponentRef<0>(), filename,
+      value::UnpackedRangesOf(bounds), static_cast<unsigned>(base), start,
+      std::nullopt);
+  return load;
 }
 
 template <typename Inner, std::size_t N>
   requires detail::IsMemoryLevel<Inner>::value
 auto ReadMemWithin(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner, N> dest,
+    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& memory,
     const value::String& filename, std::span<const std::int64_t> bounds,
     std::int64_t base, std::int64_t start, std::int64_t finish)
     -> MemoryLoad<value::UnpackedArray<Inner, N>> {
+  MemoryLoad<value::UnpackedArray<Inner, N>> load(memory);
   detail::ReadMemMultidim(
-      runtime, dest, filename, value::UnpackedRangesOf(bounds),
-      static_cast<unsigned>(base), start, finish);
-  return MemoryLoad<value::UnpackedArray<Inner, N>>{std::move(dest)};
+      runtime, load.template ComponentRef<0>(), filename,
+      value::UnpackedRangesOf(bounds), static_cast<unsigned>(base), start,
+      finish);
+  return load;
 }
 
 template <typename Inner, std::size_t N>

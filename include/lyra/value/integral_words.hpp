@@ -1753,10 +1753,25 @@ constexpr void FromBytes(IntegralView out, std::span<const char> bytes) {
 // LRM 21.4: a word of digits read as the value `out` is, its last digit the
 // least significant -- a shorter word leaves the positions above it 0 and a
 // longer one loses its leading digits. `_` separates digits; an x digit is x
-// in every bit it covers and a z or ? digit z in every one. Answers false
-// where a character is no digit of the radix, or there is no digit at all.
+// in every bit it covers and a z or ? digit z in every one. Answers false,
+// leaving `out` as it was, where a character is no digit of the radix, or
+// there is no digit at all.
 [[nodiscard]] constexpr auto FromDigits(
     IntegralView out, DigitRadix radix, std::string_view digits) -> bool {
+  bool any_digit = false;
+  for (const char c : digits) {
+    if (c == '_') {
+      continue;
+    }
+    if (!IsUnknownDigit(c) && !IsHighImpedanceDigit(c) &&
+        !DigitOf(c, radix).has_value()) {
+      return false;
+    }
+    any_digit = true;
+  }
+  if (!any_digit) {
+    return false;
+  }
   const std::uint64_t bits_per_digit = BitsPerDigit(radix);
   const std::uint64_t all = LowBits(bits_per_digit);
   const bool four_state = out.IsFourState();
@@ -1772,7 +1787,6 @@ constexpr void FromBytes(IntegralView out, std::span<const char> bytes) {
       plane[step.word + 1U] |= bits >> step.count;
     }
   };
-  bool any_digit = false;
   std::uint64_t at = 0;
   for (std::size_t k = digits.size(); k-- > 0;) {
     const char c = digits[k];
@@ -1786,12 +1800,9 @@ constexpr void FromBytes(IntegralView out, std::span<const char> bytes) {
       unknown_bits = all;
     } else if (IsHighImpedanceDigit(c)) {
       unknown_bits = all;
-    } else if (const std::optional<std::uint64_t> number = DigitOf(c, radix)) {
-      value_bits = *number;
     } else {
-      return false;
+      value_bits = DigitOf(c, radix).value_or(0U);
     }
-    any_digit = true;
     if (at < out.width && four_state) {
       place(out.value, at, value_bits);
       place(out.unknown, at, unknown_bits);
@@ -1802,7 +1813,7 @@ constexpr void FromBytes(IntegralView out, std::span<const char> bytes) {
   }
   ClearAboveWidth(out.value, out.width);
   ClearAboveWidth(out.unknown, out.width);
-  return any_digit;
+  return true;
 }
 
 // The byte `index` positions up from a value's least significant end, a

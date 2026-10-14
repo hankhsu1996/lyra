@@ -7,7 +7,7 @@
 #include <new>
 #include <utility>
 
-#include "lyra/value/integral.hpp"
+#include "lyra/value/frame_bound.hpp"
 
 namespace lyra::runtime {
 

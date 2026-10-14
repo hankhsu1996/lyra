@@ -811,7 +811,7 @@ auto LowerOnPlanes(
     };
     return std::ranges::all_of(shapes.operands, held) && held(shapes.answer);
   };
-  if (!every_value(LiesInPlace)) {
+  if (!every_value(IsStatedOnPlanes)) {
     return std::nullopt;
   }
   const PlaneArithmetic words(builder);

@@ -4,6 +4,7 @@
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -68,6 +69,48 @@ auto ReadsWhereItLies(const TypePool& types, const Block& block, ExprId id)
     -> bool {
   return StoragePartAccess(types, block, id) != nullptr ||
          WrapperRead(block.exprs.Get(id)).has_value();
+}
+
+auto SelectedFrom(const Block& block, ExprId target) -> std::optional<ExprId> {
+  const auto* part = std::get_if<CallExpr>(&block.exprs.Get(target).data);
+  if (part == nullptr || !SelectionOf(*part).has_value()) {
+    return std::nullopt;
+  }
+  return CalleeReceiver(part->callee);
+}
+
+auto IsPlaceExpression(const TypePool& types, const Block& block, ExprId id)
+    -> bool {
+  const auto place = [](const auto&) { return true; };
+  const auto made = [](const auto&) { return false; };
+  return std::visit(
+      Overloaded{
+          [&](const ReferenceExpr& e) { return place(e); },
+          [&](const DerefExpr& e) { return place(e); },
+          [&](const FieldAccessExpr& e) { return place(e); },
+          [&](const AwaitExpr& e) { return place(e); },
+          [&](const CallExpr&) { return ReadsWhereItLies(types, block, id); },
+          [&](const StringLiteral& e) { return made(e); },
+          [&](const NullLiteral& e) { return made(e); },
+          [&](const MachineBoolLiteral& e) { return made(e); },
+          [&](const MachineIntLiteral& e) { return made(e); },
+          [&](const MachineFloatLiteral& e) { return made(e); },
+          [&](const UnaryExpr& e) { return made(e); },
+          [&](const BinaryExpr& e) { return made(e); },
+          [&](const CastExpr& e) { return made(e); },
+          [&](const DynamicCastExpr& e) { return made(e); },
+          [&](const ConditionalExpr& e) { return made(e); },
+          [&](const BlockExpr& e) { return made(e); },
+          [&](const AssignExpr& e) { return made(e); },
+          [&](const NewExpr& e) { return made(e); },
+          [&](const AddressOfExpr& e) { return made(e); },
+          [&](const BorrowExpr& e) { return made(e); },
+          [&](const MoveExpr& e) { return made(e); },
+          [&](const ClosureExpr& e) { return made(e); },
+          [&](const CompositeExpr& e) { return made(e); },
+          [&](const WaitExpr& e) { return made(e); },
+          [&](const VectorGetExpr& e) { return made(e); }},
+      block.exprs.Get(id).data);
 }
 
 }  // namespace lyra::mir

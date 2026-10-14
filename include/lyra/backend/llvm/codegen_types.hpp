@@ -34,15 +34,13 @@ struct TupleLayout {
 };
 
 // How a fixed-size unpacked array is laid out: its elements one after another
-// `stride` bytes apart, where the array lies when `in_place`, and otherwise in
-// a run the array owns and holds the address of. `storage` is what the array
+// `stride` bytes apart, where the array lies. `storage` is what the array
 // takes of whatever holds it.
 struct ArrayLayout {
   lir::TypeId element;
-  std::uint64_t count;
-  std::uint64_t stride;
-  bool in_place;
-  support::ObjectLayout storage;
+  std::uint64_t count = 0;
+  std::uint64_t stride = 0;
+  support::ObjectLayout storage{};
 };
 
 // An integral type as the value layer states one.
@@ -66,16 +64,20 @@ class CodeGenTypes {
   auto GetFunctionType(const FnAbi& abi) -> llvm::FunctionType*;
 
   // The storage a value an owner holds occupies. A tuple's is composed from
-  // its components'; a fixed-size unpacked array's is its elements', or the
-  // address of them where they are too many to lie in what holds the array;
-  // an integral value's is the bytes the value layer lays a value of its
-  // width and states out in; a machine integer's is that integer's; every
-  // other owned value is one runtime object, whose storage the library states.
+  // its components'; a fixed-size unpacked array's is its elements'; an
+  // integral value's is the bytes the value layer lays a value of its width
+  // and states out in; a machine integer's is that integer's; a sequence of
+  // machine values is the values, as a C++ `std::array` is; every other owned
+  // value is one runtime object, whose storage the library states.
   auto LayoutOf(lir::TypeId type) -> support::ObjectLayout;
   // Whether a value of `type` lies in storage of its own, which an operand of
   // it then names by address. Every owned value does but a pointer owning what
   // it points at, which is that address itself, as a Rust `Box` is.
   [[nodiscard]] auto LiesInStorage(lir::TypeId type) const -> bool;
+  // Whether a value of `type` is a sequence of machine values, which is built
+  // where it is kept and read as the {pointer, length} view over that, as C++
+  // forms a `std::span` over a `std::array` where one is taken.
+  [[nodiscard]] auto IsReadAsView(lir::TypeId type) const -> bool;
   // An integral type as the value layer states one, or nothing for a type that
   // is not integral.
   [[nodiscard]] auto IntegralShapeOf(lir::TypeId type) const
@@ -106,6 +108,10 @@ class CodeGenTypes {
   auto Void() const -> llvm::Type*;
 
  private:
+  // The storage a machine value of `type` takes where it lies: what a register
+  // holding it holds.
+  auto MachineValueLayout(lir::TypeId type) -> support::ObjectLayout;
+
   llvm::LLVMContext* ctx_;
   const lir::CompilationUnit* unit_;
   llvm::PointerType* ptr_ty_;

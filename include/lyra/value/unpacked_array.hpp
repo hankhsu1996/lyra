@@ -5,13 +5,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <memory>
-#include <new>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
@@ -20,9 +17,11 @@
 #include "lyra/value/element_sequence.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/queue.hpp"
+#include "lyra/value/small_box.hpp"
 
 namespace lyra::value {
 
@@ -43,104 +42,6 @@ class String;
 }
 
 namespace detail {
-
-// The elements of an array small enough to lie in whatever holds it.
-template <typename T, std::size_t N>
-class InlineElements {
- public:
-  [[nodiscard]] auto Data() const -> const T* {
-    return items_.data();
-  }
-  [[nodiscard]] auto Data() -> T* {
-    return items_.data();
-  }
-
- private:
-  std::array<T, N> items_{};
-};
-
-// The elements of an array past the size that lies in a frame: the same
-// elements in the same order, in one run the array owns apart from itself. The
-// run is the array's for as long as it holds elements, so an element stays
-// where it is across every assignment (LRM 13.5.2 has a reference to one go on
-// naming it); an array that was moved from holds none until it is assigned.
-template <typename T, std::size_t N>
-class HeapElements {
- public:
-  HeapElements() {
-    Run run;
-    std::uninitialized_value_construct_n(run.items, N);
-    items_ = run.Release();
-  }
-  HeapElements(const HeapElements& other) {
-    Run run;
-    std::uninitialized_copy_n(other.items_, N, run.items);
-    items_ = run.Release();
-  }
-  HeapElements(HeapElements&& other) noexcept
-      : items_(std::exchange(other.items_, nullptr)) {
-  }
-  auto operator=(const HeapElements& other) -> HeapElements& {
-    if (this == &other) {
-      return *this;
-    }
-    if (items_ == nullptr) {
-      Run run;
-      std::uninitialized_copy_n(other.items_, N, run.items);
-      items_ = run.Release();
-    } else {
-      std::copy_n(other.items_, N, items_);
-    }
-    return *this;
-  }
-  auto operator=(HeapElements&& other) noexcept -> HeapElements& {
-    if (this == &other) {
-      return *this;
-    }
-    if (items_ == nullptr) {
-      items_ = std::exchange(other.items_, nullptr);
-    } else {
-      std::move(other.items_, other.items_ + N, items_);
-    }
-    return *this;
-  }
-  ~HeapElements() {
-    if (items_ != nullptr) {
-      std::destroy_n(items_, N);
-      const Run given_back{items_};
-    }
-  }
-
-  [[nodiscard]] auto Data() const -> const T* {
-    return items_;
-  }
-  [[nodiscard]] auto Data() -> T* {
-    return items_;
-  }
-
- private:
-  // Storage for the elements, given back unless it is released: building an
-  // element may fail, and the storage is then nobody's.
-  struct Run {
-    Run() : items(std::allocator<T>{}.allocate(N)) {
-    }
-    explicit Run(T* held) : items(held) {
-    }
-    Run(const Run&) = delete;
-    auto operator=(const Run&) -> Run& = delete;
-    ~Run() {
-      if (items != nullptr) {
-        std::allocator<T>{}.deallocate(items, N);
-      }
-    }
-    [[nodiscard]] auto Release() -> T* {
-      return std::exchange(items, nullptr);
-    }
-    T* items;
-  };
-
-  T* items_ = nullptr;
-};
 
 // A run of elements as the whole-value operations of a sequence read one: the
 // element's operations, the count, and each element by its address.
@@ -165,18 +66,6 @@ class ElementRun {
   std::span<const T> elements_;
 };
 
-// The value `build` constructs in the storage it is handed.
-template <typename T, typename Build>
-[[nodiscard]] auto BuiltInPlace(Build build) -> T {
-  alignas(T) std::array<std::byte, sizeof(T)> storage;
-  void* raw = storage.data();
-  build(raw);
-  T* built = std::launder(static_cast<T*>(raw));
-  T out = std::move(*built);
-  std::destroy_at(built);
-  return out;
-}
-
 }  // namespace detail
 
 // SystemVerilog fixed-size unpacked array (LRM 7.4.2): `N` elements of the C++
@@ -189,11 +78,8 @@ template <typename T, typename Build>
 // own comparison does, so equality on aggregates propagates through the same
 // one-bit type the integral surface uses.
 //
-// An array of at most `kMaxInlineBytes` lies in whatever holds it. A larger one
-// owns its elements apart from itself, the type deciding which, so that the
-// size of a frame never follows the size a design declared. Either way an
-// element keeps its address for as long as the array holds it: an assignment
-// writes each element where it lies.
+// The elements lie in the array, and an element keeps its address for as long
+// as the array holds it: an assignment writes each element where it lies.
 //
 // An access names an element by its ordinal, counted from the left (LRM 7.6),
 // because the declared range is a fact of the static type the select was
@@ -203,16 +89,23 @@ template <typename T, std::size_t N>
 class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   static_assert(N >= 1, "a fixed-size unpacked array has at least one element");
 
-  using Storage = std::conditional_t<
-      (sizeof(T) * N > kMaxInlineBytes), detail::HeapElements<T, N>,
-      detail::InlineElements<T, N>>;
-
  public:
   using ElementType = T;
   template <typename U>
   using Rebound = UnpackedArray<U, N>;
 
   UnpackedArray() = default;
+
+  // An array of structures defaults to each element at the default its
+  // structure's declaration states (LRM 7.4.5, 7.2.2), so the array's default
+  // is stated by its element's as a structure's is by its declaration.
+  [[nodiscard]] static auto DeclaredDefault() -> UnpackedArray
+    requires HasDeclaredDefault<T>
+  {
+    UnpackedArray array;
+    std::ranges::fill(array.items_, detail::DefaultOf<T>());
+    return array;
+  }
 
   // The array `unit` fills when laid down again and again from the left:
   // element `i` is a copy of `unit[i % unit.size()]`. Every element stated
@@ -488,8 +381,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
 
   // LRM 6.24.3: the elements' own streams laid end to end into a stream below
   // its `filled` most significant positions, answering how many are filled
-  // after them; and the inverse, which reads an array of this type and answers
-  // how many positions it took.
+  // after them; and the inverse, which reads each element in turn where it
+  // lies and answers how many positions it took.
   [[nodiscard]] auto WriteToStream(
       const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
     for (std::size_t i = 0; i < N; ++i) {
@@ -497,22 +390,20 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
     }
     return filled;
   }
-  [[nodiscard]] static auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken)
-      -> std::pair<UnpackedArray, std::uint64_t> {
-    UnpackedArray read;
+  auto ReadFromStream(const ConstIntegralView& stream, std::uint64_t taken)
+      -> std::uint64_t {
     for (std::size_t i = 0; i < N; ++i) {
-      read.Items()[i] = detail::BuiltInPlace<T>([&](void* out) {
-        taken = StaticElem<T>::ReadFromStream(stream, taken, out);
-      });
+      taken = StaticElem<T>::ReadFromStream(stream, taken, Items()[i]);
     }
-    return {std::move(read), taken};
+    return taken;
   }
 
   // The array a stream of exactly its bits holds (LRM 11.4.14.3).
   template <IntegralValue Bits>
   [[nodiscard]] static auto FromBitstream(const Bits& bits) -> UnpackedArray {
-    return ReadFromStream(bits.AsWords().View(), 0).first;
+    UnpackedArray out;
+    out.ReadFromStream(bits.AsWords().View(), 0);
+    return out;
   }
 
   // The elements, in ordinal order, where they lie.
@@ -527,10 +418,10 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   friend class OrdinalArrayMethods<UnpackedArray<T, N>, T>;
 
   [[nodiscard]] auto Items() const -> const T* {
-    return storage_.Data();
+    return items_.data();
   }
   [[nodiscard]] auto Items() -> T* {
-    return storage_.Data();
+    return items_.data();
   }
   [[nodiscard]] auto Run() const -> detail::ElementRun<T> {
     return detail::ElementRun<T>{Elements()};
@@ -576,15 +467,17 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
     return out;
   }
 
-  // Puts the value that was at `order[k]` at ordinal `k` (LRM 7.12.2).
+  // Puts the value that was at `order[k]` at ordinal `k` (LRM 7.12.2). The
+  // values as they were are kept aside while they are put back, as a frame
+  // keeps a value aside, since a copy of them is as large as the array.
   void Permute(std::span<const std::size_t> order) {
-    const UnpackedArray held = *this;
+    const SmallBox<std::array<T, N>> before(items_);
     for (std::size_t k = 0; k < order.size(); ++k) {
-      Items()[k] = held.RawAt(order[k]);
+      Items()[k] = (*before)[order[k]];
     }
   }
 
-  Storage storage_;
+  std::array<T, N> items_{};
 };
 
 // LRM 7.6: an assignment to an unpacked slice is a single assignment to the
@@ -658,6 +551,7 @@ static_assert(std::is_trivially_copyable_v<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(
     sizeof(UnpackedArray<LogicVector<8>, 4>) == 4 * sizeof(LogicVector<8>));
 static_assert(
-    sizeof(UnpackedArray<LogicVector<8>, kMaxInlineBytes>) == sizeof(void*));
+    sizeof(UnpackedArray<LogicVector<8>, kMaxInlineBytes>) ==
+    kMaxInlineBytes * sizeof(LogicVector<8>));
 
 }  // namespace lyra::value

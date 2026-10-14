@@ -30,14 +30,14 @@ the detail lives in the entry itself.
   Each choice is justified by what its cost scales with for any input. Supersedes the runtime-shape
   halves of the four entries below it.
 - [a-packed-value-is-its-words](a-packed-value-is-its-words.md) -- how the entry above is carried
-  out for packed values: one clean layout per type on both backends, a value past a fixed size
-  owning its words so that no frame follows a declared width, an integral type in MIR that is only
-  width, signedness and state domain, every operation stated once as a function over a value read
-  and a value written and used as the C++ value type, the prebuilt wide entries and constant
-  folding, folding that makes no data the source did not write, the four-state formula in the
-  execution backend's code generator as a function of the operand type, a line at 64 bits, and the
-  front end's 2^24 - 1 bits as the widest type. Code compiled before a design exists is told a
-  number of bytes, a number of bits or the address of a function of the design's, never a
+  out for packed values: one clean layout per type on both backends, a value its words at every size
+  and held through a box past a fixed size so that no frame follows a declared width, an integral
+  type in MIR that is only width, signedness and state domain, every operation stated once as a
+  function over a value read and a value written and used as the C++ value type, the prebuilt wide
+  entries and constant folding, folding that makes no data the source did not write, the four-state
+  formula in the execution backend's code generator as a function of the operand type, a line at 64
+  bits, and the front end's 2^24 - 1 bits as the widest type. Code compiled before a design exists
+  is told a number of bytes, a number of bits or the address of a function of the design's, never a
   description of a type: a holder reads a layout, a wide value is held as words at a width told when
   its holder is installed, how a routine reads each operand is declared with the routine, a
   comparison answers a scalar, and a net's positions are words and a count. States what is not yet
@@ -114,14 +114,13 @@ the detail lives in the entry itself.
   the bytes, and holding a tuple in storage of the runtime's own, are superseded by the holder entry
   below.
 - [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) -- on the
-  execution backend a fixed-size unpacked array is its elements one after another, in place up to
-  1,024 bytes and one address of a run it owns past that, an element reached by address arithmetic
-  with the library answering only an index that names none. The library is handed the array's type
-  as constant data -- a count and the element's type -- and runs every whole-array operation over
-  it; an array crosses to it as its bytes followed by its type, and a construction carries no count.
-  Read it for why a type stated as data and a type passed beside the bytes, both rejected for a
-  tuple, are taken for an array. A function per array type, a header in the bytes, and an element
-  default handed to each construction are rejected.
+  execution backend a fixed-size unpacked array is its elements one after another at every size, an
+  element reached by address arithmetic with the library answering only an index that names none.
+  The library is handed the array's type as constant data -- a count and the element's type -- and
+  runs every whole-array operation over it; an array crosses to it as its bytes followed by its
+  type, and a construction carries no count. Read it for why a type stated as data and a type passed
+  beside the bytes, both rejected for a tuple, are taken for an array. A function per array type, a
+  header in the bytes, and an element default handed to each construction are rejected.
 - [a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md) -- on the
   execution backend a variable, a net and a procedural local of an integral value wider than a word,
   a tuple or a fixed-size unpacked array are told its width or type where they are built and lay the

@@ -467,36 +467,6 @@ auto LowerSampledHistoryExpr(
   }};
 }
 
-// Maps a frontend ReturnConvention to the builtin HIR TypeId that represents
-// it. Local to the calls subsystem (system subroutines are the only consumer).
-auto MakeReturnConventionType(
-    const hir::BuiltinHirTypes& builtins, support::ReturnConvention conv)
-    -> hir::TypeId {
-  switch (conv) {
-    case support::ReturnConvention::kVoid:
-      return builtins.void_type;
-    case support::ReturnConvention::kInt32:
-      return builtins.int_type;
-    case support::ReturnConvention::kIntUnsigned:
-      return builtins.int_unsigned;
-    case support::ReturnConvention::kBit:
-      return builtins.scalar_bit;
-    case support::ReturnConvention::kInteger:
-      return builtins.integer;
-    case support::ReturnConvention::kString:
-      return builtins.string;
-    case support::ReturnConvention::kTime64:
-      return builtins.time;
-    case support::ReturnConvention::kRealTime:
-      return builtins.realtime;
-    case support::ReturnConvention::kOperandType:
-      throw InternalError(
-          "MakeReturnConventionType: a result that follows its operand has no "
-          "type of its own, so the caller reads it off the operand");
-  }
-  throw InternalError("MakeReturnConventionType: unknown ReturnConvention");
-}
-
 // A call to a built-in runtime entry, out of the operands the source wrote with
 // the object first. The object the entry acts on becomes the call's receiver
 // and the rest its arguments, so no layer below has to know which operand
@@ -967,23 +937,13 @@ auto LowerSystemCall(
     }
   }
 
-  // A result that follows its operand reads its type off that operand rather
-  // than off a builtin, which is what lets one entry serve every type its
-  // argument may have (LRM 16.9.3 `$sampled`).
-  const auto result_type = [&] {
-    if (desc->result_conv != support::ReturnConvention::kOperandType) {
-      return MakeReturnConventionType(
-          unit_lowerer.Unit().builtins, desc->result_conv);
-    }
-    if (arg_ids.empty() || !arg_ids.front().has_value()) {
-      throw InternalError(
-          std::string{"AST->HIR call: '"} + std::string{name} +
-          "' takes its result type from an operand it was not given");
-    }
-    return frame.Exprs().Get(*arg_ids.front()).type;
-  }();
+  // The call is of the type the front end gave it, which is the standard's
+  // type for the function and, for one whose result follows its operand (LRM
+  // 16.9.3 `$sampled`), that operand's.
+  auto result_type = unit_lowerer.InternType(*call.type, span);
+  if (!result_type) return std::unexpected(std::move(result_type.error()));
   return hir::Expr{
-      .type = result_type,
+      .type = *result_type,
       .data =
           hir::CallExpr{
               .callee = hir::SystemSubroutineRef{.id = desc->id},

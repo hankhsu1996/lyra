@@ -19,12 +19,12 @@ array may be passed by reference, and only an element of a variable-size array s
 named (LRM 13.5.2); a wrapper that replaced its storage on whole assignment left such a reference on
 freed storage. The reasons given for the rejection no longer hold: the count is one more template
 argument where the type is spelled, every container still answers one method surface so nothing
-dispatches on container kind, and an element's default is its type's own default construction since
-a value's width became part of its type, so no prototype is needed to size one (finding F4). Three
-rules a later change meets: an array of at most 1,024 bytes lies in whatever holds it, and a larger
-one owns one run of elements apart from itself, the type deciding, so a frame's size never follows a
-declared size; assignment writes each element where it lies and never takes another array's run; and
-a structure states its declared default once, so an element's default is its type's. The execution
+dispatches on container kind, and an element's default is its type's, which for a structure is the
+one its declaration states (LRM 7.2.2), since a value's width became part of its type, so no
+prototype is needed to size one (finding F4). Three rules a later change meets: an array lies in
+whatever holds it at every size, and one too large for a frame is held through a box MIR states, so
+a frame's size never follows a declared size; assignment writes each element where it lies; and a
+structure states its declared default once, so an element's default is its type's. The execution
 backend lays the array out by the same three rules, from its type, and hands the prebuilt library
 that type beside the array's bytes
 ([a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md)). On both

@@ -75,7 +75,7 @@ class CodeGenFunction {
     lir::ValueId value;
   };
   struct PlaceRef {
-    llvm::Value* address;
+    llvm::Value* address = nullptr;
     lir::TypeId type;
   };
   using DestinationRef = std::variant<PendingOperand, PlaceRef>;
@@ -230,11 +230,15 @@ class CodeGenFunction {
   auto ResolveCallee(
       const lir::CallInstr& call, lir::TypeId result_type, const FnAbi& abi,
       std::span<llvm::Value*> args) -> diag::Result<llvm::FunctionCallee>;
-  // A {pointer, length} view over a scratch buffer of `element` this function
-  // fills with `values`, for an entry that takes a sequence of them.
-  auto SpanOver(std::span<llvm::Value* const> values, llvm::Type* element)
-      -> llvm::Value*;
-  auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
+  // A {pointer, length} view over `storage` of `element`, which this fills
+  // with `values`, for an entry that takes a sequence of them.
+  auto SpanOver(
+      std::span<llvm::Value* const> values, llvm::Type* element,
+      llvm::Value* storage) -> llvm::Value*;
+  // The {pointer, length} view over `count` values lying at `storage`.
+  auto ViewOver(llvm::Value* storage, std::uint64_t count) -> llvm::Value*;
+  auto LowerArray(
+      const lir::ArrayInstr& array, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
   auto LowerTuple(
       const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
@@ -256,8 +260,8 @@ class CodeGenFunction {
   auto LowerUse(const lir::UseInstr& use, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
   // Bits written into the integral value at a place, where it lies: the
-  // insertion as instructions where the value, every part and the bits each
-  // lie in place, and a call on the library's insertion otherwise.
+  // insertion as instructions where the value, every part and the bits are
+  // each stated on planes, and a call on the library's insertion otherwise.
   auto LowerBitsStore(const lir::BitsStoreInstr& store)
       -> diag::Result<llvm::Value*>;
   // Bits written into the integral value a write in progress designates, by

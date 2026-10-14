@@ -75,8 +75,8 @@ template <std::ranges::sized_range Ranges>
     const mir::IntegralConstant& value) -> mir::Expr;
 
 // A value of `type` whose bits are `value`, added to `block`: that constant,
-// or, where the type owns its words and the value is one scalar above a few
-// bits, the extension of the constant those bits are.
+// or, where the type is too large for a frame and the value is one scalar
+// above a few bits, the extension of the constant those bits are.
 [[nodiscard]] auto BuildIntegralLiteral(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     const mir::IntegralConstant& value) -> mir::ExprId;

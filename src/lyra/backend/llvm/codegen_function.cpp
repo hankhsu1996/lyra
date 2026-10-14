@@ -25,11 +25,9 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/place_query.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
-#include "lyra/value/integral.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -77,13 +75,20 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
 
   // A place local is frame storage: its slot is allocated once, in the entry
   // block, so every path that reaches it names the same address. A slot of an
-  // owned type holds the value itself, as a C++ local of class type does.
+  // owned type holds the value itself, as a C++ local of class type does. The
+  // return place of an answer lying in storage is the storage the caller gave,
+  // as clang's return value is the address an indirect result arrives in.
   builder_.SetInsertPoint(entry);
   frame_storage_point_ =
       builder_.CreateAlloca(builder_.getInt8Ty(), nullptr, "frame.storage");
   for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
     if (!local.NamesStorage()) {
+      continue;
+    }
+    if (id == fn_->return_place &&
+        module_->Types().LiesInStorage(fn_->result_type)) {
+      values_.emplace(id, value_->getArg(value_->arg_size() - 1));
       continue;
     }
     llvm::Value* owned = StorageFor(local.type);
@@ -139,7 +144,8 @@ auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
 }
 
 auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
-  if (!module_->Types().LiesInStorage(type)) {
+  if (!module_->Types().LiesInStorage(type) &&
+      !module_->Types().IsReadAsView(type)) {
     return nullptr;
   }
   return LaidOutStorage(module_->Types().LayoutOf(type));
@@ -199,8 +205,11 @@ void CodeGenFunction::StoreInto(
           [&](const PendingOperand& pending) {
             values_.emplace(pending.value, value);
           },
+          // What lies in storage of its own, and a sequence of machine values,
+          // was built where the place is.
           [&](const PlaceRef& place) {
-            if (!module_->Types().LiesInStorage(place.type)) {
+            if (!module_->Types().LiesInStorage(place.type) &&
+                !module_->Types().IsReadAsView(place.type)) {
               at.CreateStore(value, place.address);
             }
           }},
@@ -434,33 +443,26 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
     -> diag::Result<void> {
   return std::visit(
       Overloaded{
-          [&](const lir::ReturnTerm& ret) -> diag::Result<void> {
+          [&](const lir::ReturnTerm&) -> diag::Result<void> {
             if (IsCoroutine()) {
               // A coroutine completes through its final suspension; its owner
               // reads completion from the handle, never from a returned value.
               builder_.CreateBr(coro_final_);
               return {};
             }
-            if (!ret.value.has_value()) {
+            if (!fn_->return_place.has_value()) {
               builder_.CreateRetVoid();
               return {};
             }
-            auto value = LowerOperand(*ret.value);
-            if (!value) {
-              return std::unexpected(std::move(value.error()));
-            }
-            // An answer lying in storage is built in the storage the caller
+            // An answer lying in storage is already in the storage the caller
             // gave, which the body answers with as an entry does.
+            llvm::Value* answer = values_.at(*fn_->return_place);
             if (module_->Types().LiesInStorage(fn_->result_type)) {
-              llvm::Value* out = value_->getArg(value_->arg_size() - 1);
-              auto relocated = RelocateValue(fn_->result_type, *value, out);
-              if (!relocated) {
-                return relocated;
-              }
-              builder_.CreateRet(out);
+              builder_.CreateRet(answer);
               return {};
             }
-            builder_.CreateRet(*value);
+            builder_.CreateRet(builder_.CreateLoad(
+                module_->Types().Map(fn_->result_type), answer));
             return {};
           },
           [&](const lir::BranchTerm& br) -> diag::Result<void> {

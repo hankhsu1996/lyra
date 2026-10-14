@@ -89,34 +89,13 @@ auto FixedArrayType::Layout() const -> FixedArrayLayout {
   return LayoutOf(element_->Type(), count_);
 }
 
-auto FixedArrayType::LiesInPlace() const -> bool {
-  return Layout().in_place;
-}
-
-auto FixedArrayType::RunOf(const void* array) const -> const void* {
-  return LiesInPlace() ? array : *static_cast<const void* const*>(array);
-}
-
-auto FixedArrayType::RunOf(void* array) const -> void* {
-  return LiesInPlace() ? array : *static_cast<void**>(array);
-}
-
-auto FixedArrayType::ObtainRun() const -> void* {
-  return ::operator new(
-      Layout().stride * count_, std::align_val_t{element_->Type().Align()});
-}
-
-void FixedArrayType::GiveBackRun(void* run) const noexcept {
-  ::operator delete(run, std::align_val_t{element_->Type().Align()});
-}
-
 auto FixedArrayType::ElementAt(const void* array, std::size_t position) const
     -> const void* {
   if (position >= count_) {
     throw InternalError(
         "FixedArrayType::ElementAt: the position is past the last");
   }
-  return Offset(RunOf(array), position * Layout().stride);
+  return Offset(array, position * Layout().stride);
 }
 
 auto FixedArrayType::ElementAt(void* array, std::size_t position) const
@@ -125,7 +104,7 @@ auto FixedArrayType::ElementAt(void* array, std::size_t position) const
     throw InternalError(
         "FixedArrayType::ElementAt: the position is past the last");
   }
-  return Offset(RunOf(array), position * Layout().stride);
+  return Offset(array, position * Layout().stride);
 }
 
 auto FixedArrayType::ElementRef(
@@ -180,9 +159,7 @@ auto FixedArrayType::PartsClassName() -> const char* {
 }
 
 FixedArrayType::Building::Building(const FixedArrayType& type, void* out)
-    : type_(&type),
-      out_(out),
-      run_(type.LiesInPlace() ? out : type.ObtainRun()) {
+    : type_(&type), out_(out) {
 }
 
 FixedArrayType::Building::~Building() {
@@ -191,15 +168,12 @@ FixedArrayType::Building::~Building() {
   }
   for (std::size_t i = 0; i < built_; ++i) {
     type_->ElementType().Type().Destroy(
-        Offset(run_, i * type_->Layout().stride));
-  }
-  if (!type_->LiesInPlace()) {
-    type_->GiveBackRun(run_);
+        Offset(out_, i * type_->Layout().stride));
   }
 }
 
 auto FixedArrayType::Building::Next() -> void* {
-  return Offset(run_, built_ * type_->Layout().stride);
+  return Offset(out_, built_ * type_->Layout().stride);
 }
 
 void FixedArrayType::Building::Advance() {
@@ -207,9 +181,6 @@ void FixedArrayType::Building::Advance() {
 }
 
 void FixedArrayType::Building::Finish() {
-  if (!type_->LiesInPlace()) {
-    *static_cast<void**>(out_) = run_;
-  }
   finished_ = true;
 }
 
@@ -220,12 +191,6 @@ void FixedArrayType::Copy(const void* value, void* out) const {
 }
 
 void FixedArrayType::Move(void* value, void* out) const noexcept {
-  if (!LiesInPlace()) {
-    void** held = static_cast<void**>(value);
-    *static_cast<void**>(out) = *held;
-    *held = nullptr;
-    return;
-  }
   for (std::size_t i = 0; i < count_; ++i) {
     element_->Type().Move(
         Offset(value, i * Layout().stride), Offset(out, i * Layout().stride));
@@ -233,23 +198,12 @@ void FixedArrayType::Move(void* value, void* out) const noexcept {
 }
 
 void FixedArrayType::Destroy(void* value) const noexcept {
-  void* run = RunOf(value);
-  if (run == nullptr) {
-    return;
-  }
   for (std::size_t i = 0; i < count_; ++i) {
-    element_->Type().Destroy(Offset(run, i * Layout().stride));
-  }
-  if (!LiesInPlace()) {
-    GiveBackRun(run);
+    element_->Type().Destroy(Offset(value, i * Layout().stride));
   }
 }
 
 void FixedArrayType::Assign(void* storage, const void* value) const {
-  if (RunOf(storage) == nullptr) {
-    Copy(value, storage);
-    return;
-  }
   for (std::size_t i = 0; i < count_; ++i) {
     element_->Type().Assign(ElementAt(storage, i), ElementAt(value, i));
   }

@@ -5,10 +5,10 @@
 #include <cstring>
 
 #include "lyra/runtime/tail.hpp"
+#include "lyra/runtime/word_recycler.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/wide.hpp"
-#include "lyra/value/word_recycler.hpp"
 
 namespace lyra::runtime {
 
@@ -28,8 +28,7 @@ class WordsStorage : public TailValue<WordsStorage<kDomain>> {
       : TailValue<WordsStorage>(
             IsInline(ValueLayoutFor(width))
                 ? nullptr
-                : value::AllocateWords(
-                      BytesFor(width) / sizeof(std::uint64_t))),
+                : AllocateWords(BytesFor(width) / sizeof(std::uint64_t))),
         width_(width) {
     std::memset(this->Bytes(), 0, ByteSize());
     value::FillDefault(value::WideMutableViewAt(this->Bytes(), width, kDomain));
@@ -40,7 +39,7 @@ class WordsStorage : public TailValue<WordsStorage<kDomain>> {
   auto operator=(WordsStorage&&) -> WordsStorage& = delete;
   ~WordsStorage() {
     if (this->IsSpilled()) {
-      value::DeallocateWords(
+      DeallocateWords(
           static_cast<std::uint64_t*>(this->Bytes()),
           ByteSize() / sizeof(std::uint64_t));
     }
@@ -71,15 +70,16 @@ class WordsStorage : public TailValue<WordsStorage<kDomain>> {
     return {.bytes = this->Bytes(), .width = width_};
   }
 
-  // Whether the value at `bytes` is the one held, taking it, a copy of the
-  // value held, and a copy of the one at `bytes`.
+  // Whether the value at `bytes` is the one held, taking it, the value held as
+  // the owned type, which this holder keeps only as words and so copies, and a
+  // copy of the one at `bytes`.
   [[nodiscard]] auto IsBitIdenticalTo(const void* bytes) const -> bool {
     return std::memcmp(this->Bytes(), bytes, ByteSize()) == 0;
   }
   void AssignBytes(const void* bytes) {
     std::memmove(this->Bytes(), bytes, ByteSize());
   }
-  [[nodiscard]] auto Copy() const -> Owned {
+  [[nodiscard]] auto AsOwned() const -> Owned {
     return ToOwned(this->Bytes());
   }
   [[nodiscard]] auto ToOwned(const void* bytes) const -> Owned {

@@ -401,8 +401,11 @@ auto CodeGenModule::BuildCallArg(
 auto CodeGenModule::EndOwnedStorage(
     llvm::IRBuilderBase& builder, lir::TypeId owner, llvm::Value* storage)
     -> diag::Result<void> {
+  // A box holds a value its type lays out; an object of a class a unique
+  // pointer owns is ended by its class, which is not carried out here.
   const lir::TypeId pointee = *unit_->types.Get(owner).Pointee();
-  if (!types_.LiesInStorage(pointee)) {
+  const lir::Type& pointed = unit_->types.Get(pointee);
+  if (pointed.Is<lir::ObjectType>() || pointed.Is<lir::CrossUnitClassType>()) {
     return diag::Fail(
         diag::DiagCode::kUnsupportedExpressionForm,
         "llvm codegen: ending an object a unique pointer owns is not yet "
