@@ -646,8 +646,7 @@ cc_test(
 )
 
 # The same two compilations, held to stating the same thing where the written
-# text cannot show a difference: the form two lowerings of one body are held
-# equal in when they are taken into one.
+# text cannot show a difference: the form each lowers every unit to.
 cc_test(
     name = "repeatable_lowering_test",
     srcs = [

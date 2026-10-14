@@ -83,9 +83,14 @@ of which the front end records as it evaluates the scheme.
 
 **D5. Within one instance, a loop's blocks of one name are still one body.** Blocks of one class at
 different indices may build different nested alternatives, a chain's first block and its others for
-instance, and that body holds every alternative its blocks built -- which the name holds, by D1. A
-loop of one body lists no values of its index: it builds that body wherever it counts a block out,
-and two objects of one class may count differently.
+instance, and that body holds every alternative its blocks built -- which the name holds, by D1. It
+is lowered once, as D3 lowers an instance's body: its own declarations and code from one of its
+blocks, each nested alternative and loop body from one block that built it, and which blocks were
+counted out and selected from all of them. Nothing is lowered twice and nothing is compared. Where
+the compile checks itself, every part is lowered from the last block that built it rather than the
+first, so the comparison of the two compiles reads a second block of every part. A loop of one body
+lists no values of its index: it builds that body wherever it counts a block out, and two objects of
+one class may count differently.
 
 ## Why the direction changed
 
@@ -167,9 +172,11 @@ almost all of them small primitives.
 - [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
   D1 and D2 stand for a conditional written inside a loop, whose blocks are collected within one
   instance; what a unit holds of a conditional outside a loop is now the alternative its name says.
+  Its D2's two blocks being one body where they compare equal, each pair merged, is replaced: the
+  body is lowered once, each part from one block that built it (D5 here).
 - [one-body-built-at-every-index](one-body-built-at-every-index.md) D2 and
   [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5: blocks
-  of one name are taken into one body within an instance, never across instances (D5 here); D4 of
-  the nested-definition record, which listed what selects an alternative among what decides nothing
-  for a name, is narrowed: it decides nothing for the block's own name, and what it selected is part
-  of the name of the instance holding the block.
+  of one name are one body within an instance, never across instances, lowered once rather than each
+  lowered and compared (D5 here); D4 of the nested-definition record, which listed what selects an
+  alternative among what decides nothing for a name, is narrowed: it decides nothing for the block's
+  own name, and what it selected is part of the name of the instance holding the block.

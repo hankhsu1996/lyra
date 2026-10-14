@@ -1,9 +1,5 @@
 # Compiling A Design
 
-One part of this is not realized: within one instance, an ordinary build still lowers every block of
-a loop and takes the blocks of one name into one body by comparing what they lowered to. The
-contract binds every layer regardless.
-
 ## Purpose
 
 A design is compiled to as few artifacts as the source and its values require, each named before it
@@ -70,14 +66,17 @@ a type it reads as a fact; the lowering reads an instance's tree only through th
 written, the types declarations state, and those recorded constants and types, and works out
 everything else itself. So two instances of one name lower alike by construction, and the key is the
 whole of what the lowering could see. A read the key missed is the compiler's defect, found by the
-tests that lower every instance and compare; a build never compares.
+tests that lower every instance, and every part of a body from another block that built it, and
+compare; a build never compares.
 
 **Which generate blocks an instance built is part of its name.** An alternative a conditional did
 not select is not elaborated and need not be valid for the instance's values (LRM 27.5), so it
 cannot be compiled from an instance that did not select it. What was built is therefore part of what
 an instance is, as the branch an `if constexpr` keeps is part of a C++ instantiation. The name holds
 which blocks were built and not the value that selected them, so two values selecting one
-alternative are one body. How many blocks a loop counts out is not part of it.
+alternative are one body. How many blocks a loop counts out is not part of it. Within one instance
+the blocks of one name are one body, lowered once: each of its parts from one block that built it,
+and what the blocks counted out and selected gathered from all of them.
 
 **The constructor runs the source's generate.** Its conditions and loops are constructor code, run
 against the values the object was handed, as a C++ constructor runs its own; the name guarantees
@@ -89,17 +88,17 @@ which renames nothing.
 
 ## How the scheme lines up
 
-| This scheme                                          | rustc                                                                                                 | C++                                                   | Bazel / ccache                                    |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------- |
-| Name = definition + values of the parameters it uses | `Instance { def, args }`                                                                              | template instantiation by arguments                   | action key = digest of its inputs                 |
-| Uses recorded as the lowering reads them             | a query's reads are its dependency edges                                                              | --                                                    | discovered inputs (`.d` files), ccache's manifest |
-| A value read at run time, not in the name            | the proposed successor to polymorphization: monomorphic data, polymorphic code with a hidden argument | a constructor argument                                | --                                                |
-| Signature / body                                     | `type_of` and `fn_sig` / `optimized_mir`, queried apart so a body edit reaches no caller              | header / translation unit; module interface           | an action's declared outputs                      |
-| Generate blocks built, in the name                   | the arguments an `Instance` is monomorphized with                                                     | the branch an `if constexpr` keeps                    | --                                                |
-| Values handed in at construction                     | --                                                                                                    | the arguments `main` builds objects with              | --                                                |
-| Output content stops a rebuild                       | red/green: an equal result fingerprint is green                                                       | a byte-identical module interface (update-if-changed) | output digest is the next action's input          |
-| Equal code folded without renaming                   | LLVM MergeFunctions                                                                                   | linker identical-code folding                         | --                                                |
-| Every instance lowered and compared, in tests only   | `-Zincremental-verify-ich`                                                                            | --                                                    | --                                                |
+| This scheme                                                                                 | rustc                                                                                                 | C++                                                   | Bazel / ccache                                    |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------- |
+| Name = definition + values of the parameters it uses                                        | `Instance { def, args }`                                                                              | template instantiation by arguments                   | action key = digest of its inputs                 |
+| Uses recorded as the lowering reads them                                                    | a query's reads are its dependency edges                                                              | --                                                    | discovered inputs (`.d` files), ccache's manifest |
+| A value read at run time, not in the name                                                   | the proposed successor to polymorphization: monomorphic data, polymorphic code with a hidden argument | a constructor argument                                | --                                                |
+| Signature / body                                                                            | `type_of` and `fn_sig` / `optimized_mir`, queried apart so a body edit reaches no caller              | header / translation unit; module interface           | an action's declared outputs                      |
+| Generate blocks built, in the name                                                          | the arguments an `Instance` is monomorphized with                                                     | the branch an `if constexpr` keeps                    | --                                                |
+| Values handed in at construction                                                            | --                                                                                                    | the arguments `main` builds objects with              | --                                                |
+| Output content stops a rebuild                                                              | red/green: an equal result fingerprint is green                                                       | a byte-identical module interface (update-if-changed) | output digest is the next action's input          |
+| Equal code folded without renaming                                                          | LLVM MergeFunctions                                                                                   | linker identical-code folding                         | --                                                |
+| Every instance, and every body part from another block, lowered and compared, in tests only | `-Zincremental-verify-ich`                                                                            | --                                                    | --                                                |
 
 Where the conditions differ: a template argument is written at type level, while a parameter's value
 follows the instance (a loop hands each child its index) -- so a name holds the values of the

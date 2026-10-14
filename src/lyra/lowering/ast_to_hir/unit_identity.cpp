@@ -750,11 +750,20 @@ auto SpecializationPolicy::NameOf(const slang::ast::InstanceSymbol& inst) const
   return name;
 }
 
+auto SpecializationPolicy::ChecksItself() const -> bool {
+  switch (bodies_read_) {
+    case support::BodiesRead::kElaborated:
+      return false;
+    case support::BodiesRead::kEveryInstance:
+      return true;
+  }
+  return false;
+}
+
 auto SpecializationPolicy::HasBodyOfItsOwn(
     const slang::ast::InstanceSymbol& inst) const -> bool {
   const slang::ast::InstanceBodySymbol* shared = inst.getCanonicalBody();
-  if (bodies_read_ == support::BodiesRead::kEveryInstance ||
-      shared == nullptr || read_anyway_.contains(&inst)) {
+  if (ChecksItself() || shared == nullptr || read_anyway_.contains(&inst)) {
     return true;
   }
   // What is written elsewhere reaches one instance and not another (LRM

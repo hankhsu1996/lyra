@@ -279,13 +279,13 @@ today.
 
 **A read set arrives in the order the text makes its reads.** What a body waits on is a set (LRM
 9.4.2.1), but turning each read into this compiler's own form allocates as it goes, and two
-lowerings of one body are taken into one only where they agree position for position. The front end
-kept reads in a hash table keyed on each symbol's address, so two copies of one text enumerated them
-differently and compared unequal: a loop whose blocks each read three of their own variables in an
-`always_comb` was 8 scope classes per iteration (68 at 8 blocks, 260 at 32, and 12 at both once
-fixed), and a module handed different values of a parameter lost its sharing. The fork keeps reads
-the way it already keeps writes, in the order each symbol is first read, and nothing here sorts
-them.
+lowerings of one body are held to agree position for position wherever the compile checks itself.
+The front end kept reads in a hash table keyed on each symbol's address, so two copies of one text
+enumerated them differently and compared unequal: a loop whose blocks each read three of their own
+variables in an `always_comb` was 8 scope classes per iteration (68 at 8 blocks, 260 at 32, and 12
+at both once fixed), and a module handed different values of a parameter lost its sharing. The fork
+keeps reads the way it already keeps writes, in the order each symbol is first read, and nothing
+here sorts them.
 
 **A read keeps the names the text reached it by.** The analysis states the symbol a read landed on
 in the instance analyzed, and that is not where the same text lands in another instance: a name

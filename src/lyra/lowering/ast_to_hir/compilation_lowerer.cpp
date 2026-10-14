@@ -455,9 +455,9 @@ struct DeclaredDesign::Units {
   // here. Every body of a design element's unit declares what the unit
   // publishes, from the instance it is named for: the unit's name holds
   // everything the declarations depend on, the blocks its instances built
-  // included, so every body states it alike, the design keeps the first, and
-  // one stating anything else is this compiler's defect. Whether any failed is
-  // the sink's answer.
+  // included, so every body states it alike and the design keeps the first.
+  // One stating anything else is this compiler's defect, which the compile
+  // looks for where it checks itself. Whether any failed is the sink's answer.
   void DeclareEveryUnit(
       const LowerCompilationFacts& front_end_facts, const Collected& collected,
       const BodiesCheckedAgainst& checked_against, diag::DiagnosticSink& sink) {
@@ -503,7 +503,9 @@ struct DeclaredDesign::Units {
       const hir::UnitSignature* kept = signatures.Find(signature.unit_name);
       if (kept == nullptr) {
         signatures.Publish(std::move(signature));
-      } else if (*kept != signature) {
+        continue;
+      }
+      if (specialization.ChecksItself() && *kept != signature) {
         throw InternalError(
             std::format(
                 "DeclaredDesign: two bodies of unit '{}' publish different "

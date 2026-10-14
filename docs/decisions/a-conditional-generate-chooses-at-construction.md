@@ -5,7 +5,8 @@ reversed by
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) D3;
 what a unit holds of a conditional is revised 2026-10-14 by
 [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
-the alternatives its own instances built, which are part of its name
+the alternatives its own instances built, which are part of its name; and the blocks of one loop are
+one body lowered once rather than compared and merged (its D5)
 
 ## Context
 

@@ -1,8 +1,9 @@
 #include <algorithm>
-#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -20,28 +21,36 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
-#include "lyra/lowering/ast_to_hir/one_body.hpp"
 #include "lyra/lowering/ast_to_hir/selection_tree.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/walk_frame.hpp"
+#include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Lowers one generate block -- a loop iteration, an `if` / `case` arm, or a
-// bare block -- into a fresh concrete structural scope. The source label is
-// settled here, on the scope itself; the hierarchy index is not, because a
-// loop's blocks differ in it by definition and one scope serves every block
-// its loop builds of it.
-auto LowerGenerateScope(
-    UnitLowerer& unit_lowerer, const slang::ast::GenerateBlockSymbol& block,
-    std::string_view source_name, WalkFrame frame)
+// The body the block instances `built` are, in the order the lowering reads
+// them, lowered from the first. The source label is settled here, on the scope
+// itself; the hierarchy index is not, because a loop's blocks differ in it by
+// definition and one scope serves every block its loop builds of it. A name the
+// body reaches outward resolves through the scopes holding the block it is
+// lowered from, which need not be the elaboration the walk holding the
+// construct is lowered from.
+auto LowerGenerateBody(
+    UnitLowerer& unit_lowerer, std::vector<const slang::ast::Scope*> built,
+    std::string_view source_name, const WalkFrame& frame)
     -> diag::Result<hir::StructuralScope> {
-  StructuralScopeLowerer child(unit_lowerer, block);
-  auto scope_or = child.Run(frame);
+  StructuralScopeLowerer body(unit_lowerer, std::move(built));
+  const slang::ast::Scope& holder =
+      *body.LoweredFrom().asSymbol().getParentScope();
+  auto scope_or = body.Run(frame.WithDeclaringScope(
+      unit_lowerer.DeclaringScopeChain(holder), &holder));
   if (!scope_or) return std::unexpected(std::move(scope_or.error()));
-  scope_or->source_name = NameInAPath(source_name, block.getCompilation());
+  scope_or->source_name =
+      NameInAPath(source_name, body.LoweredFrom().getCompilation());
   return scope_or;
 }
 
@@ -137,55 +146,101 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
   auto loop = BuildTheLoop(*this, array, frame);
   if (!loop) return std::unexpected(std::move(loop.error()));
 
-  // Each block is lowered and taken into the body of its name; the index
-  // reaches it as a value its construction supplies.
-  LoopBodies bodies;
-  for (const auto* entry : array.entries) {
-    auto scope_or = LowerGenerateScope(*owner_, *entry, array.name, frame);
-    if (!scope_or) return std::unexpected(std::move(scope_or.error()));
-    const std::array index{LoopIndexOf(*entry)};
-    if (!bodies.Take(
-            *std::move(scope_or),
-            owner_->Specialization().BodyArgumentsOf(*entry), index)) {
-      throw InternalError(
-          std::format(
-              "StructuralScopeLowerer: the block of loop generate '{}' at {} "
-              "lowers to something the blocks of its name before it do not "
-              "-- please report this as a bug",
-              array.getExternalName(), index[0]));
+  // Every block any elaboration of this scope counted out, in the order the
+  // lowering reads them, under the body it is: blocks of one class and one body
+  // of it are one body wherever they stand, and the index reaches each as a
+  // value its construction supplies (LRM 27.4). Which body stands at an index
+  // is what the first elaboration read to count a block out there says.
+  const SpecializationPolicy& policy = owner_->Specialization();
+  using BodyName =
+      std::pair<support::GenerateBlockStep, std::optional<std::uint64_t>>;
+  std::map<BodyName, std::vector<const slang::ast::Scope*>> blocks_of;
+  std::map<std::int64_t, BodyName> standing_at;
+  for (const slang::ast::Scope* elaboration : elaborations_) {
+    const auto& counted = CounterpartIn(*elaboration, array);
+    for (const slang::ast::Scope* entry : owner_->InReadingOrder(
+             {counted.entries.begin(), counted.entries.end()})) {
+      const auto& block =
+          entry->asSymbol().as<slang::ast::GenerateBlockSymbol>();
+      BodyName name{policy.BlockStepOf(block), policy.BodyArgumentsOf(block)};
+      standing_at.try_emplace(LoopIndexOf(block), name);
+      blocks_of[std::move(name)].push_back(entry);
     }
   }
-  return std::move(bodies).Build(*std::move(loop));
+
+  // A body is built where it stands, in the order of the first index it stands
+  // at. A loop of one body has nothing to look up and lists no values: it
+  // builds that body at every index it counts out, however many that is.
+  hir::Generate gen{};
+  std::map<BodyName, std::size_t> position_of;
+  for (const auto& [index, name] : standing_at) {
+    const auto [at, first] = position_of.try_emplace(name, loop->bodies.size());
+    if (first) {
+      auto scope_or =
+          LowerGenerateBody(*owner_, blocks_of.at(name), array.name, frame);
+      if (!scope_or) return std::unexpected(std::move(scope_or.error()));
+      loop->bodies.push_back(
+          hir::BodyBuiltAt{
+              .body = gen.blocks.Add(
+                  hir::GenerateBlock{.scope = *std::move(scope_or)}),
+              .body_arguments = name.second,
+              .indices = {}});
+    }
+    loop->bodies[at->second].indices.push_back(index);
+  }
+  if (loop->bodies.size() == 1) loop->bodies.front().indices.clear();
+  gen.counting = *std::move(loop);
+  return gen;
 }
 
 auto StructuralScopeLowerer::BuildGenerateFromBlock(
     const slang::ast::GenerateBlockSymbol& block, WalkFrame frame)
     -> diag::Result<hir::Generate> {
-  // A block no conditional produced stands on its own, and there is exactly
-  // one of it.
+  // A block no conditional produced stands on its own, and every elaboration
+  // built it.
   if (!IsAlternative(block)) {
+    std::vector<const slang::ast::Scope*> built;
+    for (const slang::ast::Scope* elaboration : elaborations_) {
+      built.push_back(&CounterpartIn(*elaboration, block));
+    }
     hir::Generate gen{};
-    auto scope_or = LowerGenerateScope(*owner_, block, block.name, frame);
+    auto scope_or =
+        LowerGenerateBody(*owner_, std::move(built), block.name, frame);
     if (!scope_or) return std::unexpected(std::move(scope_or.error()));
     gen.blocks.Add(hir::GenerateBlock{.scope = *std::move(scope_or)});
     return gen;
   }
 
   // What selects an alternative is the source's and is stated wherever the
-  // construct stands, so every alternative is lowered here whether or not this
-  // elaboration selected it (LRM 27.5); a body is lowered only for the one
-  // that was, because an unselected block is not part of the model and its own
-  // names need not resolve.
+  // construct stands, so every alternative is placed here whether or not any
+  // elaboration selected it (LRM 27.5). A body is lowered for each alternative
+  // some elaboration of this scope selected, from those that did; one none
+  // selected is not part of the model, and its own names need not resolve.
+  std::vector<std::vector<const slang::ast::GenerateBlockSymbol*>>
+      alternatives_in;
+  for (const slang::ast::Scope* elaboration : elaborations_) {
+    alternatives_in.push_back(
+        AlternativesOfConstruct(CounterpartIn(*elaboration, block)));
+  }
   hir::Generate gen{};
   std::vector<std::optional<hir::StructuralScopeId>> alternatives;
   SelectionTree selection;
-  for (const auto* arm : AlternativesOfConstruct(block)) {
+  for (const auto* arm : alternatives_in.front()) {
     const auto position = static_cast<std::uint32_t>(alternatives.size());
     auto placed = selection.Place(*this, frame, arm->selectionPath, position);
     if (!placed) return std::unexpected(std::move(placed.error()));
+    std::vector<const slang::ast::Scope*> built;
+    for (const auto& elaboration : alternatives_in) {
+      if (!elaboration[position]->isUninstantiated) {
+        built.push_back(elaboration[position]);
+      }
+    }
     std::optional<hir::StructuralScopeId> body;
-    if (!arm->isUninstantiated) {
-      auto scope_or = LowerGenerateScope(*owner_, *arm, arm->name, frame);
+    if (!built.empty()) {
+      // The front end spells the name LRM 27.6 gives an unnamed alternative
+      // only on a block it built.
+      const std::string_view name = built.front()->asSymbol().name;
+      auto scope_or = LowerGenerateBody(*owner_, std::move(built), name, frame);
       if (!scope_or) return std::unexpected(std::move(scope_or.error()));
       body = gen.blocks.Add(hir::GenerateBlock{.scope = *std::move(scope_or)});
     }

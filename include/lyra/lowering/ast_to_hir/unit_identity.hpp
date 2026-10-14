@@ -235,6 +235,10 @@ class SpecializationPolicy {
       : bodies_read_(bodies_read) {
   }
 
+  // Whether this compile reads every instance's body and holds each to the
+  // body it is named for, which is how a compile is checked against itself.
+  [[nodiscard]] auto ChecksItself() const -> bool;
+
   // Whether `inst` is read through a body of its own: one the front end
   // elaborated for it, or one this compile decided to read.
   [[nodiscard]] auto HasBodyOfItsOwn(

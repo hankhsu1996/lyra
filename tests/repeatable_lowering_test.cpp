@@ -2,18 +2,18 @@
 // repeating does not show it: nothing below the first semantic form reads where
 // that form put each of its parts, so two lowerings that differ only there
 // write the same text. What does read it is holding two lowerings of one body
-// equal position for position, which a loop's blocks of one name and the check
-// of the compile against itself both do -- so a form
-// that moves on its own refuses a correct design only where a body happens to
-// be lowered more than once, and nothing a design simulates or a build writes
-// reports it elsewhere.
+// equal position for position, which the check of the compile against itself
+// does -- so a form that moves on its own refuses a correct design there, and
+// nothing a design simulates or a build writes reports it elsewhere.
 //
 // What is compared is each unit's own form, by that equality, in the order the
 // design lists its units.
 //
 // The two lowerings also differ in which instances they read. The first reads
 // the bodies the front end elaborated and names every other instance where it
-// is written, as a build does. The second reads every instance's body and
+// is written, and lowers each part of a generate body from the first block
+// instance that built it, as a build does. The second reads every instance's
+// body, lowers each part from the last block instance that built it, and
 // holds each to the unit it shares, so a design where an instance left unread
 // would have lowered apart from its unit stops there, and the two are then
 // held to having found the same units stating the same things.

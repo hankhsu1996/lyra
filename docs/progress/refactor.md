@@ -3133,13 +3133,6 @@ source, or not yet tried.
       unit is a class of its own per value where a realization would do. Target: the front end
       records, with each evaluation, the declaration it was made for.
 
-- [ ] R235 -- Within one instance, an ordinary build lowers every block of a loop and takes the
-      blocks of one name into one body by holding what they lowered to equal and joining the nested
-      alternatives each built, so lowering a loop costs every block it counts out and an ordinary
-      build compares. Which blocks of one name built which nested alternatives is already in the
-      name, so a block per distinct set of alternatives is all the body needs. Target: the body is
-      lowered from one block per such set, and nothing in an ordinary build is held equal.
-
 ## Out of Scope
 
 - Per-feature workstreams. Those live in the dedicated feature files (`operators.md`,

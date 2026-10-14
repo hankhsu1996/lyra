@@ -46,7 +46,6 @@
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
-#include "lyra/lowering/ast_to_hir/one_body.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -221,10 +220,8 @@ auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
       "lower to HIR", [&] { return unit_.name; });
   lowering_ = &application;
   WalkFrame frame;
-  StructuralScopeLowerer root(*this, application);
-  auto scope = root.Run(frame);
-  if (!scope) return scope;
-  return WithoutIndicesOfLoopsOfOneBody(*std::move(scope));
+  StructuralScopeLowerer root(*this, {&application});
+  return root.Run(frame);
 }
 
 auto UnitLowerer::ApplicationDeclaring(const slang::ast::ParameterSymbol& param)
@@ -287,6 +284,10 @@ void UnitLowerer::DeclareStructuralIdentities(
     if (!Owns(member)) continue;
     DeclareMemberIdentities(member, decls, published, frame);
   }
+  // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
+  // name one whose body lowers later, lives in another process entirely, or
+  // stands in a block instance its body was not lowered from.
+  DeclareProceduralScopes(scope, scope, *this, decls.procedural_scopes);
 }
 
 void UnitLowerer::DeclareBlockIdentities(
@@ -781,6 +782,12 @@ auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
   }
   std::ranges::reverse(chain);
   return chain;
+}
+
+auto UnitLowerer::InReadingOrder(std::vector<const slang::ast::Scope*> built)
+    const -> std::vector<const slang::ast::Scope*> {
+  if (Specialization().ChecksItself()) std::ranges::reverse(built);
+  return built;
 }
 
 auto UnitLowerer::HeldByAnotherDesignElement(

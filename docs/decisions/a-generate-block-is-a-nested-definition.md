@@ -18,7 +18,7 @@ narrowed and D5 revised 2026-10-14 by
 [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
 what selects an alternative names no block, and is part of the name of the instance holding it
 through what it selected; blocks of one name are one body within an instance, never across
-instances.
+instances, lowered once from the blocks that built each part.
 
 ## Requirement
 
@@ -122,22 +122,22 @@ process keeps for the whole run, are what the class declares: a caller passes th
 reaches the other (LRM 13.4, 6.21, 23.6). This used to say "the code of a process, a continuous
 assignment or a subroutine", and read that way a static variable of a named block and an argument
 sized by the index each published a different class under one name. A place this reading misses is
-this compiler's defect, and is reported as one where the unit declares itself: block instances taken
-for one application that publish different classes.
+this compiler's defect, and is found where the compile checks itself, which publishes each class
+from another of its block instances.
 
 **D5. Block instances of one application whose code relies on their index are that class realized
 once per index value.** Which body a block is, is named before any body lowers, from the value of
 its index where the front end records that the block's code relied on it (fact 6), as its
 application is named from the index's value where what the block declares relied on it. Blocks of
-one name are one body: each is lowered and taken into it, which is how the body comes to hold every
-alternative and every loop body their constructions built, and blocks of one name that lower to
-anything else are this compiler's defect, reported as one. Nothing a lowered block holds is compared
-with another to find which body it is. Each body is a realizing class extending the one published
-class. A published subroutine is a virtual method the published class introduces and each realizing
-class overrides with its body, so a call reaches the body of the class the object is however many
-realize it, as a virtual call does in C++ and a call through a trait object does in Rust. No
-referrer sees how many realizations there are, so a body edit that changes the count changes no
-header.
+one name are one body, lowered once: each of its parts from one block that built it, which is how
+the body comes to hold every alternative and every loop body their constructions built. Blocks of
+one name that would lower to anything else are this compiler's defect, found where the compile
+checks itself. Nothing a lowered block holds is compared with another to find which body it is. Each
+body is a realizing class extending the one published class. A published subroutine is a virtual
+method the published class introduces and each realizing class overrides with its body, so a call
+reaches the body of the class the object is however many realize it, as a virtual call does in C++
+and a call through a trait object does in Rust. No referrer sees how many realizations there are, so
+a body edit that changes the count changes no header.
 
 This decision first found the realizations by lowering every block and comparing each with the
 bodies found before it, which cost the square of the number of distinct bodies and was most of the
@@ -226,6 +226,7 @@ every scope extends, so no header needs another unit's scope class and none is n
   referrer knows the published class and not which class realizes the object, so D5 here makes each
   published subroutine virtual. Its D4 named the anchor an enclosing instance; D6 widens it to an
   enclosing scope.
-- [one-body-built-at-every-index](one-body-built-at-every-index.md) D2: blocks are still lowered,
-  each into the body of its name, and are no longer compared to find which body they are (D5). A
-  hole in what the front end's record shows is reported as a defect rather than absorbed.
+- [one-body-built-at-every-index](one-body-built-at-every-index.md) D2: blocks of one name are one
+  body, lowered once with each part from one block that built it, and are no longer compared to find
+  which body they are (D5). A hole in what the front end's record shows is this compiler's defect,
+  found where the compile checks itself.

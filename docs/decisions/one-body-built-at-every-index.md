@@ -113,10 +113,11 @@ defines as a superset of this one's.
 compared.** The front end came to record which parameters each constant evaluation read, so whether
 a block's index is used -- in what the block declares and in its code -- is known from the front end
 alone ([a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5).
-Blocks of one name are each lowered and taken into one body, which holds what their constructions
-chose and counted; blocks of one name lowering to anything else are a defect, reported as one. What
-follows is the decision as it stood, and the requirement it names -- a correct program is never
-refused for want of sharing -- still holds, because what the front end's record misses is this
+Blocks of one name are one body, which holds what their constructions chose and counted, lowered
+once with each part taken from one block that built it
+([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
+D5). What follows is the decision as it stood, and the requirement it names -- a correct program is
+never refused for want of sharing -- still holds, because what the front end's record misses is this
 compiler's defect rather than a case the design leaves open. Comparing every block with the bodies
 found before it cost the square of the number of distinct bodies. A loop is now one form, the loop
 the source wrote with the body that stands at each value of its index, and blocks built on their own

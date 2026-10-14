@@ -1688,21 +1688,22 @@ auto UnitLowerer::PopulateClassBodiesReplicatedBy(
 }
 
 void UnitLowerer::RequireEveryClassBodyLowered() const {
-  if (pending_class_bodies_.empty()) return;
   std::string left;
   for (const auto& [scope, bodies] : pending_class_bodies_) {
     for (const PendingClassBody& body : bodies) {
+      if (unit_.classes.IsDefined(body.id)) continue;
       left += std::format(
           "{}'{}' in '{}'", left.empty() ? "" : ", ",
           SpecializationName(*body.cls, Specialization()),
           scope->asSymbol().name);
     }
   }
+  if (left.empty()) return;
   throw InternalError(
       std::format(
           "UnitLowerer::RequireEveryClassBodyLowered: every class this unit "
-          "holds is replicated by a structural scope of it, and every such "
-          "scope lowers the classes it replicates; left: {}",
+          "holds is replicated by a structural scope of it, and every scope "
+          "lowered lowers the classes it replicates; left: {}",
           left));
 }
 
@@ -1910,10 +1911,11 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   }
   decl.constructor = std::move(constructor);
 
-  // Every application of the unit builds the class at its path, each from its
-  // own copy of the text (LRM 8.25), and they agree on everything the class
-  // holds for the same reason their scopes agree: the lowering reads a value
-  // only through the unit's identity or as one the object is built with.
+  // Where the compile checks itself, every application of the unit builds the
+  // class at its path, each from its own copy of the text (LRM 8.25), and they
+  // agree on everything the class holds for the same reason their scopes
+  // agree: the lowering reads a value only through the unit's identity or as
+  // one the object is built with.
   if (!unit_.classes.IsDefined(pending.id)) {
     unit_.classes.Define(pending.id, std::move(*pending.decl));
   } else if (!(unit_.classes.Get(pending.id) == *pending.decl)) {

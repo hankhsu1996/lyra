@@ -4,7 +4,10 @@
 // conditional written inside another conditional (LRM 27.5), a case construct's
 // selector and labels, a loop's bounds, and a constant the block settles from
 // the index are all evaluated for the block they stand in, and every block
-// selects and counts by its own index.
+// selects and counts by its own index. What a nested construct builds is part
+// of the block it stands in, so it reaches that block's own declarations, a
+// class among them (LRM 23.9), even where no earlier block of the loop built
+// it.
 module Top;
   // Two levels of conditional under the loop, the inner one reading the index.
   int two_level [4] = '{-1, -1, -1, -1};
@@ -104,7 +107,35 @@ module Top;
     end
   end
 
+  // An alternative and an inner loop only later blocks build, each reading a
+  // variable of the block it stands in and calling a class that block declares.
+  int own [3] = '{-1, -1, -1};
+  int counted [3][2] = '{'{-1, -1}, '{-1, -1}, '{-1, -1}};
+  for (genvar a = 0; a < 3; a++) begin : keeper
+    class Scale;
+      static function int of(int v);
+        return v * 2;
+      endfunction
+    endclass
+    int held = 5 + a;
+    if (a == 2) begin : late
+      initial own[a] = Scale::of(held);
+    end else begin : early
+      initial own[a] = held;
+    end
+    for (genvar m = 0; m < a; m++) begin : more
+      initial counted[a][m] = Scale::of(held) + m;
+    end
+  end
+
   final begin
+    if (own[0] !== 5 || own[1] !== 6 || own[2] !== 14)
+      $fatal(1, "own was %0d %0d %0d, expected 5 6 14", own[0], own[1], own[2]);
+    foreach (counted[a, m]) begin
+      if (counted[a][m] !== (m < a ? (5 + a) * 2 + m : -1))
+        $fatal(1, "counted[%0d][%0d] was %0d", a, m, counted[a][m]);
+    end
+
     if (picked[0] !== 10) $fatal(1, "picked[0] was %0d, expected 10", picked[0]);
     if (picked[1] !== 20) $fatal(1, "picked[1] was %0d, expected 20", picked[1]);
     if (picked[2] !== 30) $fatal(1, "picked[2] was %0d, expected 30", picked[2]);

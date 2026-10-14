@@ -500,6 +500,8 @@ struct ScopeDeclarations {
   base::Registry<hir::Generate, hir::GenerateId> generates;
   base::Registry<hir::InstanceMemberDecl, hir::InstanceMemberId>
       instance_members;
+  base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>
+      procedural_scopes;
 };
 
 // The specializations of a generic class a namespace declares that a design
@@ -1188,6 +1190,16 @@ class UnitLowerer {
   [[nodiscard]] auto DeclaringScopeChain(const slang::ast::Scope& scope) const
       -> std::vector<ScopeFrameId>;
 
+  // `built`, scopes that each built one part of what is compiled alike, in
+  // the order the lowering reads them: the part is lowered from the first, and
+  // where they disagree on something only all of them together state, the
+  // first to state it decides. That is the order the source wrote them in,
+  // and the reverse where the compile checks itself, so that the lowering it
+  // is checked against reads a second scope of every part wherever one built
+  // it.
+  [[nodiscard]] auto InReadingOrder(std::vector<const slang::ast::Scope*> built)
+      const -> std::vector<const slang::ast::Scope*>;
+
   // Whether a design element other than this unit holds `cls`, so that an
   // object of it belongs to an instance of that element, which no count of
   // this unit's own scopes reaches.
@@ -1316,7 +1328,9 @@ class UnitLowerer {
   auto PopulateClassBody(PendingClassBody& pending) -> diag::Result<void>;
 
   // Every class a unit holds is replicated by one of its structural scopes, and
-  // every such scope lowers what it replicates, so nothing is left over.
+  // every scope lowered lowers what it replicates. A block instance a body was
+  // not lowered from replicates the same classes as the one it was, so a copy
+  // left over is of a class already lowered, and none other is.
   void RequireEveryClassBodyLowered() const;
 
   // Reads the signature of every class of another unit this one named, once
@@ -1668,8 +1682,10 @@ class UnitLowerer {
   void DeclareClassStatics(
       const slang::ast::ClassType& cls, const slang::ast::Scope& replicating);
 
-  // The class of the scope `published` records, in this unit's own types.
-  auto PublishScopeClass(const ScopePublicationRecord& published)
+  // The class `scopes` are objects of, in this unit's own types, the scopes in
+  // the order the lowering reads them: what it declares as the first records
+  // it, and every block any of them built.
+  auto PublishScopeClass(std::span<const slang::ast::Scope* const> scopes)
       -> diag::Result<hir::ScopeClassSignature>;
 
   // A published callable as this unit's own types state it.
@@ -1854,7 +1870,7 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
   }
 }
 
-// Mints the identity of every procedural scope the bodies of `slang_scope`
+// Mints the identity of every procedural scope the bodies of `walked`
 // declare, into the registry of the declaration scope that owns them -- a
 // structural scope or a class. A procedural scope is what slang records as
 // one: a process body, a subroutine body, and each block that introduces
@@ -1866,7 +1882,9 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
 // Identity precedes bodies because a `disable` names a block or task by static
 // declaration identity (LRM 9.6.2) and so can name one whose body lowers later
 // or lives in another body entirely. Only what a name can reach from elsewhere
-// is minted here, so nothing is minted that no body goes on to fill: the walk
+// is minted here, so nothing is minted that no body goes on to fill -- a block
+// instance its body was not lowered from mints the identities the one it was
+// lowered from fills, since the source orders both alike. The walk
 // that lowers a body mints and fills every other scope it opens, and the
 // lexical nesting -- which slang's member list does not follow -- is recorded
 // there, where it is known.

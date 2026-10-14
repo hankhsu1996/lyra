@@ -240,6 +240,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   scope.processes = std::move(declarations.processes);
   scope.generates = std::move(declarations.generates);
   scope.instance_members = std::move(declarations.instance_members);
+  scope.procedural_scopes = std::move(declarations.procedural_scopes);
   scope.replicated_classes = owner_->TakeReplicatedClasses(*slang_scope_);
   const WalkFrame frame =
       parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
@@ -251,11 +252,6 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // elaboration gave it.
   auto parameters = DeclareDifferingParameters(scope, frame);
   if (!parameters) return std::unexpected(std::move(parameters.error()));
-
-  // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
-  // name one whose body lowers later, or lives in another process entirely.
-  DeclareProceduralScopes(
-      *slang_scope_, *slang_scope_, *owner_, scope.procedural_scopes);
 
   // Structural members (variables, instances, generates, subroutine bodies)
   // are lowered before the members that name them (processes, continuous
