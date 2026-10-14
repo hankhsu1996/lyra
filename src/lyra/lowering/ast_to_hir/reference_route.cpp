@@ -1588,11 +1588,6 @@ auto UnitLowerer::SensitivityEntriesOf(
                             .prefix = frame.Exprs().Add(*std::move(lowered))});
                   }
                   return parts;
-                },
-                [](const UnselectedBits& bits)
-                    -> diag::Result<std::vector<hir::WatchedPart>> {
-                  return std::vector<hir::WatchedPart>{
-                      hir::WatchedBits{.first = bits.first, .last = bits.last}};
                 }},
             read.part);
       },

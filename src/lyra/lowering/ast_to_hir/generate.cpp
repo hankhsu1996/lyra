@@ -146,7 +146,7 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
     const std::array index{LoopIndexOf(*entry)};
     if (!bodies.Take(
             *std::move(scope_or),
-            owner_->Specialization().CodeArgumentsOf(*entry), index)) {
+            owner_->Specialization().BodyArgumentsOf(*entry), index)) {
       throw InternalError(
           std::format(
               "StructuralScopeLowerer: the block of loop generate '{}' at {} "

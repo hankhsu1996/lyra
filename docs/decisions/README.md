@@ -246,7 +246,9 @@ the detail lives in the entry itself.
   to rule no path out by a constant: what a body waits on is what its text reads, so every
   construction of one body waits alike and wakes on a read its constants exclude. **How an implicit
   list takes in what its called functions read is revised by
-  [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).**
+  [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md), and where
+  a read set comes from by
+  [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md).**
 - [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) -- runtime effects lower
   to ordinary `CallExpr` with the engine handle as one argument.
 - [ambient-runtime-services](ambient-runtime-services.md) -- generated code reaches the runtime
@@ -324,15 +326,31 @@ the detail lives in the entry itself.
   generate block is a definition nested in the scope holding it, and a block instance is an
   application of it, named from the front end by the function that names a unit: one published class
   per application, a loop an array of them, a child naming the block that holds it one unit. Read it
-  for what an index decides -- the constants the front end settled from it, and nothing where it is
-  only read, selects an alternative, or sits in what a body's statements run -- for why blocks of
-  one application whose index fixed their code differently are one class realized more than once,
+  for what an index decides -- its value where what the block declares relies on it, and nothing
+  where it is only read, selects an alternative, or sits in what a body's statements run -- for why
+  blocks of one application whose code relies on their index are one class realized more than once,
   each realization named from the front end before any body lowers and nothing compared, with a
   published subroutine a virtual method each realization overrides, for why a class of a unit is
   identified by a path of steps and never by a composed name, and for why a unit's scope classes are
   nested in one another and written in the file that carries the unit's name. A file per class with
   its name shortened by a digest, deciding by comparing published classes, and a non-virtual method
   asking which realization the object is are rejected.
+- [a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)
+  -- a unit is named by the values of the parameters what it declares relies on and compiled to one
+  body per value of those only its code relies on, as a block is. Read it for why a parameter read
+  as a value reads the object's own, why each body is a compilation of its own that states the
+  published classes alike and the link keeps one, why a scope declaring a class has one body, and
+  why a parameter handed to a child's argument is an argument of the scope building it. A name
+  holding the constants settled at each place, a unit of its own for what is published, and every
+  body in one compilation are rejected.
+- [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md)
+  -- every instance one identity names lowers alike because the lowering reads nothing of it the
+  identity does not hold, not because a check finds the copies alike. Read it for what the lowering
+  may take from an instance's tree, why the front end records what settled a type wherever it reads
+  one as a fact, why an operation's result is typed by its width and numbered from zero through one
+  function, and why a read set is collected from the text rather than from the front end's flow
+  analysis. Keying on every evaluation the front end made, predicting which queries the lowering
+  answers, recording every fact's provenance, and patching the flow analysis are rejected.
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) -- one semantic shape per
   hierarchical reference; per-segment classification by layout visibility; sealed endpoint on the
   hot path. **Its D2 is reversed by
@@ -1107,21 +1125,23 @@ the detail lives in the entry itself.
   [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md).
 - [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
   -- a value parameter is read as the expression the source wrote and handed to the instance when it
-  is built, so instances handed different values are one unit; only a reference where the front end
-  settled a constant keeps it in the key. Read it for why a module boundary forces a prediction the
-  loop record could decline -- the parent names the child without reading the child's body -- and
-  for why the prediction is read off the front end's record of which parameters each constant
-  evaluation read rather than written as a list of positions. Every instance handed new values is
-  lowered into its unit, which holds what each built, and a disagreement is a compiler defect; a
-  class the design element holds is one class of the unit, built from each instance's copy. It
-  rejects naming a child by its body's hash, grouping by comparing across the design, declaring
-  every parameter, and keeping a definition whole where its instances lower apart.
+  is built, so instances handed different values are one unit; a parameter something compiled relies
+  on is an argument and keeps its value in the key. Read it for why a module boundary forces a
+  prediction the loop record could decline -- the parent names the child without reading the child's
+  body -- and for why the prediction is read off the front end's record of which parameters each
+  constant evaluation read rather than written as a list of positions. Every instance handed new
+  values is lowered into its unit, which holds what each built, and a disagreement is a compiler
+  defect; a class the design element holds is one class of the unit, built from each instance's
+  copy. It rejects naming a child by its body's hash, grouping by comparing across the design,
+  declaring every parameter, and keeping a definition whole where its instances lower apart.
 - [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
   vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
   positions a connection joins -- is stated as the select the source wrote, so constructions
   differing only in that value share one body. Which bits are watched stays the front end's answer,
   and every construction is still compared. Watching the whole variable, computing the read set from
-  the source, and passing settled ranges at construction are rejected.
+  the source, and passing settled ranges at construction are rejected. **Which bits are watched, the
+  comparison, and the rejection of a read set computed from the source are revised by
+  [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md).**
 - [generate-variable-specialization](generate-variable-specialization.md) -- a generate variable is
   a specialization input like a parameter; demoting it to a runtime input is a proof-gated
   optimization. Its conservative default is superseded on the loop axis by the next entry.
@@ -1129,8 +1149,8 @@ the detail lives in the entry itself.
   with its default inverted: a loop generate's blocks are one compiled class the constructor builds
   once per index, because the index reaches the block as a value construction supplies rather than
   as a constant folded into it. Read it for the comparison of lowered blocks it first decided by,
-  and why that was revised: which body a block is, is now named from the front end's record of what
-  its index fixed, before any block lowers, and nothing is compared. The measurement that removed
+  and why that was revised: which body a block is, is now named from the front end's record of where
+  its index is used, before any block lowers, and nothing is compared. The measurement that removed
   speed from the argument is there too, as is what a scope's construction receives: one entry for
   every class, because the constructing site may hold only the definition -- except a unit's own
   entry, which takes its values typed, since a parent works out that prototype from the child's

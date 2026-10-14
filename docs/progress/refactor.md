@@ -1771,12 +1771,12 @@ enough to warrant its own focused review.
 
 - [x] R117 -- The semantic layer states the loop generate the source wrote, with the bodies its
       blocks are built from and the values of its index each one stands at. Which body a block is is
-      named before any body lowers, from its text and from what its index fixed in what the block
-      declares and in its code, so blocks of one name are one body and nothing is decided by
-      comparing lowered scopes. A block whose index fixed nothing is the one body every index
-      builds; a conditional inside the loop is held as the source nested it and run against the
-      index by the construction. Why the earlier shape, which compared every lowered block, could
-      not be finished is in `one-body-built-at-every-index`.
+      named before any body lowers, from its text and from whether what the block declares or its
+      code uses its index, so blocks of one name are one body and nothing is decided by comparing
+      lowered scopes. A block that uses its index nowhere is the one body every index builds; a
+      conditional inside the loop is held as the source nested it and run against the index by the
+      construction. Why the earlier shape, which compared every lowered block, could not be finished
+      is in `one-body-built-at-every-index`.
 
 - [ ] R119 -- The positions where this compiler still settles an elaboration-time value into the
       artifact, rather than supplying it to the artifact. Each is a place the front end had an
@@ -3120,23 +3120,20 @@ source, or not yet tried.
       Confirmed by running the front end's check. Target: the front end diagnoses it, reported
       upstream, and the refusal here goes.
 
-- [ ] R232 -- A unit's name counts the constants its code was compiled for as well as those its
-      declarations hold, so an edit to a body that makes a parameter fix something new renames the
-      unit, and every unit reaching it by a hierarchical name sees a different class. A generate
-      block keeps the two apart: its class is named by what it declares, and the bodies that class
-      is realized by are named by what its code fixed. Two instances that agree on a unit's name and
-      still lower apart end the compile as a compiler bug, where two blocks of one class that do are
-      that class realized twice. Target: a unit the same, its published class named by its
-      declarations and its realizations by its code.
+- [x] R232 -- A unit's name counted the constants its code was compiled for as well as those its
+      declarations hold, so an edit to a body that made a parameter fix something new renamed the
+      unit, and every unit reaching it by a hierarchical name saw a different class. Done: a unit is
+      named by the handed values what it declares uses, as a generate block is, and is compiled to
+      one body for each set of values its code uses. Each body is a compilation of its own that
+      states the classes the unit published alike, the design root makes each instance from the body
+      its code needs, and a published subroutine reaches the body of the object it is called on. A
+      parameter read as a value reads what the instance was built with, and a scope that declares a
+      class has one body.
 
-      Under way. What a value an object is handed fixes is now worked out the same way for a
-      unit's parameters and a loop's index, apart for what is declared and for what the code
-      runs, and a constant computed from such a value counts as that value wherever it is read. A
-      published subroutine is a virtual method of the published class that each realization
-      overrides, so a call reaches the right body through the object however many there are. What
-      remains is the unit itself: its name taken from what is declared only, each realization its
-      own compilation unit carrying the published class as a header does, and the design root
-      making each instance from the realization its code needs.
+- [ ] R234 -- A construction table belongs to a body, so a scope that hands a child a value fixing
+      only the child's code is itself compiled once per value, though its own code is the same for
+      every value: which child body its construction builds is all that differs. Target: the design
+      root states a table per instance it builds rather than per body, and such a scope is one body.
 
 - [ ] R233 -- Whether a constant the front end evaluated belongs to what a scope declares or to what
       its code runs is told only by where the evaluation's expression sits, because the front end

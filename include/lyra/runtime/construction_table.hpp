@@ -9,8 +9,8 @@ namespace lyra::runtime {
 struct ConstructionTable;
 
 // How the instance at one instantiation is made (LRM 23.3.2): the entry that
-// makes an object of the unit elaborated there, and the table that object is
-// constructed with in turn. Which unit that is depends on the instance being
+// makes an object of the body elaborated there, and the table that object is
+// constructed with in turn. Which body that is depends on the instance being
 // built, never on the code compiled for it, so it is stated where the program
 // is assembled and handed to the code.
 //
@@ -18,7 +18,7 @@ struct ConstructionTable;
 // array, and a construction restores it to the prototype of the class it
 // reads at that instantiation.
 struct Instantiation {
-  ErasedEntry make_object = nullptr;
+  ErasedEntry entry = nullptr;
   const ConstructionTable* table = nullptr;
 };
 

@@ -258,9 +258,16 @@ auto DefinitionSymbol(const CompilationUnit& unit, TypeId type)
       *declaration);
 }
 
+auto QualifierOf(
+    const CompilationUnit& unit, const std::optional<support::DefPath>& path)
+    -> std::string_view {
+  return path.has_value() ? unit.name : unit.body_name;
+}
+
 auto DefinitionSymbol(const CompilationUnit& unit, ClassId id) -> std::string {
+  const std::optional<support::DefPath>& path = unit.classes.Get(id).path;
   return ClassDefinitionSymbol(
-      unit.name, SymbolPartOf(unit.classes.Get(id).path, id.value));
+      QualifierOf(unit, path), SymbolPartOf(path, id.value));
 }
 
 // A closure has no declaration of the source to take a name from, so what
@@ -269,7 +276,8 @@ auto DefinitionSymbol(const CompilationUnit& unit, ClosureId id)
     -> std::string {
   return SymbolName(
       SymbolCategory::kClosureDefinition,
-      {SymbolPart::Name(unit.name), SymbolPart::Ordinal(id.value)});
+      {SymbolPart::Name(QualifierOf(unit, std::nullopt)),
+       SymbolPart::Ordinal(id.value)});
 }
 
 auto ConstructorPrologueSymbol(std::string_view definition) -> std::string {

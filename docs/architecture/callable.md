@@ -147,8 +147,8 @@ closure is code plus a captured environment, and "async" is the result type (`as
   type; a backend that re-derives it is inventing a library shape (`mir.md` invariant 10).
 
 - **A lifecycle registration as a static class-level list.** A process registration can depend on
-  generate conditions and generate-for multiplicity, so it is per-instance, constructor-time work; a
-  class holds at most a registration descriptor.
+  which generate blocks an instance built, so it is per-instance, constructor-time work; a class
+  holds at most a registration descriptor.
 
 ## Notes / Examples
 

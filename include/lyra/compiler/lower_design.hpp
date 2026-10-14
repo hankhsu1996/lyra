@@ -77,9 +77,9 @@ void LowerToHir(
           if (!unit) {
             return std::unexpected(std::move(unit.error()));
           }
-          // The unit is handed on below, so the name it is known by here is a
-          // copy that lasts as long as the work on it.
-          const std::string name = unit->name;
+          // The unit is handed on below, so the name of the body it compiles
+          // is a copy that lasts as long as the work on it.
+          const std::string name = unit->body_name;
           const auto in_unit = diag::FailureContext::InUnit(name);
           const status::Piece piece(unit->source_name);
           return produce(*std::move(unit));
@@ -108,12 +108,12 @@ auto LowerToSemantic(
     diag::DiagnosticSink& sink, std::size_t width, Produce produce,
     Consume consume) -> std::optional<SemanticDesign> {
   using Produced = std::invoke_result_t<Produce, mir::CompilationUnit>;
-  // What a unit elaborated at its instantiations is the one fact of it the
+  // What a body elaborated at its instantiations is the one fact of it the
   // design root reads, so it travels with what the consumer made of the unit,
   // and the two arrive together and in the design's order.
   struct Lowered {
-    std::string unit;
-    std::vector<std::string> instantiated;
+    std::string body;
+    std::vector<hir::InstantiatedBody> instantiated;
     typename Produced::value_type produced;
   };
   lowering::hir_to_mir::DesignInstantiations instantiations;
@@ -129,14 +129,14 @@ auto LowerToSemantic(
           return std::unexpected(std::move(produced.error()));
         }
         return Lowered{
-            .unit = hir_unit.name,
+            .body = hir_unit.body_name,
             .instantiated =
                 hir::ConstructionTableLayout(hir_unit).Instantiated(),
             .produced = *std::move(produced)};
       },
       [&](Lowered lowered) {
-        instantiations.by_unit.emplace(
-            std::move(lowered.unit), std::move(lowered.instantiated));
+        instantiations.by_body.emplace(
+            std::move(lowered.body), std::move(lowered.instantiated));
         consume(std::move(lowered.produced));
       });
   if (sink.HasErrors()) {

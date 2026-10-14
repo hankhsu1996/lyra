@@ -11,16 +11,16 @@ because of this split.
 Read every SystemVerilog construct in a module as a piece of a C++ class:
 
 - `module Foo #(parameter N = 4);` is class `Foo` with a constructor parameter `N`.
-- `for (genvar i = 0; i < N; i = i + 1) begin : g child u(); end` is a `for` loop in the class
-  constructor. It instantiates `N` children.
-- `if (N > 0) begin ... end` is an `if` in the class constructor. It picks which sub-tree to
-  instantiate.
+- `for (genvar i = 0; i < N; i = i + 1) begin : g child u(); end` builds, in the class constructor,
+  the `N` blocks the instance's construction data lists.
+- `if (N > 0) begin ... end` builds, in the class constructor, the alternative elaboration selected,
+  which the data names.
 - `initial begin ... end` is a class method that the scheduler calls once at simulation time zero.
 - `always_ff @(posedge clk) begin ... end` is a class method registered with an event source and
   called by the scheduler on each matching event.
 
-Generate constructs are constructor code. `initial` and `always*` are runtime methods. They run in
-different contexts and they do different jobs.
+Building a generate's blocks is constructor work. `initial` and `always*` are runtime methods. They
+run in different contexts and they do different jobs.
 
 ## Storage and binding follow the type; construction is the variable part
 

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <optional>
 #include <set>
@@ -18,6 +19,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/compiler/parallel.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -534,7 +536,8 @@ auto LinkProgram(
 
 auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
     -> diag::Result<EmittedUnit> {
-  const profiling::TimeTraceScope span("emit C++", [&] { return unit.name; });
+  const profiling::TimeTraceScope span(
+      "emit C++", [&] { return unit.body_name; });
   diag::DiagnosticSink refused;
   const backend::cpp::CppUnitArtifacts artifacts =
       backend::cpp::EmitCppUnit(unit, refused);
@@ -542,42 +545,60 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
     status::Errors(refused.Diagnostics().size());
     return RefusedUnit{.refusals = refused.Diagnostics()};
   }
-  WrittenUnit written{
-      .files = {},
-      .translation_unit =
-          {.relpath = artifacts.code.relpath, .source_name = unit.source_name},
-      .dpi_fragment = dpi::AbiFragmentOf(unit)};
-  std::vector<support::Artifact> recorded;
-  const auto write = [&](const backend::cpp::CppArtifact& file,
-                         support::ArtifactKind kind) -> diag::Result<void> {
-    if (auto r = WriteArtifact(file); !r) {
-      return r;
-    }
-    written.files.push_back(file.relpath);
-    recorded.push_back(
-        support::Artifact{
-            .kind = kind,
-            .name = file.relpath,
-            .bytes = file.content.size(),
-            .made = true});
-    return {};
-  };
-  for (const backend::cpp::CppArtifact& declarations : artifacts.declarations) {
-    if (auto r = write(declarations, support::ArtifactKind::kCppHeader); !r) {
-      return std::unexpected(std::move(r.error()));
-    }
-  }
-  if (auto r = write(artifacts.code, support::ArtifactKind::kCppSource); !r) {
+  if (auto r = WriteArtifact(artifacts.code); !r) {
     return std::unexpected(std::move(r.error()));
   }
-  support::RecordUnit(unit.name, std::move(recorded));
-  return written;
+  support::RecordUnit(
+      unit.body_name, {support::Artifact{
+                          .kind = support::ArtifactKind::kCppSource,
+                          .name = artifacts.code.relpath,
+                          .bytes = artifacts.code.content.size(),
+                          .made = true}});
+  return WrittenUnit{
+      .body_name = unit.body_name,
+      .files = {artifacts.code.relpath},
+      .translation_unit =
+          {.relpath = artifacts.code.relpath, .source_name = unit.source_name},
+      .dpi_fragment = dpi::AbiFragmentOf(unit),
+      .declarations = artifacts.declarations};
+}
+
+void CppProjectSink::WriteDeclarations(WrittenUnit& written) {
+  std::vector<support::Artifact> recorded;
+  for (const backend::cpp::CppArtifact& declaration : written.declarations) {
+    const std::size_t says = std::hash<std::string>{}(declaration.content);
+    const auto [stated, first] =
+        declared_.try_emplace(declaration.relpath, says);
+    if (!first) {
+      if (stated->second != says) {
+        throw InternalError(
+            std::format(
+                "backend::cpp: '{}' states '{}' differently from another body "
+                "of its unit -- please report this as a bug",
+                written.body_name, declaration.relpath));
+      }
+      continue;
+    }
+    if (auto r = WriteArtifact(declaration); !r) {
+      refusals_->Report(std::move(r.error()));
+      continue;
+    }
+    written_.push_back(declaration.relpath);
+    recorded.push_back(
+        support::Artifact{
+            .kind = support::ArtifactKind::kCppHeader,
+            .name = declaration.relpath,
+            .bytes = declaration.content.size(),
+            .made = true});
+  }
+  support::RecordUnit(written.body_name, std::move(recorded));
 }
 
 void CppProjectSink::Collect(EmittedUnit unit) {
   std::visit(
       Overloaded{
           [&](WrittenUnit& written) {
+            WriteDeclarations(written);
             written_.insert(
                 written_.end(), std::make_move_iterator(written.files.begin()),
                 std::make_move_iterator(written.files.end()));
@@ -612,9 +633,11 @@ auto CppProjectSink::Finish(const mir::CompilationUnit& root)
   }
   Collect(
       WrittenUnit{
+          .body_name = root.body_name,
           .files = {host_main.relpath},
           .translation_unit = {.relpath = host_main.relpath, .source_name = {}},
-          .dpi_fragment = std::nullopt});
+          .dpi_fragment = std::nullopt,
+          .declarations = {}});
   if (formatting_ == SourceFormatting::kOn) {
     return FormatSources(written_, dir_);
   }

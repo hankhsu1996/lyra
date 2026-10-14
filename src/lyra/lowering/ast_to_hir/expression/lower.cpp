@@ -122,14 +122,14 @@ auto LowerExprImpl(
 
   switch (expr.kind) {
     case slang::ast::ExpressionKind::IntegerLiteral: {
-      auto type_id = unit_lowerer.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(expr, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeIntegerLiteralExpr(
           expr.as<slang::ast::IntegerLiteral>(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral: {
-      auto type_id = unit_lowerer.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(expr, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeUnbasedUnsizedLiteralExpr(
           expr.as<slang::ast::UnbasedUnsizedIntegerLiteral>(), *type_id, span);
@@ -137,7 +137,7 @@ auto LowerExprImpl(
 
     case slang::ast::ExpressionKind::StringLiteral: {
       const auto& sl = expr.as<slang::ast::StringLiteral>();
-      auto type_id = unit_lowerer.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(expr, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeStringLiteralExpr(std::string{sl.getValue()}, *type_id, span);
     }
@@ -149,20 +149,20 @@ auto LowerExprImpl(
     // number -- what reaches HIR is a real, and its type says which real.
     case slang::ast::ExpressionKind::TimeLiteral: {
       const auto& tl = expr.as<slang::ast::TimeLiteral>();
-      auto type_id = unit_lowerer.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(expr, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeRealLiteralExpr(tl.getValue(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::RealLiteral: {
       const auto& rl = expr.as<slang::ast::RealLiteral>();
-      auto type_id = unit_lowerer.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(expr, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeRealLiteralExpr(rl.getValue(), *type_id, span);
     }
 
     case slang::ast::ExpressionKind::NullLiteral: {
-      auto type_id = unit_lowerer.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(expr, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return MakeNullLiteralExpr(*type_id, span);
     }
@@ -241,7 +241,7 @@ auto LowerExprImpl(
       if (!lo) return std::unexpected(std::move(lo.error()));
       auto hi = bound(vr.right());
       if (!hi) return std::unexpected(std::move(hi.error()));
-      auto type_id = unit_lowerer.InternType(*expr.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(expr, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -312,7 +312,7 @@ auto LowerExprImpl(
 
     case slang::ast::ExpressionKind::TaggedUnion: {
       const auto& tu = expr.as<slang::ast::TaggedUnionExpression>();
-      auto type_id = lowerer.Owner().InternType(*tu.type, span);
+      auto type_id = lowerer.Owner().InternExpressionType(tu, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       std::optional<hir::ExprId> payload_id;
       if (tu.valueExpr != nullptr) {

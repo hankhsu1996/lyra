@@ -181,6 +181,30 @@ auto PrototypeOf(
   return code;
 }
 
+auto PrototypeOf(
+    UnitLowerer& unit_lowerer, const hir::PublishedCallable& published,
+    mir::TypeId self) -> mir::CallableCode {
+  mir::CallableCode code;
+  CallableBindings bindings(unit_lowerer.Unit(), code);
+  std::vector<mir::LocalId> params{
+      bindings.Declare(BindingOriginId::Receiver(), self)};
+  params.reserve(published.interface.params.size() + 2);
+  for (const hir::ExternalCalleeParam& param : published.interface.params) {
+    const std::optional<mir::TypeId> type =
+        ParamTypeOf(unit_lowerer, param.type, param.direction);
+    if (!type.has_value()) continue;
+    params.push_back(bindings.DeclareAnonymous(*type));
+  }
+  if (const std::optional<mir::TypeId> report =
+          ReportParamTypeOf(unit_lowerer.Unit(), published.interface.kind)) {
+    params.push_back(bindings.DeclareAnonymous(*report));
+  }
+  code.params = std::move(params);
+  code.result_type = SubroutineCallTypeOf(
+      unit_lowerer, published.interface, published.result_type);
+  return code;
+}
+
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
     base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId {

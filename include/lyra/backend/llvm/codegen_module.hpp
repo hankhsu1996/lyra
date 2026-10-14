@@ -25,6 +25,7 @@
 #include "lyra/lir/enum_table_id.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
+#include "lyra/lir/linkage.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -54,6 +55,9 @@ struct StaticStorage;
 }  // namespace lyra::lir
 
 namespace lyra::backend::llvm_backend {
+
+// How a symbol linked as `linkage` says is linked here.
+auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes;
 
 // Where the storage of one declaration's own members sits in a value of it,
 // laid out after whatever the declaration extends: what each member holds and
@@ -339,6 +343,9 @@ class CodeGenModule {
     std::span<const lir::TypeId> implements;
   };
   [[nodiscard]] auto DeclarationOf(lir::TypeId type) const -> Declared;
+  // How what this unit defines of the declaration `type` names is linked: as
+  // the class or struct states, and as this unit's own where it is neither.
+  [[nodiscard]] auto DeclaredLinkage(lir::TypeId type) const -> lir::Linkage;
   // The interface classes a value of `declared` holds a part for, in the order
   // the parts are placed. Those of the class it extends come first, so a part
   // keeps its place in every class extending this one; then each interface
@@ -388,8 +395,9 @@ class CodeGenModule {
       lir::TypeId type, const Declared& declared,
       std::span<const lir::ConformingBehavior> conforming)
       -> diag::Result<void>;
-  // Defines the constant `value` under `symbol`.
-  auto DefineConstant(const std::string& symbol, llvm::Constant* value)
+  // Defines the constant `value` under `symbol`, linked as `linkage` says.
+  auto DefineConstant(
+      const std::string& symbol, llvm::Constant* value, lir::Linkage linkage)
       -> llvm::GlobalVariable*;
   // The address, `point` entries into the table group of the class whose
   // definition is linked under `definition`, that a value holds as where one
@@ -405,14 +413,16 @@ class CodeGenModule {
   // once its base is built: the value's table address, then its own members,
   // then the table address of each interface class part a complete object of
   // it holds.
-  auto EmitConstructorPrologue(const Declared& declared) -> diag::Result<void>;
+  auto EmitConstructorPrologue(const Declared& declared, lir::Linkage linkage)
+      -> diag::Result<void>;
   // Emits the three destructors of `declared`, as clang emits them for a class
   // whose destructor is implicit: the base object destructor ends its own
   // members, last placed first, then what it extends; the complete object
   // destructor is the base object one, since an interface class part holds
   // nothing to end; the deleting destructor ends the value and gives its
   // storage back.
-  auto EmitDestructors(const Declared& declared) -> diag::Result<void>;
+  auto EmitDestructors(const Declared& declared, lir::Linkage linkage)
+      -> diag::Result<void>;
   // The definition linked under `symbol`, or a declaration of it where nothing
   // has defined it yet.
   auto DefinitionGlobal(const std::string& symbol) -> llvm::GlobalVariable*;

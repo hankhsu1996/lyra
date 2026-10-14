@@ -11,7 +11,6 @@
 # the machine as well, so one listed is owed even on a run that stayed under the
 # bound, and only the change fixing that cost takes its line out.
 instance_array: [bytes]
-loop_holding_a_sized_block: [mir.types]
 loop_of_children_sized_by_index:
   - lir.classes
   - lir.constants
@@ -54,7 +53,6 @@ loop_reaching_its_neighbour:
   - mir.fields
   - mir.types
   - time lower units
-loop_sized_from_a_table: [mir.types]
 loop_sizing_by_index:
   - lir.classes
   - lir.constants

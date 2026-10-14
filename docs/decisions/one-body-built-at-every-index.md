@@ -108,8 +108,8 @@ defines as a superset of this one's.
 ### D2. Whether the blocks are one body is read off the lowered blocks, and nothing predicts it
 
 **Revised 2026-10-12: which body a block is, is now named before any block lowers, and nothing is
-compared.** The front end came to record which parameters each constant evaluation read, so what a
-block's index fixed -- in what the block declares and in its code -- is known from the front end
+compared.** The front end came to record which parameters each constant evaluation read, so whether
+a block's index is used -- in what the block declares and in its code -- is known from the front end
 alone ([a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5).
 Blocks of one name are each lowered and taken into one body, which holds what their constructions
 chose and counted; blocks of one name lowering to anything else are a defect, reported as one. What

@@ -2275,7 +2275,7 @@ auto EmitUnitModule(const mir::CompilationUnit& unit)
   }
   auto emitted = [&] {
     const profiling::TimeTraceScope span(
-        "emit LLVM IR", [&] { return unit.name; });
+        "emit LLVM IR", [&] { return unit.body_name; });
     return backend::llvm_backend::EmitModule(*lowered);
   }();
   if (!emitted) {
@@ -2349,7 +2349,7 @@ auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
   }
   auto object = [&] {
     const profiling::TimeTraceScope span(
-        "generate object", [&] { return unit.name; });
+        "generate object", [&] { return unit.body_name; });
     return CompileObject(std::move(emitted->module), build);
   }();
   if (!object) {
@@ -2362,7 +2362,7 @@ auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
   if (!artifact) {
     return std::unexpected(std::move(artifact.error()));
   }
-  support::RecordUnit(unit.name, {*std::move(artifact)});
+  support::RecordUnit(unit.body_name, {*std::move(artifact)});
   return BuiltUnit{
       .object = *std::move(object), .dpi_fragment = dpi::AbiFragmentOf(unit)};
 }
@@ -2402,7 +2402,7 @@ auto ProgramSink::Finish(
     }
     artifacts.push_back(*std::move(artifact));
   }
-  support::RecordUnit(root.name, std::move(artifacts));
+  support::RecordUnit(root.body_name, std::move(artifacts));
   program_.objects.push_back(*std::move(root_object));
   program_.objects.push_back(*std::move(entry_object));
   return std::move(program_);

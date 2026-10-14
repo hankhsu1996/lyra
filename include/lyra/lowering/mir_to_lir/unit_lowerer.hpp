@@ -49,6 +49,7 @@ class UnitLowerer {
   // lowering happens, and everything else here is minted as the pass runs.
   explicit UnitLowerer(const mir::CompilationUnit& mir) : mir_(&mir) {
     out_.name = mir.name;
+    out_.body_name = mir.body_name;
   }
 
   auto Run() -> diag::Result<lir::CompilationUnit>;

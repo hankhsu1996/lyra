@@ -270,20 +270,21 @@ void StateDefinition(
 //   (Erased)&Child::sv_create
 auto ErasedObjectEntry(
     const mir::CompilationUnit& unit, mir::Block& block,
-    const std::string& unit_name) -> mir::ExprId {
+    const hir::InstantiatedBody& made) -> mir::ExprId {
   return block.exprs.Add(
       mir::Expr{
           .data =
               mir::ReferenceExpr{
                   .target =
                       mir::ExternalUnitMintedEntryRef{
-                          .unit_name = unit_name,
+                          .unit_name = made.unit,
+                          .body_name = made.body,
                           .entry = mir::MintedEntry::kMakeObject}},
           .type = mir::ErasedFunction(unit.types)});
 }
 
-// The construction tables the design root states, one per unit an object is
-// made of, each stated the first time an instantiation makes that unit and
+// The construction tables the design root states, one per body an object is
+// made of, each stated the first time an instantiation makes that body and
 // named by every later one.
 //
 //   const Instantiation entries[2] = {{(Erased)&Child::sv_create, &child},
@@ -297,13 +298,14 @@ class ConstructionTables {
       : unit_(&unit), id_(id), cls_(&cls), instantiations_(&instantiations) {
   }
 
-  // The table listing, at each instantiation, how the unit `instantiated`
+  // The table listing, at each instantiation, how the body `instantiated`
   // names there is made.
-  auto Of(std::span<const std::string> instantiated) -> mir::ClassConstantRef {
+  auto Of(std::span<const hir::InstantiatedBody> instantiated)
+      -> mir::ClassConstantRef {
     std::vector<mir::ClassConstantRef> tables;
     tables.reserve(instantiated.size());
-    for (const std::string& made : instantiated) {
-      tables.push_back(OfUnit(made));
+    for (const hir::InstantiatedBody& made : instantiated) {
+      tables.push_back(OfBody(made.body));
     }
 
     using Kind = mir::RuntimeLibraryKind;
@@ -315,7 +317,7 @@ class ConstructionTables {
         parts, *unit_, table, id_, *cls_,
         LibraryType(*unit_, Kind::kInstantiation), instantiated.size(),
         [&](mir::Block& entry, std::size_t i) {
-          unit_->ConsumeNamespaceOf(instantiated[i]);
+          unit_->ConsumeNamespaceOf(instantiated[i].body);
           return Record(
               *unit_, entry, Kind::kInstantiation,
               {ErasedObjectEntry(*unit_, entry, instantiated[i]),
@@ -331,21 +333,21 @@ class ConstructionTables {
   }
 
  private:
-  auto OfUnit(const std::string& made) -> mir::ClassConstantRef {
-    if (const auto stated = of_unit_.find(made); stated != of_unit_.end()) {
+  auto OfBody(const std::string& made) -> mir::ClassConstantRef {
+    if (const auto stated = of_body_.find(made); stated != of_body_.end()) {
       return stated->second;
     }
-    const auto found = instantiations_->by_unit.find(made);
-    if (found == instantiations_->by_unit.end()) {
+    const auto found = instantiations_->by_body.find(made);
+    if (found == instantiations_->by_body.end()) {
       throw InternalError(
           std::format(
-              "hir_to_mir: an object of unit '{}' is made, and what that unit "
+              "hir_to_mir: an object of body '{}' is made, and what that body "
               "elaborated at its instantiations was never recorded -- please "
               "report this as a bug",
               made));
     }
     const mir::ClassConstantRef table = Of(found->second);
-    of_unit_.emplace(made, table);
+    of_body_.emplace(made, table);
     return table;
   }
 
@@ -353,7 +355,7 @@ class ConstructionTables {
   mir::ClassId id_;
   mir::Class* cls_;
   const DesignInstantiations* instantiations_;
-  std::map<std::string, mir::ClassConstantRef, std::less<>> of_unit_;
+  std::map<std::string, mir::ClassConstantRef, std::less<>> of_body_;
 };
 
 }  // namespace
@@ -389,7 +391,7 @@ void StateScopeDefinition(
 
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    std::span<const std::string> own,
+    std::span<const hir::InstantiatedBody> own,
     const DesignInstantiations& instantiations) -> mir::ClassConstantRef {
   return ConstructionTables(unit, id, cls, instantiations).Of(own);
 }

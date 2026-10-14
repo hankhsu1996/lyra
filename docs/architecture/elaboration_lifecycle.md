@@ -193,8 +193,8 @@ depends on the first two, and an `initial` reading an input port tied to a const
   doc owns _when_: every cross-instance reference resolves in Resolve, seals in Seal, and is read on
   the hot path after Activate; a reference that only climbs to an enclosing scope of the same
   instance resolves in no phase, being walked where it is used.
-- **`hierarchy_and_generate.md`** owns the object tree this lifecycle builds; generate is
-  Build-phase constructor-time logic.
+- **`hierarchy_and_generate.md`** owns the object tree this lifecycle builds; a generate's blocks
+  are built in Build, from the instance's construction data.
 - **`specialization_model.md`** owns parameter strategy, orthogonal to the lifecycle.
 
 ## Forbidden Shapes

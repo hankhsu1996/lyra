@@ -14,48 +14,51 @@ Read top to bottom on first pass:
 
 1. `north_star.md` -- top-level objective and first-class constraints; constrains every other doc
 2. `compiler_overview.md` -- pipeline, worldview, compile-time vs runtime
-3. `compilation_unit_model.md` -- what a compilation unit is and owns
-4. `runtime_model.md` -- the constructor / simulation execution-context split
-5. `elaboration_lifecycle.md` -- the build / resolve / seal / initialize / activate phase protocol
-6. `specialization_model.md` -- how parameter values refine a unit into specializations
-7. `hir.md` -- source-near semantic IR
-8. `mir.md` -- object-oriented semantic IR (objects, members, callables)
-9. `callable.md` -- the one callable concept; callable code vs callable value; capture model;
-   references as a field type
-10. `object_model.md` -- the one nominal object model; module / scope / class as one object type;
+3. `compiling_a_design.md` -- the whole scheme for compiling a design to few artifacts, each named
+   from inputs before it is built, so an edit rebuilds only what it changed; how it lines up with
+   rustc, C++ and Bazel, and the models it replaces
+4. `compilation_unit_model.md` -- what a compilation unit is and owns
+5. `runtime_model.md` -- the constructor / simulation execution-context split
+6. `elaboration_lifecycle.md` -- the build / resolve / seal / initialize / activate phase protocol
+7. `specialization_model.md` -- how parameter values refine a unit into specializations
+8. `hir.md` -- source-near semantic IR
+9. `mir.md` -- object-oriented semantic IR (objects, members, callables)
+10. `callable.md` -- the one callable concept; callable code vs callable value; capture model;
+    references as a field type
+11. `object_model.md` -- the one nominal object model; module / scope / class as one object type;
     inheritance, dispatch, construction, references and handles
-11. `storage.md` -- what has storage identity and what may alias it; an aggregate's components and
+12. `storage.md` -- what has storage identity and what may alias it; an aggregate's components and
     what a whole-aggregate assignment does to them; access path versus retained identity
-12. `lifetime.md` -- the lifetime regimes and why the language needs more than one; a value's end
+13. `lifetime.md` -- the lifetime regimes and why the language needs more than one; a value's end
     emitted versus an object's discovered; managed reachability, precise tracing, activation frames,
     safepoints and roots
-13. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
-14. `activation.md` -- the runtime execution instance; completion slot; ownership / continuation /
+14. `lir.md` -- execution-oriented IR (CFG, basic blocks, storage)
+15. `activation.md` -- the runtime execution instance; completion slot; ownership / continuation /
     cancellation relations
-15. `nonlocal_control_flow.md` -- leaving a scope from anywhere within it; region, raise, cleanup;
+16. `nonlocal_control_flow.md` -- leaving a scope from anywhere within it; region, raise, cleanup;
     the language layer under a cancellation library
-16. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
-17. `hierarchy_and_generate.md` -- hierarchy and generate ownership
-18. `reference_resolution.md` -- references as routes from origin to typed endpoint; every step
+17. `scheduling.md` -- stratified event scheduler, regions, suspension protocol
+18. `hierarchy_and_generate.md` -- hierarchy and generate ownership
+19. `reference_resolution.md` -- references as routes from origin to typed endpoint; every step
     typed against what a scope published; sealed endpoint on the hot path
-19. `net_resolution.md` -- a net's value as the resolution of its driver contributions; net vs
+20. `net_resolution.md` -- a net's value as the resolution of its driver contributions; net vs
     variable; drivers attached along the reference route
-20. `binding_and_capture.md` -- the lexical reference axis: logical binding identity, per-body
+21. `binding_and_capture.md` -- the lexical reference axis: logical binding identity, per-body
     materialization, closure capture forwarding, carrier vs view
-21. `compiler_generated_storage.md` -- compiler-generated storage: the closure (`ClosureType`, a
+22. `compiler_generated_storage.md` -- compiler-generated storage: the closure (`ClosureType`, a
     concrete callable value) and the lifted local (its own cell, held through a shared pointer),
     capture forms
-22. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes each
+23. `emission_model.md` -- how a backend emits independent per-unit artifacts and realizes each
     route step against the class a scope published
-23. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
+24. `backend_contract.md` -- per-node within-artifact realization rules; type mapping vs value
     emission; what a backend may and may not name in render
-24. `identity_and_ownership.md` -- identity rules and forbidden shapes
-25. `lowering_boundaries.md` -- what each lowering may and may not do
-26. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
+25. `identity_and_ownership.md` -- identity rules and forbidden shapes
+26. `lowering_boundaries.md` -- what each lowering may and may not do
+27. `lowering_organization.md` -- how lowering passes organize their internal objects (facts,
     registries, builders, walk frame)
-27. `incremental_build.md` -- query-based incremental compilation and caching
-28. `testing_strategy.md` -- test categories and structure
-29. `language_conformance.md` -- what source text is accepted, and how a disputed text is ruled on
+28. `incremental_build.md` -- query-based incremental compilation and caching
+29. `testing_strategy.md` -- test categories and structure
+30. `language_conformance.md` -- what source text is accepted, and how a disputed text is ruled on
 
 ## Concept Index
 
@@ -65,11 +68,12 @@ If you are looking for a concept, this table points to the canonical doc.
 | ----------------------------------------------------------------------------------------------------- | ------------------------------- |
 | Primary optimization target; non-negotiable design constraints                                        | `north_star.md`                 |
 | Pipeline (HIR -> MIR -> LIR -> LLVM IR); compile-time vs runtime split                                | `compiler_overview.md`          |
+| What an artifact is and what names it; construction data; what an edit rebuilds                       | `compiling_a_design.md`         |
 | Compilation unit; class-level artifacts; instance records                                             | `compilation_unit_model.md`     |
 | Constructor vs simulation execution contexts; structural vs process                                   | `runtime_model.md`              |
 | Storage and binding vs construction; type-driven member walk                                          | `runtime_model.md`              |
 | Elaboration phases (build / resolve / seal / initialize / activate); ctor scope                       | `elaboration_lifecycle.md`      |
-| Generate as constructor-time logic; object graph shape                                                | `hierarchy_and_generate.md`     |
+| Generate blocks built at construction from instance data; object graph shape                          | `hierarchy_and_generate.md`     |
 | Instance array as a data type; multiplicity vs generate axes                                          | `hierarchy_and_generate.md`     |
 | Reference routes; typed steps against what a scope published; sealed endpoints                        | `reference_resolution.md`       |
 | Net value as the resolution of driver contributions; net vs variable; drivers                         | `net_resolution.md`             |
@@ -120,7 +124,7 @@ it compiles and passes tests.
 | Cross-unit access / hierarchical refs / ports / connectivity    | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `elaboration_lifecycle`                    |
 | Nets / drivers / net resolution / net-typed ports               | `north_star`, `net_resolution`, `reference_resolution`, `elaboration_lifecycle`, `mir`                                       |
 | Backend emit / artifact structure / SDK boundary                | `north_star`, `compilation_unit_model`, `reference_resolution`, `emission_model`, `backend_contract`, `runtime_distribution` |
-| Compilation boundaries / unit dependencies / incrementality     | `north_star`, `compilation_unit_model`, `incremental_build`                                                                  |
+| Compilation boundaries / unit dependencies / incrementality     | `north_star`, `compiling_a_design`, `compilation_unit_model`, `specialization_model`, `incremental_build`                    |
 | Hierarchy / generate / object graph / construction              | `north_star`, `hierarchy_and_generate`, `runtime_model`, `elaboration_lifecycle`                                             |
 | Identity / ownership / id kinds                                 | `north_star`, `identity_and_ownership`                                                                                       |
 | Object model / classes / inheritance / dispatch / handles       | `north_star`, `object_model`, `lifetime`, `mir`, `callable`, `runtime_model`                                                 |

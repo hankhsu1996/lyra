@@ -261,11 +261,18 @@ struct BuiltinMirTypes {
 };
 
 struct CompilationUnit {
-  // The unit's own name -- its module, package, or interface name. A backend
-  // names the unit's emitted artifact from this, so a unit whose root is a
-  // namespace rather than a class (a package) still has a stable identity
-  // independent of any member.
+  // The unit's own name -- its module, package, or interface name, with what
+  // was fixed for it. Every declaration another unit may name is named under
+  // it, so a unit whose root is a namespace rather than a class (a package)
+  // still has a stable identity independent of any member.
   std::string name;
+  // Which body of the unit this is: its own name where the unit is compiled to
+  // one body, and otherwise that name with the digest of the values its
+  // instances' code uses. Its bodies each state the declarations the unit
+  // names, alike, and what only one body holds -- the classes realizing its
+  // scopes, their entries, the artifact it is emitted as -- is named under
+  // this.
+  std::string body_name;
   // The identifier the source declares the unit under, which several units
   // share where one definition is compiled once per specialization, and which
   // a unit the source gave no identifier lacks. It is what a person is told
@@ -575,6 +582,19 @@ struct CompilationUnit {
 [[nodiscard]] inline auto IsPublished(const CompilationUnit& unit, ClassId id)
     -> bool {
   return unit.GetClass(id).path.has_value();
+}
+
+// Whether this class is what a scope of the design hierarchy published -- an
+// instance's class, or a generate block's -- rather than a class the source
+// declared. Such a class is built from the unit's declarations alone, so every
+// body of the unit states it alike, and which body's statement is kept is the
+// link's to choose. A class the source declared reaches the scope declaring it
+// as that scope's body compiled it, and a scope declaring one has one body.
+[[nodiscard]] inline auto IsPublishedScopeClass(
+    const CompilationUnit& unit, ClassId id) -> bool {
+  const Class& cls = unit.GetClass(id);
+  return cls.path.has_value() && cls.base.has_value() &&
+         std::holds_alternative<ObjectTreeRootRef>(*cls.base);
 }
 
 // The class some unit declares that `cls` extends, where it extends one -- the

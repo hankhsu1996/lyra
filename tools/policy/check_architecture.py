@@ -216,13 +216,9 @@ Rules:
         not a reason to read one: it says the value is known, not that the
         artifact has to hold it. What a unit publishes about its ports and
         what a type is are exempt: both are part of the unit's identity, so a
-        value deciding either is already one artifact per value. So is what
-        tells two applications of a generate block apart: where a block's
-        index decides what the block declares, the constant settled from it
-        there is read as the identity itself, which makes fewer artifacts
-        than the index would and never one more. A port's default is not
-        among them -- it is evaluated for each instance that leaves the port
-        unconnected (LRM 23.2.2.4).
+        value deciding either is already one artifact per value. A port's
+        default is not among them -- it is evaluated for each instance that
+        leaves the port unconnected (LRM 23.2.2.4).
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
@@ -259,6 +255,19 @@ Rules:
         whose condition happened to be constant, a sequence it found can
         never match -- is recorded nowhere, so code compiled from it holds a
         value the unit was never told apart by. Read the expression instead.
+        Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
+        include/lyra/lowering/ast_to_hir.
+
+  A027  An expression's type is interned through the one function that
+        decides what it is: the type a declaration or the expression's own
+        text states, or, for what an operation yields, the width, signedness
+        and element count the standard fixes, numbered from zero. The front
+        end hands an operation a range it took from an operand or settled from
+        a select's base, which two instances given one name do not share, so a
+        lowering that interns it holds a value its unit was never told apart
+        by. Interning `*e.type` directly takes that range whichever kind of
+        expression `e` is. What a unit publishes about its ports is exempt,
+        as in A023: the front end records what settled it.
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
@@ -1056,16 +1065,11 @@ A023_PATTERN = re.compile(r"(?:->|\.)\s*(?:getConstant|eval)\s*\(")
 # Where reading one is not the lowering of a body. What a unit publishes about
 # its ports and what a type is are part of the unit's identity: a value that
 # decides either is one a parameter keeps in the key, so the artifact is already
-# one per value and reading the value costs no second one. What a parameter
-# decides is the same identity one step earlier: the file working that out
-# lowers nothing, and reads a settled constant only where a generate block's
-# index was found to decide a declaration, to tell two applications of the
-# block apart by it. Everything else is the case the rule is for, a port's
-# default included -- it is written in the header, but it is evaluated for each
-# instance that leaves the port unconnected (LRM 23.2.2.4), and so is a body's
-# expression like any other.
+# one per value and reading the value costs no second one. Everything else is
+# the case the rule is for, a port's default included -- it is written in the
+# header, but it is evaluated for each instance that leaves the port unconnected
+# (LRM 23.2.2.4), and so is a body's expression like any other.
 A023_EXEMPT = (
-    "src/lyra/lowering/ast_to_hir/parameter_value_source.cpp",
     "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
     "src/lyra/lowering/ast_to_hir/type.cpp",
 )
@@ -1280,6 +1284,38 @@ def check_a026(repo_root: Path) -> list[str]:
                     f"  {rel}:{lineno}: A026 reads a fold the front end made "
                     f"where nothing asked for a constant, which no record of "
                     f"what decides a unit holds; lower the expression"
+                )
+    return errors
+
+
+# Rule A027
+# An expression's front-end type handed to the interner directly: `*e.type`,
+# `*e->type`, however the expression is reached. A HIR type id is a value and is
+# never dereferenced, so the pattern matches only the front end's type pointer.
+A027_PATTERN = re.compile(r"\bInternType\s*\(\s*\*[\w.\->()\[\]]*(?:\.|->)type\b")
+
+# The definition of the deciding function, and what a unit publishes about its
+# ports (see A023's exemption).
+A027_EXEMPT = (
+    "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
+    "src/lyra/lowering/ast_to_hir/type.cpp",
+)
+
+
+def check_a027(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(
+            repo_root,
+            "src/lyra/lowering/ast_to_hir",
+            "include/lyra/lowering/ast_to_hir"):
+        if rel in A027_EXEMPT:
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if A027_PATTERN.search(strip_comment(line)):
+                errors.append(
+                    f"  {rel}:{lineno}: A027 interns an expression's front-end "
+                    f"type directly, which keeps a range an operation's "
+                    f"instances need not share; use InternExpressionType"
                 )
     return errors
 
@@ -1843,6 +1879,19 @@ def run_self_tests() -> bool:
         not A026_PATTERN.search(
             strip_comment("  // e.knownSide() is the fold being avoided")),
         "A026 a comment naming the fold is not a read")
+    # A027
+    expect(
+        A027_PATTERN.search("  auto t = lowerer.Owner().InternType(*sel.type, span);"),
+        "A027 an expression's type interned directly is reported")
+    expect(
+        A027_PATTERN.search("  auto t = InternType(*call.arguments()[0]->type, span);"),
+        "A027 a type reached through an arrow is reported")
+    expect(
+        not A027_PATTERN.search("  auto t = InternType(symbol.getType(), span);"),
+        "A027 a declaration's type is clean")
+    expect(
+        not A027_PATTERN.search("  auto t = InternExpressionType(sel, span);"),
+        "A027 the deciding function is clean")
 
     return ok
 
@@ -1876,6 +1925,7 @@ CHECKS = [
     ("A024 backend text composed as a value", check_a024),
     ("A025 HIR equality not derived exactly", check_a025),
     ("A026 front end's own fold read", check_a026),
+    ("A027 expression type interned directly", check_a027),
 ]
 
 

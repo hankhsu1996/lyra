@@ -1,23 +1,26 @@
-// Which of an instance's value parameters are supplied at construction, which
-// its declarations compute from those, and which decide what is compiled.
+// Which of an instance's value parameters are arguments of what is compiled,
+// which are supplied at construction, and which its declarations compute from
+// those.
 //
 // A parameter read where the source wrote an expression is lowered as that
-// expression, and the object reads the value it was built with. So a parameter
-// is supplied unless what is compiled holds a constant settled from it: the
-// language requires a constant there -- a range, a width, a count, a value a
-// class specialization is handed -- and the front end evaluated it. Which
-// parameters each such evaluation read is the front end's own record, kept as
-// it evaluates, so no position of the language is listed here and none can be
-// missed. Two kinds of evaluation hold nothing compiled and are passed over:
-// what a construction evaluates to decide what it builds -- a generate's
-// selection, a loop's count (LRM 27.4, 27.5) -- which the front end marks; and
-// the few positions this compiler lowers as the source wrote them, which it
-// lists itself.
+// expression, and the object reads the value it was built with: it is a
+// constructor argument. One whose value something compiled relies on -- a
+// range, a width, a count, a type, a value a class specialization is handed --
+// is an argument of the specialization instead, as a template argument is in
+// C++, and enters the name by its value: the unit's where the signature, what
+// the scope declares, relies on it, and the body's where only the statements
+// of that body do. Which parameters something compiled relies on is the front
+// end's own record, kept as it evaluates a constant the language requires and
+// as it reads a type as a fact, so no position of the language is listed here
+// and none can be missed. Two kinds of reads are passed over: what a
+// construction evaluates to decide what it builds -- a generate's selection, a
+// loop's count (LRM 27.4, 27.5) -- which the front end marks; and the few
+// positions this compiler lowers as the source wrote them, which it lists
+// itself.
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
-#include <string>
+#include <span>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -37,9 +40,7 @@
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/types/DeclaredType.h>
-#include <slang/numeric/ConstantValue.h>
 #include <slang/syntax/AllSyntax.h>
-#include <slang/text/SourceLocation.h>
 
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
@@ -285,180 +286,198 @@ auto CanBeSupplied(const slang::ast::ParameterSymbol& param) -> bool {
          !DeclaredInAClass(param);
 }
 
-// What the values an object may be supplied fixed about what is compiled: for
-// each, the constants the front end settled from it, each taken where the body
-// states it and once however often it was evaluated, so two values that fold
-// alike everywhere are told apart by nothing; and its own value where one of
-// those places kept no constant. The front end evaluates when something first
-// asks, so its record is in no order of the body's.
-class WhatSuppliedValuesFixed {
- public:
-  void Settled(
-      const slang::ast::ParameterSymbol& supplied,
-      const slang::ast::Expression& where,
-      const slang::ConstantValue& constant) {
-    const slang::SourceLocation at = where.sourceRange.start();
-    settled_at_[&supplied].emplace_back(
-        std::pair{at.buffer().getId(), at.offset()}, ValueIdentity(constant));
-  }
-
-  void ByItsOwnValue(const slang::ast::ParameterSymbol& supplied) {
-    by_own_value_.insert(&supplied);
-  }
-
-  [[nodiscard]] auto Folded() && -> std::unordered_map<
-      const slang::ast::ParameterSymbol*, std::vector<std::string>> {
-    std::unordered_map<
-        const slang::ast::ParameterSymbol*, std::vector<std::string>>
-        out;
-    for (auto& [supplied, constants] : settled_at_) {
-      std::ranges::sort(constants);
-      const auto repeated = std::ranges::unique(constants, {}, &Place::first);
-      constants.erase(repeated.begin(), repeated.end());
-      for (Place& constant : constants) {
-        out[supplied].push_back(std::move(constant.second));
-      }
-    }
-    for (const slang::ast::ParameterSymbol* supplied : by_own_value_) {
-      out[supplied] = {ValueIdentity(supplied->getValue())};
-    }
-    return out;
-  }
-
- private:
-  using Place = std::pair<std::pair<std::uint32_t, std::size_t>, std::string>;
-  std::unordered_map<const slang::ast::ParameterSymbol*, std::vector<Place>>
-      settled_at_;
-  ParameterSet by_own_value_;
+// The parameters what a body compiles to uses, each entering a name by its own
+// value as a template argument does in C++ -- what rustc's polymorphization
+// called a definition's used generic parameters: those its signature, what the
+// body declares, uses, and apart, those only its body uses -- the statements of
+// its processes, continuous assignments and subroutines, which are how it is
+// compiled and no part of the signature.
+struct UsedParameters {
+  ParameterSet in_signature;
+  ParameterSet in_body;
 };
 
-// What the values an object of a body may be supplied fixed in what the body
-// declares, and apart, in the code of its processes, continuous assignments
-// and subroutines, which is how that code is compiled and no part of what the
-// body declares.
-struct WhatTheyFix {
-  std::unordered_map<
-      const slang::ast::ParameterSymbol*, std::vector<std::string>>
-      in_declarations;
-  std::unordered_map<
-      const slang::ast::ParameterSymbol*, std::vector<std::string>>
-      in_code;
-};
+// Whether `scope` declares a class, itself or in a scope inside it. A child
+// instance's body is the child's, so it is not reached.
+auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
+  return std::ranges::any_of(
+      scope.members(), [](const slang::ast::Symbol& member) {
+        if (member.kind == slang::ast::SymbolKind::ClassType ||
+            member.kind == slang::ast::SymbolKind::GenericClassDef) {
+          return true;
+        }
+        if (member.kind == slang::ast::SymbolKind::Instance) return false;
+        const auto* inner = member.as_if<slang::ast::Scope>();
+        return inner != nullptr && DeclaresAClass(*inner);
+      });
+}
 
-// What the values an object of `body` may be supplied fix in what is compiled.
-// Each place a constant is held is one the front end evaluated where it
-// required one, a parameter written into a value the object holds as compiled,
-// or a parameter whose value decides by its own: one a design element declared
-// inside this one reads, whose type is the type of its value, or that a class
-// declares. What the place fixes is fixed by every supplied value the
-// parameter it read was computed from, at the constant the place settled.
-//
-// So what selects an alternative of a conditional generate fixes nothing: the
-// construction chooses it (LRM 27.5), and what is compiled holds every
-// alternative any object selected. Nor does what counts a loop generate's
-// blocks out: the construction runs the loop (LRM 27.4), and how many blocks an
-// object holds is no part of what it is an object of.
-auto WhatSuppliedValuesFix(
-    const slang::ast::InstanceBodySymbol& body, const ParameterSet& own,
-    const ParameterEdges& written_from, const SpecializationPolicy& policy)
-    -> WhatTheyFix {
-  EveryReference every(own);
-  body.visit(every);
+// The parameters an object could be handed that `param` was computed from,
+// `param` among them where it is one.
+auto SuppliedParametersItDependsOn(
+    const slang::ast::ParameterSymbol& param,
+    const ParameterEdges& written_from) -> ParameterSet {
+  ParameterSet sources;
+  for (const slang::ast::ParameterSymbol* source : Reached(
+           ParameterSet{&param}, written_from,
+           [](const auto&) { return true; })) {
+    if (CanBeSupplied(*source)) sources.insert(source);
+  }
+  return sources;
+}
+
+// Marks what `param` was computed from as used in the signature.
+void MarkUsedInSignature(
+    UsedParameters& used, const slang::ast::ParameterSymbol& param,
+    const ParameterEdges& written_from) {
+  used.in_signature.merge(SuppliedParametersItDependsOn(param, written_from));
+}
+
+// Marks what `param` was computed from as used in the body -- each in the body
+// of the scope it is supplied to, unless that scope declares a class. A class
+// reaches the object of the scope declaring it as that scope's body compiled
+// it, and is one class however many bodies there were, so such a scope has one
+// body and the parameter is used in its signature instead.
+void MarkUsedInBody(
+    UsedParameters& used, const slang::ast::ParameterSymbol& param,
+    const ParameterEdges& written_from) {
+  for (const slang::ast::ParameterSymbol* source :
+       SuppliedParametersItDependsOn(param, written_from)) {
+    if (DeclaresAClass(*source->getParentScope())) {
+      used.in_signature.insert(source);
+    } else {
+      used.in_body.insert(source);
+    }
+  }
+}
+
+// Marks the parameters the front end recorded as read by a constant it
+// evaluated where the language requires one, or by a type it read as a fact. A
+// design element declared inside this one is handed none of this body's
+// parameters, so what its own evaluations read of them counts here too. Passed
+// over are what only decides which blocks a construction builds and what the
+// lowering states as written; a read in what a process, a continuous
+// assignment or a subroutine runs is a use in the body, any other one in the
+// signature.
+void MarkUsedInConstantsAndTypes(
+    UsedParameters& used, const slang::ast::InstanceBodySymbol& body,
+    const ParameterSet& own, const ParameterEdges& written_from,
+    std::span<const slang::ast::InstanceBodySymbol* const> nested_bodies) {
   EveryExpression code;
   CollectCodeOf(body, code);
   StatedAsWritten as_written;
   body.visit(as_written);
 
-  WhatSuppliedValuesFixed in_declarations;
-  WhatSuppliedValuesFixed in_code;
-  // Fixes, in `layer`, every supplied value `param` was computed from, the way
-  // `settle` says.
-  const auto fix = [&](WhatSuppliedValuesFixed& layer,
-                       const slang::ast::ParameterSymbol& param,
-                       const auto& settle) {
-    for (const slang::ast::ParameterSymbol* source : Reached(
-             ParameterSet{&param}, written_from,
-             [](const auto&) { return true; })) {
-      if (CanBeSupplied(*source)) settle(layer, *source);
-    }
-  };
-
-  // A design element declared inside this one is handed none of this body's
-  // parameters, so what its own evaluations read of them is held there too.
-  const slang::ast::Compilation& compilation = body.getCompilation();
   std::vector<const slang::ast::InstanceBodySymbol*> evaluated_in{&body};
   evaluated_in.insert(
-      evaluated_in.end(), every.nested_bodies.begin(),
-      every.nested_bodies.end());
+      evaluated_in.end(), nested_bodies.begin(), nested_bodies.end());
   for (const slang::ast::InstanceBodySymbol* in : evaluated_in) {
     for (const slang::ast::ParameterRead& read :
-         compilation.getParameterReads(*in)) {
+         body.getCompilation().getParameterReads(*in)) {
       if (!own.contains(read.parameter) || read.decidesGenerateBlocks ||
           as_written.held.contains(read.root)) {
         continue;
       }
-      fix(code.held.contains(read.root) ? in_code : in_declarations,
-          *read.parameter, [&](auto& layer, const auto& supplied) {
-            if (const slang::ConstantValue* settled =
-                    read.root->getConstant()) {
-              layer.Settled(supplied, *read.root, *settled);
-            } else {
-              layer.ByItsOwnValue(supplied);
-            }
-          });
+      if (code.held.contains(read.root)) {
+        MarkUsedInBody(used, *read.parameter, written_from);
+      } else {
+        MarkUsedInSignature(used, *read.parameter, written_from);
+      }
     }
   }
+}
 
-  // What each parameter of a child this body builds is handed, and whether the
-  // child takes it at construction. Asking for the value is what has the front
-  // end evaluate it, which is what records what it was evaluated from.
-  std::unordered_map<const slang::ast::ParameterSymbol*, bool>
-      taken_at_construction;
-  for (const slang::ast::InstanceSymbol* child : every.children) {
-    const auto supplied = policy.SuppliedParametersOf(*child);
+// Marks the parameters of this body read into the value of a parameter that is
+// not this body's own, as rustc's `visit_child_body` marks the arguments a
+// nested body uses. A parameter of a child this body builds is handed when the
+// child is built, so where the child does not use it, this body does not
+// either; where the child does not take it at construction, which is where the
+// child's signature uses it, this body uses it in its signature, which names
+// the child's unit as a member's type, and where the child uses it in its body
+// only, this
+// body uses it in its body, since which body is built there is how this body
+// is built. Any other parameter it is read into -- a class specialization's,
+// which picks a type, a virtual interface's -- is a use in the signature.
+// Asking for a child's value is what has the front end evaluate it, which is
+// what records what it was evaluated from.
+void MarkUsedByChildArgs(
+    UsedParameters& used, const ParameterSet& own,
+    const ParameterEdges& written_from,
+    std::span<const slang::ast::InstanceSymbol* const> children,
+    const SpecializationPolicy& policy) {
+  std::unordered_map<
+      const slang::ast::ParameterSymbol*, const slang::ast::InstanceSymbol*>
+      child_of;
+  for (const slang::ast::InstanceSymbol* child : children) {
     for (const auto* base : child->body.getParameters()) {
-      const auto* param = base->symbol.as_if<slang::ast::ParameterSymbol>();
-      if (param == nullptr) continue;
-      param->getValue();
-      taken_at_construction.emplace(
-          param, std::ranges::contains(supplied, param));
+      if (const auto* param =
+              base->symbol.as_if<slang::ast::ParameterSymbol>()) {
+        param->getValue();
+        child_of.emplace(param, child);
+      }
     }
   }
 
-  // A parameter read into the value of one that is not this body's is held as
-  // the value it gave, unless that is a child's the child takes at
-  // construction, which this body hands when it builds the child. So a child's
-  // parameter that decides there, and so which unit this body names, a class
-  // specialization's, which picks a type, and a virtual interface's are each
-  // what is compiled.
   for (const slang::ast::ParameterSymbol* source : own) {
     for (const slang::ast::ParameterSymbol* reader :
-         compilation.getParameterValueReaders(*source)) {
+         source->getParentScope()->getCompilation().getParameterValueReaders(
+             *source)) {
       if (own.contains(reader)) continue;
-      const auto child = taken_at_construction.find(reader);
-      if (child != taken_at_construction.end() && child->second) continue;
-      fix(in_declarations, *source, [&](auto& layer, const auto& supplied) {
-        if (reader->getInitializer() != nullptr) {
-          layer.Settled(
-              supplied, *reader->getInitializer(), reader->getValue());
-        } else {
-          layer.ByItsOwnValue(supplied);
-        }
-      });
+      const auto child = child_of.find(reader);
+      if (child == child_of.end()) {
+        MarkUsedInSignature(used, *source, written_from);
+        continue;
+      }
+      const slang::ast::InstanceSymbol& built = *child->second;
+      if (!std::ranges::contains(policy.SuppliedParametersOf(built), reader)) {
+        MarkUsedInSignature(used, *source, written_from);
+      } else if (policy.IsUsedInBody(built, *reader)) {
+        MarkUsedInBody(used, *source, written_from);
+      }
     }
   }
+}
 
+// Marks the parameters used whatever the body does, as rustc's
+// `mark_used_by_default_parameters` does: one a design element declared inside
+// this one reads, since its instance is handed none of them; one whose type is
+// its value's (LRM 6.20.2); one a class declares, since a class's code is no
+// body of the unit's objects.
+void MarkUsedByDefaultParameters(
+    UsedParameters& used, const ParameterSet& own,
+    const ParameterEdges& written_from,
+    const ParameterSet& read_in_a_nested_element) {
   for (const slang::ast::ParameterSymbol* param : own) {
-    if (every.read_in_a_nested_element.contains(param) ||
-        TypeFollowsValue(*param) || DeclaredInAClass(*param)) {
-      fix(in_declarations, *param, [](auto& layer, const auto& supplied) {
-        layer.ByItsOwnValue(supplied);
-      });
+    if (read_in_a_nested_element.contains(param) || TypeFollowsValue(*param) ||
+        DeclaredInAClass(*param)) {
+      MarkUsedInSignature(used, *param, written_from);
     }
   }
-  return WhatTheyFix{
-      .in_declarations = std::move(in_declarations).Folded(),
-      .in_code = std::move(in_code).Folded()};
+}
+
+// The parameters what the specialization `body` is read through compiles to
+// uses: every one an object could be handed whose value something compiled
+// relies on, together with every such parameter that one was computed from.
+//
+// So what selects an alternative of a conditional generate decides nothing:
+// the construction chooses it (LRM 27.5), and what is compiled holds every
+// alternative any object selected. Nor does what counts a loop generate's
+// blocks out: the construction runs the loop (LRM 27.4), and how many blocks an
+// object holds is no part of what it is an object of.
+auto UsedParametersOf(
+    const slang::ast::InstanceBodySymbol& body, const ParameterSet& own,
+    const ParameterEdges& written_from, const SpecializationPolicy& policy)
+    -> UsedParameters {
+  EveryReference every(own);
+  body.visit(every);
+
+  UsedParameters used;
+  MarkUsedInConstantsAndTypes(
+      used, body, own, written_from, every.nested_bodies);
+  MarkUsedByChildArgs(used, own, written_from, every.children, policy);
+  MarkUsedByDefaultParameters(
+      used, own, written_from, every.read_in_a_nested_element);
+  return used;
 }
 
 }  // namespace
@@ -486,8 +505,8 @@ auto SpecializationPolicy::OfBody(
   PerBody out{
       .own = ValueParametersOf(body),
       .written_into = {},
-      .fixed_in_declarations = {},
-      .fixed_in_code = {}};
+      .used_in_signature = {},
+      .used_in_body = {}};
   ParameterEdges written_from;
   for (const slang::ast::ParameterSymbol* param : out.own) {
     written_from.emplace(param, DependenciesOf(*param, out.own));
@@ -498,9 +517,9 @@ auto SpecializationPolicy::OfBody(
       out.written_into.at(source).insert(param);
     }
   }
-  WhatTheyFix fixed = WhatSuppliedValuesFix(body, out.own, written_from, *this);
-  out.fixed_in_declarations = std::move(fixed.in_declarations);
-  out.fixed_in_code = std::move(fixed.in_code);
+  UsedParameters used = UsedParametersOf(body, out.own, written_from, *this);
+  out.used_in_signature = std::move(used.in_signature);
+  out.used_in_body = std::move(used.in_body);
   return per_body_.emplace(&body, std::move(out)).first->second;
 }
 
@@ -540,25 +559,32 @@ auto SpecializationPolicy::Classify(
            ValueSetElsewhere(inst.body, *its->second);
   };
 
+  // A header parameter of the read body stands for the instance's own.
+  const auto as_handed = [&](const slang::ast::ParameterSymbol* param) {
+    const auto its = of_instance.find(param);
+    return its == of_instance.end() ? param : its->second;
+  };
   PerInstance out;
-  out.fixed_in_declarations = text.fixed_in_declarations;
-  out.fixed_in_code = text.fixed_in_code;
+  for (const slang::ast::ParameterSymbol* param : text.used_in_signature) {
+    out.used_in_signature.insert(as_handed(param));
+  }
+  for (const slang::ast::ParameterSymbol* param : text.used_in_body) {
+    out.used_in_body.insert(as_handed(param));
+  }
   // A top-level instance is built by the design root, which hands nothing, and
   // is the only instance of its unit, so a value it is given is compiled in.
   // Every other instance is handed, in the order its body declares them, each
-  // parameter an instantiation may assign that fixes nothing about what is
-  // compiled -- assigned or left to its default, which the instantiation says
-  // and the unit evaluates, so whether a value was written does not tell
-  // instances apart (LRM 6.20.1, 23.10). A unit is compiled to one body, so
-  // what a parameter fixes in its code names it as what it fixes in its
-  // declarations does.
+  // parameter an instantiation may assign that its signature does not use --
+  // assigned or left to its default, which the instantiation says and the unit
+  // evaluates, so whether a value was written does not tell instances apart
+  // (LRM 6.20.1, 23.10). One its body uses names the body as well, and a read
+  // of it is of the value the object was built with.
   ParameterSet roots;
   if (!inst.isTopLevel()) {
     for (const slang::ast::ParameterSymbolBase* base : declared) {
       const auto* param = base->symbol.as_if<slang::ast::ParameterSymbol>();
       if (param == nullptr || param->isLocalParam() ||
-          text.fixed_in_declarations.contains(param) ||
-          text.fixed_in_code.contains(param)) {
+          text.used_in_signature.contains(param)) {
         continue;
       }
       out.supplied.push_back(of_instance.at(param));
@@ -597,24 +623,16 @@ auto SpecializationPolicy::ValueSourceOf(
   return ParameterValueSource::kComputedAtConstruction;
 }
 
-auto SpecializationPolicy::WhatItFixesInDeclarations(
+auto SpecializationPolicy::IsUsedInSignature(
     const slang::ast::InstanceSymbol& inst,
-    const slang::ast::ParameterSymbol& index) const
-    -> std::span<const std::string> {
-  const PerInstance& known = Of(inst);
-  const auto folded = known.fixed_in_declarations.find(&index);
-  if (folded == known.fixed_in_declarations.end()) return {};
-  return folded->second;
+    const slang::ast::ParameterSymbol& param) const -> bool {
+  return Of(inst).used_in_signature.contains(&param);
 }
 
-auto SpecializationPolicy::WhatItFixesInCode(
+auto SpecializationPolicy::IsUsedInBody(
     const slang::ast::InstanceSymbol& inst,
-    const slang::ast::ParameterSymbol& index) const
-    -> std::span<const std::string> {
-  const PerInstance& known = Of(inst);
-  const auto fixed = known.fixed_in_code.find(&index);
-  if (fixed == known.fixed_in_code.end()) return {};
-  return fixed->second;
+    const slang::ast::ParameterSymbol& param) const -> bool {
+  return Of(inst).used_in_body.contains(&param);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

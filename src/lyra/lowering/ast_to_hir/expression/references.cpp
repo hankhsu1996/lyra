@@ -354,7 +354,7 @@ auto MakeIterationElementRefExpr(
     UnitLowerer& unit_lowerer, const slang::ast::NamedValueExpression& named,
     hir::WithClauseId clause, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto type_id = unit_lowerer.InternType(*named.type, span);
+  auto type_id = unit_lowerer.InternExpressionType(named, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return MakeRefExpr(
       hir::IterationBindingRef{
@@ -570,7 +570,7 @@ auto LowerHierarchicalValue(
           unit_lowerer.Specialization().ValueSourceOf(
               InstanceHolding(*holder), param) !=
               ParameterValueSource::kFixedBySpecialization) {
-        auto type_id = unit_lowerer.InternType(*hve.type, span);
+        auto type_id = unit_lowerer.InternExpressionType(hve, span);
         if (!type_id) return std::unexpected(std::move(type_id.error()));
         auto reached = unit_lowerer.ResolveValueTarget(
             frame, target, unit_lowerer.StartOf(frame, hve.ref), span);
@@ -609,7 +609,7 @@ auto LowerHierarchicalValue(
           span);
     case Referent::kVariableStorage:
     case Referent::kNetStorage: {
-      auto type_id = unit_lowerer.InternType(*hve.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(hve, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       auto reached = unit_lowerer.ResolveValueTarget(
           frame, target, unit_lowerer.StartOf(frame, hve.ref), span);
@@ -706,7 +706,7 @@ auto LowerInterfaceInstanceValue(
       frame, handle_type->iface.body,
       unit_lowerer.StartOf(frame, named.hierRef), span);
   if (!route) return std::unexpected(std::move(route.error()));
-  auto type_id = unit_lowerer.InternType(*named.type, span);
+  auto type_id = unit_lowerer.InternExpressionType(named, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const hir::TypeId object_type = unit_lowerer.ScopeClassTypeOf(
       unit_lowerer.ScopeClassOfInstance(handle_type->iface));

@@ -315,8 +315,8 @@ void RenderReferenceExpr(
           [&](const mir::ExternalUnitMintedEntryRef& r) {
             Write(
                 out, "reinterpret_cast<", CppType(view.Unit(), type), ">(&",
-                CppUnitScope(r.unit_name), "::", CppMintedEntryName(r.entry),
-                ")");
+                CppBodyScope(r.unit_name, r.body_name),
+                "::", CppMintedEntryName(r.entry), ")");
           }},
       reference.target);
 }

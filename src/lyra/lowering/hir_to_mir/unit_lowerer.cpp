@@ -361,8 +361,8 @@ void PublishNamespaceStorageBringUp(
 // passes them on.
 auto PublishObjectEntry(
     mir::CompilationUnit& unit, mir::ClassId root, mir::ClassId published,
-    std::span<const ConstructionValue> handed, const EntryTableSource& table)
-    -> mir::CallableId {
+    std::span<const ConstructionValue> handed,
+    const ConstructionTableSource& table) -> mir::CallableId {
   const auto owning_pointer = [&](mir::ClassId cls) {
     return unit.types.Intern(
         mir::Type{mir::PointerType{
@@ -389,7 +389,7 @@ auto PublishObjectEntry(
           mir::MakeLocalRefExpr(segment, unit.builtins.hierarchy_segment)),
       std::visit(
           Overloaded{
-              [&](const TableHandedIn&) {
+              [&](const ConstructionTableSupplied&) {
                 const mir::LocalId handed_in = code.AddLocal(table_type);
                 code.params.push_back(handed_in);
                 return body.exprs.Add(
@@ -516,22 +516,21 @@ auto UnitLowerer::PublishedScopeClassAt(
   return it->second;
 }
 
-auto UnitLowerer::TakePublishedScopeClass(
-    const hir::ScopePublication& published) -> mir::ClassId {
-  const auto [known, first] = published_scope_classes_.try_emplace(
-      published.signature.class_path, mir::ClassId{});
+auto UnitLowerer::TakePublishedScopeClass(const support::DefPath& class_path)
+    -> mir::ClassId {
+  const auto [known, first] =
+      published_scope_classes_.try_emplace(class_path, mir::ClassId{});
   if (first) known->second = unit_.DeclareClass();
   return known->second;
 }
 
 auto UnitLowerer::SettlePublishedScope(
-    mir::ClassId published, const hir::StructuralScope& scope)
+    mir::ClassId published, const hir::ScopeClassSignature& signature)
     -> const PublishedScopeLayout& {
   if (const auto settled = published_scopes_.find(published);
       settled != published_scopes_.end()) {
     return settled->second.layout.published;
   }
-  const hir::ScopeClassSignature& signature = scope.published.signature;
   ClassShape shape;
   shape.path = signature.class_path;
   shape.base = mir::ClassRef{mir::ObjectTreeRootRef{}};
@@ -542,26 +541,26 @@ auto UnitLowerer::SettlePublishedScope(
                   mir::ObjectType{.of = mir::IntraUnitClassRef{published}}}),
           .ownership = mir::PointerOwnership::kBorrowed}});
   // It is the unit's object as other units see it, so it is the same time
-  // scope (LRM 3.14.2.2) as the classes extending it.
-  shape.time_resolution = scope.time_resolution;
+  // scope (LRM 3.14.2.2) as the classes extending it, which is the unit's.
+  shape.time_resolution = hir_->root_scope.time_resolution;
   // Each published subroutine is a virtual method it introduces, its identity
   // reserved here at the position the signature gave the subroutine, so a body
   // reaching another instance of this unit calls it by position before any
   // class realizing the scope is built. Which body runs is the answer of the
   // class the object is, which it carries.
   shape.callable_signatures = {
-      scope.published.callables.size(),
+      signature.callables.size(),
       std::vector<CallableSignature>(
-          scope.published.callables.size(),
+          signature.callables.size(),
           CallableSignature{.virtual_dispatch = mir::IntroducesVirtualSlot{}})};
   base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines{
-      scope.published.callables.size()};
-  for (const hir::StructuralSubroutineId id : scope.published.callables) {
-    const hir::SubroutineDecl& decl = scope.structural_subroutines.Get(id);
+      signature.callables.size()};
+  for (const hir::PublishedCallable& callable : signature.callables) {
     subroutines.Append(
         PublishedSubroutine{
-            .name = decl.name,
-            .prototype = PrototypeOf(*this, decl, shape.self_pointer_type)});
+            .name = callable.name,
+            .prototype =
+                PrototypeOf(*this, callable, shape.self_pointer_type)});
   }
 
   std::vector<mir::FieldId> slots;
@@ -604,6 +603,7 @@ auto UnitLowerer::TakeClassIdentities(const hir::ClassDecl& decl)
 
 auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   unit_.name = hir_->name;
+  unit_.body_name = hir_->body_name;
   unit_.source_name = hir_->source_name;
 
   // Every identity another declaration can name is taken before any
@@ -774,7 +774,7 @@ auto UnitLowerer::PopulateModuleRoot(
       .root = *top_r,
       .object_entry = PublishObjectEntry(
           unit_, *top_r, root->PublishedClassId(), root->ConstructionValues(),
-          root->EntryTable())};
+          root->ConstructionTable())};
   return {};
 }
 
@@ -1050,11 +1050,11 @@ auto UnitLowerer::RecordPublishedScopeClass(
     hir::ExternalScopeClassId hir_id, const hir::ExternalScopeClass& scope)
     -> void {
   const support::DefPath& class_path = scope.signature.class_path;
-  // A class this unit published is its own: what is known of it is the
-  // declaration this unit states, laid out where its scope's shape is, and it
-  // is no dependency.
-  if (std::holds_alternative<mir::IntraUnitClassRef>(
-          ScopeClassIdentity(hir_id))) {
+  // A class this unit published is its own and no dependency: every body of
+  // the unit states it alike from what the unit published, whichever of its
+  // scopes this body's instances built.
+  if (hir_->IsItself(scope.unit_name)) {
+    SettlePublishedScope(TakePublishedScopeClass(class_path), scope.signature);
     return;
   }
   unit_.ConsumeClassOf(scope.unit_name, class_path);

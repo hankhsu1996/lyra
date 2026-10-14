@@ -1,7 +1,8 @@
 # A parameter read only as a value is supplied at construction
 
 Date: 2026-09-24 Status: accepted; D1 and D2 revised 2026-10-11 and again 2026-10-12, D3 and D7
-withdrawn 2026-10-12
+withdrawn 2026-10-12, D1 and D4 revised 2026-10-13: a parameter something compiled relies on enters
+the key by its value
 
 ## Context
 
@@ -57,40 +58,58 @@ evaluation read (D1).
 
 ## Decision
 
-### D1. A parameter is read as the source wrote it, except where the front end settled a constant
+### D1. A parameter is read as the source wrote it, except where something compiled relies on it
 
 A reference to a parameter is an expression the source wrote, and this compiler lowers it as that
-expression: the object reads the value it was built with. So a value parameter is supplied at
-construction unless what is compiled holds a constant the front end settled from it instead of the
-expression -- a declared range, a replication count, a range select's width, anywhere the language
-requires a constant and the lowering keeps the front end's. A reference anywhere else keeps the
-parameter out of the key, and that includes what a construction evaluates to decide what it builds:
-a conditional generate's condition, a `case` generate's selector and labels, and a loop generate's
-header (LRM 27.4, 27.5). A unit holds every alternative and every loop body any of its instances
-built (D2), so which one an instance selects is that instance's own. A parameter stays in the key as
-well where an instantiation may override it and it is written with no type (LRM 6.20.2: its type is
-the type of the value it is given), where it is handed on to a child parameter that decides
-something there, where a design element declared inside this one reads it, where it is read through
-a hierarchical name, and where another deciding parameter is written from it -- including one the
-module's blocks or subroutines declare.
+expression: the object reads the value it was built with, as a C++ object reads a constructor
+argument. Where something compiled relies on the parameter's value -- a constant the language
+requires, such as a declared range, a replication count or a range select's width, or a type the
+front end reads as a fact, such as what `type(...)` declares or what `$left(...)` answers from --
+the parameter is an argument of the specialization instead, as a C++ template argument is, and its
+value enters the key: the unit's name where what the unit declares relies on it, the name of the
+body the unit is compiled to where only its code does
+([a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)).
+SystemVerilog writes both kinds as `parameter`, where C++ and Rust make the author say which, so
+which one a parameter is is read off what relies on it. A reference anywhere else adds nothing to
+the key, and that includes what a construction evaluates to decide what it builds: a conditional
+generate's condition, a `case` generate's selector and labels, and a loop generate's header (LRM
+27.4, 27.5). A unit holds every alternative and every loop body any of its instances built (D2), so
+which one an instance selects is that instance's own. A parameter stays in the key as well where an
+instantiation may override it and it is written with no type (LRM 6.20.2: its type is the type of
+the value it is given), where it is handed on to a child parameter that decides something there,
+where a design element declared inside this one reads it, where it is read through a hierarchical
+name, and where another deciding parameter is written from it -- including one the module's blocks
+or subroutines declare.
 
-**Where the front end folded is the front end's own record, not a list kept here.** This record
+**What relies on a parameter is the front end's own record, not a list kept here.** This record
 first listed the positions this compiler lowers as an expression, then the positions the front end
 settles a constant at. Both were lists of a language's positions kept beside the code that decides
 them, and both went stale: each time a construction learned to run something -- its conditions
 ([a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)),
 its loops ([one-body-built-at-every-index](one-body-built-at-every-index.md) D2) -- or the front end
 folded somewhere new, a parameter was classified wrongly and nothing showed it. So the front end
-records, as it evaluates a constant, which parameters that evaluation read, and marks the reads that
-only decide which blocks a construction builds. The classification reads that record: a parameter
-some evaluation read stays in the key, unless the read only decides blocks, or sits where the
-lowering states the expression itself -- an element select's index and an indexed part select's
-base, which name a position rather than a shape (LRM 11.5.1, 11.5.3), and an input port's default,
-which each object evaluates (LRM 23.2.2.4). Nothing here names the positions the language requires a
-constant at, so none can be missed. A select's position the front end found out of bounds is the
-exception: such a select reaches nothing, which is what is compiled, so the front end records the
-position as a required constant and it decides. Two blocks of one loop that differ only there are
-two bodies; the select is rare and warned of, so no more than that is done for it.
+records, as it evaluates a constant the language requires, which parameters that evaluation read,
+and marks the reads that only decide which blocks a construction builds. Where it reads a type as a
+fact -- the type `type(...)` declares, an argument a system subroutine reads for its type alone, the
+part a port names -- it records the parameters its folds read while settling that type, since a type
+can be settled from a fold made only because it could be: a part-select's position, a condition
+leaving an arm unevaluated. The classification reads that record: a parameter some evaluation read
+is an argument, unless the read only decides blocks, or sits where the lowering states the
+expression itself -- an element select's index and an indexed part select's base, which name a
+position rather than a shape (LRM 11.5.1, 11.5.3), and an input port's default, which each object
+evaluates (LRM 23.2.2.4). Nothing here names the positions the language requires a constant at, so
+none can be missed. A select's position the front end found out of bounds is the exception: such a
+select reaches nothing, which is what is compiled, so the front end records the position as a
+required constant and it decides. Two blocks of one loop that differ only there are two bodies; the
+select is rare and warned of, so no more than that is done for it.
+
+The key holds an argument's value, not the constants settled from it at each place. Keying by the
+constants would share two values that size a range alike, but it needs the front end to say, for
+every fact, which constant at which place it came from, and the places a type is settled from a fold
+it made only because it could are exactly the ones it cannot say. Keyed by the value, a parameter is
+an argument or it is not, which the record of what was read answers whole. Two values that size a
+range alike are two units, which is what a C++ template does and what rustc's `Instance` does with
+its arguments.
 
 A value given elsewhere -- by a `defparam` (LRM 23.10.1) or a configuration (LRM 33.4.3) -- is
 classified the same way as the instantiation's own, since LRM 23.10 makes the three ways of altering
@@ -104,9 +123,9 @@ built by the design root, which hands nothing, and is the only instance of its u
 it is given is compiled in.
 
 A class specialization or a virtual interface is chosen by the values a site hands it and shared by
-every site handing the same ones, so a parameter whose value is read into one is held by what is
-compiled, and stays in the key; the record answers that too, since choosing the specialization
-evaluates the values handed.
+every site handing the same ones, so a parameter whose value is read into one is an argument; the
+record answers that too, since the front end charges the values a site hands a specialization to the
+instance writing the site.
 
 The record is the front end's answer to a question about its own evaluation, which is what
 [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) D1 asks of every
@@ -168,9 +187,12 @@ a procedural block declares is a static-lifetime declaration of that body, as a 
 there is (LRM 6.21): one per object, initialized with its expression when the object is built, and
 read by name. That is what a C++ compiler makes of a `static const` local whose initializer is not a
 constant expression -- a variable of its function, initialized once, never a value folded into each
-read. Every other parameter is read as the value its specialization settled, because that value is
-in the key and reading it costs no second unit -- and a design with nothing supplied lowers exactly
-as before.
+read. An argument of the unit's signature -- including one a design element declared inside this one
+reads, one whose type is its value's, one a class reads, and every parameter of a top instance -- is
+read as the value its specialization settled, because that value is in the key and reading it costs
+no second unit. An argument only of a body is supplied like any other and read as what the object
+was built with, which is the value the body's name holds. A design with nothing supplied lowers
+exactly as before.
 
 ### D5. A construction hands its values to the entry by type
 
@@ -272,12 +294,10 @@ defect of the record, found where any defect is: the designs the tests hold to t
   handed its index, where the index selects an alternative, a case item and a loop count in the
   child, is one of the designs held to its size: at 512 instances and at 1024 its units, files and
   bytes do not follow the count.
-- A parameter in a declared range is told apart by its value, so two values that size the same range
-  are two units that are one body; telling such a unit apart by what the value sizes, as a loop's
-  index already is, is not done.
-- A parameter reaching a constant the front end settled stays in the key, found by the front end's
-  record of the evaluation rather than by a walk of where it could be. The front end is ours, so
-  that is where the record was added.
+- A parameter in a declared range is an argument, so each value is a unit of its own, even where two
+  values size the range alike.
+- Whether a parameter is an argument is found by the front end's record of what relied on it rather
+  than by a walk of where it could be. The front end is ours, so that is where the record was added.
 - A module holding a class shares one unit across instances that build different blocks, as any
   module does, and a class a loop's block declares is one class of the unit however many blocks hold
   a copy, wherever the index decides nothing about the block.

@@ -569,6 +569,19 @@ class LoweringFacts {
 // by the second's return; afterwards the lowerer holds no IR.
 class UnitLowerer {
  public:
+  // What a compiled unit is called: the unit, which is what it publishes and
+  // what every referrer names, and the body of the unit it compiles, which is
+  // the unit's own name wherever the unit is compiled to one body.
+  struct Names {
+    std::string unit;
+    std::string body;
+
+    // The names of a unit compiled to one body.
+    [[nodiscard]] static auto Of(std::string_view unit) -> Names {
+      return Names{.unit = std::string{unit}, .body = std::string{unit}};
+    }
+  };
+
   // The unit holding the declarations whose own source `home` is: a design
   // element's body, a package, a `$unit` scope, or a specialization that is a
   // unit of its own, which is lowered from the scope declaring its generic and
@@ -576,14 +589,20 @@ class UnitLowerer {
   //
   // A design element's unit is one text every application of it shares, and
   // `home` is the body of one of them. `also_lowered_from` holds the bodies of
-  // the others the unit is lowered from as well: what each of them built is
-  // part of what the unit holds, since which alternative of a conditional
-  // generate stands and how many blocks a loop counts out are decided when an
-  // object is built (LRM 27.4, 27.5) and differ between applications.
+  // the others the body is lowered from as well: what each of them built is
+  // part of what it holds, since which alternative of a conditional generate
+  // stands and how many blocks a loop counts out are decided when an object is
+  // built (LRM 27.4, 27.5) and differ between applications. `declared_from`
+  // holds the bodies of the other applications it is declared from: for the
+  // body publishing its unit, every application of the unit, since what the
+  // unit publishes is what every one of them built whichever body it is
+  // compiled to.
   UnitLowerer(
-      const LoweringFacts& facts, const slang::ast::Symbol& home,
-      std::string name, hir::UnitRole role,
-      std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from);
+      const LoweringFacts& facts, const slang::ast::Symbol& home, Names names,
+      hir::UnitRole role,
+      std::span<const slang::ast::InstanceBodySymbol* const> declared_from = {},
+      std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from =
+          {});
 
   // The declaration phase: everything this unit states about itself, including
   // the signature it publishes. Reads no other unit, so a body that later
@@ -628,6 +647,29 @@ class UnitLowerer {
   // past the translation work for a type already translated; two frontend
   // spellings of one type reach the same id whether or not either took it.
   auto InternType(const slang::ast::Type& type, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
+
+  // The type of `expr`, which is the one way an expression's type is interned.
+  // What a declaration types -- a name, a member, an element, a user
+  // subroutine's result, a pattern or a `new` typed by what it is assigned to
+  // -- and what its own text types, a literal, keep that type, since a select
+  // or a key is read against its range. What an operation yields -- an
+  // operator, a conversion, an assignment, a part-select, a concatenation and
+  // its kin, a system subroutine's result -- is typed as what an operation
+  // yields, below.
+  auto InternExpressionType(
+      const slang::ast::Expression& expr, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
+
+  // The type of a value no select or key is ever read against -- what an
+  // operation yields -- numbered from zero in the direction its outermost
+  // dimension runs. No clause fixes that range (LRM 11.6.1 and 11.8.1 fix a
+  // width and a signedness, 11.4.11 and 7.4.5 an element count), and the front
+  // end hands up one it took from an operand or settled from a select's base,
+  // which differs between two instances whose identity is one. A query that
+  // reads the range reads the front end's own type, whose reads the front end
+  // records where the query is written.
+  auto InternResultType(const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
 
   // Adds a type the lowering itself composes rather than reads off the
@@ -1682,12 +1724,15 @@ class UnitLowerer {
   LoweringFacts facts_;
   const slang::ast::Symbol* home_;
   const slang::ast::Scope* scope_;
-  // The scope of every application the unit is lowered from, the one it is
+  // The scope of every application the body is lowered from, the one it is
   // named for first.
   std::vector<const slang::ast::Scope*> applications_;
+  // The scope of every application the unit is declared from: those, then the
+  // ones the unit's other bodies are lowered from.
+  std::vector<const slang::ast::Scope*> declared_applications_;
   // The bodies of those beyond the first, which is what a declaration is asked
   // against to learn whether this unit holds it.
-  std::unordered_set<const slang::ast::Symbol*> also_lowered_from_;
+  std::unordered_set<const slang::ast::Symbol*> also_declared_from_;
   // The application being read, which is what a name leaving the instance is
   // resolved from.
   const slang::ast::Scope* lowering_;
@@ -1803,7 +1848,7 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
     return SpecializationName(cls, Specialization());
   };
   if constexpr (std::is_void_v<Result>) {
-    for (const slang::ast::Scope* application : applications_) {
+    for (const slang::ast::Scope* application : declared_applications_) {
       WalkDeclarationScopes(*application, owned, name_of);
       for (const slang::ast::ClassType* spec :
            facts_.PlacedIn(application->asSymbol())) {
@@ -1812,7 +1857,7 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
       }
     }
   } else {
-    for (const slang::ast::Scope* application : applications_) {
+    for (const slang::ast::Scope* application : declared_applications_) {
       if (auto r = WalkDeclarationScopes(*application, owned, name_of); !r) {
         return r;
       }

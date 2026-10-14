@@ -32,6 +32,7 @@ auto UnitWithNullOf(mir::TypeId (*type_of)(mir::CompilationUnit&))
     -> mir::CompilationUnit {
   mir::CompilationUnit unit;
   unit.name = "U";
+  unit.body_name = "U";
   mir::CallableCode empty = mir::CallableCode::Defined();
   empty.result_type = unit.builtins.void_type;
   const mir::CallableId install = AddBody(unit, empty);

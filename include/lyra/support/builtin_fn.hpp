@@ -767,8 +767,8 @@ enum class BuiltinFn : std::uint16_t {
   // How the instance at one instantiation is made, read off the construction
   // table the object being built was handed: the entry making it, as a code
   // address whose prototype the construction restores, and the table it is
-  // constructed with. Which unit is made there is decided where the program is
-  // assembled, so no compiled body names it.
+  // constructed with. Which body of which unit is made there is decided where
+  // the program is assembled, so no compiled body names it.
   kInstantiationEntry,
   kInstantiationTable,
   // Extends a sequence still being composed by one element, answering with

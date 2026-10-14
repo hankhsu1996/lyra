@@ -711,9 +711,6 @@ class HirDumper {
             [](const WatchedWhole&) -> std::string { return "whole"; },
             [](const WatchedSelect& s) -> std::string {
               return std::format("Expr[{}]", s.prefix.value);
-            },
-            [](const WatchedBits& b) -> std::string {
-              return std::format("[{}:{}]", b.first, b.last);
             }},
         part);
   }
@@ -2859,8 +2856,8 @@ class HirDumper {
       }
       out += std::format(
           " body{}{}@[{}]", built.body.value,
-          built.code_arguments.has_value()
-              ? std::format("#{:016x}", *built.code_arguments)
+          built.body_arguments.has_value()
+              ? std::format("#{:016x}", *built.body_arguments)
               : std::string{},
           indices);
     }

@@ -17,6 +17,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -81,18 +82,33 @@ auto LowerDesign(std::string_view source) -> std::optional<LoweredUnits> {
   return units;
 }
 
+// Whether `unit` is one `definition` was compiled into.
+auto IsOf(const lyra::hir::CompilationUnit& unit, std::string_view definition)
+    -> bool {
+  const std::string_view name = unit.name;
+  return name == definition ||
+         (name.starts_with(definition) &&
+          name.substr(definition.size()).starts_with("__"));
+}
+
 // How many units `definition` was compiled into: one per specialization,
 // whatever the number of instances.
 auto UnitsOf(const LoweredUnits& design, std::string_view definition)
     -> std::size_t {
+  std::set<std::string_view> units;
+  for (const lyra::hir::CompilationUnit& unit : design) {
+    if (IsOf(unit, definition)) units.insert(unit.name);
+  }
+  return units.size();
+}
+
+// How many bodies those units were compiled to: one per way the values their
+// instances are handed fix their code, whatever the number of instances.
+auto BodiesOf(const LoweredUnits& design, std::string_view definition)
+    -> std::size_t {
   std::size_t count = 0;
   for (const lyra::hir::CompilationUnit& unit : design) {
-    const std::string_view name = unit.name;
-    if (name == definition ||
-        (name.starts_with(definition) &&
-         name.substr(definition.size()).starts_with("__"))) {
-      ++count;
-    }
+    if (IsOf(unit, definition)) ++count;
   }
   return count;
 }
@@ -177,10 +193,11 @@ endmodule
       4U);
 }
 
-TEST(ArtifactCount, BlocksOfTwoShapesAreCompiledOncePerShape) {
-  // Sixteen blocks whose widths alternate between two: two bodies, each built
-  // at the indices that take it, so the count follows the shapes and not the
-  // indices.
+TEST(ArtifactCount, BlocksWhoseWidthTheIndexSetsAreCompiledOncePerIndex) {
+  // Sixteen blocks whose widths alternate between two. The index decides what
+  // each block declares, so it is an argument of the block's class and each of
+  // its values names one, as a template argument does, even where two values
+  // settle one width.
   EXPECT_EQ(
       CompiledBlocksOfGenerate(
           R"(
@@ -192,7 +209,7 @@ module Top;
 endmodule
 )",
           0),
-      2U);
+      16U);
 }
 
 TEST(ArtifactCount, BlocksDerivingAConstantFromTheIndexAreCompiledOnce) {
@@ -1342,6 +1359,96 @@ endmodule
   ASSERT_TRUE(design.has_value());
   EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
   EXPECT_EQ(UnitsOf(*design, "Inner"), 1U);
+}
+
+TEST(ArtifactCount, AValueFixingOnlyCodeIsOneUnitCompiledPerBody) {
+  // A value only a process's code relies on names a body and leaves the unit
+  // one class, and a value a declaration relies on names the unit; either way
+  // by the value, as a template argument does, so two values that settle one
+  // constant are still two: `Code` and `Folded` are each one unit compiled to
+  // a body per value, and `Declared` is a unit per value.
+  const auto design = LowerDesign(R"(
+module Code #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
+  always_comb out = 8'(in[P:0]);
+endmodule
+
+module Folded #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
+  always_comb out = 8'(in[P % 2:0]);
+endmodule
+
+module Declared #(parameter int P = 1);
+  logic [P % 2:0] r;
+endmodule
+
+module Top;
+  logic [7:0] in, a, b, c, d;
+  Code #(.P(1)) code_a (.in(in), .out(a));
+  Code #(.P(3)) code_b (.in(in), .out(b));
+  Folded #(.P(1)) folded_a (.in(in), .out(c));
+  Folded #(.P(3)) folded_b (.in(in), .out(d));
+  Declared #(.P(2)) declared_a ();
+  Declared #(.P(4)) declared_b ();
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Code"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "Code"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Folded"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "Folded"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Declared"), 2U);
+  EXPECT_EQ(BodiesOf(*design, "Declared"), 2U);
+}
+
+TEST(ArtifactCount, AValueFixingTheCodeOfAUnitDeclaringAClassNamesTheUnit) {
+  // A class a unit declares reaches the unit's object as its body compiled it,
+  // and is one class of the unit, so a unit declaring one is compiled to one
+  // body: a value fixing only its code names the unit instead.
+  const auto design = LowerDesign(R"(
+module Holds #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
+  class Probe;
+    int v;
+  endclass
+  always_comb out = 8'(in[P:0]);
+endmodule
+
+module Top;
+  logic [7:0] in, a, b;
+  Holds #(.P(1)) narrow (.in(in), .out(a));
+  Holds #(.P(3)) wide (.in(in), .out(b));
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Holds"), 2U);
+  EXPECT_EQ(BodiesOf(*design, "Holds"), 2U);
+}
+
+TEST(ArtifactCount, AValueFixingAGrandchildsCodeFixesTheBodyHandingItOn) {
+  // A value handed on to a grandchild whose code alone it fixes: the
+  // grandchild is one unit compiled to a body per value, and which of those is
+  // built is how the child is built, so the child is one unit compiled to a
+  // body per value too.
+  const auto design = LowerDesign(R"(
+module Leaf #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
+  always_comb out = 8'(in[P:0]);
+endmodule
+
+module Mid #(parameter int K = 1) (input logic [7:0] in, output logic [7:0] out);
+  Leaf #(.P(K)) leaf (.in(in), .out(out));
+endmodule
+
+module Top;
+  logic [7:0] in;
+  logic [7:0] out [2];
+  for (genvar i = 0; i < 2; i += 1) begin : g
+    Mid #(.K(i + 1)) mid (.in(in), .out(out[i]));
+  end
+endmodule
+)");
+  ASSERT_TRUE(design.has_value());
+  EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "Leaf"), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Mid"), 1U);
+  EXPECT_EQ(BodiesOf(*design, "Mid"), 2U);
 }
 
 }  // namespace

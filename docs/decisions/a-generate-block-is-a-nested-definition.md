@@ -12,6 +12,8 @@ and narrows its D2 and D4. Revises fact 5 of that record and what
 [one-body-built-at-every-index](one-body-built-at-every-index.md) decides by comparing blocks. D5
 and fact 6 revised 2026-10-12: which body a block is, is named before any body lowers. D4 narrowed,
 D5's dispatch and the rejection of a virtual method per published subroutine reversed the same day.
+D7 revised 2026-10-13: a block declaring a class has one body. D4, D5 and fact 6 revised the same
+day: an index names an application or a body by its value, not by the constants settled from it.
 
 ## Requirement
 
@@ -37,10 +39,11 @@ the source and uses the source's names.
 4. A type declared inside an instance is a type of that instance (LRM 6.22), and the clause says the
    same of a generate block and of a module.
 5. A unit is named before any body lowers, by every party that names it, from the front end alone.
-6. What an index fixed, in what its block declares and in its block's code, is read off the front
-   end's own record of which parameters each constant evaluation read, before any body lowers. This
-   fact used to say the opposite -- that which blocks lower to one scope is known only once every
-   body has -- which was true while nothing recorded what an evaluation read.
+6. Whether what its block declares, or its block's code, relies on an index is read off the front
+   end's own record of which parameters each constant evaluation, and each type it read as a fact,
+   read, before any body lowers. This fact used to say the opposite -- that which blocks lower to
+   one scope is known only once every body has -- which was true while nothing recorded what an
+   evaluation read.
 
 ## What was wrong
 
@@ -93,36 +96,40 @@ names a unit.** The declaring unit, a referrer stepping into the block, and a ch
 on it each compute it, with no table between them and before any body lowers (fact 5). Nothing a
 comparison of lowered bodies finds is told to another unit.
 
-**D4. An index enters an application through the constants the front end settled from it.** Where
-the index sits in a place that decides what is declared, the expression the front end folded there
-keeps a constant, and that constant is what the index decides: two indices that fold alike in every
-such place are one application. Where no constant is kept, the index's own value stands in. Four
-places decide nothing for an index. What a run evaluates. What selects an alternative of a
-conditional, since the construction chooses it and the class holds every alternative any of its
-objects selected. What counts a loop's blocks out -- where its index starts, whether a block stands
-at it, how it reaches the next -- since the construction runs the loop (LRM 27.4) and how many
-blocks an object holds is no part of its class. And what the statements of a process, a continuous
-assignment or a subroutine run, since that is no part of what the class declares; what the index
-fixes there names the body the class is realized by (D5). A subroutine's arguments and result, and a
-variable a process keeps for the whole run, are what the class declares: a caller passes the one and
-a name reaches the other (LRM 13.4, 6.21, 23.6). This used to say "the code of a process, a
-continuous assignment or a subroutine", and read that way a static variable of a named block and an
-argument sized by the index each published a different class under one name. A place this reading
-misses is this compiler's defect, and is reported as one where the unit declares itself: block
-instances taken for one application that publish different classes.
+**D4. An index enters an application by its value, where what the block declares relies on it.**
+Where the front end records that something the block declares relied on the index -- a constant the
+language requires, a type it read as a fact -- the index is an argument of the block's class, and
+its value names the application, as a template argument does; two indices that settle every such
+constant alike are still two applications. This said, until 2026-10-13, that the constants settled
+from the index named it, so that two indices folding alike were one application (see
+[a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
+D1 for why the value replaced them). Four places decide nothing for an index. What a run evaluates.
+What selects an alternative of a conditional, since the construction chooses it and the class holds
+every alternative any of its objects selected. What counts a loop's blocks out -- where its index
+starts, whether a block stands at it, how it reaches the next -- since the construction runs the
+loop (LRM 27.4) and how many blocks an object holds is no part of its class. And what the statements
+of a process, a continuous assignment or a subroutine run, since that is no part of what the class
+declares; an index that code relies on names the body the class is realized by (D5). A subroutine's
+arguments and result, and a variable a process keeps for the whole run, are what the class declares:
+a caller passes the one and a name reaches the other (LRM 13.4, 6.21, 23.6). This used to say "the
+code of a process, a continuous assignment or a subroutine", and read that way a static variable of
+a named block and an argument sized by the index each published a different class under one name. A
+place this reading misses is this compiler's defect, and is reported as one where the unit declares
+itself: block instances taken for one application that publish different classes.
 
-**D5. Block instances of one application whose index fixed their code differently are that class
-realized more than once.** Which body a block is, is named before any body lowers, from the
-constants the front end settled from its index in its code (fact 6), as its application is named
-from those settled in what the block declares. Blocks of one name are one body: each is lowered and
-taken into it, which is how the body comes to hold every alternative and every loop body their
-constructions built, and blocks of one name that lower to anything else are this compiler's defect,
-reported as one. Nothing a lowered block holds is compared with another to find which body it is.
-Each body is a realizing class extending the one published class. A published subroutine is a
-virtual method the published class introduces and each realizing class overrides with its body, so a
-call reaches the body of the class the object is however many realize it, as a virtual call does in
-C++ and a call through a trait object does in Rust. No referrer sees how many realizations there
-are, so a body edit that changes the count changes no header.
+**D5. Block instances of one application whose code relies on their index are that class realized
+once per index value.** Which body a block is, is named before any body lowers, from the value of
+its index where the front end records that the block's code relied on it (fact 6), as its
+application is named from the index's value where what the block declares relied on it. Blocks of
+one name are one body: each is lowered and taken into it, which is how the body comes to hold every
+alternative and every loop body their constructions built, and blocks of one name that lower to
+anything else are this compiler's defect, reported as one. Nothing a lowered block holds is compared
+with another to find which body it is. Each body is a realizing class extending the one published
+class. A published subroutine is a virtual method the published class introduces and each realizing
+class overrides with its body, so a call reaches the body of the class the object is however many
+realize it, as a virtual call does in C++ and a call through a trait object does in Rust. No
+referrer sees how many realizations there are, so a body edit that changes the count changes no
+header.
 
 This decision first found the realizations by lowering every block and comparing each with the
 bodies found before it, which cost the square of the number of distinct bodies and was most of the
@@ -135,9 +142,13 @@ tells the unit apart. A child naming the block that holds it therefore carries n
 instance of the application is of one class, so the child is one unit.
 
 **D7. A type a block declares is a type of the block's application.** A struct is named by the
-applications between it and its unit. A block declaring a class is an application per index: a
-class's bodies are compiled against the scope its block lowered to, and which blocks lower to one
-scope is not known where the class is named (fact 6).
+applications between it and its unit. A class reaches the object of the block declaring it as that
+block's body compiled it -- a name its method writes is a route slot the body adds -- and is one
+class of the application however many bodies realize it, so a block declaring a class has one body:
+an index its code uses names its application instead. This said, until 2026-10-13, that such a block
+is an application per index, because which blocks lower to one scope was not known where the class
+is named; fact 6 made it known, and the block was then realized more than once with one class
+reaching into each, which ended the compile as a defect.
 
 **D8. A declaration of a unit is identified by a path of steps, each a kind and what tells it from
 its siblings, and a target spells it.** Every identifier has a unique hierarchical path name (LRM
@@ -169,10 +180,10 @@ every scope extends, so no header needs another unit's scope class and none is n
 
 ## Limits, each with its cause
 
-- An index that reaches a declaration through a position where the front end kept no constant makes
-  an application per value, also where two values compile alike. An identity is a function of the
-  occurrence, as it is for any parameter.
-- A loop whose blocks declare a class is an application per index (D7).
+- An index a declaration relies on makes an application per value, also where two values compile
+  alike, as a template argument does.
+- A loop whose blocks declare a class is an application per value of its index wherever the blocks'
+  code or what they declare relies on it (D7).
 - An application or a specialization with arguments is told apart by a digest of them, as a unit is,
   so the emitted name carries sixteen hex digits. How arguments are spelled is one question for
   both.

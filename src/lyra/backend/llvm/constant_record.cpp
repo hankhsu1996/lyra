@@ -114,8 +114,8 @@ void AppendRecord(
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::Instantiation& record) {
-  const auto& [make_object, table] = record;
-  AppendFieldsOf(out, at, record, make_object, table);
+  const auto& [entry, table] = record;
+  AppendFieldsOf(out, at, record, entry, table);
 }
 
 void AppendRecord(

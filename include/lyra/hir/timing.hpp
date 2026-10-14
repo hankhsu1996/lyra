@@ -29,25 +29,14 @@ struct WatchedWhole {
 // A leaf reads the part of its cell the source selected: the longest static
 // prefix the source wrote (LRM 11.5.3), a select over the cell whose indices
 // are constants. A genvar or a parameter is such a constant and each
-// construction is given its own, so the part is stated in terms of that value
-// rather than as the bits one construction settled it to.
+// construction is given its own, so the part is evaluated where the leaf is.
 struct WatchedSelect {
   ExprId prefix;
 
   auto operator==(const WatchedSelect&) const -> bool = default;
 };
 
-// A leaf reads bits of its cell's packed encoding, first and last bit, that no
-// prefix in the source spells: a read inside a called function, or what is left
-// of one once the procedure's own writes are excluded (LRM 9.2.2.2.1).
-struct WatchedBits {
-  std::uint64_t first;
-  std::uint64_t last;
-
-  auto operator==(const WatchedBits&) const -> bool = default;
-};
-
-using WatchedPart = std::variant<WatchedWhole, WatchedSelect, WatchedBits>;
+using WatchedPart = std::variant<WatchedWhole, WatchedSelect>;
 
 // Where a read set's storage is, fixed for as long as a wait on it lasts: a
 // cell elaboration sealed; or a variable the running body declares, which lives
@@ -177,9 +166,8 @@ struct EventControl {
   auto operator==(const EventControl&) const -> bool = default;
 };
 
-// LRM 9.4.2.2 `@*` / `@(*)`. Sensitivity for the controlled body is
-// computed by slang's AnalysisManager (write-before-read exclusion via
-// must-def) and looked up at AST -> HIR via the precomputed read-set facts.
+// LRM 9.4.2.2 `@*` / `@(*)`: the controlled statement waits on what its text
+// reads.
 struct ImplicitEventControl {
   std::vector<SensitivityEntry> sensitivity_list;
 

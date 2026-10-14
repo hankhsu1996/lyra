@@ -16,6 +16,7 @@
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -1942,6 +1943,101 @@ auto UnitLowerer::InternType(
   const hir::TypeId id = unit_.types.Intern(*std::move(type_or));
   type_cache_.emplace(canonical, id);
   return id;
+}
+
+namespace {
+
+// Whether `expr` yields a value no select or key is ever read against: what LRM
+// 11.4 calls an operator, a conversion (LRM 6.24), an assignment used as an
+// expression, a part-select, a concatenation, a replication, a stream, a set
+// membership test, a value range, a min:typ:max choice, and what a system
+// subroutine returns.
+auto IsAnOperation(const slang::ast::Expression& expr) -> bool {
+  switch (expr.kind) {
+    case slang::ast::ExpressionKind::UnaryOp:
+    case slang::ast::ExpressionKind::BinaryOp:
+    case slang::ast::ExpressionKind::ConditionalOp:
+    case slang::ast::ExpressionKind::Conversion:
+    case slang::ast::ExpressionKind::Assignment:
+    case slang::ast::ExpressionKind::RangeSelect:
+    case slang::ast::ExpressionKind::Concatenation:
+    case slang::ast::ExpressionKind::Replication:
+    case slang::ast::ExpressionKind::Streaming:
+    case slang::ast::ExpressionKind::Inside:
+    case slang::ast::ExpressionKind::ValueRange:
+    case slang::ast::ExpressionKind::MinTypMax:
+      return true;
+    case slang::ast::ExpressionKind::Call:
+      return expr.as<slang::ast::CallExpression>().isSystemCall();
+    case slang::ast::ExpressionKind::Invalid:
+    case slang::ast::ExpressionKind::IntegerLiteral:
+    case slang::ast::ExpressionKind::RealLiteral:
+    case slang::ast::ExpressionKind::TimeLiteral:
+    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral:
+    case slang::ast::ExpressionKind::NullLiteral:
+    case slang::ast::ExpressionKind::UnboundedLiteral:
+    case slang::ast::ExpressionKind::StringLiteral:
+    case slang::ast::ExpressionKind::NamedValue:
+    case slang::ast::ExpressionKind::HierarchicalValue:
+    case slang::ast::ExpressionKind::ElementSelect:
+    case slang::ast::ExpressionKind::MemberAccess:
+    case slang::ast::ExpressionKind::DataType:
+    case slang::ast::ExpressionKind::TypeReference:
+    case slang::ast::ExpressionKind::ArbitrarySymbol:
+    case slang::ast::ExpressionKind::LValueReference:
+    case slang::ast::ExpressionKind::SimpleAssignmentPattern:
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern:
+    case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
+    case slang::ast::ExpressionKind::EmptyArgument:
+    case slang::ast::ExpressionKind::Dist:
+    case slang::ast::ExpressionKind::NewArray:
+    case slang::ast::ExpressionKind::NewClass:
+    case slang::ast::ExpressionKind::NewCovergroup:
+    case slang::ast::ExpressionKind::CopyClass:
+    case slang::ast::ExpressionKind::ClockingEvent:
+    case slang::ast::ExpressionKind::AssertionInstance:
+    case slang::ast::ExpressionKind::TaggedUnion:
+      return false;
+  }
+  throw InternalError("IsAnOperation: unknown slang ExpressionKind");
+}
+
+}  // namespace
+
+auto UnitLowerer::InternExpressionType(
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  return IsAnOperation(expr) ? InternResultType(*expr.type, span)
+                             : InternType(*expr.type, span);
+}
+
+auto UnitLowerer::InternResultType(
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  auto handed_up = InternType(type, span);
+  if (!handed_up) return handed_up;
+  const auto from_zero = [](std::int64_t left, std::int64_t right,
+                            std::uint64_t count) {
+    const auto last = static_cast<std::int64_t>(count) - 1;
+    return left >= right ? std::pair{last, std::int64_t{0}}
+                         : std::pair{std::int64_t{0}, last};
+  };
+  const hir::Type& handed = unit_.types.Get(*handed_up);
+  if (const auto* packed = handed.As<hir::PackedArrayType>()) {
+    const auto [left, right] = from_zero(
+        packed->dim.left, packed->dim.right, packed->dim.ElementCount());
+    hir::PackedArrayType numbered = *packed;
+    numbered.dim = hir::PackedRange{.left = left, .right = right};
+    return unit_.types.Intern(hir::Type{std::move(numbered)});
+  }
+  if (const auto* unpacked = handed.As<hir::UnpackedArrayType>()) {
+    const auto [left, right] = from_zero(
+        unpacked->dim.left, unpacked->dim.right, unpacked->dim.ElementCount());
+    hir::UnpackedArrayType numbered = *unpacked;
+    numbered.dim = hir::UnpackedRange{.left = left, .right = right};
+    return unit_.types.Intern(hir::Type{std::move(numbered)});
+  }
+  return handed_up;
 }
 
 }  // namespace lyra::lowering::ast_to_hir

@@ -29,7 +29,7 @@ auto LowerInsideExpr(
     items.push_back(frame.Exprs().Add(*std::move(item_or)));
   }
 
-  auto type_id = lowerer.Owner().InternType(*in.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(in, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,

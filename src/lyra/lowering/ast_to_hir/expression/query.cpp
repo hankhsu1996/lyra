@@ -146,7 +146,7 @@ auto MakeQueryConstant(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call, const slang::ConstantValue& value,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = unit_lowerer.InternType(*call.type, span);
+  auto type_id = unit_lowerer.InternExpressionType(call, span);
   if (!type_id) {
     return std::unexpected(std::move(type_id.error()));
   }
@@ -184,7 +184,7 @@ auto BuildElementCountExpr(
       unit_lowerer.Unit().types.Get(operand_type).Is<hir::StringType>();
   const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
 
-  auto result_type = unit_lowerer.InternType(*call.type, span);
+  auto result_type = unit_lowerer.InternExpressionType(call, span);
   if (!result_type) {
     return std::unexpected(std::move(result_type.error()));
   }
@@ -304,7 +304,7 @@ auto LowerAssociativeDimensionQuery(
       if (!operand_or) {
         return std::unexpected(std::move(operand_or.error()));
       }
-      auto result_type = unit_lowerer.InternType(*call.type, span);
+      auto result_type = unit_lowerer.InternExpressionType(call, span);
       if (!result_type) {
         return std::unexpected(std::move(result_type.error()));
       }
@@ -343,7 +343,7 @@ auto LowerDynamicBitsQuery(
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
-  auto result_type = unit_lowerer.InternType(*call.type, span);
+  auto result_type = unit_lowerer.InternExpressionType(call, span);
   if (!result_type) {
     return std::unexpected(std::move(result_type.error()));
   }
@@ -484,7 +484,7 @@ auto LowerComposedDimensionQuery(
     rows.push_back(frame.Exprs().Add(*std::move(row_or)));
   }
 
-  auto element_type = unit_lowerer.InternType(*call.type, span);
+  auto element_type = unit_lowerer.InternExpressionType(call, span);
   if (!element_type) {
     return std::unexpected(std::move(element_type.error()));
   }

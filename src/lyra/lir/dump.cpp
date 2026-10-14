@@ -172,6 +172,8 @@ class LirDumper {
         return "internal";
       case Linkage::kExternal:
         return "external";
+      case Linkage::kShared:
+        return "shared";
     }
     throw InternalError("lir dump: unknown linkage");
   }

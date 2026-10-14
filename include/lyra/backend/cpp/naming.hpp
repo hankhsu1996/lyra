@@ -269,6 +269,30 @@ void WriteOne(TargetText& out, UnitScope scope);
   return UnitScope{.unit_name = unit_name};
 }
 
+// The namespace what only one body of a unit states is in: one inside the
+// unit's, named after the body, so the body's own text sees the unit's
+// declarations and another body's stands apart from it. A unit compiled to one
+// body is that body, and its namespace is the unit's.
+[[nodiscard]] inline auto BodyNamespaceOf(
+    std::string_view unit_name, std::string_view body_name)
+    -> std::optional<SourceName> {
+  if (body_name == unit_name) return std::nullopt;
+  return ToCppName(body_name);
+}
+
+// The qualifier for a reference into that namespace, `::Top` or `::Top::Body`.
+struct BodyScope {
+  std::string_view unit_name;
+  std::string_view body_name;
+};
+
+void WriteOne(TargetText& out, BodyScope scope);
+
+[[nodiscard]] inline auto CppBodyScope(
+    std::string_view unit_name, std::string_view body_name) -> BodyScope {
+  return BodyScope{.unit_name = unit_name, .body_name = body_name};
+}
+
 // The files a unit is emitted as. Both the unit writing a file and every unit
 // including it compute the name from here, so a unit can include a file of
 // another unit without seeing how that unit was emitted. A file name is a

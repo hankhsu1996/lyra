@@ -1,6 +1,10 @@
 # A part a construction value selects is the select the source wrote
 
-Date: 2026-09-28 Status: accepted
+Date: 2026-09-28 Status: accepted. D2, D3, the last sentence of D4, and the rejected "compute the
+read set from the source's selects" are revised by
+[the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md):
+a read set is collected from the text, an instance is never lowered against another in a build, and
+a query reads the type an operation is given.
 
 ## Context
 

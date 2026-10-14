@@ -126,8 +126,11 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   for (const mir::StructId id : mir_->structs.Ids()) {
     const mir::StructDecl& decl = mir_->GetStruct(id);
+    // A struct is a declaration another unit names, so each body of the unit
+    // states it alike.
     lir::Struct lowered{
         .path = decl.path,
+        .linkage = lir::Linkage::kShared,
         .elements = TranslateTypes(decl.elements),
         .methods = {}};
     for (const mir::StructMethod& method : decl.methods) {
@@ -164,7 +167,8 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       out_.static_storage.push_back(
           lir::StaticStorage{
               .symbol = lir::StaticPropertySymbol(
-                  mir_->name, lir::SymbolPartOf(cls.path, id.value),
+                  lir::QualifierOf(out_, cls.path),
+                  lir::SymbolPartOf(cls.path, id.value),
                   lir::SymbolPartOf(
                       mir::NameOf(cls.named_static_properties, prop_id),
                       prop_id.value)),
@@ -184,7 +188,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    fn->definition = lir::Definition::kShared;
+    fn->linkage = lir::Linkage::kShared;
     out_.functions.Add(*std::move(fn));
   }
 
@@ -216,7 +220,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     auto fn = FunctionLowerer(
                   *this, stated.code,
                   lir::TypeDefaultSymbol(
-                      mir_->name,
+                      lir::QualifierOf(out_, std::nullopt),
                       static_cast<std::uint32_t>(out_.type_defaults.size())))
                   .Run();
     if (!fn) {
@@ -242,6 +246,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
       if (!fn) {
         return std::unexpected(std::move(fn.error()));
       }
+      fn->linkage = lowered.linkage;
       out_.functions.Define(lowered.methods[i].function, *std::move(fn));
     }
   }
@@ -269,7 +274,9 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     }
     closure.invoke = ClosureFunction(id);
     auto fn = FunctionLowerer(
-                  *this, decl, lir::ClosureInvokeSymbol(mir_->name, id.value))
+                  *this, decl,
+                  lir::ClosureInvokeSymbol(
+                      lir::QualifierOf(out_, std::nullopt), id.value))
                   .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
@@ -341,12 +348,16 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
             return lir::NamespaceCallableSymbol(
                 mir_->name, lir::SymbolPart::Name(r.name));
           },
+          // An entry the unit makes up is the body's: making an object of one
+          // body is making an object of that body's classes.
           [&](const mir::ReachedByMintedEntry& r) {
-            return MintedEntrySymbol(mir_->name, r.entry);
+            return MintedEntrySymbol(
+                lir::QualifierOf(out_, std::nullopt), r.entry);
           },
           [&](const mir::ReachedByPosition& r) {
             return lir::NamespaceCallableSymbol(
-                mir_->name, lir::SymbolPart::Ordinal(r.slot.value));
+                lir::QualifierOf(out_, std::nullopt),
+                lir::SymbolPart::Ordinal(r.slot.value));
           }},
       mir::NamespaceReachOf(*mir_, id));
 }
@@ -389,7 +400,7 @@ auto UnitLowerer::ClassBodySymbol(
     lir::SymbolPart class_part, const mir::Class& cls, mir::CallableId id) const
     -> std::string {
   return lir::ClassCallableSymbol(
-      mir_->name, std::move(class_part),
+      lir::QualifierOf(out_, cls.path), std::move(class_part),
       lir::SymbolPartOf(mir::NameOf(cls.named_callables, id), id.value));
 }
 
@@ -428,6 +439,10 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
   out.path = cls.path;
+  out.linkage = mir::IsPublishedScopeClass(*mir_, owner)
+                    ? lir::Linkage::kShared
+                    : lir::Linkage::kExternal;
+  const std::string_view qualifier = lir::QualifierOf(out_, cls.path);
   out.base = cls.base.transform(
       [&](const mir::ClassRef& base) { return BaseType(base); });
 
@@ -448,13 +463,14 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
             *this, cls, *cls.constructor,
             lir::ConstructorPrologueSymbol(
                 lir::ClassDefinitionSymbol(
-                    mir_->name, lir::SymbolPartOf(cls.path, owner.value))),
+                    qualifier, lir::SymbolPartOf(cls.path, owner.value))),
             lir::ConstructorSymbol(
-                mir_->name, lir::SymbolPartOf(cls.path, owner.value)))
+                qualifier, lir::SymbolPartOf(cls.path, owner.value)))
             .Run();
     if (!constructor) {
       return std::unexpected(std::move(constructor.error()));
     }
+    constructor->linkage = out.linkage;
     out_.functions.Define(function, *std::move(constructor));
   }
 
@@ -474,6 +490,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
+    fn->linkage = out.linkage;
     out_.functions.Define(*body, *std::move(fn));
   }
   out.dispatch = LowerDispatch(owner, cls);
@@ -501,7 +518,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
   out_.constants.push_back(
       lir::GlobalConstant{
           .symbol = definition,
-          .linkage = lir::Linkage::kExternal,
+          .linkage = out.linkage,
           .initializer = LowerConstant(
               cls.object_definition_initializer,
               cls.object_definition_initializer.value)});
@@ -513,10 +530,11 @@ auto UnitLowerer::DefinitionSymbolOf(const mir::DeclaredClassRef& of) const
   return std::visit(
       Overloaded{
           [&](const mir::IntraUnitClassRef& intra) {
+            const std::optional<support::DefPath>& path =
+                mir_->GetClass(intra.class_id).path;
             return lir::ClassDefinitionSymbol(
-                mir_->name,
-                lir::SymbolPartOf(
-                    mir_->GetClass(intra.class_id).path, intra.class_id.value));
+                lir::QualifierOf(out_, path),
+                lir::SymbolPartOf(path, intra.class_id.value));
           },
           [](const mir::CrossUnitClassRef& cross) {
             return lir::ClassDefinitionSymbol(
@@ -574,7 +592,7 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     [&](const mir::ExternalUnitMintedEntryRef& e)
                         -> lir::Constant {
                       return {lir::ConstantAddress{
-                          .symbol = MintedEntrySymbol(e.unit_name, e.entry),
+                          .symbol = MintedEntrySymbol(e.body_name, e.entry),
                           .kind = lir::AddressKind::kCode}};
                     },
                     [&](const mir::ClassConstantRef&) {

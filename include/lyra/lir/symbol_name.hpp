@@ -147,6 +147,14 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
 auto TypeDefaultSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
 
+// The name what `unit` defines is qualified by: the unit's own for a
+// declaration another unit names, `path` being how it is named, which every
+// body of the unit states alike; the body's for what was built for one body's
+// own use, which no other body states and whose position is its only identity.
+auto QualifierOf(
+    const CompilationUnit& unit, const std::optional<support::DefPath>& path)
+    -> std::string_view;
+
 // The symbol `type`'s definition is linked under, or nothing where the type
 // names no declaration a value is built from. The definition is the compiler's
 // own and stands beside the declaration rather than inside it, so it is a

@@ -27,16 +27,16 @@ document conflicts with a North Star principle, the lower-level document is wron
    edit-compile-run-inspect loop, not simulation throughput alone. A design that cuts one stage of
    the loop at the cost of inflating another beyond budget is rejected.
 2. **Compile per unit; elaborate at runtime.** The compile-time scope is the compilation unit
-   (module, package, interface), not the elaborated instance graph. Generate constructs (`if`,
-   `for`, `case`) are constructor-time logic the runtime executes to build the object graph at time
-   zero. Compile-time artifacts are class-level and shared across every instance; per-instance data
-   (parameter values, wiring, hierarchical position) flows in at runtime construction. The count of
-   compile-time **artifacts** scales with the count of distinct unit specializations, not with
-   instance count. Compile-time **work** is a different axis and is not this invariant's subject: a
-   front end that elaborates every instance it does not find alike an earlier one makes some work
-   proportional to instance count whatever is built above it, and what the artifacts go on to cost
-   dominates it by orders of magnitude. A design that produces more artifacts in order to do less
-   per-instance work has traded the wrong way.
+   (module, package, interface), not the elaborated instance graph. The object graph, generate
+   constructs (`if`, `for`, `case`) included, is built at runtime construction at time zero.
+   Compile-time artifacts are class-level and shared across every instance; per-instance data
+   (parameter values, which generate blocks were built, wiring, hierarchical position) flows in at
+   runtime construction. The count of compile-time **artifacts** scales with the count of distinct
+   unit specializations, not with instance count. Compile-time **work** is a different axis and is
+   not this invariant's subject: a front end that elaborates every instance it does not find alike
+   an earlier one makes some work proportional to instance count whatever is built above it, and
+   what the artifacts go on to cost dominates it by orders of magnitude. A design that produces more
+   artifacts in order to do less per-instance work has traded the wrong way.
 3. **Correctness is independent of optimization.** The compiler produces correct output for every
    accepted program; the per-unit sharing of invariant 2 is admitted only when behavior-preserving,
    and a correct program is never rejected because an optimization cannot be applied.

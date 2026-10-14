@@ -7,7 +7,21 @@
 ## Status
 
 Accepted. How a procedure's own implicit list takes in what the functions it calls read is revised
-by [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).
+by [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md). Revised
+2026-10-13 by
+[the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md):
+the read and write sets no longer come from the front end's flow analysis but from a walk of the
+text that marks each name read or written by the same rules and states the part it reaches as the
+longest static prefix the source wrote. The flow analysis answered in bits it settled from one
+elaboration's values -- how many runs a symbol split into, which prefixes coincide, whether a
+constant index fell outside its value, where a read was then dropped -- so two elaborations of one
+body read differently where a value they are built with differs, and a body shared between them
+could not be lowered from either. F5's precision is unaffected: the front end's read set never took
+a write out of a read, and the write is still taken out when the prefixes are evaluated (LRM
+9.2.2.2.1 b). What the walk counts that the flow analysis did not is a read only an unreachable path
+holds and a select past its value's end, both of which LRM 9.2.2.2.1 lists all the same. The
+mechanism the sections below prescribe is the one this replaced; their findings on what a read set
+must hold stand.
 
 ## Why this decision matters
 

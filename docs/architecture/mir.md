@@ -25,10 +25,10 @@ SV-specific concepts -- signals as observable storage cells, NBA scheduling regi
 semantics, generate as elaboration -- are translated at HIR-to-MIR into MIR's generic vocabulary:
 variables whose type is a capability wrapper, calls against those wrappers' APIs for the operations
 that act on the wrapper itself, dereference for naming the storage it stands for, runtime callables
-the scheduler invokes, constructor-time logic that builds the object graph. Once MIR sees a value it
-sees a programming-language expression with a programming-language type; it does not know or care
-that the source was SystemVerilog. The same MIR could in principle express the same program reached
-from any source language with comparable semantic surface.
+the scheduler invokes, constructors that build the object graph. Once MIR sees a value it sees a
+programming-language expression with a programming-language type; it does not know or care that the
+source was SystemVerilog. The same MIR could in principle express the same program reached from any
+source language with comparable semantic surface.
 
 MIR is also not the machine-execution model. Control-flow graphs, basic blocks, storage placement,
 register allocation, and instruction-level effect ordering belong to LIR. MIR is high-level
@@ -152,9 +152,9 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 2. All hierarchy is expressed as object ownership. A hierarchical reference is navigation on the
    object graph, not a lookup in a side table. _Programming-language consequence: containment is
    expressed in the type system, not by a parallel registry._
-3. Generate is lowered to constructor-time construction logic. A module's constructor builds its
-   children via `if`, loop, and sequence over construction actions. _Programming-language
-   consequence: generate is not a meta-language at MIR; it is ordinary constructor code._
+3. Generate is lowered to construction. A module's constructor builds the children, generate blocks
+   included, that the data it is handed lists. _Programming-language consequence: generate is not a
+   meta-language at MIR; it is ordinary constructor code building objects from its arguments._
 4. MIR ids are the single source of identity at this layer. Earlier-layer ids are not carried
    through. _Programming-language consequence: a layer's names are owned by the layer._
 5. MIR admits a pure textual dumper that is lossless with respect to MIR identity and structure. It

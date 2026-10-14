@@ -555,6 +555,7 @@ auto SpecializationKeyOf(
       case ParameterValueSource::kFixedBySpecialization:
         key.inputs.push_back(ParameterInput(*value, policy));
         break;
+      // Its value names at most the body the unit is compiled to.
       case ParameterValueSource::kSuppliedAtConstruction:
         key.inputs.push_back(
             SpecializationInput{
@@ -669,26 +670,6 @@ auto SpecializationPolicy::ReadThroughItsOwnBody() const -> HasBodyOfItsOwnFn {
   };
 }
 
-namespace {
-
-// The inputs of a block's key that what its index fixed contributes, each
-// named by the index and its place among them.
-auto IndexInputs(
-    const slang::ast::ParameterSymbol& index,
-    std::span<const std::string> fixed) -> std::vector<SpecializationInput> {
-  std::vector<SpecializationInput> inputs;
-  std::uint32_t place = 0;
-  for (const std::string& value : fixed) {
-    inputs.push_back(
-        SpecializationInput{
-            .name = std::format("{}#{}", index.name, place++),
-            .kind = FixedValue{.value = value}});
-  }
-  return inputs;
-}
-
-}  // namespace
-
 auto SpecializationPolicy::BlockStepOf(
     const slang::ast::GenerateBlockSymbol& block) const
     -> support::GenerateBlockStep {
@@ -696,9 +677,9 @@ auto SpecializationPolicy::BlockStepOf(
     return kept->second;
   }
   SpecializationKey key{.definition = GenerateBlockLabel(block), .inputs = {}};
-  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block)) {
-    key.inputs = IndexInputs(
-        *index, WhatItFixesInDeclarations(InstanceHolding(block), *index));
+  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block);
+      index != nullptr && IsUsedInSignature(InstanceHolding(block), *index)) {
+    key.inputs.push_back(ParameterInput(*index, *this));
   }
   for (const OverriddenBelow& overridden :
        OverridesBelow(block, context_, ReadThroughItsOwnBody())) {
@@ -725,15 +706,33 @@ auto SpecializationPolicy::BlockStepOf(
   return step;
 }
 
-auto SpecializationPolicy::CodeArgumentsOf(
+auto SpecializationPolicy::BodyArgumentsOf(
     const slang::ast::GenerateBlockSymbol& block) const
     -> std::optional<std::uint64_t> {
   SpecializationKey key{.definition = GenerateBlockLabel(block), .inputs = {}};
-  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block)) {
-    key.inputs =
-        IndexInputs(*index, WhatItFixesInCode(InstanceHolding(block), *index));
+  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block);
+      index != nullptr && IsUsedInBody(InstanceHolding(block), *index)) {
+    key.inputs.push_back(ParameterInput(*index, *this));
   }
   return ArgumentsDigest(key);
+}
+
+auto SpecializationPolicy::BodyArgumentsOf(
+    const slang::ast::InstanceSymbol& inst) const
+    -> std::optional<std::uint64_t> {
+  SpecializationKey key{.definition = NameOf(inst), .inputs = {}};
+  for (const slang::ast::ParameterSymbol* supplied :
+       SuppliedParametersOf(inst)) {
+    if (IsUsedInBody(inst, *supplied)) {
+      key.inputs.push_back(ParameterInput(*supplied, *this));
+    }
+  }
+  return ArgumentsDigest(key);
+}
+
+auto SpecializationPolicy::BodyNameOf(
+    const slang::ast::InstanceSymbol& inst) const -> std::string {
+  return WithDigest(NameOf(inst), BodyArgumentsOf(inst));
 }
 
 void SpecializationPolicy::EnterNaming(

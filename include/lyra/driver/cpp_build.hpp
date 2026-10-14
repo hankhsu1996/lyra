@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -59,13 +60,17 @@ struct EmittedCppSources {
   std::vector<dpi::AbiFragment> dpi_fragments;
 };
 
-// What writing one unit's sources left in the project: the files, the one a
+// What writing one body of a unit left in the project: the files, the one a
 // build compiles, and the text of what the unit states of the program's
-// foreign name space where it states anything.
+// foreign name space where it states anything; and its declarations, which
+// every body of the unit states alike and which are written where the bodies
+// are collected, once.
 struct WrittenUnit {
+  std::string body_name;
   std::vector<std::string> files;
   TranslationUnit translation_unit;
   std::optional<std::string> dpi_fragment;
+  std::vector<backend::cpp::CppArtifact> declarations;
 };
 
 // A unit this target has no form for somewhere: every construct it refused,
@@ -77,9 +82,10 @@ struct RefusedUnit {
 
 using EmittedUnit = std::variant<WrittenUnit, RefusedUnit>;
 
-// Writes the emitted C++ sources of a project into a directory. A unit's
-// rendered text is written and released as soon as it is rendered, so what an
-// emit holds is the units in flight rather than the design.
+// Writes the emitted C++ sources of a project into a directory. A body's code
+// is written and released as soon as it is rendered, and its declarations as
+// soon as it is collected, so what an emit holds is the bodies in flight
+// rather than the design.
 //
 // A unit this backend has no form for is refused as it arrives, and the other
 // units are still attempted, so one run names every gap rather than the first.
@@ -96,15 +102,19 @@ class CppProjectSink {
       : dir_(std::move(dir)), formatting_(formatting), refusals_(&refusals) {
   }
 
-  // Writes the unit's declarations and the translation unit realizing them, or
-  // nothing where the unit holds a construct this target has no form for.
-  // Every file a unit writes is named for that unit, and this reads nothing
-  // the sink collects, so several units may be written at once.
+  // Writes the translation unit realizing one body of a unit, or nothing where
+  // the unit holds a construct this target has no form for, and hands back the
+  // unit's declarations. Every file a body writes is named for it, and nothing
+  // here reads what the sink collects, so several bodies may be written at
+  // once.
   [[nodiscard]] auto Write(const mir::CompilationUnit& unit) const
       -> diag::Result<EmittedUnit>;
 
-  // Collects what writing a unit left, in the order it is called, which is the
-  // order a build compiles the units in; what a unit refused is reported.
+  // Collects what writing a body left, in the order it is called, which is the
+  // order a build compiles the units in; what a body refused is reported. The
+  // declarations it handed back are written here: the bodies of one unit state
+  // them alike, so one another body wrote already is not written again, and
+  // one that reads otherwise is this compiler's defect.
   void Collect(EmittedUnit unit);
 
   // Closes the project: the design root's own files and the program entry,
@@ -121,10 +131,15 @@ class CppProjectSink {
  private:
   [[nodiscard]] auto WriteArtifact(const backend::cpp::CppArtifact& file) const
       -> diag::Result<void>;
+  // Writes the declarations `written` handed back that no body collected
+  // before it wrote, reporting a file that could not be written.
+  void WriteDeclarations(WrittenUnit& written);
 
   std::filesystem::path dir_;
   SourceFormatting formatting_;
   diag::DiagnosticSink* refusals_;
+  // Each declaration written so far, by its path, as a digest of what it says.
+  std::unordered_map<std::string, std::size_t> declared_;
   // Formatting runs one process over every file rather than one per file, so
   // what was written is remembered while the text itself is not.
   std::vector<std::string> written_;

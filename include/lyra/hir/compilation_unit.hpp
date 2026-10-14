@@ -47,7 +47,12 @@ struct BuiltinHirTypes {
 };
 
 struct CompilationUnit {
+  // The unit, which is what it publishes and what every referrer names.
   std::string name;
+  // The body of the unit this compiles: the unit's own name where the unit is
+  // compiled to one body, and otherwise that name with the digest of the values
+  // its instances are handed that its code uses.
+  std::string body_name;
   // The identifier the source declares this unit's design element, package or
   // class under, which is what its author knows it by. Units of one definition
   // compiled once per specialization share it, and a unit the source gave no
@@ -79,8 +84,10 @@ struct CompilationUnit {
   // entry in each. One entry per declaration; a repeat is the same entry.
   base::Arena<ForeignImportDecl, ForeignImportId> foreign_imports;
 
-  explicit CompilationUnit(std::string name)
-      : name(std::move(name)), builtins(MakeBuiltins(types)) {
+  CompilationUnit(std::string name, std::string body_name)
+      : name(std::move(name)),
+        body_name(std::move(body_name)),
+        builtins(MakeBuiltins(types)) {
   }
 
   auto operator==(const CompilationUnit&) const -> bool = default;

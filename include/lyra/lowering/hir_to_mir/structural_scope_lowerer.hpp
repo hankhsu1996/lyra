@@ -61,10 +61,11 @@ struct GenerateBinding {
   base::Translation<hir::StructuralScopeId, ChildStructuralScopeBinding> blocks;
 };
 
-// Where the object an entry makes takes its construction table from: handed
-// in by whoever asks for the object, or a constant the unit states of itself.
-struct TableHandedIn {};
-using EntryTableSource = std::variant<TableHandedIn, mir::ClassConstantRef>;
+// Where the object an entry makes takes its construction table from: supplied
+// by whoever asks for the object, or a constant the unit states of itself.
+struct ConstructionTableSupplied {};
+using ConstructionTableSource =
+    std::variant<ConstructionTableSupplied, mir::ClassConstantRef>;
 
 // A value whoever builds a scope hands it: the declaration it fills, and the
 // type the constructor takes it as.
@@ -220,8 +221,9 @@ class StructuralScopeLowerer {
   // table from: handed in by whoever asks for the object, or, for the design
   // root, which nothing instantiates (LRM 23.3.1), the table the root states
   // of itself. Settled once the bodies are populated.
-  [[nodiscard]] auto EntryTable() const -> const EntryTableSource& {
-    return entry_table_;
+  [[nodiscard]] auto ConstructionTable() const
+      -> const ConstructionTableSource& {
+    return construction_table_;
   }
 
   // The scope's time unit (LRM 3.14.2), which a time query scales its result
@@ -507,7 +509,7 @@ class StructuralScopeLowerer {
   // Present only on the design root's own scope, which states every unit's
   // construction table as constants of its class.
   std::optional<DesignInstantiations> instantiations_;
-  EntryTableSource entry_table_ = TableHandedIn{};
+  ConstructionTableSource construction_table_ = ConstructionTableSupplied{};
   base::Translation<hir::StructuralDataObjectId, mir::ClassFieldTarget>
       data_object_fields_;
   base::Translation<hir::SampledHistoryId, mir::FieldId>

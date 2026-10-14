@@ -36,7 +36,7 @@ class LoopBodies {
   // False where that body and `scope` are not one, or where one of `indices`
   // already stands under another body.
   [[nodiscard]] auto Take(
-      hir::StructuralScope scope, std::optional<std::uint64_t> code_arguments,
+      hir::StructuralScope scope, std::optional<std::uint64_t> body_arguments,
       std::span<const std::int64_t> indices) -> bool;
 
   // `loop` building each body taken, at the values standing under it.
@@ -44,7 +44,7 @@ class LoopBodies {
 
  private:
   std::vector<hir::StructuralScope> bodies_;
-  std::vector<std::optional<std::uint64_t>> code_arguments_;
+  std::vector<std::optional<std::uint64_t>> body_arguments_;
   std::map<
       std::pair<support::DefPath, std::optional<std::uint64_t>>, std::size_t>
       named_;

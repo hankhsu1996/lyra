@@ -80,13 +80,17 @@ struct ArgumentSource {
 // parameter it takes at construction gets its value, in the unit's own order.
 struct InstanceConstruction {
   std::string unit;
+  std::string body;
   std::vector<ArgumentSource> arguments;
 };
 
 auto ConstructionOf(
     const slang::ast::InstanceSymbol& instance,
     const SpecializationPolicy& policy) -> InstanceConstruction {
-  InstanceConstruction built{.unit = policy.NameOf(instance), .arguments = {}};
+  InstanceConstruction built{
+      .unit = policy.NameOf(instance),
+      .body = policy.BodyNameOf(instance),
+      .arguments = {}};
   for (const slang::ast::ParameterSymbol* param :
        policy.SuppliedParametersOf(instance)) {
     ArgumentSource source{.parameter = param, .from = LeftToDefault{}};
@@ -119,7 +123,7 @@ auto BuiltAlike(const InstanceConstruction& a, const InstanceConstruction& b)
             [](const LeftToDefault&) { return std::string{"d"}; }},
         source.from);
   };
-  return a.unit == b.unit &&
+  return a.unit == b.unit && a.body == b.body &&
          std::ranges::equal(
              a.arguments, b.arguments, {}, told_apart_by, told_apart_by);
 }
@@ -214,6 +218,7 @@ auto StructuralScopeLowerer::BuildInstanceMember(
     member.alternatives.push_back(
         hir::InstanceAlternative{
             .scope_class = owner_->ExternalScopeClassOf(built.unit),
+            .body = built.body,
             .assignments = *std::move(assignments)});
     distinct.push_back(std::move(built));
   }
@@ -729,7 +734,7 @@ auto StructuralScopeLowerer::DefineEvaluator(
     const slang::ast::Symbol& holder, std::string name,
     const slang::ast::Expression& expr, WalkFrame frame) -> diag::Result<void> {
   const auto span = frontend::PointSpanOf(holder.location);
-  auto result_type = owner_->InternType(*expr.type, span);
+  auto result_type = owner_->InternExpressionType(expr, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
 
   hir::ProceduralBody body;

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -103,17 +104,23 @@ struct ClassFile {
   TargetText defined;
 };
 
-// A unit becomes one C++ namespace, named after it, written across these files:
+// A unit becomes one C++ namespace, named after it, and each body of it is
+// written across these files, `Body` being the unit's name where the unit is
+// compiled to one body:
 //
 //   Top.<Struct>.types.hpp  one per struct the unit declares under a name
 //   Top.forward.hpp         the classes other units may name, declared
 //   Top.opening.hpp         namespace functions and variables
+//   Body.opening.hpp        the entry that makes an object of this body
 //   Top.<Class>.hpp         one per class the source declared
 //   Top.hpp                 what the unit published of its scopes: the class
 //                           of its instance, and the class of each generate
 //                           block declared inside the class of the scope
-//                           holding it
-//   Top.cpp                 every other class, and every definition
+//                           holding it, each defined there
+//   Body.cpp                every other class, and every other definition
+//
+// Every body states the unit's declarations alike, so every file but the last
+// two is the same text from each.
 //
 // A declaration has a file of its own only where a declaration of another unit
 // needs it complete ahead of its own: a class another class may extend, a
@@ -138,7 +145,7 @@ auto RenderUnitFiles(
   UnitRenderReport report{
       .refusals = &refusals, .constants_named = {}, .enum_tables_named = {}};
   UnitStructs structs = RenderUnitStructs(unit, report);
-  const UnitText callables = RenderUnitCallables(unit, report);
+  const UnitCallables callables = RenderUnitCallables(unit, report);
   const UnitText variables = RenderUnitStaticVariables(unit);
   const UnitText forwards = RenderUnitForwardDeclarations(unit);
   UnitClasses classes = RenderUnitClasses(unit, report);
@@ -148,6 +155,16 @@ auto RenderUnitFiles(
   TargetText enum_tables;
   RenderEnumTables(unit, report, enum_tables);
   const SourceName unit_namespace = UnitNamespaceOf(unit.name);
+  // `text` placed where what only this body states is: in the unit's
+  // namespace, inside the body's own where it has one.
+  const auto in_body = [&](const TargetText& text) {
+    const std::optional<SourceName> body =
+        BodyNamespaceOf(unit.name, unit.body_name);
+    if (!body.has_value()) return text;
+    TargetText placed;
+    AppendSectionInNamespace(placed, *body, text);
+    return placed;
+  };
 
   std::vector<CppArtifact> declarations;
   for (const UnitStruct& declared : structs.declared) {
@@ -171,26 +188,53 @@ auto RenderUnitFiles(
   forward += forwards.signature.View();
   CloseNamespace(forward, unit_namespace);
 
+  // What the unit's namespace offers another unit opens its own header; the
+  // entries that make an object of this body open the body's, in the body's
+  // namespace. A unit compiled to one body is that body, and both are one
+  // file.
   TargetText opened;
-  AppendSection(opened, callables.signature);
+  AppendSection(opened, callables.of_unit.signature);
   AppendSection(opened, variables.signature);
-  opened += "\n";
+  const TargetText opened_by_body = in_body(callables.of_body.signature);
 
   const std::string opening_file = UnitOpeningFileOf(unit.name);
+  const std::string body_opening_file = UnitOpeningFileOf(unit.body_name);
+  const auto write_opening = [&](TargetText& file, std::string_view self) {
+    file += "#pragma once\n";
+    WriteInclude(file, support::kRuntimePreludeHeader);
+    WriteRequiredIncludes(file, opened, self);
+    WriteRequiredIncludes(file, opened_by_body, self);
+    file += "\n";
+  };
+  const auto open_unit = [&](TargetText& file) {
+    OpenNamespace(file, unit_namespace);
+    file += opened.View();
+    CloseNamespace(file, unit_namespace);
+  };
+  const auto open_body = [&](TargetText& file) {
+    AppendSectionInNamespace(file, unit_namespace, opened_by_body);
+  };
   TargetText opening;
-  opening += "#pragma once\n";
-  WriteInclude(opening, support::kRuntimePreludeHeader);
-  WriteRequiredIncludes(opening, opened, opening_file);
-  opening += "\n";
-  OpenNamespace(opening, unit_namespace);
-  opening += opened.View();
-  CloseNamespace(opening, unit_namespace);
-
+  write_opening(opening, opening_file);
+  open_unit(opening);
   declarations.push_back(
       {.relpath = UnitForwardFileOf(unit.name),
        .content = std::move(forward).Take()});
-  declarations.push_back(
-      {.relpath = opening_file, .content = std::move(opening).Take()});
+  if (body_opening_file == opening_file) {
+    open_body(opening);
+    declarations.push_back(
+        {.relpath = opening_file, .content = std::move(opening).Take()});
+  } else {
+    declarations.push_back(
+        {.relpath = opening_file, .content = std::move(opening).Take()});
+    TargetText body_opening;
+    write_opening(body_opening, body_opening_file);
+    WriteInclude(body_opening, opening_file);
+    open_body(body_opening);
+    declarations.push_back(
+        {.relpath = body_opening_file,
+         .content = std::move(body_opening).Take()});
+  }
 
   // Each class other units may name is written into the file that defines it,
   // after whatever that file already holds. The unit's own header comes first
@@ -221,33 +265,46 @@ auto RenderUnitFiles(
         {.relpath = class_file.relpath, .content = std::move(file).Take()});
   }
 
+  // What nothing outside this file names -- the classes realizing the unit's
+  // scopes, its closures, the functions only its own bodies call -- is in the
+  // namespace with no name, so another body of the unit stating its own under
+  // the same names is no conflict. Their members are still defined in the
+  // unit's namespace, which encloses it.
+  TargetText own_declarations;
+  AppendSection(own_declarations, forwards.code);
+  AppendSection(own_declarations, callables.of_artifact.signature);
+  TargetText own_classes;
+  AppendSection(own_classes, classes.internal);
+  AppendSection(own_classes, closures.declarations);
+
   TargetText realized;
-  AppendSection(realized, forwards.code);
+  AppendSectionInUnnamedNamespace(realized, own_declarations);
   AppendSection(realized, enum_tables);
   {
     const TargetText::Section constants(realized);
     RenderIntegralConstants(unit, report, realized);
   }
   AppendSection(realized, structs.code);
-  AppendSection(realized, classes.internal);
-  AppendSection(realized, closures.declarations);
+  AppendSectionInUnnamedNamespace(realized, own_classes);
   AppendSection(realized, variables.code);
   AppendSection(realized, closures.definitions);
   AppendSection(realized, classes.definitions);
-  AppendSection(realized, callables.code);
+  AppendSection(realized, callables.of_unit.code);
+  AppendSectionInUnnamedNamespace(realized, callables.of_artifact.code);
   AppendSection(realized, foreign_symbols);
   realized += "\n";
 
   // The whole runtime through its one umbrella header, which is also what the
   // precompiled header covers; then every header of this unit, and of every
   // other unit only the headers this unit uses, each once.
-  const std::string code_file = UnitCodeFileOf(unit.name);
+  const std::string code_file = UnitCodeFileOf(unit.body_name);
   std::set<std::string> included{code_file};
   TargetText code;
   WriteInclude(code, support::kRuntimePreludeHeader);
   const auto include_once = [&](const std::string& file) {
     if (included.insert(file).second) WriteInclude(code, file);
   };
+  include_once(body_opening_file);
   for (const ClassFile& class_file : class_files) {
     include_once(class_file.relpath);
   }
@@ -257,10 +314,15 @@ auto RenderUnitFiles(
   for (const std::string& required : realized.RequiredFiles()) {
     include_once(required);
   }
+  for (const std::string& required : callables.of_body.code.RequiredFiles()) {
+    include_once(required);
+  }
   code += "\n";
   OpenNamespace(code, unit_namespace);
   code += realized.View();
   CloseNamespace(code, unit_namespace);
+  AppendSectionInNamespace(
+      code, unit_namespace, in_body(callables.of_body.code));
 
   return {
       .declarations = std::move(declarations),

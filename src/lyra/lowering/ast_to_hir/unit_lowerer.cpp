@@ -6,6 +6,7 @@
 #include <format>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -39,6 +40,9 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/unit_signature.hpp"
+#include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/verify.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
@@ -86,30 +90,57 @@ auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
   return std::string(home.name);
 }
 
+// The path of the class every scope of `scope`'s tree published, `scope`'s own
+// among them.
+void CollectPublishedClassPaths(
+    const hir::StructuralScope& scope, std::set<support::DefPath>& paths) {
+  paths.insert(scope.published.signature.class_path);
+  for (const hir::Generate& generate : scope.generates) {
+    for (const hir::GenerateBlock& block : generate.blocks) {
+      CollectPublishedClassPaths(block.scope, paths);
+    }
+  }
+}
+
+// `scopes`, then every body of `others` not among them, in order.
+auto WithOthers(
+    std::vector<const slang::ast::Scope*> scopes,
+    std::span<const slang::ast::InstanceBodySymbol* const> others)
+    -> std::vector<const slang::ast::Scope*> {
+  for (const slang::ast::InstanceBodySymbol* other : others) {
+    if (!std::ranges::contains(scopes, other)) scopes.push_back(other);
+  }
+  return scopes;
+}
+
 }  // namespace
 
 UnitLowerer::UnitLowerer(
-    const LoweringFacts& facts, const slang::ast::Symbol& home,
-    std::string name, hir::UnitRole role,
+    const LoweringFacts& facts, const slang::ast::Symbol& home, Names names,
+    hir::UnitRole role,
+    std::span<const slang::ast::InstanceBodySymbol* const> declared_from,
     std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from)
     : facts_(facts),
       home_(&home),
       scope_(&ScopeLoweredFor(home)),
+      applications_(WithOthers({scope_}, also_lowered_from)),
+      declared_applications_(WithOthers(applications_, declared_from)),
       lowering_(scope_),
-      unit_{std::move(name)} {
+      unit_{std::move(names.unit), std::move(names.body)} {
   unit_.role = role;
   unit_.source_name = SourceNameOf(home);
   unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
   signature_.unit_name = unit_.name;
-  applications_.push_back(scope_);
-  applications_.insert(
-      applications_.end(), also_lowered_from.begin(), also_lowered_from.end());
-  also_lowered_from_.insert(also_lowered_from.begin(), also_lowered_from.end());
+  for (const slang::ast::Scope* application : declared_applications_) {
+    if (application != scope_) {
+      also_declared_from_.insert(&application->asSymbol());
+    }
+  }
 }
 
 auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
   const slang::ast::Symbol& home = UnitHomeOf(decl);
-  return &home == home_ || also_lowered_from_.contains(&home);
+  return &home == home_ || also_declared_from_.contains(&home);
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
@@ -118,7 +149,7 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
       "declare unit", [&] { return unit_.name; });
   {
     const profiling::TimeTraceScope step("declare structural identities");
-    for (const slang::ast::Scope* application : applications_) {
+    for (const slang::ast::Scope* application : declared_applications_) {
       DeclareStructuralIdentities(*application, support::DefPath{});
     }
   }
@@ -192,6 +223,20 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     }
   }
   unit_.root_scope = *std::move(one_body);
+  // Every class the unit published of its scopes is stated by this body: the
+  // classes of the scopes its instances built as those scopes published them,
+  // and every other as the unit published it, so the bodies of one unit state
+  // one class each.
+  if (const auto* element = std::get_if<hir::PublishedDesignElement>(
+          &signatures.Instantiated(unit_.name).unit)) {
+    std::set<support::DefPath> built;
+    CollectPublishedClassPaths(unit_.root_scope, built);
+    for (const hir::ScopeClassSignature& block : element->blocks) {
+      if (!built.contains(block.class_path)) {
+        ExternalScopeClassOf(unit_.name, block.class_path);
+      }
+    }
+  }
   RequireEveryClassBodyLowered();
   ReadSignaturesOfNamedClasses();
   hir::Verify(unit_);
@@ -212,7 +257,7 @@ auto UnitLowerer::ApplicationDeclaring(const slang::ast::ParameterSymbol& param)
     const -> const slang::ast::Scope& {
   for (const slang::ast::Scope* level = param.getParentScope();
        level != nullptr; level = level->asSymbol().getParentScope()) {
-    if (also_lowered_from_.contains(&level->asSymbol())) return *level;
+    if (also_declared_from_.contains(&level->asSymbol())) return *level;
   }
   return *scope_;
 }

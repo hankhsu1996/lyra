@@ -55,14 +55,14 @@ many of them it works on at a time.
 
 ## Core Invariants
 
-1. **A signature and a code artifact per unit specialization; the program is linked, not
-   aggregated.** A backend emits each unit specialization as a signature and a code artifact. The
-   signature is derived from the unit's declarations alone, so it completes without lowering a
-   single body; the code carries the bodies. No emitted artifact contains the bodies of more than
-   one unit, and none enumerates "all units." The program is formed by linking the per-unit
-   artifacts. This is what keeps compilation parallel and incremental (`north_star.md` inv 3, 4),
-   and the split is what makes it pipelined: a unit's referrers compile against its signature while
-   its own code is still being emitted.
+1. **A signature per unit specialization and a code artifact per body it is compiled to; the program
+   is linked, not aggregated.** A backend emits each unit specialization as a signature and a code
+   artifact for each body of it. The signature is derived from the unit's declarations alone, so it
+   completes without lowering a single body; the code carries the bodies. No emitted artifact
+   contains the bodies of more than one unit, and none enumerates "all units." The program is formed
+   by linking the per-unit artifacts. This is what keeps compilation parallel and incremental
+   (`north_star.md` inv 3, 4), and the split is what makes it pipelined: a unit's referrers compile
+   against its signature while its own code is still being emitted.
 
    **A signature is one artifact and may be more than one file.** Where the target reads
    declarations in an order and reads each file once, the files have to be no coarser than what the
@@ -94,10 +94,11 @@ many of them it works on at a time.
    when the artifact owns both classes, and through the member's name resolved against the published
    class at the referrer's compile time when it does not. The emitted code reaches the next pointer
    or member via a typed access expression, steps into a generate block through the construct's
-   published entry viewed as the block's published class, and calls a published subroutine directly.
-   No step carries a string and none is an SDK lookup by name; the one SDK call a route may make is
-   the anchor of an upward name, which asks for the nearest enclosing scope of a class and downcasts
-   statically to it. The sealed endpoint is one access point however many steps the route contained.
+   published entry viewed as the block's published class, and calls a published subroutine through
+   the object. No step carries a string and none is an SDK lookup by name; the one SDK call a route
+   may make is the anchor of an upward name, which asks for the nearest enclosing scope of a class
+   and downcasts statically to it. The sealed endpoint is one access point however many steps the
+   route contained.
 
 6. **A scope is two classes: the published part and the realization extending it.** The published
    part holds the published members first, in the order the publication states, and one virtual
@@ -128,10 +129,13 @@ many of them it works on at a time.
    **A published class is named from declarations alone, and how many classes realize it is no
    referrer's concern.** A generate block is a definition nested in the scope holding it, and each
    block instance is an application of it; an application is one published class, named before any
-   body lowers. Block instances of one application whose index fixed their code differently are that
-   class realized more than once, each realization extending it and named, like the class, before
-   any body lowers. A referrer names the published class and is unaffected by how many realizations
-   stand beneath it, so a body edit that changes the count changes nothing a referrer read.
+   body lowers. Block instances of one application whose code uses their index are that class
+   realized once per value of it, each realization extending it and named, like the class, before
+   any body lowers. A unit is the same one level out: instances handed different values its code
+   uses are one unit compiled to more than one body, each a compilation of its own that states the
+   classes the unit published alike, so the link keeps one of each. A referrer names the published
+   class and is unaffected by how many realizations stand beneath it, so a body edit that changes
+   the count changes nothing a referrer read.
 
 9. **The design's own link-level unit is a unit, and invariant 2 binds it.** A design needs one
    artifact nothing in the source declares -- the one whose construct elaborates the design by
@@ -286,15 +290,16 @@ candidate endpoint; Seal commits the variable's cell.
 `always_comb r = c.x;` where `x` is one of its internal variables. Both routes open with the same
 step `parent -> c`, since the parent's artifact owns the `c` member's pointer type, and both end at
 a member of `c`'s published class, so the parent emits a typed access at that member's offset in the
-published part and a renamed `p` or `x` fails where the parent compiles. A call `c.tick()` is a
-direct call to the published part's forwarding method for `tick`.
+published part and a renamed `p` or `x` fails where the parent compiles. A call `c.tick()` is a call
+through the object to the published part's virtual method for `tick`, which the class the object is
+overrides with its body.
 
 **What each backend borrows to realize a cross-unit step.** A referrer needs the published part's
-layout and the symbol of each forwarding method. A backend emitting to a language with its own name
-resolution borrows both from that language's compiler, which is why including a declaration-only
-header is sufficient there. A backend emitting machine code computes the same offsets from the same
-publication and calls the same symbols. Neither reaches past the published members, which is what
-invariant 8 states.
+layout and the position of each virtual method in its table. A backend emitting to a language with
+its own name resolution borrows both from that language's compiler, which is why including a
+declaration-only header is sufficient there. A backend emitting machine code computes the same
+offsets and table positions from the same publication. Neither reaches past the published members,
+which is what invariant 8 states.
 
 **Cross-unit upward reference.** `always_comb x = Top.g;`. The referrer does not instantiate `Top`.
 The front end's search lands on `Top`'s class; the route's anchor asks the runtime for the nearest

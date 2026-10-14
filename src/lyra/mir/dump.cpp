@@ -793,8 +793,8 @@ class MirDumper {
             },
             [](const ExternalUnitMintedEntryRef& r) -> std::string {
               return std::format(
-                  "ExternalUnitMintedEntryRef external={}::{}", r.unit_name,
-                  FormatMintedEntry(r.entry));
+                  "ExternalUnitMintedEntryRef external={} body={}::{}",
+                  r.unit_name, r.body_name, FormatMintedEntry(r.entry));
             }},
         target);
   }

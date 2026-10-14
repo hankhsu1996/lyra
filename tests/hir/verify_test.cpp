@@ -83,7 +83,7 @@ auto AddLeaf(const CompilationUnit& unit, ProceduralBody& body) -> ExprId {
 // of what `fill` answers with, each holding that entry.
 template <typename Fill>
 auto UnitWithProcess(const Fill& fill) -> CompilationUnit {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   Process process;
   ProceduralBody& body = process.body;
   std::vector<StmtId> statements;
@@ -107,7 +107,7 @@ auto UnitWithProcess(const Fill& fill) -> CompilationUnit {
 // operands of one operation is refused, and the refusal names the expression,
 // where it is, and what reaches it.
 TEST(HirVerifyTest, AnExpressionReachedFromTwoPlacesIsRefused) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId shared = AddLeaf(unit);
   Assign(unit, target, AddSum(unit, shared, shared));
@@ -132,7 +132,7 @@ TEST(HirVerifyTest, AnExpressionReachedFromTwoPlacesIsRefused) {
 }
 
 TEST(HirVerifyTest, DistinctOperandsAreAccepted) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId lhs = AddLeaf(unit);
   const ExprId rhs = AddLeaf(unit);
@@ -144,7 +144,7 @@ TEST(HirVerifyTest, DistinctOperandsAreAccepted) {
 // reached through it: one of them standing under a held expression as well is
 // reached once.
 TEST(HirVerifyTest, AnExpressionNothingHoldsReachesNothing) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId lhs = AddLeaf(unit);
   const ExprId rhs = AddLeaf(unit);
@@ -156,7 +156,7 @@ TEST(HirVerifyTest, AnExpressionNothingHoldsReachesNothing) {
 // A sensitivity describes what its holder waits on in terms of expressions the
 // holder already reaches, so naming one there is no second place it stands at.
 TEST(HirVerifyTest, ADescriptionIsNoPlace) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId lhs = AddLeaf(unit);
   const ExprId rhs = AddLeaf(unit);
@@ -167,7 +167,7 @@ TEST(HirVerifyTest, ADescriptionIsNoPlace) {
 // A description is still held to naming an expression its arena has, and the
 // refusal says it was a description that named it.
 TEST(HirVerifyTest, ADescriptionOutsideTheArenaIsRefused) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId source = AddLeaf(unit);
   Assign(unit, target, source, {ExprId{source.value + 7}});
@@ -285,7 +285,7 @@ TEST(HirVerifyTest, AConstantIsHeldByItsPattern) {
 // An id is a position in the arena of the scope that minted it, so a holder
 // naming one the arena does not have is refused.
 TEST(HirVerifyTest, AnExpressionOutsideTheArenaIsRefused) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   Assign(unit, target, ExprId{target.value + 7});
   try {

@@ -158,4 +158,12 @@ void WriteOne(TargetText& out, UnitScope scope) {
   Write(out, "::", UnitNamespaceOf(scope.unit_name));
 }
 
+void WriteOne(TargetText& out, BodyScope scope) {
+  Write(out, CppUnitScope(scope.unit_name));
+  if (const std::optional<SourceName> body =
+          BodyNamespaceOf(scope.unit_name, scope.body_name)) {
+    Write(out, "::", *body);
+  }
+}
+
 }  // namespace lyra::backend::cpp

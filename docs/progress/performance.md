@@ -436,11 +436,9 @@ specializations, not with instance count.
 - [ ] What stays in the key although it might not. A parameter choosing which element a hierarchical
       name reaches, or read through its own hierarchical name, because either is settled when the
       unit is lowered rather than when the instance is built; a parameter an instantiation may
-      override declared with no type, whose type is the type of the value it is given; a parameter
-      in a declared range, which is told apart by its value where two values that size the same
-      range compile alike; and a parameter a class or one of its methods declares, with what it is
-      written from, since the class's code holds it as a constant. Each still compiles once per
-      value.
+      override declared with no type, whose type is the type of the value it is given; and a
+      parameter a class or one of its methods declares, with what it is written from, since the
+      class's code holds it as a constant. Each still compiles once per value.
 
 - [x] Which parameters decide is read off the front end's record of what each constant evaluation
       read, so no position is listed and none can be missed. Instances handed different values are
@@ -549,7 +547,8 @@ specializations, not with instance count.
       file per block and a module's forward header changed when one body did. A block instance is
       now an application of its block, named from the source: one published class per application,
       and blocks of one application whose code differs are that class realized more than once, each
-      realization named from what the index fixed in the block's code before any block lowers, so
+      realization named from the index's value where the block's code uses it before any block
+      lowers, so
       no block is compared with another to find which body it is. A
       child naming the block that holds it is one unit where it was one per block, and a struct a
       block declares is one type where it was one per block. On the C++ backend the classes of a

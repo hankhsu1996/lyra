@@ -132,4 +132,5 @@ region all appear in HIR as themselves -- a process kind, an NBA statement, an e
 expression, a generate node. HIR-to-MIR is where each gets translated into MIR's generic
 programming-language vocabulary (a process becomes a callable invoked by the scheduler; an NBA
 becomes a deferred closure submission; an event control becomes a coroutine suspension; a generate
-becomes constructor-time logic). The SV vocabulary is HIR's; the generic vocabulary is MIR's.
+becomes construction from the instance's data). The SV vocabulary is HIR's; the generic vocabulary
+is MIR's.

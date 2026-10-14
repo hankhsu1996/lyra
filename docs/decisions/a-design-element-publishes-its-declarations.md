@@ -120,7 +120,7 @@ published under its own name, with the names of blocks found to compile alike ke
 class, made the set of names depend on a comparison of bodies, so a body edit changed a header --
 the requirement above, failed. A block instance is an application of its block, named from the front
 end alone, and which realization of that class a block is, is named from the front end as well, by
-what its index fixed in its code.
+the value of its index where its code uses it.
 
 **D6. Nothing resolves a hierarchical name while the design runs.** No scope registers a signal, a
 static or a disable target by name, no scope or class carries a table of subroutine or member names,

@@ -97,8 +97,8 @@ struct PublishedSubroutine {
 };
 
 // A class this unit published of its scopes. Several scopes may be published
-// as one class -- the bodies of one generate block whose code its index fixed
-// differently (LRM 27.3) -- so what the signature fixes is held once: where it
+// as one class -- the bodies of one generate block whose code uses its index
+// (LRM 27.3) -- so what the signature fixes is held once: where it
 // placed what was published, and each subroutine it published, in the order
 // the signature gave them.
 struct PublishedScope {
@@ -204,18 +204,18 @@ class UnitLowerer {
   [[nodiscard]] auto PublishedScopeClassAt(
       const support::DefPath& class_path) const -> mir::ClassId;
 
-  // Takes the identity of the class the unit published of one of its scopes,
-  // which is one class for every scope published under one path. The lowering
-  // of the scope takes it as it is built, which is before any type translates.
-  auto TakePublishedScopeClass(const hir::ScopePublication& published)
+  // Takes the identity of the class the unit published under `class_path`,
+  // which is one class for every scope published under it. The lowering of the
+  // scope takes it as it is built, which is before any type translates.
+  auto TakePublishedScopeClass(const support::DefPath& class_path)
       -> mir::ClassId;
 
-  // Where the class `published` places what `scope` published, laying the
-  // class out from the scope's signature the first time a scope published as
-  // it asks. Every scope published as one class states one signature, so
-  // whichever asks first settles the same shape.
+  // Where the class `published` places what its scopes published, laying the
+  // class out from `signature` the first time it is asked. Every scope
+  // published as one class states one signature, so whichever asks first
+  // settles the same shape.
   auto SettlePublishedScope(
-      mir::ClassId published, const hir::StructuralScope& scope)
+      mir::ClassId published, const hir::ScopeClassSignature& signature)
       -> const PublishedScopeLayout&;
 
   // Every class the unit published of its scopes.

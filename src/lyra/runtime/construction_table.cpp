@@ -9,8 +9,7 @@ namespace lyra::runtime {
 
 auto InstantiationEntry(const ConstructionTable* table, std::int64_t at)
     -> ErasedEntry {
-  return table->instantiations.Entries()[static_cast<std::size_t>(at)]
-      .make_object;
+  return table->instantiations.Entries()[static_cast<std::size_t>(at)].entry;
 }
 
 auto InstantiationTable(const ConstructionTable* table, std::int64_t at)

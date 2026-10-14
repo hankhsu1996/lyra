@@ -1,8 +1,6 @@
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 
 #include <algorithm>
-#include <cstdint>
-#include <iterator>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -10,11 +8,9 @@
 #include <variant>
 #include <vector>
 
-#include <slang/analysis/AbstractFlowAnalysis.h>
 #include <slang/analysis/AnalysisManager.h>
 #include <slang/analysis/AnalysisOptions.h>
 #include <slang/analysis/AnalyzedProcedure.h>
-#include <slang/analysis/DFAResults.h>
 #include <slang/analysis/DataFlowAnalysis.h>
 #include <slang/ast/ASTVisitor.h>
 #include <slang/ast/EvalContext.h>
@@ -33,36 +29,267 @@
 #include <slang/ast/symbols/VariableSymbols.h>
 #include <slang/ast/types/Type.h>
 
-#include "lyra/base/internal_error.hpp"
-
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Every value path in the node's text, each with its longest static prefix as
-// this elaboration settles it. A path is visited from the expression that heads
-// it, which reaches the reads inside its selectors too, so an expression is
-// taken whole and not descended into again.
-class PathCollector : public slang::ast::ASTVisitor<
-                          PathCollector, slang::ast::VisitFlags::AllGood> {
+// One name a text reaches a declaration by: the declaration, the longest
+// static prefix the source wrote, the expression the name starts at, whether
+// the name goes on past its prefix, and whether the text writes it.
+struct NameInText {
+  const slang::ast::ValueSymbol* symbol = nullptr;
+  const slang::ast::Expression* prefix = nullptr;
+  const slang::ast::Expression* start = nullptr;
+  bool ends_at_prefix = false;
+  bool written = false;
+};
+
+// A static class property is where a path through it starts (LRM 8.9).
+auto IsStaticProperty(const slang::ast::MemberAccessExpression& access)
+    -> bool {
+  const auto* property = access.member.as_if<slang::ast::ClassPropertySymbol>();
+  return property != nullptr &&
+         property->lifetime == slang::ast::VariableLifetime::Static;
+}
+
+// A member reached through a class handle (LRM 8.4) is no part of the
+// variable holding the handle, so writing it writes nothing that variable
+// holds.
+auto IsThroughHandle(const slang::ast::MemberAccessExpression& access) -> bool {
+  const auto& value_type = access.value().type->getCanonicalType();
+  return value_type.isObjectHandleType() || value_type.isVoid();
+}
+
+// Every name in a node's text, in the order the text has them, each marked
+// read or written as LRM 9.2.2.2.1 and 9.4.2.2 count it: an assignment's
+// target, an `++` / `--` operand, a by-reference or output argument is written;
+// what selects inside any name, a procedural `force` target, and everything
+// else is read. A timing control's own expressions count for neither (LRM
+// 9.2.2.2.1 c), and neither does what runs apart from the statement: a
+// concurrent assertion, a deferred assertion's action, and the reads of an
+// immediate assertion's action. Every name counts wherever the text has it, so
+// a branch that a value the body is built with never takes still counts, and
+// so does a select that value puts past its value's end.
+class NameCollector : public slang::ast::ASTVisitor<
+                          NameCollector, slang::ast::VisitFlags::AllGood> {
  public:
-  PathCollector(
-      slang::ast::EvalContext& eval_context,
-      std::vector<slang::ast::ValuePath>& paths)
-      : eval_context_(&eval_context), paths_(&paths) {
+  NameCollector(
+      slang::ast::EvalContext& eval_context, std::vector<NameInText>& names)
+      : eval_context_(&eval_context), names_(&names) {
   }
 
   template <typename T>
-    requires std::is_base_of_v<slang::ast::Expression, T>
+    requires(
+        std::is_same_v<T, slang::ast::NamedValueExpression> ||
+        std::is_same_v<T, slang::ast::HierarchicalValueExpression> ||
+        std::is_same_v<T, slang::ast::ElementSelectExpression> ||
+        std::is_same_v<T, slang::ast::RangeSelectExpression> ||
+        std::is_same_v<T, slang::ast::MemberAccessExpression>)
   void handle(const T& expr) {
-    slang::ast::ValuePath::visitPaths(
-        expr, *eval_context_,
-        [&](const slang::ast::ValuePath& path) { paths_->push_back(path); });
+    const slang::ast::ValuePath path(expr, *eval_context_);
+    bool through_a_handle = false;
+    for (const slang::ast::Expression& elem : path) {
+      const auto* access = elem.as_if<slang::ast::MemberAccessExpression>();
+      through_a_handle |= access != nullptr && IsThroughHandle(*access);
+    }
+    const bool written = writing_ && !through_a_handle;
+    const slang::ast::Expression* prefix =
+        PrefixAsWritten(path, *eval_context_);
+    if (prefix != nullptr && (written || !in_action_)) {
+      names_->push_back(
+          NameInText{
+              .symbol = path.rootSymbol(),
+              .prefix = prefix,
+              .start = path.rootExpr,
+              .ends_at_prefix = path.fullExpr == prefix,
+              .written = written});
+    }
+    const bool outer_writing = std::exchange(writing_, false);
+    for (const slang::ast::Expression& elem : path) {
+      if (const auto* select =
+              elem.as_if<slang::ast::ElementSelectExpression>()) {
+        select->selector().visit(*this);
+      } else if (
+          const auto* range = elem.as_if<slang::ast::RangeSelectExpression>()) {
+        range->left().visit(*this);
+        range->right().visit(*this);
+      } else if (
+          const auto* access =
+              elem.as_if<slang::ast::MemberAccessExpression>()) {
+        // What names a static property -- `objs[i].count` -- is still read
+        // to reach it.
+        if (IsStaticProperty(*access)) access->value().visit(*this);
+      } else if (elem.as_if<slang::ast::ValueExpressionBase>() == nullptr) {
+        elem.visit(*this);
+      }
+    }
+    writing_ = outer_writing;
+  }
+
+  void handle(const slang::ast::AssignmentExpression& assign) {
+    if (assign.isLValueArg()) {
+      Write(assign.left());
+      return;
+    }
+    Write(assign.left());
+    assign.right().visit(*this);
+  }
+
+  void handle(const slang::ast::UnaryExpression& unary) {
+    if (slang::ast::OpInfo::isLValue(unary.op)) {
+      Write(unary.operand());
+      return;
+    }
+    visitDefault(unary);
+  }
+
+  void handle(const slang::ast::CallExpression& call) {
+    call.visitExprsNoArgs(*this);
+    const auto args = call.arguments();
+    if (const auto* system =
+            std::get_if<slang::ast::CallExpression::SystemCallInfo>(
+                &call.subroutine)) {
+      const auto& subroutine = *system->subroutine;
+      for (std::size_t i = 0; i < args.size(); ++i) {
+        if (subroutine.isArgUnevaluated(i)) continue;
+        if (subroutine.isArgByRef(i)) {
+          Write(*args[i]);
+        } else {
+          args[i]->visit(*this);
+        }
+      }
+      return;
+    }
+    const auto formals =
+        std::get<const slang::ast::SubroutineSymbol*>(call.subroutine)
+            ->getArguments();
+    for (std::size_t i = 0; i < args.size(); ++i) {
+      const auto& formal = *formals[i];
+      if (formal.direction == slang::ast::ArgumentDirection::Ref &&
+          !formal.flags.has(slang::ast::VariableFlags::Const)) {
+        Write(*args[i]);
+      } else {
+        args[i]->visit(*this);
+      }
+    }
+  }
+
+  // A procedural force names the variable it overrides without driving it.
+  void handle(const slang::ast::ProceduralAssignStatement& stmt) {
+    if (stmt.isForce &&
+        stmt.assignment.kind == slang::ast::ExpressionKind::Assignment) {
+      const auto& assign =
+          stmt.assignment.as<slang::ast::AssignmentExpression>();
+      assign.left().visit(*this);
+      assign.right().visit(*this);
+      return;
+    }
+    visitDefault(stmt);
+  }
+
+  // An automatic's initializer runs each time its block is entered; a static
+  // one's runs once before time zero (LRM 6.21), so it reads nothing here.
+  void handle(const slang::ast::VariableDeclStatement& stmt) {
+    if (stmt.symbol.lifetime == slang::ast::VariableLifetime::Static) return;
+    if (const slang::ast::Expression* init = stmt.symbol.getInitializer();
+        init != nullptr) {
+      init->visit(*this);
+    }
+  }
+
+  void handle(const slang::ast::TimedStatement& stmt) {
+    stmt.stmt.visit(*this);
+  }
+
+  void handle(const slang::ast::WaitStatement& stmt) {
+    stmt.stmt.visit(*this);
+  }
+
+  void handle(const slang::ast::EventTriggerStatement& stmt) {
+    stmt.target.visit(*this);
+  }
+
+  void handle(const slang::ast::WaitOrderStatement& stmt) {
+    if (stmt.ifTrue != nullptr) stmt.ifTrue->visit(*this);
+    if (stmt.ifFalse != nullptr) stmt.ifFalse->visit(*this);
+  }
+
+  // A concurrent assertion runs apart from the statement that holds it (LRM
+  // 16.14.6), so it is no part of what that statement reads or writes; any
+  // other statement is read through.
+  template <typename T>
+    requires std::is_base_of_v<slang::ast::Statement, T>
+  void handle(const T& stmt) {
+    if constexpr (!std::is_same_v<
+                      T, slang::ast::ConcurrentAssertionStatement>) {
+      visitDefault(stmt);
+    }
+  }
+
+  // A deferred assertion's action runs in a later region (LRM 16.4), apart
+  // from the statement that holds it.
+  void handle(const slang::ast::ImmediateAssertionStatement& stmt) {
+    stmt.cond.visit(*this);
+    if (stmt.isDeferred) return;
+    const bool outer = std::exchange(in_action_, true);
+    if (stmt.ifTrue != nullptr) stmt.ifTrue->visit(*this);
+    if (stmt.ifFalse != nullptr) stmt.ifFalse->visit(*this);
+    in_action_ = outer;
   }
 
  private:
+  void Write(const slang::ast::Expression& target) {
+    const bool outer = std::exchange(writing_, true);
+    target.visit(*this);
+    writing_ = outer;
+  }
+
+  // The longest static prefix of `path` (LRM 11.5.3) as the source wrote it:
+  // the outermost select whose own selector and every selector inside it are
+  // constant expressions, and the name itself where there is none. A select
+  // is static where its value has a fixed range and its selector evaluates as
+  // a constant expression around the node, which a select past its value's
+  // end still does. None where the path starts at something no name declares.
+  static auto PrefixAsWritten(
+      const slang::ast::ValuePath& path, slang::ast::EvalContext& eval_context)
+      -> const slang::ast::Expression* {
+    const slang::ast::Expression* prefix = nullptr;
+    const auto note = [&](const slang::ast::Expression& select,
+                          bool is_static) {
+      if (!is_static) {
+        prefix = nullptr;
+      } else if (prefix == nullptr) {
+        prefix = &select;
+      }
+    };
+    for (const slang::ast::Expression& elem : path) {
+      if (const auto* select =
+              elem.as_if<slang::ast::ElementSelectExpression>()) {
+        note(elem, select->isConstantSelect(eval_context));
+      } else if (
+          const auto* range = elem.as_if<slang::ast::RangeSelectExpression>()) {
+        note(elem, range->isConstantSelect(eval_context));
+      } else if (
+          const auto* access =
+              elem.as_if<slang::ast::MemberAccessExpression>()) {
+        if (!IsStaticProperty(*access)) {
+          note(elem, !IsThroughHandle(*access));
+        } else if (prefix == nullptr) {
+          prefix = &elem;
+        }
+      } else if (elem.as_if<slang::ast::ValueExpressionBase>() != nullptr) {
+        if (prefix == nullptr) prefix = &elem;
+      } else {
+        return nullptr;
+      }
+    }
+    return path.rootSymbol() == nullptr ? nullptr : prefix;
+  }
+
   slang::ast::EvalContext* eval_context_;
-  std::vector<slang::ast::ValuePath>* paths_;
+  std::vector<NameInText>* names_;
+  bool writing_ = false;
+  bool in_action_ = false;
 };
 
 // What a node brings into being itself: the scopes it opens, whose
@@ -147,188 +374,81 @@ auto IsStateOutside(
          !variable.flags.has(slang::ast::VariableFlags::CompilerGenerated);
 }
 
-// The run `[first, last]` of `symbol` as an access states it, none where it
-// cannot be stated. The prefixes among `paths` rooted at the symbol that lie
-// inside the run, one per distinct stretch of it, name it where together they
-// leave none of it out. A run they do not make up is, for a packed vector,
-// those bits; for any other value the front end counts it in a numbering of
-// its own, which no later layer shares.
-auto PartReached(
-    const slang::ast::ValueSymbol& symbol,
-    std::pair<std::uint64_t, std::uint64_t> range,
-    std::span<const slang::ast::ValuePath> paths) -> std::optional<StatedPart> {
-  const PartAddressing addressing = PartAddressingOf(symbol.getType());
-  std::vector<const slang::ast::ValuePath*> inside;
-  for (const slang::ast::ValuePath& path : paths) {
-    if (path.lsp == nullptr || path.rootSymbol() != &symbol) continue;
-    const auto [first, last] = path.lspBounds;
-    if (first < range.first || last > range.second) continue;
-    const bool repeated =
-        std::ranges::any_of(inside, [&](const slang::ast::ValuePath* seen) {
-          return seen->lspBounds == path.lspBounds;
-        });
-    if (!repeated) inside.push_back(&path);
+// What `name` states of its declaration: all of it where its prefix is the
+// name itself, or where the declaration has no part a select states; the part
+// its prefix names otherwise. A write that goes on past its prefix into a
+// value whose parts are stated by selects -- an entry of an associative array,
+// an element at an index the program computes -- writes only some of what the
+// prefix names, so it states nothing, since what a write states is taken out
+// of what is read.
+auto PartNamed(const NameInText& name) -> std::optional<StatedPart> {
+  const PartAddressing addressing = PartAddressingOf(name.symbol->getType());
+  if (name.prefix == name.start || addressing == PartAddressing::kWholeOnly) {
+    return WholePart{};
   }
-  std::vector<const slang::ast::ValuePath*> by_first = inside;
-  std::ranges::sort(by_first, {}, [](const slang::ast::ValuePath* path) {
-    return path->lspBounds.first;
-  });
-  std::uint64_t next = range.first;
-  for (const slang::ast::ValuePath* path : by_first) {
-    if (path->lspBounds.first > next) break;
-    next = std::max(next, path->lspBounds.second + 1);
+  if (name.written && !name.ends_at_prefix &&
+      addressing == PartAddressing::kSelects) {
+    return std::nullopt;
   }
-  const bool made_up = next > range.second;
-  switch (addressing) {
-    case PartAddressing::kWholeOnly:
-      return std::nullopt;
-    case PartAddressing::kSelects:
-      if (!made_up) return std::nullopt;
-      break;
-    case PartAddressing::kBits:
-      if (!made_up) {
-        return UnselectedBits{.first = range.first, .last = range.second};
-      }
-      break;
-  }
-  SelectedParts named;
-  named.prefixes.reserve(inside.size());
-  for (const slang::ast::ValuePath* path : inside) {
-    named.prefixes.push_back(path->lsp);
-  }
-  return named;
+  return SelectedParts{.prefixes = {name.prefix}};
 }
 
-// The expression each name reaching `symbol` starts at, over `paths`, each
-// stated once and in the order the text has them.
-auto NamesReaching(
-    const slang::ast::ValueSymbol& symbol,
-    std::span<const slang::ast::ValuePath> paths)
-    -> std::vector<const slang::ast::Expression*> {
-  std::vector<const slang::ast::Expression*> names;
-  for (const slang::ast::ValuePath& path : paths) {
-    if (path.rootExpr == nullptr || path.rootSymbol() != &symbol) continue;
-    if (!std::ranges::contains(names, path.rootExpr)) {
-      names.push_back(path.rootExpr);
-    }
-  }
-  return names;
-}
-
-// Flattens slang's `(symbol, bitMap)` `ReadSet` into one read per range of a
-// symbol's bits, each named by the prefixes in `paths` that make it up.
-// Disjoint ranges of the same symbol stay disjoint so downstream can preserve
-// precision.
-//
-// What comes back stands for a set (LRM 9.4.2.1), and is in the order the
-// analyzed text first reads each symbol, which is the order the front end keeps
-// them in. Two copies of one text therefore hand their reads over alike, and so
-// whatever a later step builds from them, one read at a time, is built alike.
-auto FlattenReadSet(
-    const slang::analysis::DFAResults::ReadSet& reads,
-    std::span<const slang::ast::ValuePath> paths) -> std::vector<AccessedPart> {
+// One access per declaration `names` read, or wrote, in the order the text
+// first names each, holding every prefix it names that declaration by once;
+// all of the declaration where any name reaches all of it.
+auto AccessesOf(std::span<const NameInText> names, bool written)
+    -> std::vector<AccessedPart> {
   std::vector<AccessedPart> out;
-  for (const auto& [symbol, bitmap] : reads) {
-    const std::vector<const slang::ast::Expression*> names =
-        NamesReaching(*symbol, paths);
-    for (auto it = bitmap.begin(); it != bitmap.end(); ++it) {
-      // A read whose part cannot be stated is a read of the whole, which is
-      // every part it could have been.
+  for (const NameInText& name : names) {
+    if (name.written != written) continue;
+    std::optional<StatedPart> part = PartNamed(name);
+    if (!part.has_value()) continue;
+    auto it = std::ranges::find(out, name.symbol, &AccessedPart::symbol);
+    if (it == out.end()) {
       out.push_back(
-          {.symbol = symbol,
-           .part =
-               PartReached(*symbol, it.bounds(), paths).value_or(WholePart{}),
-           .reached_by = names});
+          {.symbol = name.symbol, .part = *std::move(part), .reached_by = {}});
+      continue;
+    }
+    auto* named = std::get_if<SelectedParts>(&it->part);
+    if (named == nullptr) continue;
+    if (std::holds_alternative<WholePart>(*part)) {
+      it->part = WholePart{};
+      continue;
+    }
+    const slang::ast::Expression* prefix =
+        std::get<SelectedParts>(*part).prefixes.front();
+    if (!std::ranges::contains(named->prefixes, prefix)) {
+      named->prefixes.push_back(prefix);
     }
   }
-  return out;
-}
-
-// What `lvalues` write, one write per run of a symbol assigned, each named by
-// the prefixes in `paths` that make it up, as a read is. A write is taken out
-// of a read only where the two compare exactly, so a write whose part cannot
-// be stated is stated only where it is the whole of the symbol, and is
-// otherwise left out rather than taking the whole away.
-//
-// A prefix names what is written only where the path it heads stops at it. A
-// path that goes on past its prefix -- into an entry of an associative array,
-// an element at an index the program computes -- writes some of what the
-// prefix names, and for a value whose parts are stated by selects that prefix
-// would say all of it was written.
-auto FlattenWrites(
-    std::span<const slang::analysis::DFAResults::LValueSymbol> lvalues,
-    std::span<const slang::ast::ValuePath> paths) -> std::vector<AccessedPart> {
-  std::vector<slang::ast::ValuePath> ending_at_their_prefix;
-  std::ranges::copy_if(
-      paths, std::back_inserter(ending_at_their_prefix),
-      [](const slang::ast::ValuePath& path) { return path.isFullyStatic(); });
-  std::vector<AccessedPart> out;
-  for (const auto& lvalue : lvalues) {
-    const slang::ast::ValueSymbol& symbol = *lvalue.symbol;
-    const std::uint64_t width = symbol.getType().getSelectableWidth();
-    const std::vector<const slang::ast::Expression*> names =
-        NamesReaching(symbol, paths);
-    const auto naming = [&]() -> std::span<const slang::ast::ValuePath> {
-      switch (PartAddressingOf(symbol.getType())) {
-        case PartAddressing::kSelects:
-          return ending_at_their_prefix;
-        case PartAddressing::kBits:
-        case PartAddressing::kWholeOnly:
-          return paths;
-      }
-      throw InternalError("FlattenWrites: unknown part addressing");
-    }();
-    for (auto it = lvalue.assigned.begin(); it != lvalue.assigned.end(); ++it) {
-      const auto [first, last] = it.bounds();
-      std::optional<StatedPart> reached =
-          PartReached(symbol, it.bounds(), naming);
-      if (reached.has_value()) {
-        out.push_back(
-            {.symbol = &symbol,
-             .part = *std::move(reached),
-             .reached_by = names});
-      } else if (first == 0 && last + 1 >= width) {
-        out.push_back(
-            {.symbol = &symbol, .part = WholePart{}, .reached_by = names});
+  // Every name the text reaches a declaration by, read or written, is one it
+  // is reached by from another instance too.
+  for (AccessedPart& access : out) {
+    for (const NameInText& name : names) {
+      if (name.symbol == access.symbol &&
+          !std::ranges::contains(access.reached_by, name.start)) {
+        access.reached_by.push_back(name.start);
       }
     }
   }
   return out;
 }
 
-// The value paths in `node`'s text, settled against the scope around
-// `containing_symbol`.
+// What `node` reads and writes of the state there before it runs, given what
+// it declares, settled against the scope around `containing_symbol`.
 template <typename Node>
-auto PathsOf(const Node& node, const slang::ast::Symbol& containing_symbol)
-    -> std::vector<slang::ast::ValuePath> {
-  slang::ast::EvalContext eval_context(containing_symbol);
-  std::vector<slang::ast::ValuePath> paths;
-  PathCollector collector(eval_context, paths);
-  node.visit(collector);
-  return paths;
-}
-
-// Runs slang's `DefaultDFA` on a single AST node and harvests the state it
-// reads and writes from outside itself, given what the node declares.
-template <typename Node>
-auto RunDfa(
-    slang::analysis::AnalysisContext& context,
+auto AccessesOfNode(
     const slang::ast::Symbol& containing_symbol, const Node& node,
     const NodeDeclarations& declarations) -> NodeAccesses {
-  slang::analysis::DefaultDFA dfa(context, containing_symbol, false);
-  dfa.slang::analysis::AbstractFlowAnalysis<
-      slang::analysis::DefaultDFA, slang::analysis::DataFlowState>::run(node);
-  const std::vector<slang::ast::ValuePath> paths =
-      PathsOf(node, containing_symbol);
-  NodeAccesses accesses{
-      .reads = FlattenReadSet(dfa.getRValues(), paths),
-      .writes = FlattenWrites(dfa.getLValues(), paths)};
-  const auto inside = [&](const AccessedPart& access) {
-    return !IsStateOutside(*access.symbol, declarations);
-  };
-  std::erase_if(accesses.reads, inside);
-  std::erase_if(accesses.writes, inside);
-  return accesses;
+  slang::ast::EvalContext eval_context(containing_symbol);
+  std::vector<NameInText> names;
+  NameCollector collector(eval_context, names);
+  node.visit(collector);
+  std::erase_if(names, [&](const NameInText& name) {
+    return !IsStateOutside(*name.symbol, declarations);
+  });
+  return NodeAccesses{
+      .reads = AccessesOf(names, false), .writes = AccessesOf(names, true)};
 }
 
 // The variables a statement uses only to control its `for` loops: each is
@@ -447,7 +567,7 @@ auto SensitivityAnalyzer::AnalyzeReads(
   }
   auto [inserted_it, _] = expression_cache_.emplace(
       &expr,
-      RunDfa(*context_, containing_symbol, expr, DeclarationsOf(expr)).reads);
+      AccessesOfNode(containing_symbol, expr, DeclarationsOf(expr)).reads);
   return inserted_it->second;
 }
 
@@ -460,7 +580,7 @@ auto SensitivityAnalyzer::AnalyzeImplicitEventList(
     return it->second;
   }
   std::vector<AccessedPart> reads =
-      RunDfa(*context_, containing_symbol, stmt, DeclarationsOf(stmt)).reads;
+      AccessesOfNode(containing_symbol, stmt, DeclarationsOf(stmt)).reads;
   LoopControlCollector collector;
   stmt.visit(collector);
   const std::vector<const slang::ast::Symbol*> left_out =
@@ -482,7 +602,7 @@ auto SensitivityAnalyzer::AnalyzeAccesses(
   NodeDeclarations declarations = DeclarationsOf(body);
   declarations.scopes.push_back(&subroutine);
   auto [inserted_it, _] = subroutine_cache_.emplace(
-      &subroutine, RunDfa(*context_, subroutine, body, declarations));
+      &subroutine, AccessesOfNode(subroutine, body, declarations));
   return inserted_it->second;
 }
 
@@ -507,7 +627,7 @@ auto SensitivityAnalyzer::AnalyzeProcedureText(
   }
   const slang::ast::Statement& body = proc.getBody();
   const NodeDeclarations declarations = DeclarationsOf(body);
-  NodeAccesses accesses = RunDfa(*context_, proc, body, declarations);
+  NodeAccesses accesses = AccessesOfNode(proc, body, declarations);
   // The list leaves out every variable the procedure declares, static ones
   // too, where a wait inside it reads a static one as state (LRM 9.2.2.2.1 a).
   const auto declared = [&](const AccessedPart& access) {

@@ -61,7 +61,7 @@ auto LowerConcatExpr(
     const slang::ast::ConcatenationExpression& cc, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
-  auto type_id = unit_lowerer.InternType(*cc.type, span);
+  auto type_id = unit_lowerer.InternExpressionType(cc, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const hir::Type& result_ty = unit_lowerer.Unit().types.Get(*type_id);
   if (!result_ty.IsIntegral() && !result_ty.Is<hir::StringType>() &&
@@ -166,7 +166,7 @@ auto LowerReplicationExpr(
     const slang::ast::ReplicationExpression& rp, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
   auto& unit_lowerer = lowerer.Owner();
-  auto type_id = unit_lowerer.InternType(*rp.type, span);
+  auto type_id = unit_lowerer.InternExpressionType(rp, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   const hir::Type& result_ty = unit_lowerer.Unit().types.Get(*type_id);
   if (!result_ty.IsIntegral() && !result_ty.Is<hir::StringType>()) {
@@ -193,7 +193,7 @@ auto LowerAssignmentPatternFromElements(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::AssignmentPatternExpressionBase& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = lowerer.Owner().InternType(*ap.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(ap, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   std::vector<hir::ExprId> element_ids;
   element_ids.reserve(ap.elements().size());
@@ -219,7 +219,7 @@ auto LowerAssociativeAssignmentPattern(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::StructuredAssignmentPatternExpression& ap,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = lowerer.Owner().InternType(*ap.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(ap, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   std::vector<hir::AssociativeAssignmentPatternExpr::Entry> entries;
   entries.reserve(ap.indexSetters.size());
@@ -266,7 +266,7 @@ auto LowerArrayOfOneValue(
     const slang::ast::AssignmentPatternExpressionBase& ap,
     const slang::ast::Expression& value, diag::SourceSpan span)
     -> diag::Result<hir::Expr> {
-  auto type_id = lowerer.Owner().InternType(*ap.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(ap, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   auto lowered = lowerer.LowerExpr(value, frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
@@ -346,7 +346,7 @@ auto LowerStructuredAssignmentPattern(
   // how the repeat is spelled, neither of which is what the pattern says, so
   // that question belongs to HIR-to-MIR.
   if (TargetsAFixedArray(ap)) {
-    auto type_id = lowerer.Owner().InternType(*ap.type, span);
+    auto type_id = lowerer.Owner().InternExpressionType(ap, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     std::optional<hir::ExprId> default_id;
     if (const slang::ast::Expression* unkeyed = ValueOfUnkeyedElements(ap)) {
@@ -381,7 +381,7 @@ auto LowerReplicatedAssignmentPatternExpr(
     Lowerer& lowerer, WalkFrame frame,
     const slang::ast::ReplicatedAssignmentPatternExpression& rp,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = lowerer.Owner().InternType(*rp.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(rp, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   auto count_or = lowerer.LowerExpr(rp.count(), frame);
   if (!count_or) return std::unexpected(std::move(count_or.error()));
@@ -412,7 +412,7 @@ template <ExprLowerer Lowerer>
 auto LowerNewArrayExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::NewArrayExpression& na,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  auto type_id = lowerer.Owner().InternType(*na.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(na, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   auto size_or = lowerer.LowerExpr(na.sizeExpr(), frame);
   if (!size_or) return std::unexpected(std::move(size_or.error()));
@@ -462,7 +462,7 @@ auto LowerNewClassExpr(
   const auto& cls = nc.type->getCanonicalType().as<slang::ast::ClassType>();
   auto class_ref = unit_lowerer.ResolveClassRef(cls, span);
   if (!class_ref) return std::unexpected(std::move(class_ref.error()));
-  auto type_id = unit_lowerer.InternType(*nc.type, span);
+  auto type_id = unit_lowerer.InternExpressionType(nc, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   auto declaring_instance =
       unit_lowerer.DeclaringInstanceFrom(cls, frame, span);

@@ -64,8 +64,7 @@ void ReachSensitivityEntry(const SensitivityEntry& entry, const auto& reach) {
           [](const WatchedWhole&) {},
           [&](const WatchedSelect& part) {
             reach(part.prefix, Slot::kSensitivity);
-          },
-          [](const WatchedBits&) {}},
+          }},
       entry.part);
 }
 

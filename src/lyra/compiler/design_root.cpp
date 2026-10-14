@@ -85,7 +85,8 @@ void LeaveInputsUnconnected(
 auto BuildDesignRootHir(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& signatures) -> hir::CompilationUnit {
-  hir::CompilationUnit root{std::string{kDesignRootUnitName}};
+  hir::CompilationUnit root{
+      std::string{kDesignRootUnitName}, std::string{kDesignRootUnitName}};
   // Like any module, its object is published as the class an instance of the
   // unit is, and what it publishes is every instance it builds (LRM 23.6).
   hir::ScopeClassSignature published{
@@ -116,7 +117,9 @@ auto BuildDesignRootHir(
                       .instance_name = top.name_in_a_path,
                       .array_dims = {},
                       .alternatives = {hir::InstanceAlternative{
-                          .scope_class = scope_class, .assignments = {}}},
+                          .scope_class = scope_class,
+                          .body = top.unit_name,
+                          .assignments = {}}},
                       .taken = {0}});
     LeaveInputsUnconnected(root, signature, scope_class, instance);
     const std::array kind{hir::UnitObjectType{

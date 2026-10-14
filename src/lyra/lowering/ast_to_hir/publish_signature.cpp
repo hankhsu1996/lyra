@@ -526,12 +526,12 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
       signature_.types, published);
 
-  // The ports are read off every application the unit is lowered from, since
+  // The ports are read off every application the unit is declared from, since
   // a port's direction decides what the declaration it reaches holds in each
   // of them. What they state is the text's, so the unit publishes the list of
   // the application it is named for, and a port whose type differs between two
   // of them is a member of the unit's own class that does.
-  for (const slang::ast::Scope* application : applications_) {
+  for (const slang::ast::Scope* application : declared_applications_) {
     const auto& built_by =
         application->asSymbol().as<slang::ast::InstanceBodySymbol>();
     const ScopePublicationRecord& its_root = PublicationOf(*application);

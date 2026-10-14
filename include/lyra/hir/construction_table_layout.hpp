@@ -12,6 +12,15 @@
 
 namespace lyra::hir {
 
+// What one instantiation makes: an object of `unit`, which is what a referrer
+// names, compiled to its body `body`.
+struct InstantiatedBody {
+  std::string unit;
+  std::string body;
+
+  auto operator==(const InstantiatedBody&) const -> bool = default;
+};
+
 // Which entry of a construction table an instantiation is.
 struct InstantiationIndex {
   std::uint32_t value = base::kUnassignedId;
@@ -53,8 +62,9 @@ class ConstructionTableLayout {
     return root_;
   }
 
-  // The unit elaborated at each instantiation, in index order.
-  [[nodiscard]] auto Instantiated() const -> const std::vector<std::string>& {
+  // What is elaborated at each instantiation, in index order.
+  [[nodiscard]] auto Instantiated() const
+      -> const std::vector<InstantiatedBody>& {
     return instantiated_;
   }
 
@@ -62,7 +72,7 @@ class ConstructionTableLayout {
   auto LayOut(const CompilationUnit& unit, const StructuralScope& scope)
       -> ScopeLayout;
 
-  std::vector<std::string> instantiated_;
+  std::vector<InstantiatedBody> instantiated_;
   ScopeLayout root_;
 };
 

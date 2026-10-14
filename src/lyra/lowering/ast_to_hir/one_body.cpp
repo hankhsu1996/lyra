@@ -90,7 +90,7 @@ auto MergeLoops(
        {std::pair{&a, &loop_a}, std::pair{&b, &loop_b}}) {
     for (const hir::BodyBuiltAt& built : loop->bodies) {
       if (!bodies.Take(
-              gen->blocks.Get(built.body).scope, built.code_arguments,
+              gen->blocks.Get(built.body).scope, built.body_arguments,
               built.indices)) {
         return std::nullopt;
       }
@@ -169,15 +169,15 @@ auto OneBodyOf(const hir::StructuralScope& a, const hir::StructuralScope& b)
 }
 
 auto LoopBodies::Take(
-    hir::StructuralScope scope, std::optional<std::uint64_t> code_arguments,
+    hir::StructuralScope scope, std::optional<std::uint64_t> body_arguments,
     std::span<const std::int64_t> indices) -> bool {
   const auto [named, first] = named_.try_emplace(
-      std::pair{scope.published.signature.class_path, code_arguments},
+      std::pair{scope.published.signature.class_path, body_arguments},
       bodies_.size());
   const std::size_t body = named->second;
   if (first) {
     bodies_.push_back(std::move(scope));
-    code_arguments_.push_back(code_arguments);
+    body_arguments_.push_back(body_arguments);
   } else {
     auto one = OneBodyOf(bodies_[body], scope);
     if (!one.has_value()) return false;
@@ -195,7 +195,7 @@ auto LoopBodies::Build(hir::BlocksRepeat loop) && -> hir::Generate {
         hir::BodyBuiltAt{
             .body = gen.blocks.Add(
                 hir::GenerateBlock{.scope = std::move(bodies_[at])}),
-            .code_arguments = code_arguments_[at],
+            .body_arguments = body_arguments_[at],
             .indices = {}});
   }
   for (const auto& [index, body] : standing_at_) {

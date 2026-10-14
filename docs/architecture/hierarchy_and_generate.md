@@ -10,8 +10,8 @@ shared by all consumers: external references, child routing, and construction.
 - The rule that the canonical hierarchy is an object tree, built at construction time.
 - The rule that the object tree is single-rooted at the implicit `$root` scope, which owns every
   top-level block as a child.
-- The rule that generate constructs are constructor-time mechanisms that build the object tree.
-  Generate is not a separate identity or topology system.
+- The rule that generate constructs build the object tree at construction, from what elaboration
+  decided for each instance. Generate is not a separate identity or topology system.
 - The rule that a semantically visible generate scope (named, navigable) is represented as a
   first-class constructed object in the tree.
 - The contract that every consumer of hierarchy navigates the same object tree.
@@ -26,9 +26,10 @@ shared by all consumers: external references, child routing, and construction.
 
 1. The canonical hierarchy is an object tree. Path identity derives from ownership on this tree, not
    from a parallel side table.
-2. A compilation unit that has a generate structure contributes that structure as constructor-time
-   construction logic. The constructor expands generate via `if`, loop, and sequence to build
-   children.
+2. A generate block is a definition of its own, compiled like any other. Which blocks an instance
+   builds -- the alternative a conditional selected, how many blocks a loop counted out, which body
+   each block is -- the front end has already decided, and it reaches the construction as that
+   instance's data; a body builds what its data lists and decides none of it again.
 3. A named generate scope is a first-class constructed object. An unnamed generate scope is not
    addressable and is not materialized as an object.
 4. External references, runtime child routing, and the runtime constructor all navigate the same
@@ -62,9 +63,9 @@ shared by all consumers: external references, child routing, and construction.
    collapsed into one set.
 9. Instance multiplicity and generate are orthogonal axes. An array of instances (`c[3]`) is a
    cardinality property of one member's type -- a vector of owned children (see `mir.md`) -- not a
-   generate construct. A generate builds named child scopes as constructor-time logic; an array
-   replicates one child member. Either may appear without the other, and a generate scope may itself
-   contain instance arrays. Neither axis subsumes the other.
+   generate construct. A generate builds named child scopes; an array replicates one child member.
+   Either may appear without the other, and a generate scope may itself contain instance arrays.
+   Neither axis subsumes the other.
 10. Scope identity is structural and complete at construction. A child's identity at one hierarchy
     edge is the pair `(parent, segment)`, where the segment is the source-level label plus any
     per-dimension elaborated indices. The child receives that segment from its constructor's caller,
@@ -81,44 +82,43 @@ shared by all consumers: external references, child routing, and construction.
     silently substitute a null, a default, or an alternate target.
 12. A set of objects the source writes under one name -- an instance array, the instances an
     interface port carrying a range is bound to, the blocks a loop generate counts out -- is
-    described object by object, each from its own elaboration, and what its objects share is found
-    by comparing those descriptions. Every element takes what its instantiation wrote (LRM 23.3.2),
-    but a `defparam`, a `bind` or a configuration rule may reach one of them (LRM 23.10.1, 23.11,
-    33.4), so nothing about the set can be read off one element. What this serves is that
-    correctness does not depend on sharing (`north_star.md` invariant 3): a description of the set
-    that starts from a representative has to predict that the rest agree, and the element it
-    predicted wrong is then lowered as another one. The set is still one declaration, stating which
-    kind stands at each position, so artifacts follow the distinct kinds and never the element count
-    (invariant 2 there).
+    described object by object: each element's identity is computed from its own elaboration, and
+    elements whose identities are one share an artifact. Every element takes what its instantiation
+    wrote (LRM 23.3.2), but a `defparam`, a `bind` or a configuration rule may reach one of them
+    (LRM 23.10.1, 23.11, 33.4), so nothing about the set can be read off one element. What this
+    serves is that correctness does not depend on sharing (`north_star.md` invariant 3): a
+    description of the set that starts from a representative has to predict that the rest agree.
+    Which kind stands at each position is the holding instance's construction data, so artifacts
+    follow the distinct kinds and never the element count (invariant 2 there).
 
 ## Boundary to Adjacent Layers
 
-- HIR holds the generate tree inside each module compilation unit. MIR lowers generate to
-  constructor-time construction logic that builds the object tree.
-- The runtime constructor executes this logic to produce the live object graph.
+- HIR holds the generate tree inside each module compilation unit, one definition per block. MIR
+  lowers a scope's construction to building the children its data lists.
+- The runtime constructor builds the live object graph from each instance's data.
 - `runtime_model.md` defines the constructor / simulation execution-context split that this doc
-  builds on. Generate logic is constructor-context; processes are simulation-context.
+  builds on. Building a generate's blocks is constructor-context; processes are simulation-context.
 - `reference_resolution.md` owns how a reference reaches state across the object tree and when it
   resolves. This doc owns the tree's shape and construction and its faithfulness to the frontend's
   elaboration; that doc relies on this faithfulness to make cross-unit resolution total.
 - A node whose owned child is built from another compilation unit (an instantiation) crosses the
   unit boundary: the parent references the class the child's unit published, never its body or
-  internal ids, and never which unit is made there. An object is handed a construction table, which
-  says how the instance at each of its instantiations is made, and makes each child through the
-  entry the table holds there, so the code compiled for a unit counts its instantiations and the
-  design root states, for every unit, what is made at each. An owned child that belongs to the same
-  unit (a named generate scope) is intra-unit and crosses no boundary for the unit's own code; a
-  referrer in another unit reaches it through the class it was published as.
-  `compilation_unit_model.md` owns the signature and the name-based linkage; this doc owns only the
-  resulting ownership edge in the object tree.
+  internal ids, and never which unit is made there. An object is handed its construction data, which
+  says how each child it builds is made -- an instance at each instantiation, a block of each
+  generate -- and makes each through the entry the data holds there, so the code compiled for a unit
+  counts its instantiations and generates and the design root states, for every instance, what is
+  made at each. A named generate scope crosses no unit boundary for the unit's own code; a referrer
+  in another unit reaches it through the class it was published as. `compilation_unit_model.md` owns
+  the signature and the name-based linkage; this doc owns only the resulting ownership edge in the
+  object tree.
 
 ## Forbidden Shapes
 
 - A coordinate or ordinal side system that numbers generate regions and is used as identity.
 - A topology representation owned by the driver or a central map instead of by the object tree
   itself, which fails invariant 4: a consumer navigating such a map instead of the tree reaches
-  something the tree may not hold. The table a constructor is handed -- which unit is made at each
-  of the object's instantiations, decided by elaborating the instance -- is not this: nothing
+  something the tree may not hold. The data a constructor is handed -- what is made at each of the
+  object's instantiations and generates, decided by elaborating the instance -- is not this: nothing
   navigates it and nothing reads it once construction is over.
 - Separate hierarchy models for compile-time and runtime. Only one model exists.
 - Two independently maintained runtime child views that can drift -- e.g., one list for traversal
@@ -131,10 +131,14 @@ shared by all consumers: external references, child routing, and construction.
   unchecked cast in its place.
 - A child-routing or external-reference path that reconstructs hierarchy from flattened symbol
   names.
-- Per-instance generate trees that duplicate the unit's construction logic.
+- Per-instance code for a generate. What differs between instances is their construction data; code
+  that differs per instance makes artifacts follow instances (`north_star.md` invariant 2).
+- A body that decides at construction which generate blocks to build, or that holds every block any
+  of its instances built. It evaluates again what the front end decided, and its content then
+  follows instances it is not named for, so adding one elsewhere changes it.
 - Treating an instance array as a generate construct, or modeling generate replication as an array
-  type. Multiplicity is a property of a member's type; generate is constructor-time scope
-  construction. The two axes must not be conflated or made to subsume each other.
+  type. Multiplicity is a property of a member's type; a generate builds scopes. The two axes must
+  not be conflated or made to subsume each other.
 - A parameter read only as a value used as part of compile-time identity, which forks artifacts per
   value and fails `north_star.md` invariant 2 for no correctness gain.
 - Describing a set of objects by one of its elements -- the first element's unit standing for an
@@ -206,16 +210,15 @@ a child like any other and contributes no segment to the paths beneath it, so a 
 own scope without lengthening any hierarchical name.
 
 **Each scope a name can step into publishes a class.** `mid`'s class publishes its members, the
-`bank` array, and one entry per generate construct: `g`'s entry names the class its blocks are
-objects of, and `genblk2`'s names its one block by where the source wrote it. So `mid.g[1].leaf` is
-a typed step into the entry at the place `g[1]` has among the blocks `mid` counted out, viewed as
-that block's class, and then a published member. `g[0]` and `g[1]` are two applications of one
-block, and objects of one class unless the index decides what the block declares; where it does, the
-entry lists the classes and which of them stands at each index. How many blocks a loop counts out is
-no part of the entry: each construction of the holding scope runs the loop, so two objects of one
-class may hold different numbers of them, none included. `bank` is published the same way as a set:
-its range, and which kind of object stands at each position, so `mid.bank[1]` reaches the kind its
-own elaboration made it even where a `defparam` made it differ from `bank[0]`.
+`bank` array, and one entry per generate construct, holding the blocks the object built. So
+`mid.g[1].leaf` is a typed step into `g`'s entry at the block `g[1]`, viewed as the class that block
+was published as, and then a published member. Which block a name reaches and its class are the
+referrer's, read off its own elaboration, so the entry lists no classes and no count: `g[0]` and
+`g[1]` are two applications of one block, objects of one class unless the index decides what the
+block declares, and two objects of one class may hold different numbers of blocks, none included, as
+their data says. `bank` is published the same way as a set: its range, and which kind of object
+stands at each position, so `mid.bank[1]` reaches the kind its own elaboration made it even where a
+`defparam` made it differ from `bank[0]`.
 
 If resolving a hierarchical reference requires a lookup through a table that mirrors the object
 tree, the table is redundant: the tree itself is the authority.

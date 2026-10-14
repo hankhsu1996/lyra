@@ -159,8 +159,8 @@ using PublishedDecl = std::variant<
 // The signature's class path is the one a referrer reaches the class by.
 // Several scopes of a unit may state one class: the block instances of one
 // application of a generate block are objects of one class (LRM 27.3), and
-// those whose index fixed their code differently are that class realized by a
-// scope each.
+// those whose code uses their index are that class realized by a scope per
+// value of it.
 struct ScopePublication {
   ScopeClassSignature signature;
   base::Translation<PublishedMemberId, PublishedDecl> members;
@@ -322,10 +322,12 @@ struct ParameterValueAssignment {
 
 // One way the objects of an instance declaration are built: the unit they are
 // instances of, standing on this unit's record of the class that unit's
-// instances are, and what each instantiation says of each parameter the unit
-// takes at construction, in the order the unit declares them.
+// instances are, the body of that unit they are compiled to, which is what the
+// construction makes there, and what each instantiation says of each parameter
+// the unit takes at construction, in the order the unit declares them.
 struct InstanceAlternative {
   ExternalScopeClassId scope_class;
+  std::string body;
   std::vector<ParameterValueAssignment> assignments;
 
   auto operator==(const InstanceAlternative&) const -> bool = default;
@@ -482,14 +484,14 @@ struct SingleBlock {
 
 // One of a loop's bodies, and the values its index stood at where an
 // elaboration built a block of that body (LRM 27.4), in ascending order. A
-// block is named by what its index fixed about what it compiles to -- in what
-// it declares, which is the class it is an object of, and in its code,
-// `code_arguments`, which is which body of that class it is -- so blocks
+// block is named by the value of its index where what it compiles to uses it
+// -- what it declares, which is the class it is an object of, and its code,
+// `body_arguments`, which is which body of that class it is -- so blocks
 // standing at different values may be different bodies, and which one stands
 // at a value is what the construction looks up when it builds there.
 struct BodyBuiltAt {
   StructuralScopeId body;
-  std::optional<std::uint64_t> code_arguments;
+  std::optional<std::uint64_t> body_arguments;
   std::vector<std::int64_t> indices;
 
   auto operator==(const BodyBuiltAt&) const -> bool = default;

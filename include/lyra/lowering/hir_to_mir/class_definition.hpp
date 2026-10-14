@@ -46,7 +46,7 @@ void StateScopeDefinition(
 // entry holds the unit's object entry with its prototype erased.
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    std::span<const std::string> own,
+    std::span<const hir::InstantiatedBody> own,
     const DesignInstantiations& instantiations) -> mir::ClassConstantRef;
 
 }  // namespace lyra::lowering::hir_to_mir

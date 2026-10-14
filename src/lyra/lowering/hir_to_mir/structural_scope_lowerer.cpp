@@ -2278,8 +2278,8 @@ auto StructuralScopeLowerer::ForScope(
   auto lowerer = std::make_unique<StructuralScopeLowerer>(
       unit_lowerer, parent, hir_scope, layout, std::move(namespaces),
       std::move(instantiations));
-  lowerer->published_class_id_ =
-      unit_lowerer.TakePublishedScopeClass(hir_scope.published);
+  lowerer->published_class_id_ = unit_lowerer.TakePublishedScopeClass(
+      hir_scope.published.signature.class_path);
   lowerer->generate_children_.reserve(hir_scope.generates.size());
   for (const hir::GenerateId generate : hir_scope.generates.Ids()) {
     const base::Arena<hir::GenerateBlock, hir::StructuralScopeId>& held =
@@ -2333,7 +2333,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   // class, after them.
   const mir::ClassId owner = published_class_id_;
   const PublishedScopeLayout& layout =
-      unit_lowerer.SettlePublishedScope(owner, hir_scope);
+      unit_lowerer.SettlePublishedScope(owner, hir_scope.published.signature);
   const auto on_published = [&](mir::FieldId slot) {
     return mir::ClassFieldTarget{
         .owner = mir::IntraUnitClassRef{owner}, .slot = slot};
@@ -3494,7 +3494,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // The design root states every unit's construction table, its own among
   // them, since nothing hands it one.
   if (instantiations_.has_value()) {
-    entry_table_ = StateConstructionTables(
+    construction_table_ = StateConstructionTables(
         unit, class_id_, mir_class,
         unit_lowerer.ConstructionLayout().Instantiated(), *instantiations_);
   }

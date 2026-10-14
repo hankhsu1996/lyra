@@ -56,6 +56,8 @@ MAPPERS = [
     "ToCppName",
     "UnitNamespaceOf",
     "CppUnitScope",
+    "BodyNamespaceOf",
+    "CppBodyScope",
     "UnitSignatureFileOf",
     "UnitOpeningFileOf",
     "UnitForwardFileOf",

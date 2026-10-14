@@ -627,11 +627,14 @@ struct FunctionRef {
 };
 
 // A body of another unit that answers to no name, named as the code it is --
-// the peer of `ExternalUnitMintedEntryTarget`, which calls one. What it takes
-// is not this unit's to know, so `Expr::type` is the code address with its
-// prototype erased, and whatever calls it restores the prototype it read.
+// the peer of `ExternalUnitMintedEntryTarget`, which calls one. An entry the
+// unit makes up makes an object of one body of it, so it names the unit and
+// the body. What it takes is not this unit's to know, so `Expr::type` is the
+// code address with its prototype erased, and whatever calls it restores the
+// prototype it read.
 struct ExternalUnitMintedEntryRef {
   std::string unit_name;
+  std::string body_name;
   MintedEntry entry;
 };
 
