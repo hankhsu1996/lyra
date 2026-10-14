@@ -101,9 +101,9 @@ void WriteMemberSignatureTail(
 template <typename Owner, typename Member>
 void RenderMemberFunctionDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    const Owner& owner, const Member& member, const mir::CallableCode& code,
-    TargetText& out) {
-  Write(out, "auto ", owner, "::", member);
+    std::string_view specifiers, const Owner& owner, const Member& member,
+    const mir::CallableCode& code, TargetText& out) {
+  Write(out, specifiers, "auto ", owner, "::", member);
   WriteMemberSignatureTail(unit, code, out);
   out += " ";
   WriteBody(out, [&] {
@@ -188,11 +188,11 @@ void RenderClassCallableDecl(
 // A class function's definition. A pure virtual has none.
 void RenderClassCallableDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    mir::ClassId cls_id, const mir::Class& s, mir::CallableId id,
-    const mir::CallableDecl& m, TargetText& out) {
+    std::string_view specifiers, mir::ClassId cls_id, const mir::Class& s,
+    mir::CallableId id, const mir::CallableDecl& m, TargetText& out) {
   if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(m))) return;
   RenderMemberFunctionDef(
-      unit, report, CppClassPath(unit, cls_id),
+      unit, report, specifiers, CppClassPath(unit, cls_id),
       CppClassCallableName(unit, s, id), m.code, out);
 }
 
@@ -342,9 +342,9 @@ void AppendClassInDependencyOrder(
   const std::span<const mir::ClassId> declares_inside =
       nesting.declares_inside[id.value];
   const TargetText::Section defined(text.definitions);
-  // What a scope published is defined beside its declaration, since every body
-  // of the unit states it alike and a referrer reads its definition too.
-  if (mir::IsPublishedScopeClass(unit, id)) {
+  // A class every body states alike is what a scope published, defined beside
+  // its declaration, since a referrer reads its definition too.
+  if (mir::IsStatedByEveryBody(unit, id)) {
     PublishedClass published{.id = id, .text = TargetText{}};
     TargetText definitions;
     RenderClass(
@@ -370,9 +370,9 @@ void RenderClass(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
     const mir::Class& s, std::span<const mir::ClassId> declares_inside,
     TargetText& signature, TargetText& code) {
-  // Every body of the unit states what a scope published, so each definition
-  // of it is inline, where every one of them is kept as one.
-  const bool stated_by_every_body = mir::IsPublishedScopeClass(unit, id);
+  // A class every body states is defined in its header, so each definition of
+  // it is inline, where every one of them is kept as one.
+  const bool stated_by_every_body = mir::IsStatedByEveryBody(unit, id);
   const std::string_view specifiers = stated_by_every_body ? "inline " : "";
   TargetText& out = signature;
   Write(out, "class ", CppClassPath(unit, id));
@@ -464,7 +464,8 @@ void RenderClass(
       const mir::CallableDecl& callable = s.callables.Get(callable_id);
       RenderClassCallableDecl(unit, s, callable_id, callable, out);
       const TargetText::Section defined(code);
-      RenderClassCallableDef(unit, report, id, s, callable_id, callable, code);
+      RenderClassCallableDef(
+          unit, report, specifiers, id, s, callable_id, callable, code);
     }
   }
 
@@ -552,6 +553,11 @@ void RenderStruct(
     mir::StructId id, TargetText& declared, TargetText& defined) {
   const mir::StructDecl& decl = unit.GetStruct(id);
   const CppName name = CppStructName(decl);
+  // A method is defined in the code file of the body, where nothing need call
+  // it, since another unit does; so where every body states it, each
+  // definition is one the link keeps one of whether or not its file calls it.
+  const std::string_view specifiers =
+      mir::IsStatedByEveryBody(unit, id) ? "[[gnu::weak]] " : "";
   const CppTupleComponents components{.unit = &unit, .of = decl.elements};
   const MintedWord base = CppTupleBaseName();
   Write(declared, "struct ", name, " : ", components, " {\n");
@@ -573,7 +579,8 @@ void RenderStruct(
     Write(declared, StaticPrefix(method.code), "auto ", member);
     WriteMemberSignatureTail(unit, method.code, declared);
     declared += ";\n";
-    RenderMemberFunctionDef(unit, report, name, member, method.code, defined);
+    RenderMemberFunctionDef(
+        unit, report, specifiers, name, member, method.code, defined);
   }
   declared.Outdent();
   declared += "};\n";

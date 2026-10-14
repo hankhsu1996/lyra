@@ -412,7 +412,6 @@ cc_library(
     deps = [
         ":backend_cpp",
         ":base",
-        ":compiler",
         ":diag",
         ":dpi",
         ":mir",

@@ -2,7 +2,10 @@
 
 Date: 2026-09-24 Status: accepted; D1 and D2 revised 2026-10-11 and again 2026-10-12, D3 and D7
 withdrawn 2026-10-12, D1 and D4 revised 2026-10-13: a parameter something compiled relies on enters
-the key by its value
+the key by its value; D1 and D2 revised 2026-10-14 by
+[a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
+a unit holds the generate blocks its own instances built, which are part of its name, and no
+instance is lowered into another's unit
 
 ## Context
 
@@ -34,9 +37,13 @@ down, for a block's own constant computed from its index. A module boundary adde
 record did not face: a parent named the child it built without reading the child's body, so whatever
 decided sharing had to be known before the body was.
 
-That premise no longer holds. A parent is handed a construction table saying which unit is made at
-each of its instantiations, and its code names no child, so two parents that differ only in which
-child they make are one body, and what a value decides is a question about the child alone.
+That premise no longer holds. A parent is handed a construction table saying which body is made at
+each of its instantiations, and its code names no body, so two parents that differ only in which
+body of a child they make are one body, and what a value decides is a question about the child alone
+-- except where it decides which generate blocks the child builds, which names the child's unit and
+so the parent's class
+([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
+D4).
 
 ## The tension this addresses
 
@@ -73,13 +80,14 @@ SystemVerilog writes both kinds as `parameter`, where C++ and Rust make the auth
 which one a parameter is is read off what relies on it. A reference anywhere else adds nothing to
 the key, and that includes what a construction evaluates to decide what it builds: a conditional
 generate's condition, a `case` generate's selector and labels, and a loop generate's header (LRM
-27.4, 27.5). A unit holds every alternative and every loop body any of its instances built (D2), so
-which one an instance selects is that instance's own. A parameter stays in the key as well where an
-instantiation may override it and it is written with no type (LRM 6.20.2: its type is the type of
-the value it is given), where it is handed on to a child parameter that decides something there,
-where a design element declared inside this one reads it, where it is read through a hierarchical
-name, and where another deciding parameter is written from it -- including one the module's blocks
-or subroutines declare.
+27.4, 27.5). What an instance built is part of its unit's name instead
+([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
+D1), so two values that build the same blocks are one unit. A parameter stays in the key as well
+where an instantiation may override it and it is written with no type (LRM 6.20.2: its type is the
+type of the value it is given), where it is handed on to a child parameter that decides something
+there, where a design element declared inside this one reads it, where it is read through a
+hierarchical name, and where another deciding parameter is written from it -- including one the
+module's blocks or subroutines declare.
 
 **What relies on a parameter is the front end's own record, not a list kept here.** This record
 first listed the positions this compiler lowers as an expression, then the positions the front end
@@ -133,17 +141,14 @@ place this compiler takes an answer the front end settled. A place where this co
 the front end's constant for an expression the source wrote is a fold of ours, and is undone where
 it is found.
 
-### D2. Every instance handed new values is lowered into its unit, and they have to agree
+### D2. Every instance of a unit lowers alike, and the check of the compile against itself holds them to it
 
-**An instance is one body with its unit where the two differ in nothing but what their constructions
-decide**: which alternative of a conditional generate stood, and how many blocks a loop counted out.
-That is the relation
-[a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
-D2 gives two blocks of one loop, asked of two instances of one unit, and the unit is what it gives a
-body: everything the instances agree on, with every alternative and every loop body any of them
-built. So a unit is lowered from the instance it is named for and from each other instance handed
-values none before it was, into one unit, and what the unit publishes is declared from all of them,
-so a name reaching into an alternative finds it whichever instance selected it.
+**What an instance's construction built is part of its unit's name**
+([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
+D1), so every instance of a unit built the same blocks, and a unit is lowered and declared from the
+instance it is named for alone. This said, until 2026-10-14, that each instance handed values none
+before it was was lowered into its unit too, which held every alternative and loop body any of them
+built.
 
 They agree by construction, because the lowering reads a value only through what the unit's identity
 holds or as one the object is built with; that is what D1 makes the classification answer. Where two
@@ -156,13 +161,12 @@ fall back would hide the one defect that remains.
 
 A class the design element holds is no exception. Each instance's copy is a type of its own (LRM
 8.25), but every copy at one place in the unit is the same text, so they are one class of the unit,
-built from each instance that holds a copy and required to come out the same as everything else is.
-That is how clang merges a class two modules each define: the later definition is looked up in its
-context by name, found to be the same entity, and folded into the first
-(`ASTDeclReader::findExisting` and `ASTDeclMerger::MergeDefinitionData` in
-`clang/lib/Serialization/ASTReaderDecl.cpp`). This record used to say a unit holding a class holds
-what one instance built and no other; that was this compiler declaring a class from one instance's
-copy only, never a property of the language.
+declared from the instance the unit is named for. Within that instance, a class each of a loop's
+blocks declares is one class built from every block holding a copy and required to come out the same
+as everything else is. That is how clang merges a class two modules each define: the later
+definition is looked up in its context by name, found to be the same entity, and folded into the
+first (`ASTDeclReader::findExisting` and `ASTDeclMerger::MergeDefinitionData` in
+`clang/lib/Serialization/ASTReaderDecl.cpp`).
 
 An instance handed the same values as an earlier one is not read: the front end left it sharing that
 instance's body, or it builds what that instance does. Reading every instance through its own body
@@ -198,7 +202,9 @@ exactly as before.
 
 The unit's object entry takes the supplied values after the parent, the segment and the construction
 table, in the order the child declares them, and passes them to the constructor. Both sides reach
-that order and those types from the child's instantiation. The design's tops are handed no values.
+that order and those types from the child's instantiation, and the child publishes them, as a class
+publishes its constructor, for whoever names the entry without building through it: the design root,
+whose construction tables hold every unit's entry. The design's tops are handed no values.
 
 Every construction states its constructor arguments where the construction is written: for an
 instance, one per parameter it takes -- the value its instantiation assigned or that was given it
@@ -290,17 +296,18 @@ defect of the record, found where any defect is: the designs the tests hold to t
 - A parameter read only to decide what an instance builds is supplied. Measured on one module given
   three values, a unit each before and one after: read in a module-level loop's bound, in an `if`,
   in the same `if` inside a loop, in a `case`, and through a `localparam` the module writes from it.
-  Instances selecting different alternatives are one unit holding both. A loop of instances each
-  handed its index, where the index selects an alternative, a case item and a loop count in the
-  child, is one of the designs held to its size: at 512 instances and at 1024 its units, files and
-  bytes do not follow the count.
+  Instances selecting different alternatives are a unit per set of blocks they built. A loop of
+  instances each handed its index, where the index selects an alternative, a case item and a loop
+  count in the child, is one of the designs held to its size: the child is a unit per set of blocks
+  its values build, and the block holding it a class per index, since the index names which unit the
+  child is.
 - A parameter in a declared range is an argument, so each value is a unit of its own, even where two
   values size the range alike.
 - Whether a parameter is an argument is found by the front end's record of what relied on it rather
   than by a walk of where it could be. The front end is ours, so that is where the record was added.
-- A module holding a class shares one unit across instances that build different blocks, as any
-  module does, and a class a loop's block declares is one class of the unit however many blocks hold
-  a copy, wherever the index decides nothing about the block.
+- A module holding a class is a unit per set of blocks its instances build, as any module is, and a
+  class a loop's block declares is one class of the unit however many blocks hold a copy, wherever
+  the index decides nothing about the block.
 - [parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) is
   superseded for value parameters: the constructor-input vehicle it waited for is the one the loop
   record built.

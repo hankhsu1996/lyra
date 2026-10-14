@@ -33,7 +33,7 @@
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/pattern_rendering.hpp"
@@ -726,26 +726,22 @@ void UnitLowerer::PublishTypeDefaults() {
 }
 
 auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {
-  if (auto root = PopulateModuleRoot({}, std::nullopt); !root) {
+  if (auto root = PopulateModuleRoot(std::nullopt); !root) {
     return std::unexpected(std::move(root.error()));
   }
   return std::move(unit_);
 }
 
-auto UnitLowerer::RunDesignRoot(
-    DesignNamespaces namespaces, DesignInstantiations instantiations)
+auto UnitLowerer::RunDesignRoot(DesignRootInputs design_root)
     -> diag::Result<mir::CompilationUnit> {
-  if (auto root =
-          PopulateModuleRoot(std::move(namespaces), std::move(instantiations));
-      !root) {
+  if (auto root = PopulateModuleRoot(std::move(design_root)); !root) {
     return std::unexpected(std::move(root.error()));
   }
   return std::move(unit_);
 }
 
 auto UnitLowerer::PopulateModuleRoot(
-    DesignNamespaces namespaces,
-    std::optional<DesignInstantiations> instantiations) -> diag::Result<void> {
+    std::optional<DesignRootInputs> design_root) -> diag::Result<void> {
   WalkFrame root_frame;
   // The tree of scope lowerers is built first, and building it takes the
   // identity of every class the unit published of its scopes: a type a record
@@ -756,7 +752,7 @@ auto UnitLowerer::PopulateModuleRoot(
   const std::unique_ptr<StructuralScopeLowerer> root =
       StructuralScopeLowerer::ForScope(
           *this, nullptr, hir_->root_scope, construction_layout_.Root(),
-          std::move(namespaces), std::move(instantiations));
+          std::move(design_root));
   if (auto prologue = PublishUnitDeclarations(); !prologue) {
     return std::unexpected(std::move(prologue.error()));
   }
@@ -1160,12 +1156,11 @@ auto UnitLowerer::PublishedFieldsOf(const hir::ScopeClassSignature& signature)
     fields.push_back(PublishedField{.name = std::nullopt, .type = loop_blocks});
   }
   // The member holding the one block a construct building at most one built.
-  // Each block is published under a class of its own, and which of them are
-  // one body is decided by lowering the bodies, which a unit's publication
-  // does not depend on -- an edit to a body never changes what a referrer
-  // compiles against. So the handle holds the base every block extends, as a
-  // C++ header keeps a pointer to a base whose derived classes its
-  // implementation defines.
+  // Each alternative is published under a class of its own, and which of them
+  // an object built is settled as it is constructed, so the handle holds the
+  // base every alternative extends, as a C++ header keeps a pointer to a base
+  // whose derived classes its implementation defines; a name reaching the
+  // block views it as the class it knows the block to be.
   for (std::size_t i = 0; i < signature.choices.size(); ++i) {
     fields.push_back(
         PublishedField{.name = std::nullopt, .type = unit_.builtins.scope_ptr});

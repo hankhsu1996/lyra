@@ -93,7 +93,7 @@ auto DigestOfFile(const std::filesystem::path& file)
     return IoError(std::format("failed to read '{}'", file.string()));
   }
   stable_hash::StableHasher hasher;
-  hasher.Text(ReadWholeFile(file));
+  hasher.AddText(ReadWholeFile(file));
   return hasher.Finish();
 }
 
@@ -212,14 +212,14 @@ Action::Action(std::string_view step) {
 }
 
 void Action::Input(std::string_view label, std::string_view bytes) {
-  hasher_.Text(label);
-  hasher_.Text(bytes);
+  hasher_.AddText(label);
+  hasher_.AddText(bytes);
 }
 
 void Action::InputDigest(
     std::string_view label, const stable_hash::Fingerprint& digest) {
-  hasher_.Text(label);
-  hasher_.Of(digest);
+  hasher_.AddText(label);
+  hasher_.AddFingerprint(digest);
 }
 
 void Action::InputFile(

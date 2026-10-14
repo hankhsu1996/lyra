@@ -1947,12 +1947,14 @@ auto UnitLowerer::InternType(
 
 namespace {
 
-// Whether `expr` yields a value no select or key is ever read against: what LRM
-// 11.4 calls an operator, a conversion (LRM 6.24), an assignment used as an
-// expression, a part-select, a concatenation, a replication, a stream, a set
-// membership test, a value range, a min:typ:max choice, and what a system
-// subroutine returns.
-auto IsAnOperation(const slang::ast::Expression& expr) -> bool {
+// Whether `expr` yields a value with no range of its own, which no select or
+// key is ever read against: what LRM 11.4 calls an operator, a conversion (LRM
+// 6.24), an assignment used as an expression, a part-select, a concatenation, a
+// replication, a stream, a set membership test, a value range, a min:typ:max
+// choice, what a system subroutine returns, and an unbased unsized literal,
+// whose every bit is the one it spells at whatever width its context gives it
+// (LRM 5.7.1).
+auto HasNoRangeOfItsOwn(const slang::ast::Expression& expr) -> bool {
   switch (expr.kind) {
     case slang::ast::ExpressionKind::UnaryOp:
     case slang::ast::ExpressionKind::BinaryOp:
@@ -1966,6 +1968,7 @@ auto IsAnOperation(const slang::ast::Expression& expr) -> bool {
     case slang::ast::ExpressionKind::Inside:
     case slang::ast::ExpressionKind::ValueRange:
     case slang::ast::ExpressionKind::MinTypMax:
+    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral:
       return true;
     case slang::ast::ExpressionKind::Call:
       return expr.as<slang::ast::CallExpression>().isSystemCall();
@@ -1973,7 +1976,6 @@ auto IsAnOperation(const slang::ast::Expression& expr) -> bool {
     case slang::ast::ExpressionKind::IntegerLiteral:
     case slang::ast::ExpressionKind::RealLiteral:
     case slang::ast::ExpressionKind::TimeLiteral:
-    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral:
     case slang::ast::ExpressionKind::NullLiteral:
     case slang::ast::ExpressionKind::UnboundedLiteral:
     case slang::ast::ExpressionKind::StringLiteral:
@@ -1999,7 +2001,7 @@ auto IsAnOperation(const slang::ast::Expression& expr) -> bool {
     case slang::ast::ExpressionKind::TaggedUnion:
       return false;
   }
-  throw InternalError("IsAnOperation: unknown slang ExpressionKind");
+  throw InternalError("HasNoRangeOfItsOwn: unknown slang ExpressionKind");
 }
 
 }  // namespace
@@ -2007,37 +2009,47 @@ auto IsAnOperation(const slang::ast::Expression& expr) -> bool {
 auto UnitLowerer::InternExpressionType(
     const slang::ast::Expression& expr, diag::SourceSpan span)
     -> diag::Result<hir::TypeId> {
-  return IsAnOperation(expr) ? InternResultType(*expr.type, span)
-                             : InternType(*expr.type, span);
+  return HasNoRangeOfItsOwn(expr) ? InternResultType(*expr.type, span)
+                                  : InternType(*expr.type, span);
 }
 
 auto UnitLowerer::InternResultType(
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<hir::TypeId> {
-  auto handed_up = InternType(type, span);
-  if (!handed_up) return handed_up;
+  // The type the operand handed up is translated and not interned: its
+  // outermost range is one a value outside the name may have placed, and a type
+  // interned with it would make what the unit holds follow the instance it was
+  // lowered from. Only that range is renumbered.
+  const slang::ast::SymbolKind kind = type.getCanonicalType().kind;
+  if (kind != slang::ast::SymbolKind::PackedArrayType &&
+      kind != slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+    return InternType(type, span);
+  }
+  auto handed = TranslateType(*this, type, span);
+  if (!handed) return std::unexpected(std::move(handed.error()));
   const auto from_zero = [](std::int64_t left, std::int64_t right,
                             std::uint64_t count) {
     const auto last = static_cast<std::int64_t>(count) - 1;
     return left >= right ? std::pair{last, std::int64_t{0}}
                          : std::pair{std::int64_t{0}, last};
   };
-  const hir::Type& handed = unit_.types.Get(*handed_up);
-  if (const auto* packed = handed.As<hir::PackedArrayType>()) {
+  if (const auto* packed = handed->As<hir::PackedArrayType>()) {
     const auto [left, right] = from_zero(
         packed->dim.left, packed->dim.right, packed->dim.ElementCount());
     hir::PackedArrayType numbered = *packed;
     numbered.dim = hir::PackedRange{.left = left, .right = right};
     return unit_.types.Intern(hir::Type{std::move(numbered)});
   }
-  if (const auto* unpacked = handed.As<hir::UnpackedArrayType>()) {
+  if (const auto* unpacked = handed->As<hir::UnpackedArrayType>()) {
     const auto [left, right] = from_zero(
         unpacked->dim.left, unpacked->dim.right, unpacked->dim.ElementCount());
     hir::UnpackedArrayType numbered = *unpacked;
     numbered.dim = hir::UnpackedRange{.left = left, .right = right};
     return unit_.types.Intern(hir::Type{std::move(numbered)});
   }
-  return handed_up;
+  throw InternalError(
+      "UnitLowerer::InternResultType: an array type translated to something "
+      "other than an array -- please report this as a bug");
 }
 
 }  // namespace lyra::lowering::ast_to_hir

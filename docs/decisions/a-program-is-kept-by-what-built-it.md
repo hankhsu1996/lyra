@@ -1,6 +1,6 @@
 # A program is kept by what built it
 
-Date: 2026-09-23 Status: accepted
+Date: 2026-09-23 Status: accepted; D2 and D9 revised and D10 added 2026-10-12
 
 ## The requirement
 

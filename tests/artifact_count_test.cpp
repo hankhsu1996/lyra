@@ -852,8 +852,7 @@ endmodule
 TEST(ArtifactCount, ARangeTheFrontEndFoldsIsSeenAndCompiledPerValue) {
   // Each module sizes something with its parameter at a place the front end
   // evaluates while binding. The parameter decides the module, so each value is
-  // its own unit -- and it is seen where it is written, so no instance has to
-  // be lowered apart to find it out.
+  // its own unit, read off what the front end recorded where it is written.
   constexpr std::string_view kFolded = R"(
 package p;
   typedef logic [3:0] nib_t;
@@ -929,8 +928,8 @@ TEST(
   // Each module hands its parameter to a class specialization at a different
   // kind of site, or to the interface a virtual interface type names (LRM
   // 25.9). Either is shared by every site handing it the same value, so what
-  // decides the module is the value this site wrote -- and it is seen there,
-  // so no instance has to be lowered apart to find it out.
+  // decides the module is the value this site wrote, read off what the front
+  // end recorded there.
   constexpr std::string_view kSpecialized = R"(
 interface bus_if #(parameter int W = 1);
   logic [W-1:0] data;
@@ -1142,12 +1141,15 @@ endmodule
   }
 }
 
-TEST(ArtifactCount, AValueSayingWhatIsBuiltIsCompiledOnce) {
+TEST(ArtifactCount, AValueSayingWhatIsBuiltIsCompiledPerWhatItBuilt) {
   // A parameter read where a construction decides what it builds (LRM 27.4,
   // 27.5) -- a conditional's condition, a case's selector, a loop's bound, and
   // any of them through a parameter the module writes from it -- is a value
-  // each instance is built with. So a module handed three values is one unit,
-  // whichever alternative each of them selects.
+  // each instance is built with, and which blocks the instance built is part
+  // of its unit's name. So a module handed four values is one unit per set of
+  // blocks they built, not per value: three values selecting one alternative
+  // are one unit, and so are loops counting one, two and three blocks of one
+  // kind.
   const auto design = LowerDesign(R"(
 module ByCondition #(parameter int P = 0) (output int o);
   if (P != 0) begin : on
@@ -1182,11 +1184,11 @@ module ThroughADeclaredParameter #(parameter int P = 0) (output int o);
 endmodule
 
 module Top;
-  int c [3];
-  int k [3];
-  int b [3];
-  int d [3];
-  for (genvar i = 0; i < 3; i++) begin : g
+  int c [4];
+  int k [4];
+  int b [4];
+  int d [4];
+  for (genvar i = 0; i < 4; i++) begin : g
     ByCondition #(.P(i)) by_condition (.o(c[i]));
     ByCase #(.P(i)) by_case (.o(k[i]));
     ByBound #(.P(i)) by_bound (.o(b[i]));
@@ -1197,7 +1199,7 @@ endmodule
   ASSERT_TRUE(design.has_value());
   for (const std::string_view definition :
        {"ByCondition", "ByCase", "ByBound", "ThroughADeclaredParameter"}) {
-    EXPECT_EQ(UnitsOf(*design, definition), 1U) << definition;
+    EXPECT_EQ(UnitsOf(*design, definition), 2U) << definition;
   }
 }
 
@@ -1227,8 +1229,9 @@ TEST(ArtifactCount, AClassAModuleHoldsIsOneClassOfItsUnit) {
   // declares, or a specialization of a generic placed in it because it is
   // specialized on a type of the module -- is a type of each instance's own
   // (LRM 8.25), and the same text in every one. So it does not tell instances
-  // apart: those that select different alternatives, or count out different
-  // blocks, are one unit holding one class, as they are when they hold none.
+  // apart: those handed different values that build the same blocks, or that
+  // count out different numbers of blocks of one kind, are one unit holding one
+  // class, as they are when they hold none.
   const auto design = LowerDesign(R"(
 package p;
   class Box #(type T = int);
@@ -1273,10 +1276,10 @@ module Top;
   int d [2];
   int q [2];
   int n [2];
-  Declares #(.P(0)) declares_none (.o(d[0]));
-  Declares #(.P(1)) declares_one (.o(d[1]));
-  Placed #(.P(0)) placed_none (.o(q[0]));
-  Placed #(.P(1)) placed_one (.o(q[1]));
+  Declares #(.P(1)) declares_one (.o(d[0]));
+  Declares #(.P(2)) declares_two (.o(d[1]));
+  Placed #(.P(1)) placed_one (.o(q[0]));
+  Placed #(.P(2)) placed_two (.o(q[1]));
   Counted #(.N(1)) one_block (.o(n[0]));
   Counted #(.N(3)) three_blocks (.o(n[1]));
 endmodule
@@ -1313,8 +1316,8 @@ TEST(ArtifactCount, StringValuesThatSpellAlikeWhenJoinedAreToldApart) {
   // Two arrays of strings whose elements, joined with commas and quoted, read
   // the same: a quote and a comma are ordinary characters in a string (LRM
   // 5.9). The generate condition reads the array when an instance is built, so
-  // the two are one unit handed two values, each selecting its own
-  // alternative. The unit holds both only because the two values are told
+  // each instance selects its own alternative, and which one is part of its
+  // unit's name. They are two units only because the two values are told
   // apart, and nothing about how their elements happen to join may make them
   // one.
   const auto design = LowerDesign(R"(
@@ -1333,8 +1336,7 @@ module Top;
 endmodule
 )");
   ASSERT_TRUE(design.has_value());
-  EXPECT_EQ(UnitsOf(*design, "Leaf"), 1U);
-  EXPECT_EQ(BlocksOfGenerate(*design, 0), 2U);
+  EXPECT_EQ(UnitsOf(*design, "Leaf"), 2U);
 }
 
 TEST(ArtifactCount, AValueHandedOnToBeReadIsCompiledOnce) {

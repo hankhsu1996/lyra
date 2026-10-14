@@ -141,11 +141,10 @@ why nothing a signature states may rest on it.
 
 - [x] S10 -- The C++ backend emits a unit's signature as a declaration-only artifact distinct from
       the artifact carrying its bodies, and a referrer consumes only the first. What a scope
-      published is a class of its own there, holding the published members first and a non-virtual
-      method per subroutine that forwards to its body, and the class realizing the scope extends it.
-      A change confined to what a unit kept to itself changes no signature, so nothing a referrer
-      compiles against moves. The program is formed by compiling each artifact and linking the
-      results.
+      published is a class of its own there, holding the published members first and a virtual
+      method per subroutine, which the class realizing the scope overrides with its body. A change
+      confined to what a unit kept to itself changes no signature, so nothing a referrer compiles
+      against moves. The program is formed by compiling each artifact and linking the results.
 
       A signature reaches another unit through a pointer, so it names the class without defining it:
       each unit declares the classes other units may name in a header of their own that reads

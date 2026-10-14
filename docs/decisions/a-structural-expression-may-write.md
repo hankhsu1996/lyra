@@ -79,5 +79,5 @@ second answer to a settled question, not an incomplete one.
 - [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) -- the same move
   one layer up: the compiled form states the expression the source wrote rather than an answer
   computed on its behalf.
-- `../architecture/hierarchy_and_generate.md` -- generate built at construction, which is what makes
-  a write at construction time ordinary rather than exceptional.
+- `../architecture/hierarchy_and_generate.md` -- generate as constructor-time logic the runtime
+  executes, which is what makes a write at construction time ordinary rather than exceptional.

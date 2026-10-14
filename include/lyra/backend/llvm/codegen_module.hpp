@@ -302,6 +302,14 @@ class CodeGenModule {
   auto AtExit() -> llvm::FunctionCallee;
 
   auto DeclareCallable(lir::FunctionId id) -> llvm::Function*;
+  // The type of a function taking `params` and answering `result`, as this
+  // module declares a function of its own and one another module emits.
+  auto FunctionTypeOf(std::span<const lir::TypeId> params, lir::TypeId result)
+      -> llvm::FunctionType*;
+  // The function another module emits under `symbol`, declared at
+  // `prototype`, the type that module published it with.
+  auto ExternalFunction(const std::string& symbol, lir::TypeId prototype)
+      -> llvm::Function*;
   // Emits the body building the storage this unit shares, and asks the target
   // to run it before the program starts. Composing the program is what settles
   // when that is -- a linker collects it, a session runs it on the way up --

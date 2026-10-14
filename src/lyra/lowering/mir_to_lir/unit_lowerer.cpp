@@ -39,6 +39,16 @@
 
 namespace lyra::lowering::mir_to_lir {
 
+namespace {
+
+// A definition every body of the unit states is one the link keeps one of;
+// any other is this body's own, defined once.
+auto LinkageOf(bool stated_by_every_body) -> lir::Linkage {
+  return stated_by_every_body ? lir::Linkage::kShared : lir::Linkage::kExternal;
+}
+
+}  // namespace
+
 auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   // Every identity the unit will hold is taken before any body is lowered,
   // because a body may name a function whose own body is lowered later --
@@ -126,11 +136,9 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   for (const mir::StructId id : mir_->structs.Ids()) {
     const mir::StructDecl& decl = mir_->GetStruct(id);
-    // A struct is a declaration another unit names, so each body of the unit
-    // states it alike.
     lir::Struct lowered{
         .path = decl.path,
-        .linkage = lir::Linkage::kShared,
+        .linkage = LinkageOf(mir::IsStatedByEveryBody(*mir_, id)),
         .elements = TranslateTypes(decl.elements),
         .methods = {}};
     for (const mir::StructMethod& method : decl.methods) {
@@ -349,7 +357,8 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
                 mir_->name, lir::SymbolPart::Name(r.name));
           },
           // An entry the unit makes up is the body's: making an object of one
-          // body is making an object of that body's classes.
+          // body is making an object of that body's classes, and a namespace
+          // brought up is the one body it is compiled to.
           [&](const mir::ReachedByMintedEntry& r) {
             return MintedEntrySymbol(
                 lir::QualifierOf(out_, std::nullopt), r.entry);
@@ -439,9 +448,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
   out.path = cls.path;
-  out.linkage = mir::IsPublishedScopeClass(*mir_, owner)
-                    ? lir::Linkage::kShared
-                    : lir::Linkage::kExternal;
+  out.linkage = LinkageOf(mir::IsStatedByEveryBody(*mir_, owner));
   const std::string_view qualifier = lir::QualifierOf(out_, cls.path);
   out.base = cls.base.transform(
       [&](const mir::ClassRef& base) { return BaseType(base); });
@@ -589,11 +596,10 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                           .function =
                               MethodFunction(f.body.owner, f.body.slot)}};
                     },
-                    [&](const mir::ExternalUnitMintedEntryRef& e)
-                        -> lir::Constant {
-                      return {lir::ConstantAddress{
-                          .symbol = MintedEntrySymbol(e.body_name, e.entry),
-                          .kind = lir::AddressKind::kCode}};
+                    [&](const mir::ExternalObjectEntryRef& e) -> lir::Constant {
+                      return {lir::ConstantExternalFunction{
+                          .symbol = lir::ObjectEntrySymbol(e.body_name),
+                          .prototype = TranslateType(expr.type)}};
                     },
                     [&](const mir::ClassConstantRef&) {
                       return not_data("a constant read whole");
@@ -636,18 +642,16 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                 Overloaded{
                     [&](const mir::DefinitionRef& d) -> lir::Constant {
                       return {lir::ConstantAddress{
-                          .symbol = DefinitionSymbolOf(d.of),
-                          .kind = lir::AddressKind::kStorage}};
+                          .symbol = DefinitionSymbolOf(d.of)}};
                     },
                     [&](const mir::ClassConstantRef& c) -> lir::Constant {
                       return {lir::ConstantAddress{
-                          .symbol = ClassConstantSymbolOf(c),
-                          .kind = lir::AddressKind::kStorage}};
+                          .symbol = ClassConstantSymbolOf(c)}};
                     },
                     [&](const mir::FunctionRef&) {
                       return not_data("the address of a body's address");
                     },
-                    [&](const mir::ExternalUnitMintedEntryRef&) {
+                    [&](const mir::ExternalObjectEntryRef&) {
                       return not_data("the address of a body's address");
                     },
                     [&](const mir::LocalRef&) {

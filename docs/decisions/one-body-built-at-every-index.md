@@ -1,6 +1,8 @@
 # A loop generate's blocks are one body built at every index
 
-Date: 2026-09-17 Status: accepted; D2 revised 2026-10-12
+Date: 2026-09-17 Status: accepted; D2 revised 2026-10-12, and again 2026-10-14 by
+[a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
+blocks of one name are one body within an instance, never across instances
 
 ## Context
 

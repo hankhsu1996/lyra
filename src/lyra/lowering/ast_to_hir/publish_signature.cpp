@@ -27,6 +27,7 @@
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -517,7 +518,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
 
   auto& element = signature_.unit.emplace<hir::PublishedDesignElement>(
       hir::PublishedDesignElement{
-          .ports = {}, .instance_class = {}, .blocks = {}});
+          .ports = {}, .handed = {}, .instance_class = {}, .blocks = {}});
   const ScopePublicationRecord& root = PublicationOf(*scope_);
 
   hir::TypeImportMemo published;
@@ -526,12 +527,22 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
       signature_.types, published);
 
-  // The ports are read off every application the unit is declared from, since
-  // a port's direction decides what the declaration it reaches holds in each
-  // of them. What they state is the text's, so the unit publishes the list of
-  // the application it is named for, and a port whose type differs between two
-  // of them is a member of the unit's own class that does.
-  for (const slang::ast::Scope* application : declared_applications_) {
+  // What an instance is handed is the parameters its instantiation may assign
+  // that the unit's name does not hold, the list a parent hands them in.
+  for (const slang::ast::ParameterSymbol* handed :
+       Specialization().SuppliedParametersOf(InstantiationOf(*body))) {
+    auto type =
+        InternType(handed->getType(), frontend::PointSpanOf(handed->location));
+    if (!type) return std::unexpected(std::move(type.error()));
+    element.handed.push_back(importer.Import(*type));
+  }
+
+  // The ports are read off every application the unit is declared from -- the
+  // one it is named for, and where the compile is checked against itself each
+  // other one -- since a port's direction decides what the declaration it
+  // reaches holds in each of them. What they state is the text's, so the unit
+  // publishes the list of the application it is named for.
+  for (const slang::ast::Scope* application : applications_) {
     const auto& built_by =
         application->asSymbol().as<slang::ast::InstanceBodySymbol>();
     const ScopePublicationRecord& its_root = PublicationOf(*application);
@@ -673,26 +684,35 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // A hierarchical name reaches any named declaration of the element from
   // anywhere in the design (LRM 23.6), and an interface port reaches every name
   // the interface declares (LRM 25.3), so what a design element publishes is
-  // every scope it holds -- its own and each generate block's (LRM 27). The
-  // block instances of one application are objects of one class, so the class
-  // is published once, stating what any of them built. Each scope keeps the
-  // class in this unit's own types as well, which is what its own published
-  // class is laid out from.
-  //
-  // Two scopes are taken for objects of one class only where they agree on
-  // every value the unit's identity holds, and what a scope publishes reads no
-  // other, so the two publish one class but for what their constructions
-  // built.
-  std::vector<hir::ScopeClassSignature> classes;
-  std::map<support::DefPath, std::size_t> class_at;
+  // every scope it holds -- its own and each generate block's (LRM 27). Within
+  // one application the block instances of one class differ only in what their
+  // constructions built, and the class is published once, stating what any of
+  // them built. Every other application of the body built the same blocks, so
+  // it publishes the same classes. Each scope keeps the class in this unit's
+  // own types as well, which is what its own published class is laid out from.
+  struct PublishedClasses {
+    std::vector<hir::ScopeClassSignature> classes;
+    std::map<support::DefPath, std::size_t> class_at;
+  };
+  const auto application_of = [&](const slang::ast::Scope& scope) {
+    for (const slang::ast::Scope* level = &scope; level != nullptr;
+         level = level->asSymbol().getParentScope()) {
+      if (std::ranges::contains(applications_, level)) return level;
+    }
+    throw InternalError(
+        "UnitLowerer::PublishSignature: a scope the unit publishes is in none "
+        "of the applications it is declared from");
+  };
+  std::unordered_map<const slang::ast::Scope*, PublishedClasses> by_application;
   for (const slang::ast::Scope* scope : publishing_scopes_) {
     auto own = PublishScopeClass(PublicationOf(*scope));
     if (!own) return std::unexpected(std::move(own.error()));
+    PublishedClasses& into = by_application[application_of(*scope)];
     const auto [known, first] =
-        class_at.try_emplace(own->class_path, classes.size());
+        into.class_at.try_emplace(own->class_path, into.classes.size());
     if (first) {
-      classes.push_back(*std::move(own));
-    } else if (!AddWhatWasBuilt(classes[known->second], *own)) {
+      into.classes.push_back(*std::move(own));
+    } else if (!AddWhatWasBuilt(into.classes[known->second], *own)) {
       throw InternalError(
           std::format(
               "UnitLowerer::PublishSignature: '{}' and another scope of unit "
@@ -702,7 +722,26 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
               scope->asSymbol().getHierarchicalPath(), unit_.name));
     }
   }
-  for (hir::ScopeClassSignature& cls : classes) StateLoopsOfOneClass(cls);
+  for (auto& [_, published_by] : by_application) {
+    for (hir::ScopeClassSignature& cls : published_by.classes) {
+      StateLoopsOfOneClass(cls);
+    }
+  }
+  const PublishedClasses& named = by_application.at(scope_);
+  for (const auto& [application, published_by] : by_application) {
+    if (published_by.classes != named.classes) {
+      throw InternalError(
+          std::format(
+              "UnitLowerer::PublishSignature: '{}' is an application of body "
+              "'{}' and publishes other classes than '{}' does, so a value the "
+              "body's name does not hold reached what it publishes -- please "
+              "report this as a bug",
+              application->asSymbol().getHierarchicalPath(), unit_.name,
+              scope_->asSymbol().getHierarchicalPath()));
+    }
+  }
+  const std::vector<hir::ScopeClassSignature>& classes = named.classes;
+  const std::map<support::DefPath, std::size_t>& class_at = named.class_at;
   for (const slang::ast::Scope* scope : publishing_scopes_) {
     scope_classes_.emplace(
         scope, classes[class_at.at(PublicationOf(*scope).class_path)]);

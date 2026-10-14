@@ -164,9 +164,25 @@ struct BoundToCell {
   auto operator==(const BoundToCell&) const -> bool = default;
 };
 
+// The generate blocks the instance built (LRM 27), each named by the steps
+// from the instance down to it, in order. A conditional builds the alternative
+// its condition selects, and an alternative it did not select is not
+// elaborated and need not be valid for these values (LRM 27.5), so what was
+// built is part of what is compiled -- the way the branch an `if constexpr`
+// selects is part of a C++ template instantiation, which compiles no other.
+// A loop's blocks enter as the kinds of block it built, not as how many,
+// since the construction counts them out (LRM 27.4); where one loop built
+// blocks of several kinds, which kind stands at each index enters as well,
+// because the construction chooses by it.
+struct BlocksBuilt {
+  std::vector<std::string> blocks;
+
+  auto operator==(const BlocksBuilt&) const -> bool = default;
+};
+
 using SpecializationInputKind = std::variant<
     FixedValue, FixedType, FixedInterface, SuppliedAtConstruction, LandsIn,
-    LandsBack, BindInstantiation, BoundToCell>;
+    LandsBack, BindInstantiation, BoundToCell, BlocksBuilt>;
 
 // One thing the design fixed for an instance: what it named, and what it fixed
 // that to. Every input is named -- a parameter by its own name, an interface
@@ -195,9 +211,10 @@ struct SpecializationKey {
 // Which value parameters of each instance reach its unit when the instance is
 // built rather than as part of what is compiled, and which what is compiled
 // uses. A parameter's value is fixed before the run (LRM 23.10), and nothing
-// requires the compiled unit to hold it: one read as the source wrote it,
-// including where a construction decides which blocks it builds, makes every
-// value one unit, and the instance is handed it when it is built. One whose
+// requires the compiled unit to hold it: one read as the source wrote it makes
+// every value one unit, and the instance is handed it when it is built. Where a
+// construction reads it to decide which blocks it builds (LRM 27.4, 27.5), the
+// blocks built name the unit and the value still does not. One whose
 // value something compiled relies on -- a constant the language requires, a
 // type -- is used instead, and its value names the unit where what the unit
 // declares uses it, and the body the unit is compiled to where only its code
@@ -287,6 +304,14 @@ class SpecializationPolicy {
       const slang::ast::InstanceSymbol& inst,
       const slang::ast::ParameterSymbol& param) const -> bool;
 
+  // Whether `param`, a value parameter `inst`'s body declares, decides which
+  // generate blocks the body builds (LRM 27.4, 27.5). The blocks built are part
+  // of the unit's name and the value is not, but a scope building `inst` names
+  // its unit, so a value it hands `param` is one its own signature uses.
+  [[nodiscard]] auto DecidesWhatIsBuilt(
+      const slang::ast::InstanceSymbol& inst,
+      const slang::ast::ParameterSymbol& param) const -> bool;
+
   // The name of the specialization `inst` is an application of, folded from
   // what the design fixed for it: its parameters (LRM 6.20, 23.10), the
   // interface each of its interface ports is connected to (LRM 25.3), the scope
@@ -298,7 +323,8 @@ class SpecializationPolicy {
   // specialization -- one its signature uses -- enters with its value; one
   // supplied at construction enters as being supplied, and one computed at
   // construction not at all, so instances supplied different values are one
-  // unit.
+  // unit wherever they built the same generate blocks, which enter as well
+  // (LRM 27.5).
   //
   // Every part is read off `inst` and what elaborated below it, which is where
   // the parent naming a child already stands. An instance the front end left
@@ -336,6 +362,8 @@ class SpecializationPolicy {
     std::unordered_set<const slang::ast::ParameterSymbol*> varying;
     std::unordered_set<const slang::ast::ParameterSymbol*> used_in_signature;
     std::unordered_set<const slang::ast::ParameterSymbol*> used_in_body;
+    std::unordered_set<const slang::ast::ParameterSymbol*>
+        deciding_what_is_built;
   };
 
   using InstanceBodies =
@@ -366,6 +394,7 @@ class SpecializationPolicy {
         written_into;
     ParameterSet used_in_signature;
     ParameterSet used_in_body;
+    ParameterSet deciding_what_is_built;
   };
 
   auto Of(const slang::ast::InstanceSymbol& inst) const -> const PerInstance&;

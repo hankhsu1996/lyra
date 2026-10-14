@@ -2,22 +2,27 @@
 
 #include <array>
 #include <expected>
+#include <functional>
+#include <map>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "lyra/compiler/unit_pipeline.hpp"
+#include "lyra/hir/body_of_unit.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
+#include "lyra/hir/type_import.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/transform.hpp"
@@ -118,7 +123,7 @@ auto BuildDesignRootHir(
                       .array_dims = {},
                       .alternatives = {hir::InstanceAlternative{
                           .scope_class = scope_class,
-                          .body = top.unit_name,
+                          .body = top.body_name,
                           .assignments = {}}},
                       .taken = {0}});
     LeaveInputsUnconnected(root, signature, scope_class, instance);
@@ -142,6 +147,41 @@ auto BuildDesignRootHir(
   return root;
 }
 
+// The object entry of every unit the root's tables make, as each unit
+// published it, its types taken into the root's: the tops, which the root's
+// own table makes, and every body any table lists.
+auto PublishedObjectEntries(
+    std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
+    const hir::UnitSignatures& signatures,
+    const lowering::hir_to_mir::DesignInstantiations& instantiations,
+    hir::TypePool& into)
+    -> std::map<
+        std::string, lowering::hir_to_mir::PublishedObjectEntry, std::less<>> {
+  std::map<std::string, lowering::hir_to_mir::PublishedObjectEntry, std::less<>>
+      entries;
+  const auto take = [&](const std::string& unit) {
+    if (entries.contains(unit)) return;
+    const hir::UnitSignature& signature = signatures.Instantiated(unit);
+    const hir::PublishedDesignElement& element =
+        hir::DesignElementOf(signature);
+    hir::TypeImportMemo memo;
+    hir::TypeImporter importer(signature.types, std::nullopt, into, memo);
+    entries.emplace(
+        unit, lowering::hir_to_mir::PublishedObjectEntry{
+                  .published_class = element.instance_class.class_path,
+                  .handed = hir::ImportTypes(importer, element.handed)});
+  };
+  for (const lowering::ast_to_hir::TopLevelUnit& top : tops) {
+    take(top.unit_name);
+  }
+  for (const auto& [_, made] : instantiations.by_body) {
+    for (const hir::BodyOfUnit& body : made) {
+      take(body.unit);
+    }
+  }
+  return entries;
+}
+
 }  // namespace
 
 auto SynthesizeDesignRoot(
@@ -150,12 +190,17 @@ auto SynthesizeDesignRoot(
     lowering::hir_to_mir::DesignInstantiations instantiations,
     const diag::SourceManager& source_manager)
     -> diag::Result<mir::CompilationUnit> {
-  const hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
+  hir::CompilationUnit root_hir = BuildDesignRootHir(tops, signatures);
+  auto object_entries =
+      PublishedObjectEntries(tops, signatures, instantiations, root_hir.types);
   lowering::hir_to_mir::UnitLowerer root_lowerer(root_hir, source_manager);
   auto root_mir = root_lowerer.RunDesignRoot(
-      lowering::hir_to_mir::DesignNamespaces{
-          .units = signatures.NamespaceUnitNames()},
-      std::move(instantiations));
+      lowering::hir_to_mir::DesignRootInputs{
+          .namespaces =
+              lowering::hir_to_mir::DesignNamespaces{
+                  .units = signatures.NamespaceUnitNames()},
+          .instantiations = std::move(instantiations),
+          .object_entries = std::move(object_entries)});
   if (!root_mir) {
     return std::unexpected(std::move(root_mir.error()));
   }

@@ -13,7 +13,12 @@ and narrows its D2 and D4. Revises fact 5 of that record and what
 and fact 6 revised 2026-10-12: which body a block is, is named before any body lowers. D4 narrowed,
 D5's dispatch and the rejection of a virtual method per published subroutine reversed the same day.
 D7 revised 2026-10-13: a block declaring a class has one body. D4, D5 and fact 6 revised the same
-day: an index names an application or a body by its value, not by the constants settled from it.
+day: an index names an application or a body by its value, not by the constants settled from it. D4
+narrowed and D5 revised 2026-10-14 by
+[a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
+what selects an alternative names no block, and is part of the name of the instance holding it
+through what it selected; blocks of one name are one body within an instance, never across
+instances.
 
 ## Requirement
 
@@ -105,17 +110,20 @@ from the index named it, so that two indices folding alike were one application 
 [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
 D1 for why the value replaced them). Four places decide nothing for an index. What a run evaluates.
 What selects an alternative of a conditional, since the construction chooses it and the class holds
-every alternative any of its objects selected. What counts a loop's blocks out -- where its index
-starts, whether a block stands at it, how it reaches the next -- since the construction runs the
-loop (LRM 27.4) and how many blocks an object holds is no part of its class. And what the statements
-of a process, a continuous assignment or a subroutine run, since that is no part of what the class
-declares; an index that code relies on names the body the class is realized by (D5). A subroutine's
-arguments and result, and a variable a process keeps for the whole run, are what the class declares:
-a caller passes the one and a name reaches the other (LRM 13.4, 6.21, 23.6). This used to say "the
-code of a process, a continuous assignment or a subroutine", and read that way a static variable of
-a named block and an argument sized by the index each published a different class under one name. A
-place this reading misses is this compiler's defect, and is reported as one where the unit declares
-itself: block instances taken for one application that publish different classes.
+every alternative any of its objects selected; what it selected is part of the name of the instance
+holding the block
+([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)).
+What counts a loop's blocks out -- where its index starts, whether a block stands at it, how it
+reaches the next -- since the construction runs the loop (LRM 27.4) and how many blocks an object
+holds is no part of its class. And what the statements of a process, a continuous assignment or a
+subroutine run, since that is no part of what the class declares; an index that code relies on names
+the body the class is realized by (D5). A subroutine's arguments and result, and a variable a
+process keeps for the whole run, are what the class declares: a caller passes the one and a name
+reaches the other (LRM 13.4, 6.21, 23.6). This used to say "the code of a process, a continuous
+assignment or a subroutine", and read that way a static variable of a named block and an argument
+sized by the index each published a different class under one name. A place this reading misses is
+this compiler's defect, and is reported as one where the unit declares itself: block instances taken
+for one application that publish different classes.
 
 **D5. Block instances of one application whose code relies on their index are that class realized
 once per index value.** Which body a block is, is named before any body lowers, from the value of

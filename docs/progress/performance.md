@@ -423,15 +423,16 @@ specializations, not with instance count.
 
 - [x] Specialization dedup for a value parameter read only as a value. Instances of a module handed
       different values of such a parameter are one unit, and the value reaches each instance when it
-      is built (LRM 23.10). Measured on a loop generate handing a child its index at 256 iterations:
-      33.7 KB of design C++ against about 4.4 MB, one child unit against 256.
+      is built (LRM 23.10), so a loop generate handing a child its index emits one child.
       [../decisions/a-parameter-read-as-a-value-is-supplied-at-construction.md](../decisions/a-parameter-read-as-a-value-is-supplied-at-construction.md)
-      holds how a parameter qualifies and why a miss costs sharing and never correctness.
+      holds how a parameter qualifies and why a miss is reported as a compiler defect.
 
-- [x] A parameter that only says what an instance builds is one unit for every value: one read by a
-      conditional generate's condition, a case generate's selector, or a loop generate's bound,
-      directly or through a parameter the module writes from it (LRM 27.4, 27.5). Instances
-      selecting different alternatives are one unit holding each alternative any of them built.
+- [x] A parameter that only says what an instance builds is one unit for every value that builds the
+      same blocks: one read by a conditional generate's condition, a case generate's selector, or a
+      loop generate's bound, directly or through a parameter the module writes from it (LRM 27.4,
+      27.5). Which blocks an instance built is part of its unit's name, so instances selecting
+      different alternatives are a unit per set of blocks, and a loop counting more or fewer blocks
+      of one kind is the same unit.
 
 - [ ] What stays in the key although it might not. A parameter choosing which element a hierarchical
       name reaches, or read through its own hierarchical name, because either is settled when the
@@ -441,34 +442,28 @@ specializations, not with instance count.
       class's code holds it as a constant. Each still compiles once per value.
 
 - [x] Which parameters decide is read off the front end's record of what each constant evaluation
-      read, so no position is listed and none can be missed. Instances handed different values are
-      lowered into their unit, and where they still lower apart the run reports a compiler bug
-      rather than compiling the definition once per value. A module holding a class shares one unit
-      like any other, its class one class of the unit. An instantiation a `bind` directive inserts
-      states its connections in the directive and is told apart by the directive that inserted it,
-      which a case exercises.
+      read, so no position is listed and none can be missed. A unit is lowered from the one instance
+      it is named for; a check that lowers every other instance too reports one that lowers apart as
+      a compiler bug, and nothing compiles the definition once per value instead. A module holding a
+      class is a unit like any other, its class one class of the unit. An instantiation a `bind`
+      directive inserts states its connections in the directive and is told apart by the directive
+      that inserted it, which a case exercises.
 
 - [x] The generate axis of that same sharing. A `generate for` used to lower concretely: N
       iterations became N scope classes and N construction statements, so the artifact grew
       one-for-one with the iteration count even when no parameter varied and every body was
-      identical. Measured over 16, 64, and 256 iterations of one trivial child, emitted lines and
-      generated classes both scaled linearly with N -- about 4.2 KB per elaborated block in the
-      bodies file and 1.85 KB in the declarations header, the second of which every referrer parses.
-      This is the one item here that was not a cost but a wall: past some width the host C++
-      compiler does not finish, and a design that does not compile has no behaviour to be correct.
+      identical, in the declarations header every referrer parses as much as in the bodies. This is
+      the one item here that was not a cost but a wall: past some width the host C++ compiler does
+      not finish, and a design that does not compile has no behaviour to be correct.
 
       A loop's blocks now compile to one class the constructor builds once per index it counts out,
       and the index reaches the block as a value that construction supplies rather than as a constant
       folded into its body -- which is what lets the body of a loop that uses its index be one body
-      at all. Measured at 256 iterations of a block declaring one variable and writing `sink[i] = i`:
-      9,666 bytes of bodies and 7,072 of declarations, which is what four iterations emit, against
-      1,064,336 and 765,273 before; the host compile of that emitted project goes from 16.8 seconds
-      to 3.5. Where the index instead fixes something a class settles once -- a width, a
+      at all, and a loop emits the same however many blocks it counts. Where the index instead fixes something a class settles once -- a width, a
       specialization, which members exist -- separate compilation is the correct answer and stays,
       which is `specialization_model.md` invariant 1. It is one class per distinct body rather than
-      per index: blocks whose widths alternate between two over sixteen indices compile to two
-      classes, and the loop builds at each index the one that index takes, where they used to
-      compile to sixteen.
+      per index: blocks whose widths alternate between two compile to two classes, and the loop
+      builds at each index the one that index takes.
       [../decisions/one-body-built-at-every-index.md](../decisions/one-body-built-at-every-index.md)
       holds how a body qualifies, why the question deciding that is checked rather than trusted, and
       what a scope's construction receives.
@@ -476,9 +471,8 @@ specializations, not with instance count.
       **A block naming a constant worked out from its own index used to fall outside that and no
       longer does.** It reads as a case the sentence above already covers and was not: the index
       reached the block as a supplied value, and a constant derived from it was still folded, so
-      one level of naming put the block back to one class per index. Measured at 256 iterations of
-      a block declaring `localparam int K = i * 3 + 1` and adding it to a signal: 2,236,192 bytes of
-      design C++ before and 21,111 after, which is what four iterations emit. Such a parameter is
+      one level of naming put the block back to one class per index, as a block declaring
+      `localparam int K = i * 3 + 1` did. Such a parameter is
       now a declaration of the block holding the expression the source wrote, so blocks that wrote
       the same expression state the same thing. The positions where the value reaches a **type** --
       a declared width, an unpacked extent -- are unchanged and correct: two types are two classes,
@@ -491,8 +485,8 @@ specializations, not with instance count.
       joins. A loop of `assign d[e] = v[e]` was therefore one class per index, and a module reading
       `v[N]` one unit per value, the second caught only by comparing instances and reported as lost
       sharing. Each is now stated as the select the source wrote (LRM 11.5.3), which every
-      construction evaluates with its own index or value. The loop at 64 iterations emits two scope
-      classes and 11,368 bytes for the whole module, where it emitted one class per iteration.
+      construction evaluates with its own index or value, so the loop's block is one class however
+      many iterations it counts.
       [../decisions/a-part-is-the-select-the-source-wrote.md](../decisions/a-part-is-the-select-the-source-wrote.md)
       holds why which bits are watched stays the front end's answer.
 
@@ -500,14 +494,13 @@ specializations, not with instance count.
       them too, and no longer does.** What a body waits on was computed with every path its
       constants exclude left out, so `always_comb if ((i % 2) == 0) y[i] = a[i]; else y[i] = 1'b0;`
       waited on `a[i]` at one index and on nothing at the next, and blocks written alike were one
-      set of classes per index: 628,896 bytes and 180 classes added from 4 iterations to 64. The
+      set of classes per index. The
       same held under a `case`, a conditional operator, a logical operator's second operand, a
       procedural loop the index bounds, `@*`, `wait`, and a continuous assignment. What a body waits
-      on is now what its text reads (LRM 9.2.2.2.1, 9.4.2.2), so each of those adds 33 bytes over
-      the same range, the digits of the loop bound.
+      on is now what its text reads (LRM 9.2.2.2.1, 9.4.2.2), so each of those is one set of
+      classes however many iterations it counts.
       [../decisions/read-set-inference.md](../decisions/read-set-inference.md) holds why, and what
-      it costs: a procedure wakes on a read in a branch its constants exclude, as the clause states,
-      which on Ibex is 1.0% more instructions (15.31 G to 15.47 G).
+      it costs: a procedure wakes on a read in a branch its constants exclude, as the clause states.
 
       Still one class per index, for two causes of their own. A constant select that lands outside
       its object at some index, which is how a chain is written inside a procedure
@@ -516,30 +509,25 @@ specializations, not with instance count.
       every block apart. And a read inside a function the procedure calls (`return a[i];`), which is
       stated as the bits it reached and not as the select written there. Naming it by that select
       was tried: it shares the body, and it also watches the same bits as every select that makes
-      it up, which on Ibex raised the watched entries from 1838 to 2071.
+      it up, so a design watched more entries than its text reads.
 
       **A body waiting on two or more variables of its own used to fall outside them as well, for
       a reason no construct explains.** What a body waits on arrived in the order the front end's
       table of reads enumerated them, which follows where each variable was allocated, so two
       copies of one body stated the same reads at different positions and compared unequal. A loop
-      whose blocks each declare three variables and read them in an `always_comb` was 8 classes per
-      iteration (68 at 8 iterations, 260 at 32) and is 12 at both; a module instantiated with
+      whose blocks each declare three variables and read them in an `always_comb` was a set of
+      classes per iteration and is one set at any count; a module instantiated with
       different values of a parameter it only reads reported lost sharing and was compiled once per
       value. Reads now arrive in the order the text makes them.
       [../decisions/read-set-inference.md](../decisions/read-set-inference.md) holds why the order
-      is settled there. Every corpus design is now lowered twice and held to stating one thing, and
-      every instance read through a body of its own is lowered and held to the unit it shares, on
-      every run; one the front end left sharing another's body is neither read nor lowered. That
-      costs a lowering per instance read and nothing after it, since what is compared is dropped
-      before anything is compiled: 1.06 s to 1.15 s for Ibex's front half, and 3.3 s to 15.2 s on
-      18,000 identical instances while each of those was still read, with peak memory within 5%.
+      is settled there. Every corpus design is lowered twice and held to stating one thing, and a
+      check reads every instance through a body of its own and holds each to the unit it shares; an
+      ordinary build lowers each unit from one instance.
 
-      What it costs where nothing is gained, measured rather than waved at: a block that cannot
-      share either way now carries the declaration instead of the folded literal, which is **359
-      bytes per block** -- 15 blocks declaring a width through a named constant emit 154,362 bytes
-      against 148,978 writing the index straight into the width. Against 8,693 bytes an iteration
-      removed where the block does share, and the blocks paying it are the ones compiled apart for a
-      reason of their own.
+      What it costs where nothing is gained: a block that cannot share either way now carries the
+      declaration instead of the folded literal, a few hundred bytes per block, paid only by blocks
+      compiled apart for a reason of their own -- far less than an iteration removed where the block
+      does share.
 
       **How many classes a loop publishes used to follow from comparing its blocks, and no longer
       does.** Each block was published under the path to it and the blocks found alike were merged
@@ -548,9 +536,7 @@ specializations, not with instance count.
       now an application of its block, named from the source: one published class per application,
       and blocks of one application whose code differs are that class realized more than once, each
       realization named from the index's value where the block's code uses it before any block
-      lowers, so
-      no block is compared with another to find which body it is. A
-      child naming the block that holds it is one unit where it was one per block, and a struct a
+      lowers, so no block is compared with another to find which body it is. A child naming the block that holds it is one unit where it was one per block, and a struct a
       block declares is one type where it was one per block. On the C++ backend the classes of a
       module's scopes are nested classes in the one header that carries the module's name, so file
       count and emitted bytes no longer grow with the iteration count for any loop design the growth
@@ -589,12 +575,8 @@ specializations, not with instance count.
       under a block told apart is written once per such block. Same growth record.
 
 - [ ] A block reaching its neighbour by a name indexed from its own index is compiled once per
-      block, and lowering such a loop takes more than proportional time: twice the blocks is over
-      three times the time, held in both paths' growth records. Which blocks are one body is found
-      by comparing each block with every body found before it, so a loop whose blocks are all
-      distinct takes time in the square of its length; a block is its text and the values its
-      elaboration read as constants, and blocks agreeing on those are one body with nothing
-      compared.
+      block, and lowering such a loop takes more than proportional time, held in both paths' growth
+      records.
 
 - [ ] What remains of the instance array on that same axis. The member and the construction
       statement no longer scale: `Child c[0:N-1]` is one member whose type carries the multiplicity

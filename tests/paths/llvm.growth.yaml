@@ -35,10 +35,6 @@ loop_of_clocked_procedures_sized_by_index:
   - mir.constructors
   - mir.fields
   - mir.types
-loop_of_instances: [bodies lowered]
-loop_of_instances_built_by_parameter: [bodies lowered]
-loop_of_instances_reading_their_block: [bodies lowered]
-loop_of_instances_reading_upward: [bodies lowered]
 loop_reaching_its_neighbour:
   - bytes
   - lir.classes

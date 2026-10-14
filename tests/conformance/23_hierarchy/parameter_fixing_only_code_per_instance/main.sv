@@ -4,6 +4,8 @@
 // look from outside. A subroutine called through each instance's name runs
 // that instance's code (LRM 23.6), a value handed on to a child does the same
 // one level down, and the parameter read as a value reads the instance's own.
+// A structure the module declares is one type of the module (LRM 7.2), built
+// and compared alike in every instance whatever its code was compiled for.
 module Leaf #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out);
   always_comb out = 8'(in[P:0]);
 
@@ -13,6 +15,23 @@ module Leaf #(parameter int P = 1) (input logic [7:0] in, output logic [7:0] out
 
   function automatic int plus(int x);
     return x + P;
+  endfunction
+
+  typedef struct {
+    logic [7:0] ones;
+    int plus;
+  } pair_t;
+
+  function automatic pair_t pair();
+    pair_t made;
+    made.ones = ones();
+    made.plus = plus(0);
+    return made;
+  endfunction
+
+  function automatic bit pair_holds();
+    pair_t fresh;
+    return pair() == pair() && fresh.plus == 0 && pair() !== fresh;
   endfunction
 endmodule
 
@@ -40,6 +59,11 @@ module Top;
     if (wide.ones() !== 8'h0f) $fatal(1, "wide.ones() is %h", wide.ones());
     if (narrow.plus(10) !== 11) $fatal(1, "narrow.plus is %0d", narrow.plus(10));
     if (wide.plus(10) !== 13) $fatal(1, "wide.plus is %0d", wide.plus(10));
+    if (narrow.pair().plus !== 1 || wide.pair().plus !== 3)
+      $fatal(1, "the pairs hold %0d and %0d", narrow.pair().plus,
+             wide.pair().plus);
+    if (!narrow.pair_holds() || !wide.pair_holds())
+      $fatal(1, "a pair is not built or compared alike");
     if (mid_out[0] !== 8'h07) $fatal(1, "g[0] selected %h", mid_out[0]);
     if (mid_out[1] !== 8'h0f) $fatal(1, "g[1] selected %h", mid_out[1]);
     if (g[0].mid.leaf.ones() !== 8'h07)

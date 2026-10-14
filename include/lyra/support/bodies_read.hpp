@@ -12,9 +12,8 @@ namespace lyra::support {
 // pointing at that one's body. What that body states then holds for such an
 // instance too, so a compile reads the bodies the front end elaborated and
 // names every other instance where it is written. Reading every instance's
-// body instead makes
-// the front end elaborate each one, and holds each to its unit; that is how a
-// compile is checked against itself.
+// body instead makes the front end elaborate each one, and holds each to the
+// body it is named for; that is how a compile is checked against itself.
 enum class BodiesRead : std::uint8_t {
   kElaborated,
   kEveryInstance,

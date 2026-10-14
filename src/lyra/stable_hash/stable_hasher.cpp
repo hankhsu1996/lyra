@@ -13,7 +13,7 @@
 
 namespace lyra::stable_hash {
 
-void StableHasher::Number(std::uint64_t value) {
+void StableHasher::AddNumber(std::uint64_t value) {
   std::array<std::uint8_t, sizeof(value)> bytes{};
   for (std::size_t i = 0; i < bytes.size(); ++i) {
     bytes.at(i) = static_cast<std::uint8_t>(value >> (8 * i));
@@ -21,12 +21,12 @@ void StableHasher::Number(std::uint64_t value) {
   hasher_.update(llvm::ArrayRef<std::uint8_t>(bytes));
 }
 
-void StableHasher::Text(std::string_view text) {
-  Number(text.size());
+void StableHasher::AddText(std::string_view text) {
+  AddNumber(text.size());
   hasher_.update(llvm::StringRef(text.data(), text.size()));
 }
 
-void StableHasher::Of(const Fingerprint& fingerprint) {
+void StableHasher::AddFingerprint(const Fingerprint& fingerprint) {
   hasher_.update(llvm::ArrayRef<std::uint8_t>(fingerprint.bytes));
 }
 

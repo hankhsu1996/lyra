@@ -1,4 +1,4 @@
-#include "lyra/compiler/stack.hpp"
+#include "lyra/base/stack_thread.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -12,7 +12,7 @@
 #include "lyra/base/memory_watch.hpp"
 #include "lyra/base/stack_watch.hpp"
 
-namespace lyra::compiler {
+namespace lyra::base {
 
 namespace {
 
@@ -40,14 +40,14 @@ auto CompileStackSize() -> std::size_t {
 StackThread::StackThread(std::function<void()> work)
     : work_(std::move(work)),
       done_(work_.get_future()),
-      alt_stack_(base::kAltStackSize) {
+      alt_stack_(kAltStackSize) {
   pthread_attr_t attributes;
   ::pthread_attr_init(&attributes);
   ::pthread_attr_setstacksize(&attributes, CompileStackSize());
   const int refused = ::pthread_create(&thread_, &attributes, Run, this);
   ::pthread_attr_destroy(&attributes);
   if (refused != 0) {
-    base::EndForLackOfMemory();
+    EndForLackOfMemory();
   }
 }
 
@@ -65,10 +65,10 @@ void StackThread::Join() {
 
 auto StackThread::Run(void* self) -> void* {
   auto& thread = *static_cast<StackThread*>(self);
-  base::InstallStackOverflowHandler(kOutOfStack);
-  base::RegisterThreadStack(thread.alt_stack_);
+  InstallStackOverflowHandler(kOutOfStack);
+  RegisterThreadStack(thread.alt_stack_);
   thread.work_();
   return nullptr;
 }
 
-}  // namespace lyra::compiler
+}  // namespace lyra::base

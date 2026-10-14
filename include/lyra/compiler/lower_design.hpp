@@ -8,13 +8,14 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/parallel.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/design_root.hpp"
-#include "lyra/compiler/parallel.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
+#include "lyra/hir/body_of_unit.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/lir/compilation_unit.hpp"
@@ -69,7 +70,7 @@ void LowerToHir(
   using Produced = std::invoke_result_t<Produce, hir::CompilationUnit>;
   const profiling::StageScope stage("lower units");
   status::Pieces(design.units.UnitCount());
-  ProduceInOrder(
+  base::ProduceInOrder(
       design.units.UnitCount(), width,
       [&](std::size_t i) -> Produced {
         Produced produced = diag::ContainFailure([&]() -> Produced {
@@ -113,7 +114,7 @@ auto LowerToSemantic(
   // and the two arrive together and in the design's order.
   struct Lowered {
     std::string body;
-    std::vector<hir::InstantiatedBody> instantiated;
+    std::vector<hir::BodyOfUnit> instantiated;
     typename Produced::value_type produced;
   };
   lowering::hir_to_mir::DesignInstantiations instantiations;

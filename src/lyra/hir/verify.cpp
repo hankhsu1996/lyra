@@ -1194,16 +1194,14 @@ void VerifyLoopGenerates(
       lines.push_back(
           std::format(
               "hir verify: a loop generate of {} holds {} bodies and says "
-              "where "
-              "{} of them stand",
+              "where {} of them stand",
               label, generate.blocks.size(), named.size()));
     }
     if (std::ranges::adjacent_find(indices) != indices.end()) {
       lines.push_back(
           std::format(
               "hir verify: a loop generate of {} stands two bodies at one "
-              "value "
-              "of its index",
+              "value of its index",
               label));
     }
   }

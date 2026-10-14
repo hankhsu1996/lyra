@@ -236,16 +236,15 @@ Rules:
         Scope: every .cpp/.hpp under src/lyra/backend/cpp and
         include/lyra/backend/cpp.
 
-  A025  HIR equality is derived and exact. Instances handed different values
-        are lowered into one unit and held to lowering alike, so the
-        comparison is what finds a lowering that read a value the unit does
-        not hold. A hand-written `operator==` can leave a field out, and a
-        floating-point
-        member compares as a number, which calls 0.0 and -0.0 one value and
-        two identical NaNs two; either way two different programs compare
-        equal, or one program compares unequal to itself. So every
-        `operator==` a HIR node declares is `= default`, and a real value is
-        held as the bits that represent it.
+  A025  HIR equality is derived and exact. Every instance of a body is held
+        to lowering alike where the compile is checked against itself, so the
+        comparison is what finds a lowering that read a value the body's name
+        does not hold. A hand-written `operator==` can leave a field out, and
+        a floating-point member compares as a number, which calls 0.0 and
+        -0.0 one value and two identical NaNs two; either way two different
+        programs compare equal, or one program compares unequal to itself. So
+        every `operator==` a HIR node declares is `= default`, and a real
+        value is held as the bits that represent it.
         Scope: include/lyra/hir/**.
 
   A026  Nothing reads what the front end folded where the language did not
@@ -1880,16 +1879,16 @@ def run_self_tests() -> bool:
             strip_comment("  // e.knownSide() is the fold being avoided")),
         "A026 a comment naming the fold is not a read")
     # A027
-    expect(
+    ok &= expect(
         A027_PATTERN.search("  auto t = lowerer.Owner().InternType(*sel.type, span);"),
         "A027 an expression's type interned directly is reported")
-    expect(
+    ok &= expect(
         A027_PATTERN.search("  auto t = InternType(*call.arguments()[0]->type, span);"),
         "A027 a type reached through an arrow is reported")
-    expect(
+    ok &= expect(
         not A027_PATTERN.search("  auto t = InternType(symbol.getType(), span);"),
         "A027 a declaration's type is clean")
-    expect(
+    ok &= expect(
         not A027_PATTERN.search("  auto t = InternExpressionType(sel, span);"),
         "A027 the deciding function is clean")
 

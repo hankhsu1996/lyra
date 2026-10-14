@@ -73,7 +73,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | Constructor vs simulation execution contexts; structural vs process                                   | `runtime_model.md`              |
 | Storage and binding vs construction; type-driven member walk                                          | `runtime_model.md`              |
 | Elaboration phases (build / resolve / seal / initialize / activate); ctor scope                       | `elaboration_lifecycle.md`      |
-| Generate blocks built at construction from instance data; object graph shape                          | `hierarchy_and_generate.md`     |
+| Generate as constructor-time logic; object graph shape                                                | `hierarchy_and_generate.md`     |
 | Instance array as a data type; multiplicity vs generate axes                                          | `hierarchy_and_generate.md`     |
 | Reference routes; typed steps against what a scope published; sealed endpoints                        | `reference_resolution.md`       |
 | Net value as the resolution of driver contributions; net vs variable; drivers                         | `net_resolution.md`             |

@@ -32,7 +32,7 @@ auto ConstructionTableLayout::LayOut(
         static_cast<std::uint32_t>(instantiated_.size()));
     for (const InstanceAlternative& alternative : member.alternatives) {
       instantiated_.push_back(
-          InstantiatedBody{
+          BodyOfUnit{
               .unit = unit.external_scope_classes.Get(alternative.scope_class)
                           .unit_name,
               .body = alternative.body});

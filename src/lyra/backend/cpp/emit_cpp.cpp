@@ -119,8 +119,8 @@ struct ClassFile {
 //                           holding it, each defined there
 //   Body.cpp                every other class, and every other definition
 //
-// Every body states the unit's declarations alike, so every file but the last
-// two is the same text from each.
+// Every body states the unit's declarations alike, so every file but the two
+// named after the body is the same text from each.
 //
 // A declaration has a file of its own only where a declaration of another unit
 // needs it complete ahead of its own: a class another class may extend, a
@@ -332,7 +332,8 @@ auto RenderUnitFiles(
 // `main.cpp`: hands the root unit's label and its `sv_create` entry to the
 // runtime, which does everything else about running the program -- command
 // line, errors, the simulation itself. `sv_create` is the entry any other unit
-// would use to make an object of the root unit.
+// would use to make an object of the root's body, and the runtime holds what
+// it makes as a scope, which needs the root's class complete.
 auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   if (mir::RootedTreeOf(root) == nullptr) {
     throw InternalError("backend::cpp: the design root roots no tree");
@@ -341,11 +342,12 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> std::string {
   TargetText out;
   WriteInclude(out, support::kHostEntryHeader);
   WriteInclude(out, UnitSignatureFileOf(root.name));
+  WriteInclude(out, UnitOpeningFileOf(root.body_name));
   out += "\n";
   out += "auto main(int argc, char** argv) -> int {\n";
   Write(
       out, "  return lyra::runtime::RunDesignRoot(argc, argv, ",
-      CppNameLiteral(root.name), ", ", CppUnitScope(root.name),
+      CppNameLiteral(root.name), ", ", CppBodyScope(root.name, root.body_name),
       "::", CppMintedEntryName(mir::MintedEntry::kMakeObject), ");\n");
   out += "}\n";
   return std::move(out).Take();

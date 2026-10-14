@@ -44,11 +44,6 @@ enum class PointerOwnership : std::uint8_t { kUnique, kShared, kBorrowed };
 
 enum class Mutability : std::uint8_t { kMutable, kReadOnly };
 
-// What an address names. The two do not convert into one another -- no language
-// this compiles through guarantees that a code address survives a trip through
-// a data one -- so retyping an address preserves which of them it is.
-enum class AddressKind : std::uint8_t { kStorage, kCode };
-
 enum class RuntimeLibraryKind : std::uint8_t {
   kEnumeration,
   kPrintItem,
@@ -474,12 +469,6 @@ class Type {
   // narrow relation of indirection -- storage that lives elsewhere -- which is
   // what an address-of yields.
   [[nodiscard]] auto Pointee() const -> std::optional<TypeId>;
-
-  // Which kind of address this type names, or nothing where it names none.
-  // Wider than the storage relation above, since a code address points at no
-  // storage and is an address regardless; what asks is a retype of an address,
-  // which requires one on each side and the same kind on both.
-  [[nodiscard]] auto Address() const -> std::optional<AddressKind>;
 
   // The type of the storage a dereference reaches. That is a reference's
   // referent, and also what a capability wrapper represents -- a wrapper is not

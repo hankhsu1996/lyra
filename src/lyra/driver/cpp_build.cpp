@@ -21,7 +21,7 @@
 #include "lyra/backend/cpp/api.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/compiler/parallel.hpp"
+#include "lyra/base/parallel.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/dpi/abi_header.hpp"
 #include "lyra/driver/action_cache.hpp"
@@ -481,7 +481,7 @@ auto CompileTranslationUnits(
   // seeing every such file at once is what saves the run it would otherwise
   // take to find the next.
   std::string failures;
-  compiler::ProduceInOrder(
+  base::ProduceInOrder(
       translation_units.size(), host.compile_width,
       [&](std::size_t i) -> diag::Result<ActionResult> {
         const TranslationUnit& unit = translation_units[i];

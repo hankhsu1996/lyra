@@ -105,8 +105,8 @@ struct PublishedMember {
           // question from what the storage is. A loop's index does not exist at
           // simulation time so nothing answers its name at all; the others
           // answer the names the declaring scope and the scopes inside it read,
-          // and a hierarchical name reaching one from elsewhere, which reads
-          // the value the object holds as it reads a variable's.
+          // and a hierarchical name reaching one from elsewhere as well, which
+          // reads the value the object holds as it reads a variable's.
           [](const StructuralGenvarDecl&) -> PublishedStorage {
             return VariableStorage{};
           },

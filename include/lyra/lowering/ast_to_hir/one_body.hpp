@@ -13,17 +13,15 @@
 
 namespace lyra::lowering::ast_to_hir {
 
-// The one body two scopes of one name are, or nothing where they are not one.
-// They are one where they differ in nothing but what their own constructions
-// decide, at any depth beneath them, by an expression reading a value the
-// construction is handed (LRM 27.4, 27.5): which alternative of a conditional
-// generate stood, where the body holds every alternative either selected, and
-// which blocks a loop counted out, where the body holds every body either
-// counted one of. Two scopes of one name that are not one are a defect of how
-// the name was worked out, and each caller reports it as one.
-[[nodiscard]] auto OneBodyOf(
-    const hir::StructuralScope& a, const hir::StructuralScope& b)
-    -> std::optional<hir::StructuralScope>;
+// `scope` with every loop of one body, at any depth, listing no values its
+// index stood at. Such a loop builds its body at every index it counts out, so
+// where its blocks stood is what running the loop says, and two objects of one
+// class may count differently; the values matter only to a loop choosing among
+// several bodies. Asked once the scope is whole, because blocks of one name
+// taken into one body are merged loop by loop first, and a loop of one body
+// there may be one of several once merged.
+[[nodiscard]] auto WithoutIndicesOfLoopsOfOneBody(hir::StructuralScope scope)
+    -> hir::StructuralScope;
 
 // The bodies of one loop generate's blocks. A block's body is named by the
 // class it is an object of and by which body of that class its code is, so

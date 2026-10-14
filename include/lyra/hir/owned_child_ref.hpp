@@ -35,8 +35,9 @@ struct InstanceMemberId {
 // it is what ran the loop; the name carries only what the language gave it.
 //
 // A path names the construct and the block, never the scope the block compiled
-// to: a loop whose blocks agree compiles to one scope and one whose blocks
-// disagree to one each, and both reach the same elaborated block. Which scope
+// to: a loop whose blocks are of one name compiles to one scope and one whose
+// blocks are of several to one per name, and both reach the same elaborated
+// block. Which scope
 // that is stays the construct's own answer, so no name has to be spelled
 // before it exists.
 struct GenerateLoopRef {

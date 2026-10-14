@@ -1,10 +1,8 @@
 # Compiling A Design
 
-Three parts of this are not realized: the design root does not yet state which generate blocks each
-instance built (a body still holds every alternative any of its instances built and decides among
-them as it constructs), an ordinary build still lowers every block of a loop and every instance
-handed new values and compares them, and the key is not yet read off the lowering's own reads
-everywhere. The contract binds every layer regardless.
+One part of this is not realized: within one instance, an ordinary build still lowers every block of
+a loop and takes the blocks of one name into one body by comparing what they lowered to. The
+contract binds every layer regardless.
 
 ## Purpose
 
@@ -24,27 +22,26 @@ the design as a program that builds objects of it:
 
 ```cpp
 // The signature every referrer compiles against: one header per way the values
-// fix what the element declares.
-class Leaf : public Scope { public: Logic<8> in, out; int K; Scope* g; };
+// fix what the element declares and per set of generate blocks it built.
+class Leaf_odd : public Scope { public: Logic<8> in, out; int K; struct odd; Scope* g; };
 
 // One body per way the values fix its statements; compiled once, shared.
-class LeafBody final : public Leaf {
-  LeafBody(const Record& r) { K = r.K; g = r.g(this); }   // builds what r says, decides nothing
+class LeafBody final : public Leaf_odd {
+  LeafBody(int K) : K(K) { if (K % 2 == 1) g = new odd(this); }   // runs the source's generate
 };
-class G0 ...  class G1 ...                                // each generate block: a definition of its own
 
-// The design root: data, one record per instance, equal subtrees stored once.
-row[0].u: { make: LeafBody, K: 0, g: G0::Make }
-row[1].u: { make: LeafBody, K: 1, g: G1::Make }
+// The design root: which body each instance is, and what it is handed.
+u0: { make: LeafBody, K: 1 }
+u1: { make: LeafBody, K: 3 }
 ```
 
 Three kinds of thing, and nothing else:
 
-| Kind              | What it is                                                         | Count follows                            |
-| ----------------- | ------------------------------------------------------------------ | ---------------------------------------- |
-| Signature         | what referrers compile against: what the element declares          | distinct values of what declarations use |
-| Body              | the code: processes, subroutines, how to build its children        | distinct values of what statements use   |
-| Construction data | per instance: values, which body each child is, which blocks stand | instances (data, never code)             |
+| Kind              | What it is                                                  | Count follows                                                           |
+| ----------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Signature         | what referrers compile against: what the element declares   | distinct values of what declarations use, and the generate blocks built |
+| Body              | the code: processes, subroutines, how to build its children | distinct values of what statements use                                  |
+| Construction data | per instance: the values it is handed                       | instances (data, never code)                                            |
 
 A value only statements use names a body and leaves the signature alone, because a child instance is
 a member of its parent's signature -- a hierarchical name reaches into it -- so a value in the
@@ -55,15 +52,17 @@ and a call through `dyn Trait` does in Rust.
 A value parameter is an argument of the class only where something the class states uses it -- a
 width, a type, a constant a statement requires. Everywhere else it is a field the object is built
 with, read at run time, so a loop handing each child its index makes one class and one body, not one
-per index.
+per index -- unless the index decides which generate blocks the child builds, which names the
+child's class and so the block's, one per index, as `Leaf<i>` does in C++.
 
 ## The decisions
 
 **An artifact's name is decided from inputs, before it is built.** A referrer names the class it
 compiles against without opening the body, and both sides derive the name by one function of the
-same inputs, so units compile in any order and in parallel. The name is the definition plus the
-values of the parameters it uses -- those its declarations rely on for the signature, those only its
-statements rely on for a body. The output of a lowering is never its identity.
+same inputs, so units compile in any order and in parallel. The name is the definition, the values
+of the parameters it uses -- those its declarations rely on for the signature, those only its
+statements rely on for a body -- and the generate blocks it built. The output of a lowering is never
+its identity.
 
 **Which parameters a name uses is what the lowering reads, recorded where it was read.** The front
 end records which parameters each constant it was required to evaluate read, and which ones settled
@@ -73,15 +72,16 @@ everything else itself. So two instances of one name lower alike by construction
 whole of what the lowering could see. A read the key missed is the compiler's defect, found by the
 tests that lower every instance and compare; a build never compares.
 
-**Which blocks an instance built is construction data, not code.** The front end has already decided
-every generate condition and counted every loop for every instance. Stating those answers per
-instance keeps a body a function of its name alone: an instance added elsewhere, selecting another
-alternative, changes data and compiles one new block, never an existing body or header. A body
-holding every alternative its instances built would make its content follow instances it is not
-named for.
+**Which generate blocks an instance built is part of its name.** An alternative a conditional did
+not select is not elaborated and need not be valid for the instance's values (LRM 27.5), so it
+cannot be compiled from an instance that did not select it. What was built is therefore part of what
+an instance is, as the branch an `if constexpr` keeps is part of a C++ instantiation. The name holds
+which blocks were built and not the value that selected them, so two values selecting one
+alternative are one body. How many blocks a loop counts out is not part of it.
 
-**A body is not re-decided at construction.** It builds the children its record lists, with the
-values the record holds. Nothing the front end already settled is evaluated again at time zero.
+**The constructor runs the source's generate.** Its conditions and loops are constructor code, run
+against the values the object was handed, as a C++ constructor runs its own; the name guarantees
+that whatever they select is among the blocks the body holds.
 
 **The content of an artifact decides only whether its dependents rebuild.** A rebuilt body whose
 output is unchanged stops the rebuild there; equal code under two names may be folded at the link,
@@ -95,7 +95,8 @@ which renames nothing.
 | Uses recorded as the lowering reads them             | a query's reads are its dependency edges                                                              | --                                                    | discovered inputs (`.d` files), ccache's manifest |
 | A value read at run time, not in the name            | the proposed successor to polymorphization: monomorphic data, polymorphic code with a hidden argument | a constructor argument                                | --                                                |
 | Signature / body                                     | `type_of` and `fn_sig` / `optimized_mir`, queried apart so a body edit reaches no caller              | header / translation unit; module interface           | an action's declared outputs                      |
-| Construction data in the design root                 | --                                                                                                    | the arguments `main` builds objects with              | --                                                |
+| Generate blocks built, in the name                   | the arguments an `Instance` is monomorphized with                                                     | the branch an `if constexpr` keeps                    | --                                                |
+| Values handed in at construction                     | --                                                                                                    | the arguments `main` builds objects with              | --                                                |
 | Output content stops a rebuild                       | red/green: an equal result fingerprint is green                                                       | a byte-identical module interface (update-if-changed) | output digest is the next action's input          |
 | Equal code folded without renaming                   | LLVM MergeFunctions                                                                                   | linker identical-code folding                         | --                                                |
 | Every instance lowered and compared, in tests only   | `-Zincremental-verify-ich`                                                                            | --                                                    | --                                                |
@@ -108,23 +109,24 @@ reads the lowering makes, never predicted from the text.
 
 ## Models this one replaces
 
-| Model                                                | For                                      | Against                                                                                     |
-| ---------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------- |
-| An artifact per instance                             | trivially correct                        | artifacts follow instances; every instance compiled                                         |
-| A name holding every parameter's whole value         | the field's answer; nothing to classify  | a value following instances splits per instance                                             |
-| Lower every instance, compare, share the equal       | correct without classifying anything     | the name waits on the body; cost grows with instances, comparisons with distinct bodies     |
-| A name from a hash of the lowered body               | no classifier; a miss costs only sharing | the name is known only after building; the field never does this; hashes merge unequal code |
-| A name from an analysis predicting what a body reads | the name before the body                 | the analysis misses reads; rustc removed its version of it                                  |
-| A body holding every block its instances built       | decides at construction like the source  | the body follows instances it is not named for; re-evaluates what the front end settled     |
+| Model                                                       | For                                      | Against                                                                                                                        |
+| ----------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| An artifact per instance                                    | trivially correct                        | artifacts follow instances; every instance compiled                                                                            |
+| A name holding every parameter's whole value                | the field's answer; nothing to classify  | a value following instances splits per instance                                                                                |
+| Lower every instance, compare, share the equal              | correct without classifying anything     | the name waits on the body; cost grows with instances, comparisons with distinct bodies                                        |
+| A name from a hash of the lowered body                      | no classifier; a miss costs only sharing | the name is known only after building; the field never does this; hashes merge unequal code                                    |
+| A name from an analysis predicting what a body reads        | the name before the body                 | the analysis misses reads; rustc removed its version of it                                                                     |
+| A body holding every block its instances built              | one body whatever its instances built    | the body follows instances it is not named for; every instance handed new values is merged                                     |
+| Each block its own artifact, chosen by data the root states | one body whatever its instances built    | no compiler shares code across instantiations whose kept branches differ; every name a block reads in its module crosses units |
 
 ## Core Invariants
 
-1. An artifact's name is a function of its definition and of the values of the parameters it uses,
-   and of nothing produced by building it.
+1. An artifact's name is a function of its definition, of the values of the parameters it uses and
+   of the generate blocks elaboration built, and of nothing produced by building it.
 2. A lowering reads of an instance only what its name holds, so every instance of one name lowers to
    the same artifact.
-3. Whatever the front end decided per instance and the name does not hold -- a value read as a
-   value, which blocks stand, which body each child is -- reaches the object as construction data.
+3. Which generate blocks an instance built is part of its name; how many blocks a loop counted out
+   is not, and a value read as a value reaches the object when it is built.
 4. The count of artifacts follows distinct names; only construction data follows instances.
 5. A build decides nothing by comparing artifacts; comparison checks the scheme, in tests.
 

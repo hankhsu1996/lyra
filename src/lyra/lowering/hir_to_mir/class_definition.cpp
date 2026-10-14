@@ -20,7 +20,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
@@ -264,22 +263,24 @@ void StateDefinition(
   cls.object_definition_initializer = std::move(build);
 }
 
-// The object entry of `unit_name`, with its prototype erased, as a value of
-// `block`.
+// The object entry of the body `made` names, at the type `entry` its unit
+// declared it with, read with that prototype erased, as a value of `block`.
 //
 //   (Erased)&Child::sv_create
 auto ErasedObjectEntry(
     const mir::CompilationUnit& unit, mir::Block& block,
-    const hir::InstantiatedBody& made) -> mir::ExprId {
-  return block.exprs.Add(
+    const hir::BodyOfUnit& made, mir::TypeId entry) -> mir::ExprId {
+  const mir::ExprId declared = block.exprs.Add(
       mir::Expr{
           .data =
               mir::ReferenceExpr{
                   .target =
-                      mir::ExternalUnitMintedEntryRef{
-                          .unit_name = made.unit,
-                          .body_name = made.body,
-                          .entry = mir::MintedEntry::kMakeObject}},
+                      mir::ExternalObjectEntryRef{
+                          .unit_name = made.unit, .body_name = made.body}},
+          .type = entry});
+  return block.exprs.Add(
+      mir::Expr{
+          .data = mir::CastExpr{.operand = declared},
           .type = mir::ErasedFunction(unit.types)});
 }
 
@@ -294,17 +295,22 @@ class ConstructionTables {
  public:
   ConstructionTables(
       mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-      const DesignInstantiations& instantiations)
-      : unit_(&unit), id_(id), cls_(&cls), instantiations_(&instantiations) {
+      const DesignInstantiations& instantiations,
+      const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
+      : unit_(&unit),
+        id_(id),
+        cls_(&cls),
+        instantiations_(&instantiations),
+        entry_types_(&entry_types) {
   }
 
   // The table listing, at each instantiation, how the body `instantiated`
   // names there is made.
-  auto Of(std::span<const hir::InstantiatedBody> instantiated)
+  auto Of(std::span<const hir::BodyOfUnit> instantiated)
       -> mir::ClassConstantRef {
     std::vector<mir::ClassConstantRef> tables;
     tables.reserve(instantiated.size());
-    for (const hir::InstantiatedBody& made : instantiated) {
+    for (const hir::BodyOfUnit& made : instantiated) {
       tables.push_back(OfBody(made.body));
     }
 
@@ -320,7 +326,9 @@ class ConstructionTables {
           unit_->ConsumeNamespaceOf(instantiated[i].body);
           return Record(
               *unit_, entry, Kind::kInstantiation,
-              {ErasedObjectEntry(*unit_, entry, instantiated[i]),
+              {ErasedObjectEntry(
+                   *unit_, entry, instantiated[i],
+                   EntryTypeOf(instantiated[i].unit)),
                AddressOfConstant(*unit_, entry, tables[i], table_type)});
         });
     build.value =
@@ -351,10 +359,24 @@ class ConstructionTables {
     return table;
   }
 
+  auto EntryTypeOf(const std::string& unit) const -> mir::TypeId {
+    const auto found = entry_types_->find(unit);
+    if (found == entry_types_->end()) {
+      throw InternalError(
+          std::format(
+              "hir_to_mir: an object of unit '{}' is made, and how its object "
+              "entry is declared was never taken from what it published -- "
+              "please report this as a bug",
+              unit));
+    }
+    return found->second;
+  }
+
   mir::CompilationUnit* unit_;
   mir::ClassId id_;
   mir::Class* cls_;
   const DesignInstantiations* instantiations_;
+  const std::map<std::string, mir::TypeId, std::less<>>* entry_types_;
   std::map<std::string, mir::ClassConstantRef, std::less<>> of_body_;
 };
 
@@ -391,9 +413,11 @@ void StateScopeDefinition(
 
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    std::span<const hir::InstantiatedBody> own,
-    const DesignInstantiations& instantiations) -> mir::ClassConstantRef {
-  return ConstructionTables(unit, id, cls, instantiations).Of(own);
+    std::span<const hir::BodyOfUnit> own,
+    const DesignInstantiations& instantiations,
+    const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
+    -> mir::ClassConstantRef {
+  return ConstructionTables(unit, id, cls, instantiations, entry_types).Of(own);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

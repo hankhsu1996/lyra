@@ -64,7 +64,7 @@ resolution serves both accessing the target's value and observing its changes.
    before it is the object's and not the referrer's; a step into a block a conditional chose is the
    construct's entry, which holds at most one object and takes no select. Either block step views
    what it reached as that block's published class. A leaf is a published member, a published
-   disable target, or a direct call to a published subroutine.
+   disable target, or a call through the object to a published subroutine.
 
    A step's identity comes from one of two places, which changes nothing about its cost or its
    realization: an in-artifact member identity when the emitting artifact owns both classes, and the

@@ -1,14 +1,15 @@
 // Lowering one unchanged design twice states one thing. The written program
 // repeating does not show it: nothing below the first semantic form reads where
 // that form put each of its parts, so two lowerings that differ only there
-// write the same text. What does read it is taking the lowerings of one body
-// into one, which holds two scopes equal position for position -- so a form
+// write the same text. What does read it is holding two lowerings of one body
+// equal position for position, which a loop's blocks of one name and the check
+// of the compile against itself both do -- so a form
 // that moves on its own refuses a correct design only where a body happens to
 // be lowered more than once, and nothing a design simulates or a build writes
 // reports it elsewhere.
 //
-// What is compared is each unit's own form, by the equality that taking two
-// lowerings into one holds them to, in the order the design lists its units.
+// What is compared is each unit's own form, by that equality, in the order the
+// design lists its units.
 //
 // The two lowerings also differ in which instances they read. The first reads
 // the bodies the front end elaborated and names every other instance where it

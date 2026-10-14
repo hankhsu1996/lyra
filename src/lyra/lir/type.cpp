@@ -442,16 +442,6 @@ auto Type::Pointee() const -> std::optional<TypeId> {
   return std::nullopt;
 }
 
-auto Type::Address() const -> std::optional<AddressKind> {
-  if (Is<MachineFunctionType>()) {
-    return AddressKind::kCode;
-  }
-  if (Pointee().has_value()) {
-    return AddressKind::kStorage;
-  }
-  return std::nullopt;
-}
-
 auto Type::DerefTarget() const -> std::optional<TypeId> {
   if (const auto* observable = As<ObservableType>()) {
     return observable->value;

@@ -6,20 +6,12 @@
 #include <vector>
 
 #include "lyra/base/pool_id.hpp"
+#include "lyra/hir/body_of_unit.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/owned_child_ref.hpp"
 #include "lyra/hir/structural_scope.hpp"
 
 namespace lyra::hir {
-
-// What one instantiation makes: an object of `unit`, which is what a referrer
-// names, compiled to its body `body`.
-struct InstantiatedBody {
-  std::string unit;
-  std::string body;
-
-  auto operator==(const InstantiatedBody&) const -> bool = default;
-};
 
 // Which entry of a construction table an instantiation is.
 struct InstantiationIndex {
@@ -63,8 +55,7 @@ class ConstructionTableLayout {
   }
 
   // What is elaborated at each instantiation, in index order.
-  [[nodiscard]] auto Instantiated() const
-      -> const std::vector<InstantiatedBody>& {
+  [[nodiscard]] auto Instantiated() const -> const std::vector<BodyOfUnit>& {
     return instantiated_;
   }
 
@@ -72,7 +63,7 @@ class ConstructionTableLayout {
   auto LayOut(const CompilationUnit& unit, const StructuralScope& scope)
       -> ScopeLayout;
 
-  std::vector<InstantiatedBody> instantiated_;
+  std::vector<BodyOfUnit> instantiated_;
   ScopeLayout root_;
 };
 

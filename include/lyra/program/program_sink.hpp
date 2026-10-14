@@ -34,7 +34,7 @@ struct BuiltUnit {
 // built at once.
 //
 // Compiling is an action whose inputs are the module, the code generator and
-// the level, and the object of one kept is taken instead of compiling.
+// the level, and a kept result of that action is taken instead of compiling.
 // Before either, the module is checked against the runtime library this
 // compiler ships, which is the library the program links: a module naming an
 // entry that library does not publish is refused by name, so the absence is

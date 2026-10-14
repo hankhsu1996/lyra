@@ -24,6 +24,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/body_of_unit.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
@@ -569,39 +570,22 @@ class LoweringFacts {
 // by the second's return; afterwards the lowerer holds no IR.
 class UnitLowerer {
  public:
-  // What a compiled unit is called: the unit, which is what it publishes and
-  // what every referrer names, and the body of the unit it compiles, which is
-  // the unit's own name wherever the unit is compiled to one body.
-  struct Names {
-    std::string unit;
-    std::string body;
-
-    // The names of a unit compiled to one body.
-    [[nodiscard]] static auto Of(std::string_view unit) -> Names {
-      return Names{.unit = std::string{unit}, .body = std::string{unit}};
-    }
-  };
-
   // The unit holding the declarations whose own source `home` is: a design
   // element's body, a package, a `$unit` scope, or a specialization that is a
   // unit of its own, which is lowered from the scope declaring its generic and
   // holds nothing of that scope but itself.
   //
-  // A design element's unit is one text every application of it shares, and
-  // `home` is the body of one of them. `also_lowered_from` holds the bodies of
-  // the others the body is lowered from as well: what each of them built is
-  // part of what it holds, since which alternative of a conditional generate
-  // stands and how many blocks a loop counts out are decided when an object is
-  // built (LRM 27.4, 27.5) and differ between applications. `declared_from`
-  // holds the bodies of the other applications it is declared from: for the
-  // body publishing its unit, every application of the unit, since what the
-  // unit publishes is what every one of them built whichever body it is
-  // compiled to.
+  // A design element's body is one text every application of it shares, and
+  // `home` is the body of one of them. `checked_against` holds the bodies of
+  // others, which the body is lowered from as well and has to come out the
+  // same from: what is compiled is a function of the body's name, so an
+  // application lowering to anything else is a defect of how the name was
+  // worked out. A build asks for none; the check of the compile against itself
+  // asks for every instance.
   UnitLowerer(
-      const LoweringFacts& facts, const slang::ast::Symbol& home, Names names,
-      hir::UnitRole role,
-      std::span<const slang::ast::InstanceBodySymbol* const> declared_from = {},
-      std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from =
+      const LoweringFacts& facts, const slang::ast::Symbol& home,
+      hir::BodyOfUnit names, hir::UnitRole role,
+      std::span<const slang::ast::InstanceBodySymbol* const> checked_against =
           {});
 
   // The declaration phase: everything this unit states about itself, including
@@ -617,8 +601,7 @@ class UnitLowerer {
   // The body phase: everything this unit executes, resolved against what the
   // design's units published. Which of those publications this unit ends up
   // depending on is the set it reads, so nothing decides that set in advance.
-  // The unit's own scope is the one body of what every application it is
-  // lowered from built.
+  // The unit's own scope is lowered from the instance its body is named for.
   auto LowerBodies(const hir::UnitSignatures& signatures)
       -> diag::Result<hir::CompilationUnit>;
 
@@ -655,8 +638,9 @@ class UnitLowerer {
   // -- and what its own text types, a literal, keep that type, since a select
   // or a key is read against its range. What an operation yields -- an
   // operator, a conversion, an assignment, a part-select, a concatenation and
-  // its kin, a system subroutine's result -- is typed as what an operation
-  // yields, below.
+  // its kin, a system subroutine's result -- and an unbased unsized literal,
+  // which is as wide as its context (LRM 5.7.1), have no range of their own
+  // and are typed as what an operation yields, below.
   auto InternExpressionType(
       const slang::ast::Expression& expr, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
@@ -1703,10 +1687,10 @@ class UnitLowerer {
       const slang::ast::ParameterSymbol& param) const -> bool;
 
   // Hands `visit` every declaration outside a body this unit holds, each before
-  // anything inside it, in every application of the unit: those its scope
-  // declares, then each specialization placed in it from a generic another unit
-  // declares. Each application holds its own copy of a declaration, so one
-  // declaration may be handed over once per application that built it.
+  // anything inside it, in every application the body is lowered from: those
+  // its scope declares, then each specialization placed in it from a generic
+  // another unit declares. Each application holds its own copy of a
+  // declaration, so one declaration may be handed over once per application.
   template <typename Visit>
   auto WalkOwnDeclarations(Visit& visit)
       -> std::invoke_result_t<Visit&, const slang::ast::Symbol&>;
@@ -1724,15 +1708,12 @@ class UnitLowerer {
   LoweringFacts facts_;
   const slang::ast::Symbol* home_;
   const slang::ast::Scope* scope_;
-  // The scope of every application the body is lowered from, the one it is
-  // named for first.
+  // The scope of every application the body is lowered and declared from, the
+  // one it is named for first.
   std::vector<const slang::ast::Scope*> applications_;
-  // The scope of every application the unit is declared from: those, then the
-  // ones the unit's other bodies are lowered from.
-  std::vector<const slang::ast::Scope*> declared_applications_;
-  // The bodies of those beyond the first, which is what a declaration is asked
-  // against to learn whether this unit holds it.
-  std::unordered_set<const slang::ast::Symbol*> also_declared_from_;
+  // The bodies the body is checked against, which is what a declaration is
+  // asked against to learn whether this unit holds it.
+  std::unordered_set<const slang::ast::Symbol*> checked_bodies_;
   // The application being read, which is what a name leaving the instance is
   // resolved from.
   const slang::ast::Scope* lowering_;
@@ -1848,7 +1829,7 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
     return SpecializationName(cls, Specialization());
   };
   if constexpr (std::is_void_v<Result>) {
-    for (const slang::ast::Scope* application : declared_applications_) {
+    for (const slang::ast::Scope* application : applications_) {
       WalkDeclarationScopes(*application, owned, name_of);
       for (const slang::ast::ClassType* spec :
            facts_.PlacedIn(application->asSymbol())) {
@@ -1857,7 +1838,7 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
       }
     }
   } else {
-    for (const slang::ast::Scope* application : declared_applications_) {
+    for (const slang::ast::Scope* application : applications_) {
       if (auto r = WalkDeclarationScopes(*application, owned, name_of); !r) {
         return r;
       }

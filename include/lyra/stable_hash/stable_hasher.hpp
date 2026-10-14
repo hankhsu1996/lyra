@@ -15,9 +15,9 @@ namespace lyra::stable_hash {
 // pieces written one after the other cannot be read as two others.
 class StableHasher {
  public:
-  void Number(std::uint64_t value);
-  void Text(std::string_view text);
-  void Of(const Fingerprint& fingerprint);
+  void AddNumber(std::uint64_t value);
+  void AddText(std::string_view text);
+  void AddFingerprint(const Fingerprint& fingerprint);
 
   [[nodiscard]] auto Finish() const -> Fingerprint;
 

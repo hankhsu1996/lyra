@@ -316,12 +316,12 @@ the detail lives in the entry itself.
 
 - [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) --
   every scope a name can step into publishes every declaration a name can reach, as a class the
-  referrer reaches by typed steps, offsets and direct calls; an upward name starts at the enclosing
-  instance of the class it landed on, which tells the unit apart; a loop's blocks keep their own
-  names over shared code; nothing resolves a hierarchical name while the design runs. Resolving by
-  name at elaboration, handing over the size, a dispatched base class, a behaviors-only promise, and
-  keying by the climb's path are rejected. **Its D5, a loop's blocks each under their own name, is
-  reversed by the next entry.**
+  referrer reaches by typed steps, offsets and calls through the object; an upward name starts at
+  the enclosing instance of the class it landed on, which tells the unit apart; a loop's blocks keep
+  their own names over shared code; nothing resolves a hierarchical name while the design runs.
+  Resolving by name at elaboration, handing over the size, a dispatched base class, a behaviors-only
+  promise, and keying by the climb's path are rejected. **Its D5, a loop's blocks each under their
+  own name, is reversed by the next entry.**
 - [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) -- a
   generate block is a definition nested in the scope holding it, and a block instance is an
   application of it, named from the front end by the function that names a unit: one published class
@@ -335,14 +335,6 @@ the detail lives in the entry itself.
   nested in one another and written in the file that carries the unit's name. A file per class with
   its name shortened by a digest, deciding by comparing published classes, and a non-virtual method
   asking which realization the object is are rejected.
-- [a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)
-  -- a unit is named by the values of the parameters what it declares relies on and compiled to one
-  body per value of those only its code relies on, as a block is. Read it for why a parameter read
-  as a value reads the object's own, why each body is a compilation of its own that states the
-  published classes alike and the link keeps one, why a scope declaring a class has one body, and
-  why a parameter handed to a child's argument is an argument of the scope building it. A name
-  holding the constants settled at each place, a unit of its own for what is published, and every
-  body in one compilation are rejected.
 - [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md)
   -- every instance one identity names lowers alike because the lowering reads nothing of it the
   identity does not hold, not because a check finds the copies alike. Read it for what the lowering
@@ -1056,7 +1048,8 @@ the detail lives in the entry itself.
   offset, a by-name lookup, and free entries over an opaque handle are rejected. **Its D1 to D4 are
   reversed by
   [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
-  where a referrer reads a published member at its offset and calls a published subroutine directly.
+  where a referrer reads a published member at its offset and calls a published subroutine through
+  the object.
 - [publishing-part-of-a-member](publishing-part-of-a-member.md) -- a connection point names a
   projection of a published member, a folded value, or nothing; a signature carries a closed
   selector path and never an expression, an interface publishes its modports, and the referrer
@@ -1129,11 +1122,29 @@ the detail lives in the entry itself.
   on is an argument and keeps its value in the key. Read it for why a module boundary forces a
   prediction the loop record could decline -- the parent names the child without reading the child's
   body -- and for why the prediction is read off the front end's record of which parameters each
-  constant evaluation read rather than written as a list of positions. Every instance handed new
-  values is lowered into its unit, which holds what each built, and a disagreement is a compiler
-  defect; a class the design element holds is one class of the unit, built from each instance's
-  copy. It rejects naming a child by its body's hash, grouping by comparing across the design,
-  declaring every parameter, and keeping a definition whole where its instances lower apart.
+  constant evaluation read rather than written as a list of positions. Every instance of a unit
+  built the same generate blocks, so a unit is lowered from the instance it is named for; a check
+  lowering every instance holds the rest to it, and a disagreement is a compiler defect. It rejects
+  naming a child by its body's hash, grouping by comparing across the design, declaring every
+  parameter, and keeping a definition whole where its instances lower apart. **Its D1 and D2 are
+  revised by
+  [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
+- [a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)
+  -- a unit is named by the values of the parameters what it declares relies on and compiled to one
+  body per value of those only its code relies on, as a block is. Read it for why a parameter read
+  as a value reads the object's own, why each body is a compilation of its own that states the
+  published classes alike and the link keeps one, why a scope declaring a class has one body, and
+  why a parameter handed to a child's argument is an argument of the scope building it. A name
+  holding the constants settled at each place, a unit of its own for what is published, and every
+  body in one compilation are rejected.
+- [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
+  -- which generate blocks an instance built is part of its unit's name, as the branch an
+  `if constexpr` keeps is part of a C++ instantiation: an alternative not selected is not
+  elaborated, so a body holds what its own instances built and no other's, and is lowered from one
+  instance. Read it for why the direction changed -- a body holding every block any instance built,
+  and then each block as an artifact of its own chosen by data the design root states, were both
+  held against rustc and C++ and went beyond them -- for what it cost on nineteen real designs, and
+  for why a value deciding what a child builds names the scope handing it, as `Leaf<i>` does.
 - [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
   vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
   positions a connection joins -- is stated as the select the source wrote, so constructions
@@ -1154,7 +1165,8 @@ the detail lives in the entry itself.
   speed from the argument is there too, as is what a scope's construction receives: one entry for
   every class, because the constructing site may hold only the definition -- except a unit's own
   entry, which takes its values typed, since a parent works out that prototype from the child's
-  instantiation.
+  instantiation. **Its D2, blocks of one name taken into one body, is narrowed to one instance by
+  [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
 - [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
   -- the entry above completed for the commonest reason a loop's blocks differ, which is a
   conditional written inside it: the construct holds the conditionals the source wrote, nested as
@@ -1168,7 +1180,9 @@ the detail lives in the entry itself.
   nothing, which is true outside a loop and false inside one. **Its rejection of one member covering
   every alternative is reversed by
   [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
-  where every generate construct holds one entry a step views as the block it names.
+  where every generate construct holds one entry a step views as the block it names. **What a unit
+  holds of a conditional outside a loop is revised by
+  [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
 - [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) -- the rule both
   entries above turned out to be cases of. The front end evaluates whatever it can, so an already
   computed answer sits beside nearly every expression, and taking one decides where that value

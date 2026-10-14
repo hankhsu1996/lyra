@@ -20,10 +20,12 @@ at compile time rather than held by the definition.
 **D1 to D4 are reversed by
 [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md).** The
 published part of a scope holds the published members first, in the order the publication states, so
-a referrer reads a member at its offset and calls a published subroutine directly through a
-non-virtual forwarding method; nothing is dispatched. This entry's requirement -- a change to what a
-unit keeps to itself moves no referrer -- still holds, through the realization extending the
-published part. D5, the element's own entry making the object, stands.
+a referrer reads a member at its offset and calls a published subroutine through a virtual method
+the realization overrides (revised by
+[a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5). This
+entry's requirement -- a change to what a unit keeps to itself moves no referrer -- still holds,
+through the realization extending the published part. D5, the element's own entry making the object,
+stands.
 
 ## Why this decision matters
 

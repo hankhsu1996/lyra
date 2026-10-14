@@ -33,11 +33,12 @@ lowers to the same thing, because the lowering reads nothing of it that the iden
    those opportunistic answers differ between them. Lowering one of them for both is right only if
    the lowering never reads those answers.
 3. The standard fixes an operation's width and signedness (LRM 11.6.1, 11.8.1) and an unpacked
-   result's element count (11.4.11, 7.4.5), never the range of an operation's result; it lists a
-   procedure's implicit sensitivity as the longest static prefixes the text reads (9.2.2.2.1,
-   11.5.3), with no exception for a branch a constant decides or a select past its value's end; and
-   it defines a select past its value's end by its value, whether its index is constant or not
-   (11.5.1, 7.4.5).
+   result's element count (11.4.11, 7.4.5), never the range of an operation's result; an unbased
+   unsized literal is as wide as its context and sets every bit (5.7.1), so it has no range either,
+   and the front end gives it its context's type whole; it lists a procedure's implicit sensitivity
+   as the longest static prefixes the text reads (9.2.2.2.1, 11.5.3), with no exception for a branch
+   a constant decides or a select past its value's end; and it defines a select past its value's end
+   by its value, whether its index is constant or not (11.5.1, 7.4.5).
 4. A reduction of the field: rustc shrank an instance's identity to the generic parameters a body
    uses by analysing the body, and removed it (rust#133883) because that analysis could not be kept
    right; what replaces it keys code by the layout of its data and passes the rest as a hidden
@@ -52,14 +53,15 @@ a fact, and a constant the language requires, each where the front end recorded 
 identity holds the values of the parameters so recorded. Everything else it needs it works out from
 those.
 
-**D2. What an operation yields is typed by its width, its signedness and its element count, numbered
-from zero.** That covers an operator, a conversion, an assignment, a part-select, a concatenation
-and its kin, and a system subroutine's result. A name, a member, an element, a user subroutine's
-result and a pattern keep the type their declaration states, since a select or a key is read against
-its range. One function decides which an expression is, and nothing in the lowering interns an
-expression's front-end type past it. A query (LRM 20.6.1, 20.7) is not such a reader: it reads the
-type the front end settled for its operand, which the front end recorded where the query is bound,
-so one expression has one answer wherever a query on it stands.
+**D2. What has no range of its own is typed by its width, its signedness and its element count,
+numbered from zero.** That covers an operator, a conversion, an assignment, a part-select, a
+concatenation and its kin, a system subroutine's result, and an unbased unsized literal, which takes
+its context's type even where that context is a part-select an index places. A name, a member, an
+element, a user subroutine's result and a pattern keep the type their declaration states, since a
+select or a key is read against its range. One function decides which an expression is, and nothing
+in the lowering interns an expression's front-end type past it. A query (LRM 20.6.1, 20.7) is not
+such a reader: it reads the type the front end settled for its operand, which the front end recorded
+where the query is bound, so one expression has one answer wherever a query on it stands.
 
 **D3. What a node reads and writes is collected from its text.** Each name is marked read or written
 by where it stands, and states the longest static prefix the source wrote. Nothing is split into bit

@@ -23,8 +23,7 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
-#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
-#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -128,14 +127,12 @@ class StructuralScopeLowerer {
   StructuralScopeLowerer(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
       const hir::StructuralScope& hir_scope, const hir::ScopeLayout& layout,
-      DesignNamespaces namespaces = {},
-      std::optional<DesignInstantiations> instantiations = std::nullopt)
+      std::optional<DesignRootInputs> design_root = std::nullopt)
       : owner_(&unit_lowerer),
         parent_(parent),
         hir_scope_(&hir_scope),
         layout_(&layout),
-        namespaces_(std::move(namespaces)),
-        instantiations_(std::move(instantiations)) {
+        design_root_(std::move(design_root)) {
   }
 
   // The lowering of `hir_scope`, a scope of the design hierarchy laid out in
@@ -145,8 +142,7 @@ class StructuralScopeLowerer {
   [[nodiscard]] static auto ForScope(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
       const hir::StructuralScope& hir_scope, const hir::ScopeLayout& layout,
-      DesignNamespaces namespaces = {},
-      std::optional<DesignInstantiations> instantiations = std::nullopt)
+      std::optional<DesignRootInputs> design_root = std::nullopt)
       -> std::unique_ptr<StructuralScopeLowerer>;
 
   // Mints this class's identity, builds its structural shape, publishes the
@@ -502,13 +498,10 @@ class StructuralScopeLowerer {
   const StructuralScopeLowerer* parent_;
   const hir::StructuralScope* hir_scope_;
   const hir::ScopeLayout* layout_;
-  // Non-empty only on the design root's own scope, the sole scope whose
-  // elaboration spans the whole design. Every source unit's scope and every
-  // nested scope leaves it empty.
-  DesignNamespaces namespaces_;
-  // Present only on the design root's own scope, which states every unit's
-  // construction table as constants of its class.
-  std::optional<DesignInstantiations> instantiations_;
+  // Present only on the design root's own scope, the sole scope whose
+  // elaboration spans the whole design: it brings up every namespace and
+  // states every body's construction table as constants of its class.
+  std::optional<DesignRootInputs> design_root_;
   ConstructionTableSource construction_table_ = ConstructionTableSupplied{};
   base::Translation<hir::StructuralDataObjectId, mir::ClassFieldTarget>
       data_object_fields_;

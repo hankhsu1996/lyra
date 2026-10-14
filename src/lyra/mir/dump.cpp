@@ -791,10 +791,10 @@ class MirDumper {
                   "FunctionRef owner=Class[{}] body=Callable[{}]",
                   r.body.owner.value, r.body.slot.value);
             },
-            [](const ExternalUnitMintedEntryRef& r) -> std::string {
+            [](const ExternalObjectEntryRef& r) -> std::string {
               return std::format(
-                  "ExternalUnitMintedEntryRef external={} body={}::{}",
-                  r.unit_name, r.body_name, FormatMintedEntry(r.entry));
+                  "ExternalObjectEntryRef external={} body={}", r.unit_name,
+                  r.body_name);
             }},
         target);
   }

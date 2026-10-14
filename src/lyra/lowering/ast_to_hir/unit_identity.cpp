@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <format>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -421,6 +422,13 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
             },
             [](const BoundToCell& v) {
               return std::format("<cell {}>", v.cell);
+            },
+            [](const BlocksBuilt& v) {
+              std::string built = "<built";
+              for (const std::string& block : v.blocks) {
+                built += std::format(" {}:{}", block.size(), block);
+              }
+              return built + ">";
             }},
         input.kind);
     bytes += ';';
@@ -431,7 +439,7 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
 // Where a name that left an instance lands, as one input to that instance's
 // key: the class of the scope it lands in, or where that scope stands relative
 // to an instance whose name is being worked out.
-auto ResolveBitRange(
+auto LandingOf(
     const slang::ast::Scope& scope, const SpecializationPolicy& policy)
     -> SpecializationInputKind {
   support::DefPath blocks;
@@ -477,6 +485,103 @@ auto OverrideInput(
                 .kind = BoundToCell{.cell = CellName(*chosen.cell)}};
           }},
       effect);
+}
+
+// The generate blocks one instance built, stated twice: once as the classes
+// they are objects of, which is what the instance declares, and once with
+// which body of its class each is as well, which is what its code is.
+struct BlocksOfAnInstance {
+  BlocksBuilt classes;
+  BlocksBuilt bodies;
+};
+
+// The blocks `scope` built below itself, each named from the instance down by
+// the steps reaching it. An instance it holds is not crossed: what that
+// instance built is that instance's own.
+void CollectBlocksBuilt(
+    const slang::ast::Scope& scope, const std::string& class_prefix,
+    const std::string& body_prefix, const SpecializationPolicy& policy,
+    BlocksOfAnInstance& out) {
+  struct Named {
+    const slang::ast::GenerateBlockSymbol* block;
+    std::string as_class;
+    std::string as_body;
+  };
+  const auto name = [&](const slang::ast::GenerateBlockSymbol& block) {
+    const support::GenerateBlockStep step = policy.BlockStepOf(block);
+    const std::optional<std::uint64_t> body = policy.BodyArgumentsOf(block);
+    // A label may be an escaped identifier holding any character (LRM 5.6.1),
+    // so a step is written the way every other path in a key is.
+    const std::string at =
+        DefPathIdentity(support::Extended(support::DefPath{}, step));
+    std::string as_class = class_prefix + at;
+    std::string as_body =
+        body.has_value() ? std::format("{}{}@{:016x};", body_prefix, at, *body)
+                         : body_prefix + at;
+    return Named{
+        .block = &block,
+        .as_class = std::move(as_class),
+        .as_body = std::move(as_body)};
+  };
+  const auto take = [&](const Named& named, const std::string& as_class,
+                        const std::string& as_body) {
+    out.classes.blocks.push_back(as_class);
+    out.bodies.blocks.push_back(as_body);
+    CollectBlocksBuilt(
+        *named.block, named.as_class, named.as_body, policy, out);
+  };
+  for (const slang::ast::Symbol& member : scope.members()) {
+    if (const auto* block = member.as_if<slang::ast::GenerateBlockSymbol>()) {
+      if (block->isUninstantiated) continue;
+      const Named named = name(*block);
+      take(named, named.as_class, named.as_body);
+      continue;
+    }
+    const auto* loop = member.as_if<slang::ast::GenerateBlockArraySymbol>();
+    if (loop == nullptr) continue;
+    std::vector<Named> blocks;
+    for (const slang::ast::GenerateBlockSymbol* entry : loop->entries) {
+      blocks.push_back(name(*entry));
+    }
+    // Where every block is of one kind, the construction builds that kind at
+    // every index it counts out, and how many it counted is no part of what
+    // is compiled; where they are of several, which stands at each index is.
+    const auto of_several = [&](auto kind) {
+      return std::ranges::any_of(blocks, [&](const Named& named) {
+        return kind(named) != kind(blocks.front());
+      });
+    };
+    const bool classes_differ =
+        of_several([](const Named& named) { return named.as_class; });
+    const bool bodies_differ =
+        of_several([](const Named& named) { return named.as_body; });
+    for (const Named& named : blocks) {
+      const std::string at = std::format("[{}]", LoopIndexOf(*named.block));
+      take(
+          named, classes_differ ? named.as_class + at : named.as_class,
+          bodies_differ ? named.as_body + at : named.as_body);
+    }
+  }
+}
+
+// What `inst` built, read off the body the instance is read through. A
+// top-level instance is the only one of its unit and every value it is given
+// is in the name already, so what it built follows from the rest and enters
+// no name.
+auto BlocksBuiltBy(
+    const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)
+    -> BlocksOfAnInstance {
+  BlocksOfAnInstance built;
+  if (inst.isTopLevel()) return built;
+  const slang::ast::InstanceBodySymbol* body = &inst.body;
+  if (!policy.HasBodyOfItsOwn(inst)) body = inst.getCanonicalBody();
+  CollectBlocksBuilt(*body, "", "", policy, built);
+  for (BlocksBuilt* list : {&built.classes, &built.bodies}) {
+    std::ranges::sort(list->blocks);
+    const auto repeated = std::ranges::unique(list->blocks);
+    list->blocks.erase(repeated.begin(), repeated.end());
+  }
+  return built;
 }
 
 }  // namespace
@@ -580,17 +685,24 @@ auto SpecializationKeyOf(
     key.inputs.push_back(
         SpecializationInput{
             .name = std::format("^{}", written),
-            .kind = ResolveBitRange(*context.climbs[written].scope, policy)});
+            .kind = LandingOf(*context.climbs[written].scope, policy)});
   }
   for (const NameLandingBelow& name : context.names_below) {
     key.inputs.push_back(
         SpecializationInput{
             .name = std::format("{}.^{}", name.path, name.written),
-            .kind = ResolveBitRange(*name.scope, policy)});
+            .kind = LandingOf(*name.scope, policy)});
   }
   for (const OverriddenBelow& overridden : context.overridden_below) {
     key.inputs.push_back(
         OverrideInput(overridden.path, overridden.effect, policy));
+  }
+  // What a block declares is part of what the instance declares, so the
+  // classes of the blocks it built name the unit.
+  if (BlocksBuilt built = BlocksBuiltBy(inst, policy).classes;
+      !built.blocks.empty()) {
+    key.inputs.push_back(
+        SpecializationInput{.name = "<generate>", .kind = std::move(built)});
   }
   policy.LeaveNaming();
   return key;
@@ -726,6 +838,14 @@ auto SpecializationPolicy::BodyArgumentsOf(
     if (IsUsedInBody(inst, *supplied)) {
       key.inputs.push_back(ParameterInput(*supplied, *this));
     }
+  }
+  // Which body each block built is, where that says more than the classes the
+  // unit's name already holds.
+  if (BlocksOfAnInstance built = BlocksBuiltBy(inst, *this);
+      built.bodies != built.classes) {
+    key.inputs.push_back(
+        SpecializationInput{
+            .name = "<generate>", .kind = std::move(built.bodies)});
   }
   return ArgumentsDigest(key);
 }

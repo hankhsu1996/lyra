@@ -24,8 +24,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
-#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
-#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -132,10 +131,9 @@ class UnitLowerer {
   // 10.5). Which namespaces those are is read off the signatures the root
   // consumes and passed in; the lowering turns each into cross-unit calls, so
   // this input stays at the design-root boundary and never reaches a source
-  // unit's lowering. So does `instantiations`, from which the root states every
-  // unit's construction table, its own among them.
-  auto RunDesignRoot(
-      DesignNamespaces namespaces, DesignInstantiations instantiations)
+  // unit's lowering. So do the instantiations, from which the root states
+  // every body's construction table, its own among them.
+  auto RunDesignRoot(DesignRootInputs design_root)
       -> diag::Result<mir::CompilationUnit>;
 
   // Lowers a unit that roots no object -- a package (LRM 26) or the `$unit`
@@ -439,14 +437,12 @@ class UnitLowerer {
 
  private:
   // Lowers a scope whose root is an object type into the unit's top class,
-  // which the unit then names as its root. The namespace list is empty for a
-  // source module and names every namespace of the design for the design root
-  // (LRM 26.2 / 10.5), whose Initialize phase turns each into a cross-unit
-  // install and initialize call; the instantiations are present for the design
-  // root alone, which states every construction table.
-  auto PopulateModuleRoot(
-      DesignNamespaces namespaces,
-      std::optional<DesignInstantiations> instantiations) -> diag::Result<void>;
+  // which the unit then names as its root. `design_root` is present for the
+  // design root alone, whose Initialize phase turns each namespace of the
+  // design into a cross-unit install and initialize call (LRM 26.2 / 10.5) and
+  // which states every construction table.
+  auto PopulateModuleRoot(std::optional<DesignRootInputs> design_root)
+      -> diag::Result<void>;
 
   // Everything one class declaration can be named by before it settles: its
   // own identity, the object type that names it, and one identity per method a

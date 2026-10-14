@@ -12,9 +12,9 @@
 #include <slang/text/SourceManager.h>
 
 #include "lyra/base/memory_watch.hpp"
+#include "lyra/base/stack_thread.hpp"
 #include "lyra/cli/command_line.hpp"
 #include "lyra/cli/commands.hpp"
-#include "lyra/compiler/stack.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
@@ -137,8 +137,7 @@ auto main(int argc, char** argv) -> int {
   try {
     lyra::driver::EndOnSignal();
     int exit_code = lyra::cli::kCompilerFailureExit;
-    lyra::compiler::StackThread command(
-        [&] { exit_code = RunLyra(argc, argv); });
+    lyra::base::StackThread command([&] { exit_code = RunLyra(argc, argv); });
     command.Join();
     return exit_code;
   } catch (const std::exception& failure) {

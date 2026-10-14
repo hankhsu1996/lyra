@@ -1770,13 +1770,13 @@ enough to warrant its own focused review.
       parameters are gone, and no consumer asks what kind of function it is looking at.
 
 - [x] R117 -- The semantic layer states the loop generate the source wrote, with the bodies its
-      blocks are built from and the values of its index each one stands at. Which body a block is is
-      named before any body lowers, from its text and from whether what the block declares or its
-      code uses its index, so blocks of one name are one body and nothing is decided by comparing
-      lowered scopes. A block that uses its index nowhere is the one body every index builds; a
-      conditional inside the loop is held as the source nested it and run against the index by the
-      construction. Why the earlier shape, which compared every lowered block, could not be finished
-      is in `one-body-built-at-every-index`.
+      blocks are built from and, where its blocks are several bodies, the values of its index each
+      one stands at. Which body a block is is named before any body lowers, from its text and from
+      whether what the block declares or its code uses its index, so blocks of one name are one body
+      and nothing is decided by comparing lowered scopes. A block that uses its index nowhere is the
+      one body every index builds; a conditional inside the loop is held as the source nested it and
+      run against the index by the construction. Why the earlier shape, which compared every lowered
+      block, could not be finished is in `one-body-built-at-every-index`.
 
 - [ ] R119 -- The positions where this compiler still settles an elaboration-time value into the
       artifact, rather than supplying it to the artifact. Each is a place the front end had an
@@ -3011,19 +3011,13 @@ enough to warrant its own focused review.
       about fifty times faster. Target: a concatenation states all its operands and writes each into
       its answer once. Not blocked.
 
-- [ ] R219 -- One value, a unit's name, both says which unit a parent means and decides which
-      instances share one compiled artifact, where the incremental-build contract makes those two
-      values: a key for what is computed and a fingerprint for whether it came out the same. The
-      name has to exist before any unit is lowered, since a parent writes it, so which instances
-      will come out alike is predicted from the source before lowering and then checked by lowering
-      them. The prediction is now read off the front end's record of what each constant evaluation
-      read, with no fall back behind it: a miss is reported as a compiler bug. What is left is the
-      prediction itself. High priority. Target: a parent names a child by what its instantiation
-      states, every value included, which needs no reading of the child's body; each distinct such
-      key is lowered with every parameter a value its object is built with; and keys whose lowered
-      forms are the same share everything after. No parameter is classified beforehand. First to
-      find out: where emitted code and what a unit publishes take the name for the artifact. Not
-      blocked.
+- [x] R219 -- A unit's name says which unit a parent means, and it is decided before any unit
+      lowers: from its definition, the values its declarations and code rely on, and the generate
+      blocks it built, read off the front end's record, with a miss reported as a compiler bug.
+      Whether a result is reused is a second value, the digest of what its action read -- an emitted
+      module's text, a C++ file and what it includes, the objects a link reads -- so a result that
+      comes out the same however it was reached is reused, and nothing is shared by comparing
+      lowered forms.
 
 - [ ] R220 -- On the execution backend, what a continuous assignment writes to part of a forced
       variable through a reference to the whole of it is kept nowhere, so the release does not show
@@ -3130,11 +3124,6 @@ source, or not yet tried.
       parameter read as a value reads what the instance was built with, and a scope that declares a
       class has one body.
 
-- [ ] R234 -- A construction table belongs to a body, so a scope that hands a child a value fixing
-      only the child's code is itself compiled once per value, though its own code is the same for
-      every value: which child body its construction builds is all that differs. Target: the design
-      root states a table per instance it builds rather than per body, and such a scope is one body.
-
 - [ ] R233 -- Whether a constant the front end evaluated belongs to what a scope declares or to what
       its code runs is told only by where the evaluation's expression sits, because the front end
       records the scope it evaluated in and not the declaration it evaluated for. A scope does not
@@ -3143,6 +3132,13 @@ source, or not yet tried.
       variable whose width a loop's index or a parameter fixes is counted as declared: its block or
       unit is a class of its own per value where a realization would do. Target: the front end
       records, with each evaluation, the declaration it was made for.
+
+- [ ] R235 -- Within one instance, an ordinary build lowers every block of a loop and takes the
+      blocks of one name into one body by holding what they lowered to equal and joining the nested
+      alternatives each built, so lowering a loop costs every block it counts out and an ordinary
+      build compares. Which blocks of one name built which nested alternatives is already in the
+      name, so a block per distinct set of alternatives is all the body needs. Target: the body is
+      lowered from one block per such set, and nothing in an ordinary build is held equal.
 
 ## Out of Scope
 

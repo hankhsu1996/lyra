@@ -42,8 +42,10 @@ class LowerCompilationFacts {
 
 // A top-level block is an auto-promoted, uninstantiated module, named three
 // times because the names answer different questions: the first two coincide
-// only when the identifier needs no escaping, the first and the last only when
-// no parameter decides which unit it is.
+// only when the identifier needs no escaping, the first and the unit only when
+// no parameter decides which unit it is. The body it is compiled to is named
+// apart, as every instance's is, though a top is the only instance of its unit
+// and every value it is given is in the unit's name.
 struct TopLevelUnit {
   // What the design's hierarchy shows for this top. Nothing instantiates a
   // top, so it stands under its own module identifier (LRM 23.3), and that is
@@ -52,9 +54,10 @@ struct TopLevelUnit {
   // That identifier as a hierarchical name writes it (LRM 23.6), which is what
   // the top reports as its own name.
   std::string name_in_a_path;
-  // The compiled unit it is an instance of. One module compiles to one unit
-  // per specialization, so this is the artifact's name.
+  // The compiled unit it is an instance of, which is what its class is named
+  // by, and the body of that unit it is compiled to, which is what is made.
   std::string unit_name;
+  std::string body_name;
 };
 
 // The design once every unit has declared itself and before any unit's bodies
@@ -93,16 +96,14 @@ class DeclaredDesign {
   // module declaring either is a design element and not a design, and is
   // reported.
   //
-  // Instances share one unit where they agree on what the language fixes in
-  // it, and the lowering reads a value only through that or as one the object
-  // is built with, so nothing is compared. Instances handed different values
-  // may build different blocks, since those values decide which alternative of
-  // a conditional generate stands and how many blocks a loop counts out (LRM
-  // 27.4, 27.5), so the unit is lowered from each of them and holds what each
-  // built. `bodies_read` says which instances are read through a body of their
-  // own; where it is every instance, each is lowered into its unit, which is
-  // where one that lowers to anything else is found -- this compiler's defect,
-  // thrown as one.
+  // Instances share one body where they agree on its name: what the language
+  // fixes in the unit, the generate blocks each built (LRM 27.4, 27.5), and the
+  // values its code uses. The lowering reads a value only through that name or
+  // as one the object is built with, so a body is lowered from the one
+  // instance it is named for and nothing is compared. `bodies_read` says which
+  // instances are read through a body of their own; where it is every
+  // instance, each other instance of a body is lowered too and has to come out
+  // the same, and one that does not is this compiler's defect, thrown as one.
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
       support::AssertionPolicy assertion_policy,

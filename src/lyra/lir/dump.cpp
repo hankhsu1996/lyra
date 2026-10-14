@@ -215,6 +215,9 @@ class LirDumper {
             [&](const ConstantFunction& c) {
               return std::format("&{}", unit_->functions.Get(c.function).name);
             },
+            [](const ConstantExternalFunction& c) {
+              return std::format("&{}", c.symbol);
+            },
             [](const ConstantAddress& c) {
               return std::format("&{}", c.symbol);
             },

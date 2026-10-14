@@ -101,12 +101,12 @@ loop's block names the loop and the value its index stood at, as the source does
 loop's entry answers which of the blocks the object built that is, and the block is viewed as its
 published class; a step into a block that stands alone or that a conditional chose names the block
 by its label, which needs no select (LRM 27.5), and views the construct's entry as that block's
-class. A leaf is a published member, a published disable target, or a direct call to a published
-subroutine. A construction of a class another instance declares, and a call of a method of that
-class itself, are handed that instance by the same kind of route. That route starts where the name
-the class's type came through landed, or, for a type handed down by a parameter, at the enclosing
-instance it belongs to -- never at whichever landing happens to hold the instance, which differs
-between instances of one unit (fact 7). A name the scope did not publish is refused where it
+class. A leaf is a published member, a published disable target, or a call through the object to a
+published subroutine. A construction of a class another instance declares, and a call of a method of
+that class itself, are handed that instance by the same kind of route. That route starts where the
+name the class's type came through landed, or, for a type handed down by a parameter, at the
+enclosing instance it belongs to -- never at whichever landing happens to hold the instance, which
+differs between instances of one unit (fact 7). A name the scope did not publish is refused where it
 compiles.
 
 **D4. An upward name starts at the enclosing instance of the class the front end's search landed on,
@@ -154,9 +154,9 @@ and the runtime has no by-name child search. A scope keeps its hierarchy segment
   other's headers, not a cycle in either stage. D3 and D4 are reversed, and so is D5's second leaf,
   a disable target the scope answers for by name.
 - [a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md) D1 to D4 are
-  reversed: a referrer reads a member at its offset and calls a subroutine directly. Its requirement
-  -- a change to what a unit keeps to itself moves no referrer -- holds through D2 here, and its D5,
-  the element's own entry making the object, stands.
+  reversed: a referrer reads a member at its offset and calls a published subroutine. Its
+  requirement -- a change to what a unit keeps to itself moves no referrer -- holds through D2 here,
+  and its D5, the element's own entry making the object, stands.
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) D2, a segment past the layout
   answered by name, is reversed by D3. Its other decisions stand.
 - [structural-access-on-an-opaque-object](structural-access-on-an-opaque-object.md) and

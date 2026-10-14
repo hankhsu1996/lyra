@@ -626,16 +626,15 @@ struct FunctionRef {
   CallableTarget body;
 };
 
-// A body of another unit that answers to no name, named as the code it is --
-// the peer of `ExternalUnitMintedEntryTarget`, which calls one. An entry the
-// unit makes up makes an object of one body of it, so it names the unit and
-// the body. What it takes is not this unit's to know, so `Expr::type` is the
-// code address with its prototype erased, and whatever calls it restores the
-// prototype it read.
-struct ExternalUnitMintedEntryRef {
+// The entry that makes an object of one body of another unit, named as the
+// code it is, as `FunctionRef` names a body of this unit. The entry is one the
+// unit makes up and answers to no name, and it makes an object of one body, so
+// it is named by the unit and the body. `Expr::type` is the machine function
+// type the unit published its entry with; holding it where any unit's entry
+// may stand erases that by a conversion of its own.
+struct ExternalObjectEntryRef {
   std::string unit_name;
   std::string body_name;
-  MintedEntry entry;
 };
 
 // Which declared thing a reference names. The alternatives differ in the table
@@ -647,7 +646,7 @@ using ReferenceTarget = std::variant<
     LocalRef, DefinitionRef, EnumTableRef, IntegralConstantRef,
     StaticPropertyRef, StaticVariableRef, ExternalUnitVariableRef,
     ExternalStaticPropertyRef, ClassConstantRef, FunctionRef,
-    ExternalUnitMintedEntryRef>;
+    ExternalObjectEntryRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to
 // it stores there, and taking its address yields a pointer to it -- one node

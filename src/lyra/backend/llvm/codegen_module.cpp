@@ -145,7 +145,7 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   return EmittedModule{std::move(context_), std::move(module_)};
 }
 
-// A definition several artifacts write is one the session keeps one of, which
+// A definition several artifacts write is one the link keeps one of, which
 // is what every target spells as a weak definition; one this artifact owns is
 // written once and a repeat of it is a program that does not link.
 auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes {
@@ -160,23 +160,49 @@ auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes {
   throw InternalError("llvm codegen: unknown linkage");
 }
 
-auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
-  const lir::Function& fn = unit_->functions.Get(id);
-  std::vector<llvm::Type*> params;
-  params.reserve(fn.params.size());
-  for (const lir::ValueId param : fn.params) {
-    params.push_back(types_.Map(fn.values.Get(param).type));
+auto CodeGenModule::FunctionTypeOf(
+    std::span<const lir::TypeId> params, lir::TypeId result)
+    -> llvm::FunctionType* {
+  std::vector<llvm::Type*> mapped;
+  mapped.reserve(params.size() + 1);
+  for (const lir::TypeId param : params) {
+    mapped.push_back(types_.Map(param));
   }
   // A body answering a value its caller will own builds that value in storage
   // the caller gives, handed over last, and answers with it -- the shape every
   // runtime entry answering one has.
-  if (unit_->types.Get(fn.result_type).IsOwnedValue()) {
-    params.push_back(types_.Ptr());
+  if (unit_->types.Get(result).IsOwnedValue()) {
+    mapped.push_back(types_.Ptr());
   }
-  auto* fn_ty =
-      llvm::FunctionType::get(types_.Map(fn.result_type), params, false);
+  return llvm::FunctionType::get(types_.Map(result), mapped, false);
+}
+
+auto CodeGenModule::ExternalFunction(
+    const std::string& symbol, lir::TypeId prototype) -> llvm::Function* {
+  const auto* function =
+      unit_->types.Get(prototype).As<lir::MachineFunctionType>();
+  if (function == nullptr) {
+    throw InternalError(
+        "llvm codegen: another module's function is declared at a type that "
+        "is no function's -- please report this as a bug");
+  }
+  return llvm::cast<llvm::Function>(
+      module_
+          ->getOrInsertFunction(
+              symbol, FunctionTypeOf(function->params, function->result))
+          .getCallee());
+}
+
+auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
+  const lir::Function& fn = unit_->functions.Get(id);
+  std::vector<lir::TypeId> params;
+  params.reserve(fn.params.size());
+  for (const lir::ValueId param : fn.params) {
+    params.push_back(fn.values.Get(param).type);
+  }
   llvm::Function* declared = llvm::Function::Create(
-      fn_ty, LinkageOf(fn.linkage), fn.name, module_.get());
+      FunctionTypeOf(params, fn.result_type), LinkageOf(fn.linkage), fn.name,
+      module_.get());
   // A body the runtime calls back through a tuple's table answers a
   // predicate as a C++ `bool`, which is read as a whole byte.
   if (unit_->types.Get(fn.result_type).Is<lir::MachineBoolType>()) {
@@ -540,22 +566,11 @@ auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
             [&](const lir::ConstantFunction& c) -> llvm::Constant* {
               return UnitFunction(c.function);
             },
+            [&](const lir::ConstantExternalFunction& c) -> llvm::Constant* {
+              return ExternalFunction(c.symbol, c.prototype);
+            },
             [&](const lir::ConstantAddress& c) -> llvm::Constant* {
-              switch (c.kind) {
-                case lir::AddressKind::kStorage:
-                  return DefinitionGlobal(c.symbol);
-                // Code another unit emits, held with its prototype erased; the
-                // call that reads it restores the prototype.
-                case lir::AddressKind::kCode:
-                  return llvm::cast<llvm::Constant>(
-                      module_
-                          ->getOrInsertFunction(
-                              c.symbol,
-                              llvm::FunctionType::get(
-                                  llvm::Type::getVoidTy(*context_), {}, false))
-                          .getCallee());
-              }
-              throw InternalError("llvm codegen: unknown address kind");
+              return DefinitionGlobal(c.symbol);
             },
             [&](const lir::ConstantInt&) { return mismatch("a pointer"); },
             [&](const lir::ConstantRecord&) { return mismatch("a pointer"); },
@@ -629,6 +644,9 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
                       [&](const lir::ConstantString&) {
                         not_whole("a string");
                       },
+                      [&](const lir::ConstantExternalFunction&) {
+                        not_whole("another unit's function");
+                      },
                       [&](const lir::ConstantAddress&) {
                         not_whole("an address");
                       },
@@ -653,6 +671,9 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
           [&](const lir::ConstantNull&) { return not_whole("a null"); },
           [&](const lir::ConstantString&) { return not_whole("a string"); },
           [&](const lir::ConstantFunction&) {
+            return not_whole("a function's address");
+          },
+          [&](const lir::ConstantExternalFunction&) {
             return not_whole("a function's address");
           },
           [&](const lir::ConstantAddress&) { return not_whole("an address"); }},

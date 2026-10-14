@@ -1953,7 +1953,7 @@ auto FunctionLowerer::NamesStorage(
             [](const mir::DefinitionRef&) { return false; },
             [](const mir::ClassConstantRef&) { return false; },
             [](const mir::FunctionRef&) { return false; },
-            [](const mir::ExternalUnitMintedEntryRef&) { return false; }},
+            [](const mir::ExternalObjectEntryRef&) { return false; }},
         reference->target);
   }
   return std::holds_alternative<mir::FieldAccessExpr>(expr.data) ||
@@ -2125,7 +2125,7 @@ auto FunctionLowerer::ReferenceValue(
                     unit_->MethodFunction(ref.body.owner, ref.body.slot),
                 .type = unit_->TranslateType(type)}};
           },
-          [&](const mir::ExternalUnitMintedEntryRef&)
+          [&](const mir::ExternalObjectEntryRef&)
               -> diag::Result<lir::Operand> {
             throw InternalError(
                 "mir_to_lir: a body names another unit's entry as a value -- "
@@ -2276,8 +2276,7 @@ auto FunctionLowerer::ReferencePlace(
           [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: a function names no place");
           },
-          [](const mir::ExternalUnitMintedEntryRef&)
-              -> diag::Result<lir::Place> {
+          [](const mir::ExternalObjectEntryRef&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: a function names no place");
           }},
       target);

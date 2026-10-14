@@ -17,6 +17,18 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// The one body two scopes of one name are, or nothing where they are not one.
+// They are one where they differ in nothing but what their own constructions
+// decide, at any depth beneath them, by an expression reading a value the
+// construction is handed (LRM 27.4, 27.5): which alternative of a conditional
+// generate stood, where the body holds every alternative either selected, and
+// which blocks a loop counted out, where the body holds every body either
+// counted one of. Two scopes of one name that are not one are a defect of how
+// the name was worked out, and each caller reports it as one.
+[[nodiscard]] auto OneBodyOf(
+    const hir::StructuralScope& a, const hir::StructuralScope& b)
+    -> std::optional<hir::StructuralScope>;
+
 // One conditional construct as two blocks left it. The alternatives and what
 // selects each are the source's, so both blocks state the same ones in the
 // same order; what differs is which of them each index selected a body for.
@@ -139,8 +151,6 @@ auto MergeGenerates(const hir::Generate& a, const hir::Generate& b)
       a.counting);
 }
 
-}  // namespace
-
 auto OneBodyOf(const hir::StructuralScope& a, const hir::StructuralScope& b)
     -> std::optional<hir::StructuralScope> {
   if (a.published.signature.class_path != b.published.signature.class_path ||
@@ -166,6 +176,28 @@ auto OneBodyOf(const hir::StructuralScope& a, const hir::StructuralScope& b)
   }
   merged.generates = std::move(generates);
   return merged;
+}
+
+}  // namespace
+
+auto WithoutIndicesOfLoopsOfOneBody(hir::StructuralScope scope)
+    -> hir::StructuralScope {
+  base::Registry<hir::Generate, hir::GenerateId> generates;
+  for (const hir::Generate& generate : scope.generates) {
+    hir::Generate stated{.blocks = {}, .counting = generate.counting};
+    if (auto* loop = std::get_if<hir::BlocksRepeat>(&stated.counting);
+        loop != nullptr && loop->bodies.size() == 1) {
+      loop->bodies.front().indices.clear();
+    }
+    for (const hir::GenerateBlock& block : generate.blocks) {
+      stated.blocks.Add(
+          hir::GenerateBlock{
+              .scope = WithoutIndicesOfLoopsOfOneBody(block.scope)});
+    }
+    generates.Add(std::move(stated));
+  }
+  scope.generates = std::move(generates);
+  return scope;
 }
 
 auto LoopBodies::Take(

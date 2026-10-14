@@ -40,7 +40,7 @@
 #include "lyra/lowering/hir_to_mir/continuous_assign.hpp"
 #include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
-#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
@@ -335,6 +335,49 @@ auto ReadInstantiation(
           .type = type});
 }
 
+// The type of a unit's object entry: where the object hangs, its segment and
+// the construction table it is built with, then each value it is handed, as
+// `handed` types them, answering an owning pointer to the object, `made`.
+auto ObjectEntryType(
+    mir::CompilationUnit& unit, std::span<const mir::TypeId> handed,
+    mir::TypeId made) -> mir::TypeId {
+  std::vector<mir::TypeId> params{
+      unit.builtins.scope_ptr, unit.builtins.hierarchy_segment,
+      mir::ConstructionTablePointer(unit.types)};
+  params.insert(params.end(), handed.begin(), handed.end());
+  return unit.types.Intern(
+      mir::Type{mir::MachineFunctionType{
+          .params = std::move(params), .result = made}});
+}
+
+// The type of the object entry of each unit the design root's tables make,
+// as that unit published it: every value it is handed, assigned or not, and an
+// owning pointer to the class it published of its object.
+auto ObjectEntryTypes(
+    UnitLowerer& unit_lowerer,
+    const std::map<std::string, PublishedObjectEntry, std::less<>>& entries)
+    -> std::map<std::string, mir::TypeId, std::less<>> {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  std::map<std::string, mir::TypeId, std::less<>> types;
+  for (const auto& [made, entry] : entries) {
+    std::vector<mir::TypeId> handed;
+    handed.reserve(entry.handed.size());
+    for (const hir::TypeId value : entry.handed) {
+      handed.push_back(
+          AssignedOrNoneOf(unit, unit_lowerer.TranslateType(value)));
+    }
+    const mir::TypeId object = unit.types.Intern(
+        mir::Type{mir::ObjectType{
+            .of = mir::CrossUnitClassRef{
+                .unit_name = made, .class_path = entry.published_class}}});
+    const mir::TypeId owning = unit.types.Intern(
+        mir::Type{mir::PointerType{
+            .pointee = object, .ownership = mir::PointerOwnership::kUnique}});
+    types.emplace(made, ObjectEntryType(unit, handed, owning));
+  }
+  return types;
+}
+
 // What a block of this unit is built with: the table the object building it
 // was handed, since every scope of one object is constructed with the same
 // one, then whatever its construction supplies.
@@ -362,7 +405,7 @@ auto BuildOwnedInstance(
     mir::TypeId owning_pointer_type, mir::TypeId borrowed_pointer_type,
     std::span<const mir::ExprId> indices, std::vector<mir::Expr> arguments)
     -> mir::ExprId {
-  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
   const auto& builtins = unit.builtins;
   const mir::ExprId segment_id = BuildHierarchySegment(
@@ -379,10 +422,9 @@ auto BuildOwnedInstance(
       ReadInstantiation(
           unit, frame, support::BuiltinFn::kInstantiationTable, instantiation,
           table_type)};
-  std::vector<mir::TypeId> prototype{
-      builtins.scope_ptr, builtins.hierarchy_segment, table_type};
+  std::vector<mir::TypeId> handed;
   for (mir::Expr& value : arguments) {
-    prototype.push_back(value.type);
+    handed.push_back(value.type);
     entry_arguments.push_back(block.exprs.Add(std::move(value)));
   }
   const mir::ExprId erased = ReadInstantiation(
@@ -391,10 +433,7 @@ auto BuildOwnedInstance(
   const mir::ExprId entry = block.exprs.Add(
       mir::Expr{
           .data = mir::CastExpr{.operand = erased},
-          .type = unit.types.Intern(
-              mir::Type{mir::MachineFunctionType{
-                  .params = std::move(prototype),
-                  .result = owning_pointer_type}})});
+          .type = ObjectEntryType(unit, handed, owning_pointer_type)});
   const mir::ExprId ctor_call_id = block.exprs.Add(
       mir::Expr{
           .data =
@@ -2272,12 +2311,10 @@ auto StructuralScopeLowerer::RouteEnd(
 auto StructuralScopeLowerer::ForScope(
     UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
     const hir::StructuralScope& hir_scope, const hir::ScopeLayout& layout,
-    DesignNamespaces namespaces,
-    std::optional<DesignInstantiations> instantiations)
+    std::optional<DesignRootInputs> design_root)
     -> std::unique_ptr<StructuralScopeLowerer> {
   auto lowerer = std::make_unique<StructuralScopeLowerer>(
-      unit_lowerer, parent, hir_scope, layout, std::move(namespaces),
-      std::move(instantiations));
+      unit_lowerer, parent, hir_scope, layout, std::move(design_root));
   lowerer->published_class_id_ = unit_lowerer.TakePublishedScopeClass(
       hir_scope.published.signature.class_path);
   lowerer->generate_children_.reserve(hir_scope.generates.size());
@@ -3079,11 +3116,13 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
             .type = void_type});
     initialize_block.AppendStmt(mir::ExprStmt{.expr = call});
   };
-  for (const std::string& unit : namespaces_.units) {
-    call_namespace_unit(unit, mir::MintedEntry::kInstallStorage);
-  }
-  for (const std::string& unit : namespaces_.units) {
-    call_namespace_unit(unit, mir::MintedEntry::kInitializeStorage);
+  if (design_root_.has_value()) {
+    for (const std::string& unit : design_root_->namespaces.units) {
+      call_namespace_unit(unit, mir::MintedEntry::kInstallStorage);
+    }
+    for (const std::string& unit : design_root_->namespaces.units) {
+      call_namespace_unit(unit, mir::MintedEntry::kInitializeStorage);
+    }
   }
 
   // Commit the class of every procedural scope's name node. A name node carries
@@ -3491,12 +3530,14 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       unit, mir_class, std::move(ctor_code), ctor_prefix_local_ids,
       {definition});
 
-  // The design root states every unit's construction table, its own among
+  // The design root states every body's construction table, its own among
   // them, since nothing hands it one.
-  if (instantiations_.has_value()) {
+  if (design_root_.has_value()) {
     construction_table_ = StateConstructionTables(
         unit, class_id_, mir_class,
-        unit_lowerer.ConstructionLayout().Instantiated(), *instantiations_);
+        unit_lowerer.ConstructionLayout().Instantiated(),
+        design_root_->instantiations,
+        ObjectEntryTypes(unit_lowerer, design_root_->object_entries));
   }
   StateScopeDefinition(unit, class_id_, mir_class, exports);
   unit.DefineClass(class_id_, std::move(mir_class));

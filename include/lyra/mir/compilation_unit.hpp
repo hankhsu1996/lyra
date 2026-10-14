@@ -584,17 +584,26 @@ struct CompilationUnit {
   return unit.GetClass(id).path.has_value();
 }
 
-// Whether this class is what a scope of the design hierarchy published -- an
-// instance's class, or a generate block's -- rather than a class the source
-// declared. Such a class is built from the unit's declarations alone, so every
-// body of the unit states it alike, and which body's statement is kept is the
-// link's to choose. A class the source declared reaches the scope declaring it
-// as that scope's body compiled it, and a scope declaring one has one body.
-[[nodiscard]] inline auto IsPublishedScopeClass(
+// Whether every body the unit is compiled to states this definition alike, so
+// that a program holds one of them whichever of the bodies it links: what the
+// unit's declarations alone build, rather than what one body's code adds.
+//
+// Of the classes, that is what a scope of the design hierarchy published -- an
+// instance's class, or a generate block's. A class the source declared reaches
+// the scope declaring it as that scope's body compiled it, and a scope
+// declaring one has one body.
+[[nodiscard]] inline auto IsStatedByEveryBody(
     const CompilationUnit& unit, ClassId id) -> bool {
   const Class& cls = unit.GetClass(id);
   return cls.path.has_value() && cls.base.has_value() &&
          std::holds_alternative<ObjectTreeRootRef>(*cls.base);
+}
+
+// Every structure is: it is a declaration of the unit another unit names
+// (LRM 7.2), and no body's code adds one.
+[[nodiscard]] inline auto IsStatedByEveryBody(const CompilationUnit&, StructId)
+    -> bool {
+  return true;
 }
 
 // The class some unit declares that `cls` extends, where it extends one -- the

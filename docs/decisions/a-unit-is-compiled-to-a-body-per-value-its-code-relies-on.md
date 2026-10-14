@@ -10,7 +10,10 @@ Accepted. Revises
 [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
 D1 and D4, and extends
 [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D5 from a
-block to a unit.
+block to a unit. D3 revised 2026-10-14 by
+[a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
+every body declares what the unit publishes from its own instance, since the generate blocks built
+are part of the unit's name.
 
 ## Requirement
 
@@ -80,15 +83,16 @@ object's own. An argument of a body only is handed too: the body's name already 
 reading the object's own costs nothing and keeps one way of reading a supplied parameter.
 
 **D3. A body is a compilation of its own, and states what the unit publishes alike.** Each body is
-lowered from its own instances into a unit of its own, named by the body's name. The first body of a
-unit is declared from every instance of it and publishes the unit's signature (fact 4); every other
-body is declared from its own instances, and states the unit's published classes it built no scope
-of as the signature has them. The published classes are built from declarations alone, so every body
-states them alike, and the link keeps one of each (fact 7): the execution backend links them weak,
-and the C++ backend defines them inline in the header every body writes alike, which the project
-keeps one copy of. What only a body states -- the classes realizing its scopes, its closures, the
-functions nothing else names -- is named by the body: under its name on the execution backend, and
-in the namespace with no name on the C++ backend.
+lowered from the instance it is named for into a unit of its own, named by the body's name, and
+declares the unit's signature from that instance: which generate blocks were built is part of the
+unit's name
+([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)),
+so every body of a unit built the same ones. The published classes are built from declarations
+alone, so every body states them alike, and the link keeps one of each (fact 7): the execution
+backend links them weak, and the C++ backend defines them inline in the header every body writes
+alike, which the project keeps one copy of. What only a body states -- the classes realizing its
+scopes, its closures, the functions nothing else names -- is named by the body: under its name on
+the execution backend, and in the namespace with no name on the C++ backend.
 
 **D4. A scope declaring a class has one body.** A class reaches the object of the scope declaring it
 as that scope's body compiled it (fact 5), so a parameter the code of a scope that declares a class
@@ -103,7 +107,9 @@ built there is how the scope is built (fact 6).
 
 **D6. The design root makes each instance from the entry of the body it is compiled to.** An
 instantiation states the unit and the body it makes, the construction table it hands on is the
-body's, and the entry making an object of a body is the body's, named under it.
+body's, and the entry making an object of a body is the body's, named under it. Every body's entry
+of a unit is declared with the one prototype the unit published, so a table names it at that type
+and erases it by a conversion it states, as it does an entry of its own.
 
 ## Limits, each with its cause
 
@@ -112,7 +118,8 @@ body's, and the entry making an object of a body is the body's, named under it.
 - Two values a parameter takes that settle every constant alike are two units or two bodies (fact
   2).
 - A scope that hands a child an argument of the child's code only is a body per value, though its
-  own code is one (D5; a construction table is per body, and a table per instance is not built).
+  own code is one (D5; a construction table is per body, as `Mid<P>` naming `Leaf<P>` is one class
+  per `P` in C++).
 - A unit or a block declaring a class is a unit per value its code relies on (D4).
 - Every body compiles the published classes' constructor, destructor and definition again; the link
   keeps one (D3).

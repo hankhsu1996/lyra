@@ -488,7 +488,9 @@ struct SingleBlock {
 // -- what it declares, which is the class it is an object of, and its code,
 // `body_arguments`, which is which body of that class it is -- so blocks
 // standing at different values may be different bodies, and which one stands
-// at a value is what the construction looks up when it builds there.
+// at a value is what the construction looks up when it builds there. A loop of
+// one body has nothing to look up and lists no values: it builds that body at
+// every index it counts out.
 struct BodyBuiltAt {
   StructuralScopeId body;
   std::optional<std::uint64_t> body_arguments;
@@ -642,6 +644,7 @@ struct Generate {
         "hir::LoopBlockScopeOf: a construct that counts out no blocks is "
         "named as a loop");
   }
+  if (repeat->bodies.size() == 1) return repeat->bodies.front().body;
   for (const BodyBuiltAt& built : repeat->bodies) {
     if (std::ranges::binary_search(built.indices, index)) return built.body;
   }

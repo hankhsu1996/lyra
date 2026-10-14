@@ -225,11 +225,11 @@ cc_test(
 )
 
 cc_test(
-    name = "compiler_parallel_test",
-    srcs = ["compiler/parallel_test.cpp"],
+    name = "base_parallel_test",
+    srcs = ["base/parallel_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
-        "//:compiler",
+        "//:base",
         "@googletest//:gtest_main",
     ],
 )

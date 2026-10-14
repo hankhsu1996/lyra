@@ -32,6 +32,8 @@ struct DataPortPart {
   PortDirection direction{};
   TypeId type{};
   ConnectionTarget target;
+
+  auto operator==(const DataPortPart&) const -> bool = default;
 };
 
 // A port part naming a scope rather than carrying data -- an interface port
@@ -41,6 +43,8 @@ struct DataPortPart {
 // must be bound to and how many of them.
 struct InterfacePortPart {
   PublishedMemberId member;
+
+  auto operator==(const InterfacePortPart&) const -> bool = default;
 };
 
 // One point of a port that a connection reaches individually. A port bundling
@@ -65,6 +69,8 @@ struct PortDecl {
   // in the instantiator's, so what crosses is the subroutine that evaluates it.
   // Only an input port declared in the header may have one.
   std::optional<PublishedCallableId> default_value;
+
+  auto operator==(const PortDecl&) const -> bool = default;
 };
 
 // One class of the source language a unit publishes (LRM 26.2 puts a package's
@@ -119,20 +125,30 @@ struct ClassSignature {
   // itself are handed the instance the class belongs to (LRM 6.22), as the
   // class's own declaration states it.
   bool takes_declaring_instance = false;
+
+  auto operator==(const ClassSignature&) const -> bool = default;
 };
 
 // What a design element (LRM 23.2.1) publishes beside its classes, which exists
-// to be instantiated and wired: its ports, the object an instance of it is, and
-// the class of every generate block an instance holds.
+// to be instantiated and wired: its ports, what an instance is handed when it
+// is built, the object an instance of it is, and the class of every generate
+// block an instance holds.
 struct PublishedDesignElement {
   // In declaration order, which is the order a positional connection counts
   // through (LRM 23.3.2.1). A consumer walking a unit's connections walks these
   // parts in step with them rather than searching for each, so the two cannot
   // disagree about which point is which.
   std::vector<PortDecl> ports;
+  // The type of each parameter an instance is handed when it is built (LRM
+  // 23.10), in the order its object entry takes them: what an entry another
+  // unit names is declared with, as a class's constructor states what a
+  // construction of it is entered with.
+  std::vector<TypeId> handed;
   ScopeClassSignature instance_class;
   // However deep (LRM 27), each reached from the scope holding its construct.
   std::vector<ScopeClassSignature> blocks;
+
+  auto operator==(const PublishedDesignElement&) const -> bool = default;
 
   // The class of a scope an instance of this unit is or holds, published under
   // `class_path`, or nothing where the unit published no such scope.
@@ -152,6 +168,8 @@ struct PublishedDesignElement {
 // roots no object, so nothing reaches it through a receiver.
 struct PublishedNamespace {
   std::vector<PublishedCallable> subroutines;
+
+  auto operator==(const PublishedNamespace&) const -> bool = default;
 
   // The subroutine published under `name`, or nothing where the unit published
   // no such name.
@@ -183,6 +201,8 @@ struct UnitSignature {
   // instance.
   std::vector<ClassSignature> classes;
   std::variant<PublishedDesignElement, PublishedNamespace> unit;
+
+  auto operator==(const UnitSignature&) const -> bool = default;
 
   // The class published under `class_path`, or nothing where the unit published
   // no such class.

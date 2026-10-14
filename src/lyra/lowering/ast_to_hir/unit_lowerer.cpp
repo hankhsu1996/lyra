@@ -6,7 +6,6 @@
 #include <format>
 #include <iterator>
 #include <optional>
-#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -90,18 +89,6 @@ auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
   return std::string(home.name);
 }
 
-// The path of the class every scope of `scope`'s tree published, `scope`'s own
-// among them.
-void CollectPublishedClassPaths(
-    const hir::StructuralScope& scope, std::set<support::DefPath>& paths) {
-  paths.insert(scope.published.signature.class_path);
-  for (const hir::Generate& generate : scope.generates) {
-    for (const hir::GenerateBlock& block : generate.blocks) {
-      CollectPublishedClassPaths(block.scope, paths);
-    }
-  }
-}
-
 // `scopes`, then every body of `others` not among them, in order.
 auto WithOthers(
     std::vector<const slang::ast::Scope*> scopes,
@@ -116,31 +103,29 @@ auto WithOthers(
 }  // namespace
 
 UnitLowerer::UnitLowerer(
-    const LoweringFacts& facts, const slang::ast::Symbol& home, Names names,
-    hir::UnitRole role,
-    std::span<const slang::ast::InstanceBodySymbol* const> declared_from,
-    std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from)
+    const LoweringFacts& facts, const slang::ast::Symbol& home,
+    hir::BodyOfUnit names, hir::UnitRole role,
+    std::span<const slang::ast::InstanceBodySymbol* const> checked_against)
     : facts_(facts),
       home_(&home),
       scope_(&ScopeLoweredFor(home)),
-      applications_(WithOthers({scope_}, also_lowered_from)),
-      declared_applications_(WithOthers(applications_, declared_from)),
+      applications_(WithOthers({scope_}, checked_against)),
       lowering_(scope_),
       unit_{std::move(names.unit), std::move(names.body)} {
   unit_.role = role;
   unit_.source_name = SourceNameOf(home);
   unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
   signature_.unit_name = unit_.name;
-  for (const slang::ast::Scope* application : declared_applications_) {
+  for (const slang::ast::Scope* application : applications_) {
     if (application != scope_) {
-      also_declared_from_.insert(&application->asSymbol());
+      checked_bodies_.insert(&application->asSymbol());
     }
   }
 }
 
 auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
   const slang::ast::Symbol& home = UnitHomeOf(decl);
-  return &home == home_ || also_declared_from_.contains(&home);
+  return &home == home_ || checked_bodies_.contains(&home);
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
@@ -149,7 +134,7 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
       "declare unit", [&] { return unit_.name; });
   {
     const profiling::TimeTraceScope step("declare structural identities");
-    for (const slang::ast::Scope* application : declared_applications_) {
+    for (const slang::ast::Scope* application : applications_) {
       DeclareStructuralIdentities(*application, support::DefPath{});
     }
   }
@@ -202,39 +187,26 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     -> diag::Result<hir::CompilationUnit> {
   signatures_ = &signatures;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
-  std::optional<hir::StructuralScope> one_body;
+  auto own = LowerScopeOf(*scope_);
+  if (!own) return std::unexpected(std::move(own.error()));
+  unit_.root_scope = *std::move(own);
+  // Every application holds what the body's name holds, which includes the
+  // blocks it built, and the lowering reads a value only through that name or
+  // as one the object is built with, so every one of them lowers to the same
+  // scope.
   for (const slang::ast::Scope* application : applications_) {
+    if (application == scope_) continue;
     auto built = LowerScopeOf(*application);
     if (!built) return std::unexpected(std::move(built.error()));
-    one_body = one_body.has_value() ? OneBodyOf(*one_body, *built)
-                                    : std::optional{*std::move(built)};
-    // Every application agrees on what the unit's identity holds, and the
-    // lowering reads a value only through that identity or as one the object
-    // is built with, so they differ in nothing but what their constructions
-    // built.
-    if (!one_body.has_value()) {
+    if (!(*built == unit_.root_scope)) {
       throw InternalError(
           std::format(
-              "UnitLowerer::LowerBodies: '{}' is an application of unit '{}' "
-              "and lowers to something the applications before it do not, so "
-              "the lowering read a value the unit's identity does not hold -- "
-              "please report this as a bug",
-              application->asSymbol().getHierarchicalPath(), unit_.name));
-    }
-  }
-  unit_.root_scope = *std::move(one_body);
-  // Every class the unit published of its scopes is stated by this body: the
-  // classes of the scopes its instances built as those scopes published them,
-  // and every other as the unit published it, so the bodies of one unit state
-  // one class each.
-  if (const auto* element = std::get_if<hir::PublishedDesignElement>(
-          &signatures.Instantiated(unit_.name).unit)) {
-    std::set<support::DefPath> built;
-    CollectPublishedClassPaths(unit_.root_scope, built);
-    for (const hir::ScopeClassSignature& block : element->blocks) {
-      if (!built.contains(block.class_path)) {
-        ExternalScopeClassOf(unit_.name, block.class_path);
-      }
+              "UnitLowerer::LowerBodies: '{}' is an application of body '{}' "
+              "and lowers to something else than '{}' does, so the lowering "
+              "read a value the body's name does not hold -- please report "
+              "this as a bug",
+              application->asSymbol().getHierarchicalPath(), unit_.name,
+              scope_->asSymbol().getHierarchicalPath()));
     }
   }
   RequireEveryClassBodyLowered();
@@ -250,14 +222,16 @@ auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
   lowering_ = &application;
   WalkFrame frame;
   StructuralScopeLowerer root(*this, application);
-  return root.Run(frame);
+  auto scope = root.Run(frame);
+  if (!scope) return scope;
+  return WithoutIndicesOfLoopsOfOneBody(*std::move(scope));
 }
 
 auto UnitLowerer::ApplicationDeclaring(const slang::ast::ParameterSymbol& param)
     const -> const slang::ast::Scope& {
   for (const slang::ast::Scope* level = param.getParentScope();
        level != nullptr; level = level->asSymbol().getParentScope()) {
-    if (also_declared_from_.contains(&level->asSymbol())) return *level;
+    if (checked_bodies_.contains(&level->asSymbol())) return *level;
   }
   return *scope_;
 }
