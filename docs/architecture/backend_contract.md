@@ -335,9 +335,9 @@ many copies as fill a replication -- says so once, in its own declaration, and a
 the type on its callee, beside the part a callee names. Each backend then tells the entry the way
 that backend tells a type: one that resolves types where the call is written names the type there,
 and one calling code compiled once for every type hands that code the facts of the type it needs.
-Neither works the type out from the call's own: a write into some bits answers with the place it
-designates, and the entry is called at the type of the bits. The unit's verification refuses a call
-to such an entry that states no type, and a type stated to a callee generic over none. A count or a
+Neither works the type out from the call's own: a write into some bits answers with a reference to
+them, and the entry is called at the type of the bits. The unit's verification refuses a call to
+such an entry that states no type, and a type stated to a callee generic over none. A count or a
 width the type fixes is therefore never an operand, on a read, a write or a reference alike.
 
 An operand that stands for a type survives only where its contents are an input: a value no type

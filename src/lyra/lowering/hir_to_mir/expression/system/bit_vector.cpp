@@ -147,7 +147,7 @@ template <ExprLowerer Lowerer>
 auto LowerUnknownTest(Lowerer& lowerer, WalkFrame frame, hir::ExprId value)
     -> diag::Result<mir::Expr> {
   auto& body = *frame.current_block;
-  auto operand_or = lowerer.LowerExpr(lowerer.HirExprs().Get(value), frame);
+  auto operand_or = lowerer.LowerAsPlace(lowerer.HirExprs().Get(value), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }
@@ -163,8 +163,9 @@ auto LowerBitVectorSystemSubroutineCall(
     Lowerer& lowerer, WalkFrame frame, const hir::CallExpr& call,
     const support::BitVectorSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
-  // Every one of these reads its value first; $countbits (LRM 20.9) follows it
-  // with control bits and the rest take nothing more. None of them elides.
+  // Every one of these asks about its value, handed as it stands;
+  // $countbits (LRM 20.9) follows it with control bits and the rest take
+  // nothing more. None of them elides.
   const std::vector<hir::ExprId> operands = RequiredOperands(call);
 
   AdmittedBitValues admitted = 0;
@@ -196,7 +197,7 @@ auto LowerBitVectorSystemSubroutineCall(
   auto& unit = lowerer.Owner().Unit();
   auto& body = *frame.current_block;
   auto operand_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(operands[0]), frame);
+      lowerer.LowerAsPlace(lowerer.HirExprs().Get(operands[0]), frame);
   if (!operand_or) {
     return std::unexpected(std::move(operand_or.error()));
   }

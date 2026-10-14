@@ -213,6 +213,7 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> Layout {
           [&](const ResolvedType& t) { return handle(t); },
           [&](const OpenWriteType& t) { return handle(t); },
           [&](const DesignationType& t) { return handle(t); },
+          [&](const BitsReferenceType& t) { return handle(t); },
           [&](const ObjectWriteType& t) { return handle(t); },
           [&](const SampledHistoryType& t) { return handle(t); },
           [&](const EvaluationAttemptsType& t) { return handle(t); }});

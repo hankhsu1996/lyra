@@ -270,24 +270,6 @@ concept AssocIndexable = requires(T& t, const K& key) {
   { t.ElementMut(key) };
 };
 
-// SliceableRef: `count` parts in a row starting at a position, written through
-// (LRM 7.4.5 for the elements of an unpacked array). The count is fixed by the
-// type the select produces; the start arrives as a position, which may also
-// name no position at all. `SliceRef` returns a write-through proxy that, on
-// `operator=`, writes the value back into the receiver's storage at the
-// positions that exist. The value form, `Slice`, answers a fixed-size array of
-// that count, a type of its own which the caller names, so no concept probes
-// it.
-//
-// A queue's slice is bounded by two positions that the running program can
-// move (LRM 7.10.1), and a string slices by `Substr(i, j)` (LRM 6.16.8);
-// neither is a fixed count of parts, so neither claims this.
-template <typename T>
-concept SliceableRef =
-    requires(T& t, const Position& start, std::int64_t count) {
-      { t.SliceRef(start, count) };
-    };
-
 // Sortable: in-place ordering family. Conforming containers expose
 // `Sort(F)` / `Rsort(F)` taking a with-clause key closure (LRM 7.12.2) plus
 // the no-closure `Reverse()`. C++ concepts cannot probe templated methods

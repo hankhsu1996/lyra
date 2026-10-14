@@ -366,7 +366,8 @@ auto LowerBuiltinMethodCall(
   auto& block = *frame.current_block;
   // A method that changes the object it acts on takes the place that object
   // stands in, so the change lands where the source named it; one that does not
-  // consumes a value.
+  // is entered on the object where it lies, and reads it there if it takes it
+  // by value.
   std::optional<mir::ExprId> receiver;
   if (b.receiver.has_value()) {
     const hir::Expr& object = hir_exprs.Get(*b.receiver);
@@ -375,7 +376,7 @@ auto LowerBuiltinMethodCall(
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver = PathPlace(lowerer.Owner().Unit(), block, *recv_or);
     } else {
-      auto recv_or = lowerer.LowerExpr(object, frame);
+      auto recv_or = lowerer.LowerAsPlace(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
       receiver = block.exprs.Add(*std::move(recv_or));
     }

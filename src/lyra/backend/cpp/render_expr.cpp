@@ -355,19 +355,24 @@ auto FieldInitValue(
 // aggregate on every evaluation, and every arm of a chain of selections stands
 // in such a block, so wrapping each would nest the text a lambda per link.
 void RenderBlockExpr(
-    const ScopeView& view, const mir::BlockExpr& block, Precedence at_least,
-    TargetText& out) {
+    const ScopeView& view, const mir::BlockExpr& block, mir::TypeId type,
+    Precedence at_least, TargetText& out) {
   const ScopeView body_view =
       view.WithBlock(view.Block().child_scopes.Get(block.scope));
   if (body_view.Block().root_stmts.empty()) {
     Write(body_view, out, Operand{.expr = block.value, .at_least = at_least});
     return;
   }
-  out += "[&] ";
+  // The lambda answers the block's own type, so a block yielding a reference
+  // answers the reference rather than a copy of what it refers to. A block
+  // yielding nothing ends with its last step, which C++ may give a value of
+  // its own that a lambda answering nothing cannot return.
+  const bool yields_nothing = type == view.Unit().builtins.void_type;
+  Write(out, "[&]() -> ", CppType(view.Unit(), type), " ");
   WriteBody(out, [&] {
     RenderBlockStatements(body_view, out);
     out.OpenLine();
-    Write(body_view, out, "return ", block.value, ";\n");
+    Write(body_view, out, yields_nothing ? "" : "return ", block.value, ";\n");
   });
   out += "()";
 }
@@ -585,7 +590,7 @@ void RenderExpr(
             RenderConditionalExpr(view, c, at_least, out);
           },
           [&](const mir::BlockExpr& b) {
-            RenderBlockExpr(view, b, at_least, out);
+            RenderBlockExpr(view, b, expr.type, at_least, out);
           },
           [&](const mir::AssignExpr& a) { RenderAssignExpr(view, a, out); },
           [&](const mir::CallExpr& call) {

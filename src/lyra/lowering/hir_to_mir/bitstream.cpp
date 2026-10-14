@@ -92,7 +92,7 @@ auto BuildToBitstream(
       mir::PackedVectorOf(unit.types, shape->width, shape->state_kind);
   // A packed value's stream is its own bits, read unsigned (LRM 6.24.3).
   if (unit.types.Get(block.exprs.Get(value_id).type).IsIntegral()) {
-    return ConvertToType(unit, block, value_id, stream);
+    return AtType(unit, block, value_id, stream);
   }
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kToBitstream, value_id, {}, stream);
@@ -151,7 +151,7 @@ auto BuildFromBitstream(
   }
   // The destination takes its stream in the state domain its own parts settle,
   // which a stream cast from a value of the other domain is brought to.
-  const mir::ExprId stream_id = ConvertToType(
+  const mir::ExprId stream_id = AtType(
       unit, block, filled,
       mir::PackedVectorOf(unit.types, target->width, target->state_kind));
   return BuildValueOperation(

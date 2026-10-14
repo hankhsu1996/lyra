@@ -32,22 +32,32 @@ enum class BuiltinFn : std::uint16_t {
   // the source is read.
   kElement,
   kElementMut,
-  // LRM 7.4 / 7.10 / 11.5 parts of a value that are no storage of their own.
-  // The plain form answers with the part's value; the `Ref` form answers with
-  // the part itself, so what stands there may be written.
+  // LRM 7.4 / 7.10 / 11.5 several parts in a row of a value, read as a value.
   //
-  // Several parts in a row are three operations, each with operands of its
-  // own. Bits of an integral value are named by where they start, and are as
-  // many as the type they are read at is wide (LRM 11.5.1). Elements of a
-  // fixed-size or dynamic array are named by where they start and how many
-  // there are (LRM 7.4.6). A queue's slice is bounded by two positions the
-  // running program can move, and is a queue the slice builds rather than a
-  // part that may be written (LRM 7.10.1).
+  // They are three operations, each with operands of its own. Bits of an
+  // integral value are named by where they start, and are as many as the type
+  // they are read at is wide (LRM 11.5.1). Elements of a fixed-size or dynamic
+  // array are named by where they start
+  // and how many there are (LRM 7.4.6). A queue's slice is bounded by two
+  // positions the running program can move, and is a queue the slice builds
+  // rather than a part that may be written (LRM 7.10.1).
   kSlice,
   kElementSlice,
   kQueueSlice,
-  kSliceRef,
-  kElementSliceRef,
+  // LRM 11.5.1: a reference to bits of an integral value, named by where they
+  // start and as many as the type it is called at is wide, through which a
+  // write lands on them where they lie -- as `std::bitset`'s `operator[]`
+  // answers a reference to one bit. It is taken on the place the value lies
+  // in, on a reference to bits the value is part of, or on the value
+  // designated within a write in progress, and a write through it is the
+  // reference's `set`.
+  kSliceMut,
+  // LRM 7.6: a value written into several elements of a fixed-size or dynamic
+  // array in a row, one assignment to the whole window. A window is several
+  // elements rather than one storage, so it is written by the array's own
+  // operation on the place the array lies in, or on the array designated
+  // within a write in progress, as `putc` writes a character.
+  kAssignElementSlice,
   // LRM 11.5.1: an integral value with the bits a position names replaced,
   // which is how bits of a value lying in no storage are written.
   kWithSlice,
@@ -318,9 +328,11 @@ enum class BuiltinFn : std::uint16_t {
   kAggregateNetInitializeWiredOr,
   kAggregateNetInitializeRetaining,
   // Reading what a cell holds, and replacing it. Both act on the wrapper rather
-  // than name its storage: a read answers with a value the cell decides how to
-  // produce, and a write publishes the change to whatever the wrapper relates
-  // to in the object graph (LRM 4.3). Naming the wrapper itself is the bare
+  // than name its storage: a read answers with a reference to what the cell
+  // shows, and a write publishes the change to whatever the wrapper relates
+  // to in the object graph (LRM 4.3). A write through a reference to bits is
+  // the same replacement, of the bits the reference names. Naming the wrapper
+  // itself is the bare
   // place, which is how rebinding a reference stays a different program from
   // writing through one.
   //
@@ -331,10 +343,9 @@ enum class BuiltinFn : std::uint16_t {
   kLoad,
   kStore,
   // Reading what a cell held in the Preponed region of the current time slot --
-  // its value before anything in that slot ran (LRM 4.4.2.1, 16.5.1). The same
-  // operation on the wrapper as an ordinary read and it carries no handle for
-  // the same reason; the two differ only in which of the values the cell holds
-  // is asked for.
+  // its value before anything in that slot ran (LRM 4.4.2.1, 16.5.1). It acts
+  // on the wrapper and carries no handle for the same reason as a read, but
+  // the cell keeps that value apart from its storage and answers a copy of it.
   kSampledLoad,
   // Arming a cell to answer for a sampled value at all, starting from its
   // default sampled value (LRM 16.5.1). A cell nothing samples is never armed
@@ -351,19 +362,18 @@ enum class BuiltinFn : std::uint16_t {
   // the whole lands.
   kDesignateWhole,
   // A step taken within a write in progress, into a part of what it designates
-  // that the write lands on where it lies: an element, a component, bits of an
-  // integral value, a slice of elements. It answers with the part designated
-  // within the same write -- a value of its own that borrows the write -- which
-  // is not what the step answering with the part alone answers. The write hears
-  // what the step did to the variable where the part cannot say so itself -- an
-  // element made by being written, an index naming none (LRM 7.8.7, 7.10.1,
-  // 7.4.6), bits or elements the write moved; a component is formed by nothing,
-  // so its step has nothing to tell. Dereferencing what the steps designate is
-  // where the write lands.
+  // that is storage of its own: an element or a component. It answers with the
+  // part designated within the same write -- a value of its own that borrows
+  // the write -- which is not what the step answering with the part alone
+  // answers. The write hears what the step did to the variable where the part
+  // cannot say so itself -- an element made by being written, an index naming
+  // none (LRM 7.8.7, 7.10.1, 7.4.6); a component is formed by nothing, so its
+  // step has nothing to tell. Dereferencing what the steps designate is where
+  // the write lands. Bits and a run of elements are no storage of their own,
+  // and are written within the write by the value's own operations taken on
+  // its designation.
   kDesignateElement,
   kDesignateComponent,
-  kDesignateSlice,
-  kDesignateElementSlice,
   // A step taken on a reference, into a part of what it refers to that may be
   // passed by reference -- an element or a component (LRM 13.5.2). It answers
   // with a reference to that part, which belongs to whatever the reference it
@@ -1197,17 +1207,20 @@ enum class CallEnding : std::uint8_t {
 // access composes onto the call (a guard, LRM 11.3.5); a reference to a part
 // of that object that is storage of its own, read-only or mutable, whose
 // dereference is the part, as rustc's `Index::index` answers `&Self::Output`
-// and `IndexMut::index_mut` `&mut Self::Output`; or a part reached inside that
-// object that is a view of it, which may be written and descended into
-// further. An entry may also answer with an execution the engine drives (LRM
-// 9.2), which a target building values in its caller's storage builds there
-// too, and which whoever drives it takes from there rather than the caller
-// ending it.
+// and `IndexMut::index_mut` `&mut Self::Output`; a read-only reference to what
+// a capability wrapper holds, whose dereference is the storage the wrapper
+// represents, as a `std::cell::Ref` dereferences to the value its cell holds;
+// or a part reached inside that object that is a view of it, which may be
+// written and descended into further. An entry may also answer with an
+// execution the engine drives (LRM 9.2), which a target building values in its
+// caller's storage builds there too, and which whoever drives it takes from
+// there rather than the caller ending it.
 enum class EntryAnswer : std::uint8_t {
   kNewValue,
   kTheReceiver,
   kReadOnlyReferenceIntoTheReceiver,
   kMutableReferenceIntoTheReceiver,
+  kReferenceToContents,
   kPartOfTheReceiver,
   kExecution,
 };

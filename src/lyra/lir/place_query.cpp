@@ -100,17 +100,9 @@ auto CallMakesValue(const CallTarget& target) -> bool {
   }
   // Landing a write keeps what the part held, inside the write, and answers
   // with where the part lies; writing a slice lands it where the slice lies.
-  // Neither answers with a value of its own. Reading a slice answers with the
-  // slice as a value.
-  if (const auto* write = std::get_if<OpenWriteTarget>(&target)) {
-    switch (write->op) {
-      case OpenWriteTarget::Op::kLand:
-      case OpenWriteTarget::Op::kAssignSlice:
-        return false;
-      case OpenWriteTarget::Op::kReadSlice:
-        return true;
-    }
-    throw InternalError("lir: unknown open-write operation");
+  // Neither answers with a value of its own.
+  if (std::holds_alternative<OpenWriteTarget>(target)) {
+    return false;
   }
   // Writing bits lands them where they lie and answers nothing.
   if (std::holds_alternative<DesignatedBitsTarget>(target)) {
@@ -127,6 +119,7 @@ auto CallMakesValue(const CallTarget& target) -> bool {
     case support::EntryAnswer::kTheReceiver:
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+    case support::EntryAnswer::kReferenceToContents:
     case support::EntryAnswer::kPartOfTheReceiver:
       return false;
   }
@@ -156,6 +149,7 @@ auto CallBuildsExecution(const CallTarget& target) -> bool {
     case support::EntryAnswer::kTheReceiver:
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+    case support::EntryAnswer::kReferenceToContents:
     case support::EntryAnswer::kPartOfTheReceiver:
       return false;
   }

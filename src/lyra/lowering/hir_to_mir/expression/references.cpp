@@ -89,9 +89,8 @@ auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
 // as -- so it is produced by an operation taking the receiver rather than by
 // loading anything through it.
 auto LowerHirThisHandle(const WalkFrame& frame, mir::TypeId type) -> mir::Expr {
-  const mir::ExprId self_ref =
-      frame.current_block->Read(frame.current_block->exprs.Add(
-          MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)));
+  const mir::ExprId self_ref = frame.current_block->Read(
+      frame.current_block->exprs.Add(MakeSelfRefExpr(frame)));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -340,10 +339,8 @@ auto LowerHirPrimaryExprProc(
             return LowerPatternVarRefExpr(frame, r);
           },
           [&](const hir::ClassPropertyRef& r) -> mir::Expr {
-            const mir::TypeId self_type =
-                frame.current_class->self_pointer_type;
-            const mir::ExprId self_ref = frame.current_block->exprs.Add(
-                MakeSelfRefExpr(frame, self_type));
+            const mir::ExprId self_ref =
+                frame.current_block->exprs.Add(MakeSelfRefExpr(frame));
             return BuildClassPropertyAccess(
                 process, frame, self_ref, r.target, result_type);
           },

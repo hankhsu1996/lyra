@@ -142,10 +142,12 @@ auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
           .referent = type, .mutability = mir::Mutability::kReadOnly}});
 }
 
+// The reference a method takes `operand` by: to the storage it names where it
+// names one, and otherwise to its value, held for the full-expression as a C++
+// reference binds a temporary.
 auto Borrow(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand)
     -> mir::ExprId {
-  operand = mir::PlaceRead(block.exprs.Get(operand).data).value_or(operand);
   return block.exprs.Add(
       mir::Expr{
           .data = mir::BorrowExpr{.operand = operand},
@@ -291,27 +293,22 @@ class Synthesizer {
         type);
   }
 
-  // The value of `type` the parameter `local` refers to.
-  auto Value(mir::Block& block, mir::LocalId local, mir::TypeId type)
-      -> mir::ExprId {
-    return block.Read(Referent(block, local, type));
-  }
-
   // The struct the parameter `local` refers to.
   auto Whole(mir::Block& block, mir::LocalId local) -> mir::ExprId {
     return Referent(block, local, structure_);
   }
 
-  // The value of member `i` of the struct parameter `local`.
+  // Member `i` of the struct parameter `local`, where it lies: each
+  // operation asked of it settles whether it reads it or borrows it.
   auto Member(mir::Block& block, mir::LocalId local, std::size_t i)
       -> mir::ExprId {
-    return block.Read(block.exprs.Add(
+    return block.exprs.Add(
         mir::MakeFieldAccessExpr(
             Whole(block, local),
             mir::ComponentFieldTarget{
                 .position =
                     base::ComponentIndex{static_cast<std::uint32_t>(i)}},
-            members_[i])));
+            members_[i]));
   }
 
   // The struct built from one value per member.
@@ -457,7 +454,7 @@ auto Synthesizer::CountBits() -> mir::StructMethod {
               Unit(), block, mir::BinaryOp::kAdd, answer,
               BuildBitCount(
                   Unit(), block, Member(block, p[0], i),
-                  Value(block, p[1], control)),
+                  Referent(block, p[1], control)),
               count));
         }
         return answer;
@@ -483,7 +480,7 @@ auto Synthesizer::ToBitstream() -> mir::StructMethod {
                 "Synthesizer::ToBitstream: a member of a structure whose "
                 "stream is fixed has none");
           }
-          streams.push_back(*member);
+          streams.push_back(block.AsValue(Unit().types, *member));
         }
         // A stream of no bits is no value, so a fixed stream has a first
         // member to start from rather than an empty join.
@@ -581,7 +578,7 @@ auto Synthesizer::FilledMember(
   if (!member.IsIntegral()) {
     return BuildValueOperation(
         Unit(), block, support::BuiltinFn::kFilledLike, std::nullopt,
-        {Member(block, p[0], i), Value(block, p[1], fill)}, members_[i]);
+        {Member(block, p[0], i), Referent(block, p[1], fill)}, members_[i]);
   }
   const mir::TypeId copies = mir::PackedVectorOf(
       Unit().types, member.Integral().bit_width,
@@ -663,6 +660,9 @@ auto BuildValueOperation(
     return StructMethodCall(
         unit, block, *std::move(structure), entry, receiver,
         std::move(operands), result);
+  }
+  for (mir::ExprId& operand : operands) {
+    operand = block.AsValue(unit.types, operand);
   }
   return block.exprs.Add(MakeBuiltinCall(
       unit, block, entry, receiver, std::move(operands), result));

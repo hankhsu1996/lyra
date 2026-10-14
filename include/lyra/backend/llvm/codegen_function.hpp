@@ -244,16 +244,11 @@ class CodeGenFunction {
       const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
   auto LowerAggregateExtract(
-      const lir::AggregateExtractInstr& extract, lir::TypeId result_type,
-      llvm::Value* out) -> diag::Result<llvm::Value*>;
+      const lir::AggregateExtractInstr& extract, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
   auto LowerAggregateUpdate(
       const lir::AggregateUpdateInstr& update, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  // The position a selector names bits of an integral value by (LRM 11.5.1).
-  // It names them by that one operand: how many bits is the width of the type
-  // they are read at, or of the value written over them.
-  auto IntegralPosition(const lir::AggregateSelector& selector)
-      -> diag::Result<OperandRef>;
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;

@@ -802,10 +802,11 @@ class Integral {
     return out;
   }
 
-  // The bits a part of type `Part` names of this value, held where a write
-  // lands (LRM 11.5.1).
+  // A reference to the bits a part of type `Part` names of this value, which a
+  // write lands through where they lie (LRM 11.5.1), as `std::bitset`'s
+  // `operator[]` answers a reference to one bit.
   template <IntegralValue Part, IntegralValue P>
-  [[nodiscard]] constexpr auto SliceRef(const P& position)
+  [[nodiscard]] constexpr auto SliceMut(const P& position)
       -> BitsRef<Integral, Part> {
     return BitsRef<Integral, Part>{
         *this, PositionNamed(position.View()),
@@ -991,8 +992,8 @@ constexpr auto InsertBitsWithin(
 // Some bits of a value held where a write lands (LRM 11.5.1): the bits of a
 // value of `Part` from `start`, counted from the value's least significant bit,
 // which lie inside the positions `within` names -- all of the value's, or those
-// of the part this one was taken in. `Part` is the type the bits are read and
-// written at. A write lands on the bits and leaves every other position, and a
+// of the part this one was taken in. `Part` is the type the bits are written
+// at. A write lands on the bits and leaves every other position, and a
 // start that names no position names none to write. A part taken in these
 // composes the same way.
 template <IntegralValue T, IntegralValue Part>
@@ -1004,30 +1005,16 @@ class BitsRef {
   }
 
   // Writes `bits`, answering the positions of the value it reached.
-  constexpr auto Assign(const Part& bits) -> std::optional<BitPositions> {
+  constexpr auto Set(const Part& bits) -> std::optional<BitPositions> {
     if (!start_) {
       return std::nullopt;
     }
     return InsertBitsWithin(*root_, *start_, bits, within_);
   }
 
-  constexpr auto operator=(const Part& bits) -> BitsRef& {
-    Assign(bits);
-    return *this;
-  }
-
-  // The bits as they stand: `Part`'s default where the start names no
-  // position, and x at each position outside the value.
-  [[nodiscard]] constexpr auto Read() const -> Part {
-    if (!start_) {
-      return Part{};
-    }
-    return ExtractBits<Part>(*root_, *start_);
-  }
-
-  // The bits of a value of `Inner` at `position` within these.
+  // A reference to the bits of a value of `Inner` at `position` within these.
   template <IntegralValue Inner, IntegralValue P>
-  [[nodiscard]] constexpr auto SliceRef(const P& position) const
+  [[nodiscard]] constexpr auto SliceMut(const P& position) const
       -> BitsRef<T, Inner> {
     const std::optional<std::int64_t> offset = ReadPosition(position);
     const std::optional<std::int64_t> start =

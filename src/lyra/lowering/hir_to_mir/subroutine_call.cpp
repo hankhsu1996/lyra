@@ -375,8 +375,7 @@ auto BuildReceiverPointer(
   mir::Block& block = *frame.current_block;
   const auto* handle = std::get_if<hir::HandleReceiver>(&receiver);
   if (handle == nullptr) {
-    return block.exprs.Add(
-        MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+    return block.exprs.Add(MakeSelfRefExpr(frame));
   }
   const mir::TypePool& types = lowerer.Owner().Unit().types;
   auto handle_or =

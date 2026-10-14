@@ -44,11 +44,10 @@ auto BindImplicitParameters(
 // same capture machinery as any other; forming it appends any closure-receiver
 // operand to `frame.current_block`, and the caller adds the returned place to
 // that same block, reading it where it stands as a value. The place is typed
-// as `self_ptr_type`, the borrowed pointer to the enclosing object. This is the
+// as the binding is, the borrowed pointer to the enclosing object. This is the
 // one place the self place is formed -- every field access, cross-unit deref,
 // closure self-capture, and runtime-effect engine handle starts from it.
-auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
-    -> mir::Expr;
+auto MakeSelfRefExpr(const WalkFrame& frame) -> mir::Expr;
 
 // The object `reaches` designates, as a place -- `*reaches` -- added to
 // `block`, or the place itself where `reaches` is its address. A member is

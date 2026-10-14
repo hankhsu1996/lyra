@@ -385,6 +385,9 @@ auto BuildDefaultValueExpr(
           [&](const mir::DesignationType&) -> mir::Expr {
             return holds_no_declared_value("a part a write designates");
           },
+          [&](const mir::BitsReferenceType&) -> mir::Expr {
+            return holds_no_declared_value("a reference to bits");
+          },
           [&](const mir::ObjectWriteType&) -> mir::Expr {
             return holds_no_declared_value("a write into an object");
           },

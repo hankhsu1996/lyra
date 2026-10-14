@@ -5110,7 +5110,7 @@ auto lyra_rt_dynarray_element_slice(
                source.SliceElements(PositionNamedAt(start), count)));
 }
 
-void lyra_rt_dynarray_element_slice_ref(
+void lyra_rt_dynarray_assign_element_slice(
     void* array, const void* start, std::int64_t count, const void* replacement,
     const void* replacement_type) {
   static_cast<RuntimeDynamicArray*>(array)->AssignSlice(
@@ -5646,7 +5646,7 @@ auto lyra_rt_unpackedarray_element_slice(
       out, RuntimeFixedArray::FromElements(ArrayTypeAt(answer_type), items));
 }
 
-void lyra_rt_unpackedarray_element_slice_ref(
+void lyra_rt_unpackedarray_assign_element_slice(
     void* array, const void* array_type, const void* start, std::int64_t count,
     const void* replacement, const void* replacement_type) {
   ArrayTypeAt(array_type)

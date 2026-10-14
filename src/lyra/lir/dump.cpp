@@ -541,9 +541,6 @@ class LirDumper {
             },
             [&](const ContainerElement& e) -> std::string {
               return std::format("element({})", FormatOperands(e.operands));
-            },
-            [&](const ContainerSlice& s) -> std::string {
-              return std::format("slice({})", FormatOperands(s.operands));
             }},
         selector);
   }

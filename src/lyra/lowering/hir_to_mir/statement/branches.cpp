@@ -224,13 +224,8 @@ auto BuildLabelTest(
     hir::CaseCondition condition, mir::ExprId selector, mir::ExprId label)
     -> mir::ExprId {
   const auto entry = [&](support::BuiltinFn fn) {
-    return block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Direct{.target = fn, .receiver = selector},
-                    .arguments = {label}},
-            .type = unit.builtins.bit1});
+    return BuildValueOperation(
+        unit, block, fn, selector, {label}, unit.builtins.bit1);
   };
   switch (condition) {
     case hir::CaseCondition::kNormal:
@@ -309,13 +304,17 @@ auto LowerCaseStmt(
       [&](const WalkFrame& at,
           hir::ExprId label_expr) -> diag::Result<mir::ExprId> {
     mir::Block& block = *at.current_block;
-    const mir::ExprId selector = block.ReadLocal(subject.local, subject.type);
     if (c.condition_kind == hir::CaseCondition::kInside) {
       return BuildSetMemberTest(
-          process, at, selector, label_expr, unit.builtins.bit1);
+          process, at, block.ReadLocal(subject.local, subject.type), label_expr,
+          unit.builtins.bit1);
     }
+    // The selector and the label are compared where they lie, which a
+    // structure's own method borrows them at.
+    const mir::ExprId selector =
+        block.exprs.Add(mir::MakeLocalRefExpr(subject.local, subject.type));
     auto written =
-        process.LowerExpr(process.HirBody().exprs.Get(label_expr), at);
+        process.LowerAsPlace(process.HirBody().exprs.Get(label_expr), at);
     if (!written) return std::unexpected(std::move(written.error()));
     return BuildLabelTest(
         unit, block, c.condition_kind, selector,

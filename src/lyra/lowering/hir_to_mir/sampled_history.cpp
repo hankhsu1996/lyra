@@ -85,8 +85,7 @@ auto BuildSampledHistoryExpr(
     const StructuralScopeLowerer& lowerer, hir::SampledHistoryId id)
     -> mir::ExprId {
   const mir::FieldId field = lowerer.TranslateSampledHistory(id);
-  const mir::ExprId self = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(lowerer.Owner().Unit(), block, self),

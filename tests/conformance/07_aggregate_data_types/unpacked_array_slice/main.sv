@@ -9,8 +9,9 @@
 // left-hand side is a slice is one assignment to the entire slice. A base
 // that lies outside the array or carries x or z is an invalid index, so
 // reading through it yields an array whose every element is the element
-// type's default and writing through it performs no operation
-// (LRM 7.4.5, 7.4.6, 7.6, Table 7-1).
+// type's default and writing through it performs no operation. All of this
+// holds of an array a subroutine declares as it does of one a module declares,
+// a dynamic array's elements included (LRM 7.4.5, 7.4.6, 7.5, 7.6, Table 7-1).
 module Top;
   int values [6] = '{10, 20, 30, 40, 50, 60};
   logic [7:0] four_state [4] = '{8'h11, 8'h22, 8'h33, 8'h44};
@@ -22,6 +23,25 @@ module Top;
   integer base;
   integer unknown_base;
   int row;
+
+  function automatic void write_slices_in_a_body(integer at, integer unknown);
+    int local_target [6] = '{1, 2, 3, 4, 5, 6};
+    int local_grid [2][5] = '{'{10, 20, 30, 40, 50}, '{60, 70, 80, 90, 100}};
+    int local_dynamic [] = '{1, 2, 3, 4, 5};
+    local_target[at -: 3] = source;
+    local_target[unknown +: 3] = source;
+    local_grid[1][at -: 2] = '{7, 8};
+    local_dynamic[at +: 2] = '{6, 9};
+    if (local_target[0] !== 1 || local_target[1] !== 77 ||
+        local_target[3] !== 99 || local_target[4] !== 5)
+      $fatal(1, "a local's slice was written as %p", local_target);
+    if (local_grid[1][2] !== 7 || local_grid[1][3] !== 8 ||
+        local_grid[1][1] !== 70 || local_grid[0][2] !== 30)
+      $fatal(1, "a local's inner slice was written as %p", local_grid);
+    if (local_dynamic[3] !== 6 || local_dynamic[4] !== 9 ||
+        local_dynamic[2] !== 3)
+      $fatal(1, "a dynamic array's slice was written as %p", local_dynamic);
+  endfunction
 
   int constant_range [3];
   int upward [3];
@@ -49,6 +69,8 @@ module Top;
     base = 10;
     read_past_end = four_state[base +: 3];
     four_state[base +: 3] = replacement;
+
+    write_slices_in_a_body(3, 'x);
   end
 
   final begin

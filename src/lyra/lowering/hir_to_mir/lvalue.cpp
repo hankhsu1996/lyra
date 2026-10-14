@@ -104,8 +104,7 @@ auto DistributeStreamed(
     members_width += shape->width;
   }
 
-  auto source_or = BuildToBitstream(
-      unit, block, block.AsValue(unit.types, value), lvalue.span);
+  auto source_or = BuildToBitstream(unit, block, value, lvalue.span);
   if (!source_or) return std::unexpected(std::move(source_or.error()));
   // By value: the pool's view does not survive the interning below.
   const mir::IntegralType source =

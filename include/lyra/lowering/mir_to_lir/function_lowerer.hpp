@@ -356,12 +356,9 @@ class FunctionLowerer {
   // address, so the place opens there and dereferences it -- the same shape a
   // member place has once its receiver is resolved.
   auto SymbolPlace(std::string symbol, mir::TypeId type) -> lir::Place;
-  // The value naming a referent yields, whether that is the reference itself --
-  // a member table, a function, a local bound to a value that never had storage
-  // -- or what the storage it names holds.
-  auto ReferenceValue(
-      const mir::Block& block, mir::ExprId id,
-      const mir::ReferenceTarget& target, mir::TypeId type)
+  // The value a name of something that is no storage stands for: a member
+  // table, a constant, a function's address.
+  auto ReferenceValue(const mir::ReferenceTarget& target, mir::TypeId type)
       -> diag::Result<lir::Operand>;
   // The storage a capability wrapper stands for. A wrapper that is itself
   // storage continues the chain that reached it; one that refers to storage
@@ -411,8 +408,6 @@ class FunctionLowerer {
       -> diag::Result<lir::Place>;
   // A slot of this frame holding `value` for the rest of the full-expression.
   auto HeldInSlot(lir::Operand value, lir::TypeId type) -> lir::ValueId;
-  [[nodiscard]] auto NamesStorage(const mir::Block& block, mir::ExprId id) const
-      -> bool;
   // The step `field` takes off the place of its receiver: a member an object
   // or a closure declares, or a component where its product's type lays it.
   auto FieldStep(const mir::FieldRef& field) -> lir::Projection;
@@ -504,6 +499,11 @@ class FunctionLowerer {
   auto LowerReferenceIntoReceiver(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
+  // A reference to what a capability wrapper holds: the address of the
+  // storage the wrapper represents.
+  auto LowerReferenceToContents(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // A reference to a property of an object (LRM 13.5.2), the call naming the
   // property as its part: the runtime entry takes what holds the storage and
   // where the storage is, both of which are the one object reached once.
@@ -551,58 +551,18 @@ class FunctionLowerer {
   auto UpdateTarget(
       const mir::Block& block, mir::ExprId target, const ValueChange& change)
       -> diag::Result<lir::Operand>;
-  // The bits of an integral value a target names (LRM 11.5.1): the steps to
-  // bits its chain ends in, innermost first, and what the outermost of them is
-  // taken in. A target that ends in no such step has none, and is itself what
-  // nothing is taken in.
-  struct BitsProjection {
-    mir::ExprId base;
-    std::vector<const mir::CallExpr*> steps;
-  };
-  static auto SplitBitsProjection(const mir::Block& block, mir::ExprId target)
-      -> BitsProjection;
-  // The step designating bits within a write in progress, where `landed` is
-  // where that write lands.
-  [[nodiscard]] auto DesignatedBitsStep(
-      const mir::Block& block, mir::ExprId landed) const
-      -> const mir::CallExpr*;
-  // Whether an expression names storage a write lands in. A part of a value
-  // some view reached is storage only of a copy held for the write, so it is
-  // not.
-  [[nodiscard]] auto IsAddressablePlace(
-      const mir::Block& block, mir::ExprId id) const -> bool;
-  // The parts of `bits`, outermost first: where each starts and the type it
-  // is written at.
-  auto LowerBitsParts(const mir::Block& block, const BitsProjection& bits)
+  // A store of `value` through the reference to bits `reference` (LRM
+  // 11.5.1): the `slice_mut` steps it was taken by, followed back to what the
+  // first was taken on, and the bits written there.
+  auto LowerBitsStore(
+      const mir::Block& block, mir::ExprId reference, mir::ExprId value)
+      -> diag::Result<lir::Operand>;
+  // The parts `steps` name, outermost first: where each starts and the type
+  // it is written at. `steps` are the `slice_mut` calls a reference to bits
+  // was taken by, innermost first.
+  auto LowerBitsParts(
+      const mir::Block& block, std::span<const mir::CallExpr* const> steps)
       -> diag::Result<std::vector<lir::BitsPart>>;
-  // What `change` writes over bits of `type`. Nothing reads such bits back
-  // first: an assignment operator states its own read, and no method changes
-  // an integral value where it lies.
-  static auto BitsWritten(const ValueChange& change, lir::TypeId type)
-      -> diag::Result<lir::Operand>;
-  // Writing bits of an integral value that lies where a write lands: one
-  // statement on its place, naming the parts the bits are reached through.
-  auto StoreBitsOfPlace(
-      const mir::Block& block, const BitsProjection& bits,
-      const ValueChange& change) -> diag::Result<lir::Operand>;
-  // Writing bits of an integral value some view reached: the value is held in
-  // a slot, the bits are written where they lie there, and what the slot then
-  // holds is what the view is updated to. The bits are written into the
-  // whole value, so what the part's own type cannot hold stays as it was --
-  // an x under a two-state member of a four-state structure (LRM 7.2.1).
-  auto StoreBitsInCopy(
-      const mir::Block& block, const BitsProjection& bits,
-      const ValueChange& change) -> diag::Result<lir::Operand>;
-  auto StoreBitsAtPlace(
-      const mir::Block& block, lir::Place place, const BitsProjection& bits,
-      const ValueChange& change) -> diag::Result<lir::Operand>;
-  // Writing bits of the integral value a write in progress designates: one
-  // call on the designation `designated` steps from, which hears which bits
-  // moved.
-  auto StoreBitsInDesignation(
-      const mir::Block& block, const mir::CallExpr& designated,
-      const BitsProjection& bits, const ValueChange& change)
-      -> diag::Result<lir::Operand>;
   // Whether a target reaches, somewhere along its chain, a part that is a view
   // of its whole rather than storage of its own.
   [[nodiscard]] auto ReachesViewedPart(
@@ -621,30 +581,10 @@ class FunctionLowerer {
   auto UpdateThroughView(
       const mir::Block& block, mir::ExprId target, const ValueChange& change)
       -> diag::Result<lir::Operand>;
-  // The slice of elements a target names, where it is a slice of a container
-  // that holds its elements as storage of their own.
-  [[nodiscard]] auto StorageSlice(const mir::Block& block, mir::ExprId target)
-      const -> const mir::CallExpr*;
-  // Updating a slice of elements: the elements it spans, read as one value,
-  // and what that value is changed to written into the elements already there
-  // (LRM 7.6).
-  auto LowerSliceUpdate(
-      const mir::Block& block, const mir::CallExpr& slice, mir::ExprId target,
-      const ValueChange& change) -> diag::Result<lir::Operand>;
-  // The slice write itself: `writer` is handed `container` -- the container's
-  // storage, or what a write in progress designates of it -- then the slice's
-  // bounds and what the slice is changed to. `read` answers with the slice's
-  // value at those bounds, where the change reads one.
-  auto WriteSlice(
-      const std::vector<lir::Operand>& bounds, const ValueChange& change,
-      const lir::Operand& container, lir::TypeId slice_type,
-      lir::CallTarget writer, const ValueReader& read)
-      -> diag::Result<lir::Operand>;
   // Which subvalue one reaching call names, in the vocabulary this layer's
-  // aggregate instructions take.
-  auto LowerValuePartSelector(
-      const mir::Block& block, const mir::CallExpr& call)
-      -> diag::Result<lir::AggregateSelector>;
+  // aggregate instructions take: a union's member, by its position.
+  static auto LowerValuePartSelector(const mir::CallExpr& call)
+      -> lir::AggregateSelector;
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;

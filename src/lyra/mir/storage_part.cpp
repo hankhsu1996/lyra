@@ -22,29 +22,6 @@ auto SelectionOf(const CallExpr& call)
   return support::RuntimeEntryOf(*fn).selects;
 }
 
-auto StorageSelection(const TypePool& types, const Block& block, ExprId id)
-    -> std::optional<support::PartSelection> {
-  const auto* call = std::get_if<CallExpr>(&block.exprs.Get(id).data);
-  if (call == nullptr) {
-    return std::nullopt;
-  }
-  const std::optional<support::PartSelection> selects = SelectionOf(*call);
-  const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
-  if (!selects.has_value() || !receiver.has_value() ||
-      !types.Get(block.exprs.Get(*receiver).type).PartsAreStorage()) {
-    return std::nullopt;
-  }
-  return selects;
-}
-
-auto WrapperRead(const Expr& expr) -> std::optional<ExprId> {
-  const auto* call = std::get_if<CallExpr>(&expr.data);
-  if (call == nullptr || DirectBuiltinFn(*call) != support::BuiltinFn::kLoad) {
-    return std::nullopt;
-  }
-  return CalleeReceiver(call->callee);
-}
-
 auto SelectedFrom(const Block& block, ExprId target) -> std::optional<ExprId> {
   const auto* part = std::get_if<CallExpr>(&block.exprs.Get(target).data);
   if (part == nullptr || !SelectionOf(*part).has_value()) {
@@ -53,40 +30,10 @@ auto SelectedFrom(const Block& block, ExprId target) -> std::optional<ExprId> {
   return CalleeReceiver(part->callee);
 }
 
-auto IsPlaceExpression(const Block& block, ExprId id) -> bool {
-  const auto place = [](const auto&) { return true; };
-  const auto made = [](const auto&) { return false; };
-  return std::visit(
-      Overloaded{
-          [&](const ReferenceExpr& e) { return place(e); },
-          [&](const DerefExpr& e) { return place(e); },
-          [&](const FieldAccessExpr& e) { return place(e); },
-          [&](const CopyExpr& e) { return place(e); },
-          [&](const AwaitExpr& e) { return place(e); },
-          [&](const CallExpr&) {
-            return WrapperRead(block.exprs.Get(id)).has_value();
-          },
-          [&](const StringLiteral& e) { return made(e); },
-          [&](const NullLiteral& e) { return made(e); },
-          [&](const MachineBoolLiteral& e) { return made(e); },
-          [&](const MachineIntLiteral& e) { return made(e); },
-          [&](const MachineFloatLiteral& e) { return made(e); },
-          [&](const UnaryExpr& e) { return made(e); },
-          [&](const BinaryExpr& e) { return made(e); },
-          [&](const CastExpr& e) { return made(e); },
-          [&](const DynamicCastExpr& e) { return made(e); },
-          [&](const ConditionalExpr& e) { return made(e); },
-          [&](const BlockExpr& e) { return made(e); },
-          [&](const AssignExpr& e) { return made(e); },
-          [&](const NewExpr& e) { return made(e); },
-          [&](const AddressOfExpr& e) { return made(e); },
-          [&](const BorrowExpr& e) { return made(e); },
-          [&](const MoveExpr& e) { return made(e); },
-          [&](const ClosureExpr& e) { return made(e); },
-          [&](const CompositeExpr& e) { return made(e); },
-          [&](const WaitExpr& e) { return made(e); },
-          [&](const VectorGetExpr& e) { return made(e); }},
-      block.exprs.Get(id).data);
+auto ValueLiesInStorage(const Block& block, ExprId id) -> bool {
+  const ExprData& data = block.exprs.Get(id).data;
+  return IsPlace(data) || std::holds_alternative<CopyExpr>(data) ||
+         std::holds_alternative<AwaitExpr>(data);
 }
 
 }  // namespace lyra::mir

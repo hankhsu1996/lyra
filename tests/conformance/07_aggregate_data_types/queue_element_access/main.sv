@@ -4,9 +4,32 @@
 // the write through it is ignored. Reading an invalid index yields the value
 // Table 7-1 gives for the element type, all x for a 4-state element and zero
 // for a 2-state one, and never makes the queue grow. A read-modify-write form
-// reaches the stored element through the same write path (LRM 7.10, 7.10.1,
-// 7.4.5, Table 7-1).
+// reaches the stored element through the same write path. A member of an
+// element is reached the same way, in a queue a variable holds and in one a
+// function answers (LRM 7.10, 7.10.1, 7.4.5, Table 7-1).
 module Top;
+  typedef struct {
+    int tag;
+    int counts [2];
+  } record_t;
+  typedef record_t records_t [$];
+
+  records_t records;
+
+  function automatic record_t record(int tag);
+    record_t r;
+    r.tag = tag;
+    r.counts = '{tag + 1, tag + 2};
+    return r;
+  endfunction
+
+  function automatic records_t two_records();
+    records_t answered;
+    answered.push_back(record(30));
+    answered.push_back(record(40));
+    return answered;
+  endfunction
+
   integer values [$] = '{1, 2, 3};
   int two_state [$] = '{4, 5};
 
@@ -60,6 +83,18 @@ module Top;
     element2 = values[2];
     element3 = values[3];
     element4 = values[4];
+
+    records.push_back(record(10));
+    records.push_back(record(20));
+    records[1].counts[0] = 99;
+    if (records[1].counts[0] !== 99 || records[$].counts[1] !== 22 ||
+        records[$-1].tag !== 10)
+      $fatal(1, "a member of an element read as %p", records);
+    if (two_records()[1].counts[1] !== 42)
+      $fatal(1, "a member of an answered queue's element read as %0d",
+             two_records()[1].counts[1]);
+    if (records[9].tag !== 0 || records.size() !== 2)
+      $fatal(1, "a member past the end read as %0d", records[9].tag);
   end
 
   final begin

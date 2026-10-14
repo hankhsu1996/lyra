@@ -100,10 +100,10 @@ enum class OperandUse : std::uint8_t {
   kStorage,
   // What a read or a move takes: a place holding a value.
   kRead,
-  // The object a call is entered on: where it lies, for a member function
-  // that binds it as C++ binds an implicit object argument, or read, for one
-  // that takes it by value as a Rust method taking `self` does. Which is the
-  // callee's to say.
+  // The object a call is entered on: named where it lies, as C++ binds an
+  // implicit object argument, or already read. An entry taking it by value,
+  // as a Rust method taking `self` does, is handed it read by each target's
+  // realization of the call, so either stands here.
   kObject,
   // The pointer a dereference opens.
   kPointer,
@@ -836,7 +836,7 @@ auto ReachesReadOnly(const Type& pointer) -> bool {
 // would cross with nothing telling the entry how to read its bits; and an
 // entry reaching by a key is called on a container reached by keys, one
 // reaching by a position on something that numbers its parts; and an entry
-// answering a reference into its receiver is typed as that reference.
+// answering a reference is typed as that reference.
 void VerifyEntryDeclarations(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -868,21 +868,20 @@ void VerifyEntryDeclarations(
           "names an entry over values of several kinds where its first "
           "operand is integral");
     }
-    // An entry answering a reference into its receiver is typed as that
-    // reference, at the mutability the entry answers it with, so its
-    // dereference is the part and the access made there is the entry's.
+    // An entry answering a reference -- into its receiver, or to what the
+    // wrapper it is taken on holds -- is typed as that reference, at the
+    // mutability the entry answers it with, so its dereference is the part or
+    // the contents and the access made there is the entry's.
     const Type& answered = unit.types.Get(block.exprs.Get(id).type);
     const auto typed_as_reference = [&](bool read_only) {
       if (!answered.Is<ReferenceType>() ||
           ReachesReadOnly(answered) != read_only) {
-        refuse(
-            id,
-            "answers a reference into its receiver and is typed as something "
-            "else");
+        refuse(id, "answers a reference and is typed as something else");
       }
     };
     switch (declared.answer) {
       case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+      case support::EntryAnswer::kReferenceToContents:
         typed_as_reference(true);
         break;
       case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
@@ -949,10 +948,11 @@ void VerifyEntryDeclarations(
   }
 }
 
-// What a write lands on -- an assignment's target, or the object an entry
-// changing its receiver acts on -- is not reached through a read-only
-// reference, which an element's read form answers and whose referent may be
-// the element default every read of its type shares (LRM 7.4.6).
+// What a write lands on -- an assignment's target, the object an entry
+// changing its receiver acts on, or the value a reference to bits is taken on
+// -- is not reached through a read-only reference, which an element's read
+// form answers and whose referent may be the element default every read of its
+// type shares (LRM 7.4.6).
 void VerifyWritesLandInWritableStorage(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
@@ -963,7 +963,8 @@ void VerifyWritesLandInWritableStorage(
     } else if (const auto* call = std::get_if<CallExpr>(&expr.data)) {
       const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
       if (entry.has_value() &&
-          support::RuntimeEntryOf(*entry).mutates_receiver) {
+          (support::RuntimeEntryOf(*entry).mutates_receiver ||
+           *entry == support::BuiltinFn::kSliceMut)) {
         reached = CalleeReceiver(call->callee);
       }
     }
@@ -1155,7 +1156,7 @@ void VerifyLargeValuesLieInStorage(
   for (const ExprId id : block.exprs.Ids()) {
     if (made_in_storage.at(id.value) ||
         !IsTooLargeForAFrame(unit, block.exprs.Get(id).type) ||
-        IsPlaceExpression(block, id)) {
+        ValueLiesInStorage(block, id)) {
       continue;
     }
     throw InternalError(

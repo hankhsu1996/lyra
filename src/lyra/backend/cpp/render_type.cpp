@@ -366,6 +366,12 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 "the expression that opens the write, so nothing names its "
                 "type -- please report this as a bug");
           },
+          [](const mir::BitsReferenceType&) {
+            throw InternalError(
+                "backend::cpp: a reference to bits is written through where "
+                "it is taken, so nothing names its type -- please report this "
+                "as a bug");
+          },
           // Named where it is opened, by constructing it on the object.
           [&](const mir::ObjectWriteType& w) {
             Write(out, "lyra::runtime::ObjectWrite<", type(w.object), ">");
@@ -478,6 +484,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return DerefByOperator{};
           },
           [&](const mir::OpenWriteType&) { return reaches_nothing(); },
+          [&](const mir::BitsReferenceType&) { return reaches_nothing(); },
           // A write in progress into an object is dereferenced to the object,
           // as a guard is to what it guards.
           [&](const mir::ObjectWriteType&) -> DerefSpelling {
@@ -700,6 +707,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::DriverType& t) { by_naming_itself(t); },
           [&](const mir::OpenWriteType& t) { by_naming_itself(t); },
           [&](const mir::DesignationType& t) { by_naming_itself(t); },
+          [&](const mir::BitsReferenceType& t) { by_naming_itself(t); },
           [&](const mir::ObjectWriteType& t) { by_naming_itself(t); },
           [&](const mir::SampledHistoryType& t) { by_naming_itself(t); },
           [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },

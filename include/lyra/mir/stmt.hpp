@@ -192,6 +192,16 @@ struct Block {
     return IsReadablePlace(types, exprs.Get(id)) ? Read(id) : id;
   }
 
+  // The same for an expression not yet added: the read of it where it names
+  // storage holding a value, and it as it stands otherwise.
+  auto AsValue(const TypePool& types, Expr expr) -> Expr {
+    if (!IsReadablePlace(types, expr)) {
+      return expr;
+    }
+    const TypeId type = expr.type;
+    return MakeCopyExpr(exprs.Add(std::move(expr)), type);
+  }
+
   // The value the local `local`, of type `type`, holds.
   auto ReadLocal(LocalId local, TypeId type) -> ExprId {
     return Read(exprs.Add(MakeLocalRefExpr(local, type)));
@@ -204,6 +214,18 @@ struct Block {
     return types.Get(exprs.Get(pointer).type).OwnsPointee()
                ? pointer
                : AsValue(types, pointer);
+  }
+
+  // The storage the capability wrapper `wrapper` represents, holding a
+  // `value`: the dereference of the reference the wrapper answers when asked
+  // for what it holds, the ask added here and the dereference left to add.
+  auto WrapperContents(const TypePool& types, ExprId wrapper, TypeId value)
+      -> Expr {
+    const TypeId reference = types.Intern(
+        Type{ReferenceType{
+            .referent = value, .mutability = Mutability::kReadOnly}});
+    return MakeDerefExpr(
+        exprs.Add(MakeCellLoadCallExpr(wrapper, reference)), value);
   }
 
   // `*pointer`, the storage `pointer` reaches.

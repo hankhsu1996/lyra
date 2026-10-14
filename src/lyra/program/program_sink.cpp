@@ -1083,8 +1083,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dynarray_element_mut", &lyra_rt_dynarray_element_mut);
   add("lyra_rt_dynarray_delete", &lyra_rt_dynarray_delete);
   add("lyra_rt_dynarray_element_slice", &lyra_rt_dynarray_element_slice);
-  add("lyra_rt_dynarray_element_slice_ref",
-      &lyra_rt_dynarray_element_slice_ref);
+  add("lyra_rt_dynarray_assign_element_slice",
+      &lyra_rt_dynarray_assign_element_slice);
   add("lyra_rt_dynarray_size", &lyra_rt_dynarray_size);
   add("lyra_rt_dynarray_eq", &lyra_rt_dynarray_eq);
   add("lyra_rt_dynarray_ne", &lyra_rt_dynarray_ne);
@@ -1289,8 +1289,8 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_unpackedarray_write_mem_within);
   add("lyra_rt_unpackedarray_element_slice",
       &lyra_rt_unpackedarray_element_slice);
-  add("lyra_rt_unpackedarray_element_slice_ref",
-      &lyra_rt_unpackedarray_element_slice_ref);
+  add("lyra_rt_unpackedarray_assign_element_slice",
+      &lyra_rt_unpackedarray_assign_element_slice);
   add("lyra_rt_unpackedarray_size", &lyra_rt_unpackedarray_size);
   add("lyra_rt_unpackedarray_count_bits", &lyra_rt_unpackedarray_count_bits);
   add("lyra_rt_unpackedarray_eq", &lyra_rt_unpackedarray_eq);

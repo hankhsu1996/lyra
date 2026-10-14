@@ -720,15 +720,6 @@ struct Expr {
   return Expr{.data = CopyExpr{.place = place}, .type = type};
 }
 
-// The place `data` reads, where it is a read. A borrow binds the place itself,
-// as a C++ reference binds to an lvalue without reading it, so a borrow handed
-// a read takes the place it reads instead.
-[[nodiscard]] inline auto PlaceRead(const ExprData& data)
-    -> std::optional<ExprId> {
-  const auto* read = std::get_if<CopyExpr>(&data);
-  return read != nullptr ? std::optional{read->place} : std::nullopt;
-}
-
 // The local a reference names, for a consumer following where storage lives;
 // absent for a reference to anything a body does not bind.
 [[nodiscard]] inline auto ReferencedLocal(const ExprData& data)
@@ -889,11 +880,12 @@ struct Expr {
       .type = built};
 }
 
-// Reading what a capability wrapper's storage holds. An operation on the
-// wrapper rather than a way of naming its storage: the wrapper decides what
-// producing that value means, which is why a bare wrapper place -- the wrapper
-// read as a value, or rebound -- stays a different program.
-[[nodiscard]] inline auto MakeCellLoadCallExpr(ExprId cell, TypeId value)
+// Asking a capability wrapper for what its storage holds, answering
+// `reference`, a read-only reference whose dereference is that storage. An
+// operation on the wrapper rather than a way of naming its storage: the
+// wrapper decides what it shows, which is why a bare wrapper place -- the
+// wrapper read as a value, or rebound -- stays a different program.
+[[nodiscard]] inline auto MakeCellLoadCallExpr(ExprId cell, TypeId reference)
     -> Expr {
   return Expr{
       .data =
@@ -901,13 +893,12 @@ struct Expr {
               .callee =
                   Direct{.target = support::BuiltinFn::kLoad, .receiver = cell},
               .arguments = {}},
-      .type = value};
+      .type = reference};
 }
 
 // Reading what a capability wrapper's storage held in the Preponed region of
-// the current time slot (LRM 16.5.1). The same operation on the wrapper as an
-// ordinary read; which of the two values the wrapper produces is the whole
-// difference.
+// the current time slot (LRM 16.5.1). The wrapper keeps that value apart from
+// its storage and answers a copy of it, so the call answers the value.
 [[nodiscard]] inline auto MakeCellSampledLoadCallExpr(ExprId cell, TypeId value)
     -> Expr {
   return Expr{

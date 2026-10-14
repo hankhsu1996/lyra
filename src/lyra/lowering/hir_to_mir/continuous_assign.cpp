@@ -63,8 +63,7 @@ auto AddField(mir::Class& mir_class, mir::TypeId type) -> ClassField {
 auto FieldOfSelf(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
     const ClassField& field) -> mir::ExprId {
-  const mir::ExprId self = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),

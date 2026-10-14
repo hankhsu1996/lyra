@@ -279,24 +279,22 @@ struct ValueCellTarget {
 // whose value from before the write the write keeps where anything will ask
 // whether the write changed the variable (LRM 4.3); it answers with where the
 // part lies. `kAssignSlice` writes a run of the elements of the container
-// designated within the write (LRM 7.4.6), telling it what moved. `kReadSlice`
-// answers with that run as it stands, which an assignment operator combines
-// before the run is written (LRM 11.4.1), read at the type the call answers
-// at: the slice's operands say where it starts and nothing of how much of the
-// value it takes. `value` is what the part or the container holds, and the
-// domain it is realized in names the runtime entry.
+// designated within the write (LRM 7.4.6, 7.6), telling it what moved. `value`
+// is what the part or the container holds, and the domain it is realized in
+// names the runtime entry.
 // A LIR-only target with no MIR twin: MIR states the landing as a dereference
-// and the slice write as an assignment into a designated slice, and a place is
-// named by an address here, so each is a call on the designation.
+// and the slice write as the array's own `assign_element_slice` on the
+// designation, and a place is named by an address here, so each is a call on
+// the designation.
 struct OpenWriteTarget {
-  enum class Op : std::uint8_t { kLand, kAssignSlice, kReadSlice };
+  enum class Op : std::uint8_t { kLand, kAssignSlice };
   Op op;
   TypeId value;
 };
 
 // One part of an integral value: where it starts within what it is a part of,
-// counted from the least significant bit, and the type it is read or written
-// at, which fixes how many bits it has. A start naming no position names no
+// counted from the least significant bit, and the type it is written at,
+// which fixes how many bits it has. A start naming no position names no
 // part (LRM 11.5.1).
 struct BitsPart {
   Operand start;
@@ -311,8 +309,8 @@ struct BitsPart {
 // the bits as a store of bits at a place names them: outermost first, the
 // first a part of the value, each one after it a part of the one before, and
 // the last the part written, whose type is the type of the bits.
-// A LIR-only target with no MIR twin: MIR states the write as an assignment
-// into a slice designated within the write.
+// A LIR-only target with no MIR twin: MIR states the write as `set` through
+// the reference `slice_mut` answers on the designation.
 struct DesignatedBitsTarget {
   TypeId value;
   std::vector<BitsPart> parts;
@@ -474,26 +472,18 @@ struct Component {
   base::ComponentIndex index;
 };
 
-// One coordinate into a homogeneous or keyed value, and one fixed-width range
-// of a value. `operands` carries the source coordinates followed by whatever
-// the value's family takes from its static type rather than from the value -- a
-// declared range, a declared result shape. Which runtime entry realizes a step
-// follows from the aggregate's type, below this layer; the selector says only
-// which subvalue is named.
+// One element of a sequence of handles, at the index the program computes.
+// Which runtime entry realizes the step follows from the aggregate's type,
+// below this layer; the selector says only which subvalue is named.
 struct ContainerElement {
   std::vector<Operand> operands;
 };
 
-struct ContainerSlice {
-  std::vector<Operand> operands;
-};
-
-using AggregateSelector =
-    std::variant<Component, ContainerElement, ContainerSlice>;
+using AggregateSelector = std::variant<Component, ContainerElement>;
 
 // Extracts a subvalue of an aggregate value, named by `selector`: a part that
-// is a view of the whole it belongs to rather than storage of its own -- a bit
-// or a slice of a packed value, a member of a union.
+// is a view of the whole it belongs to rather than storage of its own -- a
+// member of a union, an object of a sequence of handles.
 // The subvalue is built out of the aggregate, not aliased. This is the read
 // half of value-aggregate access, the peer of LLVM's `extractvalue`; a part
 // that is storage of its own is a step of a place instead. The result's type

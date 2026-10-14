@@ -7,7 +7,11 @@ string's character by
 [an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md)
 (2026-10-14): an element's two entries are `element` / `element_mut` (`Element` / `ElementMut`),
 each answering a reference to the element, and a string's character is read by `getc` and written by
-`putc`; `with_element` is gone.
+`putc`; `with_element` is gone. Revised again the same day for bits and a window: bits are written
+through the reference `slice_mut` (`SliceMut`) answers, taken on the place the value lies in or on
+its designation within a write, which replaces `slice_ref` and `designate_slice`; a window is
+written by its array's `assign_element_slice`, on the place or on the designation, which replaces
+`element_slice_ref` and `designate_element_slice`.
 
 ## Context
 

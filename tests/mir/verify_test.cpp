@@ -617,10 +617,105 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
   ExpectRefused(
       element_write(
           support::BuiltinFn::kElementMut, Mutability::kMutable, false),
-      "answers a reference into its receiver");
+      "answers a reference and is typed as something else");
   ExpectRefused(
       element_write(support::BuiltinFn::kElement, Mutability::kMutable, true),
-      "answers a reference into its receiver");
+      "answers a reference and is typed as something else");
+}
+
+// Bits are written through the reference `slice_mut` takes on the value they
+// lie in, so that value is reached as a write reaches it: through an
+// element's write form, never through the read form, whose referent may be
+// the element default every read shares (LRM 7.4.6).
+TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
+  const auto bits_written = [](support::BuiltinFn entry,
+                               Mutability mutability) {
+    return UnitWithBody([entry, mutability](CompilationUnit& u, Block& body) {
+      const TypeId byte =
+          PackedVectorOf(u.types, 8, IntegralStateKind::kFourState);
+      const TypeId nibble =
+          PackedVectorOf(u.types, 4, IntegralStateKind::kFourState);
+      const TypeId container =
+          u.types.Intern(Type{DynamicArrayType{.element_type = byte}});
+      const ExprId array =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = container});
+      const ExprId at = body.exprs.Add(
+          Expr{.data = NullLiteral{}, .type = PositionType(u.types)});
+      const ExprId element = body.exprs.Add(MakeDerefExpr(
+          body.exprs.Add(
+              Expr{
+                  .data =
+                      CallExpr{
+                          .callee = Direct{.target = entry, .receiver = array},
+                          .arguments = {at}},
+                  .type = u.types.Intern(
+                      Type{ReferenceType{
+                          .referent = byte, .mutability = mutability}})}),
+          byte));
+      const ExprId bits = body.exprs.Add(
+          Expr{
+              .data =
+                  CallExpr{
+                      .callee =
+                          Direct{
+                              .target = support::BuiltinFn::kSliceMut,
+                              .receiver = element,
+                              .type_argument = nibble},
+                      .arguments = {at}},
+              .type = u.types.Intern(Type{BitsReferenceType{.bits = nibble}})});
+      const ExprId value =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = nibble});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{
+                                      .target = support::BuiltinFn::kStore,
+                                      .receiver = bits},
+                              .arguments = {value}},
+                      .type = u.builtins.void_type})});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(
+      bits_written(support::BuiltinFn::kElementMut, Mutability::kMutable)));
+  ExpectRefused(
+      bits_written(support::BuiltinFn::kElement, Mutability::kReadOnly),
+      "writes through a read-only reference");
+}
+
+// A reference the program holds binds the storage it refers to, as a C++
+// reference parameter binds an lvalue (LRM 13.5.2); bound to a read, every
+// write through it would land on a copy.
+TEST(MirVerifyTest, AReferenceBindsStorageNeverARead) {
+  const auto referred_to = [](bool read_first) {
+    return UnitWithBody([read_first](CompilationUnit& u, Block& body) {
+      const TypeId byte =
+          PackedVectorOf(u.types, 8, IntegralStateKind::kFourState);
+      const TypeId pointer = u.types.Intern(
+          Type{PointerType{
+              .pointee = byte, .ownership = PointerOwnership::kBorrowed}});
+      const ExprId place = body.exprs.Add(MakeDerefExpr(
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = pointer}), byte));
+      const ExprId bound = read_first ? body.Read(place) : place;
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data =
+                          CallExpr{.callee = Construct{}, .arguments = {bound}},
+                      .type = u.types.Intern(
+                          Type{VariableRefType{
+                              .pointee = byte,
+                              .mutability = Mutability::kMutable}})})});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(referred_to(false)));
+  ExpectRefused(referred_to(true), "takes a read");
 }
 
 // A call on `entry` whose receiver is of type `container` and whose one

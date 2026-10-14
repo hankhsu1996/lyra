@@ -107,8 +107,8 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
     // is built, and belongs to the closure alone; no other process reaches it,
     // so it is the value rather than a cell that reports its writes.
     field_type = cell->value;
-    source =
-        capture_site_->exprs.Add(mir::MakeCellLoadCallExpr(read, field_type));
+    source = capture_site_->Read(capture_site_->exprs.Add(
+        capture_site_->WrapperContents(unit_->types, read, field_type)));
   } else {
     source = capture_site_->Read(read);
   }

@@ -368,6 +368,7 @@ auto BuildValueConversion(
           [&](const mir::DriverType& t) { return none(t); },
           [&](const mir::OpenWriteType& t) { return none(t); },
           [&](const mir::DesignationType& t) { return none(t); },
+          [&](const mir::BitsReferenceType& t) { return none(t); },
           [&](const mir::ObjectWriteType& t) { return none(t); },
           [&](const mir::SampledHistoryType& t) { return none(t); },
           [&](const mir::EvaluationAttemptsType& t) { return none(t); },
@@ -407,6 +408,15 @@ auto ConvertToType(
   }
   return block.exprs.Add(
       BuildValueConversion(unit, block, operand_id, dst_type));
+}
+
+auto AtType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId type) -> mir::ExprId {
+  if (block.exprs.Get(operand_id).type == type) {
+    return operand_id;
+  }
+  return ConvertToType(unit, block, operand_id, type);
 }
 
 auto ConvertToPropagatedType(

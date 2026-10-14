@@ -609,8 +609,8 @@ auto DeclaredRealizations() -> Realizations {
     holder(op, support::AnswerTold::kNothing);
   }
   for (const lir::OpenWriteTarget::Op op :
-       {lir::OpenWriteTarget::Op::kLand, lir::OpenWriteTarget::Op::kAssignSlice,
-        lir::OpenWriteTarget::Op::kReadSlice}) {
+       {lir::OpenWriteTarget::Op::kLand,
+        lir::OpenWriteTarget::Op::kAssignSlice}) {
     holder(op, support::AnswerTold::kNothing);
   }
   // The entry building a member's storage, for each kind of storage that holds

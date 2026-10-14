@@ -726,6 +726,19 @@ struct DesignationType {
   auto operator==(const DesignationType&) const -> bool = default;
 };
 
+// A reference to some bits of an integral value lying in storage, of type
+// `bits`, through which a write lands on them where they lie (LRM 11.5.1), as
+// `std::bitset`'s `operator[]` answers a reference to one bit. Bits are no
+// storage of their own, so it is no pointer: it names the storage they lie
+// in, or a place designated within a write in progress, and where in it they
+// start, and a write through it is its `set`. Nothing holds one past the
+// full-expression that takes it.
+struct BitsReferenceType {
+  TypeId bits;
+
+  auto operator==(const BitsReferenceType&) const -> bool = default;
+};
+
 // A write in progress into the properties of an object (LRM 8.4), opened on
 // the object alone, which answers the object as `object`, the class its
 // properties are reached through. It is an object the writer holds and it ends
@@ -758,8 +771,9 @@ class Type {
       DiagnosticType, RuntimeLibraryType, CoroutineType, VariableRefType,
       ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType, VectorType, TupleType,
       UnionType, TaggedUnionType, EmptyType, ObservableType, ResolvedType,
-      DriverType, OpenWriteType, DesignationType, ObjectWriteType,
-      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, StructType, ClosureType>;
+      DriverType, OpenWriteType, DesignationType, BitsReferenceType,
+      ObjectWriteType, SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, StructType,
+      ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

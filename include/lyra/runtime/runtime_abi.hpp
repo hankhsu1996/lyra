@@ -1426,7 +1426,7 @@ auto lyra_rt_empty_default(void* out) -> void*;
 // with. A literal's elements cross as bare handles, since that type is theirs,
 // so the entry copies each as a value of it. An element is storage of its own:
 // `element` answers with it where it lies, for reading, and `element_mut` with
-// the same storage for a write to land in (LRM 7.4.6); `element_slice_ref`
+// the same storage for a write to land in (LRM 7.4.6); `assign_element_slice`
 // writes a window into the elements already there (LRM 7.6).
 auto lyra_rt_make_dynamic_array_new(
     std::int64_t size, const void* answer_element_type, void* out) -> void*;
@@ -1461,7 +1461,7 @@ void lyra_rt_dynarray_delete(void* array);
 auto lyra_rt_dynarray_element_slice(
     const void* array, const void* start, std::int64_t count,
     const void* answer_type, void* out) -> void*;
-void lyra_rt_dynarray_element_slice_ref(
+void lyra_rt_dynarray_assign_element_slice(
     void* array, const void* start, std::int64_t count, const void* replacement,
     const void* replacement_type);
 auto lyra_rt_dynarray_size(const void* array, void* out) -> void*;
@@ -1503,7 +1503,7 @@ auto lyra_rt_queue_unpacked_array_from_array(
 auto lyra_rt_unpackedarray_element_slice(
     const void* array, const void* array_type, const void* start,
     std::int64_t count, const void* answer_type, void* out) -> void*;
-void lyra_rt_unpackedarray_element_slice_ref(
+void lyra_rt_unpackedarray_assign_element_slice(
     void* array, const void* array_type, const void* start, std::int64_t count,
     const void* replacement, const void* replacement_type);
 auto lyra_rt_unpackedarray_size(

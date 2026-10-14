@@ -221,7 +221,10 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
         KeepsSampledValue(lowerer, expr)) {
       return mir::MakeCellSampledLoadCallExpr(cell_id, result_type);
     }
-    return mir::MakeCellLoadCallExpr(cell_id, result_type);
+    // Reading what the wrapper holds names the storage it represents, which
+    // is then read where a value is wanted.
+    return frame.current_block->WrapperContents(
+        lowerer.Owner().Unit().types, cell_id, result_type);
   }
   return raw_or;
 }
@@ -232,13 +235,11 @@ template <ExprLowerer L>
 auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   auto lowered = LowerAsPlaceImpl(lowerer, expr, frame);
-  if (!lowered ||
-      !mir::IsReadablePlace(lowerer.Owner().Unit().types, *lowered)) {
+  if (!lowered) {
     return lowered;
   }
-  const mir::TypeId read_type = lowered->type;
-  return mir::MakeCopyExpr(
-      frame.current_block->exprs.Add(*std::move(lowered)), read_type);
+  return frame.current_block->AsValue(
+      lowerer.Owner().Unit().types, *std::move(lowered));
 }
 
 // The dispatcher for an expression named as a part rather than read, shared by
@@ -278,8 +279,7 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                       std::get_if<hir::ClassPropertyRef>(&p.data)) {
                 return PropertyPath(
                     lowerer, frame,
-                    frame.current_block->exprs.Add(MakeSelfRefExpr(
-                        frame, frame.current_class->self_pointer_type)),
+                    frame.current_block->exprs.Add(MakeSelfRefExpr(frame)),
                     property->target, result_type);
               }
               return as_place(

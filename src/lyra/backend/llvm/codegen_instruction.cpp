@@ -139,7 +139,7 @@ auto CodeGenFunction::LowerRvalue(
           },
           [&](const lir::AggregateExtractInstr& extract) -> Lowered {
             return LowerAggregateExtract(
-                extract, result_type, EnsureDestination(destination));
+                extract, EnsureDestination(destination));
           },
           [&](const lir::AggregateUpdateInstr& update) -> Lowered {
             return LowerAggregateUpdate(update, EnsureDestination(destination));
@@ -1872,40 +1872,14 @@ auto CodeGenFunction::SelectorArgs(
   return {};
 }
 
-auto CodeGenFunction::IntegralPosition(const lir::AggregateSelector& selector)
-    -> diag::Result<OperandRef> {
-  const auto* bits = std::get_if<lir::ContainerSlice>(&selector);
-  if (bits == nullptr || bits->operands.size() != 1) {
-    throw InternalError(
-        "llvm codegen: a part of an integral value is the bits one position "
-        "names -- please report this as a bug");
-  }
-  auto position = LowerOperand(bits->operands.front());
-  if (!position) {
-    return std::unexpected(std::move(position.error()));
-  }
-  return OperandRef{
-      .value = *position, .type = OperandType(bits->operands.front())};
-}
-
 auto CodeGenFunction::LowerAggregateExtract(
-    const lir::AggregateExtractInstr& extract, lir::TypeId result_type,
-    llvm::Value* out) -> diag::Result<llvm::Value*> {
+    const lir::AggregateExtractInstr& extract, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
   auto aggregate = LowerOperand(extract.aggregate);
   if (!aggregate) {
     return std::unexpected(std::move(aggregate.error()));
   }
   const lir::TypeId container = OperandType(extract.aggregate);
-  if (module_->Types().IntegralShapeOf(container).has_value()) {
-    auto position = IntegralPosition(extract.selector);
-    if (!position) {
-      return std::unexpected(std::move(position.error()));
-    }
-    const std::array<OperandRef, 2> operands{
-        OperandRef{.value = *aggregate, .type = container}, *position};
-    return LowerIntegral(
-        support::IntegralOp::kSlice, operands, result_type, out);
-  }
   // A sequence of handles belongs to no value domain, so which object a
   // coordinate names is answered by the entry that knows the sequence rather
   // than by a value's own element read.
@@ -1932,43 +1906,6 @@ auto CodeGenFunction::LowerAggregateExtract(
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
   }
-  // The part an entry reads out of the aggregate, built in `out`: the
-  // aggregate and then what names the part, each as the entry reads it and as
-  // the realization for the aggregate's domain is told of it.
-  const auto read_by = [&](const StepEntry& step,
-                           const std::vector<lir::Operand>& operands)
-      -> diag::Result<llvm::Value*> {
-    const support::RuntimeEntry declared = support::RuntimeEntryOf(step.entry);
-    const Told told = ToldOf(*domain, step.entry);
-    const ReturnInfo built = ReturnIndirect{.returned = module_->Types().Ptr()};
-    std::vector<ArgAbi> arranged{
-        arranger_.ArgOf(declared.operands, 0, container, told, {})};
-    std::vector<llvm::Value*> stated{*aggregate};
-    for (std::size_t i = 0; i < operands.size(); ++i) {
-      auto lowered = LowerOperand(operands[i]);
-      if (!lowered) {
-        return std::unexpected(std::move(lowered.error()));
-      }
-      arranged.push_back(arranger_.ArgOf(
-          declared.operands, i + 1, OperandType(operands[i]), told, {}));
-      stated.push_back(*lowered);
-    }
-    const FnAbi abi{
-        .implicit_arg = NoImplicitArg{},
-        .named_part = std::nullopt,
-        .args = std::move(arranged),
-        .type_args = TypeArgsOf(
-            module_->Unit().types, told, declared.answer_told, std::nullopt,
-            result_type, built),
-        .ret = built};
-    auto args = module_->BuildCallArgs(abi, stated);
-    if (!args) {
-      return std::unexpected(std::move(args.error()));
-    }
-    args->push_back(out);
-    builder_.CreateCall(module_->RuntimeFunction(step.symbol, abi), *args);
-    return out;
-  };
   // A member of an active-member value is named by its index alone, and the
   // aggregate's own domain is what names the entry that answers.
   const auto positional = [&](base::ComponentIndex index) -> llvm::Value* {
@@ -1987,14 +1924,6 @@ auto CodeGenFunction::LowerAggregateExtract(
             return Unsupported(
                 "llvm codegen: an element is projected by value only out of a "
                 "sequence of handles");
-          },
-          [&](const lir::ContainerSlice& s) -> diag::Result<llvm::Value*> {
-            return read_by(
-                StepEntry{
-                    .entry = support::BuiltinFn::kElementSlice,
-                    .symbol = RuntimeSymbol(
-                        *domain, support::BuiltinFn::kElementSlice)},
-                s.operands);
           }},
       extract.selector);
 }
@@ -2035,19 +1964,6 @@ auto CodeGenFunction::LowerAggregateUpdate(
     return BuildInto(
         RuntimeSymbol(*domain, op), std::move(arranged), std::move(args), out);
   };
-  // The same where the part is named by operands the program computes.
-  const auto replaced_at = [&](RuntimeOp op,
-                               const std::vector<lir::Operand>& operands)
-      -> diag::Result<llvm::Value*> {
-    std::vector<ArgAbi> arranged = Addresses(1);
-    std::vector<llvm::Value*> args{*aggregate};
-    auto filled = SelectorArgs(OperandReadingsOf(op), operands, arranged, args);
-    if (!filled) {
-      return std::unexpected(std::move(filled.error()));
-    }
-    return replaced(
-        op, {}, std::move(arranged), std::move(args), operands.size());
-  };
   return std::visit(
       Overloaded{
           // A member is replaced by naming its index and the value that takes
@@ -2071,9 +1987,6 @@ auto CodeGenFunction::LowerAggregateUpdate(
             return Unsupported(
                 "llvm codegen: an array rebuilt around one element replaced is "
                 "not yet supported");
-          },
-          [&](const lir::ContainerSlice& s) -> diag::Result<llvm::Value*> {
-            return replaced_at(RuntimeOp::kWithSlice, s.operands);
           }},
       update.selector);
 }

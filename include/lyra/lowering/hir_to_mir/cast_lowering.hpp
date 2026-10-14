@@ -46,6 +46,13 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId;
 
+// `operand_id` at `type` for an operation that settles how it takes it: the
+// operand as it stands, a place or a value, where it is already of `type`,
+// and otherwise its value converted.
+[[nodiscard]] auto AtType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId type) -> mir::ExprId;
+
 // The same through the conversion LRM 11.8.2 puts on a context-determined
 // operand: `operand_id` unchanged when it is already at the propagated type
 // `dst_type`, otherwise that conversion interned into `block`.

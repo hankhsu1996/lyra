@@ -125,9 +125,11 @@ what the construct means.
   binds a reference to a place, or to a value it holds to the end of the full-expression as a C++
   reference bound to a temporary does. An element of an array is no node: it is a call answering a
   reference, a read form or a write form, because the language gives a read and a write of an
-  element different outcomes, and the dereference of what it answers is the place. The set is closed
-  under what a generic programming-language AST needs to express; it does not grow to model a
-  particular backend's storage realization or runtime library shape.
+  element different outcomes, and the dereference of what it answers is the place. Bits of a packed
+  value are no node either: they are read by the value's `slice` and written through the reference
+  to them its `slice_mut` answers, as a C++ library's `bitset::operator[]` answers a reference to a
+  bit. The set is closed under what a generic programming-language AST needs to express; it does not
+  grow to model a particular backend's storage realization or runtime library shape.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -286,15 +288,15 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 16. Whether an expression names storage or makes a value is the kind of its node, settled where the
     node is built. A reference to a variable, a dereference and a field step on a place are places,
     and nothing else is. A place states what kind of storage it is -- ordinary, with an address of
-    its own; with none of its own, at or below a member of a union, which no reference may end on
-    (LRM 13.5.2); overlaid, at or below a member of an untagged union, whose bits may be another
-    member's -- and each node's kind follows from its operand's. Storage is read by a read node,
-    written by an assignment whose target is a place, and referred to by a borrow, and each is
-    realized by the place's kind. _Programming-language consequence: this is value category -- a
-    THIR expression's place-or-value category in rustc, a value kind and an object kind on every
-    clang expression -- and like theirs it is a fact of the expression, so no consumer works out
-    from a finished tree which expressions name storage, and no pair of nodes or entries differs
-    only by whether it is read or written._
+    its own; with none of its own, at or below a member of a union, which nothing binds (LRM
+    13.5.2); overlaid, at or below a member of an untagged union, whose bits may be another member's
+    -- and each node's kind follows from its operand's. Storage is read by a read node, written by
+    an assignment whose target is a place, and referred to by a borrow, and each is realized by the
+    place's kind. _Programming-language consequence: this is value category -- a THIR expression's
+    place-or-value category in rustc, a value kind and an object kind on every clang expression --
+    and like theirs it is a fact of the expression, so no consumer works out from a finished tree
+    which expressions name storage, and no pair of nodes or entries differs only by whether it is
+    read or written._
 
 ## Boundary to Adjacent Layers
 
@@ -557,8 +559,8 @@ realization. A backend may wrap observable storage in a target-side library type
 access" node and needs none. The signal's MIR type is the wrapper, so the `MemberAccess` reaching
 the signal is the wrapper's place, and a dereference of it is the storage a callee may be lent and a
 descent may reach into. Reading what the wrapper holds is not that dereference: a read asks the
-wrapper for a value it decides how to produce, so it is an operation on the wrapper and states
-itself as a call.
+wrapper for what it shows, so it is an operation on the wrapper and states itself as a call
+answering a reference, whose dereference the read node then reads.
 
 A write is not a way of naming that storage but an operation on the wrapper -- it replaces what the
 storage holds and publishes the change to whatever the wrapper relates to -- so it is an ordinary
@@ -576,25 +578,29 @@ member, a fixed-width range -- states an abstract update of the owning value: wh
 levels the descent reaches through, how many times each evaluates, the value written and its
 coercion, and that the owning value is the value updated. The owner is a place; the descent is a run
 of steps on it -- a field step where the part means the same for reading and writing, the write form
-of an element where it does not -- and bits or a window are written by a store naming the place they
-lie in. Where the owner is a capability wrapper, the write is opened on it, the whole of the
+of an element where it does not -- and what it ends in may be no place: bits are written through the
+reference to them the packed value's `slice_mut` answers, taken once for each part they are reached
+through, and a window by its array's own `assign_element_slice`, each taken on the place the value
+lies in. Where the owner is a capability wrapper, the write is opened on it, the whole of the
 wrapper's contents is designated within it, and each step into a part that is storage of its own is
 taken within the write in progress rather than on the storage, so the write hears what forming each
 part did -- an element made by being written, an index naming none -- and it lands where what those
-steps designate is dereferenced; a step into a union's member is taken after that, as a field step
-of the place landed on. The write and a place designated within it are two types: the write is held
-by the writer, ended with the full-expression, which is when it reports, and names no place itself,
-while a designation borrows the write and ends with nothing to do. The variable learns whether the
-write changed it from what it heard and from the part it landed on (LRM 4.3). Whether a part is
-storage of its own is the language's fact about the type it is part of (`storage.md`), and the place
-states it as its kind (invariant 16), so no layer below works it out. A construct that binds the
-designated part rather than writing it -- an output pack component, a nonblocking update -- binds
-the same statement of owner and descent; it is owner-relative, so it names no interior pointer and
-aliases nothing the owner does not already own. A reference actual binds the part for as long as the
-callee holds it, and each write through it is a write of the owner at the moment it lands (LRM
-13.5.2, 4.3), which no write ended with the caller's full-expression can be; so a reference is
-formed over the owner and each step into a part is taken on the reference (`refer_element`,
-`refer_component`), answering a reference to that part that belongs to the same owner.
+steps designate is dereferenced, or, where the descent ends in bits or a window, the reference to
+the bits or the window's write is taken on the last designation; a step into a union's member is
+taken after that, as a field step of the place landed on. The write and a place designated within it
+are two types: the write is held by the writer, ended with the full-expression, which is when it
+reports, and names no place itself, while a designation borrows the write and ends with nothing to
+do. The variable learns whether the write changed it from what it heard and from the part it landed
+on (LRM 4.3). Whether a part is storage of its own is the language's fact about the type it is part
+of (`storage.md`), and the place states it as its kind (invariant 16), so no layer below works it
+out. A construct that binds the designated part rather than writing it -- an output pack component,
+a nonblocking update -- binds the same statement of owner and descent; it is owner-relative, so it
+names no interior pointer and aliases nothing the owner does not already own. A reference actual
+binds the part for as long as the callee holds it, and each write through it is a write of the owner
+at the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's full-expression can
+be; so a reference is formed over the owner and each step into a part is taken on the reference
+(`refer_element`, `refer_component`), answering a reference to that part that belongs to the same
+owner.
 
 Where the owner is a property of an object (LRM 8.4), the object is what hears the write (LRM
 9.4.2), and it is reached once, as the source reaches it once. A write is a write-in-progress value

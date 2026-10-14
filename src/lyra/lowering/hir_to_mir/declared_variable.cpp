@@ -60,7 +60,8 @@ auto ReadVariable(
   if (cell == nullptr) {
     return block.Read(local);
   }
-  return block.exprs.Add(mir::MakeCellLoadCallExpr(local, cell->value));
+  return block.Read(
+      block.exprs.Add(block.WrapperContents(unit.types, local, cell->value)));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -240,10 +240,17 @@ struct AccessPath {
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
+// The reference the read form of an element step answers on `receiver`, whose
+// dereference is the element: what a block of steps yields where the element
+// is reached after the block, the receiver outliving it.
+[[nodiscard]] auto ElementReference(
+    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::ExprId receiver) -> mir::Expr;
+
 // The part `step` reaches in what `receiver` names, taken for a read, at the
 // part's type: the part itself where it is storage of its own -- a field, or
-// what the reference an element's read form answers refers to -- and
-// otherwise what the entry reading the part answers.
+// what the reference an element's read form answers refers to -- and otherwise
+// what the entry reading the part answers, bits of a packed value included.
 [[nodiscard]] auto StepForRead(
     mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
     mir::ExprId receiver) -> mir::Expr;
@@ -391,12 +398,14 @@ struct NamedPart {
 // string, and so reads the character before putting it back.
 [[nodiscard]] auto WritesBitsOfACharacter(const AccessPath& path) -> bool;
 
-// Builds `lhs = rhs` against the part `path` names. Three shapes come out of
-// it, each an ordinary MIR node with nothing left to decide: replacing the
-// whole of what a capability wrapper holds acts on the wrapper, so it is a
-// call taking the wrapper as its destination; a write through a character of a
-// string is the string's own put, a call on the string's place; every other
-// write is a store into the place the path designates. Each yields nothing.
+// Builds `lhs = rhs` against the part `path` names, as an ordinary MIR node
+// with nothing left to decide that yields nothing: replacing the whole of what
+// a capability wrapper holds acts on the wrapper, a call taking the wrapper as
+// its destination; a write through a character of a string is the string's
+// own put; a run of elements is written by its array's `assign_element_slice`,
+// and bits by `set` through the reference `slice_mut` answers, each taken on
+// the place the value lies in or on its designation within a write; every
+// other write is a store into the place the path designates.
 [[nodiscard]] auto BuildStoreExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
     mir::ExprId rhs_id) -> mir::Expr;

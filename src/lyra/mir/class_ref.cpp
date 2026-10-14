@@ -101,6 +101,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const DriverType&) { return not_an_object(); },
           [&](const OpenWriteType&) { return not_an_object(); },
           [&](const DesignationType&) { return not_an_object(); },
+          [&](const BitsReferenceType&) { return not_an_object(); },
           [&](const ObjectWriteType&) { return not_an_object(); },
           [&](const SampledHistoryType&) { return not_an_object(); },
           [&](const EvaluationAttemptsType&) { return not_an_object(); },

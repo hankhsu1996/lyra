@@ -34,7 +34,10 @@ class UnitLowerer;
 // is a struct the source declared -- `receiver`'s, or for a question asked of a
 // type rather than of a value, the result's -- and the library's entry for
 // every other value. The operands are the same either way, since a struct
-// answers the question with the parameters any value does.
+// answers the question with the parameters any value does. Each is handed as
+// it stands, a place or a value: the method borrows a place where it lies, as
+// clang settles an operand's conversion once overload resolution chose the
+// callee, and the library's entry takes each operand's value.
 [[nodiscard]] auto BuildValueOperation(
     const mir::CompilationUnit& unit, mir::Block& block,
     support::BuiltinFn entry, std::optional<mir::ExprId> receiver,

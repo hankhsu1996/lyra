@@ -106,20 +106,18 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .selects = PartSelection::kSlice,
           .operands = {kMachine, kPosition, kPosition},
           .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kSliceRef:
+    case BuiltinFn::kSliceMut:
       return {
-          .name = "slice_ref",
-          .declaration = Method{"SliceRef"},
+          .name = "slice_mut",
+          .declaration = Method{"SliceMut"},
           .takes_a_type_argument = true,
-          .answer = EntryAnswer::kPartOfTheReceiver,
           .selects = PartSelection::kBits,
           .operands = {kMachine, kPosition}};
-    case BuiltinFn::kElementSliceRef:
+    case BuiltinFn::kAssignElementSlice:
       return {
-          .name = "element_slice_ref",
-          .declaration = Method{"SliceRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kSlice,
+          .name = "assign_element_slice",
+          .declaration = Method{"AssignSlice"},
+          .mutates_receiver = true,
           .operands = {kMachine, kPosition, kMachine, kTyped}};
     case BuiltinFn::kComponent:
       return {
@@ -677,7 +675,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"InitializeRetaining"},
           .operands = {kMachine, kHeld}};
     case BuiltinFn::kLoad:
-      return {.name = "get", .declaration = Method{"Get"}};
+      return {
+          .name = "get",
+          .declaration = Method{"Get"},
+          .answer = EntryAnswer::kReferenceToContents};
     case BuiltinFn::kStore:
       return {
           .name = "set",
@@ -708,19 +709,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "designate_component",
           .declaration = Method{"ComponentRef"},
           .selects = PartSelection::kComponent};
-    case BuiltinFn::kDesignateSlice:
-      return {
-          .name = "designate_slice",
-          .declaration = Method{"SliceRef"},
-          .takes_a_type_argument = true,
-          .selects = PartSelection::kBits,
-          .operands = {kMachine, kPosition}};
-    case BuiltinFn::kDesignateElementSlice:
-      return {
-          .name = "designate_element_slice",
-          .declaration = Method{"SliceRef"},
-          .selects = PartSelection::kSlice,
-          .operands = {kMachine, kPosition}};
     case BuiltinFn::kReferElement:
       return {
           .name = "refer_element",

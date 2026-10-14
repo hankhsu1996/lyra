@@ -283,7 +283,8 @@ auto WrapSliceToDeclaredType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::Expr owned,
     mir::TypeId final_type) -> mir::Expr {
   if (owned.type == final_type) return owned;
-  const mir::ExprId owned_id = block.exprs.Add(std::move(owned));
+  const mir::ExprId owned_id =
+      block.AsValue(unit.types, block.exprs.Add(std::move(owned)));
   return BuildValueConversion(unit, block, owned_id, final_type);
 }
 
@@ -410,6 +411,14 @@ auto LiesInStorage(Lowerer& lowerer, const hir::Expr& expr) -> bool {
       expr.data);
 }
 
+// The queue a select is taken from, as evaluated once for it.
+struct SelectedQueue {
+  SettledPath path;
+  // Whether the queue lies in storage that outlives the block of steps it is
+  // evaluated in, rather than in a local of that block.
+  bool outlives_the_steps;
+};
+
 // The queue a select read as a value is taken from, evaluated here, once (LRM
 // 11.4.1: the source wrote it once, and both the select and each `$` under it
 // take it). A queue lying in storage is named where it lies, so only what is
@@ -419,7 +428,7 @@ auto LiesInStorage(Lowerer& lowerer, const hir::Expr& expr) -> bool {
 template <ExprLowerer Lowerer>
 auto EvaluateSelectedQueue(
     Lowerer& lowerer, const WalkFrame& at, const hir::Expr& base)
-    -> diag::Result<SettledPath> {
+    -> diag::Result<SelectedQueue> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *at.current_block;
   // A sampled read answers with the value each cell kept (LRM 16.5.1), which
@@ -427,17 +436,23 @@ auto EvaluateSelectedQueue(
   if (at.reads_as_of == ReadsAsOf::kNow && LiesInStorage(lowerer, base)) {
     auto path = lowerer.LowerAccessPath(base, at);
     if (!path) return std::unexpected(std::move(path.error()));
-    return SettledForRead(unit_lowerer, at, *std::move(path));
+    return SelectedQueue{
+        .path = SettledForRead(unit_lowerer, at, *std::move(path)),
+        .outlives_the_steps = true};
   }
   auto value = lowerer.LowerExpr(base, at);
   if (!value) return std::unexpected(std::move(value.error()));
   const mir::TypeId type = value->type;
-  return SettledPath{
-      .named_in = &block,
-      .owner = block.exprs.Add(
-          mir::MakeLocalRefExpr(
-              DeclareLocal(at, block.exprs.Add(*std::move(value))), type)),
-      .descent = {}};
+  return SelectedQueue{
+      .path =
+          SettledPath{
+              .named_in = &block,
+              .owner = block.exprs.Add(
+                  mir::MakeLocalRefExpr(
+                      DeclareLocal(at, block.exprs.Add(*std::move(value))),
+                      type)),
+              .descent = {}},
+      .outlives_the_steps = false};
 }
 
 // The queue a select named as a part is taken from, where it is taken from
@@ -595,20 +610,30 @@ auto LowerHirElementSelectExpr(
   const hir::Expr& base_expr = exprs.Get(sel.base_value);
   // An element of a queue may be indexed from the queue's own last index (LRM
   // 7.10.1), so the queue is evaluated once in a block of steps, where the
-  // select is written, and the read is what those steps yield.
+  // select is written. Where the queue outlives those steps they yield the
+  // reference to the element, which is then the place the element lies in;
+  // where it lies in a local of theirs, they yield the element's value.
   if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
     BlockBuilder steps(frame);
     mir::Block& body = steps.Body();
     auto queue = EvaluateSelectedQueue(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
     const mir::ExprId queue_id =
-        PathAsPlace(unit_lowerer.Unit(), body, NamedIn(*queue, body));
+        PathAsPlace(unit_lowerer.Unit(), body, NamedIn(queue->path, body));
     auto index = lowerer.LowerExpr(
-        exprs.Get(sel.index), steps.Frame().WithSelectedQueue(&*queue));
+        exprs.Get(sel.index), steps.Frame().WithSelectedQueue(&queue->path));
     if (!index) return std::unexpected(std::move(index.error()));
     const mir::ExprId index_id = body.exprs.Add(*std::move(index));
-    return steps.Build(body.exprs.Add(BuildElementAccessCallExpr(
-        unit_lowerer, body, queue_id, base_expr.type, index_id, result_type)));
+    const DescentStep element =
+        ElementStep(unit_lowerer, body, base_expr.type, index_id, result_type);
+    if (!queue->outlives_the_steps) {
+      return steps.Build(body.exprs.Add(
+          StepRead(unit_lowerer.Unit(), body, element, queue_id)));
+    }
+    const mir::ExprId reference =
+        frame.current_block->exprs.Add(steps.Build(body.exprs.Add(
+            ElementReference(unit_lowerer.Unit(), body, element, queue_id))));
+    return mir::MakeDerefExpr(reference, result_type);
   }
   auto& block = *frame.current_block;
   auto base_or = lowerer.LowerAsPlace(base_expr, frame);
@@ -641,9 +666,10 @@ auto LowerHirRangeSelectExpr(
     mir::Block& body = steps.Body();
     auto queue = EvaluateSelectedQueue(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
-    const mir::ExprId queue_id = PathAsPlace(unit, body, NamedIn(*queue, body));
+    const mir::ExprId queue_id =
+        PathAsPlace(unit, body, NamedIn(queue->path, body));
     auto step = RangeStep(
-        lowerer, steps.Frame().WithSelectedQueue(&*queue), sel.bounds,
+        lowerer, steps.Frame().WithSelectedQueue(&queue->path), sel.bounds,
         base_expr.type, result_type);
     if (!step) return std::unexpected(std::move(step.error()));
     return steps.Build(body.exprs.Add(StepRead(unit, body, *step, queue_id)));

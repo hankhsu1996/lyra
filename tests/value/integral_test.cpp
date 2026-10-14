@@ -833,36 +833,29 @@ TEST(IntegralTest, AWriteThroughAPartStaysInsideIt) {
   EXPECT_EQ(written.ToInt64(), 0x0c);
 }
 
-// Bits named for a write are of a type: a write lands where they lie, a part
-// of them inside them only, and they are read at that type.
-TEST(IntegralTest, ABitsDesignationWritesInPlaceAtItsType) {
+// A reference to bits is of a type: a write through it lands where the bits
+// lie, and through a part of them inside them only.
+TEST(IntegralTest, ABitsReferenceWritesInPlaceAtItsType) {
   using Nibble = LogicVector<4>;
   Logic8 held = Logic8::FromInt(0);
-  held.SliceRef<Nibble>(Int::FromInt(4)) = Nibble::FromInt(0x9);
+  held.SliceMut<Nibble>(Int::FromInt(4)).Set(Nibble::FromInt(0x9));
   EXPECT_EQ(held.ToInt64(), 0x90);
-  held.SliceRef<Nibble>(Int::FromInt(0)).SliceRef<Nibble>(Int::FromInt(2)) =
-      Nibble::FromInt(0xf);
+  held.SliceMut<Nibble>(Int::FromInt(0))
+      .SliceMut<Nibble>(Int::FromInt(2))
+      .Set(Nibble::FromInt(0xf));
   EXPECT_EQ(held.ToInt64(), 0x9c);
-  held.SliceRef<Nibble>(Logic8{}) = Nibble::FromInt(0);
+  held.SliceMut<Nibble>(Logic8{}).Set(Nibble::FromInt(0));
   EXPECT_EQ(held.ToInt64(), 0x9c);
-  const auto reached = held.SliceRef<Nibble>(Int::FromInt(6)).Reached();
+  const auto reached = held.SliceMut<Nibble>(Int::FromInt(6)).Reached();
   ASSERT_TRUE(reached.has_value());
   EXPECT_EQ(reached->lsb, 6U);
   EXPECT_EQ(reached->width, 2U);
-  EXPECT_FALSE(held.SliceRef<Nibble>(Int::FromInt(8)).Reached().has_value());
-  EXPECT_FALSE(held.SliceRef<Nibble>(Logic8{}).Reached().has_value());
+  EXPECT_FALSE(held.SliceMut<Nibble>(Int::FromInt(8)).Reached().has_value());
+  EXPECT_FALSE(held.SliceMut<Nibble>(Logic8{}).Reached().has_value());
 
-  EXPECT_EQ(
-      held.SliceRef<SignedLogicVector<4>>(Int::FromInt(4)).Read().ToInt64(),
-      -7);
-  EXPECT_EQ(held.SliceRef<Nibble>(Int::FromInt(4)).Read().ToInt64(), 9);
-  EXPECT_TRUE(held.SliceRef<Nibble>(Logic8{}).Read().IsBitIdentical(Nibble{}));
-
-  // A two-state part of four-state storage reads each x or z as 0 and settles
-  // the bits it writes.
+  // A two-state part of four-state storage settles the bits it writes.
   Logic8 mixed;
-  EXPECT_EQ(mixed.SliceRef<Bits4>(Int::FromInt(0)).Read().ToInt64(), 0);
-  mixed.SliceRef<Bits4>(Int::FromInt(0)) = Bits4::FromInt(0x5);
+  mixed.SliceMut<Bits4>(Int::FromInt(0)).Set(Bits4::FromInt(0x5));
   EXPECT_EQ(ValueBits(mixed), 0xF5U);
   EXPECT_EQ(UnknownBits(mixed), 0xF0U);
 }

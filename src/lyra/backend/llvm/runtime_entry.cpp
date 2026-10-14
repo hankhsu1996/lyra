@@ -72,8 +72,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "wildcard_index_make";
     case RuntimeOp::kWithComponent:
       return "with_component";
-    case RuntimeOp::kWithSlice:
-      return "with_slice";
     case RuntimeOp::kDefault:
       return "default";
     case RuntimeOp::kFromLiteral:
@@ -1173,10 +1171,6 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     // 7.3).
     case RuntimeOp::kWithComponent:
       return {kMachine, kMachine, kHeld};
-    // The array, where the elements start, how many there are, and the
-    // elements that take their place (LRM 7.4.6).
-    case RuntimeOp::kWithSlice:
-      return {kMachine, kPosition, kMachine, kHeld};
     // The image of an actual and a wildcard index are each built over a value
     // whose type nothing else states (LRM 35.5.6.1, 7.8.1).
     case RuntimeOp::kMakeDpiOpenArray:
@@ -1279,7 +1273,6 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kMake:
     case RuntimeOp::kMakeWildcardIndex:
     case RuntimeOp::kWithComponent:
-    case RuntimeOp::kWithSlice:
     case RuntimeOp::kDefault:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
@@ -1332,8 +1325,6 @@ auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
       return {};
     case lir::OpenWriteTarget::Op::kAssignSlice:
       return {kMachine, kPosition, kMachine, kTyped};
-    case lir::OpenWriteTarget::Op::kReadSlice:
-      return {kMachine, kPosition};
   }
   throw InternalError("llvm codegen: unknown open-write operation");
 }
@@ -1385,7 +1376,6 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kHandleView:
     case RuntimeOp::kHandleWithView:
     case RuntimeOp::kMakeWildcardIndex:
-    case RuntimeOp::kWithSlice:
     case RuntimeOp::kMakeSegment:
     case RuntimeOp::kMakeTrigger:
     case RuntimeOp::kMakePrintLiteralItem:
@@ -1428,9 +1418,6 @@ auto RealizationsOf(lir::OpenWriteTarget::Op op)
       return kForLandings;
     case lir::OpenWriteTarget::Op::kAssignSlice:
       return kForSlicesAssigned;
-    // No container lends a run of its elements within a write.
-    case lir::OpenWriteTarget::Op::kReadSlice:
-      return {};
   }
   throw InternalError("llvm codegen: unknown open-write operation");
 }
@@ -1439,9 +1426,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   constexpr std::string_view kLeavesByUnwinding =
       "leaves a body by unwinding it, where this target's bodies leave by "
       "branching";
-  constexpr std::string_view kWrittenByTheSliceWrite =
-      "designates a slice within a write, which this target writes by the "
-      "write's own slice write";
+  constexpr std::string_view kWrittenWhereTheBitsLie =
+      "answers a reference to bits, which this target writes through by a "
+      "store of the bits where they lie";
   switch (fn) {
     // The operations over integral values alone (LRM 11.4, 11.5.1, 20.9).
     case support::BuiltinFn::kReverseBlocks:
@@ -1486,11 +1473,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kIntegralConvert:
       return OverIntegralValues{};
 
-    // A part reached for writing is written where the write lands -- bits by a
-    // store into the vector they lie in, a union's member by rebuilding the
-    // union around it -- so no library realizes the access that answers with
-    // one.
-    case support::BuiltinFn::kSliceRef:
+    // A union's member reached for writing is written by rebuilding the union
+    // around it, so no library realizes the access that answers with one.
     case support::BuiltinFn::kComponentRef:
       return NamedByValue{};
 
@@ -1513,7 +1497,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByValue{.realized = kForDynamicArraysAndQueues};
     case support::BuiltinFn::kQueueFromArray:
     case support::BuiltinFn::kElementSlice:
-    case support::BuiltinFn::kElementSliceRef:
+    case support::BuiltinFn::kAssignElementSlice:
       return NamedByValue{.realized = kForArraysOfFixedExtent};
     case support::BuiltinFn::kDynamicArrayFromArray:
       return NamedByValue{.realized = kForUnpackedArraysAndQueues};
@@ -1739,12 +1723,12 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kTakeDepartureIfDue:
       return NotRealized{.shape = kLeavesByUnwinding};
 
-    // Several bits or elements are no one place, so a slice designated within a
-    // write is written by the write's own slice write, which the lowering
-    // reaches in place of this call.
-    case support::BuiltinFn::kDesignateSlice:
-    case support::BuiltinFn::kDesignateElementSlice:
-      return NotRealized{.shape = kWrittenByTheSliceWrite};
+    // Bits are no one place, so a reference to them is no value the library
+    // holds: a write through it is a store of those bits where they lie, or
+    // within the write in progress the reference was taken on, which the
+    // lowering reaches in place of this call.
+    case support::BuiltinFn::kSliceMut:
+      return NotRealized{.shape = kWrittenWhereTheBitsLie};
 
     // The runtime leads, and the memory whose addressing names the entry
     // follows.

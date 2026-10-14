@@ -683,12 +683,12 @@ auto WriteBits(Bits& bits, const Value& value, bool watched)
   const std::optional<value::BitPositions> reached =
       watched ? bits.Reached() : std::nullopt;
   if (!reached.has_value()) {
-    bits = value;
+    bits.Set(value);
     return std::nullopt;
   }
   KeptPart<std::remove_cvref_t<decltype(bits.Root())>> kept(
       bits.Root(), *reached);
-  bits = value;
+  bits.Set(value);
   return kept.ChangeTo(bits.Root());
 }
 
@@ -1317,19 +1317,17 @@ class WriteBracket {
   std::optional<value::SmallBox<ValueType>> discarded_;
 };
 
-template <class Sink, class Slice>
-class DesignatedSlice;
-
 template <class Sink, class Bits>
 class DesignatedBits;
 
 // A place designated within a write: the whole of what the write was opened
 // on, or a part of it reached by the steps below. It borrows the write. The
 // steps reach the parts that are storage of their own (LRM 13.5.2) -- an
-// element, reported to the write as it is formed, a component, and a slice of
-// elements -- each answering with the part designated within the same write.
-// Dereferencing it is where the write lands, which is when the value from
-// before the write is kept.
+// element, reported to the write as it is formed, and a component -- each
+// answering with the part designated within the same write; bits are reached
+// by a reference to them and a run of elements is written in one call, each
+// telling the write what moved. Dereferencing it is where the write lands,
+// which is when the value from before the write is kept.
 template <class Sink, class Part>
 class Designation {
  public:
@@ -1373,21 +1371,25 @@ class Designation {
         *write_, component};
   }
 
-  // The bits of a value of `Bits` at `position` within the part (LRM 11.5.1).
-  // They lie in the part's own words, so they are a place the write lands on.
+  // A reference to the bits of a value of `Bits` at `position` within the
+  // part (LRM 11.5.1), written within this write. They lie in the part's own
+  // words, so a write through it lands on them where they are.
   template <typename Bits, typename Position>
-  auto SliceRef(const Position& position) {
-    auto bits = part_->template SliceRef<Bits>(position);
+  auto SliceMut(const Position& position) {
+    auto bits = part_->template SliceMut<Bits>(position);
     return DesignatedBits<Sink, decltype(bits)>{*write_, std::move(bits)};
   }
 
-  // `count` elements of the part from `start` (LRM 7.4.6), which are several
-  // places rather than one.
-  template <typename Position>
-  auto SliceRef(const Position& start, std::int64_t count) {
-    auto slice = part_->SliceRef(start, count);
-    return DesignatedSlice<Sink, decltype(slice)>{
-        *write_, std::move(slice), value::ReadPosition(start), count};
+  // `value` written into `count` elements of the part from `start` (LRM 7.6),
+  // several elements rather than one place, so the write learns what moved
+  // from the assignment, which compares each element before writing it. A
+  // start that names no position assigns nothing.
+  template <typename Position, typename Value>
+  void AssignSlice(
+      const Position& start, std::int64_t count, const Value& value) {
+    if (part_->AssignSlice(start, count, value)) {
+      write_->Moved(*value::ReadPosition(start), count);
+    }
   }
 
   auto operator*() -> Part& {
@@ -1409,50 +1411,11 @@ class Designation {
   std::optional<KeptPart<Part>> kept_;
 };
 
-// A slice of elements designated within a write (LRM 7.6). It is several
-// elements rather than one place, so what the write learns comes from the
-// assignment into it, which compares each element before writing it.
-template <class Sink, class Slice>
-class DesignatedSlice {
- public:
-  DesignatedSlice(
-      WriteBracket<Sink>& write, Slice slice, std::optional<std::int64_t> start,
-      std::int64_t count)
-      : write_(&write), slice_(std::move(slice)), start_(start), count_(count) {
-  }
-
-  DesignatedSlice(const DesignatedSlice&) = delete;
-  auto operator=(const DesignatedSlice&) -> DesignatedSlice& = delete;
-  DesignatedSlice(DesignatedSlice&&) = delete;
-  auto operator=(DesignatedSlice&&) -> DesignatedSlice& = delete;
-  ~DesignatedSlice() = default;
-
-  auto operator*() -> DesignatedSlice& {
-    return *this;
-  }
-
-  template <typename Value>
-  auto operator=(const Value& value) -> DesignatedSlice& {
-    // A start that names no position assigns nothing, so one that moved an
-    // element names one.
-    if (slice_.Assign(value)) {
-      write_->Moved(*start_, count_);
-    }
-    return *this;
-  }
-
- private:
-  WriteBracket<Sink>* write_;
-  Slice slice_;
-  std::optional<std::int64_t> start_;
-  std::int64_t count_;
-};
-
-// Bits of a bit-addressed value designated within a write (LRM 11.5.1), named
-// by `Bits`, the designation of them the value hands out. They lie in the
-// value's own words, so the write lands on them where they are, and each
-// assignment through them keeps what they held, writes them, and tells the
-// write which bits it reached.
+// A reference to bits of a bit-addressed value within a write (LRM 11.5.1),
+// named by `Bits`, the reference to them the value hands out. They lie in the
+// value's own words, so the write lands on them where they are, and each write
+// through them keeps what they held, writes them, and tells the write which
+// bits it reached.
 template <class Sink, class Bits>
 class DesignatedBits {
  public:
@@ -1466,27 +1429,19 @@ class DesignatedBits {
   auto operator=(DesignatedBits&&) -> DesignatedBits& = delete;
   ~DesignatedBits() = default;
 
-  auto operator*() -> DesignatedBits& {
-    return *this;
-  }
-  auto operator->() -> DesignatedBits* {
-    return this;
-  }
-
   template <class Value>
-  auto operator=(const Value& value) -> DesignatedBits& {
+  void Set(const Value& value) {
     if (const std::optional<Change> change =
             WriteBits(bits_, value, write_->Undecided())) {
       write_->Landed(*change);
     }
-    return *this;
   }
 
-  // The bits of a value of `Inner` within these, written within the same
-  // write.
+  // A reference to the bits of a value of `Inner` within these, written
+  // within the same write.
   template <class Inner, class Position>
-  [[nodiscard]] auto SliceRef(const Position& position) const {
-    auto inner = bits_.template SliceRef<Inner>(position);
+  [[nodiscard]] auto SliceMut(const Position& position) const {
+    auto inner = bits_.template SliceMut<Inner>(position);
     return DesignatedBits<Sink, decltype(inner)>{*write_, std::move(inner)};
   }
 

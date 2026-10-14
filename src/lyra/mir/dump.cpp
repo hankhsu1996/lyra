@@ -568,6 +568,9 @@ class MirDumper {
             [](const DesignationType& d) -> std::string {
               return std::format("Designation(value=Type[{}])", d.value.value);
             },
+            [](const BitsReferenceType& r) -> std::string {
+              return std::format("BitsReference(bits=Type[{}])", r.bits.value);
+            },
             [](const ObjectWriteType& w) -> std::string {
               return std::format(
                   "ObjectWrite(object=Type[{}])", w.object.value);

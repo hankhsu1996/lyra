@@ -487,8 +487,7 @@ auto ReportLeaf(
                       return ReportObjectThenHops(
                           lowerer, frame, report,
                           [&] {
-                            return block.exprs.Add(MakeSelfRefExpr(
-                                frame, frame.current_class->self_pointer_type));
+                            return block.exprs.Add(MakeSelfRefExpr(frame));
                           },
                           chain.hops);
                     }},

@@ -614,8 +614,8 @@ auto LowerProcess(
                                           .slot = advance},
                                   .receiver = BuildObjectDeref(
                                       unit, closure.Body(),
-                                      closure.Body().exprs.Add(MakeSelfRefExpr(
-                                          closure.Frame(), self_ptr_type)))},
+                                      closure.Body().exprs.Add(
+                                          MakeSelfRefExpr(closure.Frame())))},
                           .arguments = {}},
                   .type = void_type})});
 
@@ -659,8 +659,7 @@ auto BuildEvaluationAttemptsExpr(
     const StructuralScopeLowerer& lowerer, hir::ConcurrentAssertionId id)
     -> mir::ExprId {
   const mir::FieldId field = lowerer.TranslateConcurrentAssertion(id);
-  const mir::ExprId self = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(lowerer.Owner().Unit(), block, self),
@@ -739,8 +738,6 @@ void AppendConcurrentAssertionInstall(
   mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Block& block = *activate_frame.current_block;
   const mir::TypeId void_type = unit.builtins.void_type;
-  const mir::TypeId self_ptr_type =
-      activate_frame.current_class->self_pointer_type;
 
   // Both arms are the same for every attempt, so the storage holds one of each
   // and calls it once per attempt an outcome selects rather than being handed a
@@ -763,9 +760,7 @@ void AppendConcurrentAssertionInstall(
                                     .receiver = BuildObjectDeref(
                                         unit, closure.Body(),
                                         closure.Body().exprs.Add(
-                                            MakeSelfRefExpr(
-                                                closure.Frame(),
-                                                self_ptr_type)))},
+                                            MakeSelfRefExpr(closure.Frame())))},
                             .arguments = {}},
                     .type = void_type})});
     return block.exprs.Add(closure.BuildVoid());

@@ -537,8 +537,7 @@ auto BuildAlternative(
   const hir::InstanceAlternative& alternative = member.alternatives[which];
   const mir::TypeId borrowed = MakeExternalUnitPointer(
       unit_lowerer, alternative, mir::PointerOwnership::kBorrowed);
-  const mir::ExprId parent_self = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId parent_self = block.exprs.Add(MakeSelfRefExpr(frame));
   auto arguments =
       LowerConstructorArguments(lowerer, frame, alternative.assignments);
   if (!arguments) return std::unexpected(std::move(arguments.error()));
@@ -744,8 +743,7 @@ auto EmitInstanceMemberConstruction(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
                 unit_lowerer.Unit(), block,
-                block.exprs.Add(MakeSelfRefExpr(
-                    frame, frame.current_class->self_pointer_type))),
+                block.exprs.Add(MakeSelfRefExpr(frame))),
             field, member_type));
     block.AppendStmt(
         mir::ExprStmt{
@@ -1124,8 +1122,7 @@ void FillScopeSlot(
   mir::Class& mir_class = *frame.current_class;
   mir::Block& block = *frame.current_block;
   const mir::TypeId slot_type = mir_class.fields.Get(slot).type;
-  const mir::ExprId self =
-      block.exprs.Add(MakeSelfRefExpr(frame, mir_class.self_pointer_type));
+  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
   const mir::ExprId target = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
@@ -1187,11 +1184,9 @@ void AppendProcessRegistration(
     mir::CallableId body, support::BuiltinFn registration,
     diag::SourceSpan written_at) {
   mir::Block& block = *activate_frame.current_block;
-  const mir::TypeId self_ptr_type =
-      activate_frame.current_class->self_pointer_type;
   const mir::ExprId body_self = BuildObjectDeref(
       unit_lowerer.Unit(), block,
-      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type)));
+      block.exprs.Add(MakeSelfRefExpr(activate_frame)));
   const mir::ExprId body_call = block.exprs.Add(
       mir::Expr{
           .data =
@@ -1205,8 +1200,8 @@ void AppendProcessRegistration(
                           .receiver = body_self},
                   .arguments = {}},
           .type = unit_lowerer.Unit().builtins.coroutine_void});
-  const mir::ExprId reg_self = block.Read(
-      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type)));
+  const mir::ExprId reg_self =
+      block.Read(block.exprs.Add(MakeSelfRefExpr(activate_frame)));
   const mir::ExprId unit_instance = BuildEnclosingScopeReceiver(
       activate_frame, unit_lowerer.Unit(), activate_frame.HopsToUnitRoot());
   const mir::ExprId place = block.exprs.Add(
@@ -1559,8 +1554,7 @@ auto BindInputPort(
       mir_class.fields.Add(mir::FieldDecl{.type = cell_type});
   const auto kept_cell = [&](const WalkFrame& in) -> diag::Result<AccessPath> {
     mir::Block& block = *in.current_block;
-    const mir::ExprId self = block.exprs.Add(
-        MakeSelfRefExpr(in, in.current_class->self_pointer_type));
+    const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(in));
     return AccessPath{
         .owner = block.exprs.Add(
             mir::MakeFieldAccessExpr(
@@ -1765,12 +1759,11 @@ auto BuildOwnedChildHandle(
   ValidateOwnedChildConstruction(owner_class, child_scope_id);
 
   const auto& builtins = unit_lowerer.Unit().builtins;
-  const mir::TypeId self_ptr_type = owner_class.self_pointer_type;
   const mir::TypeId child_ptr_type =
       MakeUniqueObjectPointer(unit_lowerer, child_scope_id);
 
   const auto self_read = [&]() -> mir::ExprId {
-    return arm_block.exprs.Add(MakeSelfRefExpr(arm_frame, self_ptr_type));
+    return arm_block.exprs.Add(MakeSelfRefExpr(arm_frame));
   };
   const auto parent_read = [&]() -> mir::ExprId {
     if (!runtime_parent_handle.has_value()) {
@@ -1837,7 +1830,6 @@ void AppendOwnedChildConstruction(
     const mir::ClassFieldTarget& handle_field,
     std::vector<mir::Expr> arguments) {
   mir::Block& arm_block = *arm_frame.current_block;
-  const mir::Class& owner_class = *arm_frame.current_class;
   const mir::TypeId handle_type = FieldTypeOf(unit_lowerer, handle_field);
   const mir::ExprId typed_handle = BuildOwnedChildHandle(
       unit_lowerer, arm_frame, runtime_parent_handle, runtime_label,
@@ -1846,8 +1838,7 @@ void AppendOwnedChildConstruction(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(
               unit_lowerer.Unit(), arm_block,
-              arm_block.exprs.Add(
-                  MakeSelfRefExpr(arm_frame, owner_class.self_pointer_type))),
+              arm_block.exprs.Add(MakeSelfRefExpr(arm_frame))),
           handle_field, handle_type));
   arm_block.AppendStmt(
       mir::ExprStmt{
@@ -1876,8 +1867,7 @@ void AppendLoopBlockConstruction(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(
               unit, block,
-              block.exprs.Add(MakeSelfRefExpr(
-                  frame, frame.current_class->self_pointer_type))),
+              block.exprs.Add(MakeSelfRefExpr(frame))),
           blocks, FieldTypeOf(unit_lowerer, blocks)));
   block.AppendStmt(
       mir::ExprStmt{
@@ -1907,7 +1897,6 @@ auto LowerRepeatedGenerate(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  const mir::Class& owner_class = *frame.current_class;
 
   const mir::TypeId index_type = unit_lowerer.TranslateType(
       hir_scope.structural_data_objects.Get(repeat.variable).type);
@@ -1923,22 +1912,12 @@ auto LowerRepeatedGenerate(
     return in.exprs.Add(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
-                unit, in,
-                in.exprs.Add(MakeSelfRefExpr(
-                    frame.WithBlock(&in), owner_class.self_pointer_type))),
+                unit, in, in.exprs.Add(MakeSelfRefExpr(frame.WithBlock(&in)))),
             index_field, FieldTypeOf(unit_lowerer, index_field)));
   };
   const auto index_read = [&](mir::Block& in) -> mir::ExprId {
-    return in.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kLoad,
-                            .receiver = index_place(in)},
-                    .arguments = {}},
-            .type = index_type});
+    return in.Read(in.exprs.Add(
+        in.WrapperContents(unit.types, index_place(in), index_type)));
   };
 
   // The block standing at the index the loop then holds, built into `in`.
@@ -2073,7 +2052,8 @@ auto LowerSelectionBranchInto(
 // own labels. LRM 12.5 fixes that comparison: it succeeds only where every bit
 // matches exactly, `x` and `z` included, so the selector is read against each
 // label rather than reduced to a value first. `selector` stands under every
-// one of those comparisons, so it is a read that evaluates nothing.
+// one of those comparisons, so it is a place that evaluates nothing, which
+// each comparison reads or borrows as it takes its operands.
 auto MatchesAnyLabel(
     StructuralScopeLowerer& lowerer, WalkFrame frame, mir::ExprId selector,
     const std::vector<hir::ExprId>& labels) -> diag::Result<mir::ExprId> {
@@ -2084,7 +2064,7 @@ auto MatchesAnyLabel(
   std::vector<mir::ExprId> matches;
   matches.reserve(labels.size());
   for (const hir::ExprId label : labels) {
-    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(label), frame);
+    auto lowered = lowerer.LowerAsPlace(hir_scope.exprs.Get(label), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     matches.push_back(BuildCaseEquality(
         unit, block, selector, block.exprs.Add(*std::move(lowered))));
@@ -2129,7 +2109,8 @@ auto LowerLabelledChoiceInto(
 
     mir::Block step;
     auto test = MatchesAnyLabel(
-        lowerer, frame.WithBlock(&step), step.ReadLocal(held, selector_type),
+        lowerer, frame.WithBlock(&step),
+        step.exprs.Add(mir::MakeLocalRefExpr(held, selector_type)),
         item.labels);
     if (!test) return std::unexpected(std::move(test.error()));
     step.AppendStmt(
@@ -2873,12 +2854,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const auto self_object = [&]() -> mir::ExprId {
     return BuildObjectDeref(
         unit_lowerer.Unit(), ctor_block,
-        ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type)));
+        ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame)));
   };
   const auto init_self_object = [&]() -> mir::ExprId {
     return BuildObjectDeref(
         unit_lowerer.Unit(), initialize_block,
-        initialize_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type)));
+        initialize_block.exprs.Add(MakeSelfRefExpr(init_frame)));
   };
 
   // A cell takes its declared representation and default as the object is
@@ -2922,7 +2903,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
                 unit_lowerer.Unit(), block,
-                block.exprs.Add(MakeSelfRefExpr(at, self_ptr_type))),
+                block.exprs.Add(MakeSelfRefExpr(at))),
             field, FieldTypeOf(unit_lowerer, field)));
     block.AppendStmt(
         mir::ExprStmt{

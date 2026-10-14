@@ -293,6 +293,14 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::DesignationType{.value = TranslateType(d.value)}};
           },
+          // A reference to bits is written through where it is taken, so the
+          // write it is taken for is what lowers, and no value of it does.
+          [](const mir::BitsReferenceType&) -> lir::Type {
+            throw InternalError(
+                "mir_to_lir: a reference to bits is written through where it "
+                "is taken and is never a value of its own -- please report "
+                "this as a bug");
+          },
           // Which class the write answers its object as is a fact of the
           // writer's own accesses, each of which states its member's class, so
           // below MIR the write is the one library object every class shares.

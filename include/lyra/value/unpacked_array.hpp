@@ -27,8 +27,6 @@ namespace lyra::value {
 
 template <typename T, std::size_t N>
 class UnpackedArray;
-template <typename T>
-class ArraySliceRef;
 class String;
 
 // LRM 7.4.5: how many elements a slice takes, which the type the select
@@ -39,6 +37,34 @@ class String;
     throw InternalError("an unpacked slice names at least one element");
   }
   return static_cast<std::size_t>(count);
+}
+
+// LRM 7.6: `value` written into the `count` of `elements` from `start` as one
+// assignment, answering whether any element took a different value (LRM
+// 4.3). A start that names no position assigns nothing, and an element outside
+// the array is skipped.
+template <typename T, OrdinalElements C>
+auto AssignRun(
+    std::span<T> elements, std::optional<std::int64_t> start, std::size_t count,
+    const C& value) -> bool {
+  if (!start.has_value()) {
+    return false;
+  }
+  const auto size = static_cast<std::int64_t>(elements.size());
+  bool moved = false;
+  for (std::size_t i = 0; i < count; ++i) {
+    const std::int64_t at = *start + static_cast<std::int64_t>(i);
+    if (at < 0 || at >= size) {
+      continue;
+    }
+    T& element = elements[static_cast<std::size_t>(at)];
+    if (element.IsBitIdentical(value.RawAt(i))) {
+      continue;
+    }
+    element = value.RawAt(i);
+    moved = true;
+  }
+  return moved;
 }
 
 namespace detail {
@@ -254,10 +280,14 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
     return Result::SliceOf(Elements(), ReadPosition(start));
   }
 
-  [[nodiscard]] auto SliceRef(const Position& start, std::int64_t count)
-      -> ArraySliceRef<T> {
-    return ArraySliceRef<T>{
-        MutableElements(), ReadPosition(start), SliceCount(count)};
+  // LRM 7.6: `value` written into the `count` elements from `start`, one
+  // assignment to the whole window, answering whether any element took a
+  // different value (LRM 4.3).
+  template <OrdinalElements C>
+  auto AssignSlice(const Position& start, std::int64_t count, const C& value)
+      -> bool {
+    return AssignRun(
+        MutableElements(), ReadPosition(start), SliceCount(count), value);
   }
 
   // The slice of `elements` from `start` as an array of this type: what a
@@ -480,67 +510,10 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   std::array<T, N> items_{};
 };
 
-// LRM 7.6: an assignment to an unpacked slice is a single assignment to the
-// entire slice. The proxy aliases the elements of the array it was taken from,
-// plus the window's start and count, so a fixed-size unpacked array and a
-// dynamic array share one slice-write surface. A start that names no position
-// makes the assignment a no-op; partial-OOB behaves per-element. Move-only so
-// the proxy cannot outlive what it aliases.
-template <typename T>
-class ArraySliceRef {
- public:
-  ArraySliceRef(
-      std::span<T> elements, std::optional<std::int64_t> start,
-      std::size_t count)
-      : elements_(elements), start_(start), count_(count) {
-  }
-  ArraySliceRef(const ArraySliceRef&) = delete;
-  auto operator=(const ArraySliceRef&) -> ArraySliceRef& = delete;
-  ArraySliceRef(ArraySliceRef&&) noexcept = default;
-  auto operator=(ArraySliceRef&&) noexcept -> ArraySliceRef& = default;
-  ~ArraySliceRef() = default;
-
-  template <OrdinalElements C>
-  auto operator=(const C& value) -> ArraySliceRef& {
-    Assign(value);
-    return *this;
-  }
-
-  // The assignment, answering whether any element of the window took a
-  // different value (LRM 4.3).
-  template <OrdinalElements C>
-  auto Assign(const C& value) -> bool {
-    if (!start_.has_value()) {
-      return false;
-    }
-    const auto size = static_cast<std::int64_t>(elements_.size());
-    bool moved = false;
-    for (std::size_t i = 0; i < count_; ++i) {
-      const std::int64_t at = *start_ + static_cast<std::int64_t>(i);
-      if (at < 0 || at >= size) {
-        continue;
-      }
-      T& element = elements_[static_cast<std::size_t>(at)];
-      if (element.IsBitIdentical(value.RawAt(i))) {
-        continue;
-      }
-      element = value.RawAt(i);
-      moved = true;
-    }
-    return moved;
-  }
-
- private:
-  std::span<T> elements_;
-  std::optional<std::int64_t> start_;
-  std::size_t count_;
-};
-
 static_assert(LyraValue<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(Sized<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(BitstreamSizable<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(Indexable<UnpackedArray<LogicVector<4>, 3>>);
-static_assert(SliceableRef<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(ConditionallyMergeable<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(Sortable<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(NetResolvable<UnpackedArray<LogicVector<4>, 3>>);

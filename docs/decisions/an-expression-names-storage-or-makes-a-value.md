@@ -61,6 +61,11 @@ states in MIR what the recovery worked out.
   at the load (`EmitFromMemory` truncates a `_BitInt`). A field is a `MemberExpr`; a bit-field is an
   lvalue with no address, and `&` of one is refused. A library container's element is an lvalue
   because `operator[]` answers `T&`, and `std::map::operator[]` inserts on a read.
+- **Neither has bits of a value as a node.** In clang a bit-field is a `MemberExpr` whose offset its
+  record type fixes, and bits a program computes the position of are a library's: libc++'s
+  `bitset::operator[]` answers the proxy `__bit_reference` (`libcxx/include/__bit_reference`), whose
+  `operator=` writes the bit, so the AST holds only `CXXOperatorCallExpr`. rustc's `ProjectionElem`
+  has no bit projection either; the `bitvec` crate answers a `BitRef` the same way.
 - **rustc** decides place or value from the kind of a THIR expression alone (`category.rs`
   `Category::of`: `Field`, `Index`, `Deref`, a variable are places). A place used as a value is read
   by `Operand::Copy` in MIR; a value used as a place gets a temporary (`as_place.rs`). A library
@@ -75,7 +80,7 @@ in MIR becomes a LIR place in MIR-to-LIR, the move `as_place` makes from THIR to
 
 ### D1. Whether an expression is a place is the kind of the node
 
-A variable, a dereference of a value of pointer or reference type, and a field step on a place are
+A variable, a dereference of a value of pointer or reference type and a field step on a place are
 places; every other node makes a value. A call that names storage answers a reference, and the
 dereference of that reference is the place, so no call is a place by itself and nothing records
 category beside the node.
@@ -99,23 +104,32 @@ the element or the element default, and a write form, answering the element, a d
 entry. HIR-to-MIR takes the write form where the place is an assignment target, a `ref` actual, a
 mutating receiver, a read-modify-write or a nonblocking target, and the read form otherwise.
 
-### D4. Bits of an integral, a window of an array and a string's character are no places
+### D4. Bits, a window and a character are no places
 
-An integral's bits are part of a value with its own operators, and an invalid bit index reads x (LRM
-11.5.1): a read of bits is an operation on the value read, and a write is a store naming the place
-and the bits. A window of several elements is not one storage. A string's character has no identity
-of its own: a read is a call on the string read, a write a mutating call on the string's place.
+Bits of a packed value are reached through the value's own operations, as every generic language
+reaches them. A read is `slice<T>(v, start)` on the value, named where it lies. A write is a store
+through the reference to the bits that `slice_mut<T>(v, start)` answers, taken on the place the
+value lies in, as `bitset::operator[]` answers a reference to a bit and `b[i] = x` assigns through
+it. A packed value's parts nest, each with bounds of its own (LRM 7.2.1, 7.4.1) -- `v[i][j]`,
+`s.f[3]` -- so a part of a part is `slice_mut` taken on the reference to the outer part. Within a
+write in progress the reference is taken on the designation of the value, so the write hears which
+bits moved. An invalid start reads x and writes nothing (LRM 11.5.1), which is how the operations
+behave. A window of several elements is not one storage, and a partly invalid one writes only its
+valid elements, which no reference can carry: it is read by a step answering it as a value of its
+own and written by the array's own operation on the place the array lies in, as rustc copies into
+`*index_mut(&mut a, range)` by a method. A string's character has no identity of its own either: a
+read is a call on the string read, a write a mutating call on the string's place.
 
 ### D5. A place carries what kind of storage it is
 
 Ordinary storage has an address. A union's member and everything below it has none of its own (LRM
 13.5.2). An untagged union's member and everything below it is also overlaid: its bits may be
-another member's. Each node's kind is computed from its operand when it is built -- a field step on
-a union gives no-address or overlaid, on anything else its operand's kind; a dereference of a call
-that steps into its receiver's part gives the receiver's kind; a dereference of any other value
-gives ordinary. A reference the program holds -- a `ref` actual, a reference variable -- is formed
-only on an ordinary place; a binding that ends with its full-expression, which settles a
-read-modify-write's target once (LRM 11.4.1), may be formed on any.
+another member's. A place's kind follows from its node and the kind of the place it is taken on -- a
+field step on a union gives no-address or overlaid and on anything else its operand's kind, a
+dereference gives ordinary -- so it is computed from the node rather than stored beside it, as rustc
+reads such facts off a place's projections. A reference the program holds ends only on ordinary
+storage; a borrow and the object a call is entered on take storage with none by reading it first and
+holding its value for the full-expression.
 
 ### D6. A read is a node
 
@@ -143,12 +157,13 @@ is the place, and a step past the last part with an identity is a field step of 
 
 A place stands where a value is wanted only under a read. A write's target, what a borrow or an
 address-of takes and the object a field is reached on are the storage itself, never a read, which
-would act on a copy. The object a call is entered on is named where it lies for a member function
-that binds it, as clang binds the implicit object argument and rustc autorefs a receiver, and read
-for one that takes it by value, as a Rust method taking `self` does; which is the callee's to say. A
-dereference reads the pointer it opens, as clang reads the operand of builtin `*p`, and enters an
-owning pointer as an object, as C++ `*unique_ptr` enters `operator*` on it. A read and a move each
-take a place that holds a value, as rustc's `Operand::Copy` and `Operand::Move` do.
+would act on a copy. The object a call is entered on is named where it lies, as clang binds the
+implicit object argument and rustc autorefs a receiver; an entry that takes it by value, as a Rust
+method taking `self` does, is handed it read by each target's realization of the call, and no target
+realizes the two differently, so nothing beside the entry states which. A dereference reads the
+pointer it opens, as clang reads the operand of builtin `*p`, and enters an owning pointer as an
+object, as C++ `*unique_ptr` enters `operator*` on it. A read and a move each take a place that
+holds a value, as rustc's `Operand::Copy` and `Operand::Move` do.
 
 ## Where Lyra differs from both, and why
 
@@ -170,6 +185,11 @@ take a place that holds a value, as rustc's `Operand::Copy` and `Operand::Move` 
   associative entry.
 - **Keeping the entry pairs and recovering category below MIR.** The two recoveries already
   disagreed, and the C++ render cannot recover a read point at all.
+- **Bits of a place as a place node with no address**, one per part, as a C++ bit-field is an
+  lvalue. Neither compiler has such a node -- a bit-field's offset is fixed by its record, and bits
+  at a computed position are a library's reference -- and every consumer then had to decide which
+  places could be bound, read where they lie, or entered on, which the value's own operations never
+  ask.
 - **A read operation for unions alone**, ending a read path through an untagged member. It patches
   the one consumer the missing read point hurt and leaves the recovery in place.
 
@@ -178,10 +198,17 @@ take a place that holds a value, as rustc's `Operand::Copy` and `Operand::Move` 
 - The read / part entry pairs for a component and a union member, and the part entries after a
   designation, go; the array read / write forms stay, answering references.
 - `IsPlaceExpression`, MIR-to-LIR's `NamesStorage`, `ReadsWhereItLies` and `StoragePartAccess` go:
-  category is the node kind, and the kind of storage is on the place.
+  category is the node kind, and the kind of storage follows from the place's nodes.
 - MIR-to-LIR stops rebuilding a whole value to change a part of storage; extract and insert remain
   for a part of a value that lies in no storage.
-- The verifier gains two rules: an assignment's target is a place, and a reference the program holds
-  is formed on an ordinary place.
+- The verifier gains a rule: an assignment's target is a place.
+- Bits are written through a reference type of their own over the bits' type, which no backend names
+  as a type: it lives only as the receiver of `slice_mut` and of `set`, and each target realizes the
+  store by following the `slice_mut` steps to what the first was taken on. `designate_slice` and
+  `designate_element_slice` go: designated bits are `slice_mut` on the designation, and a window
+  within a write is the array's `assign_element_slice` on it.
+- An operation over an operand settles how it takes it once it is known which operation it is, as
+  clang's Sema settles an operand's conversion after overload resolution: a struct's method borrows
+  a place where it lies, a library entry takes its value.
 - A union's member is a field step, overlaid when the union is untagged, so an unpacked union needs
   nothing of its own to be read.

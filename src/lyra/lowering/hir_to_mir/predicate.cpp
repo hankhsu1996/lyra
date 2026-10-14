@@ -65,8 +65,10 @@ auto BuildCombinedArms(
   }
   const std::array compared{result_type, result_type};
   const mir::ExprId equal = block.exprs.Add(BuildMirBinaryExpr(
-      unit, block, hir::BinaryOp::kEquality, block.ReadLocal(one, result_type),
-      block.ReadLocal(other, result_type), OneBitAnswerType(unit, compared)));
+      unit, block, hir::BinaryOp::kEquality,
+      block.exprs.Add(mir::MakeLocalRefExpr(one, result_type)),
+      block.exprs.Add(mir::MakeLocalRefExpr(other, result_type)),
+      OneBitAnswerType(unit, compared)));
   return BuildSelectionChain(
       block,
       std::array{SelectedValue{

@@ -177,11 +177,12 @@ the detail lives in the entry itself.
   an array's element by the entry below.
 - [an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md) --
   whether an expression is a place is its node kind; a field step names a component or a union
-  member; an array element is a read form and a write form, each answering a reference; a place
-  carries whether it has an address and whether it is overlaid; a read is a node, realized by that
-  kind; an assignment's target is a place. Records how part access reached its shape as the value
-  representation changed under it. Implicit reads, a bounds guard before the step, and one element
-  form are rejected.
+  member; an array element is a read form and a write form, each answering a reference; bits are no
+  place, read by the value's `slice` and written through the reference its `slice_mut` answers, as
+  `bitset::operator[]` answers one; a place's kind -- whether it has an address and whether it is
+  overlaid -- follows from its nodes; a read is a node, realized by that kind; an assignment's
+  target is a place. Records how part access reached its shape as the value representation changed
+  under it. Implicit reads, a bounds guard before the step, and one element form are rejected.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering. Where it places the receiver is superseded
   by [call-receiver-on-the-callee](call-receiver-on-the-callee.md).

@@ -50,6 +50,8 @@ struct StreamShape {
     -> std::optional<StreamShape>;
 
 // The bits `value_id` makes, as a vector of that value's own stream shape.
+// `value_id` is handed as it stands, a place or a value; a packed one already
+// is its stream, which then stands as it was handed.
 [[nodiscard]] auto BuildToBitstream(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId value_id,
     diag::SourceSpan span) -> diag::Result<mir::ExprId>;

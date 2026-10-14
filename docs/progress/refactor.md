@@ -346,12 +346,13 @@ enough to warrant its own focused review.
 
 - [x] R28 -- The read-vs-write access surface is named the same across every container and across
       both lowering and runtime: bare `Element` / `Slice` for a read; for a write, `ElementMut` for
-      an element, a reference to it as rustc's `IndexMut` answers one, and `SliceRef` for a slice.
-      Lowering carries the read-vs-write choice as one access-side parameter at the slice-builder
-      boundary; the runtime concepts pin the read and write pair as part of `Indexable` (write-side
-      present on every keyed container) and state the write side of a slice as `SliceableRef` alone,
-      a slice read answering a type of its own that the caller names. No separate `Writable`
-      concept: the pair belongs with the read-side concept it shadows.
+      an element, a reference to it as rustc's `IndexMut` answers one, and for a slice
+      `AssignSlice`, within a write in progress or outside one. Lowering carries the read-vs-write
+      choice as one access-side parameter at the slice-builder boundary; the runtime concepts pin
+      the read and write pair as part of `Indexable` (write-side present on every keyed container);
+      a slice is read as a type of its own that the caller names and written by `AssignSlice`, which
+      no concept probes. No separate `Writable` concept: the pair belongs with the read-side concept
+      it shadows.
 
 - [x] R29 -- Built-in method calls and runtime entries carry one flat closed-namespace identifier
       shared between HIR and MIR, replacing the per-family variant. The receiver's MIR type drives
@@ -3047,14 +3048,13 @@ enough to warrant its own focused review.
       static members the compiler's expansion of the body reaches, which is the first thing to
       check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
       silencing the check. Not blocked.
-- [ ] R224 -- Whether an expression names storage is worked out after MIR is built rather than
-      stated by it: a union member is reached by a pair of calls differing only in whether the part
-      is read or written (a product's component is a field step on a place, and an array element a
-      read form and a write form answering a reference), and two separate visits over finished
-      expressions still decide which expressions are places. Target: the node kind says whether an
-      expression is a place and a place says what kind of storage it names
-      (`decisions/an-expression-names-storage-or-makes-a-value.md`). A read is a node and every
-      producer states it. Not blocked; it comes before the union is laid out from its type.
+- [ ] R224 -- Whether an expression names storage is stated by MIR -- the node kind says whether an
+      expression is a place, bits of a value are no place but the value's own operations, and
+      nothing below MIR works out which expressions are places -- except for a union's member, which
+      is still reached by a pair of calls differing only in whether the part is read or written, a
+      write below one rebuilding the union around the part. Target: a union's member is a field step
+      on the place holding the union (`decisions/an-expression-names-storage-or-makes-a-value.md`).
+      Blocked on the union being laid out from its type on both backends.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

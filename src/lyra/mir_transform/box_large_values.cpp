@@ -82,7 +82,7 @@ auto HoldsALargeValue(const mir::CompilationUnit& unit, const mir::Block& block)
 // is still not made in a box here: one of a large type is rewritten to choose
 // its value's box, and is read through it.
 auto MakesAValue(const mir::Block& block, mir::ExprId id) -> bool {
-  return !mir::IsPlaceExpression(block, id) &&
+  return !mir::ValueLiesInStorage(block, id) &&
          !std::holds_alternative<mir::ConditionalExpr>(
              block.exprs.Get(id).data);
 }

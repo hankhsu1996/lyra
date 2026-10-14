@@ -15,19 +15,15 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
-    -> mir::Expr {
+auto MakeSelfRefExpr(const WalkFrame& frame) -> mir::Expr {
   // The receiver is an ordinary binding: resolve it as the body-local carrier
   // for the receiver origin (a parameter in a directly-invoked body, a captured
   // field in a closure), forwarded across closure boundaries by the resolver,
-  // then named through the uniform binding path. The place is typed as the
-  // enclosing object's borrowed pointer.
+  // then named through the uniform binding path, which types it as the
+  // binding was declared: the enclosing object's borrowed pointer.
   const BodyBindingRef self =
       frame.bindings->EnsureCarrier(BindingOriginId::Receiver());
-  mir::Expr place =
-      frame.bindings->MakeBindingPlace(self, *frame.current_block);
-  place.type = self_ptr_type;
-  return place;
+  return frame.bindings->MakeBindingPlace(self, *frame.current_block);
 }
 
 auto BuildObjectDeref(
@@ -102,15 +98,13 @@ auto BuildEnclosingScopeReceiver(
                 "through one");
           },
           [&](const ScopeIsSelf&) {
-            return block.Read(block.exprs.Add(MakeSelfRefExpr(
-                frame, frame.current_class->self_pointer_type)));
+            return block.Read(block.exprs.Add(MakeSelfRefExpr(frame)));
           },
           // The instance is held as the base every scope extends, and the
           // body viewing it is one of that scope's unit, which views it as the
           // scope's own class.
           [&](const ScopeThroughMember& through) {
-            const mir::ExprId self = block.exprs.Add(
-                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+            const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
             return block.exprs.Add(
                 mir::Expr{
                     .data =

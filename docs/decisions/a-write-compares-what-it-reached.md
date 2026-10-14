@@ -67,14 +67,15 @@ part tells the write what forming it did.**
   bit-select, a part-select or a packed member a write names is designated within the write, and the
   write lands on those bits rather than on the whole. It keeps only the words they lie in, and it
   tells the waits which bits it reached and what they held: a wait reading none of them is passed
-  over without a comparison, and one reading some compares only those it shares with the write. A
-  part of a part is designated the same way, as one slice naming each part it is reached through,
-  outermost first. No part is read out at its own type to write a part of it, so a write to one bit
-  of a two-state member of a four-state structure leaves the member's other bits what the vector
-  holds, x included (LRM 7.2.1, 11.5.1). A whole-value store into a packed variable reaches every
-  bit and keeps its words the same way. This revises the earlier rule that a packed variable, having
-  no parts that are storage, is landed on whole: that rule kept a copy of the whole value for any
-  write into it, which designating the bits removes.
+  over without a comparison, and one reading some compares only those it shares with the write. The
+  bits are written through the reference to them the value's `slice_mut` answers taken on the
+  designation, and a part of a part through `slice_mut` taken on that reference, so the write hears
+  each part they are reached through, outermost first. No part is read out at its own type to write
+  a part of it, so a write to one bit of a two-state member of a four-state structure leaves the
+  member's other bits what the vector holds, x included (LRM 7.2.1, 11.5.1). A whole-value store
+  into a packed variable reaches every bit and keeps its words the same way. This revises the
+  earlier rule that a packed variable, having no parts that are storage, is landed on whole: that
+  rule kept a copy of the whole value for any write into it, which designating the bits removes.
 - **Every way a write reaches its part is a landing.** An assignment, a compound assignment or an
   increment, and a method changing its receiver in place each land the write before anything is
   written, and each reaches the part the way a write does, so an element a write would form is
