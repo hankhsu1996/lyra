@@ -71,12 +71,12 @@ what the construct means.
   concrete callable value (capture fields plus one invoke body, a distinct type per site); and the
   **object** (`mir::Class`), the rich nominal object with methods and dispatch. The tuple and the
   struct are the two products, and a component of either is reached the same way: by its position,
-  with an operation on the value, whether the value is stored, computed or behind a pointer. The
-  closure and the object share a **field substrate** -- a field declaration, a field id keyed within
-  one declaration, and one access node -- while staying distinct types; an access names the
-  declaration it reaches into, so what the substrate shares is the vocabulary and never the
-  identity. Structural versus nominal, and storage versus callable, are the ordinary
-  generic-language distinctions (C++/Rust/LLVM carry them).
+  as a field step on the place holding the product, whether that place is a variable, a dereference
+  or a value held for the full-expression. The closure and the object share a **field substrate** --
+  a field declaration, a field id keyed within one declaration, and one access node -- while staying
+  distinct types; an access names the declaration it reaches into, so what the substrate shares is
+  the vocabulary and never the identity. Structural versus nominal, and storage versus callable, are
+  the ordinary generic-language distinctions (C++/Rust/LLVM carry them).
 - A struct is an unpacked structure the source declared (LRM 7.2). It carries the name another unit
   reaches it by and a method for each operation the language defines on its whole value, which every
   unit naming it calls through the declaration, handing it each value it asks about by reference, as

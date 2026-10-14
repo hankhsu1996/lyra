@@ -67,9 +67,18 @@ struct StepToQueueRun {
   mir::ExprId highest;
 };
 
-// A component of a product, or the member an active-member value holds, by its
-// declaration-order position (LRM 7.2, 7.3).
+// A component of a product by its declaration-order position (LRM 7.2): a
+// member of an unpacked structure, or a component of a tuple the lowering
+// composes. Each is storage of its own, so reading it and writing it are the
+// one field step on the place the product lies in.
 struct StepToComponent {
+  base::ComponentIndex position;
+};
+
+// The member an unpacked union holds, by its declaration-order position (LRM
+// 7.3). The union holds one member at a time, so reading a member and writing
+// one are different operations on the union's value.
+struct StepToUnionMember {
   base::ComponentIndex position;
 };
 
@@ -84,7 +93,7 @@ struct StepToComponent {
 struct DescentStep {
   std::variant<
       StepToBits, StepToElementRun, StepToElement, StepToAssocElement,
-      StepToQueueRun, StepToComponent>
+      StepToQueueRun, StepToComponent, StepToUnionMember>
       to;
   mir::TypeId part_type;
 };
@@ -104,7 +113,7 @@ void ForEachOperand(DescentStep& step, Visit visit) {
             visit(run.lowest);
             visit(run.highest);
           },
-          [](StepToComponent&) {}},
+          [](StepToComponent&) {}, [](StepToUnionMember&) {}},
       step.to);
 }
 
@@ -128,6 +137,9 @@ void ForEachOperand(DescentStep& step, Visit visit) {
             return std::nullopt;
           },
           [](const StepToComponent&) -> std::optional<RequiredTag> {
+            return std::nullopt;
+          },
+          [](const StepToUnionMember&) -> std::optional<RequiredTag> {
             return std::nullopt;
           }},
       step.to);
@@ -158,10 +170,10 @@ using PathOwner = std::variant<mir::ExprId, ObjectProperty>;
 // nowhere and is its owner's own place.
 //
 // This is the lowering's own shape and reaches no layer below. What MIR carries
-// is what the descent lowers to -- a sequence of ordinary calls, each naming
-// its own entry, composed through the receiver -- because a consumer that met
-// the descent itself would have to decide which operation each step is, which
-// is the decision this layer is here to make.
+// is what the descent lowers to -- one node per step, a field step or an
+// ordinary call naming its own entry, composed through the receiver -- because
+// a consumer that met the descent itself would have to decide which operation
+// each step is, which is the decision this layer is here to make.
 struct AccessPath {
   PathOwner owner;
   std::vector<DescentStep> descent;
@@ -189,8 +201,8 @@ struct AccessPath {
     const mir::CompilationUnit& unit, const mir::Block& block,
     const AccessPath& path) -> mir::TypeId;
 
-// The place the path designates: the owner's own storage, then one reaching
-// call per step. Storing into the result writes the part, and applying a method
+// The place the path designates: the owner's own storage, then one step per
+// part. Storing into the result writes the part, and applying a method
 // that changes its receiver to it changes the part, because a place is what
 // both take.
 //
@@ -215,8 +227,14 @@ struct AccessPath {
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId;
 
-// The read `step` takes from the value `receiver` names, answering at the
-// part's type.
+// The part `step` reaches in what `receiver` names, taken for a read, at the
+// part's type: the part itself where it is storage of its own named by a
+// field, and otherwise what the entry reading the part answers.
+[[nodiscard]] auto StepForRead(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const DescentStep& step, mir::ExprId receiver) -> mir::Expr;
+
+// The value of that part.
 [[nodiscard]] auto StepRead(
     const mir::CompilationUnit& unit, mir::Block& block,
     const DescentStep& step, mir::ExprId receiver) -> mir::Expr;
@@ -233,6 +251,13 @@ struct AccessPath {
 [[nodiscard]] auto PartSelectNaturalType(
     mir::CompilationUnit& unit, mir::TypeId source_type, mir::TypeId part_type)
     -> mir::TypeId;
+
+// The part the path names, as the place it lies in where it is one: what the
+// owner holds, then each step as a read takes it, so nothing on the way to the
+// part is read whole.
+[[nodiscard]] auto PathAsPlace(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> mir::ExprId;
 
 // The path as an expression yielding the part's value, for a caller that reads
 // it and writes nothing.

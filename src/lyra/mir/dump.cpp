@@ -108,6 +108,10 @@ auto FormatField(const ClosureFieldTarget& t) -> std::string {
   return std::format("Closure[{}]::Field[{}]", t.owner.value, t.slot.value);
 }
 
+auto FormatField(const ComponentFieldTarget& t) -> std::string {
+  return std::format("Component[{}]", t.position.value);
+}
+
 auto FormatCallPart(const CallPart& part) -> std::string {
   return std::visit(
       Overloaded{

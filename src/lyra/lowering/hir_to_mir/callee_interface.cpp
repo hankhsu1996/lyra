@@ -246,10 +246,12 @@ auto PrototypeOf(
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
     base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId {
-  const mir::ExprId tuple_ref =
+  const mir::ExprId payload =
       block.exprs.Add(mir::MakeLocalRefExpr(completion, payload_type));
-  return block.exprs.Add(
-      mir::MakeComponentExpr(tuple_ref, index, component_type));
+  return block.Read(block.exprs.Add(
+      mir::MakeFieldAccessExpr(
+          payload, mir::ComponentFieldTarget{.position = index},
+          component_type)));
 }
 
 auto BindCompletion(

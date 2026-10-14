@@ -182,6 +182,11 @@ class StructuralScopeLowerer {
   [[nodiscard]] auto LowerExpr(const hir::Expr& expr, WalkFrame frame) const
       -> diag::Result<mir::Expr>;
 
+  // The same expression where a part of it is reached: storage it names is
+  // that place, unread, and any other expression is its value.
+  [[nodiscard]] auto LowerAsPlace(const hir::Expr& expr, WalkFrame frame) const
+      -> diag::Result<mir::Expr>;
+
   // The same expression where nothing reads its value: a loop generate's step.
   // A write is then the write alone.
   [[nodiscard]] auto LowerIgnoredExpr(

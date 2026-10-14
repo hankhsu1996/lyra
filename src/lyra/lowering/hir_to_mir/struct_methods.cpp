@@ -302,13 +302,16 @@ class Synthesizer {
     return Referent(block, local, structure_);
   }
 
-  // Member `i` of the struct parameter `local`.
+  // The value of member `i` of the struct parameter `local`.
   auto Member(mir::Block& block, mir::LocalId local, std::size_t i)
       -> mir::ExprId {
-    return block.exprs.Add(
-        mir::MakeComponentExpr(
+    return block.Read(block.exprs.Add(
+        mir::MakeFieldAccessExpr(
             Whole(block, local),
-            base::ComponentIndex{static_cast<std::uint32_t>(i)}, members_[i]));
+            mir::ComponentFieldTarget{
+                .position =
+                    base::ComponentIndex{static_cast<std::uint32_t>(i)}},
+            members_[i])));
   }
 
   // The struct built from one value per member.

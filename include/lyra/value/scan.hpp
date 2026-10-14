@@ -86,7 +86,7 @@ auto ScanInto(
     Tuple<ScanSlot<Targets>...> slots{
         ScanSlot<Targets>(std::move(prototypes).template Component<I>())...};
     const std::array<ScanTarget, sizeof...(Targets)> targets{
-        slots.template ComponentRef<I>().Target()...};
+        slots.template Component<I>().Target()...};
     const ScanCount count = ScanImpl(input, format, null_byte, targets);
     return Tuple<Integer, Int, Targets...>{
         Integer::FromInt(count.items), Int::FromInt(count.consumed),

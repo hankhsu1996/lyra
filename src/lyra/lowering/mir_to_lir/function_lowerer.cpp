@@ -1692,16 +1692,16 @@ auto FunctionLowerer::LowerCondition(const mir::Block& block, mir::ExprId id)
   return value;
 }
 
-auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
-    -> lir::StatedMemberRef {
-  const auto at = [](lir::TypeId declared_by, auto slot) {
-    return lir::StatedMemberRef{
-        .declared_by = declared_by, .slot = lir::MemberSlot{slot.value}};
+auto FunctionLowerer::FieldStep(const mir::FieldRef& field) -> lir::Projection {
+  const auto member = [](lir::TypeId declared_by, auto slot) {
+    return lir::Projection{lir::MemberProjection{
+        .member = lir::StatedMemberRef{
+            .declared_by = declared_by, .slot = lir::MemberSlot{slot.value}}}};
   };
   return std::visit(
       Overloaded{
           [&](const mir::ClassFieldTarget& t) {
-            return at(
+            return member(
                 std::visit(
                     Overloaded{
                         [&](const mir::IntraUnitClassRef& own) {
@@ -1715,7 +1715,11 @@ auto FunctionLowerer::MemberRefOf(const mir::FieldRef& field)
                 t.slot);
           },
           [&](const mir::ClosureFieldTarget& t) {
-            return at(unit_->ClosureValueType(t.owner), t.slot);
+            return member(unit_->ClosureValueType(t.owner), t.slot);
+          },
+          [](const mir::ComponentFieldTarget& t) {
+            return lir::Projection{
+                lir::ComponentProjection{.index = t.position}};
           }},
       field);
 }
@@ -1774,8 +1778,18 @@ auto ReachesIntoValue(const mir::Block& block, mir::ExprId target) -> bool {
   return ValuePartReceiver(block, target).has_value();
 }
 
-// The wrapper an expression reads what it holds of, where the expression is
-// that read.
+// What a step into a part is taken on, where the expression is one: the place
+// a field step names a field of, or the value a call reaching a part reaches
+// into.
+auto StepReceiver(const mir::Block& block, mir::ExprId step)
+    -> std::optional<mir::ExprId> {
+  if (const auto* field =
+          std::get_if<mir::FieldAccessExpr>(&block.exprs.Get(step).data)) {
+    return field->receiver;
+  }
+  return ValuePartReceiver(block, step);
+}
+
 // The position a call reaching a component by its position names. The position
 // is fixed by the call rather than computed, so it rides on the callee.
 auto PositionOf(const mir::CallExpr& call) -> base::ComponentIndex {
@@ -1850,25 +1864,28 @@ auto FunctionLowerer::WritesInto(Reach reach) -> bool {
   throw InternalError("mir_to_lir: unknown reach");
 }
 
-auto FunctionLowerer::PartPlace(
-    const mir::Block& block, const mir::CallExpr& part, Reach reach)
+auto FunctionLowerer::StepPlace(
+    const mir::Block& block, mir::ExprId whole, mir::ExprId part, Reach reach)
     -> diag::Result<lir::Place> {
-  const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(part.callee);
-  if (!receiver.has_value()) {
-    throw InternalError(
-        "mir_to_lir: a part is reached out of a value, and this access names "
-        "none -- please report this as a bug");
-  }
-  auto place = PlaceHolding(block, *receiver, HolderReach(reach));
+  auto place = PlaceHolding(block, whole, HolderReach(reach));
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
-  auto step = PartStep(block, part);
+  auto step = StepInto(block, part);
   if (!step) {
     return std::unexpected(std::move(step.error()));
   }
   place->chain.push_back(*std::move(step));
   return place;
+}
+
+auto FunctionLowerer::StepInto(const mir::Block& block, mir::ExprId part)
+    -> diag::Result<lir::Projection> {
+  const mir::ExprData& data = block.exprs.Get(part).data;
+  if (const auto* field = std::get_if<mir::FieldAccessExpr>(&data)) {
+    return FieldStep(field->field);
+  }
+  return PartStep(block, std::get<mir::CallExpr>(data));
 }
 
 auto FunctionLowerer::PartStep(
@@ -2292,7 +2309,13 @@ auto FunctionLowerer::LowerPlace(
   // it is part of.
   if (const mir::CallExpr* part =
           mir::StoragePartAccess(unit_->Mir().types, block, id)) {
-    return PartPlace(block, *part, reach);
+    const std::optional<mir::ExprId> whole = mir::CalleeReceiver(part->callee);
+    if (!whole.has_value()) {
+      throw InternalError(
+          "mir_to_lir: a part is reached out of a value, and this access names "
+          "none -- please report this as a bug");
+    }
+    return StepPlace(block, *whole, id, reach);
   }
   // A part that is a view of its whole is a position in it rather than
   // storage, so there is nothing for anything to bind. A write through one
@@ -2318,14 +2341,7 @@ auto FunctionLowerer::LowerPlace(
             return ReferencePlace(reference.target, expr.type, reach);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            auto object = LowerPlace(block, field.receiver, HolderReach(reach));
-            if (!object) {
-              return object;
-            }
-            lir::Place member = *std::move(object);
-            member.chain.emplace_back(
-                lir::MemberProjection{.member = MemberRefOf(field.field)});
-            return member;
+            return StepPlace(block, field.receiver, id, reach);
           },
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             return WrapperContentsPlace(block, deref.pointer);
@@ -2669,9 +2685,7 @@ auto FunctionLowerer::LowerPropertyReference(
       lir::Place{
           .base = args->front(),
           .chain =
-              {lir::Projection{lir::DerefProjection{}},
-               lir::Projection{
-                   lir::MemberProjection{.member = MemberRefOf(property)}}}},
+              {lir::Projection{lir::DerefProjection{}}, FieldStep(property)}},
       value));
   return EmitCallTo(
       lir::BuiltinTarget{.fn = support::BuiltinFn::kReferProperty},
@@ -3094,14 +3108,20 @@ auto FunctionLowerer::LowerValuePartSelector(
 auto FunctionLowerer::ReachesViewedPart(
     const mir::Block& block, mir::ExprId target) const -> bool {
   mir::ExprId reached = target;
-  while (const std::optional<mir::ExprId> receiver =
-             ValuePartReceiver(block, reached)) {
-    if (mir::StoragePartAccess(unit_->Mir().types, block, reached) == nullptr) {
+  while (const std::optional<mir::ExprId> whole =
+             StepReceiver(block, reached)) {
+    if (IsViewedPart(block, reached)) {
       return true;
     }
-    reached = *receiver;
+    reached = *whole;
   }
   return false;
+}
+
+auto FunctionLowerer::IsViewedPart(
+    const mir::Block& block, mir::ExprId part) const -> bool {
+  return std::holds_alternative<mir::CallExpr>(block.exprs.Get(part).data) &&
+         mir::StoragePartAccess(unit_->Mir().types, block, part) == nullptr;
 }
 
 auto FunctionLowerer::StorageSlice(
@@ -3380,14 +3400,14 @@ auto FunctionLowerer::StoreBitsInDesignation(
 auto FunctionLowerer::UpdateThroughView(
     const mir::Block& block, mir::ExprId target, const ValueChange& change)
     -> diag::Result<lir::Operand> {
-  const auto& part = std::get<mir::CallExpr>(block.exprs.Get(target).data);
-  const mir::ExprId whole = *mir::CalleeReceiver(part.callee);
   const lir::TypeId part_type =
       unit_->TranslateType(block.exprs.Get(target).type);
+  const mir::ExprId whole = *StepReceiver(block, target);
 
   // A view: the part is extracted from the whole and the whole rebuilt around
   // what it is changed to.
-  if (mir::StoragePartAccess(unit_->Mir().types, block, target) == nullptr) {
+  if (IsViewedPart(block, target)) {
+    const auto& part = std::get<mir::CallExpr>(block.exprs.Get(target).data);
     return UpdateTarget(
         block, whole,
         [&](const ValueReader& read_whole,
@@ -3431,7 +3451,7 @@ auto FunctionLowerer::UpdateThroughView(
           return std::unexpected(std::move(read.error()));
         }
         const lir::ValueId slot = HeldInSlot(*std::move(read), whole_type);
-        auto step = PartStep(block, part);
+        auto step = StepInto(block, target);
         if (!step) {
           return std::unexpected(std::move(step.error()));
         }

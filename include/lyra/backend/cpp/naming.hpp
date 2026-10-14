@@ -824,6 +824,15 @@ inline void WriteOne(TargetText& out, const StructRef& ref) {
   return MintedWord{.word = "base"};
 }
 
+// The library product's accessor for one component, `Component<I>()`, which a
+// field step to a struct's or a tuple's component is spelled through. It is
+// overloaded on the product's value category, so reading a component, writing
+// it and moving it out of an expiring product are the one access, as a C++
+// member access is.
+[[nodiscard]] inline auto CppTupleComponentAccessor() -> VerbatimName {
+  return VerbatimName{.text = "Component"};
+}
+
 // The member a struct answers an operation on its whole value with: the
 // operator, or the identifier the library's entry for the question declares on
 // every value, so the library's own code asking a value of the struct finds it

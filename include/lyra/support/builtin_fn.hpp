@@ -47,13 +47,10 @@ enum class BuiltinFn : std::uint16_t {
   kElementRef,
   kSliceRef,
   kElementSliceRef,
-  // The same two directions over a part named by its declaration-order
-  // position rather than by a coordinate. One pair covers a product and an
-  // active-member value alike: what differs is whether every part is live at
-  // once or one at a time, and whether reaching one for writing settles which
-  // that is -- all of which is the value's own semantics, reached through the
-  // domain its type names, exactly as a step by position reaches a queue's
-  // rules or a dynamic array's.
+  // The same two directions over the member an active-member value holds,
+  // named by its declaration-order position. Reaching one for writing settles
+  // which member is held, which reading one does not, so the two are different
+  // operations on the value, reached through the domain its type names.
   kComponent,
   kComponentRef,
   // Which member an active-member value holds, and building one that holds a

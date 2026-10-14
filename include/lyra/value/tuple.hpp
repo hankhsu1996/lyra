@@ -79,25 +79,23 @@ class Tuple {
   explicit Tuple(Us&&... values) : data_(std::forward<Us>(values)...) {
   }
 
-  // Component `I`'s value, by declaration-order index: a reference to read it
-  // through, or, from an expiring product, one to move it out of.
+  // Component `I`, by declaration-order index, in the product's own value
+  // category: one to read through a product that may not be changed, one to
+  // write or reach further through, and one to move out of an expiring
+  // product. Every component of a product is live at once, so reaching one
+  // settles nothing about the others, and reading and writing it are the one
+  // access.
   template <std::size_t I>
   [[nodiscard]] auto Component() const& -> decltype(auto) {
     return detail::ComponentAt<I>(data_);
   }
   template <std::size_t I>
+  [[nodiscard]] auto Component() & -> decltype(auto) {
+    return detail::ComponentAt<I>(data_);
+  }
+  template <std::size_t I>
   [[nodiscard]] auto Component() && -> decltype(auto) {
     return detail::ComponentAt<I>(std::move(data_));
-  }
-
-  // Component `I` itself, for a caller that will write it or reach further
-  // through it. Every component of a product is live at once, so reaching one
-  // settles nothing about the others; a value holding one member at a time
-  // answers the same request by settling which member that is, which is why
-  // reaching a part is spelled apart from reading its value at all.
-  template <std::size_t I>
-  [[nodiscard]] auto ComponentRef() -> decltype(auto) {
-    return detail::ComponentAt<I>(data_);
   }
 
  private:

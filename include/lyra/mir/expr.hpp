@@ -286,18 +286,24 @@ struct ClosureFieldTarget {
   auto operator==(const ClosureFieldTarget&) const -> bool = default;
 };
 
-// Which field a `FieldAccessExpr` reaches, stated as the declaration that
-// declares it and the slot that declaration gave it. One alternative per
-// declaration kind, because the declaration kinds are what the arenas holding
-// field names are keyed by, and a name is resolved by reading the arena the
-// access states rather than by classifying what the receiver turned out to be.
-//
-// A field is storage an object or a closure keeps, reached through that object
-// or closure, which is what separates it from a part of a product -- a tuple's
-// component or a struct's member. A product is a value, reached whether it is
-// stored, computed or behind a pointer, so reaching a part of one is an
-// operation on the value rather than a name in an arena, and it is a call.
-using FieldRef = std::variant<ClassFieldTarget, ClosureFieldTarget>;
+// A component of a product -- a struct's member, a tuple's component -- by its
+// declaration-order position (LRM 7.2). A product has no arena naming its
+// components: where each lies is the product type's layout, which the
+// receiver's type states, as rustc projects a field by its index alone.
+struct ComponentFieldTarget {
+  base::ComponentIndex position;
+
+  auto operator==(const ComponentFieldTarget&) const -> bool = default;
+};
+
+// Which field a `FieldAccessExpr` reaches. A field an object or a closure
+// keeps is stated as the declaration that declares it and the slot that
+// declaration gave it, one alternative per declaration kind, because the
+// declaration kinds are what the arenas holding field names are keyed by, and
+// a name is resolved by reading the arena the access states rather than by
+// classifying what the receiver turned out to be.
+using FieldRef =
+    std::variant<ClassFieldTarget, ClosureFieldTarget, ComponentFieldTarget>;
 
 // The part a call acts on where the call itself fixes it: a component of a
 // product or the member an active-member value holds, by position, or a
@@ -497,8 +503,10 @@ struct CopyExpr {
 };
 
 // Field access on an explicit receiver: `receiver.field`. The receiver is the
-// object of whichever declaration the field names, as a place. An object a
-// handle, a pointer, or a write in progress reaches is first dereferenced to
+// object of whichever declaration the field names, or the product whose
+// component it is, as a place; a product a computation makes is held for the
+// full-expression, as C++ materializes the base of a member access. An object
+// a handle, a pointer, or a write in progress reaches is first dereferenced to
 // it, so `p->field` is this node over `*p`, as in rustc's MIR, where a field is
 // projected from a place that is itself a dereference. So a backend never asks
 // "what is the current receiver?", never asks whether the receiver must first
@@ -828,11 +836,10 @@ struct Expr {
   return Expr{.data = DerefExpr{.pointer = pointer}, .type = referent_type};
 }
 
-// `subject.index` -- the component a value holds at a declaration-order
-// position: one of a product's, or the member an active-member value holds. One
-// operation for both, because what separates them -- whether every component is
-// live at once, and what a read of one that is not answers with -- is the
-// value's own semantics and reaches the call through the domain its type names.
+// `subject.index` -- the member an active-member value holds at a
+// declaration-order position. A read of a member that is not the one held
+// answers by the value's own semantics, which reach the call through the
+// domain its type names.
 [[nodiscard]] inline auto MakeComponentExpr(
     ExprId subject, base::ComponentIndex index, TypeId component) -> Expr {
   return Expr{
@@ -841,22 +848,6 @@ struct Expr {
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kComponent,
-                      .receiver = subject,
-                      .part = index},
-              .arguments = {}},
-      .type = component};
-}
-
-// The component at `index` of the value `subject` names, as a place a write
-// lands in: the reach-for-write form of the access above.
-[[nodiscard]] inline auto MakeComponentRefExpr(
-    ExprId subject, base::ComponentIndex index, TypeId component) -> Expr {
-  return Expr{
-      .data =
-          CallExpr{
-              .callee =
-                  Direct{
-                      .target = support::BuiltinFn::kComponentRef,
                       .receiver = subject,
                       .part = index},
               .arguments = {}},

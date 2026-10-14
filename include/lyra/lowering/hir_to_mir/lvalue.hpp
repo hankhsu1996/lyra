@@ -110,9 +110,11 @@ void ForEachPlace(const Lvalue& lvalue, Visit visit) {
       lvalue.form);
 }
 
-// The share of `value` each place of `lvalue` takes. One place takes the value
-// as it is. A join holds the value once, as a step of `frame`'s block, and
-// cuts it by its kind down to the places.
+// The share of `value` each place of `lvalue` takes, where `value` is a value
+// or the place one lies in. One place takes the value, read where it is a
+// place. A join cuts it by its kind down to the places, taking each part where
+// it lies, and holds a value that lies nowhere once, as a step of `frame`'s
+// block.
 [[nodiscard]] auto Shares(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,
     mir::ExprId value) -> diag::Result<std::vector<Share>>;

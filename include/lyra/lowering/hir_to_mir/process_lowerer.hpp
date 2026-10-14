@@ -156,6 +156,11 @@ class ProcessLowerer {
   auto LowerExpr(const hir::Expr& expr, WalkFrame frame)
       -> diag::Result<mir::Expr>;
 
+  // The same expression where a part of it is reached: storage it names is
+  // that place, unread, and any other expression is its value.
+  auto LowerAsPlace(const hir::Expr& expr, WalkFrame frame)
+      -> diag::Result<mir::Expr>;
+
   // The same expression where nothing reads its value: a statement, a loop's
   // initializer or step. A write is then the write alone.
   auto LowerIgnoredExpr(const hir::Expr& expr, WalkFrame frame)

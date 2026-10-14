@@ -928,7 +928,7 @@ class VariableRef {
 
   template <std::size_t I>
   [[nodiscard]] auto ReferComponent() const {
-    auto& component = Storage().template ComponentRef<I>();
+    auto& component = Storage().template Component<I>();
     return VariableRef<std::remove_reference_t<decltype(component)>>{
         erased_.Part(
             &component, value::Formation::kExisting, PartPath::Child(I))};
@@ -1365,7 +1365,7 @@ class Designation {
 
   template <std::size_t I>
   auto ComponentRef() {
-    auto& component = part_->template ComponentRef<I>();
+    auto& component = part_->template Component<I>();
     if (write_->Undecided()) {
       write_->Stepped(PartPath::Child(I));
     }

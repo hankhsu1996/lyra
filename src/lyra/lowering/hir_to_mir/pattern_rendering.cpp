@@ -117,8 +117,8 @@ class Renderer {
 
   auto UnpackedMember(
       const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
-      const hir::UnpackedAggregateField& field, base::ComponentIndex index)
-      -> mir::ExprId;
+      const hir::Type& aggregate, const hir::UnpackedAggregateField& field,
+      base::ComponentIndex index) -> mir::ExprId;
   auto PackedMember(
       const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
       const PackedProjection& projection,
@@ -332,8 +332,8 @@ auto Renderer::BuildBody(
 
 auto Renderer::UnpackedMember(
     const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
-    const hir::UnpackedAggregateField& field, base::ComponentIndex index)
-    -> mir::ExprId {
+    const hir::Type& aggregate, const hir::UnpackedAggregateField& field,
+    base::ComponentIndex index) -> mir::ExprId {
   // LRM 7.3.2 allows a tagged union member declared `void`, which is all
   // information in the tag: the name is the whole of what there is to print.
   if (HirType(field.type).Is<hir::VoidType>()) {
@@ -341,9 +341,11 @@ auto Renderer::UnpackedMember(
   }
   mir::Block& block = *frame.current_block;
   const mir::ExprId subject = Place(frame, value, mir_type);
-  const mir::ExprId member = block.exprs.Add(
-      mir::MakeComponentExpr(
-          subject, index, Owner().TranslateType(field.type)));
+  const mir::ExprId member = block.exprs.Add(StepRead(
+      Unit(), block,
+      MemberStep(
+          Owner(), block, aggregate, index, Owner().TranslateType(field.type)),
+      subject));
   return Named(frame, field.name, Render(frame, member, field.type));
 }
 
@@ -402,7 +404,7 @@ auto Renderer::BuildUnpackedAggregate(
                   mir::ConditionalExpr{
                       .condition = ReduceToCondition(Unit(), block, live),
                       .then_value = UnpackedMember(
-                          frame, value, mir_type, fields[i], index),
+                          frame, value, mir_type, t, fields[i], index),
                       .else_value = chain},
               .type = StringType()});
     }
@@ -414,7 +416,8 @@ auto Renderer::BuildUnpackedAggregate(
     for (std::size_t i = 0; i < count; ++i) {
       if (i != 0) parts.push_back(Text(frame, kSeparator));
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      parts.push_back(UnpackedMember(frame, value, mir_type, fields[i], index));
+      parts.push_back(
+          UnpackedMember(frame, value, mir_type, t, fields[i], index));
     }
   }
   parts.push_back(Text(frame, kClose));
@@ -562,8 +565,7 @@ auto Renderer::BuildIndexedElements(
   {
     const mir::ExprId separator = SeparatorAfterFirst(body_frame, ordinal);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body,
-        body_frame.current_block->ReadLocal(value, mir_type), type,
+        Owner(), loop_body, Place(body_frame, value, mir_type), type,
         body_frame.current_block->ReadLocal(index, IntType()), element_mir));
     const mir::ExprId grown = Join(
         body_frame, {body_frame.current_block->ReadLocal(text, StringType()),
@@ -607,7 +609,7 @@ auto Renderer::TraversalStep(
     -> mir::ExprId {
   BlockBuilder step(frame);
   const WalkFrame& inner = step.Frame();
-  const mir::ExprId array = inner.current_block->ReadLocal(value, mir_type);
+  const mir::ExprId array = Place(inner, value, mir_type);
   return frame.current_block->exprs.Add(BuildAssociativeTraversal(
       Owner(), step, entry, array,
       AccessPath{.owner = Place(inner, key, key_type), .descent = {}}, key_type,
@@ -649,8 +651,7 @@ auto Renderer::BuildAssociativeEntries(
         body_frame, body_frame.current_block->ReadLocal(key, key_type),
         array.key_type);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body,
-        body_frame.current_block->ReadLocal(value, mir_type), type,
+        Owner(), loop_body, Place(body_frame, value, mir_type), type,
         body_frame.current_block->ReadLocal(key, key_type), element_mir));
     const mir::ExprId grown = Join(
         body_frame, {body_frame.current_block->ReadLocal(text, StringType()),

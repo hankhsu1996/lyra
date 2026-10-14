@@ -250,6 +250,13 @@ void RenderFieldAccessExpr(
           },
           [&](const mir::ClosureFieldTarget& t) {
             Write(out, CppClosureCaptureName(t.slot));
+          },
+          // `p.template Component<2>()`: the position is a template argument
+          // of the member, so the call is written with `template`.
+          [&](const mir::ComponentFieldTarget& t) {
+            Write(
+                out, "template ", CppTupleComponentAccessor(), "<",
+                t.position.value, ">()");
           }},
       m.field);
 }

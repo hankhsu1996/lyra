@@ -3048,11 +3048,11 @@ enough to warrant its own focused review.
       check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
       silencing the check. Not blocked.
 - [ ] R224 -- Whether an expression names storage is worked out after MIR is built rather than
-      stated by it: a component and a union member are each reached by a pair of calls differing
-      only in whether the part is read or written, two separate visits over finished expressions
-      decide which expressions are places and do not agree. Target: the node kind says whether an
-      expression is a place, a place says what kind of storage it names, and an array element is a
-      read form and a write form answering a reference
+      stated by it: a union member is reached by a pair of calls differing only in whether the part
+      is read or written (a product's component is a field step on a place), two separate visits
+      over finished expressions decide which expressions are places and do not agree. Target: the
+      node kind says whether an expression is a place, a place says what kind of storage it names,
+      and an array element is a read form and a write form answering a reference
       (`decisions/an-expression-names-storage-or-makes-a-value.md`). A read is a node and every
       producer states it. Not blocked; it comes before the union is laid out from its type.
 

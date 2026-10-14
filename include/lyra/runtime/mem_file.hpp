@@ -325,7 +325,7 @@ auto ReadMem(
     -> MemoryLoad<value::DynamicArray<T>> {
   MemoryLoad<value::DynamicArray<T>> load(memory);
   detail::ReadMemZeroBased(
-      runtime, load.template ComponentRef<0>(), filename,
+      runtime, load.template Component<0>(), filename,
       static_cast<unsigned>(base), start, std::nullopt);
   return load;
 }
@@ -337,7 +337,7 @@ auto ReadMemWithin(
     std::int64_t finish) -> MemoryLoad<value::DynamicArray<T>> {
   MemoryLoad<value::DynamicArray<T>> load(memory);
   detail::ReadMemZeroBased(
-      runtime, load.template ComponentRef<0>(), filename,
+      runtime, load.template Component<0>(), filename,
       static_cast<unsigned>(base), start, finish);
   return load;
 }
@@ -366,7 +366,7 @@ auto ReadMem(
     -> MemoryLoad<value::Queue<T, kBound>> {
   MemoryLoad<value::Queue<T, kBound>> load(memory);
   detail::ReadMemZeroBased(
-      runtime, load.template ComponentRef<0>(), filename,
+      runtime, load.template Component<0>(), filename,
       static_cast<unsigned>(base), start, std::nullopt);
   return load;
 }
@@ -378,7 +378,7 @@ auto ReadMemWithin(
     std::int64_t finish) -> MemoryLoad<value::Queue<T, kBound>> {
   MemoryLoad<value::Queue<T, kBound>> load(memory);
   detail::ReadMemZeroBased(
-      runtime, load.template ComponentRef<0>(), filename,
+      runtime, load.template Component<0>(), filename,
       static_cast<unsigned>(base), start, finish);
   return load;
 }
@@ -407,7 +407,7 @@ auto ReadMem(
     -> MemoryLoad<value::AssociativeArray<K, T>> {
   MemoryLoad<value::AssociativeArray<K, T>> load(memory);
   detail::ReadMemAssociative(
-      runtime, load.template ComponentRef<0>(), filename,
+      runtime, load.template Component<0>(), filename,
       static_cast<unsigned>(base), start, std::nullopt);
   return load;
 }
@@ -419,7 +419,7 @@ auto ReadMemWithin(
     std::int64_t finish) -> MemoryLoad<value::AssociativeArray<K, T>> {
   MemoryLoad<value::AssociativeArray<K, T>> load(memory);
   detail::ReadMemAssociative(
-      runtime, load.template ComponentRef<0>(), filename,
+      runtime, load.template Component<0>(), filename,
       static_cast<unsigned>(base), start, finish);
   return load;
 }
@@ -454,7 +454,7 @@ auto ReadMem(
     -> MemoryLoad<value::UnpackedArray<Inner, N>> {
   MemoryLoad<value::UnpackedArray<Inner, N>> load(memory);
   detail::ReadMemMultidim(
-      runtime, load.template ComponentRef<0>(), filename,
+      runtime, load.template Component<0>(), filename,
       value::UnpackedRangesOf(bounds), static_cast<unsigned>(base), start,
       std::nullopt);
   return load;
@@ -469,7 +469,7 @@ auto ReadMemWithin(
     -> MemoryLoad<value::UnpackedArray<Inner, N>> {
   MemoryLoad<value::UnpackedArray<Inner, N>> load(memory);
   detail::ReadMemMultidim(
-      runtime, load.template ComponentRef<0>(), filename,
+      runtime, load.template Component<0>(), filename,
       value::UnpackedRangesOf(bounds), static_cast<unsigned>(base), start,
       finish);
   return load;

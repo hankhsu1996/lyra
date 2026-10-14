@@ -53,15 +53,17 @@ auto KeepsSampledValue(const L& lowerer, const hir::Expr& expr) -> bool {
   return true;
 }
 
-// The one value-context expression dispatcher, shared by both pass classes. An
-// expression's meaning does not depend on whether a process body or a
-// structural scope encloses it, so every context-free kind routes to one shared
-// handler listed exactly once -- a kind cannot be wired in one context and
-// forgotten in the other. The one real difference is parameterized inline: a
-// bare name resolves to different storage per scope. An observable-cell leaf is
-// auto-wrapped in a `Get` call so the result is value-typed.
+// The one expression dispatcher, shared by both pass classes. An expression's
+// meaning does not depend on whether a process body or a structural scope
+// encloses it, so every context-free kind routes to one shared handler listed
+// exactly once -- a kind cannot be wired in one context and forgotten in the
+// other. The one real difference is parameterized inline: a bare name resolves
+// to different storage per scope. What an observable cell holds is named by
+// reading the cell, so the result is value-typed. An expression naming storage
+// comes out as that place, unread, as rustc's `as_place` leaves it: an access
+// to a part of it reaches the part where it lies.
 template <ExprLowerer L>
-auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
   const diag::FailureContext at(expr.span);
@@ -221,14 +223,22 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     }
     return mir::MakeCellLoadCallExpr(cell_id, result_type);
   }
-  // A place standing where a value is wanted is read there, as Sema wraps an
-  // lvalue operand in its lvalue-to-rvalue conversion.
-  if (mir::IsReadablePlace(lowerer.Owner().Unit().types, *raw_or)) {
-    const mir::TypeId read_type = raw_or->type;
-    return mir::MakeCopyExpr(
-        frame.current_block->exprs.Add(*std::move(raw_or)), read_type);
-  }
   return raw_or;
+}
+
+// The same expression where a value is wanted: a place standing there is read,
+// as Sema wraps an lvalue operand in its lvalue-to-rvalue conversion.
+template <ExprLowerer L>
+auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<mir::Expr> {
+  auto lowered = LowerAsPlaceImpl(lowerer, expr, frame);
+  if (!lowered ||
+      !mir::IsReadablePlace(lowerer.Owner().Unit().types, *lowered)) {
+    return lowered;
+  }
+  const mir::TypeId read_type = lowered->type;
+  return mir::MakeCopyExpr(
+      frame.current_block->exprs.Add(*std::move(lowered)), read_type);
 }
 
 // The dispatcher for an expression named as a part rather than read, shared by
@@ -379,6 +389,11 @@ auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
   return LowerExprImpl(*this, expr, frame);
 }
 
+auto ProcessLowerer::LowerAsPlace(const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<mir::Expr> {
+  return LowerAsPlaceImpl(*this, expr, frame);
+}
+
 auto ProcessLowerer::LowerIgnoredExpr(const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   return LowerIgnoredExprImpl(*this, expr, frame);
@@ -397,6 +412,11 @@ auto ProcessLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
 auto StructuralScopeLowerer::LowerExpr(
     const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
   return LowerExprImpl(*this, expr, frame);
+}
+
+auto StructuralScopeLowerer::LowerAsPlace(
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
+  return LowerAsPlaceImpl(*this, expr, frame);
 }
 
 auto StructuralScopeLowerer::LowerIgnoredExpr(

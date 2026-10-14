@@ -132,20 +132,6 @@ auto EntryToQueueRun(StepUse use) -> support::BuiltinFn {
   throw InternalError("access path: unknown step use");
 }
 
-auto EntryToComponent(StepUse use) -> support::BuiltinFn {
-  switch (use) {
-    case StepUse::kRead:
-      return support::BuiltinFn::kComponent;
-    case StepUse::kWrite:
-      return support::BuiltinFn::kComponentRef;
-    case StepUse::kDesignate:
-      return support::BuiltinFn::kDesignateComponent;
-    case StepUse::kLend:
-      return support::BuiltinFn::kReferComponent;
-  }
-  throw InternalError("access path: unknown step use");
-}
-
 // The call that takes one step on a receiver: the entry, what its callee
 // states beside the receiver, and what it is handed beside it.
 struct StepCall {
@@ -155,22 +141,64 @@ struct StepCall {
   std::vector<mir::ExprId> arguments;
 };
 
+// How one step is taken: as a field of what it is taken on, or by a call.
+using StepTaken = std::variant<mir::ComponentFieldTarget, StepCall>;
+
+// A product's component is storage of its own and every component is live at
+// once, so reading it and writing it are the one field step (LRM 7.2); within
+// a write in progress, and on a reference, it is a step taken on that value.
+auto ComponentStep(StepUse use, base::ComponentIndex position) -> StepTaken {
+  switch (use) {
+    case StepUse::kRead:
+    case StepUse::kWrite:
+      return mir::ComponentFieldTarget{.position = position};
+    case StepUse::kDesignate:
+      return StepCall{
+          .entry = support::BuiltinFn::kDesignateComponent,
+          .part = mir::CallPart{position},
+          .arguments = {}};
+    case StepUse::kLend:
+      return StepCall{
+          .entry = support::BuiltinFn::kReferComponent,
+          .part = mir::CallPart{position},
+          .arguments = {}};
+  }
+  throw InternalError("access path: unknown step use");
+}
+
+// A union's member is no storage of its own (LRM 7.3), so nothing is
+// designated within a write of one or lent by reference.
+auto EntryToMember(StepUse use) -> support::BuiltinFn {
+  switch (use) {
+    case StepUse::kRead:
+      return support::BuiltinFn::kComponent;
+    case StepUse::kWrite:
+      return support::BuiltinFn::kComponentRef;
+    case StepUse::kDesignate:
+    case StepUse::kLend:
+      throw InternalError(
+          "access path: a union's member is no storage of its own, and this "
+          "descent designates or lends one");
+  }
+  throw InternalError("access path: unknown step use");
+}
+
 // A step to bits is called at the type the bits are read or written at, which
-// no operand states; a step to a component names it on the callee, the
-// component having a type of its own; a run of elements is handed how many it
+// no operand states; a step to a component or a member names it by position,
+// the part having a type of its own; a run of elements is handed how many it
 // takes as a machine count.
-auto StepCallFor(
+auto StepTakenFor(
     const mir::CompilationUnit& unit, mir::Block& block,
-    const DescentStep& step, StepUse use) -> StepCall {
+    const DescentStep& step, StepUse use) -> StepTaken {
   return std::visit(
       Overloaded{
-          [&](const StepToBits& bits) {
+          [&](const StepToBits& bits) -> StepTaken {
             return StepCall{
                 .entry = EntryToBits(use),
                 .type_argument = step.part_type,
                 .arguments = {bits.start}};
           },
-          [&](const StepToElementRun& run) {
+          [&](const StepToElementRun& run) -> StepTaken {
             return StepCall{
                 .entry = EntryToElementRun(use),
                 .type_argument = ElementRunTypeArgument(use, step.part_type),
@@ -179,23 +207,26 @@ auto StepCallFor(
                     BuildMachineIntLiteral(
                         unit, block, static_cast<std::int64_t>(run.count))}};
           },
-          [&](const StepToElement& element) {
+          [&](const StepToElement& element) -> StepTaken {
             return StepCall{
                 .entry = EntryToElement(use), .arguments = {element.position}};
           },
-          [&](const StepToAssocElement& element) {
+          [&](const StepToAssocElement& element) -> StepTaken {
             return StepCall{
                 .entry = EntryToAssocElement(use), .arguments = {element.key}};
           },
-          [&](const StepToQueueRun& run) {
+          [&](const StepToQueueRun& run) -> StepTaken {
             return StepCall{
                 .entry = EntryToQueueRun(use),
                 .arguments = {run.lowest, run.highest}};
           },
           [&](const StepToComponent& component) {
+            return ComponentStep(use, component.position);
+          },
+          [&](const StepToUnionMember& member) -> StepTaken {
             return StepCall{
-                .entry = EntryToComponent(use),
-                .part = mir::CallPart{component.position},
+                .entry = EntryToMember(use),
+                .part = mir::CallPart{member.position},
                 .arguments = {}};
           }},
       step.to);
@@ -212,7 +243,8 @@ auto EndsDesignation(const DescentStep& step) -> bool {
           [](const StepToQueueRun&) { return true; },
           [](const StepToElement&) { return false; },
           [](const StepToAssocElement&) { return false; },
-          [](const StepToComponent&) { return false; }},
+          [](const StepToComponent&) { return false; },
+          [](const StepToUnionMember&) { return false; }},
       step.to);
 }
 
@@ -221,19 +253,26 @@ auto TakeStep(
     const mir::CompilationUnit& unit, mir::Block& block,
     const DescentStep& step, StepUse use, mir::ExprId receiver,
     mir::TypeId type) -> mir::ExprId {
-  StepCall call = StepCallFor(unit, block, step, use);
   return block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = call.entry,
-                          .receiver = receiver,
-                          .part = call.part,
-                          .type_argument = call.type_argument},
-                  .arguments = std::move(call.arguments)},
-          .type = type});
+      std::visit(
+          Overloaded{
+              [&](const mir::FieldRef& field) {
+                return mir::MakeFieldAccessExpr(receiver, field, type);
+              },
+              [&](StepCall call) {
+                return mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target = call.entry,
+                                    .receiver = receiver,
+                                    .part = call.part,
+                                    .type_argument = call.type_argument},
+                            .arguments = std::move(call.arguments)},
+                    .type = type};
+              }},
+          StepTakenFor(unit, block, step, use)));
 }
 
 // A net's resolved cell is readable and observable, but no value gets into it
@@ -495,7 +534,7 @@ auto PathReference(
   return reference;
 }
 
-auto PathValue(
+auto PathAsPlace(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
   mir::ExprId reached = std::visit(
@@ -515,18 +554,42 @@ auto PathValue(
           }},
       path.owner);
   for (const DescentStep& step : path.descent) {
-    reached = block.exprs.Add(StepRead(unit, block, step, reached));
+    reached = block.exprs.Add(StepForRead(unit, block, step, reached));
   }
-  return block.AsValue(unit.types, reached);
+  return reached;
+}
+
+auto PathValue(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> mir::ExprId {
+  return block.AsValue(unit.types, PathAsPlace(unit, block, path));
+}
+
+auto StepForRead(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    const DescentStep& step, mir::ExprId receiver) -> mir::Expr {
+  return std::visit(
+      Overloaded{
+          [&](const mir::ComponentFieldTarget& field) {
+            return mir::MakeFieldAccessExpr(receiver, field, step.part_type);
+          },
+          [&](StepCall call) {
+            return MakeBuiltinCall(
+                unit, block, call.entry, receiver, call.part,
+                call.type_argument, std::move(call.arguments), step.part_type);
+          }},
+      StepTakenFor(unit, block, step, StepUse::kRead));
 }
 
 auto StepRead(
     const mir::CompilationUnit& unit, mir::Block& block,
     const DescentStep& step, mir::ExprId receiver) -> mir::Expr {
-  StepCall call = StepCallFor(unit, block, step, StepUse::kRead);
-  return MakeBuiltinCall(
-      unit, block, call.entry, receiver, call.part, call.type_argument,
-      std::move(call.arguments), step.part_type);
+  mir::Expr part = StepForRead(unit, block, step, receiver);
+  if (!mir::IsReadablePlace(unit.types, part)) {
+    return part;
+  }
+  const mir::TypeId type = part.type;
+  return mir::MakeCopyExpr(block.exprs.Add(std::move(part)), type);
 }
 
 auto PartSelectNaturalType(
@@ -557,7 +620,7 @@ auto PathValueAsDeclared(
   const mir::TypeId declared = last.part_type;
   last.part_type = PartSelectNaturalType(
       unit, ValueSelectedWithin(unit, block, path), declared);
-  const mir::ExprId receiver = PathValue(unit, block, into);
+  const mir::ExprId receiver = PathAsPlace(unit, block, into);
   const mir::ExprId read =
       block.exprs.Add(StepRead(unit, block, last, receiver));
   return ConvertToType(unit, block, read, declared);
@@ -748,6 +811,9 @@ auto PartNamedBy(
                 -> std::optional<mir::ExprId> {
               return BuildMachineIntLiteral(
                   unit, block, component.position.value);
+            },
+            [&](const StepToUnionMember& member) -> std::optional<mir::ExprId> {
+              return BuildMachineIntLiteral(unit, block, member.position.value);
             },
             [](const StepToBits&) -> std::optional<mir::ExprId> {
               return std::nullopt;

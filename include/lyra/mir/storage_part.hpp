@@ -21,8 +21,8 @@ auto StorageSelection(const TypePool& types, const Block& block, ExprId id)
     -> std::optional<support::PartSelection>;
 
 // The access an expression makes to a part that is storage of its own, where
-// it is one: an element or a component, which names a place as a field access
-// does, and is never a value made.
+// it is one: an element, which names a place as a field access does, and is
+// never a value made.
 auto StoragePartAccess(const TypePool& types, const Block& block, ExprId id)
     -> const CallExpr*;
 

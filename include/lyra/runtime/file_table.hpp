@@ -313,8 +313,8 @@ template <value::IntegralValue T>
 auto FileTable::Read(const T& dest, std::int64_t fd) -> BinaryRead<T> {
   // The destination is read into where the answer keeps it.
   BinaryRead<T> answer(value::Int{}, dest);
-  answer.template ComponentRef<0>() = ReadInto(
-      answer.template ComponentRef<1>().AsMutableWords().MutableView(), fd);
+  answer.template Component<0>() = ReadInto(
+      answer.template Component<1>().AsMutableWords().MutableView(), fd);
   return answer;
 }
 
@@ -325,9 +325,9 @@ auto FileTable::ReadMemory(
     std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>> {
   // The memory is read into where the answer keeps it.
   BinaryRead<value::UnpackedArray<T, N>> answer(value::Int{}, dest);
-  value::UnpackedArray<T, N>& memory = answer.template ComponentRef<1>();
+  value::UnpackedArray<T, N>& memory = answer.template Component<1>();
   const value::UnpackedRange declared = value::UnpackedRangesOf(bounds).front();
-  answer.template ComponentRef<0>() = value::Int::FromInt(ReadMemoryWords(
+  answer.template Component<0>() = value::Int::FromInt(ReadMemoryWords(
       *this, fd, T::kWidth, declared, sv_start, count,
       [&memory, &declared](std::int64_t sv_index, std::span<const char> bytes) {
         ReadBigEndian(

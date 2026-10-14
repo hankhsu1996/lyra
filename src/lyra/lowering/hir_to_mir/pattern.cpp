@@ -17,6 +17,7 @@
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
@@ -59,13 +60,17 @@ auto SubjectMember(
     }
     return owner.TranslateType(fields[index.value].type);
   };
+  const auto unpacked =
+      [&](const std::vector<hir::UnpackedAggregateField>& fields) {
+        return block.exprs.Add(StepForRead(
+            owner.Unit(), block,
+            MemberStep(owner, block, ty, index, member_type(fields)), subject));
+      };
   if (const auto* s = ty.As<hir::UnpackedStructType>()) {
-    return block.exprs.Add(
-        mir::MakeComponentExpr(subject, index, member_type(s->fields)));
+    return unpacked(s->fields);
   }
   if (const auto* u = ty.As<hir::UnpackedUnionType>()) {
-    return block.exprs.Add(
-        mir::MakeComponentExpr(subject, index, member_type(u->fields)));
+    return unpacked(u->fields);
   }
   const PackedProjection projection = ProjectPackedAggregate(owner, ty);
   if (index.value >= projection.members.size()) {
@@ -97,8 +102,8 @@ auto BuildTagTest(
 // The value a level of a pattern is matched against: what the construct matches
 // as a whole, and the members stepped into from it. A level is read wherever
 // its pattern tests it and again wherever it binds, so it is stated as how to
-// reach it and read afresh at each use: `whole` names a value and evaluates
-// nothing, and a step is one member read.
+// reach it and read afresh at each use: `whole` names the storage the value is
+// held in and evaluates nothing, and a step is one member reached.
 struct Subject {
   struct Step {
     hir::TypeId of;
@@ -121,7 +126,7 @@ auto Read(UnitLowerer& owner, mir::Block& block, const Subject& subject)
   for (const Subject::Step& step : subject.steps) {
     reached = SubjectMember(owner, block, reached, step.of, step.member);
   }
-  return reached;
+  return block.AsValue(owner.Unit().types, reached);
 }
 
 // Adds to `tests` the conditions a pattern imposes on `subject`, the expression
@@ -267,14 +272,14 @@ auto PatternPredicate(
         const mir::CompilationUnit& unit = lowerer.Owner().Unit();
         BlockBuilder steps(at);
         mir::Block& body = steps.Body();
-        const auto read_subject = [&](mir::Block& block) {
-          return block.ReadLocal(subject, subject_type);
+        const auto subject_place = [&](mir::Block& block) {
+          return block.exprs.Add(mir::MakeLocalRefExpr(subject, subject_type));
         };
 
         std::vector<mir::ExprId> tests;
         auto collected = CollectPatternTests(
             lowerer, steps.Frame(),
-            Subject{.whole = read_subject(body), .steps = {}}, pattern, tests);
+            Subject{.whole = subject_place(body), .steps = {}}, pattern, tests);
         if (!collected) return std::unexpected(std::move(collected.error()));
         const mir::LocalId matched = steps.DeclareLocal(
             bit, ConditionAsBit(unit, body, AllHold(unit, body, tests)));
@@ -283,7 +288,7 @@ auto PatternPredicate(
         mir::Block bound;
         BindPatternIdentifiers(
             lowerer, declared_in, steps.Frame().WithBlock(&bound),
-            Subject{.whole = read_subject(bound), .steps = {}}, pattern);
+            Subject{.whole = subject_place(bound), .steps = {}}, pattern);
         body.AppendStmt(
             mir::IfStmt{
                 .condition = ReduceToCondition(unit, body, read_matched()),

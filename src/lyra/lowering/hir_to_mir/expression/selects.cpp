@@ -57,11 +57,12 @@
 // belong to (LRM 7.4.5, 11.5.1). There is one function per source form, and
 // nothing else places a part.
 //
-// Then the step is used. A select read as a value takes the step on its base,
-// lowered as a value. A select named as a part -- by a write, a reference, a
-// wait, a join of nets -- adds the step to the path its base names, so
-// `s.b[1]` is the owner `s` and two steps, and whatever is done with the part
-// is done to that one statement of it.
+// Then the step is used. A select read as a value takes the step on the place
+// its base names, so nothing on the way to the part is read whole, or on the
+// base's value where it names no storage. A select named as a part -- by a
+// write, a reference, a wait, a join of nets -- adds the step to the path its
+// base names, so `s.b[1]` is the owner `s` and two steps, and whatever is done
+// with the part is done to that one statement of it.
 //
 // Naming convention used here, matching the rest of HIR-to-MIR:
 //   - `Lower*` -- top-level HIR-to-MIR for a HIR construct, returns
@@ -264,24 +265,6 @@ auto PackedMemberStep(
   return DescentStep{.to = bits, .part_type = part_type};
 }
 
-// The step `aggregate.member` takes (LRM 7.2, 7.3). An unpacked aggregate's
-// member is storage of its own, named by its declaration-order position;
-// whether every part is live at once or one at a time is the value's own
-// semantics and reaches the step through the domain its type names. A packed
-// aggregate's member is bits of the one vector the aggregate is.
-auto MemberStep(
-    UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
-    base::ComponentIndex index, mir::TypeId part_type) -> DescentStep {
-  if (aggregate.Is<hir::UnpackedStructType>() ||
-      aggregate.Is<hir::UnpackedUnionType>()) {
-    return DescentStep{
-        .to = StepToComponent{.position = index}, .part_type = part_type};
-  }
-  return PackedMemberStep(
-      unit_lowerer.Unit(), block,
-      ProjectPackedAggregate(unit_lowerer, aggregate), index, part_type);
-}
-
 // Whether reaching a member of `aggregate` is checked against a tag carried in
 // the aggregate's own bits (LRM 11.9), which is so only of a packed tagged
 // union naming more than one member.
@@ -354,12 +337,12 @@ auto BuildTagGuard(
       .type = value_type};
 }
 
-// The value of the member `step` reaches in the value `base_id` names, at the
-// member's declared type. A component is read at that type. A packed member
-// is bits of the aggregate's vector (LRM 7.2.1: it "can be selected as if it
-// were a packed array"), so it is read at its part-select natural type and
-// brought to the declared type, behind the tag check where the aggregate is a
-// tagged union.
+// The member `step` reaches in what `base_id` names, at the member's declared
+// type. A structure's component is the place it lies in, which a read then
+// reads, and a union's member is the value it holds. A packed member is bits of
+// the aggregate's vector (LRM 7.2.1: it "can be selected as if it were a packed
+// array"), so it is read at its part-select natural type and brought to the
+// declared type, behind the tag check where the aggregate is a tagged union.
 auto ReadMember(
     UnitLowerer& unit_lowerer, mir::Block& block, const DescentStep& step,
     mir::ExprId base_id, mir::TypeId result_type) -> mir::Expr {
@@ -373,7 +356,7 @@ auto ReadMember(
                 "tag (LRM 11.9)"))
           : base_id;
   return WrapSliceToDeclaredType(
-      unit, block, StepRead(unit, block, step, subject), result_type);
+      unit, block, StepForRead(unit, block, step, subject), result_type);
 }
 
 // Whether a read of `expr` finds its value lying in storage, as opposed to
@@ -429,9 +412,10 @@ auto LiesInStorage(Lowerer& lowerer, const hir::Expr& expr) -> bool {
 
 // The queue a select read as a value is taken from, evaluated here, once (LRM
 // 11.4.1: the source wrote it once, and both the select and each `$` under it
-// take it). A queue lying in storage is read where it lies, so only what is
+// take it). A queue lying in storage is named where it lies, so only what is
 // computed on the way to it is evaluated and the queue itself is not copied; a
-// queue that lies nowhere -- a function's result -- is kept in a local.
+// queue that lies nowhere -- a function's result, a sampled value -- is kept
+// in a local, which is then the place it lies in.
 template <ExprLowerer Lowerer>
 auto EvaluateSelectedQueue(
     Lowerer& lowerer, const WalkFrame& at, const hir::Expr& base)
@@ -447,9 +431,12 @@ auto EvaluateSelectedQueue(
   }
   auto value = lowerer.LowerExpr(base, at);
   if (!value) return std::unexpected(std::move(value.error()));
+  const mir::TypeId type = value->type;
   return SettledPath{
       .named_in = &block,
-      .owner = EvaluatedOnce(at, block.exprs.Add(*std::move(value))),
+      .owner = block.exprs.Add(
+          mir::MakeLocalRefExpr(
+              DeclareLocal(at, block.exprs.Add(*std::move(value))), type)),
       .descent = {}};
 }
 
@@ -471,6 +458,22 @@ auto SettleSelectedQueue(
 }
 
 }  // namespace
+
+auto MemberStep(
+    UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
+    base::ComponentIndex index, mir::TypeId part_type) -> DescentStep {
+  if (aggregate.Is<hir::UnpackedStructType>()) {
+    return DescentStep{
+        .to = StepToComponent{.position = index}, .part_type = part_type};
+  }
+  if (aggregate.Is<hir::UnpackedUnionType>()) {
+    return DescentStep{
+        .to = StepToUnionMember{.position = index}, .part_type = part_type};
+  }
+  return PackedMemberStep(
+      unit_lowerer.Unit(), block,
+      ProjectPackedAggregate(unit_lowerer, aggregate), index, part_type);
+}
 
 auto ElementStep(
     UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId receiver_type,
@@ -595,7 +598,7 @@ auto LowerHirElementSelectExpr(
     auto queue = EvaluateSelectedQueue(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
     const mir::ExprId queue_id =
-        PathValue(unit_lowerer.Unit(), body, NamedIn(*queue, body));
+        PathAsPlace(unit_lowerer.Unit(), body, NamedIn(*queue, body));
     auto index = lowerer.LowerExpr(
         exprs.Get(sel.index), steps.Frame().WithSelectedQueue(&*queue));
     if (!index) return std::unexpected(std::move(index.error()));
@@ -604,7 +607,7 @@ auto LowerHirElementSelectExpr(
         unit_lowerer, body, queue_id, base_expr.type, index_id, result_type)));
   }
   auto& block = *frame.current_block;
-  auto base_or = lowerer.LowerExpr(base_expr, frame);
+  auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   auto idx_or = lowerer.LowerExpr(exprs.Get(sel.index), frame);
@@ -631,7 +634,7 @@ auto LowerHirRangeSelectExpr(
     mir::Block& body = steps.Body();
     auto queue = EvaluateSelectedQueue(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
-    const mir::ExprId queue_id = PathValue(unit, body, NamedIn(*queue, body));
+    const mir::ExprId queue_id = PathAsPlace(unit, body, NamedIn(*queue, body));
     auto step = RangeStep(
         lowerer, steps.Frame().WithSelectedQueue(&*queue), sel.bounds,
         base_expr.type, result_type);
@@ -639,7 +642,7 @@ auto LowerHirRangeSelectExpr(
     return steps.Build(body.exprs.Add(StepRead(unit, body, *step, queue_id)));
   }
   auto& block = *frame.current_block;
-  auto base_or = lowerer.LowerExpr(base_expr, frame);
+  auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   auto step =
@@ -664,11 +667,12 @@ auto LowerHirMemberAccessExpr(
   }
   const WalkFrame& at = steps.has_value() ? steps->Frame() : frame;
   auto& block = *at.current_block;
-  auto base_or = lowerer.LowerExpr(base_expr, at);
+  auto base_or = lowerer.LowerAsPlace(base_expr, at);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   if (steps.has_value()) {
-    base_id = EvaluatedOnce(at, base_id);
+    base_id =
+        EvaluatedOnce(at, block.AsValue(unit_lowerer.Unit().types, base_id));
   }
   const mir::TypeId natural = PartSelectNaturalType(
       unit_lowerer.Unit(), block.exprs.Get(base_id).type, result_type);

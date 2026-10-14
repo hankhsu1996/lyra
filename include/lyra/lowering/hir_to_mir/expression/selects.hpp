@@ -32,6 +32,14 @@ namespace lyra::lowering::hir_to_mir {
     UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId receiver_type,
     mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep;
 
+// The step `aggregate.member` takes (LRM 7.2, 7.3). An unpacked aggregate's
+// member is named by its declaration-order position: a structure's is a
+// component, storage of its own, and a union's is the member it holds. A
+// packed aggregate's member is bits of the one vector the aggregate is.
+[[nodiscard]] auto MemberStep(
+    UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
+    base::ComponentIndex index, mir::TypeId part_type) -> DescentStep;
+
 // `arr[i]` read as a value: the read the element step takes from `base_id`, a
 // value of `base_type`.
 [[nodiscard]] auto BuildElementAccessCallExpr(

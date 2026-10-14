@@ -71,9 +71,9 @@ auto ValuePlusargs(
     -> value::Tuple<value::Int, T> {
   // The destination is written where the answer keeps it.
   value::Tuple<value::Int, T> answer(value::Int{}, out);
-  answer.template ComponentRef<0>() = ValuePlusargsInto(
+  answer.template Component<0>() = ValuePlusargsInto(
       runtime, user_string,
-      answer.template ComponentRef<1>().AsMutableWords().MutableView());
+      answer.template Component<1>().AsMutableWords().MutableView());
   return answer;
 }
 

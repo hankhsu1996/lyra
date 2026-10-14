@@ -1498,8 +1498,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kIntegralConvert:
       return OverIntegralValues{};
 
-    // A part of a value that is storage of its own is reached where it lies by
-    // a place, so no library realizes the access that answers with one.
+    // A part reached for writing is written where the write lands -- bits by a
+    // store into the vector they lie in, a union's member by rebuilding the
+    // union around it -- so no library realizes the access that answers with
+    // one.
     case support::BuiltinFn::kSliceRef:
     case support::BuiltinFn::kComponentRef:
       return NamedByValue{};

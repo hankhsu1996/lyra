@@ -390,12 +390,16 @@ class FunctionLowerer {
       -> diag::Result<lir::Place>;
   // The address of storage holding a value of `value`.
   auto AddressType(lir::TypeId value) -> lir::TypeId;
-  // The place a part that is storage of its own names: the place holding the
-  // value it is part of, one step further. Reaching the part for any write is
-  // writing into that place.
-  auto PartPlace(
-      const mir::Block& block, const mir::CallExpr& part, Reach reach)
+  // The place a part that is storage of its own names: the place holding
+  // `whole`, the value it is part of, one step further. Reaching the part for
+  // any write is writing into that place.
+  auto StepPlace(
+      const mir::Block& block, mir::ExprId whole, mir::ExprId part, Reach reach)
       -> diag::Result<lir::Place>;
+  // The step from a value into one of its parts that is storage of its own,
+  // whether a field step or a call reaching an element names it.
+  auto StepInto(const mir::Block& block, mir::ExprId part)
+      -> diag::Result<lir::Projection>;
   // The step from a value into one of its parts that is storage of its own.
   auto PartStep(const mir::Block& block, const mir::CallExpr& part)
       -> diag::Result<lir::Projection>;
@@ -408,7 +412,9 @@ class FunctionLowerer {
   auto HeldInSlot(lir::Operand value, lir::TypeId type) -> lir::ValueId;
   [[nodiscard]] auto NamesStorage(const mir::Block& block, mir::ExprId id) const
       -> bool;
-  auto MemberRefOf(const mir::FieldRef& field) -> lir::StatedMemberRef;
+  // The step `field` takes off the place of its receiver: a member an object
+  // or a closure declares, or a component where its product's type lays it.
+  auto FieldStep(const mir::FieldRef& field) -> lir::Projection;
   // Reads the value held where an expression names storage, whichever way it
   // names it. A cell is address-only and holds no value a reader can take out
   // of it, so an expression whose own type is one is rejected: what such a
@@ -593,12 +599,16 @@ class FunctionLowerer {
   // of its whole rather than storage of its own.
   [[nodiscard]] auto ReachesViewedPart(
       const mir::Block& block, mir::ExprId target) const -> bool;
+  // Whether `part` is itself such a part: a call reaching into a value whose
+  // parts are not storage of their own.
+  [[nodiscard]] auto IsViewedPart(
+      const mir::Block& block, mir::ExprId part) const -> bool;
   // Updating a part, other than bits, whose chain passes through a view: what
   // the part is taken from is updated in turn, with the part changed inside
-  // it. Out of a view,
-  // the part is extracted and the whole rebuilt around it; out of a value a
-  // view reached, the value is held in a slot and the part written where it
-  // lies there.
+  // it. Out of a view, the part is extracted and the whole rebuilt around it;
+  // out of a value a view reached, the value is held in a slot and the part
+  // written where it lies there, the step into it taken after the whole is
+  // read.
   auto UpdateThroughView(
       const mir::Block& block, mir::ExprId target, const ValueChange& change)
       -> diag::Result<lir::Operand>;
