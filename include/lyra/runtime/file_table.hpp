@@ -332,7 +332,7 @@ auto FileTable::ReadMemory(
       [&memory, &declared](std::int64_t sv_index, std::span<const char> bytes) {
         ReadBigEndian(
             memory
-                .ElementRef(
+                .ElementMut(
                     value::Position::FromInt(declared.ToOrdinal(sv_index)))
                 .AsMutableWords()
                 .MutableView(),

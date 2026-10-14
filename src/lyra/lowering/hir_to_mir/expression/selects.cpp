@@ -498,6 +498,10 @@ auto ElementStep(
   if (receiver.IsIntegral()) {
     return BitsStep(position, part_type);
   }
+  if (receiver.Is<hir::StringType>()) {
+    return DescentStep{
+        .to = StepToCharacter{.position = position}, .part_type = part_type};
+  }
   return OneElementStep(position, part_type);
 }
 
@@ -614,8 +618,11 @@ auto LowerHirElementSelectExpr(
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  return BuildElementAccessCallExpr(
-      unit_lowerer, block, base_id, base_expr.type, idx_id, result_type);
+  // The element is named where it lies, and read only where a value is wanted.
+  return StepForRead(
+      unit_lowerer.Unit(), block,
+      ElementStep(unit_lowerer, block, base_expr.type, idx_id, result_type),
+      base_id);
 }
 
 template <ExprLowerer Lowerer>

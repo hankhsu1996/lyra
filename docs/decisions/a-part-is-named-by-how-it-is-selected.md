@@ -2,7 +2,12 @@
 
 Date: 2026-09-27 Status: accepted. Revises the `Get` / `GetRef` spelling in
 [compound-assignment-write-location](compound-assignment-write-location.md) and
-[unpacked-union-representation](unpacked-union-representation.md).
+[unpacked-union-representation](unpacked-union-representation.md). Revised for elements and a
+string's character by
+[an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md)
+(2026-10-14): an element's two entries are `element` / `element_mut` (`Element` / `ElementMut`),
+each answering a reference to the element, and a string's character is read by `getc` and written by
+`putc`; `with_element` is gone.
 
 ## Context
 

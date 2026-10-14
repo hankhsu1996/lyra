@@ -560,13 +560,67 @@ TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
                               .callee =
                                   Direct{.target = entry, .receiver = array},
                               .arguments = {at}},
-                      .type = element})});
+                      .type = u.types.Intern(
+                          Type{ReferenceType{
+                              .referent = element,
+                              .mutability = Mutability::kReadOnly}})})});
     });
   };
 
   EXPECT_NO_THROW(Verify(element_of(false, true)));
   EXPECT_NO_THROW(Verify(element_of(true, false)));
   ExpectRefused(element_of(false, false), "position type");
+}
+
+// An element's read and write forms each answer a reference to the element,
+// and a write lands only through the write form's: the read form's referent
+// is the element default where its position names none (LRM 7.4.6), which a
+// write through it would change for every read.
+TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
+  const auto element_write = [](support::BuiltinFn entry, Mutability mutability,
+                                bool as_reference) {
+    return UnitWithBody([entry, mutability, as_reference](
+                            CompilationUnit& u, Block& body) {
+      const TypeId element = u.builtins.int_type;
+      const TypeId container =
+          u.types.Intern(Type{DynamicArrayType{.element_type = element}});
+      const ExprId array =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = container});
+      const ExprId at = body.exprs.Add(
+          Expr{.data = NullLiteral{}, .type = PositionType(u.types)});
+      const TypeId reference = u.types.Intern(
+          Type{ReferenceType{.referent = element, .mutability = mutability}});
+      const ExprId reached = body.exprs.Add(
+          Expr{
+              .data =
+                  CallExpr{
+                      .callee = Direct{.target = entry, .receiver = array},
+                      .arguments = {at}},
+              .type = as_reference ? reference : element});
+      const ExprId target =
+          as_reference ? body.exprs.Add(MakeDerefExpr(reached, element))
+                       : reached;
+      const ExprId value =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = element});
+      body.AppendStmt(
+          ExprStmt{
+              .expr =
+                  body.exprs.Add(MakeAssignExpr(u.builtins, target, value))});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(element_write(
+      support::BuiltinFn::kElementMut, Mutability::kMutable, true)));
+  ExpectRefused(
+      element_write(support::BuiltinFn::kElement, Mutability::kReadOnly, true),
+      "writes through a read-only reference");
+  ExpectRefused(
+      element_write(
+          support::BuiltinFn::kElementMut, Mutability::kMutable, false),
+      "answers a reference into its receiver");
+  ExpectRefused(
+      element_write(support::BuiltinFn::kElement, Mutability::kMutable, true),
+      "answers a reference into its receiver");
 }
 
 // A call on `entry` whose receiver is of type `container` and whose one
@@ -609,17 +663,22 @@ TEST(MirVerifyTest, AnEntryIsCalledOnTheKindOfContainerItReaches) {
   const auto position = [](CompilationUnit& u) {
     return PositionType(u.types);
   };
+  const auto read = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{ReferenceType{
+            .referent = u.builtins.int_type,
+            .mutability = Mutability::kReadOnly}});
+  };
 
   EXPECT_NO_THROW(Verify(
-      UnitCalling(support::BuiltinFn::kElement, numbered, position, element)));
+      UnitCalling(support::BuiltinFn::kElement, numbered, position, read)));
   EXPECT_NO_THROW(Verify(
-      UnitCalling(support::BuiltinFn::kAssocElement, keyed, element, element)));
+      UnitCalling(support::BuiltinFn::kAssocElement, keyed, element, read)));
   ExpectRefused(
-      UnitCalling(support::BuiltinFn::kElement, keyed, position, element),
+      UnitCalling(support::BuiltinFn::kElement, keyed, position, read),
       "reaches by a position into an associative array");
   ExpectRefused(
-      UnitCalling(
-          support::BuiltinFn::kAssocElement, numbered, element, element),
+      UnitCalling(support::BuiltinFn::kAssocElement, numbered, element, read),
       "reaches by a key into something that is no associative array");
 }
 

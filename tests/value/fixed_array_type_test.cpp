@@ -411,7 +411,7 @@ TEST(FixedArrayType, AnIndexNamingNoElementLandsInTheDiscardedWrite) {
   BuildCounting(type, array.Bytes(), 0);
   Formation formed = Formation::kMade;
   EXPECT_EQ(
-      type.ElementRef(array.Bytes(), 2, formed),
+      type.ElementMut(array.Bytes(), 2, formed),
       type.ElementAt(array.Bytes(), 2));
   EXPECT_EQ(formed, Formation::kExisting);
   for (const std::optional<std::int64_t> position :
@@ -419,7 +419,7 @@ TEST(FixedArrayType, AnIndexNamingNoElementLandsInTheDiscardedWrite) {
         std::optional<std::int64_t>{}}) {
     formed = Formation::kMade;
     EXPECT_EQ(
-        type.ElementRef(array.Bytes(), position, formed),
+        type.ElementMut(array.Bytes(), position, formed),
         type.ElementType().DiscardedWrite());
     EXPECT_EQ(formed, Formation::kNowhere);
   }

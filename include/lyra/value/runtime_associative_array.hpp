@@ -127,7 +127,7 @@ class RuntimeAssociativeArray {
   // LRM 7.8.7: the element `index` names, as storage a write lands in,
   // allocated where absent; an index naming no entry lands where no read
   // reaches.
-  [[nodiscard]] auto ElementRef(IndexView index, Formation& formed) -> void*;
+  [[nodiscard]] auto ElementMut(IndexView index, Formation& formed) -> void*;
 
   // LRM 7.9.11: the element `index` names set to a copy of `value`.
   void Store(IndexView index, const void* value);

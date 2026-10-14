@@ -193,7 +193,9 @@ frontend inserts an implicit conversion when a literal participates in an expres
 - [x] SC4 -- Indexing operator `s[i]` (LRM 6.16, Table 6-9) as a byte read and byte write, sharing
       the out-of-range no-op semantics of the `getc` / `putc` methods, plus `foreach (s[i])` which
       walks the string by byte (LRM 6.16). Blocking, compound, and nonblocking writes are all
-      covered; the nonblocking write defers the byte update to the NBA region (LRM 10.4.2).
+      covered; the nonblocking write defers the byte update to the NBA region (LRM 10.4.2). A write
+      may name bits of a character (LRM 11.5.1), and a character is written the same way as an
+      output argument and as a member of a concatenation.
 
 - [x] SC5 -- A string literal carries its LRM 5.9 dual nature: slang types it as a packed bit vector
       in every context except a `string`-typed one, so it serves both as an integral constant (a

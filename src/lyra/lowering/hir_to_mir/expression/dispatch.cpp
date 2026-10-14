@@ -379,6 +379,11 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   auto target = LowerAccessPathImpl(lowerer, expr, frame);
   if (!target) return std::unexpected(std::move(target.error()));
   AppendTagChecks(lowerer.Owner(), frame, *target);
+  // A write to bits of a character reads the character before putting it back,
+  // so the target is settled once for both (LRM 11.5.1, 6.16.2).
+  if (WritesBitsOfACharacter(*target)) {
+    *target = Settled(lowerer.Owner(), frame, *std::move(target));
+  }
   return target;
 }
 

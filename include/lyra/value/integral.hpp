@@ -960,6 +960,16 @@ template <IntegralValue R, IntegralValue T, IntegralValue P>
   return out;
 }
 
+// `a` with `bits` written at the position a value names, which is `a` where
+// it names none (LRM 11.5.1).
+template <IntegralValue T, IntegralValue P, IntegralValue Bits>
+[[nodiscard]] constexpr auto WithSlice(
+    const T& a, const P& position, const Bits& bits) -> T {
+  T out = a;
+  lyra::value::WithSlice(out.MutableView(), position.View(), bits.View());
+  return out;
+}
+
 // LRM 11.5.1: writes `bits` at `start`, leaving every other position; a
 // position outside the value is not written. Answers the positions written.
 template <IntegralValue T, IntegralValue Bits>

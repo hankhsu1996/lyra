@@ -62,17 +62,35 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "element",
           .declaration = Method{"Element"},
+          .answer = EntryAnswer::kReadOnlyReferenceIntoTheReceiver,
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kElementMut:
+      return {
+          .name = "element_mut",
+          .declaration = Method{"ElementMut"},
+          .answer = EntryAnswer::kMutableReferenceIntoTheReceiver,
           .selects = PartSelection::kElement,
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocElement:
       return {
           .name = "assocarray_element",
           .declaration = Method{"Element"},
+          .answer = EntryAnswer::kReadOnlyReferenceIntoTheReceiver,
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kKey}};
+    case BuiltinFn::kAssocElementMut:
+      return {
+          .name = "assocarray_element_mut",
+          .declaration = Method{"ElementMut"},
+          .answer = EntryAnswer::kMutableReferenceIntoTheReceiver,
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
     case BuiltinFn::kSlice:
       return IntegralEntry(
           IntegralOp::kSlice, ValueFunction("Slice"), PartSelection::kBits);
+    case BuiltinFn::kWithSlice:
+      return IntegralEntry(IntegralOp::kWithSlice, ValueFunction("WithSlice"));
     case BuiltinFn::kElementSlice:
       return {
           .name = "element_slice",
@@ -88,20 +106,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .selects = PartSelection::kSlice,
           .operands = {kMachine, kPosition, kPosition},
           .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kElementRef:
-      return {
-          .name = "element_ref",
-          .declaration = Method{"ElementRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kElement,
-          .operands = {kMachine, kPosition}};
-    case BuiltinFn::kAssocElementRef:
-      return {
-          .name = "assocarray_element_ref",
-          .declaration = Method{"ElementRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kElement,
-          .operands = {kMachine, kKey}};
     case BuiltinFn::kSliceRef:
       return {
           .name = "slice_ref",

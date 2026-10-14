@@ -493,7 +493,7 @@ using AggregateSelector =
 
 // Extracts a subvalue of an aggregate value, named by `selector`: a part that
 // is a view of the whole it belongs to rather than storage of its own -- a bit
-// or a slice of a packed value, a character of a string, a member of a union.
+// or a slice of a packed value, a member of a union.
 // The subvalue is built out of the aggregate, not aliased. This is the read
 // half of value-aggregate access, the peer of LLVM's `extractvalue`; a part
 // that is storage of its own is a step of a place instead. The result's type

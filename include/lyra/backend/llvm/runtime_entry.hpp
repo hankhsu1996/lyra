@@ -187,7 +187,6 @@ enum class RuntimeOp : std::uint8_t {
   // states (LRM 7.8.1).
   kMakeWildcardIndex,
   kWithComponent,
-  kWithElement,
   kWithSlice,
   kDefault,
   kFromLiteral,

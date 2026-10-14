@@ -120,7 +120,7 @@ class BasicQueue {
   // the default and lands there. An x/z, negative, or beyond-`$+1` index lands
   // where no read reaches, so the write is discarded, and so does an append a
   // bounded queue cannot keep, which leaves the queue as it was.
-  [[nodiscard]] auto ElementRef(
+  [[nodiscard]] auto ElementMut(
       std::optional<std::int64_t> at, Formation& formed) -> void* {
     if (const auto ordinal = ElementOrdinal(at, count_)) {
       formed = Formation::kExisting;

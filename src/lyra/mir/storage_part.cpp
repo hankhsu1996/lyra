@@ -37,38 +37,12 @@ auto StorageSelection(const TypePool& types, const Block& block, ExprId id)
   return selects;
 }
 
-auto StoragePartAccess(const TypePool& types, const Block& block, ExprId id)
-    -> const CallExpr* {
-  const std::optional<support::PartSelection> selects =
-      StorageSelection(types, block, id);
-  if (!selects.has_value()) {
-    return nullptr;
-  }
-  switch (*selects) {
-    case support::PartSelection::kElement:
-    case support::PartSelection::kComponent:
-      return &std::get<CallExpr>(block.exprs.Get(id).data);
-    // A slice is several elements rather than one storage, and bits lie
-    // inside a value.
-    case support::PartSelection::kSlice:
-    case support::PartSelection::kBits:
-      return nullptr;
-  }
-  throw InternalError("mir: unknown part selection");
-}
-
 auto WrapperRead(const Expr& expr) -> std::optional<ExprId> {
   const auto* call = std::get_if<CallExpr>(&expr.data);
   if (call == nullptr || DirectBuiltinFn(*call) != support::BuiltinFn::kLoad) {
     return std::nullopt;
   }
   return CalleeReceiver(call->callee);
-}
-
-auto ReadsWhereItLies(const TypePool& types, const Block& block, ExprId id)
-    -> bool {
-  return StoragePartAccess(types, block, id) != nullptr ||
-         WrapperRead(block.exprs.Get(id)).has_value();
 }
 
 auto SelectedFrom(const Block& block, ExprId target) -> std::optional<ExprId> {
@@ -79,8 +53,7 @@ auto SelectedFrom(const Block& block, ExprId target) -> std::optional<ExprId> {
   return CalleeReceiver(part->callee);
 }
 
-auto IsPlaceExpression(const TypePool& types, const Block& block, ExprId id)
-    -> bool {
+auto IsPlaceExpression(const Block& block, ExprId id) -> bool {
   const auto place = [](const auto&) { return true; };
   const auto made = [](const auto&) { return false; };
   return std::visit(
@@ -90,7 +63,9 @@ auto IsPlaceExpression(const TypePool& types, const Block& block, ExprId id)
           [&](const FieldAccessExpr& e) { return place(e); },
           [&](const CopyExpr& e) { return place(e); },
           [&](const AwaitExpr& e) { return place(e); },
-          [&](const CallExpr&) { return ReadsWhereItLies(types, block, id); },
+          [&](const CallExpr&) {
+            return WrapperRead(block.exprs.Get(id)).has_value();
+          },
           [&](const StringLiteral& e) { return made(e); },
           [&](const NullLiteral& e) { return made(e); },
           [&](const MachineBoolLiteral& e) { return made(e); },

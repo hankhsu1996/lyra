@@ -192,7 +192,7 @@ template <typename T>
     const std::int64_t address =
         range.Low() + static_cast<std::int64_t>(linear / inner);
     return LeafByLinearIndex(
-        node.ElementRef(AddressPosition(range, address)), rest, linear % inner);
+        node.ElementMut(AddressPosition(range, address)), rest, linear % inner);
   }
 }
 
@@ -234,7 +234,7 @@ void ReadMemZeroBased(
       1, start, finish,
       [&dest, base](std::int64_t address, std::size_t, std::string_view token) {
         return StoreParsed(
-            dest.ElementRef(value::Position::FromInt(address)), token, base);
+            dest.ElementMut(value::Position::FromInt(address)), token, base);
       });
 }
 
@@ -259,7 +259,7 @@ void ReadMemAssociative(
   ReadMemKeyedCore(
       runtime, filename, base, start, finish,
       [&dest, base](std::int64_t key, std::string_view token) {
-        return StoreParsed(dest.ElementRef(K::FromInt(key)), token, base);
+        return StoreParsed(dest.ElementMut(K::FromInt(key)), token, base);
       });
 }
 
@@ -292,7 +292,7 @@ void ReadMemMultidim(
       InnerLeafCount(inner), start, finish,
       [&dest, addressed, inner, base](
           std::int64_t top, std::size_t ordinal, std::string_view token) {
-        auto& slot = dest.ElementRef(AddressPosition(addressed, top));
+        auto& slot = dest.ElementMut(AddressPosition(addressed, top));
         return StoreParsed(
             LeafByLinearIndex(slot, inner, ordinal), token, base);
       });

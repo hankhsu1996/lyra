@@ -125,6 +125,8 @@ auto CallMakesValue(const CallTarget& target) -> bool {
     case support::EntryAnswer::kExecution:
       return true;
     case support::EntryAnswer::kTheReceiver:
+    case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+    case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
     case support::EntryAnswer::kPartOfTheReceiver:
       return false;
   }
@@ -152,6 +154,8 @@ auto CallBuildsExecution(const CallTarget& target) -> bool {
       return true;
     case support::EntryAnswer::kNewValue:
     case support::EntryAnswer::kTheReceiver:
+    case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+    case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
     case support::EntryAnswer::kPartOfTheReceiver:
       return false;
   }

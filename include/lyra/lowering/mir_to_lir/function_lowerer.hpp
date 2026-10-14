@@ -397,10 +397,11 @@ class FunctionLowerer {
       const mir::Block& block, mir::ExprId whole, mir::ExprId part, Reach reach)
       -> diag::Result<lir::Place>;
   // The step from a value into one of its parts that is storage of its own,
-  // whether a field step or a call reaching an element names it.
+  // whether a field step names it or the dereference of what an element's read
+  // or write form answers.
   auto StepInto(const mir::Block& block, mir::ExprId part)
       -> diag::Result<lir::Projection>;
-  // The step from a value into one of its parts that is storage of its own.
+  // The step a call reaching a part takes into the value it is taken on.
   auto PartStep(const mir::Block& block, const mir::CallExpr& part)
       -> diag::Result<lir::Projection>;
   // The place the value `id` evaluates to is reached in. An expression naming
@@ -494,6 +495,13 @@ class FunctionLowerer {
   // the storage at the end of the chain rather than binding afresh, so it
   // carries what it was handed (LRM 23.3.3.2).
   auto LowerReferenceBind(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // A reference into the receiver of `call` -- an element read or written,
+  // as rustc's `Index::index` and `IndexMut::index_mut` answer one -- is the
+  // address of the part where it lies, taken at the reference's own
+  // mutability, which is what asks the step for a read or for a write.
+  auto LowerReferenceIntoReceiver(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
   // A reference to a property of an object (LRM 13.5.2), the call naming the
@@ -599,8 +607,9 @@ class FunctionLowerer {
   // of its whole rather than storage of its own.
   [[nodiscard]] auto ReachesViewedPart(
       const mir::Block& block, mir::ExprId target) const -> bool;
-  // Whether `part` is itself such a part: a call reaching into a value whose
-  // parts are not storage of their own.
+  // Whether `part` is itself such a part: a call answering a part of the value
+  // it is taken on, where a part that is storage of its own is the dereference
+  // of a reference into it.
   [[nodiscard]] auto IsViewedPart(
       const mir::Block& block, mir::ExprId part) const -> bool;
   // Updating a part, other than bits, whose chain passes through a view: what

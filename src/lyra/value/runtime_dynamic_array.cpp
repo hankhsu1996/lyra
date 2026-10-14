@@ -103,9 +103,9 @@ auto RuntimeDynamicArray::Element(std::optional<std::int64_t> position) const
   return Core().ElementAt(position);
 }
 
-auto RuntimeDynamicArray::ElementRef(
+auto RuntimeDynamicArray::ElementMut(
     std::optional<std::int64_t> position, Formation& formed) -> void* {
-  return Core().ElementRef(position, formed);
+  return Core().ElementMut(position, formed);
 }
 
 void RuntimeDynamicArray::Delete() {

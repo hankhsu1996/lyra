@@ -140,7 +140,7 @@ class BasicAssociativeArray {
   // LRM 7.8.7: the element `key` names, allocated holding the array's own
   // value where it names none. An invalid key (LRM 7.8.6) lands where no read
   // reaches, so the write is discarded.
-  [[nodiscard]] auto ElementRef(const Probe& key, Formation& formed) -> void* {
+  [[nodiscard]] auto ElementMut(const Probe& key, Formation& formed) -> void* {
     if (key_.Invalid(key)) {
       formed = Formation::kNowhere;
       return elem_.DiscardedWrite();
@@ -160,7 +160,7 @@ class BasicAssociativeArray {
   // states it (LRM 7.9.11).
   void Store(const Probe& key, const void* value) {
     Formation formed{};
-    elem_.Assign(ElementRef(key, formed), value);
+    elem_.Assign(ElementMut(key, formed), value);
   }
 
   // LRM 7.9.2: empties the array, or removes the entry `key` names; an absent

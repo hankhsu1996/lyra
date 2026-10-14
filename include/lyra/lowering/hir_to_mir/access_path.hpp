@@ -59,6 +59,14 @@ struct StepToAssocElement {
   mir::ExprId key;
 };
 
+// One character of a string, at the position the program computes (LRM 6.16).
+// A character has no storage of its own: it is read by the string's `getc`
+// and written by its `putc`, the operations indexing a string is defined as
+// (LRM Table 6-9).
+struct StepToCharacter {
+  mir::ExprId position;
+};
+
 // The elements of a queue between two positions the running program can move
 // (LRM 7.10.1). It builds a queue of its own, so it reaches nothing a write
 // could land in or a reference could name.
@@ -93,7 +101,7 @@ struct StepToUnionMember {
 struct DescentStep {
   std::variant<
       StepToBits, StepToElementRun, StepToElement, StepToAssocElement,
-      StepToQueueRun, StepToComponent, StepToUnionMember>
+      StepToCharacter, StepToQueueRun, StepToComponent, StepToUnionMember>
       to;
   mir::TypeId part_type;
 };
@@ -109,6 +117,7 @@ void ForEachOperand(DescentStep& step, Visit visit) {
           [&](StepToElementRun& run) { visit(run.start); },
           [&](StepToElement& element) { visit(element.position); },
           [&](StepToAssocElement& element) { visit(element.key); },
+          [&](StepToCharacter& character) { visit(character.position); },
           [&](StepToQueueRun& run) {
             visit(run.lowest);
             visit(run.highest);
@@ -131,6 +140,9 @@ void ForEachOperand(DescentStep& step, Visit visit) {
             return std::nullopt;
           },
           [](const StepToAssocElement&) -> std::optional<RequiredTag> {
+            return std::nullopt;
+          },
+          [](const StepToCharacter&) -> std::optional<RequiredTag> {
             return std::nullopt;
           },
           [](const StepToQueueRun&) -> std::optional<RequiredTag> {
@@ -170,8 +182,9 @@ using PathOwner = std::variant<mir::ExprId, ObjectProperty>;
 // nowhere and is its owner's own place.
 //
 // This is the lowering's own shape and reaches no layer below. What MIR carries
-// is what the descent lowers to -- one node per step, a field step or an
-// ordinary call naming its own entry, composed through the receiver -- because
+// is what the descent lowers to -- for each step a field step, the dereference
+// of a call answering a reference to the part, or an ordinary call naming its
+// own entry, composed through the receiver -- because
 // a consumer that met the descent itself would have to decide which operation
 // each step is, which is the decision this layer is here to make.
 struct AccessPath {
@@ -228,16 +241,17 @@ struct AccessPath {
     -> mir::ExprId;
 
 // The part `step` reaches in what `receiver` names, taken for a read, at the
-// part's type: the part itself where it is storage of its own named by a
-// field, and otherwise what the entry reading the part answers.
+// part's type: the part itself where it is storage of its own -- a field, or
+// what the reference an element's read form answers refers to -- and
+// otherwise what the entry reading the part answers.
 [[nodiscard]] auto StepForRead(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    const DescentStep& step, mir::ExprId receiver) -> mir::Expr;
+    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::ExprId receiver) -> mir::Expr;
 
 // The value of that part.
 [[nodiscard]] auto StepRead(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    const DescentStep& step, mir::ExprId receiver) -> mir::Expr;
+    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    mir::ExprId receiver) -> mir::Expr;
 
 // The type a read of a part of `source_type` answers at, where the part is
 // declared `part_type`. LRM 11.8.1: a part-select is unsigned regardless of the
@@ -351,12 +365,14 @@ struct PathPositions {
 
 // Which part of its owner a path names, as a wait or a report is told of it.
 // A part of an unpacked value is named by the steps that reach it: an element
-// by its ordinal and a component by its index (LRM 7.4, 7.2). Where the path
+// or a character of a string by its ordinal and a component by its index (LRM
+// 7.4, 6.16, 7.2). Where the path
 // goes on into a packed value, the part is bits of the value those steps
 // reach; where it ends in a run of elements (LRM 7.4.6), it is those elements
 // of the array they reach.
 struct NamedPart {
-  // One machine integer for each step to an element or a component, in order.
+  // One machine integer for each step to an element, a character or a
+  // component, in order.
   std::vector<mir::ExprId> steps;
   // The bits or the elements named within the value the steps reach, none
   // where the part is the whole of it.
@@ -371,11 +387,16 @@ struct NamedPart {
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> NamedPart;
 
-// Builds `lhs = rhs` against the part `path` names. Two shapes come out of it,
-// each an ordinary MIR node with nothing left to decide: replacing the whole of
-// what a capability wrapper holds acts on the wrapper, so it is a call taking
-// the wrapper as its destination; every other write is a store into the place
-// the path designates. Each yields nothing.
+// Whether a write to the part `path` names lands on bits of a character of a
+// string, and so reads the character before putting it back.
+[[nodiscard]] auto WritesBitsOfACharacter(const AccessPath& path) -> bool;
+
+// Builds `lhs = rhs` against the part `path` names. Three shapes come out of
+// it, each an ordinary MIR node with nothing left to decide: replacing the
+// whole of what a capability wrapper holds acts on the wrapper, so it is a
+// call taking the wrapper as its destination; a write through a character of a
+// string is the string's own put, a call on the string's place; every other
+// write is a store into the place the path designates. Each yields nothing.
 [[nodiscard]] auto BuildStoreExpr(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
     mir::ExprId rhs_id) -> mir::Expr;

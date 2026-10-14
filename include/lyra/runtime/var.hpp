@@ -921,7 +921,7 @@ class VariableRef {
   [[nodiscard]] auto ReferElement(const Key& key) const {
     erased_.AdmitStep();
     value::Formation formed{};
-    auto& element = Storage().ElementRef(key, formed);
+    auto& element = Storage().ElementMut(key, formed);
     return VariableRef<std::remove_reference_t<decltype(element)>>{
         erased_.Part(&element, formed, RetainedStepTo<T>(key))};
   }
@@ -1354,7 +1354,7 @@ class Designation {
   template <typename Key>
   auto ElementRef(const Key& key) {
     value::Formation formed{};
-    auto& element = part_->ElementRef(key, formed);
+    auto& element = part_->ElementMut(key, formed);
     write_->Formed(formed);
     if (write_->Undecided()) {
       write_->Stepped(StepTo(key));

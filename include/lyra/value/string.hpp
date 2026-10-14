@@ -21,8 +21,6 @@
 
 namespace lyra::value {
 
-class StringCharRef;
-
 // Runtime representation of the SystemVerilog `string` type (LRM 6.16). The
 // SV semantics -- equality on contents, lexicographic compare, and the method
 // family in LRM 6.16.1 through 6.16.15 -- are exposed as member operators and
@@ -190,22 +188,6 @@ class String {
     return Byte::FromInt(static_cast<std::int8_t>(impl_[*at]));
   }
 
-  // The read side of indexed character access `s[i]`: the character value, with
-  // the same out-of-range default as `getc`. Distinct from `Getc` only in role
-  // (the indexing form versus the LRM 6.16.3 method), so it shares the query.
-  [[nodiscard]] auto Element(const Position& position) const -> Byte {
-    return Getc(position);
-  }
-
-  // The write side of indexed character access `s[i]`: a write-back reference
-  // to the character. A string exposes no in-place character reference --
-  // writes go through `putc` (LRM 6.16.2) with its out-of-range / NUL rules --
-  // so the reference is a proxy that captures the index once, routes
-  // `operator=` through `putc`, and reads-modifies-writes for each compound
-  // operator. The read/write pair `Element` / `ElementRef` mirrors a packed
-  // array element. Defined after `StringCharRef` below.
-  [[nodiscard]] auto ElementRef(const Position& position) -> StringCharRef;
-
   // LRM 6.16.4. Receiver unchanged.
   [[nodiscard]] auto Toupper() const -> String {
     std::string out = impl_;
@@ -359,36 +341,6 @@ class String {
   std::string impl_;
 };
 
-// The write-back location for a string character (the write side of `s[i]`). A
-// string exposes no in-place character reference -- writes go through `putc`
-// (LRM 6.16.2) -- so the proxy captures the receiver and index once and routes
-// every write through it: `operator=` is `putc`.
-class StringCharRef {
- public:
-  StringCharRef(String& target, const Position& position)
-      : target_(&target), position_(position) {
-  }
-
-  StringCharRef(const StringCharRef&) = delete;
-  auto operator=(const StringCharRef&) -> StringCharRef& = delete;
-  StringCharRef(StringCharRef&&) noexcept = default;
-  auto operator=(StringCharRef&&) noexcept -> StringCharRef& = default;
-  ~StringCharRef() = default;
-
-  auto operator=(const Byte& value) -> StringCharRef& {
-    target_->PutCharacter(position_, value.ToInt64());
-    return *this;
-  }
-
- private:
-  String* target_;
-  Position position_;
-};
-
-inline auto String::ElementRef(const Position& position) -> StringCharRef {
-  return StringCharRef{*this, position};
-}
-
 // LRM 5.9: a string value assigned to an integral variable is right-justified
 // -- a destination wider than the text pads its leftmost bits with zeros, and a
 // narrower one truncates the leftmost characters.
@@ -402,7 +354,6 @@ static_assert(CaseEqualComparable<String>);
 static_assert(Ordered<String>);
 static_assert(Lengthable<String>);
 static_assert(BitstreamSizable<String>);
-static_assert(Indexable<String>);
 
 // Defined here rather than alongside the rest of `UnpackedArray` because it is
 // the one member that reads a `String`, whose definition depends on the array.

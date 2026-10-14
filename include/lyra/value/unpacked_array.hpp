@@ -225,15 +225,15 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
 
   // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no
   // element of the array.
-  [[nodiscard]] auto ElementRef(const Position& position, Formation& formed)
+  [[nodiscard]] auto ElementMut(const Position& position, Formation& formed)
       -> T& {
     const auto ordinal = ElementOrdinal(position, N);
     formed = ordinal ? Formation::kExisting : Formation::kNowhere;
     return ordinal ? Items()[*ordinal] : DiscardedWrite();
   }
-  [[nodiscard]] auto ElementRef(const Position& position) -> T& {
+  [[nodiscard]] auto ElementMut(const Position& position) -> T& {
     Formation formed{};
-    return ElementRef(position, formed);
+    return ElementMut(position, formed);
   }
 
   // LRM 7.4.5: an invalid-index read returns the element default (LRM Table

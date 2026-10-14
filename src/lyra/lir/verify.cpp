@@ -37,7 +37,7 @@ auto LentValues(const CompilationUnit& unit, TypeId storage) -> TypeId {
 }
 
 // A part reached by value projection is a view of its whole -- a bit of a
-// packed value, a character of a string, a member of a union. A part that is
+// packed value, a member of a union. A part that is
 // storage of its own (LRM 7.2, 7.4, 7.8, 7.10) is a step of a place instead,
 // because a write has to land in it and a value built out of it is a copy no
 // write reaches.

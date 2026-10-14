@@ -107,11 +107,11 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
 
   // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no
   // element of the array.
-  [[nodiscard]] auto ElementRef(const Position& position, Formation& formed)
+  [[nodiscard]] auto ElementMut(const Position& position, Formation& formed)
       -> T& {
-    return *static_cast<T*>(core_.ElementRef(ReadPosition(position), formed));
+    return *static_cast<T*>(core_.ElementMut(ReadPosition(position), formed));
   }
-  [[nodiscard]] auto ElementRef(const Position& position) -> T& {
+  [[nodiscard]] auto ElementMut(const Position& position) -> T& {
     return *static_cast<T*>(core_.ExistingAt(ReadPosition(position)));
   }
 

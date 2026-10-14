@@ -749,8 +749,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_string_cstr", &lyra_rt_string_cstr);
   add("lyra_rt_string_len", &lyra_rt_string_len);
   add("lyra_rt_string_getc", &lyra_rt_string_getc);
-  add("lyra_rt_string_element", &lyra_rt_string_element);
-  add("lyra_rt_string_with_element", &lyra_rt_string_with_element);
   add("lyra_rt_string_toupper", &lyra_rt_string_toupper);
   add("lyra_rt_string_tolower", &lyra_rt_string_tolower);
   add("lyra_rt_string_compare", &lyra_rt_string_compare);
@@ -1082,7 +1080,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dynarray_element", &lyra_rt_dynarray_element);
   add("lyra_rt_dynarray_concat_element", &lyra_rt_dynarray_concat_element);
   add("lyra_rt_dynarray_concat_spread", &lyra_rt_dynarray_concat_spread);
-  add("lyra_rt_dynarray_element_ref", &lyra_rt_dynarray_element_ref);
+  add("lyra_rt_dynarray_element_mut", &lyra_rt_dynarray_element_mut);
   add("lyra_rt_dynarray_delete", &lyra_rt_dynarray_delete);
   add("lyra_rt_dynarray_element_slice", &lyra_rt_dynarray_element_slice);
   add("lyra_rt_dynarray_element_slice_ref",
@@ -1119,7 +1117,7 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_unpackedarray_queue_from_array);
   add("lyra_rt_dynarray_queue_from_array", &lyra_rt_dynarray_queue_from_array);
   add("lyra_rt_queue_element", &lyra_rt_queue_element);
-  add("lyra_rt_queue_element_ref", &lyra_rt_queue_element_ref);
+  add("lyra_rt_queue_element_mut", &lyra_rt_queue_element_mut);
   add("lyra_rt_queue_slice", &lyra_rt_queue_slice);
   add("lyra_rt_queue_size", &lyra_rt_queue_size);
   add("lyra_rt_queue_push_back", &lyra_rt_queue_push_back);
@@ -1151,7 +1149,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_assocarray_assoc_with_default",
       &lyra_rt_assocarray_assoc_with_default);
   add("lyra_rt_assocarray_element", &lyra_rt_assocarray_element);
-  add("lyra_rt_assocarray_element_ref", &lyra_rt_assocarray_element_ref);
+  add("lyra_rt_assocarray_element_mut", &lyra_rt_assocarray_element_mut);
   add("lyra_rt_assocarray_exists", &lyra_rt_assocarray_exists);
   add("lyra_rt_assocarray_size", &lyra_rt_assocarray_size);
   add("lyra_rt_assocarray_delete", &lyra_rt_assocarray_delete);

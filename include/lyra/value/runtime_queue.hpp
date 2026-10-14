@@ -78,7 +78,7 @@ class RuntimeQueue {
   // position one past the last appends an element there first, trimmed to the
   // bound, and every other position naming none lands where no read reaches.
   // `formed` says which of the three it was.
-  [[nodiscard]] auto ElementRef(
+  [[nodiscard]] auto ElementMut(
       std::optional<std::int64_t> position, Formation& formed) -> void*;
 
   // LRM 7.10.1 slice, as a queue of `type`, the type the selection answers.

@@ -1983,26 +1983,10 @@ auto CodeGenFunction::LowerAggregateExtract(
           [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
             return positional(component.index);
           },
-          [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
-            if (module_->Unit()
-                    .types.Get(container)
-                    .Is<lir::UnpackedArrayType>()) {
-              auto position = LowerOperand(e.operands.front());
-              if (!position) {
-                return std::unexpected(std::move(position.error()));
-              }
-              auto lying = ArrayElementAddress(
-                  container, *aggregate,
-                  OperandRef{
-                      .value = *position,
-                      .type = OperandType(e.operands.front())},
-                  Access::kRead);
-              if (!lying) {
-                return std::unexpected(std::move(lying.error()));
-              }
-              return CopyValue(result_type, *lying, out);
-            }
-            return read_by(ElementEntriesOf(*domain).read, e.operands);
+          [&](const lir::ContainerElement&) -> diag::Result<llvm::Value*> {
+            return Unsupported(
+                "llvm codegen: an element is projected by value only out of a "
+                "sequence of handles");
           },
           [&](const lir::ContainerSlice& s) -> diag::Result<llvm::Value*> {
             return read_by(
@@ -2080,8 +2064,13 @@ auto CodeGenFunction::LowerAggregateUpdate(
                  CallArranger::Direct(builder_.getInt64Ty())},
                 {*aggregate, builder_.getInt64(component.index.value)}, 1);
           },
-          [&](const lir::ContainerElement& e) -> diag::Result<llvm::Value*> {
-            return replaced_at(RuntimeOp::kWithElement, e.operands);
+          // Only a sequence of handles could be rebuilt around one element,
+          // and nothing asks for that: an element of an array is written where
+          // it lies.
+          [&](const lir::ContainerElement&) -> diag::Result<llvm::Value*> {
+            return Unsupported(
+                "llvm codegen: an array rebuilt around one element replaced is "
+                "not yet supported");
           },
           [&](const lir::ContainerSlice& s) -> diag::Result<llvm::Value*> {
             return replaced_at(RuntimeOp::kWithSlice, s.operands);

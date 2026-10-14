@@ -117,12 +117,12 @@ class AssociativeArray {
 
   // LRM 7.8.7 / 7.9.11: a write target allocates the absent entry, and an
   // invalid key (LRM 7.8.6) lands where the write is discarded.
-  [[nodiscard]] auto ElementRef(const K& key, Formation& formed) -> V& {
-    return *static_cast<V*>(core_.ElementRef(key, formed));
+  [[nodiscard]] auto ElementMut(const K& key, Formation& formed) -> V& {
+    return *static_cast<V*>(core_.ElementMut(key, formed));
   }
-  [[nodiscard]] auto ElementRef(const K& key) -> V& {
+  [[nodiscard]] auto ElementMut(const K& key) -> V& {
     Formation formed{};
-    return ElementRef(key, formed);
+    return ElementMut(key, formed);
   }
 
   template <typename Fn>

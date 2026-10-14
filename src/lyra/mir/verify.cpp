@@ -806,6 +806,28 @@ auto FirstOperand(const CallExpr& call) -> std::optional<ExprId> {
   return call.arguments.front();
 }
 
+// Whether what `pointer` reaches may only be read: a read-only reference or
+// pointer -- an element's read form among them, which answers the element
+// default where its position names no element (LRM 7.4.6).
+auto ReachesReadOnly(const Type& pointer) -> bool {
+  const auto read_only = [](Mutability mutability) {
+    switch (mutability) {
+      case Mutability::kReadOnly:
+        return true;
+      case Mutability::kMutable:
+        return false;
+    }
+    throw InternalError("mir verify: unknown mutability");
+  };
+  if (const auto* reference = pointer.As<ReferenceType>()) {
+    return read_only(reference->mutability);
+  }
+  if (const auto* raw = pointer.As<PointerType>()) {
+    return read_only(raw->mutability);
+  }
+  return false;
+}
+
 // A call on a library entry is held to the entry's one declaration, so no
 // consumer of the call has to ask what it was applied to: an entry the source
 // states over values of several kinds is named only where its first operand is
@@ -813,7 +835,8 @@ auto FirstOperand(const CallExpr& call) -> std::optional<ExprId> {
 // an argument the entry reads as a machine value is no integral value, which
 // would cross with nothing telling the entry how to read its bits; and an
 // entry reaching by a key is called on a container reached by keys, one
-// reaching by a position on something that numbers its parts.
+// reaching by a position on something that numbers its parts; and an entry
+// answering a reference into its receiver is typed as that reference.
 void VerifyEntryDeclarations(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -844,6 +867,32 @@ void VerifyEntryDeclarations(
           id,
           "names an entry over values of several kinds where its first "
           "operand is integral");
+    }
+    // An entry answering a reference into its receiver is typed as that
+    // reference, at the mutability the entry answers it with, so its
+    // dereference is the part and the access made there is the entry's.
+    const Type& answered = unit.types.Get(block.exprs.Get(id).type);
+    const auto typed_as_reference = [&](bool read_only) {
+      if (!answered.Is<ReferenceType>() ||
+          ReachesReadOnly(answered) != read_only) {
+        refuse(
+            id,
+            "answers a reference into its receiver and is typed as something "
+            "else");
+      }
+    };
+    switch (declared.answer) {
+      case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+        typed_as_reference(true);
+        break;
+      case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+        typed_as_reference(false);
+        break;
+      case support::EntryAnswer::kNewValue:
+      case support::EntryAnswer::kTheReceiver:
+      case support::EntryAnswer::kPartOfTheReceiver:
+      case support::EntryAnswer::kExecution:
+        break;
     }
     // An operation over integral values states what it takes in its own
     // declaration, which the folder and each target read.
@@ -897,6 +946,57 @@ void VerifyEntryDeclarations(
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyEntryDeclarations(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// What a write lands on -- an assignment's target, or the object an entry
+// changing its receiver acts on -- is not reached through a read-only
+// reference, which an element's read form answers and whose referent may be
+// the element default every read of its type shares (LRM 7.4.6).
+void VerifyWritesLandInWritableStorage(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    std::optional<ExprId> reached;
+    if (const auto* write = std::get_if<AssignExpr>(&expr.data)) {
+      reached = write->target;
+    } else if (const auto* call = std::get_if<CallExpr>(&expr.data)) {
+      const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
+      if (entry.has_value() &&
+          support::RuntimeEntryOf(*entry).mutates_receiver) {
+        reached = CalleeReceiver(call->callee);
+      }
+    }
+    // A field is written through the object it is reached on, and a selected
+    // part through the whole it is selected from.
+    while (reached.has_value()) {
+      const ExprData& data = block.exprs.Get(*reached).data;
+      if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
+        reached = field->receiver;
+      } else if (
+          const std::optional<ExprId> whole = SelectedFrom(block, *reached)) {
+        reached = whole;
+      } else {
+        break;
+      }
+    }
+    if (!reached.has_value()) {
+      continue;
+    }
+    const auto* opened =
+        std::get_if<DerefExpr>(&block.exprs.Get(*reached).data);
+    if (opened != nullptr && ReachesReadOnly(unit.types.Get(
+                                 block.exprs.Get(opened->pointer).type))) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} writes through a read-only reference (expression "
+              "{} of its block) -- please report this as a bug",
+              describe(), id.value));
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyWritesLandInWritableStorage(
+        unit, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -1055,7 +1155,7 @@ void VerifyLargeValuesLieInStorage(
   for (const ExprId id : block.exprs.Ids()) {
     if (made_in_storage.at(id.value) ||
         !IsTooLargeForAFrame(unit, block.exprs.Get(id).type) ||
-        IsPlaceExpression(unit.types, block, id)) {
+        IsPlaceExpression(block, id)) {
       continue;
     }
     throw InternalError(
@@ -1103,6 +1203,7 @@ void VerifyCode(
   }
   VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
   VerifyPlacesAreRead(unit, *code.body, {}, describe);
+  VerifyWritesLandInWritableStorage(unit, *code.body, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
   VerifyTypeArguments(*code.body, describe);

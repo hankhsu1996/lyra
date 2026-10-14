@@ -46,9 +46,10 @@ against the run before it; the figures are in the pull requests that measured th
       write it back, which turned those bits into 0.
 - [ ] Reading a part of a part of a packed value costs the part read. It costs the outer part on
       both backends.
-- [ ] Writing a character of a string, or a member of an unpacked union, costs the part written. On
-      the execution backend each reads the whole value, builds a new one around the part and stores
-      it back. Not measured.
+- [x] Writing a character of a string changes that character where the string lies, on both
+      backends, as the string's own `putc` does.
+- [ ] Writing a member of an unpacked union costs the part written. On the execution backend it
+      reads the whole union, builds a new one around the member and stores it back. Not measured.
 - [ ] No one-word operation costs more than it did while the value library's word functions were
       marked to be inlined always, and a shift of a value of several words stays inline in an
       optimized C++ build. Under clang at `-O2` the one-word operations together cost fewer

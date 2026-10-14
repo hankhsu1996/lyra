@@ -22,16 +22,19 @@ namespace lyra::support {
 // observable storage cells, runtime effects, scope handle); this enum
 // carries only the method identity.
 enum class BuiltinFn : std::uint16_t {
-  // LRM 7.4 / 7.8 / 7.10 / 11.5 access into a value. The plain form answers
-  // with the part's value; the `Ref` form answers with the part itself, so what
-  // stands there may be written and a further access composes onto it.
-  //
-  // Two entries rather than one entry read two ways: which of them a source
-  // position calls is settled where the source is read, and a consumer that had
-  // to work it out from the position could work it out differently.
-  // Composition is the receiver -- an access whose receiver is another access
-  // is the descent -- so a descent of any depth is these entries applied one
-  // per level and nothing states a path.
+  // LRM 7.4 / 7.8 / 7.10 element of an array, reached for reading and for
+  // writing. The two have different outcomes where the position names no
+  // element -- a read answers the element default and creates nothing, a write
+  // lands nowhere or creates the element (LRM 7.4.6, 7.8.6, 7.8.7) -- so they
+  // are two entries, each answering a reference to the element whose
+  // dereference is the element's place, as rustc's `Index::index` and
+  // `IndexMut::index_mut` are. Which a source position calls is settled where
+  // the source is read.
+  kElement,
+  kElementMut,
+  // LRM 7.4 / 7.10 / 11.5 parts of a value that are no storage of their own.
+  // The plain form answers with the part's value; the `Ref` form answers with
+  // the part itself, so what stands there may be written.
   //
   // Several parts in a row are three operations, each with operands of its
   // own. Bits of an integral value are named by where they start, and are as
@@ -40,13 +43,14 @@ enum class BuiltinFn : std::uint16_t {
   // there are (LRM 7.4.6). A queue's slice is bounded by two positions the
   // running program can move, and is a queue the slice builds rather than a
   // part that may be written (LRM 7.10.1).
-  kElement,
   kSlice,
   kElementSlice,
   kQueueSlice,
-  kElementRef,
   kSliceRef,
   kElementSliceRef,
+  // LRM 11.5.1: an integral value with the bits a position names replaced,
+  // which is how bits of a value lying in no storage are written.
+  kWithSlice,
   // The same two directions over the member an active-member value holds,
   // named by its declaration-order position. Reaching one for writing settles
   // which member is held, which reading one does not, so the two are different
@@ -153,7 +157,7 @@ enum class BuiltinFn : std::uint16_t {
   // and a position are different operands, so each access is an entry of its
   // own, named where the source is read and the array's type is in hand.
   kAssocElement,
-  kAssocElementRef,
+  kAssocElementMut,
   kAssocDesignateElement,
   kAssocReferElement,
   kAssocDeleteIndex,
@@ -1190,14 +1194,20 @@ enum class CallEnding : std::uint8_t {
 // `T` and returning `T&`. Most entries build a value, which the caller then
 // owns and ends. The others answer with storage that already exists and that
 // the caller owns nothing of: the object the call acted on, handed back so an
-// access composes onto the call (a guard, LRM 11.3.5); or a part reached inside
-// that object, which may be written and descended into further. An entry may
-// also answer with an execution the engine drives (LRM 9.2), which a target
-// building values in its caller's storage builds there too, and which whoever
-// drives it takes from there rather than the caller ending it.
+// access composes onto the call (a guard, LRM 11.3.5); a reference to a part
+// of that object that is storage of its own, read-only or mutable, whose
+// dereference is the part, as rustc's `Index::index` answers `&Self::Output`
+// and `IndexMut::index_mut` `&mut Self::Output`; or a part reached inside that
+// object that is a view of it, which may be written and descended into
+// further. An entry may also answer with an execution the engine drives (LRM
+// 9.2), which a target building values in its caller's storage builds there
+// too, and which whoever drives it takes from there rather than the caller
+// ending it.
 enum class EntryAnswer : std::uint8_t {
   kNewValue,
   kTheReceiver,
+  kReadOnlyReferenceIntoTheReceiver,
+  kMutableReferenceIntoTheReceiver,
   kPartOfTheReceiver,
   kExecution,
 };
@@ -1374,14 +1384,14 @@ struct RuntimeEntry {
   // through a capability wrapper reach its write access. Where the update
   // lands and how it gets there is each target's own answer.
   bool mutates_receiver = false;
-  // What the entry answers with. One answering with a part, rather than with
-  // that part's value, is one where what stands at the call may be written and
-  // a further access composes onto it; a target realizes such a call over a
-  // part that is storage of its own as a step into it, and over a part that is
-  // a view of its whole as a read of the whole and a rebuild.
-  // Which entries it must do that for, and which answers a caller owns and
-  // ends, are this, so the property stays with the entry and not with each
-  // target that has to know it.
+  // What the entry answers with. One answering with a reference into its
+  // receiver is realized as the address of the part where it lies. One
+  // answering with a part that is a view of its whole, rather than with that
+  // part's value, is one where what stands at the call may be written, which a
+  // target realizes as a read of the whole and a rebuild. Which entries it must
+  // do that for, and which answers a caller owns and ends, are this, so the
+  // property stays with the entry and not with each target that has to know
+  // it.
   EntryAnswer answer = EntryAnswer::kNewValue;
   // How the entry names the part it reaches, absent for an entry that reaches
   // none.

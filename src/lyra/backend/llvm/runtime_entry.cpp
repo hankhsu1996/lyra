@@ -72,8 +72,6 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "wildcard_index_make";
     case RuntimeOp::kWithComponent:
       return "with_component";
-    case RuntimeOp::kWithElement:
-      return "with_element";
     case RuntimeOp::kWithSlice:
       return "with_slice";
     case RuntimeOp::kDefault:
@@ -237,10 +235,6 @@ constexpr std::array kForWhatAnEntryComparesWhole{RealizedFor{
     .domains =
         kContainers | kUnions | kReals |
         DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
-// What an element is read out of by an entry: a fixed-size unpacked array's
-// lies where arithmetic on the array's address says, so none is asked for it.
-constexpr std::array kForWhatAnEntryReadsAnElementOf{
-    RealizedFor{.domains = kLibrarySequences | DomainSet{Domain::kString}}};
 constexpr std::array kForBitstreams{RealizedFor{.domains = kBitstreams}};
 constexpr std::array kForTaggedUnions{
     RealizedFor{.domains = {Domain::kTaggedUnion}}};
@@ -682,16 +676,16 @@ auto ElementEntriesOf(support::ValueDomain domain) -> ElementEntries {
             {.entry = support::BuiltinFn::kAssocElement,
              .symbol = RuntimeSymbol(support::BuiltinFn::kAssocElement)},
         .write = {
-            .entry = support::BuiltinFn::kAssocElementRef,
-            .symbol = RuntimeSymbol(support::BuiltinFn::kAssocElementRef)}};
+            .entry = support::BuiltinFn::kAssocElementMut,
+            .symbol = RuntimeSymbol(support::BuiltinFn::kAssocElementMut)}};
   }
   return {
       .read =
           {.entry = support::BuiltinFn::kElement,
            .symbol = RuntimeSymbol(domain, support::BuiltinFn::kElement)},
       .write = {
-          .entry = support::BuiltinFn::kElementRef,
-          .symbol = RuntimeSymbol(domain, support::BuiltinFn::kElementRef)}};
+          .entry = support::BuiltinFn::kElementMut,
+          .symbol = RuntimeSymbol(domain, support::BuiltinFn::kElementMut)}};
 }
 
 auto HeldObjectOf(const lir::Type& type)
@@ -1179,10 +1173,6 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     // 7.3).
     case RuntimeOp::kWithComponent:
       return {kMachine, kMachine, kHeld};
-    // A character is the one element that is a view of its whole (LRM 6.16.2):
-    // the string, where the character goes, and the number it is to hold.
-    case RuntimeOp::kWithElement:
-      return {kMachine, kPosition, kNumber};
     // The array, where the elements start, how many there are, and the
     // elements that take their place (LRM 7.4.6).
     case RuntimeOp::kWithSlice:
@@ -1289,7 +1279,6 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kMake:
     case RuntimeOp::kMakeWildcardIndex:
     case RuntimeOp::kWithComponent:
-    case RuntimeOp::kWithElement:
     case RuntimeOp::kWithSlice:
     case RuntimeOp::kDefault:
     case RuntimeOp::kMakeSegment:
@@ -1368,8 +1357,6 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
       return kForReals;
     case RuntimeOp::kToBool:
       return kForWhatIsTrueOrFalse;
-    case RuntimeOp::kWithElement:
-      return kForStrings;
     case RuntimeOp::kMakePrintValueItem:
     case RuntimeOp::kMakeFormatArg:
       return kForWhatFormatsItself;
@@ -1476,6 +1463,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kArithmeticShiftRight:
     case support::BuiltinFn::kReplicateBits:
     case support::BuiltinFn::kSlice:
+    case support::BuiltinFn::kWithSlice:
     case support::BuiltinFn::kFromBool:
     case support::BuiltinFn::kToPosition:
     case support::BuiltinFn::kIntegralFromString:
@@ -1538,8 +1526,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kRsort:
       return NamedByValue{.realized = kForSequences};
     // An element of a fixed-size unpacked array lies where arithmetic on the
-    // array's address says, so no entry is asked for one.
-    case support::BuiltinFn::kElementRef:
+    // array's address says, so no entry is asked for one, to read it or to
+    // write it.
+    case support::BuiltinFn::kElement:
+    case support::BuiltinFn::kElementMut:
       return NamedByValue{.realized = kForDynamicArraysAndQueues};
 
     case support::BuiltinFn::kSize:
@@ -1621,8 +1611,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kConcat:
       return NamedByValue{.realized = kForStrings};
 
-    case support::BuiltinFn::kElement:
-      return NamedByValue{.realized = kForWhatAnEntryReadsAnElementOf};
     case support::BuiltinFn::kCaseEqual:
     case support::BuiltinFn::kBitIdentical:
     case support::BuiltinFn::kHasUnknown:
@@ -1993,7 +1981,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // or of bits (LRM 5.9); an access into an associative array by its key
     // (LRM 7.8).
     case support::BuiltinFn::kAssocElement:
-    case support::BuiltinFn::kAssocElementRef:
+    case support::BuiltinFn::kAssocElementMut:
     case support::BuiltinFn::kAssocDesignateElement:
     case support::BuiltinFn::kAssocReferElement:
     case support::BuiltinFn::kAssocDeleteIndex:

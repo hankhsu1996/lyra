@@ -1119,15 +1119,6 @@ auto lyra_rt_string_cstr(const void* value) -> const char*;
 auto lyra_rt_string_len(const void* value, void* out) -> void*;
 auto lyra_rt_string_getc(const void* value, const void* position, void* out)
     -> void*;
-// Positional access (LRM 6.16.2). `element` reads the character; `with_element`
-// returns a copy with one character replaced -- the functional write the
-// execution backend uses because it cannot mutate a string in place.
-auto lyra_rt_string_element(const void* value, const void* position, void* out)
-    -> void*;
-auto lyra_rt_string_with_element(
-    const void* value, const void* position, const void* replacement,
-    std::int64_t replacement_width, bool replacement_is_signed,
-    bool replacement_is_four_state, void* out) -> void*;
 auto lyra_rt_string_toupper(const void* value, void* out) -> void*;
 auto lyra_rt_string_tolower(const void* value, void* out) -> void*;
 auto lyra_rt_string_compare(const void* lhs, const void* rhs, void* out)
@@ -1434,7 +1425,7 @@ auto lyra_rt_empty_default(void* out) -> void*;
 // representation and what an out-of-range read (LRM 7.4.5) and a resize fill
 // with. A literal's elements cross as bare handles, since that type is theirs,
 // so the entry copies each as a value of it. An element is storage of its own:
-// `element` answers with it where it lies, for reading, and `element_ref` with
+// `element` answers with it where it lies, for reading, and `element_mut` with
 // the same storage for a write to land in (LRM 7.4.6); `element_slice_ref`
 // writes a window into the elements already there (LRM 7.6).
 auto lyra_rt_make_dynamic_array_new(
@@ -1458,7 +1449,7 @@ auto lyra_rt_queue_dynamic_array_from_array(
     const void* source, const void* answer_element_type, void* out) -> void*;
 auto lyra_rt_dynarray_element(const void* array, const void* position) -> const
     void*;
-auto lyra_rt_dynarray_element_ref(void* array, const void* position) -> void*;
+auto lyra_rt_dynarray_element_mut(void* array, const void* position) -> void*;
 auto lyra_rt_dynarray_concat_element(
     const void* array, const void* item, void* out) -> void*;
 auto lyra_rt_dynarray_concat_spread(
@@ -1664,7 +1655,7 @@ auto lyra_rt_dynarray_queue_from_array(
     const void* source, const void* answer_type, void* out) -> void*;
 auto lyra_rt_queue_element(const void* queue, const void* position) -> const
     void*;
-auto lyra_rt_queue_element_ref(void* queue, const void* position) -> void*;
+auto lyra_rt_queue_element_mut(void* queue, const void* position) -> void*;
 auto lyra_rt_queue_slice(
     const void* queue, const void* lo, const void* hi, const void* answer_type,
     void* out) -> void*;
@@ -1732,7 +1723,7 @@ auto lyra_rt_assocarray_assoc_with_default(
 auto lyra_rt_assocarray_element(
     const void* array, const void* index, const void* index_type) -> const
     void*;
-auto lyra_rt_assocarray_element_ref(
+auto lyra_rt_assocarray_element_mut(
     void* array, const void* index, const void* index_type) -> void*;
 auto lyra_rt_assocarray_exists(
     const void* array, const void* index, const void* index_type, void* out)

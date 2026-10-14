@@ -7,7 +7,11 @@ remains in force, and genuine places keep the store model. Decision point 4 -- "
 compound shape" -- is revised below: the node is uniform over every **target**, which is what this
 entry was arguing, and not over every **operator**. The `Get` / `GetRef` spelling below is
 superseded by [a-part-is-named-by-how-it-is-selected](a-part-is-named-by-how-it-is-selected.md): a
-component is read with `Component<I>` and reached with `ComponentRef<I>`.
+component is read with `Component<I>` and reached with `ComponentRef<I>`. The string character's
+write-back proxy is gone (2026-10-14,
+[an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md)): a
+character is read by `getc` and written by `putc`, and an element is written through the reference
+`ElementMut` answers.
 
 ## Context
 

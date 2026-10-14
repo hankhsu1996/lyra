@@ -968,7 +968,7 @@ auto DesignateElement(const void* designation, const Index& index, void* out)
   const ErasedDesignation& within = DesignationAt(designation);
   value::Formation formed{};
   void* element =
-      static_cast<Container*>(within.part)->ElementRef(index, formed);
+      static_cast<Container*>(within.part)->ElementMut(index, formed);
   within.write->Formed(formed);
   if (within.write->Undecided()) {
     within.write->Stepped(StepTo(index));
@@ -1025,7 +1025,7 @@ auto DesignateArrayElement(
     std::optional<std::int64_t> position, void* out) -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
   value::Formation formed{};
-  void* element = type.ElementRef(within.part, position, formed);
+  void* element = type.ElementMut(within.part, position, formed);
   within.write->Formed(formed);
   if (within.write->Undecided()) {
     within.write->Stepped(StepTo(position));
@@ -1076,7 +1076,7 @@ auto ReferElement(const void* reference, const Index& index, void* out)
   from.AdmitStep();
   value::Formation formed{};
   void* element =
-      static_cast<Container*>(from.storage)->ElementRef(index, formed);
+      static_cast<Container*>(from.storage)->ElementMut(index, formed);
   return BuildReference(
       out, from.Part(element, formed, RetainedStepTo<Container>(index)));
 }
@@ -1089,7 +1089,7 @@ auto ReferArrayElement(
   const ErasedReference& from = ErasedAt(reference);
   from.AdmitStep();
   value::Formation formed{};
-  void* element = type.ElementRef(from.storage, position, formed);
+  void* element = type.ElementMut(from.storage, position, formed);
   return BuildReference(out, from.Part(element, formed, StepTo(position)));
 }
 
@@ -1662,7 +1662,7 @@ auto ReadKeyedMemory(
         const value::AnyValue index = value::AnyValue::Built(
             index_type, [&](void* out) { words.StoreTo(out); });
         value::Formation formed{};
-        void* word = loaded.ElementRef(
+        void* word = loaded.ElementMut(
             value::IndexView{.bytes = index.Bytes(), .type = &index_type},
             formed);
         return StoreMemoryWord(
@@ -4132,29 +4132,6 @@ auto lyra_rt_string_getc(const void* value, const void* position, void* out)
       out, Read<String>(value).Getc(Read<lyra::value::Position>(position)));
 }
 
-auto lyra_rt_string_element(const void* value, const void* position, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<String>(value).Element(Read<lyra::value::Position>(position)));
-}
-
-// The character write (LRM 6.16.2): a new string with the character at
-// `position` replaced. A character is a view of its string rather than storage
-// of its own, so a write to one rebuilds the string, which is then stored
-// whole.
-auto lyra_rt_string_with_element(
-    const void* value, const void* position, const void* replacement,
-    std::int64_t replacement_width, bool replacement_is_signed,
-    bool replacement_is_four_state, void* out) -> void* {
-  String written = Read<String>(value);
-  written.PutCharacter(
-      Read<lyra::value::Position>(position),
-      IntOf(NumberAt(
-          replacement, replacement_width, replacement_is_signed,
-          replacement_is_four_state)));
-  return Emplace(out, std::move(written));
-}
-
 auto lyra_rt_string_toupper(const void* value, void* out) -> void* {
   return Emplace(out, Read<String>(value).Toupper());
 }
@@ -5098,9 +5075,9 @@ auto lyra_rt_dynarray_element(const void* array, const void* position) -> const
   return Read<RuntimeDynamicArray>(array).Element(PositionNamedAt(position));
 }
 
-auto lyra_rt_dynarray_element_ref(void* array, const void* position) -> void* {
+auto lyra_rt_dynarray_element_mut(void* array, const void* position) -> void* {
   lyra::value::Formation formed{};
-  return static_cast<RuntimeDynamicArray*>(array)->ElementRef(
+  return static_cast<RuntimeDynamicArray*>(array)->ElementMut(
       PositionNamedAt(position), formed);
 }
 
@@ -5969,9 +5946,9 @@ auto lyra_rt_queue_element(const void* queue, const void* position) -> const
   return Read<RuntimeQueue>(queue).Element(PositionNamedAt(position));
 }
 
-auto lyra_rt_queue_element_ref(void* queue, const void* position) -> void* {
+auto lyra_rt_queue_element_mut(void* queue, const void* position) -> void* {
   lyra::value::Formation formed{};
-  return static_cast<RuntimeQueue*>(queue)->ElementRef(
+  return static_cast<RuntimeQueue*>(queue)->ElementMut(
       PositionNamedAt(position), formed);
 }
 
@@ -6139,10 +6116,10 @@ auto lyra_rt_assocarray_element(
       lyra::runtime::IndexAt(index, index_type));
 }
 
-auto lyra_rt_assocarray_element_ref(
+auto lyra_rt_assocarray_element_mut(
     void* array, const void* index, const void* index_type) -> void* {
   lyra::value::Formation formed{};
-  return static_cast<RuntimeAssociativeArray*>(array)->ElementRef(
+  return static_cast<RuntimeAssociativeArray*>(array)->ElementMut(
       lyra::runtime::IndexAt(index, index_type), formed);
 }
 

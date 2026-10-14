@@ -68,7 +68,7 @@ class FixedArrayType final : public ValueType {
 
   // LRM 7.4.5: the element `position` names in the array lying at `array` as
   // storage a write lands in, where no read reaches where it names none.
-  [[nodiscard]] auto ElementRef(
+  [[nodiscard]] auto ElementMut(
       void* array, std::optional<std::int64_t> position,
       Formation& formed) const -> void*;
 

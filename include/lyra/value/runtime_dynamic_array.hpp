@@ -64,7 +64,7 @@ class RuntimeDynamicArray {
   // where it names none.
   [[nodiscard]] auto Element(std::optional<std::int64_t> position) const
       -> const void*;
-  [[nodiscard]] auto ElementRef(
+  [[nodiscard]] auto ElementMut(
       std::optional<std::int64_t> position, Formation& formed) -> void*;
 
   // LRM 7.5.3: empties the array.

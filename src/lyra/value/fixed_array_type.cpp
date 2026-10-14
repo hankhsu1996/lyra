@@ -107,7 +107,7 @@ auto FixedArrayType::ElementAt(void* array, std::size_t position) const
   return Offset(array, position * Layout().stride);
 }
 
-auto FixedArrayType::ElementRef(
+auto FixedArrayType::ElementMut(
     void* array, std::optional<std::int64_t> position, Formation& formed) const
     -> void* {
   const std::optional<std::size_t> ordinal = ElementOrdinal(position, count_);
