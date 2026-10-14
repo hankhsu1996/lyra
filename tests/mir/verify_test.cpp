@@ -141,6 +141,17 @@ auto UnitWithBody(const Fill& fill) -> CompilationUnit {
   return unit;
 }
 
+// The verifier refuses `unit`, and its refusal says `why`.
+void ExpectRefused(const CompilationUnit& unit, std::string_view why) {
+  try {
+    Verify(unit);
+    ADD_FAILURE() << "accepted a unit whose refusal says \"" << why << "\"";
+  } catch (const InternalError& error) {
+    const std::string message = error.what();
+    EXPECT_NE(message.find(why), std::string::npos) << message;
+  }
+}
+
 auto AddCall(const CompilationUnit& unit, Block& block) -> ExprId {
   return block.exprs.Add(MakeCurrentRuntimeCallExpr(unit.builtins.effects));
 }
@@ -236,9 +247,10 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
       InternalError);
 }
 
-// A node that names a thing, spells a constant or forms a place computes
-// nothing itself, so it may stand at two places, and what counts is what it
-// reaches: a place formed over a call reaches that call at each.
+// A node that names a thing, spells a constant, forms a place or reads one
+// computes nothing itself, so it may stand at two places, and what counts is
+// what it reaches: a read of a place formed over a call reaches that call at
+// each.
 TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
   EXPECT_NO_THROW(
       Verify(UnitWithBody([](const CompilationUnit& u, Block& body) {
@@ -257,15 +269,105 @@ TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
       Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
         const ExprId null = body.exprs.Add(
             Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
-        const ExprId place = place_over(u, body, null);
-        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, place, place)});
+        const ExprId read = body.Read(place_over(u, body, null));
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
       })));
   EXPECT_THROW(
       Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
-        const ExprId place = place_over(u, body, AddCall(u, body));
-        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, place, place)});
+        const ExprId read = body.Read(place_over(u, body, AddCall(u, body)));
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
       })),
       InternalError);
+}
+
+// A place stands where a value is wanted only under a read, a read reads a
+// place, and what takes the storage itself -- a borrow here -- is handed the
+// place and not a read of it, which would have it act on a copy.
+TEST(MirVerifyTest, StorageIsReadOnlyWhereAReadSaysSo) {
+  const auto storage = [](const CompilationUnit& u, Block& body) {
+    const ExprId null = body.exprs.Add(
+        Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+    return body.exprs.Add(MakeDerefExpr(null, u.builtins.int_type));
+  };
+
+  EXPECT_NO_THROW(
+      Verify(UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId read = body.Read(storage(u, body));
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
+      })));
+  ExpectRefused(
+      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId place = storage(u, body);
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, place, place)});
+      }),
+      "a place stands as one only under a read");
+  ExpectRefused(
+      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId literal = body.exprs.Add(
+            Expr{
+                .data = MachineIntLiteral{.value = 1},
+                .type = u.builtins.int_type});
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.exprs.Add(
+                    MakeCopyExpr(literal, u.builtins.int_type))});
+      }),
+      "names no place");
+  ExpectRefused(
+      UnitWithBody([&](const CompilationUnit& u, Block& body) {
+        const ExprId read = body.Read(storage(u, body));
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.exprs.Add(
+                    Expr{
+                        .data = BorrowExpr{.operand = read},
+                        .type = u.builtins.int_type})});
+      }),
+      "would act on a copy");
+}
+
+// A dereference opens a pointer it reads, as clang reads the operand of
+// builtin `*p`, and reaches through an owner as the object C++ `*unique_ptr`
+// enters `operator*` on; a move moves out of a place.
+TEST(MirVerifyTest, ADereferenceReadsAPointerAndNotAnOwner) {
+  const auto opening = [](PointerOwnership ownership, bool read) {
+    return UnitWithBody([ownership, read](CompilationUnit& u, Block& body) {
+      const TypeId pointer = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.int_type, .ownership = ownership}});
+      const TypeId to_pointer = u.types.Intern(
+          Type{PointerType{
+              .pointee = pointer, .ownership = PointerOwnership::kBorrowed}});
+      const ExprId null =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = to_pointer});
+      const ExprId held = body.exprs.Add(MakeDerefExpr(null, pointer));
+      const ExprId opened = body.exprs.Add(
+          MakeDerefExpr(read ? body.Read(held) : held, u.builtins.int_type));
+      body.AppendStmt(ExprStmt{.expr = body.Read(opened)});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(opening(PointerOwnership::kBorrowed, true)));
+  EXPECT_NO_THROW(Verify(opening(PointerOwnership::kUnique, false)));
+  ExpectRefused(
+      opening(PointerOwnership::kBorrowed, false),
+      "a place stands as one only under a read");
+  ExpectRefused(
+      opening(PointerOwnership::kUnique, true), "would act on a copy");
+  ExpectRefused(
+      UnitWithBody([](const CompilationUnit& u, Block& body) {
+        const ExprId literal = body.exprs.Add(
+            Expr{
+                .data = MachineIntLiteral{.value = 1},
+                .type = u.builtins.int_type});
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.exprs.Add(
+                    Expr{
+                        .data = MoveExpr{.operand = literal},
+                        .type = u.builtins.int_type})});
+      }),
+      "which names no place");
 }
 
 // A value wanted at several places is bound among a block expression's steps
@@ -326,12 +428,12 @@ TEST(MirVerifyTest, AFieldIsAccessedOnTheObjectAPointerReaches) {
               : pointer;
       inner.AppendStmt(
           ExprStmt{
-              .expr = inner.exprs.Add(MakeFieldAccessExpr(
+              .expr = inner.Read(inner.exprs.Add(MakeFieldAccessExpr(
                   receiver,
                   ClassFieldTarget{
                       .owner = IntraUnitClassRef{ClassId{.value = 0}},
                       .slot = FieldId{.value = 0}},
-                  u.builtins.int_type))});
+                  u.builtins.int_type)))});
       const BlockId scope = body.child_scopes.Add(std::move(inner));
       body.AppendStmt(BlockStmt{.scope = scope});
     });
@@ -387,17 +489,6 @@ TEST(MirVerifyTest, AMemberFunctionIsEnteredOnTheObjectAPointerReaches) {
 
   EXPECT_NO_THROW(Verify(call_on(true)));
   EXPECT_THROW(Verify(call_on(false)), InternalError);
-}
-
-// The verifier refuses `unit`, and its refusal says `why`.
-void ExpectRefused(const CompilationUnit& unit, std::string_view why) {
-  try {
-    Verify(unit);
-    ADD_FAILURE() << "accepted a unit whose refusal says \"" << why << "\"";
-  } catch (const InternalError& error) {
-    const std::string message = error.what();
-    EXPECT_NE(message.find(why), std::string::npos) << message;
-  }
 }
 
 // A reference is never re-seated by a store, and only a reference held as a

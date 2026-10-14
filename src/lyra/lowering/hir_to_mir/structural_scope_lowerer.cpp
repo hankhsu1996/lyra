@@ -253,9 +253,7 @@ void AppendToSequence(
                       mir::Direct{
                           .target = support::BuiltinFn::kExtendSequence},
                   .arguments =
-                      {block.exprs.Add(
-                           mir::MakeLocalRefExpr(sequence, sequence_type)),
-                       element}},
+                      {block.ReadLocal(sequence, sequence_type), element}},
           .type = sequence_type});
   block.AppendStmt(
       mir::ExprStmt{
@@ -558,9 +556,7 @@ auto BuildAlternative(
                     .op = mir::BinaryOp::kAdd,
                     .lhs = BuildIntLiteral(
                         unit, block, member.array_dims[d].LowestIndex()),
-                    .rhs = block.exprs.Add(
-                        mir::MakeLocalRefExpr(
-                            coords[d], unit.builtins.int_type))},
+                    .rhs = block.ReadLocal(coords[d], unit.builtins.int_type)},
             .type = unit.builtins.int_type}));
   }
   std::vector<hir::TypeId> handed;
@@ -649,8 +645,7 @@ auto BuildElement(
           unit.builtins.int_type));
       at = block.exprs.Add(MakeBinary(
           unit, block, mir::BinaryOp::kAdd, scaled,
-          block.exprs.Add(
-              mir::MakeLocalRefExpr(coords[d], unit.builtins.int_type)),
+          block.ReadLocal(coords[d], unit.builtins.int_type),
           unit.builtins.int_type));
     }
     return at;
@@ -1210,8 +1205,8 @@ void AppendProcessRegistration(
                           .receiver = body_self},
                   .arguments = {}},
           .type = unit_lowerer.Unit().builtins.coroutine_void});
-  const mir::ExprId reg_self =
-      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
+  const mir::ExprId reg_self = block.Read(
+      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type)));
   const mir::ExprId unit_instance = BuildEnclosingScopeReceiver(
       activate_frame, unit_lowerer.Unit(), activate_frame.HopsToUnitRoot());
   const mir::ExprId place = block.exprs.Add(
@@ -1307,8 +1302,8 @@ void InstallInterfacePortConnection(
       unit_lowerer.TranslateType(port.type), port.storage);
   const mir::ExprId nav =
       BuildRouteValue(lowerer, resolve_frame, conn.endpoint);
-  const mir::ExprId target = block.exprs.Add(
-      mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = member_type});
+  const mir::ExprId target =
+      block.Deref(unit_lowerer.Unit().types, nav, member_type);
 
   std::vector<mir::ExprId> handles;
   handles.reserve(conn.peers.size());
@@ -1536,18 +1531,16 @@ auto BindInputPort(
   const mir::TypeId ref_type =
       unit_lowerer.MemberCellType(value_type, member.storage);
   const auto bind_to = [&](const AccessPath& storage) {
-    const mir::ExprId target = resolve_block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::DerefExpr{
-                    .pointer = BuildRouteValue(lowerer, resolve_frame, route)},
-            .type = ref_type});
+    const mir::ExprId target = resolve_block.Deref(
+        unit_lowerer.Unit().types,
+        BuildRouteValue(lowerer, resolve_frame, route), ref_type);
     resolve_block.AppendStmt(
         mir::ExprStmt{
             .expr = resolve_block.exprs.Add(
                 mir::MakeCallExpr(
                     mir::Direct{.target = support::BuiltinFn::kBindMember},
-                    {target, PathReference(unit, resolve_block, storage)},
+                    {resolve_block.AsValue(unit.types, target),
+                     PathReference(unit, resolve_block, storage)},
                     unit.builtins.void_type))});
   };
 
@@ -1671,9 +1664,8 @@ auto InstallPortConnections(
         const mir::TypeId ref_type = unit_lowerer.MemberCellType(
             unit_lowerer.TranslateType(member.type), member.storage);
         const mir::ExprId nav = BuildRouteValue(lowerer, resolve_frame, route);
-        const mir::ExprId target = resolve_block.exprs.Add(
-            mir::Expr{
-                .data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
+        const mir::ExprId target =
+            resolve_block.Deref(unit_lowerer.Unit().types, nav, ref_type);
 
         // The peer is lent as a `ref` actual is. A part of a variable is not
         // yet: the member is bound before the variable takes its declared
@@ -1801,7 +1793,8 @@ auto BuildOwnedChildHandle(
 
   std::vector<mir::ExprId> ctor_call_args;
   ctor_call_args.reserve(2 + arguments.size());
-  ctor_call_args.push_back(parent_read());
+  ctor_call_args.push_back(
+      arm_block.AsValue(unit_lowerer.Unit().types, parent_read()));
   ctor_call_args.push_back(segment_id);
   for (mir::Expr& value : arguments) {
     ctor_call_args.push_back(arm_block.exprs.Add(std::move(value)));
@@ -2136,8 +2129,7 @@ auto LowerLabelledChoiceInto(
 
     mir::Block step;
     auto test = MatchesAnyLabel(
-        lowerer, frame.WithBlock(&step),
-        step.exprs.Add(mir::MakeLocalRefExpr(held, selector_type)),
+        lowerer, frame.WithBlock(&step), step.ReadLocal(held, selector_type),
         item.labels);
     if (!test) return std::unexpected(std::move(test.error()));
     step.AppendStmt(
@@ -2260,7 +2252,8 @@ auto ApplyInstanceSelects(
         mir::Expr{
             .data =
                 mir::VectorGetExpr{
-                    .vector = reached.expr,
+                    .vector =
+                        block.AsValue(unit_lowerer.Unit().types, reached.expr),
                     .index = BuildSequenceIndex(unit_lowerer, block, select)},
             .type = reached.type});
   }
@@ -2763,7 +2756,7 @@ void FinalizeConstructor(
     const mir::ExprId local_ref =
         ctor_code.Body().exprs.Add(mir::MakeLocalRefExpr(id, ty));
     if (unit.types.Get(ty).IsAliasHandle()) {
-      base_args.push_back(local_ref);
+      base_args.push_back(ctor_code.Body().Read(local_ref));
     } else {
       base_args.push_back(ctor_code.Body().exprs.Add(
           mir::Expr{.data = mir::MoveExpr{.operand = local_ref}, .type = ty}));
@@ -2949,7 +2942,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     install_in_constructor(handed.value.declared);
     store_into(
         ctor_block, ctor_frame, handed.value.declared,
-        mir::MakeLocalRefExpr(handed.local, handed.value.type));
+        mir::MakeCopyExpr(
+            ctor_block.exprs.Add(
+                mir::MakeLocalRefExpr(handed.local, handed.value.type)),
+            handed.value.type));
   }
 
   // A constant the scope settles for itself is settled after whatever
@@ -2977,8 +2973,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     install_in_constructor(id);
     const SuppliedLocal& handed = handed_for.at(id);
     const auto read_handed = [&] {
-      return ctor_block.exprs.Add(
-          mir::MakeLocalRefExpr(handed.local, handed.value.type));
+      return ctor_block.ReadLocal(handed.local, handed.value.type);
     };
     const mir::TypeId value_type =
         unit_lowerer.TranslateType(settled_decl.type);

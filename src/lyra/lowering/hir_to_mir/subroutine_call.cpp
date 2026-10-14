@@ -386,9 +386,7 @@ auto BuildReceiverPointer(
   const mir::TypeId object_type =
       types.Get(handle_type).Get<mir::ManagedRefType>().pointee;
   const mir::ExprId handle_id = block.exprs.Add(*std::move(handle_or));
-  const mir::ExprId object_id = block.exprs.Add(
-      mir::Expr{
-          .data = mir::DerefExpr{.pointer = handle_id}, .type = object_type});
+  const mir::ExprId object_id = block.Deref(types, handle_id, object_type);
   return block.exprs.Add(
       mir::MakeAddressOfExpr(
           object_id, types.Intern(
@@ -583,10 +581,12 @@ auto EmitSubroutineCall(
   // other call hands none.
   if (const std::optional<mir::TypeId> report =
           ReportParamTypeOf(unit, plan.kind)) {
-    call_args.push_back(block.exprs.Add(
-        frame.reports_reached_to.has_value()
-            ? mir::MakeLocalRefExpr(*frame.reports_reached_to, *report)
-            : mir::Expr{.data = mir::NullLiteral{}, .type = *report}));
+    call_args.push_back(block.AsValue(
+        unit.types,
+        block.exprs.Add(
+            frame.reports_reached_to.has_value()
+                ? mir::MakeLocalRefExpr(*frame.reports_reached_to, *report)
+                : mir::Expr{.data = mir::NullLiteral{}, .type = *report})));
   }
 
   return EmittedCall{
@@ -888,8 +888,7 @@ auto EmitReportingCall(
       }
     }
   }
-  call_args.push_back(block.exprs.Add(
-      mir::MakeLocalRefExpr(report, unit.builtins.read_report_ptr)));
+  call_args.push_back(block.ReadLocal(report, unit.builtins.read_report_ptr));
   // What a call made on an object or through a virtual interface reads is
   // reached through that handle, which the report keeps apart (LRM 9.2.2.2.1
   // takes nothing of it into an implicit list; LRM 9.4.2 waits on it).

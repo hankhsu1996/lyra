@@ -3,7 +3,13 @@
 Date: 2026-09-24 Status: accepted. Realizes [storage-owns-its-value](storage-owns-its-value.md) on
 the execution backend; supersedes, for parts that are storage, the functional update of
 [value-projection-write](value-projection-write.md) D2 and the immutability of
-[jit-value-realization](jit-value-realization.md) invariant 6.
+[jit-value-realization](jit-value-realization.md) invariant 6. Revised by
+[an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md)
+(2026-10-13): which parts are storage is stated in MIR, on the place, rather than read by MIR-to-LIR
+from an entry and a receiver type; an element is the dereference of a call answering a reference,
+which the first rejected alternative below refused while a dereferenced pointer to a value meant a
+value cell, and a cell is now a wrapper type of its own; a union's member is a field step of a
+place.
 
 ## Context
 

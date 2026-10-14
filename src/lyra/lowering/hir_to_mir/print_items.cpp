@@ -227,9 +227,7 @@ auto BuildRuntimeFormatOperand(
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = value, .init = block.exprs.Add(*std::move(lowered_or))});
-  const auto read_value = [&] {
-    return block.exprs.Add(mir::MakeLocalRefExpr(value, value_type));
-  };
+  const auto read_value = [&] { return block.ReadLocal(value, value_type); };
 
   const auto make_arg = [&](mir::Callee callee,
                             std::vector<mir::ExprId> parts) {
@@ -251,7 +249,7 @@ auto BuildRuntimeFormatOperand(
             .target = text,
             .init = BuildAssignmentPatternText(
                 lowerer.Owner(), frame, read_value(), source.type)});
-    return block.exprs.Add(mir::MakeLocalRefExpr(text, unit.builtins.string));
+    return block.ReadLocal(text, unit.builtins.string);
   };
 
   switch (PatternReadingOf(lowerer.Owner().Hir(), source.type)) {

@@ -32,6 +32,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -58,7 +59,8 @@ struct PromotedVarBinding {
 // The place a lifetime-extended automatic is: its cell, reached through the
 // handle the body holds.
 [[nodiscard]] auto PromotedVarPlace(
-    const WalkFrame& frame, const PromotedVarBinding& binding) -> mir::Expr;
+    const mir::TypePool& types, const WalkFrame& frame,
+    const PromotedVarBinding& binding) -> mir::Expr;
 
 // Where one HIR procedural var of this body keeps its storage: an in-frame
 // local for an automatic, a cell behind a shared pointer for a

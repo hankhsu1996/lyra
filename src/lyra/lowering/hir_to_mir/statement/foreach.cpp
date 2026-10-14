@@ -273,9 +273,8 @@ auto BuildKeyLoopStmt(
       .label = std::nullopt,
       .data = mir::ForStmt{
           .init = std::move(init),
-          .condition = ReduceToCondition(
-              unit, block,
-              block.exprs.Add(mir::MakeLocalRefExpr(more, int_type))),
+          .condition =
+              ReduceToCondition(unit, block, block.ReadLocal(more, int_type)),
           .step = {advance},
           .scope = body_scope,
           .break_label = break_label}};

@@ -848,6 +848,9 @@ class MirDumper {
             [](const MoveExpr& m) -> std::string {
               return std::format("MoveExpr operand=Expr[{}]", m.operand.value);
             },
+            [](const CopyExpr& c) -> std::string {
+              return std::format("CopyExpr place=Expr[{}]", c.place.value);
+            },
             [this](const ReferenceExpr& r) -> std::string {
               return std::format(
                   "ReferenceExpr[{}]", FormatReferenceTarget(r.target));

@@ -37,8 +37,8 @@ auto ObjectEventSourceOf(
     mir::CompilationUnit& unit, mir::Block& block, mir::ExprId object)
     -> mir::ExprId {
   return Call(
-      block, support::BuiltinFn::kObjectEventSource, std::nullopt, {object},
-      mir::ErasedPointer(unit.types));
+      block, support::BuiltinFn::kObjectEventSource, std::nullopt,
+      {block.AsValue(unit.types, object)}, mir::ErasedPointer(unit.types));
 }
 
 auto PropertyStorage(
@@ -55,7 +55,8 @@ auto OpenObjectWrite(
       mir::Expr{
           .data =
               mir::CallExpr{
-                  .callee = mir::Construct{}, .arguments = {receiver}},
+                  .callee = mir::Construct{},
+                  .arguments = {block.AsValue(unit.types, receiver)}},
           .type = unit.types.Intern(
               mir::Type{mir::ObjectWriteType{
                   .object = mir::ObjectReachedThrough(

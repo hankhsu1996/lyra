@@ -77,10 +77,10 @@ auto BuildMatchAnywhereIn(
   const mir::LocalId item = each.AddParamAnonymous(*element);
   each.AddParamAnonymous(ArrayMethodIndexType(unit, held));
   const mir::ExprId left_in_each =
-      SnapshotIntoClosure(unit_lowerer, frame, each, left);
+      SnapshotValueIntoClosure(unit_lowerer, frame, each, left);
   const mir::ExprId matched = BuildMatchAnywhereIn(
       unit_lowerer, each.Frame(), left_in_each,
-      each.Body().exprs.Add(mir::MakeLocalRefExpr(item, *element)));
+      each.Body().ReadLocal(item, *element));
   const mir::TypeId answer = each.Body().exprs.Get(matched).type;
   const mir::ExprId question = block.exprs.Add(each.Build(matched));
   return block.exprs.Add(BuildBuiltinMethodCall(

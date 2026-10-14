@@ -185,8 +185,9 @@ against the run before it; the figures are in the pull requests that measured th
       first member's default and the C++ backend answers it.
 - [ ] An unpacked union is one storage its members overlay, laid out from its type. A structure
       member's common initial sequence then reads what was written through another member (LRM 7.3),
-      and a union streams its first-declared member whichever is live (LRM 11.4.14.1). Both are
-      refused today, since a union holds only its live member.
+      a union streams its first-declared member whichever is live (LRM 11.4.14.1), and a net's
+      drivers on different members fold as its first member. All three are refused today, since a
+      union holds only its live member.
 - [x] Runtime scalars that were packed values -- descriptors, seeds, counts, a takeover's generation
       -- are machine integers, and a constant passed as one is a constant of that machine integer. A
       delay's amount is not one of them: it crosses as its bits with its width, because an unknown

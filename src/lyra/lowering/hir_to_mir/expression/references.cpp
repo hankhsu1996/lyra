@@ -89,8 +89,9 @@ auto LowerHirNullLiteral(mir::TypeId type) -> mir::Expr {
 // as -- so it is produced by an operation taking the receiver rather than by
 // loading anything through it.
 auto LowerHirThisHandle(const WalkFrame& frame, mir::TypeId type) -> mir::Expr {
-  const mir::ExprId self_ref = frame.current_block->exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId self_ref =
+      frame.current_block->Read(frame.current_block->exprs.Add(
+          MakeSelfRefExpr(frame, frame.current_class->self_pointer_type)));
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -163,7 +164,7 @@ auto LowerPatternVarRefExpr(WalkFrame frame, const hir::PatternVarRef& r)
     -> mir::Expr {
   const BodyBindingRef ref =
       frame.bindings->EnsureCarrier(BindingOriginId::Pattern(r.pattern));
-  return frame.bindings->MakeReadExpr(ref, *frame.current_block);
+  return frame.bindings->MakeBindingPlace(ref, *frame.current_block);
 }
 
 // LRM 7.12.4: a with-clause iteration reference reads the named clause's
@@ -177,7 +178,7 @@ auto LowerIterationBindingRefExpr(
   // The parameter's identity across bodies is its clause and role, and a
   // capture forwards it one closure boundary at a time. The read's type is the
   // resolved binding's own, so the caller supplies none.
-  return frame.bindings->MakeReadExpr(
+  return frame.bindings->MakeBindingPlace(
       frame.bindings->EnsureCarrier(
           BindingOriginId::Iterator(
               ref.clause.value, static_cast<std::uint32_t>(ref.role))),
@@ -204,7 +205,8 @@ auto LowerProceduralVarRefExpr(
           // makes available in this body (a by-value, owning copy inside a
           // detached branch).
           [&](const PromotedVarBinding& promoted) {
-            return PromotedVarPlace(frame, promoted);
+            return PromotedVarPlace(
+                process.Owner().Unit().types, frame, promoted);
           },
           // An ordinary automatic local: resolve its carrier in this body -- a
           // direct local in the declaring body, a captured field in a closure
@@ -214,7 +216,7 @@ auto LowerProceduralVarRefExpr(
           [&](const AutomaticVarBinding&) {
             const BodyBindingRef ref =
                 frame.bindings->EnsureCarrier(BindingOriginId::Procedural(var));
-            return frame.bindings->MakeReadExpr(ref, *frame.current_block);
+            return frame.bindings->MakeBindingPlace(ref, *frame.current_block);
           }},
       process.LookupProceduralVar(var));
 }

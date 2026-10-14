@@ -6,7 +6,13 @@
 
 ## Status
 
-Accepted
+Accepted; D1 and D2 are narrowed by
+[an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md)
+(2026-10-13). A product's component and a union's member are a field step on a place, read by a read
+node, because D5's premise -- a union and a string the generated side cannot see into -- ended once
+every held value was laid out from its type. D1's calls and D2's two forms stand for an element of
+an array, where the standard gives a read and a write different outcomes, and both forms now answer
+a reference. D3, D4 and D6 stand.
 
 ## Why this decision matters
 

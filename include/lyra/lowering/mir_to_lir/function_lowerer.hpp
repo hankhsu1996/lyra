@@ -371,6 +371,12 @@ class FunctionLowerer {
   // the contents live.
   auto WrapperContentsPlace(const mir::Block& block, mir::ExprId wrapper)
       -> diag::Result<lir::Place>;
+  // The word a wrapper that refers elsewhere holds, as rustc's `as_operand`
+  // makes an operand of either kind of expression. MIR names the wrapper as a
+  // value it read, or as the place it lies in where a member is reached on it
+  // or an owner is reached through, as C++ enters `operator*` on the object.
+  auto WrapperOperand(const mir::Block& block, mir::ExprId wrapper)
+      -> diag::Result<lir::Operand>;
   // Opens a write into what a wrapper stands for -- an object held for the rest
   // of the full-expression, whose end tells the wrapper what the write did --
   // and answers with the whole of what the wrapper holds, designated within
@@ -409,6 +415,10 @@ class FunctionLowerer {
   // reader wants is what the cell holds, which is a dereference and names a
   // different place.
   auto ReadPlace(const mir::Block& block, mir::ExprId id, lir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // The value `place` holds, read where it lies: the one way a place stands
+  // as a value, under a copy and a move alike.
+  auto LowerRead(const mir::Block& block, mir::ExprId place)
       -> diag::Result<lir::Operand>;
   // Reduces an expression to the machine boolean a conditional branch tests.
   auto LowerCondition(const mir::Block& block, mir::ExprId id)

@@ -84,7 +84,13 @@ the detail lives in the entry itself.
   lowering.
 - [unpacked-union-representation](unpacked-union-representation.md) -- the sibling the struct
   decision left open: overlapping storage is neither a product nor a sum, and this settles which one
-  MIR models it as.
+  MIR models it as. Its active-member value is superseded by the entry below.
+- [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md) -- an
+  untagged union is C's union: every member at offset 0, a read through another member answers its
+  bits cleared above each width, a literal zeroes what it does not write, whole-value uses read the
+  first member, and a member that owns something is refused. A tagged union is that overlay with its
+  tag after it, checked in MIR before every member access. rustc's tag-first layout and recording
+  which member an untagged union holds are rejected.
 - [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- superseded: an
   aggregate's member names were put on its MIR type for rendering, and came off again once rendering
   was built from the source type.
@@ -167,7 +173,15 @@ the detail lives in the entry itself.
 - [value-descent-as-named-calls](value-descent-as-named-calls.md) -- every level of a descent into a
   value is a call whose entry HIR-to-MIR names, composed through the receiver, so no node names a
   part and no consumer classifies a step or recovers an owner. Supersedes the selector-path node of
-  [value-projection-designator](value-projection-designator.md), which was never built.
+  [value-projection-designator](value-projection-designator.md), which was never built. Narrowed to
+  an array's element by the entry below.
+- [an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md) --
+  whether an expression is a place is its node kind; a field step names a component or a union
+  member; an array element is a read form and a write form, each answering a reference; a place
+  carries whether it has an address and whether it is overlaid; a read is a node, realized by that
+  kind; an assignment's target is a place. Records how part access reached its shape as the value
+  representation changed under it. Implicit reads, a bounds guard before the step, and one element
+  form are rejected.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering. Where it places the receiver is superseded
   by [call-receiver-on-the-callee](call-receiver-on-the-callee.md).

@@ -58,7 +58,7 @@ auto ReadVariable(
       block.exprs.Add(mir::MakeLocalRefExpr(variable.local, variable.type));
   const auto* cell = unit.types.Get(variable.type).As<mir::ObservableType>();
   if (cell == nullptr) {
-    return local;
+    return block.Read(local);
   }
   return block.exprs.Add(mir::MakeCellLoadCallExpr(local, cell->value));
 }

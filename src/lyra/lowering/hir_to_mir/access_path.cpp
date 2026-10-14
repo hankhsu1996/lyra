@@ -301,6 +301,9 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           [&](const mir::BorrowExpr& e) -> mir::ExprData {
             return mir::BorrowExpr{.operand = again(e.operand)};
           },
+          [&](const mir::CopyExpr& e) -> mir::ExprData {
+            return mir::CopyExpr{.place = again(e.place)};
+          },
           [&](const mir::FieldAccessExpr& e) -> mir::ExprData {
             return mir::FieldAccessExpr{
                 .receiver = again(e.receiver), .field = e.field};
@@ -514,7 +517,7 @@ auto PathValue(
   for (const DescentStep& step : path.descent) {
     reached = block.exprs.Add(StepRead(unit, block, step, reached));
   }
-  return reached;
+  return block.AsValue(unit.types, reached);
 }
 
 auto StepRead(
@@ -618,6 +621,7 @@ auto SettledPlace(
           [&](const mir::ReferenceExpr&) { return computed(); },
           [&](const mir::AddressOfExpr&) { return computed(); },
           [&](const mir::BorrowExpr&) { return computed(); },
+          [&](const mir::CopyExpr&) { return computed(); },
           [&](const mir::UnaryExpr&) { return computed(); },
           [&](const mir::BinaryExpr&) { return computed(); },
           [&](const mir::CastExpr&) { return computed(); },

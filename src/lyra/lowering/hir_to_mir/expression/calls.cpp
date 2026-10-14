@@ -153,8 +153,7 @@ auto BuildArrayMethodClosure(
     // nothing can capture them.
     const mir::LocalId item_binding = closure.AddParamAnonymous(item_type);
     closure.AddParamAnonymous(index_type);
-    body_return_value =
-        body.exprs.Add(mir::MakeLocalRefExpr(item_binding, item_type));
+    body_return_value = body.ReadLocal(item_binding, item_type);
   }
   return closure.Build(body_return_value);
 }

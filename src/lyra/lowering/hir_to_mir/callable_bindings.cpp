@@ -93,7 +93,7 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   const BodyBindingRef parent_ref = parent_->EnsureCarrier(origin);
   const mir::TypeId parent_type = parent_->TypeOf(parent_ref);
   const mir::ExprId read = capture_site_->exprs.Add(
-      parent_->MakeReadExpr(parent_ref, *capture_site_));
+      parent_->MakeBindingPlace(parent_ref, *capture_site_));
 
   mir::ExprId source = read;
   mir::TypeId field_type = parent_type;
@@ -109,6 +109,8 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
     field_type = cell->value;
     source =
         capture_site_->exprs.Add(mir::MakeCellLoadCallExpr(read, field_type));
+  } else {
+    source = capture_site_->Read(read);
   }
 
   const mir::FieldId field =
@@ -119,8 +121,8 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   return result;
 }
 
-auto CallableBindings::MakeReadExpr(BodyBindingRef ref, mir::Block& block) const
-    -> mir::Expr {
+auto CallableBindings::MakeBindingPlace(
+    BodyBindingRef ref, mir::Block& block) const -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](mir::LocalId id) -> mir::Expr {

@@ -20,13 +20,14 @@ auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
   // The receiver is an ordinary binding: resolve it as the body-local carrier
   // for the receiver origin (a parameter in a directly-invoked body, a captured
   // field in a closure), forwarded across closure boundaries by the resolver,
-  // then read through the uniform binding-read path. The read is typed as the
+  // then named through the uniform binding path. The place is typed as the
   // enclosing object's borrowed pointer.
   const BodyBindingRef self =
       frame.bindings->EnsureCarrier(BindingOriginId::Receiver());
-  mir::Expr read = frame.bindings->MakeReadExpr(self, *frame.current_block);
-  read.type = self_ptr_type;
-  return read;
+  mir::Expr place =
+      frame.bindings->MakeBindingPlace(self, *frame.current_block);
+  place.type = self_ptr_type;
+  return place;
 }
 
 auto BuildObjectDeref(
@@ -38,14 +39,17 @@ auto BuildObjectDeref(
           std::get_if<mir::AddressOfExpr>(&block.exprs.Get(reaches).data)) {
     return address->operand;
   }
-  return block.exprs.Add(
-      mir::MakeDerefExpr(
-          reaches, mir::ObjectReachedThrough(
-                       unit.types, block.exprs.Get(reaches).type)));
+  const mir::TypeId object =
+      mir::ObjectReachedThrough(unit.types, block.exprs.Get(reaches).type);
+  return block.Deref(unit.types, reaches, object);
 }
 
 auto ObjectAs(mir::Block& block, mir::ExprId object, mir::TypeId pointer)
     -> mir::ExprId {
+  // A pointer named where it is held is read: what is cast is its value.
+  if (mir::IsPlace(block.exprs.Get(object).data)) {
+    object = block.Read(object);
+  }
   if (block.exprs.Get(object).type == pointer) return object;
   return block.exprs.Add(
       mir::Expr{.data = mir::CastExpr{.operand = object}, .type = pointer});
@@ -98,8 +102,8 @@ auto BuildEnclosingScopeReceiver(
                 "through one");
           },
           [&](const ScopeIsSelf&) {
-            return block.exprs.Add(
-                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+            return block.Read(block.exprs.Add(MakeSelfRefExpr(
+                frame, frame.current_class->self_pointer_type)));
           },
           // The instance is held as the base every scope extends, and the
           // body viewing it is one of that scope's unit, which views it as the
@@ -111,7 +115,7 @@ auto BuildEnclosingScopeReceiver(
                 mir::Expr{
                     .data =
                         mir::CastExpr{
-                            .operand = block.exprs.Add(
+                            .operand = block.Read(block.exprs.Add(
                                 mir::MakeFieldAccessExpr(
                                     BuildObjectDeref(unit, block, self),
                                     mir::ClassFieldTarget{
@@ -119,7 +123,7 @@ auto BuildEnclosingScopeReceiver(
                                             mir::IntraUnitClassRef{
                                                 frame.current_class_id},
                                         .slot = through.member},
-                                    unit.builtins.scope_ptr))},
+                                    unit.builtins.scope_ptr)))},
                     .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
                                 .cls->self_pointer_type});
           },
@@ -130,8 +134,9 @@ auto BuildEnclosingScopeReceiver(
                 mir::Expr{
                     .data =
                         mir::CastExpr{
-                            .operand = block.exprs.Add(
-                                frame.bindings->MakeReadExpr(instance, block))},
+                            .operand = block.Read(block.exprs.Add(
+                                frame.bindings->MakeBindingPlace(
+                                    instance, block)))},
                     .type = frame.EnclosingClassAtHops(mir::EnclosingHops{0})
                                 .cls->self_pointer_type});
           }},
@@ -188,7 +193,7 @@ auto BuildReferenceArg(
   // A reference held as a member is lent the same way, itself, so a `ref`
   // port bound from it is bound to it rather than to what it names now.
   if (pointee_ty.IsVariableRef()) {
-    return cell;
+    return block.AsValue(unit.types, cell);
   }
   // The reference aliases the cell's value, not its storage wrapper: a
   // `VariableRef<T>` over an observable cell binds the underlying `Var<T>`, so

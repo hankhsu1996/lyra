@@ -145,6 +145,7 @@ auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
 auto Borrow(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand)
     -> mir::ExprId {
+  operand = mir::PlaceRead(block.exprs.Get(operand).data).value_or(operand);
   return block.exprs.Add(
       mir::Expr{
           .data = mir::BorrowExpr{.operand = operand},
@@ -280,19 +281,25 @@ class Synthesizer {
         result);
   }
 
-  // The value of `type` the parameter `local` refers to.
-  auto Read(mir::Block& block, mir::LocalId local, mir::TypeId type)
+  // What the parameter `local` refers to, of `type`, as the place it is.
+  auto Referent(mir::Block& block, mir::LocalId local, mir::TypeId type)
       -> mir::ExprId {
-    return block.exprs.Add(
-        mir::MakeDerefExpr(
-            block.exprs.Add(
-                mir::MakeLocalRefExpr(local, ReferenceTo(Unit(), type))),
-            type));
+    return block.Deref(
+        Unit().types,
+        block.exprs.Add(
+            mir::MakeLocalRefExpr(local, ReferenceTo(Unit(), type))),
+        type);
+  }
+
+  // The value of `type` the parameter `local` refers to.
+  auto Value(mir::Block& block, mir::LocalId local, mir::TypeId type)
+      -> mir::ExprId {
+    return block.Read(Referent(block, local, type));
   }
 
   // The struct the parameter `local` refers to.
   auto Whole(mir::Block& block, mir::LocalId local) -> mir::ExprId {
-    return Read(block, local, structure_);
+    return Referent(block, local, structure_);
   }
 
   // Member `i` of the struct parameter `local`.
@@ -447,7 +454,7 @@ auto Synthesizer::CountBits() -> mir::StructMethod {
               Unit(), block, mir::BinaryOp::kAdd, answer,
               BuildBitCount(
                   Unit(), block, Member(block, p[0], i),
-                  Read(block, p[1], control)),
+                  Value(block, p[1], control)),
               count));
         }
         return answer;
@@ -507,7 +514,8 @@ auto Synthesizer::FromBitstream() -> mir::StructMethod {
           const std::uint64_t width = FixedStreamShapeOf(Unit(), member)->width;
           taken += width;
           const mir::ExprId bits = block.exprs.Add(BuildPackedBitsRead(
-              *lowerer_, block, Read(block, p[0], stream), shape.width - taken,
+              *lowerer_, block, Referent(block, p[0], stream),
+              shape.width - taken,
               mir::PackedVectorOf(Unit().types, width, shape.state_kind)));
           auto read = BuildFromBitstream(
               Unit(), block, bits, member, diag::SourceSpan{});
@@ -570,12 +578,12 @@ auto Synthesizer::FilledMember(
   if (!member.IsIntegral()) {
     return BuildValueOperation(
         Unit(), block, support::BuiltinFn::kFilledLike, std::nullopt,
-        {Member(block, p[0], i), Read(block, p[1], fill)}, members_[i]);
+        {Member(block, p[0], i), Value(block, p[1], fill)}, members_[i]);
   }
   const mir::TypeId copies = mir::PackedVectorOf(
       Unit().types, member.Integral().bit_width,
       Unit().types.Get(fill).Integral().state_kind);
-  const mir::ExprId run = Read(block, p[1], fill);
+  const mir::ExprId run = Referent(block, p[1], fill);
   const mir::ExprId filled = block.exprs.Add(MakeBuiltinCall(
       Unit(), block, support::BuiltinFn::kReplicateBits, run, {}, copies));
   return ConvertToType(Unit(), block, filled, members_[i]);

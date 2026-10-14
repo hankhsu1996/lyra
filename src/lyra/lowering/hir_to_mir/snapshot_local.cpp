@@ -35,6 +35,10 @@ auto SnapshotExprToLocal(
 
 auto DeclareLocal(const WalkFrame& frame, mir::ExprId init) -> mir::LocalId {
   mir::Block& block = *frame.current_block;
+  // A local starts as a value, so storage it is initialized from is read.
+  if (mir::IsPlace(block.exprs.Get(init).data)) {
+    init = block.Read(init);
+  }
   const mir::LocalId local =
       frame.bindings->DeclareAnonymous(block.exprs.Get(init).type);
   block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = init});
@@ -47,11 +51,17 @@ auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
     return value;
   }
   const mir::TypeId type = block.exprs.Get(value).type;
-  return block.exprs.Add(
-      mir::MakeLocalRefExpr(DeclareLocal(frame, value), type));
+  return block.ReadLocal(DeclareLocal(frame, value), type);
 }
 
-auto SnapshotIntoClosure(
+auto SnapshotValueIntoClosure(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
+    ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId {
+  return closure.Body().Read(
+      SnapshotPlaceIntoClosure(unit_lowerer, outer_frame, closure, outer_expr));
+}
+
+auto SnapshotPlaceIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId {
   mir::Block& outer_block = *outer_frame.current_block;
@@ -70,7 +80,7 @@ auto SnapshotIntoClosure(
 
   const BodyBindingRef ref = closure.Bindings().EnsureCarrier(origin);
   return closure.Body().exprs.Add(
-      closure.Bindings().MakeReadExpr(ref, closure.Body()));
+      closure.Bindings().MakeBindingPlace(ref, closure.Body()));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

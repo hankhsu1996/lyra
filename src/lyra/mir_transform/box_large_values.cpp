@@ -197,19 +197,38 @@ class BodyBoxing {
     return std::move(rebuild).Finish(std::move(stmts));
   }
 
-  // `operand`, a node of the block `rebuild` builds from, carried over as a
-  // value read: one of a large type it makes is made in a box and read through
-  // it, so no frame holds it.
-  auto Value(BlockRebuild& rebuild, mir::ExprId operand) -> mir::ExprId {
+  // Whether `operand`, a node of the block `rebuild` builds from, makes a
+  // value of a large type, which is then made in a box.
+  [[nodiscard]] auto MadeInABox(
+      const BlockRebuild& rebuild, mir::ExprId operand) const -> bool {
+    return mir::IsTooLargeForAFrame(
+               *unit_, rebuild.From().exprs.Get(operand).type) &&
+           MakesAValue(*unit_, rebuild.From(), operand);
+  }
+
+  // `operand`, a node of the block `rebuild` builds from, carried over where
+  // it is held: one of a large type it makes is made in a box, and what is
+  // carried is that box's storage, so no frame holds it.
+  auto Held(BlockRebuild& rebuild, mir::ExprId operand) -> mir::ExprId {
     const mir::TypeId type = rebuild.From().exprs.Get(operand).type;
     const mir::ExprId carried = rebuild.Expr(operand);
-    if (!mir::IsTooLargeForAFrame(*unit_, type) ||
-        !MakesAValue(*unit_, rebuild.From(), operand)) {
+    if (!MadeInABox(rebuild, operand)) {
       return carried;
     }
     return rebuild.Add(
         mir::MakeDerefExpr(
             BoxBuiltFrom(rebuild, BoxOf(*unit_, type), carried), type));
+  }
+
+  // `operand` carried over as a value read: one made in a box is read out of
+  // it where it lies.
+  auto Value(BlockRebuild& rebuild, mir::ExprId operand) -> mir::ExprId {
+    const mir::TypeId type = rebuild.From().exprs.Get(operand).type;
+    const mir::ExprId held = Held(rebuild, operand);
+    if (!MadeInABox(rebuild, operand)) {
+      return held;
+    }
+    return rebuild.Add(mir::MakeCopyExpr(held, type));
   }
 
   // `argument`, carried over to a body this program compiles: in a box built
@@ -305,8 +324,9 @@ class BodyBoxing {
                               .else_value = BoxBuiltFrom(
                                   rebuild, box, rebuild.Expr(e.else_value))},
                       .type = box});
-              return std::optional<mir::Expr>{
-                  mir::MakeDerefExpr(chosen, expr.type)};
+              return std::optional<mir::Expr>{mir::MakeCopyExpr(
+                  rebuild.Add(mir::MakeDerefExpr(chosen, expr.type)),
+                  expr.type)};
             },
             [&](const mir::AssignExpr& e) {
               mir::AssignExpr carried = e;
@@ -316,13 +336,13 @@ class BodyBoxing {
             },
             [&](const mir::CallExpr& e) {
               mir::CallExpr carried = e;
-              // A receiver is read as a value where a call stands as one, so
-              // one made is made in a box like any operand.
+              // The object a call is entered on is bound where it lies, so one
+              // made of a large type is made in a box and entered there.
               std::visit(
                   Overloaded{
                       [&](mir::Direct& callee) {
                         if (callee.receiver.has_value()) {
-                          callee.receiver = value(*callee.receiver);
+                          callee.receiver = Held(rebuild, *callee.receiver);
                         }
                       },
                       [&](mir::Indirect& callee) {
@@ -330,7 +350,7 @@ class BodyBoxing {
                       },
                       [](mir::Construct&) {},
                       [&](mir::Virtual& callee) {
-                        callee.receiver = value(callee.receiver);
+                        callee.receiver = Held(rebuild, callee.receiver);
                       }},
                   carried.callee);
               const bool enters_body =
@@ -345,7 +365,7 @@ class BodyBoxing {
             // A large value made to be borrowed is made in a box, which the
             // reference then refers into.
             [&](const mir::BorrowExpr& e) {
-              return node(mir::BorrowExpr{.operand = value(e.operand)});
+              return node(mir::BorrowExpr{.operand = Held(rebuild, e.operand)});
             },
             [&](const mir::CompositeExpr& e) {
               mir::CompositeExpr carried = e;
@@ -377,7 +397,7 @@ class BodyBoxing {
                                            .at(capture->slot.value);
               if (!box.has_value()) {
                 return mir::MakeFieldAccessExpr(
-                    value(e.receiver), e.field, expr.type);
+                    Held(rebuild, e.receiver), e.field, expr.type);
               }
               const mir::ExprId held = rebuild.Add(
                   mir::MakeFieldAccessExpr(
@@ -395,6 +415,7 @@ class BodyBoxing {
             [&](const mir::NewExpr& e) { return left(e); },
             [&](const mir::BlockExpr& e) { return left(e); },
             [&](const mir::MoveExpr& e) { return left(e); },
+            [&](const mir::CopyExpr& e) { return left(e); },
             [&](const mir::WaitExpr& e) { return left(e); },
             [&](const mir::VectorGetExpr& e) { return left(e); }},
         expr.data);

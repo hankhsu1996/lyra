@@ -116,6 +116,7 @@ auto MarshalSvToCarrier(
         "value; every other carrier crosses through a boundary object");
   }
   const mir::TypeId carrier = CarrierTypeId(unit, carrier_desc);
+  sv_id = block.AsValue(unit.types, sv_id);
   switch (scalar->abi) {
     case support::DpiScalarAbi::kBitScalar:
     case support::DpiScalarAbi::kByte:
@@ -194,6 +195,8 @@ auto MarshalCarrierToSv(
         "object");
   }
   mir::Block& block = *frame.current_block;
+  // The carrier is read as the machine value it holds.
+  call_id = block.AsValue(unit_lowerer.Unit().types, call_id);
   switch (scalar->abi) {
     case support::DpiScalarAbi::kBitScalar:
     case support::DpiScalarAbi::kByte:
@@ -728,7 +731,7 @@ auto PopulateForeignImportBoundary(
     if (import.is_task) {
       AppendRuntimeEffectStmt(
           unit_lowerer, body, support::BuiltinFn::kCheckImportTaskAcknowledged,
-          {body.exprs.Add(mir::MakeLocalRefExpr(*ret_temp, call_type))});
+          {body.ReadLocal(*ret_temp, call_type)});
     } else {
       AppendRuntimeEffectStmt(
           unit_lowerer, body,
@@ -1227,9 +1230,8 @@ auto SynthesizeForeignExportEntry(
         mir::Expr{
             .data =
                 mir::CastExpr{
-                    .operand = body.exprs.Add(
-                        mir::MakeLocalRefExpr(
-                            *scope_param, unit.builtins.scope_ptr))},
+                    .operand =
+                        body.ReadLocal(*scope_param, unit.builtins.scope_ptr)},
             .type = self_type});
     body.AppendStmt(mir::LocalDeclStmt{.target = self_local, .init = narrowed});
     receiver = BuildObjectDeref(
@@ -1238,8 +1240,7 @@ auto SynthesizeForeignExportEntry(
   }
 
   const auto param_ref = [&](std::size_t i) -> mir::ExprId {
-    return body.exprs.Add(
-        mir::MakeLocalRefExpr(params[i], code.locals.Get(params[i]).type));
+    return body.ReadLocal(params[i], code.locals.Get(params[i]).type);
   };
 
   // Marshal each `input` / `inout` argument to an explicit SV-typed temporary
@@ -1271,17 +1272,15 @@ auto SynthesizeForeignExportEntry(
     } else {
       const mir::ExprId carrier =
           p.direction == support::DpiDirection::kInout
-              ? body.exprs.Add(
-                    mir::Expr{
-                        .data = mir::DerefExpr{.pointer = param_ref(i)},
-                        .type = CarrierTypeId(unit, p.carrier)})
+              ? body.Deref(
+                    unit.types, param_ref(i), CarrierTypeId(unit, p.carrier))
               : param_ref(i);
       sv_init = body.exprs.Add(
           MarshalCarrierToSv(module, body_frame, carrier, p.carrier, sv_type));
     }
     const mir::LocalId sv_in = bindings.DeclareAnonymous(sv_type);
     body.AppendStmt(mir::LocalDeclStmt{.target = sv_in, .init = sv_init});
-    call_args.push_back(body.exprs.Add(mir::MakeLocalRefExpr(sv_in, sv_type)));
+    call_args.push_back(body.ReadLocal(sv_in, sv_type));
   }
   // The foreign caller has the subroutine run, so it hands no report.
   if (const std::optional<mir::TypeId> report = ReportParamTypeOf(
@@ -1394,10 +1393,8 @@ auto SynthesizeForeignExportEntry(
     const mir::TypeId carrier_type = CarrierTypeId(unit, p.carrier);
     const mir::ExprId carrier =
         MarshalSvToCarrier(unit, body, value, p.carrier);
-    const mir::ExprId place = body.exprs.Add(
-        mir::Expr{
-            .data = mir::DerefExpr{.pointer = param_ref(c.param_index)},
-            .type = carrier_type});
+    const mir::ExprId place =
+        body.Deref(unit.types, param_ref(c.param_index), carrier_type);
     body.AppendStmt(
         mir::ExprStmt{
             .expr = body.exprs.Add(
@@ -1478,8 +1475,7 @@ void PublishForeignScopeName(
                           .arguments = {}},
                   .type = unit.builtins.scope_ptr})});
 
-  const mir::ExprId scope_ref =
-      body.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr));
+  const mir::ExprId scope_ref = body.ReadLocal(scope, unit.builtins.scope_ptr);
   const mir::ExprId name = body.exprs.Add(
       mir::Expr{
           .data = mir::StringLiteral{.value = linkage.foreign_name},
@@ -1503,11 +1499,9 @@ void PublishForeignScopeName(
                   .result = prototype.result}})});
   std::vector<mir::ExprId> call_args;
   call_args.reserve(code.params.size() + 1);
-  call_args.push_back(
-      body.exprs.Add(mir::MakeLocalRefExpr(scope, unit.builtins.scope_ptr)));
+  call_args.push_back(body.ReadLocal(scope, unit.builtins.scope_ptr));
   for (const mir::LocalId param : code.params) {
-    call_args.push_back(body.exprs.Add(
-        mir::MakeLocalRefExpr(param, code.locals.Get(param).type)));
+    call_args.push_back(body.ReadLocal(param, code.locals.Get(param).type));
   }
   const mir::ExprId call = body.exprs.Add(
       mir::Expr{

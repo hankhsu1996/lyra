@@ -110,7 +110,7 @@ auto LowerProceduralContinuousAssignStmt(
             builtins.machine_int64));
     generations.push_back(DeclareLocal(
         closure.Frame(),
-        SnapshotIntoClosure(unit_lowerer, outer, closure, begin)));
+        SnapshotValueIntoClosure(unit_lowerer, outer, closure, begin)));
   }
 
   // One evaluation: the source read once and each place driven its share. The
@@ -140,14 +140,11 @@ auto LowerProceduralContinuousAssignStmt(
         driving.exprs.Add(
             mir::MakeDriveTakeoverCallExpr(
                 *place, LevelOperand(unit, driving, pca.level),
-                driving.exprs.Add(
-                    mir::MakeLocalRefExpr(
-                        generations[i], builtins.machine_int64)),
+                driving.ReadLocal(generations[i], builtins.machine_int64),
                 share.value, builtins.machine_bool))));
   }
   const auto read_owned = [&](mir::LocalId local) {
-    return driving.exprs.Add(
-        mir::MakeLocalRefExpr(local, builtins.machine_bool));
+    return driving.ReadLocal(local, builtins.machine_bool);
   };
   mir::ExprId any_owned = read_owned(owned.back());
   for (std::size_t i = owned.size() - 1; i-- > 0;) {

@@ -117,7 +117,7 @@ two ways.
    and dispatching on it is a spelling exactly when both readings are one operation seen two ways: a
    product answers with the component either way, so only the receiver's own form differs. Where
    they are not one operation -- where writing the part does something reading it does not, such as
-   making the part it names the live one -- position selects an operation, and that is the same
+   allocating the associative entry it names -- position selects an operation, and that is the same
    defect as selecting one from an operand's type. Run the test on it; "value category" is not a
    reason to skip running it.
 

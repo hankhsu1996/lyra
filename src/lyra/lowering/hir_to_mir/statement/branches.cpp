@@ -141,7 +141,7 @@ auto BuildWrappedBranching(
                bit = unit.builtins.bit1](
                   const WalkFrame& at,
                   std::size_t arm) -> diag::Result<mir::ExprId> {
-      return at.current_block->exprs.Add(mir::MakeLocalRefExpr(kept[arm], bit));
+      return at.current_block->ReadLocal(kept[arm], bit);
     };
   }
 
@@ -309,8 +309,7 @@ auto LowerCaseStmt(
       [&](const WalkFrame& at,
           hir::ExprId label_expr) -> diag::Result<mir::ExprId> {
     mir::Block& block = *at.current_block;
-    const mir::ExprId selector =
-        block.exprs.Add(mir::MakeLocalRefExpr(subject.local, subject.type));
+    const mir::ExprId selector = block.ReadLocal(subject.local, subject.type);
     if (c.condition_kind == hir::CaseCondition::kInside) {
       return BuildSetMemberTest(
           process, at, selector, label_expr, unit.builtins.bit1);

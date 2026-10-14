@@ -400,6 +400,8 @@ auto BuildPropagatedConversion(
 auto ConvertToType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId {
+  // A conversion acts on a value, so a place it is handed is read first.
+  operand_id = block.AsValue(unit.types, operand_id);
   if (block.exprs.Get(operand_id).type == dst_type) {
     return operand_id;
   }
@@ -410,6 +412,7 @@ auto ConvertToType(
 auto ConvertToPropagatedType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId {
+  operand_id = block.AsValue(unit.types, operand_id);
   if (block.exprs.Get(operand_id).type == dst_type) {
     return operand_id;
   }

@@ -130,6 +130,9 @@ auto BuildReportCall(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId report,
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments,
     mir::TypeId type) -> mir::ExprId {
+  for (mir::ExprId& argument : arguments) {
+    argument = block.AsValue(unit.types, argument);
+  }
   const mir::ExprId object = BuildObjectDeref(
       unit, block,
       block.exprs.Add(
@@ -200,10 +203,7 @@ auto BuildObservablePtrExpr(
       !unit.types.Get(pointer->pointee).Is<mir::ResolvedType>()) {
     return reached;
   }
-  const mir::ExprId net = block.exprs.Add(
-      mir::Expr{
-          .data = mir::DerefExpr{.pointer = reached},
-          .type = pointer->pointee});
+  const mir::ExprId net = block.Deref(unit.types, reached, pointer->pointee);
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -293,8 +293,8 @@ auto BuildTriggerExpr(
     mir::Block& block, const WalkFrame& frame, mir::CompilationUnit& unit,
     Lowerer& lowerer, const hir::SensitivityEntry& entry,
     mir::LocalId observation) -> diag::Result<mir::ExprId> {
-  const mir::ExprId observable_ptr =
-      BuildObservablePtrExpr(block, frame, unit, lowerer, entry);
+  const mir::ExprId observable_ptr = block.AsValue(
+      unit.types, BuildObservablePtrExpr(block, frame, unit, lowerer, entry));
   auto watched = LeafPartOf(block, frame, unit, lowerer, entry.part);
   if (!watched) return std::unexpected(std::move(watched.error()));
   return block.exprs.Add(
@@ -304,9 +304,7 @@ auto BuildTriggerExpr(
                   .callee = mir::Construct{},
                   .arguments =
                       {observable_ptr,
-                       block.exprs.Add(
-                           mir::MakeLocalRefExpr(
-                               observation, unit.builtins.observation)),
+                       block.ReadLocal(observation, unit.builtins.observation),
                        watched->steps, watched->first, watched->width}},
           .type = unit.builtins.trigger});
 }
@@ -374,8 +372,7 @@ auto WhereItNamesSomething(
   mir::Block inner;
   auto filled = fill(frame.WithBlock(&inner));
   if (!filled) return std::unexpected(std::move(filled.error()));
-  const mir::ExprId held =
-      block.exprs.Add(mir::MakeLocalRefExpr(handle, handle_type));
+  const mir::ExprId held = block.ReadLocal(handle, handle_type);
   block.AppendStmt(
       mir::IfStmt{
           .condition = ReduceToCondition(unit, block, held),
@@ -708,9 +705,7 @@ auto HoldImplicitList(
       block.exprs.Add(
           mir::MakeCallExpr(
               mir::Direct{.target = support::BuiltinFn::kWaitOnImplicitList},
-              {block.exprs.Add(
-                  mir::MakeLocalRefExpr(
-                      pointer, unit.builtins.read_report_ptr))},
+              {block.ReadLocal(pointer, unit.builtins.read_report_ptr)},
               unit.builtins.wait)));
 }
 

@@ -58,7 +58,7 @@ auto Op(
   return block.exprs.Add(MakeBinary(unit, block, op, lhs, rhs, type));
 }
 
-auto Read(mir::Block& block, mir::LocalId local, mir::TypeId type)
+auto Place(mir::Block& block, mir::LocalId local, mir::TypeId type)
     -> mir::ExprId {
   return block.exprs.Add(mir::MakeLocalRefExpr(local, type));
 }
@@ -70,7 +70,7 @@ void Assign(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeAssignExpr(
-                  unit.builtins, Read(block, local, type), value))});
+                  unit.builtins, Place(block, local, type), value))});
 }
 
 // One position set as body locals, one per word of the automaton's width. A
@@ -99,10 +99,10 @@ auto AnyOf(
   const mir::TypeId type = unit.builtins.machine_word;
   mir::ExprId combined = Word(block, type, 0);
   for (std::size_t word = 0; word < words.size(); ++word) {
-    combined =
-        Op(unit, block, type, mir::BinaryOp::kBitwiseOr, combined,
-           Op(unit, block, type, mir::BinaryOp::kBitwiseAnd,
-              Read(block, words[word], type), Word(block, type, mask[word])));
+    combined = Op(
+        unit, block, type, mir::BinaryOp::kBitwiseOr, combined,
+        Op(unit, block, type, mir::BinaryOp::kBitwiseAnd,
+           block.ReadLocal(words[word], type), Word(block, type, mask[word])));
   }
   return Op(
       unit, block, unit.builtins.machine_bool, mir::BinaryOp::kInequality,
@@ -117,7 +117,7 @@ void OrInto(
     Assign(
         unit, block, words[word], type,
         Op(unit, block, type, mir::BinaryOp::kBitwiseOr,
-           Read(block, words[word], type), Word(block, type, mask[word])));
+           block.ReadLocal(words[word], type), Word(block, type, mask[word])));
   }
 }
 
@@ -259,7 +259,7 @@ auto BuildOutcome(
         for (const mir::LocalId word : next) {
           combined =
               Op(unit, block, type, mir::BinaryOp::kBitwiseOr, combined,
-                 Read(block, word, type));
+                 block.ReadLocal(word, type));
         }
         return combined;
       }(),
@@ -444,7 +444,7 @@ auto LowerAdvance(
         unit, sweep, bits[word], word_type,
         call(
             sweep, support::BuiltinFn::kEvaluationAttemptsBitsAt,
-            {Read(sweep, cursor, index_type), Word(sweep, word_type, word)},
+            {sweep.ReadLocal(cursor, index_type), Word(sweep, word_type, word)},
             word_type));
   }
   const std::vector<mir::LocalId> matched =
@@ -453,8 +453,8 @@ auto LowerAdvance(
     Assign(
         unit, sweep, matched[word], word_type,
         Op(unit, sweep, word_type, mir::BinaryOp::kBitwiseAnd,
-           Read(sweep, bits[word], word_type),
-           Read(sweep, hold[word], word_type)));
+           sweep.ReadLocal(bits[word], word_type),
+           sweep.ReadLocal(hold[word], word_type)));
   }
   const std::vector<mir::LocalId> next =
       DeclareWords(bindings, sweep, word_type, empty);
@@ -469,12 +469,12 @@ auto LowerAdvance(
   for (std::uint32_t word = 0; word < automaton.words; ++word) {
     call_stmt(
         sweep, support::BuiltinFn::kEvaluationAttemptsSetWord,
-        {Read(sweep, cursor, index_type), Word(sweep, word_type, word),
-         Read(sweep, next[word], word_type)});
+        {sweep.ReadLocal(cursor, index_type), Word(sweep, word_type, word),
+         sweep.ReadLocal(next[word], word_type)});
   }
   call_stmt(
       sweep, support::BuiltinFn::kEvaluationAttemptsStep,
-      {Read(sweep, cursor, index_type),
+      {sweep.ReadLocal(cursor, index_type),
        BuildOutcome(sweep, unit, automaton, bits, matched, next)});
   for (const ImplicationSeed& seed : automaton.seeds) {
     mir::Block seeded;
@@ -486,7 +486,7 @@ auto LowerAdvance(
     }
     call_stmt(
         seeded, support::BuiltinFn::kEvaluationAttemptsSeed,
-        {Read(seeded, cursor, index_type),
+        {seeded.ReadLocal(cursor, index_type),
          BuildMachineBool(unit, seeded, seed.same_tick)});
     AppendIf(
         sweep, AnyOf(sweep, unit, matched, seed.antecedent_last),
@@ -501,8 +501,8 @@ auto LowerAdvance(
       mir::WhileStmt{
           .condition =
               Op(unit, body, unit.builtins.machine_bool,
-                 mir::BinaryOp::kGreaterEqual, Read(body, cursor, index_type),
-                 Word(body, index_type, 0)),
+                 mir::BinaryOp::kGreaterEqual,
+                 body.ReadLocal(cursor, index_type), Word(body, index_type, 0)),
           .scope = body.child_scopes.Add(std::move(sweep))});
 
   call_stmt(

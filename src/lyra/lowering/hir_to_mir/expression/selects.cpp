@@ -789,11 +789,11 @@ auto LowerHirInterfaceMemberAccessExpr(
   if (!held) return std::unexpected(std::move(held.error()));
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::ExprId storage = ReportedPlace(unit, frame, *held);
-  return mir::Expr{
-      .data = mir::DerefExpr{.pointer = storage},
-      .type = unit.types.Get(frame.current_block->exprs.Get(storage).type)
-                  .template Get<mir::PointerType>()
-                  .pointee};
+  return mir::MakeDerefExpr(
+      frame.current_block->DerefOperand(unit.types, storage),
+      unit.types.Get(frame.current_block->exprs.Get(storage).type)
+          .template Get<mir::PointerType>()
+          .pointee);
 }
 
 template <ExprLowerer Lowerer>

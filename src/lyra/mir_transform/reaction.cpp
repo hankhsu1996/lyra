@@ -376,7 +376,9 @@ auto RestoreErasedParameters(
   const mir::TypeId erased = mir::ErasedPointer(unit.types);
   const auto restored = [&](mir::LocalId from, mir::LocalId to,
                             mir::TypeId type) {
-    const mir::ExprId read = rebuild.Add(mir::MakeLocalRefExpr(from, erased));
+    const mir::ExprId read = rebuild.Add(
+        mir::MakeCopyExpr(
+            rebuild.Add(mir::MakeLocalRefExpr(from, erased)), erased));
     const mir::ExprId cast = rebuild.Add(
         mir::Expr{.data = mir::CastExpr{.operand = read}, .type = type});
     return rebuild.Add(mir::LocalDeclStmt{.target = to, .init = cast});
@@ -387,8 +389,19 @@ auto RestoreErasedParameters(
       restored(part.wait, wait_local, unit.builtins.wait_ptr)};
 }
 
-// The wait is reached through the pointer the part was handed: every name of
-// `wait_local` becomes `*wait_local`.
+// `*wait_local`: the wait, reached through the pointer the part was handed.
+auto WaitThroughPointer(
+    const mir::CompilationUnit& unit, BlockRebuild& rebuild,
+    mir::LocalId wait_local) -> mir::Expr {
+  const mir::ExprId pointer = rebuild.Add(
+      mir::MakeCopyExpr(
+          rebuild.Add(
+              mir::MakeLocalRefExpr(wait_local, unit.builtins.wait_ptr)),
+          unit.builtins.wait_ptr));
+  return mir::MakeDerefExpr(pointer, unit.builtins.wait);
+}
+
+// Every name of `wait_local` becomes `*wait_local`.
 auto ReachWaitThroughPointer(
     const mir::CompilationUnit& unit, mir::LocalId wait_local) {
   return [&unit, wait_local](
@@ -397,9 +410,7 @@ auto ReachWaitThroughPointer(
     if (mir::ReferencedLocal(expr.data) != wait_local) {
       return std::nullopt;
     }
-    const mir::ExprId pointer =
-        rebuild.Add(mir::MakeLocalRefExpr(wait_local, unit.builtins.wait_ptr));
-    return mir::MakeDerefExpr(pointer, expr.type);
+    return WaitThroughPointer(unit, rebuild, wait_local);
   };
 }
 
@@ -461,10 +472,8 @@ auto SetupOf(
         if (decl == nullptr || decl->target != shape.wait_local) {
           return std::nullopt;
         }
-        const mir::ExprId pointer = rebuild.Add(
-            mir::MakeLocalRefExpr(shape.wait_local, unit.builtins.wait_ptr));
         const mir::ExprId place =
-            rebuild.Add(mir::MakeDerefExpr(pointer, unit.builtins.wait));
+            rebuild.Add(WaitThroughPointer(unit, rebuild, shape.wait_local));
         return mir::ExprStmt{
             .expr = rebuild.Add(
                 mir::MakeAssignExpr(

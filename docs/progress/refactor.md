@@ -3047,6 +3047,14 @@ enough to warrant its own focused review.
       static members the compiler's expansion of the body reaches, which is the first thing to
       check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
       silencing the check. Not blocked.
+- [ ] R224 -- Whether an expression names storage is worked out after MIR is built rather than
+      stated by it: a component and a union member are each reached by a pair of calls differing
+      only in whether the part is read or written, two separate visits over finished expressions
+      decide which expressions are places and do not agree. Target: the node kind says whether an
+      expression is a place, a place says what kind of storage it names, and an array element is a
+      read form and a write form answering a reference
+      (`decisions/an-expression-names-storage-or-makes-a-value.md`). A read is a node and every
+      producer states it. Not blocked; it comes before the union is laid out from its type.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

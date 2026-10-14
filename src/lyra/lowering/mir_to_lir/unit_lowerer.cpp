@@ -753,6 +753,7 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
           [&](const mir::DerefExpr&) { return not_data("a dereference"); },
           [&](const mir::BorrowExpr&) { return not_data("a reference"); },
           [&](const mir::MoveExpr&) { return not_data("a move"); },
+          [&](const mir::CopyExpr&) { return not_data("a read"); },
           [&](const mir::FieldAccessExpr&) {
             return not_data("a field access");
           },

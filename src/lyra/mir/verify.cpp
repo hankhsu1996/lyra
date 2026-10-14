@@ -88,10 +88,34 @@ auto Suspends(
   return suspends;
 }
 
-// Calls `reach` with each node `data` takes a value from. Every one is named in
-// the block holding `data` but a block expression's value, which is named in
-// the block of its steps and is reached from there.
+// How an operation takes an operand, as clang's Sema decides whether an
+// operand undergoes the lvalue-to-rvalue conversion and rustc's builder
+// whether it lowers one as an operand or as a place.
+enum class OperandUse : std::uint8_t {
+  // As a value: a place stands here only under a read.
+  kValue,
+  // As the storage itself, which a read would replace with a copy: what a
+  // write lands in, what a borrow or an address-of takes, the object a field
+  // is reached on.
+  kStorage,
+  // What a read or a move takes: a place holding a value.
+  kRead,
+  // The object a call is entered on: where it lies, for a member function
+  // that binds it as C++ binds an implicit object argument, or read, for one
+  // that takes it by value as a Rust method taking `self` does. Which is the
+  // callee's to say.
+  kObject,
+  // The pointer a dereference opens.
+  kPointer,
+};
+
+// Calls `reach` with each node `data` takes a value from, and how it takes
+// it. Every one is named in the block holding `data` but a block expression's
+// value, which is named in the block of its steps and is reached from there.
 void ForEachOperand(const ExprData& data, const auto& reach) {
+  const auto value = [&](ExprId operand) {
+    reach(operand, OperandUse::kValue);
+  };
   std::visit(
       Overloaded{
           [](const StringLiteral&) {},
@@ -100,60 +124,67 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           [](const MachineIntLiteral&) {},
           [](const MachineFloatLiteral&) {},
           [](const ReferenceExpr&) {},
-          [&](const UnaryExpr& e) { reach(e.operand); },
+          [&](const UnaryExpr& e) { value(e.operand); },
           [&](const BinaryExpr& e) {
-            reach(e.lhs);
-            reach(e.rhs);
+            value(e.lhs);
+            value(e.rhs);
           },
-          [&](const CastExpr& e) { reach(e.operand); },
-          [&](const DynamicCastExpr& e) { reach(e.operand); },
+          [&](const CastExpr& e) { value(e.operand); },
+          [&](const DynamicCastExpr& e) { value(e.operand); },
           [&](const ConditionalExpr& e) {
-            reach(e.condition);
-            reach(e.then_value);
-            reach(e.else_value);
+            value(e.condition);
+            value(e.then_value);
+            value(e.else_value);
           },
           [](const BlockExpr&) {},
           [&](const AssignExpr& e) {
-            reach(e.target);
-            reach(e.value);
+            reach(e.target, OperandUse::kStorage);
+            value(e.value);
           },
           [&](const CallExpr& e) {
             std::visit(
                 Overloaded{
                     [&](const Direct& callee) {
                       if (callee.receiver.has_value()) {
-                        reach(*callee.receiver);
+                        reach(*callee.receiver, OperandUse::kObject);
                       }
                     },
-                    [&](const Indirect& callee) { reach(callee.code); },
+                    [&](const Indirect& callee) { value(callee.code); },
                     [](const Construct&) {},
-                    [&](const Virtual& callee) { reach(callee.receiver); }},
+                    [&](const Virtual& callee) {
+                      reach(callee.receiver, OperandUse::kObject);
+                    }},
                 e.callee);
             for (const ExprId argument : e.arguments) {
-              reach(argument);
+              value(argument);
             }
           },
-          [&](const NewExpr& e) { reach(e.initializer); },
-          [&](const DerefExpr& e) { reach(e.pointer); },
-          [&](const AddressOfExpr& e) { reach(e.operand); },
-          [&](const BorrowExpr& e) { reach(e.operand); },
-          [&](const MoveExpr& e) { reach(e.operand); },
-          [&](const FieldAccessExpr& e) { reach(e.receiver); },
+          [&](const NewExpr& e) { value(e.initializer); },
+          [&](const DerefExpr& e) { reach(e.pointer, OperandUse::kPointer); },
+          [&](const AddressOfExpr& e) {
+            reach(e.operand, OperandUse::kStorage);
+          },
+          [&](const BorrowExpr& e) { reach(e.operand, OperandUse::kStorage); },
+          [&](const MoveExpr& e) { reach(e.operand, OperandUse::kRead); },
+          [&](const CopyExpr& e) { reach(e.place, OperandUse::kRead); },
+          [&](const FieldAccessExpr& e) {
+            reach(e.receiver, OperandUse::kStorage);
+          },
           [&](const ClosureExpr& e) {
             for (const FieldInit& init : e.field_inits) {
-              reach(init.value);
+              value(init.value);
             }
           },
           [&](const CompositeExpr& e) {
             for (const ExprId part : e.parts) {
-              reach(part);
+              value(part);
             }
           },
-          [&](const AwaitExpr& e) { reach(e.execution); },
-          [&](const WaitExpr& e) { reach(e.park); },
+          [&](const AwaitExpr& e) { value(e.execution); },
+          [&](const WaitExpr& e) { value(e.park); },
           [&](const VectorGetExpr& e) {
-            reach(e.vector);
-            reach(e.index);
+            value(e.vector);
+            value(e.index);
           }},
       data);
 }
@@ -196,10 +227,10 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
 }
 
 // Whether a node computes nothing of its own: it names a declared thing, spells
-// a constant, or forms a place over what it reaches. What happens where such a
-// node stands is that place's, so one of them reached from two places and two
-// of them are the same program, and the evaluations it stands for are those of
-// what it reaches.
+// a constant, forms a place over what it reaches, or reads one. What happens
+// where such a node stands is that place's, so one of them reached from two
+// places and two of them are the same program, and the evaluations it stands
+// for are those of what it reaches.
 auto ComputesNothingItself(const ExprData& data) -> bool {
   return std::visit(
       Overloaded{
@@ -212,6 +243,7 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const DerefExpr&) { return true; },
           [](const AddressOfExpr&) { return true; },
           [](const BorrowExpr&) { return true; },
+          [](const CopyExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
           [](const UnaryExpr&) { return false; },
           [](const BinaryExpr&) { return false; },
@@ -249,7 +281,7 @@ auto Describe(const ExprData& data) -> std::string {
           [](const MachineFloatLiteral&) -> std::string {
             return "a float literal";
           },
-          [](const ReferenceExpr&) -> std::string { return "a reference"; },
+          [](const ReferenceExpr&) -> std::string { return "a name"; },
           [](const UnaryExpr&) -> std::string { return "a unary operation"; },
           [](const BinaryExpr&) -> std::string { return "a binary operation"; },
           [](const CastExpr&) -> std::string { return "a cast"; },
@@ -261,16 +293,33 @@ auto Describe(const ExprData& data) -> std::string {
           [](const AssignExpr&) -> std::string { return "an assignment"; },
           [](const CallExpr& call) -> std::string {
             const auto entry = DirectBuiltinFn(call);
-            return entry.has_value() ? std::format(
-                                           "a call of the library entry '{}'",
-                                           support::RuntimeEntryOf(*entry).name)
-                                     : std::string{"a call"};
+            if (entry.has_value()) {
+              return std::format(
+                  "a call of the library entry '{}'",
+                  support::RuntimeEntryOf(*entry).name);
+            }
+            return std::visit(
+                Overloaded{
+                    [](const Direct&) -> std::string {
+                      return "a call of a body";
+                    },
+                    [](const Indirect&) -> std::string {
+                      return "a call through a code address";
+                    },
+                    [](const Construct&) -> std::string {
+                      return "a construction";
+                    },
+                    [](const Virtual&) -> std::string {
+                      return "a dispatched call";
+                    }},
+                call.callee);
           },
           [](const NewExpr&) -> std::string { return "a new"; },
           [](const DerefExpr&) -> std::string { return "a dereference"; },
           [](const AddressOfExpr&) -> std::string { return "an address-of"; },
-          [](const BorrowExpr&) -> std::string { return "a reference"; },
+          [](const BorrowExpr&) -> std::string { return "a borrow"; },
           [](const MoveExpr&) -> std::string { return "a move"; },
+          [](const CopyExpr&) -> std::string { return "a read"; },
           [](const FieldAccessExpr&) -> std::string {
             return "a field access";
           },
@@ -345,8 +394,9 @@ void Reach(
     under.pop_back();
     return;
   }
-  ForEachOperand(
-      data, [&](ExprId operand) { Reach(block, reached, operand, id, under); });
+  ForEachOperand(data, [&](ExprId operand, OperandUse) {
+    Reach(block, reached, operand, id, under);
+  });
 }
 
 // Two of `places` that one run can both evaluate, where there are two.
@@ -408,6 +458,96 @@ void VerifyNoRunEvaluatesTwice(
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyNoRunEvaluatesTwice(
         block.child_scopes.Get(id), reached.entries.at(id.value), describe);
+  }
+}
+
+// A place stands as a value only under a read, and a read reads a place that
+// holds a value. Storage with no value to read stands as itself wherever it is
+// handed on, and what takes the storage itself is never handed a read, which
+// would make it act on a copy.
+//
+// `entered_at` is what the enclosing block's block expressions name as their
+// value among this block's nodes.
+void VerifyPlacesAreRead(
+    const CompilationUnit& unit, const Block& block,
+    std::span<const ExprId> entered_at, const auto& describe) {
+  const auto as_value = [&](ExprId id, std::string_view taker) {
+    if (IsReadablePlace(unit.types, block.exprs.Get(id))) {
+      throw InternalError(
+          std::format(
+              "mir verify: in {}, {} takes {} (expression {} of its block) as "
+              "a value, and a place stands as one only under a read",
+              describe(), taker, Describe(block.exprs.Get(id).data), id.value));
+    }
+  };
+  const auto as_storage = [&](ExprId id, std::string_view taker) {
+    if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data)) {
+      throw InternalError(
+          std::format(
+              "mir verify: in {}, {} takes a read (expression {} of its "
+              "block) where it takes the storage itself, so it would act on a "
+              "copy",
+              describe(), taker, id.value));
+    }
+  };
+  for (const StmtId id : block.root_stmts) {
+    ForEachExpr(block.stmts.Get(id).data, [&](ExprId operand) {
+      as_value(operand, "a statement");
+    });
+  }
+  for (const ExprId id : entered_at) {
+    as_value(id, "a block expression");
+  }
+  std::vector<std::vector<ExprId>> entries(block.child_scopes.size());
+  for (const ExprId id : block.exprs.Ids()) {
+    const ExprData& data = block.exprs.Get(id).data;
+    const std::string taker = Describe(data);
+    // A reference is constructed over the storage it refers to, which it binds
+    // as a C++ reference parameter binds an lvalue, without reading it.
+    const auto* call = std::get_if<CallExpr>(&data);
+    const bool binds_storage =
+        call != nullptr && std::holds_alternative<Construct>(call->callee) &&
+        unit.types.Get(block.exprs.Get(id).type).Is<VariableRefType>();
+    ForEachOperand(data, [&](ExprId operand, OperandUse use) {
+      switch (binds_storage ? OperandUse::kStorage : use) {
+        case OperandUse::kValue:
+          as_value(operand, taker);
+          return;
+        case OperandUse::kStorage:
+          as_storage(operand, taker);
+          return;
+        case OperandUse::kObject:
+          return;
+        case OperandUse::kRead:
+          if (!IsReadablePlace(unit.types, block.exprs.Get(operand))) {
+            throw InternalError(
+                std::format(
+                    "mir verify: in {}, {} takes {} (expression {} of its "
+                    "block), which names no place or names storage with no "
+                    "value to read",
+                    describe(), taker, Describe(block.exprs.Get(operand).data),
+                    operand.value));
+          }
+          return;
+        // A dereference opens a pointer it reads, as clang reads the operand
+        // of builtin `*p`. One that owns what it reaches is entered as an
+        // object, as C++ `*unique_ptr` enters `operator*` on it.
+        case OperandUse::kPointer:
+          if (unit.types.Get(block.exprs.Get(operand).type).OwnsPointee()) {
+            as_storage(operand, taker);
+          } else {
+            as_value(operand, taker);
+          }
+          return;
+      }
+    });
+    if (const auto* scope = std::get_if<BlockExpr>(&data)) {
+      entries.at(scope->scope.value).push_back(scope->value);
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyPlacesAreRead(
+        unit, block.child_scopes.Get(id), entries.at(id.value), describe);
   }
 }
 
@@ -832,10 +972,10 @@ void VerifyConstantsAreFolded(
             [](const BlockExpr&) {}, [](const AssignExpr&) {},
             [](const NewExpr&) {}, [](const DerefExpr&) {},
             [](const AddressOfExpr&) {}, [](const BorrowExpr&) {},
-            [](const MoveExpr&) {}, [](const FieldAccessExpr&) {},
-            [](const ClosureExpr&) {}, [](const CompositeExpr&) {},
-            [](const AwaitExpr&) {}, [](const WaitExpr&) {},
-            [](const VectorGetExpr&) {}},
+            [](const MoveExpr&) {}, [](const CopyExpr&) {},
+            [](const FieldAccessExpr&) {}, [](const ClosureExpr&) {},
+            [](const CompositeExpr&) {}, [](const AwaitExpr&) {},
+            [](const WaitExpr&) {}, [](const VectorGetExpr&) {}},
         expr.data);
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -962,6 +1102,7 @@ void VerifyCode(
     return;
   }
   VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
+  VerifyPlacesAreRead(unit, *code.body, {}, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
   VerifyTypeArguments(*code.body, describe);
@@ -1090,7 +1231,7 @@ auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
     return false;
   }
   bool nothing = true;
-  ForEachOperand(data, [&](ExprId operand) {
+  ForEachOperand(data, [&](ExprId operand, OperandUse) {
     nothing = nothing && EvaluatesNothing(block, operand);
   });
   return nothing;

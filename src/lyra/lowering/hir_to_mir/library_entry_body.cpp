@@ -69,12 +69,11 @@ auto ForwardingBody(
           .data =
               mir::CastExpr{
                   .operand =
-                      body.exprs.Add(mir::MakeLocalRefExpr(handed, object))},
+                      body.ReadLocal(handed, code.locals.Get(handed).type)},
           .type = cls.self_pointer_type});
   std::vector<mir::ExprId> args;
   for (const mir::LocalId param : std::span{code.params}.subspan(1)) {
-    args.push_back(body.exprs.Add(
-        mir::MakeLocalRefExpr(param, code.locals.Get(param).type)));
+    args.push_back(body.ReadLocal(param, code.locals.Get(param).type));
   }
   const mir::ExprId call = body.exprs.Add(
       mir::Expr{

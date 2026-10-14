@@ -268,7 +268,7 @@ auto PatternPredicate(
         BlockBuilder steps(at);
         mir::Block& body = steps.Body();
         const auto read_subject = [&](mir::Block& block) {
-          return block.exprs.Add(mir::MakeLocalRefExpr(subject, subject_type));
+          return block.ReadLocal(subject, subject_type);
         };
 
         std::vector<mir::ExprId> tests;
@@ -278,9 +278,7 @@ auto PatternPredicate(
         if (!collected) return std::unexpected(std::move(collected.error()));
         const mir::LocalId matched = steps.DeclareLocal(
             bit, ConditionAsBit(unit, body, AllHold(unit, body, tests)));
-        const auto read_matched = [&] {
-          return body.exprs.Add(mir::MakeLocalRefExpr(matched, bit));
-        };
+        const auto read_matched = [&] { return body.ReadLocal(matched, bit); };
 
         mir::Block bound;
         BindPatternIdentifiers(

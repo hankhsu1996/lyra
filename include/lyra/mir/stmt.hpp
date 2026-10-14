@@ -13,6 +13,7 @@
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/type.hpp"
 
 namespace lyra::mir {
 
@@ -155,6 +156,12 @@ struct Stmt {
   StmtData data;
 };
 
+// Whether `expr` names storage holding a value, which is what a read reads.
+[[nodiscard]] inline auto IsReadablePlace(
+    const TypePool& types, const Expr& expr) -> bool {
+  return IsPlace(expr.data) && !types.Get(expr.type).IsAddressOnly();
+}
+
 // `{...}` in MIR: arenas for the locally-owned IR nodes (exprs, stmts, child
 // scopes) plus the ordered execution sequence at this brace level
 // (`root_stmts`). `ExprId`, `StmtId`, and `BlockId` are scope-local: they
@@ -171,6 +178,39 @@ struct Block {
 
   [[nodiscard]] auto GetExprType(ExprId id) const -> TypeId {
     return exprs.Get(id).type;
+  }
+
+  // The value the place `place` holds, read where it stands.
+  auto Read(ExprId place) -> ExprId {
+    return exprs.Add(MakeCopyExpr(place, exprs.Get(place).type));
+  }
+
+  // `id` where a value is wanted: read, where it names storage that holds a
+  // value, and itself otherwise -- clang's `DefaultLvalueConversion`, for an
+  // operand that may be either. Storage with no value to read stands as itself.
+  auto AsValue(const TypePool& types, ExprId id) -> ExprId {
+    return IsReadablePlace(types, exprs.Get(id)) ? Read(id) : id;
+  }
+
+  // The value the local `local`, of type `type`, holds.
+  auto ReadLocal(LocalId local, TypeId type) -> ExprId {
+    return Read(exprs.Add(MakeLocalRefExpr(local, type)));
+  }
+
+  // What `*pointer` opens `pointer` as: a value, read where it names storage,
+  // as clang reads the operand of builtin `*p`, and an owner as the object
+  // C++ `*unique_ptr` enters `operator*` on.
+  auto DerefOperand(const TypePool& types, ExprId pointer) -> ExprId {
+    return types.Get(exprs.Get(pointer).type).OwnsPointee()
+               ? pointer
+               : AsValue(types, pointer);
+  }
+
+  // `*pointer`, the storage `pointer` reaches.
+  auto Deref(const TypePool& types, ExprId pointer, TypeId referent_type)
+      -> ExprId {
+    return exprs.Add(
+        MakeDerefExpr(DerefOperand(types, pointer), referent_type));
   }
 
   void AddRootStmt(StmtId id) {

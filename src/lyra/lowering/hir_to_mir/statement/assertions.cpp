@@ -202,8 +202,7 @@ auto LowerCoverStmt(
   const mir::ExprId site_id = BuildStringValueExpr(
       unit, block,
       diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
-  const mir::ExprId outcome_id =
-      block.exprs.Add(mir::MakeLocalRefExpr(succeeded, bool_type));
+  const mir::ExprId outcome_id = block.ReadLocal(succeeded, bool_type);
   const mir::ExprId record_id = block.exprs.Add(
       mir::Expr{
           .data =
@@ -220,8 +219,7 @@ auto LowerCoverStmt(
   if (!pass_or) return std::unexpected(std::move(pass_or.error()));
 
   // A condition consumes a machine boolean, and the outcome already is one.
-  const mir::ExprId taken_id =
-      block.exprs.Add(mir::MakeLocalRefExpr(succeeded, bool_type));
+  const mir::ExprId taken_id = block.ReadLocal(succeeded, bool_type);
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::IfStmt{

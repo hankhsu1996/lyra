@@ -156,11 +156,11 @@ class CallableBindings {
   // A second call for the same origin returns the same binding.
   auto EnsureCarrier(BindingOriginId origin) -> BodyBindingRef;
 
-  // A read of a binding owned by this body, typed from its arena. For a
-  // captured field the closure receiver operand is appended to `block` and the
-  // returned field access (to be appended to the same block) reads it.
-  [[nodiscard]] auto MakeReadExpr(BodyBindingRef ref, mir::Block& block) const
-      -> mir::Expr;
+  // The place of a binding owned by this body, typed from its arena: the local
+  // itself, or for a captured field the field of the closure receiver, whose
+  // operand is appended to `block` and which is appended to the same block.
+  [[nodiscard]] auto MakeBindingPlace(
+      BodyBindingRef ref, mir::Block& block) const -> mir::Expr;
   [[nodiscard]] auto TypeOf(BodyBindingRef ref) const -> mir::TypeId;
 
   // Freeze the capture set: compute the closure's canonical field order (by

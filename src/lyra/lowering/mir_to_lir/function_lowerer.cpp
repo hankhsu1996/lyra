@@ -1989,13 +1989,21 @@ auto FunctionLowerer::AddressType(lir::TypeId value) -> lir::TypeId {
           .mutability = lir::Mutability::kMutable}});
 }
 
+auto FunctionLowerer::WrapperOperand(
+    const mir::Block& block, mir::ExprId wrapper)
+    -> diag::Result<lir::Operand> {
+  return mir::IsPlace(block.exprs.Get(wrapper).data)
+             ? LowerRead(block, wrapper)
+             : LowerExpr(block, wrapper);
+}
+
 auto FunctionLowerer::WrapperContentsPlace(
     const mir::Block& block, mir::ExprId wrapper) -> diag::Result<lir::Place> {
   const mir::Type& wrapper_ty =
       unit_->Mir().types.Get(block.exprs.Get(wrapper).type);
   // Dereferencing a place designated within a write lands the write there.
   if (const auto* designated = wrapper_ty.As<mir::DesignationType>()) {
-    auto designation = LowerExpr(block, wrapper);
+    auto designation = WrapperOperand(block, wrapper);
     if (!designation) {
       return std::unexpected(std::move(designation.error()));
     }
@@ -2017,7 +2025,7 @@ auto FunctionLowerer::WrapperContentsPlace(
     contents.chain.emplace_back(lir::DerefProjection{});
     return contents;
   }
-  auto pointer = LowerExpr(block, wrapper);
+  auto pointer = WrapperOperand(block, wrapper);
   if (!pointer) {
     return std::unexpected(std::move(pointer.error()));
   }
@@ -2372,6 +2380,9 @@ auto FunctionLowerer::LowerPlace(
           [&](const mir::MoveExpr&) {
             return names_no_place("a value moved out of where it was kept");
           },
+          [&](const mir::CopyExpr&) {
+            return names_no_place("a value read out of a place");
+          },
           [&](const mir::ClosureExpr&) { return names_no_place("a closure"); },
           [&](const mir::CompositeExpr&) {
             return names_no_place("a value composed of its parts");
@@ -2401,6 +2412,15 @@ auto FunctionLowerer::ReadPlace(
     return std::unexpected(std::move(place.error()));
   }
   return Load(*std::move(place), type);
+}
+
+auto FunctionLowerer::LowerRead(const mir::Block& block, mir::ExprId place)
+    -> diag::Result<lir::Operand> {
+  const mir::Expr& expr = block.exprs.Get(place);
+  if (const auto* reference = std::get_if<mir::ReferenceExpr>(&expr.data)) {
+    return ReferenceValue(block, place, reference->target, expr.type);
+  }
+  return ReadPlace(block, place, unit_->TranslateType(expr.type));
 }
 
 auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
@@ -2459,11 +2479,20 @@ auto FunctionLowerer::LowerCallOperands(
     args.push_back(*std::move(lowered));
     return {};
   };
+  // MIR names the object a call is entered on where it lies, or as a value it
+  // read. An entry takes an object holding a value by that value, so one named
+  // where it lies is read there, and storage with no value to read is handed on
+  // by its address.
   if (const std::optional<mir::ExprId> receiver =
           mir::CalleeReceiver(call.callee)) {
-    if (auto lowered = lower_into(*receiver); !lowered) {
+    auto lowered =
+        mir::IsReadablePlace(unit_->Mir().types, block.exprs.Get(*receiver))
+            ? LowerRead(block, *receiver)
+            : LowerArgument(block, *receiver);
+    if (!lowered) {
       return std::unexpected(std::move(lowered.error()));
     }
+    args.push_back(*std::move(lowered));
   }
   // An entry acting on an object is handed whatever reaches it, and takes the
   // object itself, so that operand is opened the way an access's receiver is.
@@ -3554,6 +3583,12 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
     }
     return Emit(value->type, std::move(value->value));
   };
+  // A place stands as a value only under a read, which is where it is read.
+  const auto placed = [&]() -> Lowered {
+    throw InternalError(
+        "mir_to_lir: a place stands as a value outside a read -- please "
+        "report this as a bug");
+  };
   return std::visit(
       Overloaded{
           [&](const mir::StringLiteral& lit) -> Lowered {
@@ -3581,6 +3616,9 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
                 .type = unit_->TranslateType(type)}};
           },
           [&](const mir::ReferenceExpr& reference) -> Lowered {
+            if (mir::IsPlace(expr.data)) {
+              return placed();
+            }
             return ReferenceValue(block, id, reference.target, type);
           },
           [&](const mir::CallExpr& call) -> Lowered {
@@ -3601,16 +3639,8 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::NewExpr& allocation) -> Lowered {
             return LowerNew(block, allocation, type);
           },
-          [&](const mir::FieldAccessExpr&) -> Lowered {
-            return ReadPlace(block, id, unit_->TranslateType(type));
-          },
-          [&](const mir::DerefExpr&) -> Lowered {
-            auto place = LowerPlace(block, id, Reach::kRead);
-            if (!place) {
-              return std::unexpected(std::move(place.error()));
-            }
-            return Load(*std::move(place), unit_->TranslateType(type));
-          },
+          [&](const mir::FieldAccessExpr&) -> Lowered { return placed(); },
+          [&](const mir::DerefExpr&) -> Lowered { return placed(); },
           [&](const mir::AssignExpr& assign) -> Lowered {
             return LowerAssign(block, assign);
           },
@@ -3631,10 +3661,13 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           },
           [&](const mir::MoveExpr& m) -> Lowered {
             // A move is a last-use transfer marker placed at HIR-to-MIR; it
-            // changes neither the value nor its type, so it unwraps to its
-            // operand here. Whether the transfer is realized as a move or a
-            // copy is decided below LIR, not at this layer.
-            return LowerExpr(block, m.operand);
+            // changes neither the value nor its type, so it reads its operand
+            // here. Whether the transfer is realized as a move or a copy is
+            // decided below LIR, not at this layer.
+            return LowerRead(block, m.operand);
+          },
+          [&](const mir::CopyExpr& c) -> Lowered {
+            return LowerRead(block, c.place);
           },
           [&](const mir::AwaitExpr& await) -> Lowered {
             return LowerCoroutineAwait(block, await, type);
@@ -3909,6 +3942,7 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
           [&](const mir::ConditionalExpr&) { return used(); },
           [&](const mir::BlockExpr&) { return used(); },
           [&](const mir::MoveExpr&) { return used(); },
+          [&](const mir::CopyExpr&) { return used(); },
           [&](const mir::AwaitExpr&) { return used(); },
           [&](const mir::WaitExpr&) { return used(); },
       },
@@ -3953,9 +3987,8 @@ auto FunctionLowerer::LowerExprInto(
             }
             return LowerExprInto(scope, be.value, destination);
           },
-          [&](const mir::MoveExpr& m) -> Lowered {
-            return LowerExprInto(block, m.operand, destination);
-          },
+          [&](const mir::MoveExpr&) { return assigned(); },
+          [&](const mir::CopyExpr&) { return assigned(); },
           [&](const mir::StringLiteral&) { return assigned(); },
           [&](const mir::MachineFloatLiteral&) { return assigned(); },
           [&](const mir::NullLiteral&) { return assigned(); },

@@ -38,15 +38,15 @@ auto BindImplicitParameters(
     const WalkFrame& frame, const ClassShape& owner, CallableForm form)
     -> BoundImplicitParameters;
 
-// Makes a read of the current body's `self` binding: a direct `LocalRef` in a
-// directly-invoked body, or a field access over the closure receiver when
+// Makes the place of the current body's `self` binding: a direct `LocalRef` in
+// a directly-invoked body, or a field access over the closure receiver when
 // `self` was captured. The receiver is an ordinary binding resolved through the
-// same capture machinery as any other; its read appends any closure-receiver
-// operand to `frame.current_block`, and the caller adds the returned expression
-// to that same block. The read is typed as `self_ptr_type`, the borrowed
-// pointer to the enclosing object. This is the one place the self-read shape
-// lives -- every field access, cross-unit deref, closure self-capture, and
-// runtime-effect engine handle starts from it.
+// same capture machinery as any other; forming it appends any closure-receiver
+// operand to `frame.current_block`, and the caller adds the returned place to
+// that same block, reading it where it stands as a value. The place is typed
+// as `self_ptr_type`, the borrowed pointer to the enclosing object. This is the
+// one place the self place is formed -- every field access, cross-unit deref,
+// closure self-capture, and runtime-effect engine handle starts from it.
 auto MakeSelfRefExpr(const WalkFrame& frame, mir::TypeId self_ptr_type)
     -> mir::Expr;
 
@@ -100,7 +100,9 @@ auto BuildImplicitInstanceArgument(
       reach);
   return frame.current_block->exprs.Add(
       mir::Expr{
-          .data = mir::CastExpr{.operand = reached},
+          .data =
+              mir::CastExpr{
+                  .operand = frame.current_block->AsValue(unit.types, reached)},
           .type = unit.builtins.scope_ptr});
 }
 

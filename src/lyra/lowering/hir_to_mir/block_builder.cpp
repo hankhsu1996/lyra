@@ -22,6 +22,10 @@ auto BlockBuilder::DeclareLocal(mir::TypeId type, mir::ExprId init)
 }
 
 auto BlockBuilder::Build(mir::ExprId value) -> mir::Expr {
+  // A block expression yields a value, so a place it ends with is read there.
+  if (mir::IsPlace(body_.exprs.Get(value).data)) {
+    value = body_.Read(value);
+  }
   const mir::TypeId type = body_.exprs.Get(value).type;
   return mir::Expr{
       .data = mir::BlockExpr{.scope = Attach(), .value = value}, .type = type};

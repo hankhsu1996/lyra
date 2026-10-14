@@ -239,7 +239,7 @@ auto SampledCount(
   }
   const mir::LocalId count_var = frame.bindings->DeclareAnonymous(int_type);
   block.AppendStmt(mir::LocalDeclStmt{.target = count_var, .init = count});
-  return block.exprs.Add(mir::MakeLocalRefExpr(count_var, int_type));
+  return block.ReadLocal(count_var, int_type);
 }
 
 }  // namespace
@@ -250,11 +250,12 @@ auto BuildCountingLoopStmt(
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::ExprId bound = SampledCount(unit, frame, block, count);
-  const auto read = [&] {
+  const auto place = [&] {
     return block.exprs.Add(mir::MakeLocalRefExpr(position, int_type));
   };
+  const auto read = [&] { return block.ReadLocal(position, int_type); };
   const auto write = [&](mir::ExprId value) {
-    return block.exprs.Add(mir::MakeAssignExpr(unit.builtins, read(), value));
+    return block.exprs.Add(mir::MakeAssignExpr(unit.builtins, place(), value));
   };
   return BuildIndexLoopStmt(
       unit, block,

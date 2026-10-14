@@ -387,16 +387,14 @@ auto PublishObjectEntry(
 
   mir::Block& body = code.Body();
   std::vector<mir::ExprId> arguments{
-      body.exprs.Add(mir::MakeLocalRefExpr(parent, unit.builtins.scope_ptr)),
-      body.exprs.Add(
-          mir::MakeLocalRefExpr(segment, unit.builtins.hierarchy_segment)),
+      body.ReadLocal(parent, unit.builtins.scope_ptr),
+      body.ReadLocal(segment, unit.builtins.hierarchy_segment),
       std::visit(
           Overloaded{
               [&](const ConstructionTableSupplied&) {
                 const mir::LocalId handed_in = code.AddLocal(table_type);
                 code.params.push_back(handed_in);
-                return body.exprs.Add(
-                    mir::MakeLocalRefExpr(handed_in, table_type));
+                return body.ReadLocal(handed_in, table_type);
               },
               [&](const mir::ClassConstantRef& own) {
                 return body.exprs.Add(
@@ -412,8 +410,7 @@ auto PublishObjectEntry(
   for (const ConstructionValue& value : handed) {
     const mir::LocalId param = code.AddLocal(value.type);
     code.params.push_back(param);
-    arguments.push_back(
-        body.exprs.Add(mir::MakeLocalRefExpr(param, value.type)));
+    arguments.push_back(body.ReadLocal(param, value.type));
   }
   const mir::ExprId built = body.exprs.Add(
       mir::MakeNewExpr(

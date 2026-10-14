@@ -27,6 +27,7 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -219,6 +220,13 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
       return mir::MakeCellSampledLoadCallExpr(cell_id, result_type);
     }
     return mir::MakeCellLoadCallExpr(cell_id, result_type);
+  }
+  // A place standing where a value is wanted is read there, as Sema wraps an
+  // lvalue operand in its lvalue-to-rvalue conversion.
+  if (mir::IsReadablePlace(lowerer.Owner().Unit().types, *raw_or)) {
+    const mir::TypeId read_type = raw_or->type;
+    return mir::MakeCopyExpr(
+        frame.current_block->exprs.Add(*std::move(raw_or)), read_type);
   }
   return raw_or;
 }

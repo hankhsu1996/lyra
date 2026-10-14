@@ -798,6 +798,18 @@ class Type {
   // is what it names.
   [[nodiscard]] auto IsVariableRef() const -> bool;
 
+  // True for storage that has no value to read and is only ever reached
+  // through where it lies: an observable cell, a net's resolved cell, an
+  // object, an event, a history, an attempt record. A place of one stands as
+  // itself wherever it is handed on, since there is nothing to read out of it.
+  [[nodiscard]] auto IsAddressOnly() const -> bool;
+
+  // True for a pointer that owns what it reaches. One is an object with an
+  // owner's duties, so `*owner` reaches the pointee through the owner itself,
+  // as C++ `*unique_ptr` enters `operator*` on it rather than reading it as
+  // builtin `*p` reads a pointer.
+  [[nodiscard]] auto OwnsPointee() const -> bool;
+
   // True for a type whose value lives in storage the runtime owns, so whatever
   // holds such a value holds a handle onto that storage rather than the value
   // itself. What follows is that the handle is not the whole of the value:

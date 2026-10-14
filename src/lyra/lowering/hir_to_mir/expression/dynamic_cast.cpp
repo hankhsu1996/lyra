@@ -80,7 +80,7 @@ auto LowerHirDynamicCastExpr(
   // store happens -- and an expression belongs to the scope it is interned
   // into, so which one a read lands in is said at every read.
   const auto read_value = [&](mir::Block& into) {
-    return into.exprs.Add(mir::MakeLocalRefExpr(value_var, destination_type));
+    return into.ReadLocal(value_var, destination_type);
   };
 
   const mir::ExprId answer = [&] {
@@ -115,7 +115,7 @@ auto LowerHirDynamicCastExpr(
                           .else_value = BuildIntLiteral(unit, body, 0)},
                   .type = result_type})});
   const auto read_answer = [&] {
-    return body.exprs.Add(mir::MakeLocalRefExpr(answer_var, result_type));
+    return body.ReadLocal(answer_var, result_type);
   };
 
   // The destination is reached inside the arm that writes it, because that is

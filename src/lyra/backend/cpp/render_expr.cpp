@@ -608,6 +608,11 @@ void RenderExpr(
           [&](const mir::MoveExpr& m) {
             Write(view, out, "std::move(", m.operand, ")");
           },
+          // C++ reads an lvalue where a value is wanted ([conv.lval]), so a
+          // read is the place's own spelling.
+          [&](const mir::CopyExpr& c) {
+            Write(view, out, Operand{.expr = c.place, .at_least = at_least});
+          },
           [&](const mir::FieldAccessExpr& m) {
             RenderFieldAccessExpr(view, m, out);
           },

@@ -150,7 +150,7 @@ auto InterfaceValueOf(
     mir::TypeId type) -> mir::Expr {
   const mir::ExprId address = block.exprs.Add(
       mir::Expr{
-          .data = mir::CastExpr{.operand = object},
+          .data = mir::CastExpr{.operand = block.AsValue(unit.types, object)},
           .type = mir::ErasedPointer(unit.types)});
   return mir::Expr{
       .data = mir::CallExpr{.callee = mir::Construct{}, .arguments = {address}},

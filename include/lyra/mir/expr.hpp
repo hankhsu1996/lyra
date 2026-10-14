@@ -478,14 +478,22 @@ struct BorrowExpr {
 // operand's type -- move does not change what value the expression yields,
 // only how ownership crosses the boundary. Lowering emits this at last-use
 // sites where the backend must transfer rather than copy (a ctor param
-// forwarded to the base construction); an ordinary read stays a plain
-// expression.
+// forwarded to the base construction); an ordinary read is a copy.
 //
 // Operand must be a type whose value can be transferred. Alias-style handle
 // types carry no ownership to move, so lowering never wraps them here -- a
 // move primitive over an alias is a semantic type error.
 struct MoveExpr {
   ExprId operand;
+};
+
+// The value a place holds, read where it lies: clang's lvalue-to-rvalue
+// conversion, rustc's `Operand::Copy`. A place stands in a value position only
+// under this node or a move, so where storage is read is stated rather than
+// worked out from where a place happens to stand. `Expr::type` is the place's
+// type.
+struct CopyExpr {
+  ExprId place;
 };
 
 // Field access on an explicit receiver: `receiver.field`. The receiver is the
@@ -680,7 +688,7 @@ using ExprData = std::variant<
     StringLiteral, NullLiteral, MachineBoolLiteral, MachineIntLiteral,
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr,
-    DerefExpr, AddressOfExpr, BorrowExpr, MoveExpr, FieldAccessExpr,
+    DerefExpr, AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, FieldAccessExpr,
     ClosureExpr, CompositeExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
 
 struct Expr {
@@ -691,6 +699,26 @@ struct Expr {
 [[nodiscard]] inline auto MakeLocalRefExpr(LocalId var, TypeId type) -> Expr {
   return Expr{
       .data = ReferenceExpr{.target = LocalRef{.var = var}}, .type = type};
+}
+
+// Whether `data` names storage rather than making a value, which is what its
+// kind is: a reference to storage, a dereference, or a field of a place, as
+// rustc's `Category::of` reads a THIR expression's kind. A reference to a
+// constant or to code names something that is no storage, so it is a value.
+[[nodiscard]] auto IsPlace(const ExprData& data) -> bool;
+
+// The value the place `place` of type `type` holds.
+[[nodiscard]] inline auto MakeCopyExpr(ExprId place, TypeId type) -> Expr {
+  return Expr{.data = CopyExpr{.place = place}, .type = type};
+}
+
+// The place `data` reads, where it is a read. A borrow binds the place itself,
+// as a C++ reference binds to an lvalue without reading it, so a borrow handed
+// a read takes the place it reads instead.
+[[nodiscard]] inline auto PlaceRead(const ExprData& data)
+    -> std::optional<ExprId> {
+  const auto* read = std::get_if<CopyExpr>(&data);
+  return read != nullptr ? std::optional{read->place} : std::nullopt;
 }
 
 // The local a reference names, for a consumer following where storage lives;
@@ -793,11 +821,11 @@ struct Expr {
       .type = object_type};
 }
 
-// `*place` -- names the storage `place` stands for. `referent_type` is what
+// `*pointer` -- names the storage `pointer` reaches. `referent_type` is what
 // that storage holds: the pointee for a pointer or handle.
-[[nodiscard]] inline auto MakeDerefExpr(ExprId place, TypeId referent_type)
+[[nodiscard]] inline auto MakeDerefExpr(ExprId pointer, TypeId referent_type)
     -> Expr {
-  return Expr{.data = DerefExpr{.pointer = place}, .type = referent_type};
+  return Expr{.data = DerefExpr{.pointer = pointer}, .type = referent_type};
 }
 
 // `subject.index` -- the component a value holds at a declaration-order

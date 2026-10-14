@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/hash.hpp"
@@ -237,6 +238,28 @@ auto Type::IsCapabilityWrapper() const -> bool {
 
 auto Type::IsVariableRef() const -> bool {
   return Is<VariableRefType>() || Is<ReferenceWrapperType>();
+}
+
+auto Type::IsAddressOnly() const -> bool {
+  return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
+         Is<RuntimeClassType>() || Is<EventType>() ||
+         Is<SampledHistoryType>() || Is<EvaluationAttemptsType>() ||
+         Is<LoopBlocksType>();
+}
+
+auto Type::OwnsPointee() const -> bool {
+  const auto* pointer = As<PointerType>();
+  if (pointer == nullptr) {
+    return false;
+  }
+  switch (pointer->ownership) {
+    case PointerOwnership::kUnique:
+    case PointerOwnership::kShared:
+      return true;
+    case PointerOwnership::kBorrowed:
+      return false;
+  }
+  std::unreachable();
 }
 
 auto Type::WrappedValueType() const -> TypeId {

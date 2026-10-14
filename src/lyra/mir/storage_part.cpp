@@ -88,6 +88,7 @@ auto IsPlaceExpression(const TypePool& types, const Block& block, ExprId id)
           [&](const ReferenceExpr& e) { return place(e); },
           [&](const DerefExpr& e) { return place(e); },
           [&](const FieldAccessExpr& e) { return place(e); },
+          [&](const CopyExpr& e) { return place(e); },
           [&](const AwaitExpr& e) { return place(e); },
           [&](const CallExpr&) { return ReadsWhereItLies(types, block, id); },
           [&](const StringLiteral& e) { return made(e); },

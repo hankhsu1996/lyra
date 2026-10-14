@@ -93,6 +93,10 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::BorrowExpr& b) {
             return TargetOutlivesDeferredUpdate(block, b.operand);
           },
+          // A pointer read out of a place leads where that place's does.
+          [&](const mir::CopyExpr& c) {
+            return TargetOutlivesDeferredUpdate(block, c.place);
+          },
           // Storage a new-expression allocates belongs to what holds the
           // pointer it yields, never to the stretch that allocated it.
           [](const mir::NewExpr&) { return true; },
@@ -141,13 +145,16 @@ auto FrozenOwner(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& outer_block = *outer_frame.current_block;
   const auto captured = [&](mir::ExprId id) {
-    return SnapshotIntoClosure(unit_lowerer, outer_frame, closure, id);
+    return SnapshotValueIntoClosure(unit_lowerer, outer_frame, closure, id);
   };
   return std::visit(
       Overloaded{
           [&](mir::ExprId place) -> PathOwner {
-            return captured(BuildReferenceArg(
-                unit, outer_block, place, outer_block.exprs.Get(place).type));
+            return SnapshotPlaceIntoClosure(
+                unit_lowerer, outer_frame, closure,
+                BuildReferenceArg(
+                    unit, outer_block, place,
+                    outer_block.exprs.Get(place).type));
           },
           [&](const ObjectProperty& property) -> PathOwner {
             return ObjectProperty{
@@ -168,8 +175,8 @@ auto FreezeTarget(
   frozen.owner = FrozenOwner(unit_lowerer, outer_frame, closure, target.owner);
   for (DescentStep& step : frozen.descent) {
     ForEachOperand(step, [&](mir::ExprId& coordinate) {
-      coordinate =
-          SnapshotIntoClosure(unit_lowerer, outer_frame, closure, coordinate);
+      coordinate = SnapshotValueIntoClosure(
+          unit_lowerer, outer_frame, closure, coordinate);
     });
   }
   return frozen;
@@ -187,7 +194,7 @@ auto FreezeShareInto(
   return Share{
       .place = FreezeTarget(
           unit_lowerer, outer_frame, closure, share_in_outer.place),
-      .value = SnapshotIntoClosure(
+      .value = SnapshotValueIntoClosure(
           unit_lowerer, outer_frame, closure, share_in_outer.value)};
 }
 
@@ -482,9 +489,7 @@ auto LowerHirAssignExpr(
       StoreOf(lowerer.Owner(), steps.Frame(), a, *std::move(target_or), rhs_id);
   const mir::LocalId value = steps.DeclareLocal(
       result_type, ConvertToType(unit, body, stored, result_type));
-  const auto read_value = [&] {
-    return body.exprs.Add(mir::MakeLocalRefExpr(value, result_type));
-  };
+  const auto read_value = [&] { return body.ReadLocal(value, result_type); };
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.exprs.Add(
@@ -544,7 +549,7 @@ auto LowerHirIncDecExpr(
   const mir::LocalId before = steps.DeclareLocal(
       result_type, ConvertToType(unit, body, settled.incoming, result_type));
   const auto read = [&](mir::LocalId local) {
-    return body.exprs.Add(mir::MakeLocalRefExpr(local, result_type));
+    return body.ReadLocal(local, result_type);
   };
   const mir::LocalId after = steps.DeclareLocal(
       result_type, body.exprs.Add(BuildMirBinaryExpr(
