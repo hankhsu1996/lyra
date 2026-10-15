@@ -208,6 +208,22 @@ struct SpecializationKey {
   auto operator==(const SpecializationKey&) const -> bool = default;
 };
 
+// The value parameters a body's compiled form uses, in three sets. Those its
+// signature uses -- what the body declares -- enter the unit's name by their
+// values, as template arguments do in C++. Those only its code uses -- the
+// statements of its processes, continuous assignments and subroutines --
+// enter the name of the body the unit is compiled to instead. rustc's
+// polymorphization called both a definition's used generic parameters. Those
+// that decide which generate blocks the body builds (LRM 27.4, 27.5) enter no
+// name by value, since which blocks were built is part of the name itself; but
+// a scope building an instance of this body names which unit it is, so a value
+// it hands one of these is one its own signature uses.
+struct UsedParameters {
+  std::unordered_set<const slang::ast::ParameterSymbol*> in_signature;
+  std::unordered_set<const slang::ast::ParameterSymbol*> in_body;
+  std::unordered_set<const slang::ast::ParameterSymbol*> deciding_what_is_built;
+};
+
 // Which value parameters of each instance reach its unit when the instance is
 // built rather than as part of what is compiled, and which what is compiled
 // uses. A parameter's value is fixed before the run (LRM 23.10), and nothing
@@ -231,7 +247,7 @@ struct SpecializationKey {
 class SpecializationPolicy {
  public:
   explicit SpecializationPolicy(
-      support::BodiesRead bodies_read = support::BodiesRead::kElaborated)
+      support::BodiesRead bodies_read = support::BodiesRead::kOnePerName)
       : bodies_read_(bodies_read) {
   }
 
@@ -295,7 +311,8 @@ class SpecializationPolicy {
 
   // The name of the body `inst` is compiled to: the name of its unit, with the
   // digest of the values its body uses where it uses any. A unit compiled to
-  // one body is that body, under the unit's own name.
+  // one body is that body, under the unit's own name. It reads every block the
+  // instance built, so it is worked out once and kept, as the unit's name is.
   [[nodiscard]] auto BodyNameOf(const slang::ast::InstanceSymbol& inst) const
       -> std::string;
 
@@ -364,10 +381,7 @@ class SpecializationPolicy {
   struct PerInstance {
     std::vector<const slang::ast::ParameterSymbol*> supplied;
     std::unordered_set<const slang::ast::ParameterSymbol*> varying;
-    std::unordered_set<const slang::ast::ParameterSymbol*> used_in_signature;
-    std::unordered_set<const slang::ast::ParameterSymbol*> used_in_body;
-    std::unordered_set<const slang::ast::ParameterSymbol*>
-        deciding_what_is_built;
+    UsedParameters used;
   };
 
   using InstanceBodies =
@@ -391,14 +405,12 @@ class SpecializationPolicy {
 
   // What a body's own text says of its value parameters, whichever instance
   // it is read for: which parameters each one's declaration is written into,
-  // and which are used in its signature and which only in its body.
+  // and which the body uses and how.
   struct PerBody {
     ParameterSet own;
     std::unordered_map<const slang::ast::ParameterSymbol*, ParameterSet>
         written_into;
-    ParameterSet used_in_signature;
-    ParameterSet used_in_body;
-    ParameterSet deciding_what_is_built;
+    UsedParameters used;
   };
 
   auto Of(const slang::ast::InstanceSymbol& inst) const -> const PerInstance&;
@@ -432,6 +444,8 @@ class SpecializationPolicy {
   mutable std::unordered_map<const slang::ast::InstanceSymbol*, KeptName>
       names_;
   mutable std::vector<NameInProgress> names_in_progress_;
+  mutable std::unordered_map<const slang::ast::InstanceSymbol*, std::string>
+      body_names_;
   // Two keys reaching one name would silently make two units into one, so a
   // name kept is held against the key it was folded from.
   mutable std::unordered_map<std::string, SpecializationKey> folded_;

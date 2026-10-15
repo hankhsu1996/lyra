@@ -1163,18 +1163,34 @@ void VerifyInstanceMembers(
   }
 }
 
-// A loop states where each body it holds stands, every body once, and no value
-// of its index under two of them; a loop that counted no block holds none.
+// A loop of several bodies states where each one stands, every body once, and
+// no value of its index under two of them; a loop of one body builds it at
+// every index and states none, and a loop that counted no block holds none.
 void VerifyLoopGenerates(
     const StructuralScope& scope, const std::string& label,
     std::vector<std::string>& lines) {
   for (const Generate& generate : scope.generates) {
     const auto* loop = std::get_if<BlocksRepeat>(&generate.counting);
     if (loop == nullptr) continue;
+    const bool several = loop->bodies.size() > 1;
     std::vector<std::uint32_t> named;
     std::vector<std::int64_t> indices;
-    for (const BodyBuiltAt& built : loop->bodies) {
+    for (const LoopBody& built : loop->bodies) {
       named.push_back(built.body.value);
+      if (several && built.indices.empty()) {
+        lines.push_back(
+            std::format(
+                "hir verify: a loop generate of {} holds several bodies and "
+                "says nowhere that body {} stands",
+                label, built.body.value));
+      }
+      if (!several && !built.indices.empty()) {
+        lines.push_back(
+            std::format(
+                "hir verify: a loop generate of {} holds one body and lists "
+                "where it stands",
+                label));
+      }
       if (!std::ranges::is_sorted(built.indices)) {
         lines.push_back(
             std::format(

@@ -1598,10 +1598,16 @@ auto KeptActions(const std::filesystem::path& store) -> std::size_t {
   return CountEntries(store / "ac");
 }
 
+// The actions building a design of one module on the LLVM backend performs:
+// compiling the module's unit, the design root and the program's entry, and
+// linking what they produced.
+constexpr std::size_t kActionsBuildingOneModule = 4;
+
 // Every step of a build is kept under what it read, so building a design again
-// performs nothing new, and building a changed design, or the same one
-// compiled at another level, keeps more; how wide it was built changes nothing
-// any step reads, so that keeps none. `build` writes the
+// performs nothing new; compiling it at another level changes what every step
+// reads, and changing the module's text changes only what its unit's compile
+// and the link read. How wide it was built changes nothing any step reads, so
+// that keeps none. `build` writes the
 // one file it was asked for and `run` writes nothing, and nothing kept can be
 // reached through what a command handed back: clearing the store leaves both
 // the built program and a later run whole.
@@ -1627,24 +1633,22 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
   EXPECT_TRUE(std::filesystem::is_regular_file(work / "Test"))
       << "an anonymous design with one top names its program after the top";
-  const std::size_t kept_first = KeptActions(store);
-  EXPECT_GT(kept_first, 0U);
+  EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule);
 
   auto again = RunLyraFrom(lyra, work, "build " + common + " design.sv");
   ASSERT_EQ(again.exit_code, 0) << again.stderr_text;
-  EXPECT_EQ(KeptActions(store), kept_first)
+  EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
       << "an unchanged design built again performed a step anew";
 
   auto wider = RunLyraFrom(lyra, work, "build -j 4 " + common + " design.sv");
   ASSERT_EQ(wider.exit_code, 0) << wider.stderr_text;
-  EXPECT_EQ(KeptActions(store), kept_first)
+  EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
       << "a design built wider performed a step anew";
 
   auto released =
       RunLyraFrom(lyra, work, "build --release " + common + " design.sv");
   ASSERT_EQ(released.exit_code, 0) << released.stderr_text;
-  const std::size_t kept_released = KeptActions(store);
-  EXPECT_GT(kept_released, kept_first)
+  EXPECT_EQ(KeptActions(store), 2 * kActionsBuildingOneModule)
       << "a design compiled at another level was handed what was kept for the "
          "first";
 
@@ -1654,7 +1658,9 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   EXPECT_NE(changed.stdout_text.find("value=2"), std::string::npos)
       << "a changed design ran the program kept for the old one: "
       << changed.stdout_text;
-  EXPECT_GT(KeptActions(store), kept_released);
+  EXPECT_EQ(KeptActions(store), (2 * kActionsBuildingOneModule) + 2)
+      << "a change to the module's text performed anew a step that does not "
+         "read it";
 
   EXPECT_EQ(CountEntries(work), 2U)
       << "the working directory holds the design and the one program built, "
@@ -1721,7 +1727,7 @@ TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
   ASSERT_EQ(ran.exit_code, 0) << ran.stderr_text;
   EXPECT_EQ(CountEntries(temporary), 0U)
       << "a run left what it built in the temporary directory";
-  EXPECT_GT(KeptActions(store), 0U)
+  EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
       << "what the run built is kept in the platform's cache directory";
 
   const auto built = run("build --backend llvm -o program design.sv");

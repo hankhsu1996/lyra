@@ -247,6 +247,7 @@ cc_library(
         ":hir",
         ":profiling",
         ":slang_source",
+        ":stable_hash",
         ":support",
         "@slang",
     ],

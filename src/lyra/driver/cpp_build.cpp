@@ -5,8 +5,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
-#include <fstream>
-#include <functional>
 #include <iterator>
 #include <optional>
 #include <set>
@@ -32,6 +30,7 @@
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "lyra/profiling/time_trace.hpp"
+#include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 #include "lyra/support/statistics.hpp"
@@ -360,53 +359,38 @@ auto CopyDpiSources(
   return {};
 }
 
-// Every file of the project in `dir` that `source` reaches through an
-// `#include "..."`, each once and in a fixed order: what the compiler reads of
-// the project beside the file itself. A name the project does not hold is the
-// runtime's, whose headers are an input of their own.
-auto ProjectIncludesOf(
-    const std::filesystem::path& dir, const std::string& source)
+// Everything the compiler is told when a translation unit is compiled, short
+// of the prepared header it may be offered and the file names. One list, so the
+// command that compiles a file and the action it is kept under cannot describe
+// different things.
+auto CompileFlags(
+    const std::filesystem::path& include_root, Optimization optimization)
     -> std::vector<std::string> {
-  constexpr std::string_view kInclude = "#include \"";
-  std::set<std::string> reached;
-  std::vector<std::string> pending = {source};
-  while (!pending.empty()) {
-    std::ifstream in(dir / pending.back());
-    pending.pop_back();
-    std::string line;
-    while (std::getline(in, line)) {
-      const std::size_t end = line.find('"', kInclude.size());
-      if (!line.starts_with(kInclude) || end == std::string::npos) {
-        continue;
-      }
-      std::string included =
-          line.substr(kInclude.size(), end - kInclude.size());
-      std::error_code ec;
-      if (std::filesystem::is_regular_file(dir / included, ec) &&
-          reached.insert(included).second) {
-        pending.push_back(std::move(included));
-      }
-    }
-  }
-  return {reached.begin(), reached.end()};
+  return {
+      std::string(kCxxStandardFlag),
+      std::string(OptimizationFlag(optimization)), "-I", include_root.string()};
 }
 
-// The action compiling `source`: the file, every file of the project it
+// The action compiling `unit`: the file, every file of the project it
 // includes, each under its path, and what else the compiler reads or is told.
 // A prepared header is no input, since nothing a compile produces may depend on
 // whether it was offered one.
 auto CompileFile(
-    const std::filesystem::path& dir, const std::string& source,
-    const RuntimeLocation& runtime, const HostBuild& host) -> Action {
+    const std::filesystem::path& dir, const TranslationUnit& unit,
+    const stable_hash::Fingerprint& runtime_headers,
+    const std::filesystem::path& cxx, std::span<const std::string> flags)
+    -> Action {
   Action action("compile C++ file");
-  action.InputFile("source", dir / source);
-  for (const std::string& included : ProjectIncludesOf(dir, source)) {
+  action.InputFile("source", dir / unit.relpath);
+  for (const std::string& included : unit.includes) {
     action.Input("included", included);
     action.InputFile("content", dir / included);
   }
-  action.InputTree("runtime headers", runtime.include_root);
-  action.InputExecutable("compiler", host.cxx);
-  action.Input("optimization", OptimizationFlag(host.optimization));
+  action.InputDigest("runtime headers", runtime_headers);
+  action.InputExecutable("compiler", cxx);
+  for (const std::string& flag : flags) {
+    action.Input("flag", flag);
+  }
   return action;
 }
 
@@ -417,26 +401,24 @@ auto CompileFile(
 // next build prepares a fresh one.
 auto CompileOne(
     const std::filesystem::path& source, const std::filesystem::path& object,
-    const std::filesystem::path& include_root, const HostBuild& host,
-    const std::optional<std::filesystem::path>& prelude) -> diag::Result<void> {
-  const auto run = [&](const std::optional<std::filesystem::path>& prepared) {
-    std::vector<std::string> args = {
-        std::string(kCxxStandardFlag),
-        std::string(OptimizationFlag(host.optimization)), "-I",
-        include_root.string()};
-    if (prepared.has_value()) {
+    const std::filesystem::path& cxx, std::span<const std::string> flags,
+    const std::optional<ActionResult>& prelude, const ActionCache& actions)
+    -> diag::Result<void> {
+  const auto run = [&](const ActionResult* prepared) {
+    std::vector<std::string> args(flags.begin(), flags.end());
+    if (prepared != nullptr) {
       args.emplace_back("-include-pch");
-      args.push_back(prepared->string());
+      args.push_back(prepared->path.string());
       args.emplace_back(kPchContentValidationFlag);
     }
     args.emplace_back("-c");
     args.push_back(source.string());
     args.emplace_back("-o");
     args.push_back(object.string());
-    return RunProcessCaptured(host.cxx, args);
+    return RunProcessCaptured(cxx, args);
   };
   if (prelude.has_value()) {
-    auto fast = run(prelude);
+    auto fast = run(&*prelude);
     if (!fast) {
       return IoError(std::move(fast.error()));
     }
@@ -444,7 +426,7 @@ auto CompileOne(
       return {};
     }
   }
-  auto plain = run(std::nullopt);
+  auto plain = run(nullptr);
   if (!plain) {
     return IoError(std::move(plain.error()));
   }
@@ -456,7 +438,7 @@ auto CompileOne(
             plain->stderr_text));
   }
   if (prelude.has_value()) {
-    Discard(*prelude);
+    actions.Evict(*prelude);
   }
   return {};
 }
@@ -468,10 +450,15 @@ auto CompileTranslationUnits(
     std::span<const TranslationUnit> translation_units,
     const RuntimeLocation& runtime, const HostBuild& host, ActionCache& actions)
     -> diag::Result<std::vector<ActionResult>> {
+  const stable_hash::Fingerprint runtime_headers =
+      DigestOfTree(runtime.include_root);
+  const std::vector<std::string> flags =
+      CompileFlags(runtime.include_root, host.optimization);
   // The prelude is compiled before anything reads it, so several compiles
   // cannot each find it missing and race to build the same file.
-  const std::optional<std::filesystem::path> prelude = pch::EnsureCached(
-      host.cxx, runtime.include_root, host.pch, actions, host.optimization);
+  const std::optional<ActionResult> prelude = pch::EnsureCached(
+      host.cxx, runtime.include_root, runtime_headers, host.pch, actions,
+      host.optimization);
 
   const status::Phase phase("Compiling C++");
   status::Pieces(translation_units.size());
@@ -487,11 +474,11 @@ auto CompileTranslationUnits(
         const TranslationUnit& unit = translation_units[i];
         const status::Piece piece(unit.source_name);
         return actions.Execute(
-            CompileFile(dir, unit.relpath, runtime, host),
+            CompileFile(dir, unit, runtime_headers, host.cxx, flags),
             [&](const std::filesystem::path& object) {
               return CompileOne(
-                  dir / unit.relpath, object, runtime.include_root, host,
-                  prelude);
+                  dir / unit.relpath, object, host.cxx, flags, prelude,
+                  actions);
             });
       },
       [&](diag::Result<ActionResult> result) {
@@ -558,7 +545,9 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
       .body_name = unit.body_name,
       .files = {artifacts.code.relpath},
       .translation_unit =
-          {.relpath = artifacts.code.relpath, .source_name = unit.source_name},
+          {.relpath = artifacts.code.relpath,
+           .source_name = unit.source_name,
+           .includes = artifacts.code.includes},
       .dpi_fragment = dpi::AbiFragmentOf(unit),
       .declarations = artifacts.declarations};
 }
@@ -566,7 +555,8 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
 void CppProjectSink::WriteDeclarations(WrittenUnit& written) {
   std::vector<support::Artifact> recorded;
   for (const backend::cpp::CppArtifact& declaration : written.declarations) {
-    const std::size_t says = std::hash<std::string>{}(declaration.content);
+    const stable_hash::Fingerprint says =
+        stable_hash::FingerprintOfText(declaration.content);
     const auto [stated, first] =
         declared_.try_emplace(declaration.relpath, says);
     if (!first) {
@@ -583,6 +573,7 @@ void CppProjectSink::WriteDeclarations(WrittenUnit& written) {
       refusals_->Report(std::move(r.error()));
       continue;
     }
+    includes_of_.emplace(declaration.relpath, declaration.includes);
     written_.push_back(declaration.relpath);
     recorded.push_back(
         support::Artifact{
@@ -635,13 +626,41 @@ auto CppProjectSink::Finish(const mir::CompilationUnit& root)
       WrittenUnit{
           .body_name = root.body_name,
           .files = {host_main.relpath},
-          .translation_unit = {.relpath = host_main.relpath, .source_name = {}},
+          .translation_unit =
+              {.relpath = host_main.relpath,
+               .source_name = {},
+               .includes = host_main.includes},
           .dpi_fragment = std::nullopt,
           .declarations = {}});
   if (formatting_ == SourceFormatting::kOn) {
     return FormatSources(written_, dir_);
   }
   return {};
+}
+
+auto CppProjectSink::TakeSources() -> EmittedCppSources {
+  for (TranslationUnit& unit : translation_units_) {
+    std::set<std::string> reached;
+    std::vector<std::string> pending = std::move(unit.includes);
+    while (!pending.empty()) {
+      std::string file = std::move(pending.back());
+      pending.pop_back();
+      if (!reached.insert(file).second) continue;
+      const auto found = includes_of_.find(file);
+      if (found == includes_of_.end()) {
+        throw InternalError(
+            std::format(
+                "backend::cpp: '{}' includes '{}', which the project does not "
+                "hold -- please report this as a bug",
+                unit.relpath, file));
+      }
+      pending.insert(pending.end(), found->second.begin(), found->second.end());
+    }
+    unit.includes.assign(reached.begin(), reached.end());
+  }
+  return EmittedCppSources{
+      .translation_units = std::move(translation_units_),
+      .dpi_fragments = std::move(dpi_fragments_)};
 }
 
 auto CppProjectSink::WriteArtifact(const backend::cpp::CppArtifact& file) const

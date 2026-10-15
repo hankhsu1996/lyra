@@ -322,8 +322,9 @@ specializations, not with instance count.
       at all, and a loop emits the same however many blocks it counts. Where the index instead fixes
       something a class settles once -- a width, a specialization, which members exist -- separate
       compilation is the correct answer and stays, which is `specialization_model.md` invariant 1. It
-      is one class per distinct body rather than per index: blocks whose widths alternate between two
-      compile to two classes, and the loop builds at each index the one that index takes.
+      is one class per value of the index such a declaration relies on, as a template argument is:
+      blocks whose widths alternate between two compile to a class per index, and the loop builds at
+      each index the class that index names.
       [../decisions/one-body-built-at-every-index.md](../decisions/one-body-built-at-every-index.md)
       holds how a body qualifies, why the question deciding that is checked rather than trusted, and
       what a scope's construction receives.
@@ -376,7 +377,7 @@ specializations, not with instance count.
       copies of one body stated the same reads at different positions and compared unequal. A loop
       whose blocks each declare three variables and read them in an `always_comb` was a set of
       classes per iteration and is one set at any count; a module instantiated with different
-      values of a parameter it only reads reported lost sharing and was compiled once per value.
+      values of a parameter it only reads was compiled once per value.
       Reads now arrive in the order the text makes them.
       [../decisions/read-set-inference.md](../decisions/read-set-inference.md) holds why the order
       is settled there. Every corpus design is lowered twice and held to stating one thing, and a
@@ -399,7 +400,8 @@ specializations, not with instance count.
       one type where it was one per block. On the C++ backend the classes of a module's scopes are
       nested classes in the one header that carries the module's name, so file count and emitted
       bytes no longer grow with the iteration count for any loop design the growth check holds. A
-      loop whose blocks declare a class is still one class per index.
+      loop whose blocks declare a class is one class per index wherever the blocks' code or what
+      they declare uses the index.
       [../decisions/a-generate-block-is-a-nested-definition.md](../decisions/a-generate-block-is-a-nested-definition.md)
       holds what an index decides and why.
 
@@ -427,11 +429,6 @@ specializations, not with instance count.
       blocks can differ that sharing does not see costs a multiple of that, and a loop of a thousand
       such blocks is where a design stops building. The growth record names what follows the block
       count on each path.
-
-- [ ] Blocks that are one text are still told apart by what selects them. A declaration sized by a
-      block parameter set from the loop index is one class per block where the sizes are few; a
-      block holding nothing sized is one class per block where a block it holds is; and every block
-      under a block told apart is written once per such block. Same growth record.
 
 - [ ] A block reaching its neighbour by a name indexed from its own index is compiled once per
       block, and lowering such a loop takes more than proportional time, held in both paths' growth

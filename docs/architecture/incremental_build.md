@@ -6,9 +6,14 @@ Define how incremental compilation works at the architectural level: what is cac
 defined across sessions, how reuse is determined, and what shape the work takes so that units
 compile in parallel.
 
-This is a contract the compiler does not yet realize: today a change recompiles everything. The
-rules here constrain every layer regardless, because they are what keeps a later query-based
-implementation possible -- a design that assumes whole-design recompilation forecloses it.
+The compiler realizes this contract only below the lowering. Each step from a unit's emitted text
+onwards -- compiling a unit's module or an emitted file to an object, linking the program -- is an
+action kept under the digest of everything it reads, so a build after an edit compiles and links
+only what came out different, and that digest is the only fingerprint there is: a name the emitted
+text still spells changes it. The front end and every lowering run whole on every build, with no
+query memoized and no key finer than a unit. The rules here constrain every layer regardless,
+because they are what keeps a query-based implementation of the rest possible -- a design that
+assumes whole-design lowering forecloses it.
 
 ## Owns
 

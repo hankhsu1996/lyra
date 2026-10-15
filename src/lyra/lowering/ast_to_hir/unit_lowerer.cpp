@@ -103,7 +103,7 @@ auto WithOthers(
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Symbol& home,
-    hir::BodyOfUnit names, hir::UnitRole role,
+    hir::UnitBodyRef names, hir::UnitRole role,
     std::span<const slang::ast::InstanceBodySymbol* const> checked_against)
     : facts_(facts),
       home_(&home),
@@ -115,16 +115,15 @@ UnitLowerer::UnitLowerer(
   unit_.source_name = SourceNameOf(home);
   unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
   signature_.unit_name = unit_.name;
-  for (const slang::ast::Scope* application : applications_) {
-    if (application != scope_) {
-      checked_bodies_.insert(&application->asSymbol());
-    }
-  }
 }
 
 auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
   const slang::ast::Symbol& home = UnitHomeOf(decl);
-  return &home == home_ || checked_bodies_.contains(&home);
+  return &home == home_ ||
+         std::ranges::any_of(
+             applications_, [&](const slang::ast::Scope* application) {
+               return &application->asSymbol() == &home;
+             });
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
@@ -197,7 +196,7 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     if (application == scope_) continue;
     auto built = LowerScopeOf(*application);
     if (!built) return std::unexpected(std::move(built.error()));
-    if (!(*built == unit_.root_scope)) {
+    if (*built != unit_.root_scope) {
       throw InternalError(
           std::format(
               "UnitLowerer::LowerBodies: '{}' is an application of body '{}' "
@@ -224,13 +223,20 @@ auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
   return root.Run(frame);
 }
 
+auto UnitLowerer::ApplicationHolding(const slang::ast::Scope& scope) const
+    -> const slang::ast::Scope* {
+  for (const slang::ast::Scope* level = &scope; level != nullptr;
+       level = level->asSymbol().getParentScope()) {
+    if (std::ranges::contains(applications_, level)) return level;
+  }
+  return nullptr;
+}
+
 auto UnitLowerer::ApplicationDeclaring(const slang::ast::ParameterSymbol& param)
     const -> const slang::ast::Scope& {
-  for (const slang::ast::Scope* level = param.getParentScope();
-       level != nullptr; level = level->asSymbol().getParentScope()) {
-    if (checked_bodies_.contains(&level->asSymbol())) return *level;
-  }
-  return *scope_;
+  const slang::ast::Scope* holding =
+      ApplicationHolding(*param.getParentScope());
+  return holding != nullptr ? *holding : *scope_;
 }
 
 auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
@@ -1062,6 +1068,20 @@ auto UnitLowerer::EvaluatorOf(const slang::ast::Symbol& holder) const
         "its identity with the unit's other structural declarations");
   }
   return it->second;
+}
+
+auto UnitLowerer::InternDeclaredPortType(const slang::ast::Symbol& port)
+    -> diag::Result<hir::TypeId> {
+  const auto span = frontend::PointSpanOf(port.location);
+  if (const auto* declared = port.as_if<slang::ast::PortSymbol>()) {
+    return InternType(declared->getType(), span);
+  }
+  if (const auto* offered = port.as_if<slang::ast::ModportPortSymbol>()) {
+    return InternType(offered->getType(), span);
+  }
+  throw InternalError(
+      "UnitLowerer::InternDeclaredPortType: only a port and a name a view "
+      "offers declare a port's type");
 }
 
 void UnitLowerer::MapSubroutineBinding(

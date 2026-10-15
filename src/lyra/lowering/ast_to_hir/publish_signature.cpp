@@ -210,7 +210,7 @@ auto PublishPath(
   std::vector<hir::PublishedSelector> path;
   path.reserve(steps.size());
   for (const auto* step : std::views::reverse(steps)) {
-    auto projected = lowerer.InternType(*step->type, span);
+    auto projected = lowerer.InternExpressionType(*step, span);
     if (!projected) return std::unexpected(std::move(projected.error()));
     if (const auto* select =
             step->as_if<slang::ast::ElementSelectExpression>()) {
@@ -269,10 +269,11 @@ auto PublishedLoopOf(
         .classes = std::move(classes),
         .blocks = std::move(blocks)};
   }
-  std::optional<support::DefPath> class_path;
-  for (support::DefPath& only : classes) class_path = std::move(only);
   return hir::PublishedLoopOfOneClass{
-      .name = std::move(name), .class_path = std::move(class_path)};
+      .name = std::move(name),
+      .class_path = classes.empty()
+                        ? std::nullopt
+                        : std::optional{std::move(classes.front())}};
 }
 
 // The construct of kind `Construct` a scope's record holds under `id`. Every
@@ -366,10 +367,9 @@ auto UnitLowerer::PublishedCallableOf(
     -> diag::Result<hir::PublishedCallable> {
   // An expression another unit asks for the value of is evaluated in a
   // function of this unit that takes nothing.
-  const auto evaluator = [&](std::string name, const slang::ast::Type& type,
-                             const slang::ast::Symbol& holder)
+  const auto evaluator = [&](std::string name, const slang::ast::Symbol& holder)
       -> diag::Result<hir::PublishedCallable> {
-    auto result_type = InternType(type, frontend::PointSpanOf(holder.location));
+    auto result_type = InternDeclaredPortType(holder);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     return hir::PublishedCallable{
         .name = std::move(name),
@@ -398,21 +398,12 @@ auto UnitLowerer::PublishedCallableOf(
                 .result_type = *result_type};
           },
           [&](const ScopePublicationRecord::PortDefault& port) {
-            return evaluator(
-                PortDefaultName(port.port->name), port.port->getType(),
-                *port.port);
+            return evaluator(PortDefaultName(port.port->name), *port.port);
           },
-          [&](const ScopePublicationRecord::ViewRead& read)
-              -> diag::Result<hir::PublishedCallable> {
-            const auto* connection = read.port->getConnectionExpr();
-            if (connection == nullptr) {
-              throw InternalError(
-                  "PublishSignature: a name the view defines is the "
-                  "expression it was written with");
-            }
+          [&](const ScopePublicationRecord::ViewRead& read) {
             return evaluator(
                 ModportReadName(read.modport->name, read.port->name),
-                *connection->type, *read.port);
+                *read.port);
           }},
       callable);
 }
@@ -604,18 +595,15 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
     std::vector<hir::ScopeClassSignature> classes;
     std::map<support::DefPath, std::size_t> class_at;
   };
-  const auto application_of = [&](const slang::ast::Scope& scope) {
-    for (const slang::ast::Scope* level = &scope; level != nullptr;
-         level = level->asSymbol().getParentScope()) {
-      if (std::ranges::contains(applications_, level)) return level;
-    }
-    throw InternalError(
-        "UnitLowerer::PublishSignature: a scope the unit publishes is in none "
-        "of the applications it is declared from");
-  };
   std::unordered_map<const slang::ast::Scope*, PublishedClasses> by_application;
   for (const slang::ast::Scope* scope : publishing_scopes_) {
-    PublishedClasses& into = by_application[application_of(*scope)];
+    const slang::ast::Scope* application = ApplicationHolding(*scope);
+    if (application == nullptr) {
+      throw InternalError(
+          "UnitLowerer::PublishSignature: a scope the unit publishes is in "
+          "none of the applications it is declared from");
+    }
+    PublishedClasses& into = by_application[application];
     const auto [known, first] = into.class_at.try_emplace(
         PublicationOf(*scope).class_path, into.scopes.size());
     if (first) into.scopes.emplace_back();
@@ -632,6 +620,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   }
   const PublishedClasses& named = by_application.at(scope_);
   for (const auto& [application, published_by] : by_application) {
+    if (application == scope_) continue;
     if (published_by.classes != named.classes) {
       throw InternalError(
           std::format(
@@ -937,7 +926,7 @@ auto UnitLowerer::PublishScopeClass(
         Overloaded{
             [&](const ScopePublicationRecord::ViewPlace&)
                 -> diag::Result<hir::PublishedModportPort> {
-              auto interned = InternType(*connection->type, span);
+              auto interned = InternDeclaredPortType(port);
               if (!interned) {
                 return std::unexpected(std::move(interned.error()));
               }

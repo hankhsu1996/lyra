@@ -306,6 +306,18 @@ cc_test(
 )
 
 cc_test(
+    name = "driver_action_cache_test",
+    srcs = ["driver/action_cache_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:diag",
+        "//:driver",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "runtime_object_ref_test",
     srcs = ["runtime/object_ref_test.cpp"],
     copts = LYRA_COPTS,

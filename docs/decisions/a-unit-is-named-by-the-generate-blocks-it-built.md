@@ -14,7 +14,9 @@ D3,
 [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
 D1 and D2, [one-body-built-at-every-index](one-body-built-at-every-index.md) D2, and
 [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) D4 and D5: a
-compiled body holds the blocks its own instances built and no other instance's.
+compiled body holds the blocks its own instances built and no other instance's. Answers
+[parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) Decision 2 for
+what an instance built (below).
 
 ## Requirement
 
@@ -109,7 +111,7 @@ the other changed it.
 "which" out of the body: the design root would state, per instance, which alternative each
 conditional built, how many blocks each loop counted and which body each child is, as constant data;
 each generate block would be a compiled artifact of its own; and a parent would hold a child through
-a base pointer so that its name no longer followed the child's. Held against what rustc and C++ do,
+a base pointer so that its name did not follow the child's. Held against what rustc and C++ do,
 three of its premises went beyond them:
 
 - Sharing one body across instances whose selected branches differ. No compiler does, because the
@@ -132,6 +134,26 @@ alternative are still one body.
 and a scope handing such a module the value that decides it compiles once per value (D4). Fact 4 is
 that cost on nineteen real designs: none at all on twelve of them, and at most 10.8% more bodies,
 almost all of them small primitives.
+
+## What this reads of the elaborated design
+
+[parameter-code-shape-over-approximation](parameter-code-shape-over-approximation.md) Decision 2
+forbids reading more of the elaborated instance graph -- expanded per-instance values, materialized
+sub-instances -- as compile-time facts, because the graph would then decide identity where the
+definition and its arguments should (the North Star forbids the graph as the authority for unit or
+specialization identity). D1 reads which blocks an instance built off its elaboration, so it has to
+answer that.
+
+It reads the evaluation of the instance's own generate scheme, not the graph. Which blocks stand is
+fixed by the definition and the values the scheme read (LRM 27.3), and the front end records those
+values as it evaluates the scheme (D4), so two instances of one definition whose schemes read the
+same values built the same blocks, wherever they sit and whatever else elaborated. That is how a
+constant the front end evaluated is read, and how an `if constexpr` branch follows from a template's
+arguments. What the graph would add beyond it is not read: D1 stops at an instance the scope holds,
+whose blocks are that instance's own name, and the front end's record that two instances duplicate
+each other decides nothing. What the reading costs is that the name waits on the front end's
+elaboration of the instance, where rustc names an `Instance` from its definition and arguments
+without building anything.
 
 ## Limits, each with its cause
 

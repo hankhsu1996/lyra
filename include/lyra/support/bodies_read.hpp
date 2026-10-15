@@ -10,12 +10,13 @@ namespace lyra::support {
 // interface it carries, whose names resolve alike from both (LRM 23.8) and
 // which nothing written elsewhere reaches (LRM 23.10.1, 23.11, 33.4), is left
 // pointing at that one's body. What that body states then holds for such an
-// instance too, so a compile reads the bodies the front end elaborated and
+// instance too, and for any instance compiled to the body of the same name, so
+// a compile reads one body per name, of the first instance met with it, and
 // names every other instance where it is written. Reading every instance's
 // body instead makes the front end elaborate each one, and holds each to the
 // body it is named for; that is how a compile is checked against itself.
 enum class BodiesRead : std::uint8_t {
-  kElaborated,
+  kOnePerName,
   kEveryInstance,
 };
 

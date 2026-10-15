@@ -113,7 +113,7 @@ class RepeatableLoweringTest : public testing::Test {
     Compilation second = Elaborate(*case_);
 
     const std::optional<LoweredUnits> first_units =
-        Lower(first, 1, BodiesRead::kElaborated);
+        Lower(first, 1, BodiesRead::kOnePerName);
     const std::optional<LoweredUnits> second_units =
         Lower(second, kWide, BodiesRead::kEveryInstance);
     if (!first_units.has_value() && !second_units.has_value()) {
@@ -146,7 +146,7 @@ TEST(RepeatableLowering, ADesignWrittenToShowAnOrderingStatesOneThing) {
   Compilation second = Elaborate(design);
 
   const std::optional<LoweredUnits> first_units =
-      Lower(first, 1, BodiesRead::kElaborated);
+      Lower(first, 1, BodiesRead::kOnePerName);
   const std::optional<LoweredUnits> second_units =
       Lower(second, kWide, BodiesRead::kEveryInstance);
   ASSERT_TRUE(first_units.has_value() && second_units.has_value())

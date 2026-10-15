@@ -19,15 +19,15 @@
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/stable_hash/fingerprint.hpp"
 
 namespace lyra::driver {
 
 // How this host turns emitted C++ into a program: which compiler to invoke,
-// what to do about the precompiled header, how hard to optimize, how much of
-// the machine to take while doing it, and where what it builds is kept for the
-// next build. Resolved once at the CLI boundary and passed unchanged down every
-// path, so the recipe an emitted project carries and the compile Lyra performs
-// cannot disagree about the toolchain.
+// what to do about the precompiled header, how hard to optimize, and how much
+// of the machine to take while doing it. Resolved once at the CLI boundary and
+// passed unchanged down every path, so the recipe an emitted project carries
+// and the compile Lyra performs cannot disagree about the toolchain.
 //
 // What a build produces, and whether it works at all, is baked into that
 // recipe. How much of a machine to take, and where to keep things, are not:
@@ -39,16 +39,17 @@ struct HostBuild {
   Optimization optimization = Optimization::kIterate;
   // How many host compiles may run at once, already a positive count.
   std::size_t compile_width = 1;
-  // Absent when no store could be located, and then nothing is kept.
-  std::optional<std::filesystem::path> store;
 };
 
-// A file a build compiles: where it is in the project, and the identifier the
-// source declares the unit it was written for under. A file written for
-// nothing the source named has none.
+// A file a build compiles: where it is in the project, the identifier the
+// source declares the unit it was written for under, and each file of the
+// project compiling it reads -- every one it reaches through an include, as
+// what wrote each file recorded. A file written for nothing the source named
+// has no identifier.
 struct TranslationUnit {
   std::string relpath;
   std::string source_name;
+  std::vector<std::string> includes;
 };
 
 // What the steps after emission need, carried rather than recovered by reading
@@ -121,12 +122,9 @@ class CppProjectSink {
   // none of which may be written until every unit has been collected.
   auto Finish(const mir::CompilationUnit& root) -> diag::Result<void>;
 
-  // Hands over what emission produced, in the order the units were collected.
-  [[nodiscard]] auto TakeSources() -> EmittedCppSources {
-    return EmittedCppSources{
-        .translation_units = std::move(translation_units_),
-        .dpi_fragments = std::move(dpi_fragments_)};
-  }
+  // Hands over what emission produced, in the order the units were collected,
+  // each translation unit with every file of the project it reaches.
+  [[nodiscard]] auto TakeSources() -> EmittedCppSources;
 
  private:
   [[nodiscard]] auto WriteArtifact(const backend::cpp::CppArtifact& file) const
@@ -139,7 +137,10 @@ class CppProjectSink {
   SourceFormatting formatting_;
   diag::DiagnosticSink* refusals_;
   // Each declaration written so far, by its path, as a digest of what it says.
-  std::unordered_map<std::string, std::size_t> declared_;
+  std::unordered_map<std::string, stable_hash::Fingerprint> declared_;
+  // The files of the project each declaration written so far includes, by its
+  // path.
+  std::unordered_map<std::string, std::vector<std::string>> includes_of_;
   // Formatting runs one process over every file rather than one per file, so
   // what was written is remembered while the text itself is not.
   std::vector<std::string> written_;

@@ -5,7 +5,7 @@
 #include <span>
 #include <string>
 
-#include "lyra/hir/body_of_unit.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -50,7 +50,7 @@ void StateScopeDefinition(
 // unit's entry, with its prototype erased.
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    std::span<const hir::BodyOfUnit> own,
+    std::span<const hir::UnitBodyRef> own,
     const DesignInstantiations& instantiations,
     const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
     -> mir::ClassConstantRef;

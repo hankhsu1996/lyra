@@ -335,16 +335,26 @@ auto ReadInstantiation(
           .type = type});
 }
 
+// Where a unit's object entry takes the first parameter it is handed: after
+// where the object hangs, its segment and the construction table it is built
+// with.
+constexpr std::size_t kFirstHandedEntryParam = 3;
+
 // The type of a unit's object entry: where the object hangs, its segment and
-// the construction table it is built with, then each value it is handed, as
-// `handed` types them, answering an owning pointer to the object, `made`.
+// the construction table it is built with, then each parameter it is handed,
+// assigned or left to its default, at the type `handed` gives it, answering an
+// owning pointer to the object, `made`. The holder building one and the design
+// root listing it both state it from here, so the two cannot disagree.
 auto ObjectEntryType(
-    mir::CompilationUnit& unit, std::span<const mir::TypeId> handed,
+    UnitLowerer& unit_lowerer, std::span<const hir::TypeId> handed,
     mir::TypeId made) -> mir::TypeId {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   std::vector<mir::TypeId> params{
       unit.builtins.scope_ptr, unit.builtins.hierarchy_segment,
       mir::ConstructionTablePointer(unit.types)};
-  params.insert(params.end(), handed.begin(), handed.end());
+  for (const hir::TypeId value : handed) {
+    params.push_back(AssignedOrNoneOf(unit, unit_lowerer.TranslateType(value)));
+  }
   return unit.types.Intern(
       mir::Type{mir::MachineFunctionType{
           .params = std::move(params), .result = made}});
@@ -360,12 +370,6 @@ auto ObjectEntryTypes(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   std::map<std::string, mir::TypeId, std::less<>> types;
   for (const auto& [made, entry] : entries) {
-    std::vector<mir::TypeId> handed;
-    handed.reserve(entry.handed.size());
-    for (const hir::TypeId value : entry.handed) {
-      handed.push_back(
-          AssignedOrNoneOf(unit, unit_lowerer.TranslateType(value)));
-    }
     const mir::TypeId object = unit.types.Intern(
         mir::Type{mir::ObjectType{
             .of = mir::CrossUnitClassRef{
@@ -373,7 +377,7 @@ auto ObjectEntryTypes(
     const mir::TypeId owning = unit.types.Intern(
         mir::Type{mir::PointerType{
             .pointee = object, .ownership = mir::PointerOwnership::kUnique}});
-    types.emplace(made, ObjectEntryType(unit, handed, owning));
+    types.emplace(made, ObjectEntryType(unit_lowerer, entry.handed, owning));
   }
   return types;
 }
@@ -398,13 +402,14 @@ auto BlockConstructionArguments(
 // construction counts out rather than a constant, so a declaration covering
 // many objects builds them in a loop; a scalar instance is the index-free
 // case, built by the same expression. `arguments` are what the object's
-// constructor is passed, one per parameter it takes at construction.
+// constructor is passed, one per parameter it takes at construction, which
+// `handed` types.
 auto BuildOwnedInstance(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId parent_self,
     const std::string& runtime_label, hir::InstantiationIndex instantiation,
     mir::TypeId owning_pointer_type, mir::TypeId borrowed_pointer_type,
-    std::span<const mir::ExprId> indices, std::vector<mir::Expr> arguments)
-    -> mir::ExprId {
+    std::span<const mir::ExprId> indices, std::span<const hir::TypeId> handed,
+    std::vector<mir::Expr> arguments) -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
   const auto& builtins = unit.builtins;
@@ -413,27 +418,37 @@ auto BuildOwnedInstance(
 
   // This unit read what the instantiated one published, which states what may
   // be reached and never how much storage an object takes, so the object is
-  // asked for rather than made here. Which unit is made at the instantiation is
-  // decided where the program is assembled, so the entry is read off the table
-  // and restored to the prototype the published class states for it.
+  // asked for rather than made here. Which body is made at the instantiation
+  // is decided where the program is assembled, so the entry is read off the
+  // table and converted back to the prototype its unit declares it with.
+  const mir::TypeId entry_type =
+      ObjectEntryType(unit_lowerer, handed, owning_pointer_type);
+  const auto& entry_params =
+      unit.types.Get(entry_type).Get<mir::MachineFunctionType>().params;
+  if (entry_params.size() != kFirstHandedEntryParam + arguments.size()) {
+    throw InternalError(
+        "hir_to_mir: an instance is built with a different number of values "
+        "than its object entry takes -- please report this as a bug");
+  }
   const mir::TypeId table_type = mir::ConstructionTablePointer(unit.types);
   std::vector<mir::ExprId> entry_arguments{
       parent_self, segment_id,
       ReadInstantiation(
           unit, frame, support::BuiltinFn::kInstantiationTable, instantiation,
           table_type)};
-  std::vector<mir::TypeId> handed;
-  for (mir::Expr& value : arguments) {
-    handed.push_back(value.type);
-    entry_arguments.push_back(block.exprs.Add(std::move(value)));
+  for (std::size_t i = 0; i < arguments.size(); ++i) {
+    if (arguments[i].type != entry_params[kFirstHandedEntryParam + i]) {
+      throw InternalError(
+          "hir_to_mir: an instance is handed a value at a type other than "
+          "the one its object entry takes -- please report this as a bug");
+    }
+    entry_arguments.push_back(block.exprs.Add(std::move(arguments[i])));
   }
   const mir::ExprId erased = ReadInstantiation(
       unit, frame, support::BuiltinFn::kInstantiationEntry, instantiation,
       mir::ErasedFunction(unit.types));
   const mir::ExprId entry = block.exprs.Add(
-      mir::Expr{
-          .data = mir::CastExpr{.operand = erased},
-          .type = ObjectEntryType(unit, handed, owning_pointer_type)});
+      mir::Expr{.data = mir::CastExpr{.operand = erased}, .type = entry_type});
   const mir::ExprId ctor_call_id = block.exprs.Add(
       mir::Expr{
           .data =
@@ -548,12 +563,18 @@ auto BuildAlternative(
                             coords[d], unit.builtins.int_type))},
             .type = unit.builtins.int_type}));
   }
+  std::vector<hir::TypeId> handed;
+  handed.reserve(alternative.assignments.size());
+  for (const hir::ParameterValueAssignment& assigned :
+       alternative.assignments) {
+    handed.push_back(assigned.type);
+  }
   const mir::ExprId built = BuildOwnedInstance(
       unit_lowerer, frame, parent_self, member.instance_name,
-      lowerer.Layout().Of(id, which),
+      lowerer.Instantiations().Of(id, which),
       MakeExternalUnitPointer(
           unit_lowerer, alternative, mir::PointerOwnership::kUnique),
-      borrowed, indices, *std::move(arguments));
+      borrowed, indices, handed, *std::move(arguments));
   return ObjectAs(block, built, held);
 }
 
@@ -1928,7 +1949,7 @@ auto LowerRepeatedGenerate(
 
   // The block standing at the index the loop then holds, built into `in`.
   const auto build_into =
-      [&](mir::Block& in, const hir::BodyBuiltAt& built) -> diag::Result<void> {
+      [&](mir::Block& in, const hir::LoopBody& built) -> diag::Result<void> {
     const WalkFrame in_frame = body_frame.WithBlock(&in);
     auto arguments =
         LowerConstructorArguments(lowerer, in_frame, repeat.arguments);
@@ -1940,9 +1961,9 @@ auto LowerRepeatedGenerate(
     return {};
   };
 
-  // A loop no object of this class counted a block out of states no body, and
-  // the loop is then run by nothing: the same expressions read against the
-  // same inputs count none here either.
+  // Where the loop counted no block for any object of this class, it states no
+  // body, and nothing runs it: its expressions, read against the same inputs
+  // here, would count none either.
   if (repeat.bodies.empty()) return steps.BuildStatement();
 
   // Where the loop starts is a value it is given: LRM 27.4 spells the
@@ -1960,14 +1981,14 @@ auto LowerRepeatedGenerate(
 
   // Which body is built is chosen from the last outwards, so each test states
   // only the values its own body stands at.
-  const std::span<const hir::BodyBuiltAt> tested =
+  const std::span<const hir::LoopBody> tested =
       std::span{repeat.bodies}.first(repeat.bodies.size() - 1);
   mir::Block chosen;
   if (auto last = build_into(chosen, repeat.bodies.back()); !last) {
     return std::unexpected(std::move(last.error()));
   }
   for (std::size_t back = tested.size(); back > 0; --back) {
-    const hir::BodyBuiltAt& built = tested[back - 1];
+    const hir::LoopBody& built = tested[back - 1];
     mir::Block stands;
     if (auto here = build_into(stands, built); !here) {
       return std::unexpected(std::move(here.error()));
@@ -2310,11 +2331,12 @@ auto StructuralScopeLowerer::RouteEnd(
 
 auto StructuralScopeLowerer::ForScope(
     UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-    const hir::StructuralScope& hir_scope, const hir::ScopeLayout& layout,
+    const hir::StructuralScope& hir_scope,
+    const hir::ScopeInstantiations& instantiations,
     std::optional<DesignRootInputs> design_root)
     -> std::unique_ptr<StructuralScopeLowerer> {
   auto lowerer = std::make_unique<StructuralScopeLowerer>(
-      unit_lowerer, parent, hir_scope, layout, std::move(design_root));
+      unit_lowerer, parent, hir_scope, instantiations, std::move(design_root));
   lowerer->published_class_id_ = unit_lowerer.TakePublishedScopeClass(
       hir_scope.published.signature.class_path);
   lowerer->generate_children_.reserve(hir_scope.generates.size());
@@ -2327,7 +2349,7 @@ auto StructuralScopeLowerer::ForScope(
     for (const hir::StructuralScopeId block : held.Ids()) {
       blocks.push_back(ForScope(
           unit_lowerer, lowerer.get(), held.Get(block).scope,
-          layout.OfBlock(generate, block)));
+          instantiations.OfBlock(generate, block)));
     }
   }
   return lowerer;
@@ -3101,7 +3123,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // only for the design root, so a source unit's scope and a nested scope both
   // leave it empty.
   const auto call_namespace_unit = [&](const std::string& unit_name,
-                                       mir::MintedEntry entry) {
+                                       mir::BringUpEntry entry) {
     unit_lowerer.Unit().ConsumeNamespaceOf(unit_name);
     const mir::ExprId call = initialize_block.exprs.Add(
         mir::Expr{
@@ -3110,7 +3132,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
                     .callee =
                         mir::Direct{
                             .target =
-                                mir::ExternalUnitMintedEntryTarget{
+                                mir::ExternalBringUpTarget{
                                     .unit_name = unit_name, .entry = entry}},
                     .arguments = {}},
             .type = void_type});
@@ -3118,10 +3140,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   };
   if (design_root_.has_value()) {
     for (const std::string& unit : design_root_->namespaces.units) {
-      call_namespace_unit(unit, mir::MintedEntry::kInstallStorage);
+      call_namespace_unit(unit, mir::BringUpEntry::kInstallStorage);
     }
     for (const std::string& unit : design_root_->namespaces.units) {
-      call_namespace_unit(unit, mir::MintedEntry::kInitializeStorage);
+      call_namespace_unit(unit, mir::BringUpEntry::kInitializeStorage);
     }
   }
 

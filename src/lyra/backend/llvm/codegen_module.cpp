@@ -53,12 +53,13 @@ namespace lyra::backend::llvm_backend {
 
 CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
     : context_(std::make_unique<llvm::LLVMContext>()),
-      // A module carries the name of the unit it holds, because the party
+      // A module carries the name of the body it holds, because the party
       // composing the program derives names of its own from it -- one that
       // collects what runs before the program starts gives its result a name
       // made from this one, so two modules sharing an identifier are two
-      // artifacts that cannot be composed together.
-      module_(std::make_unique<llvm::Module>(unit.name, *context_)),
+      // artifacts that cannot be composed together, and two bodies of one
+      // unit are two artifacts.
+      module_(std::make_unique<llvm::Module>(unit.body_name, *context_)),
       unit_(&unit),
       types_(*context_, unit),
       tuples_(*this, types_, unit),
@@ -1592,7 +1593,10 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
       offsetof(ClosureDefinition, size),
       Int(captures->size, sizeof(ClosureDefinition::size)));
   out.Place(offsetof(ClosureDefinition, end_captures), end);
-  DefineConstant(symbol, std::move(out).Build(), lir::Linkage::kExternal)
+  // The definition and what ends the captures are named wherever the invoke
+  // is, and nowhere else.
+  end->setLinkage(LinkageOf(invoke.linkage));
+  DefineConstant(symbol, std::move(out).Build(), invoke.linkage)
       ->setAlignment(llvm::Align(alignof(ClosureDefinition)));
   return {};
 }

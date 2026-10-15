@@ -28,4 +28,8 @@ struct Fingerprint {
 [[nodiscard]] auto FingerprintOfHex(std::string_view hex)
     -> std::optional<Fingerprint>;
 
+// The fingerprint of one text alone, as a hasher given only that text answers
+// it.
+[[nodiscard]] auto FingerprintOfText(std::string_view text) -> Fingerprint;
+
 }  // namespace lyra::stable_hash

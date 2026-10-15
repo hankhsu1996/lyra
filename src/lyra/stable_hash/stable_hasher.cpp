@@ -37,4 +37,10 @@ auto StableHasher::Finish() const -> Fingerprint {
   return Fingerprint{.bytes = finished.final<sizeof(Fingerprint::bytes)>()};
 }
 
+auto FingerprintOfText(std::string_view text) -> Fingerprint {
+  StableHasher hasher;
+  hasher.AddText(text);
+  return hasher.Finish();
+}
+
 }  // namespace lyra::stable_hash

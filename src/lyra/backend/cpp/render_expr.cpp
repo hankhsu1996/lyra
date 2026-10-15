@@ -313,7 +313,7 @@ void RenderReferenceExpr(
           [&](const mir::ExternalObjectEntryRef& r) {
             Write(
                 out, CppBodyScope(r.unit_name, r.body_name),
-                "::", CppMintedEntryName(mir::MintedEntry::kMakeObject));
+                "::", CppObjectEntryName());
           }},
       reference.target);
 }

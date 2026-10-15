@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "lyra/hir/body_of_unit.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -16,7 +16,7 @@ namespace lyra::lowering::hir_to_mir {
 // is made at an instantiation depends on the instance being built and never on
 // the code a referrer compiled.
 struct DesignInstantiations {
-  std::map<std::string, std::vector<hir::BodyOfUnit>, std::less<>> by_body;
+  std::map<std::string, std::vector<hir::UnitBodyRef>, std::less<>> by_body;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

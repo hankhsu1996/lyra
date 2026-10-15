@@ -15,9 +15,9 @@
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
-#include "lyra/hir/body_of_unit.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/construction_table_layout.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -114,7 +114,7 @@ auto LowerToSemantic(
   // and the two arrive together and in the design's order.
   struct Lowered {
     std::string body;
-    std::vector<hir::BodyOfUnit> instantiated;
+    std::vector<hir::UnitBodyRef> instantiated;
     typename Produced::value_type produced;
   };
   lowering::hir_to_mir::DesignInstantiations instantiations;

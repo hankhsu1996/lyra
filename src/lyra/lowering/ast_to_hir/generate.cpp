@@ -171,6 +171,7 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
   // A body is built where it stands, in the order of the first index it stands
   // at. A loop of one body has nothing to look up and lists no values: it
   // builds that body at every index it counts out, however many that is.
+  const bool several_bodies = blocks_of.size() > 1;
   hir::Generate gen{};
   std::map<BodyName, std::size_t> position_of;
   for (const auto& [index, name] : standing_at) {
@@ -180,15 +181,14 @@ auto StructuralScopeLowerer::BuildGenerateFromArray(
           LowerGenerateBody(*owner_, blocks_of.at(name), array.name, frame);
       if (!scope_or) return std::unexpected(std::move(scope_or.error()));
       loop->bodies.push_back(
-          hir::BodyBuiltAt{
+          hir::LoopBody{
               .body = gen.blocks.Add(
                   hir::GenerateBlock{.scope = *std::move(scope_or)}),
               .body_arguments = name.second,
               .indices = {}});
     }
-    loop->bodies[at->second].indices.push_back(index);
+    if (several_bodies) loop->bodies[at->second].indices.push_back(index);
   }
-  if (loop->bodies.size() == 1) loop->bodies.front().indices.clear();
   gen.counting = *std::move(loop);
   return gen;
 }
@@ -217,20 +217,20 @@ auto StructuralScopeLowerer::BuildGenerateFromBlock(
   // some elaboration of this scope selected, from those that did; one none
   // selected is not part of the model, and its own names need not resolve.
   std::vector<std::vector<const slang::ast::GenerateBlockSymbol*>>
-      alternatives_in;
+      alternatives_by_elaboration;
   for (const slang::ast::Scope* elaboration : elaborations_) {
-    alternatives_in.push_back(
+    alternatives_by_elaboration.push_back(
         AlternativesOfConstruct(CounterpartIn(*elaboration, block)));
   }
   hir::Generate gen{};
   std::vector<std::optional<hir::StructuralScopeId>> alternatives;
   SelectionTree selection;
-  for (const auto* arm : alternatives_in.front()) {
+  for (const auto* arm : alternatives_by_elaboration.front()) {
     const auto position = static_cast<std::uint32_t>(alternatives.size());
     auto placed = selection.Place(*this, frame, arm->selectionPath, position);
     if (!placed) return std::unexpected(std::move(placed.error()));
     std::vector<const slang::ast::Scope*> built;
-    for (const auto& elaboration : alternatives_in) {
+    for (const auto& elaboration : alternatives_by_elaboration) {
       if (!elaboration[position]->isUninstantiated) {
         built.push_back(elaboration[position]);
       }

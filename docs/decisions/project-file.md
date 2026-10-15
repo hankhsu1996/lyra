@@ -313,6 +313,12 @@ D8. An unknown key, and a key naming a property D2 refuses, is an error that nam
 D9. The manifest supplies compiler inputs and nothing else. It never changes the simulation's
     environment: the program runs in the user's working directory, with the argv given after `--`,
     identically whether or not a manifest was used.
+
+D10. Every text of a build -- the library being built, a library it depends on, and a file named on
+    the command line -- is read with `__lyra__` defined as 1, beside the front end's own
+    `__slang__`, so a source selects on the tool that will run it by the first and on the parser
+    reading it by the second. The name is the tool's own: an invocation's `-U` takes either away,
+    and its `-D` gives neither another value. No macro states a version, since Lyra shows none.
 ```
 
 ## The schema

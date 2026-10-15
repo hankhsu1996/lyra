@@ -30,8 +30,8 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
-#include "lyra/hir/body_of_unit.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
@@ -57,9 +57,10 @@ struct CollectedUnit {
   std::string body;
 };
 
-// What the collection found: the distinct bodies, and every other instance
-// read through a body of its own, each of which is compiled to one of them.
-// An instance the front end left sharing another's body is not among them.
+// What the collection found: the distinct bodies, and, where the compile
+// checks itself, every other instance read through a body of its own, each of
+// which is compiled to one of them. An instance the front end left sharing
+// another's body is not among them.
 //
 // A repeat is one body with an instance found before it: the body's name holds
 // everything that changes what is compiled, the blocks its construction built
@@ -76,19 +77,20 @@ struct Collected {
 // through, so an instance nested in a generate block is reached without this
 // code knowing the container taxonomy.
 //
-// What the body an instance is compiled to is called decides the dedup,
-// because the name stands for what identifies it: a definition, everything
-// fixed for it that the unit declares, and the values its code uses.
-// Two instances agreeing on it are one body however many bodies the frontend
-// chose to elaborate -- it declines to share one when a name inside reaches
-// outward, since the resolution differs per instance, but that resolution is
-// settled per instance at construction and never inside the unit, so what is
-// compiled is the same.
+// Two instances are compiled to one body exactly when they agree on that
+// body's name, because the name stands for what identifies it: a definition,
+// everything fixed for it that the unit declares, and the values its code
+// uses. Two instances agreeing on it are one body however many bodies the
+// frontend chose to elaborate -- it declines to share one when a name inside
+// reaches outward, since the resolution differs per instance, but that
+// resolution is settled per instance at construction and never inside the unit,
+// so what is compiled is the same.
 //
 // Descending reaches an occurrence's own body, so a child is collected under
-// what its own parent fixed for it. An occurrence the front end left sharing
-// another's body is not descended into where its body is one already found:
-// what is below it was collected under that one.
+// what its own parent fixed for it. An occurrence whose body is one already
+// found is not descended into, whether or not the front end left it sharing
+// that body: what is below it was collected under the instance found first,
+// and only the compile checking itself reads it again.
 //
 // A virtual interface's type names an interface together with its parameters
 // (LRM 25.9), and code reaching through one compiles against that unit's
@@ -151,6 +153,7 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
       body = policy->BodyNameOf(inst);
     }
     const bool fresh = named.insert(body).second;
+    if (!fresh && !policy->ChecksItself()) return;
     (fresh ? found.units : found.repeats)
         .push_back(
             CollectedUnit{
@@ -375,8 +378,7 @@ auto TopLevelUnits(
         TopLevelUnit{
             .instance_name = std::string{inst->name},
             .name_in_a_path = NameInAPath(*inst),
-            .unit_name = policy.NameOf(*inst),
-            .body_name = policy.BodyNameOf(*inst)});
+            .unit_name = policy.NameOf(*inst)});
   }
   return tops;
 }
@@ -386,21 +388,12 @@ using BodiesCheckedAgainst = std::unordered_map<
     std::string, std::vector<const slang::ast::InstanceBodySymbol*>>;
 
 // The instances each compiled body is lowered from beside the one it is named
-// for, which come out the same as that one: where every instance is read
-// through its own body, every repeat, which is where one that lowers to
-// anything else is found, and otherwise none.
-auto CheckedAgainstOf(
-    const Collected& collected, support::BodiesRead bodies_read)
-    -> BodiesCheckedAgainst {
+// for, which come out the same as that one: every repeat, which is where one
+// that lowers to anything else is found.
+auto CheckedAgainstOf(const Collected& collected) -> BodiesCheckedAgainst {
   BodiesCheckedAgainst checked;
-  switch (bodies_read) {
-    case support::BodiesRead::kElaborated:
-      break;
-    case support::BodiesRead::kEveryInstance:
-      for (const CollectedUnit& repeat : collected.repeats) {
-        checked[repeat.body].push_back(repeat.elaborated);
-      }
-      break;
+  for (const CollectedUnit& repeat : collected.repeats) {
+    checked[repeat.body].push_back(repeat.elaborated);
   }
   return checked;
 }
@@ -443,7 +436,7 @@ struct DeclaredDesign::Units {
     const auto others = checked_against.find(collected.body);
     return std::make_unique<UnitLowerer>(
         facts, *collected.elaborated,
-        hir::BodyOfUnit{.unit = collected.unit, .body = collected.body},
+        hir::UnitBodyRef{.unit = collected.unit, .body = collected.body},
         hir::UnitRole::kObjectRoot,
         others == checked_against.end()
             ? std::span<const slang::ast::InstanceBodySymbol* const>{}
@@ -464,7 +457,7 @@ struct DeclaredDesign::Units {
     for (const auto* package : CollectPackages(front_end_facts)) {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
-              facts, *package, hir::BodyOfUnit::Sole(package->name),
+              facts, *package, hir::UnitBodyRef::Sole(package->name),
               hir::UnitRole::kNamespace));
     }
     for (const auto* cu : CollectCompilationUnits(front_end_facts)) {
@@ -475,14 +468,15 @@ struct DeclaredDesign::Units {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
               facts, *cu,
-              hir::BodyOfUnit::Sole(CompilationUnitName(*cu, specialization)),
+              hir::UnitBodyRef::Sole(CompilationUnitName(*cu, specialization)),
               hir::UnitRole::kNamespace));
     }
     for (const slang::ast::ClassType* spec : specialization_homes.own_units) {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
               facts, *spec,
-              hir::BodyOfUnit::Sole(CompilationUnitName(*spec, specialization)),
+              hir::UnitBodyRef::Sole(
+                  CompilationUnitName(*spec, specialization)),
               hir::UnitRole::kNamespace));
     }
     for (const CollectedUnit& body : collected.units) {
@@ -534,8 +528,7 @@ auto DeclaredDesign::Declare(
   const Collected collected = CollectUnits(facts, units->specialization);
   units->specialization_homes =
       CollectSpecializationHomes(facts, collected, units->specialization);
-  units->DeclareEveryUnit(
-      facts, collected, CheckedAgainstOf(collected, bodies_read), sink);
+  units->DeclareEveryUnit(facts, collected, CheckedAgainstOf(collected), sink);
   if (sink.HasErrors()) {
     return std::nullopt;
   }

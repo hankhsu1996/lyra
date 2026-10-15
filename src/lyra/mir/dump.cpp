@@ -651,17 +651,15 @@ class MirDumper {
         role);
   }
 
-  [[nodiscard]] static auto FormatMintedEntry(MintedEntry entry)
+  [[nodiscard]] static auto FormatBringUpEntry(BringUpEntry entry)
       -> std::string_view {
     switch (entry) {
-      case MintedEntry::kInstallStorage:
+      case BringUpEntry::kInstallStorage:
         return "install_storage";
-      case MintedEntry::kInitializeStorage:
+      case BringUpEntry::kInitializeStorage:
         return "initialize_storage";
-      case MintedEntry::kMakeObject:
-        return "make_object";
     }
-    throw InternalError("mir dump: unknown minted entry");
+    throw InternalError("mir dump: unknown bring-up entry");
   }
 
   [[nodiscard]] auto FormatDirectTarget(const DirectTarget& target) const
@@ -698,10 +696,10 @@ class MirDumper {
                   support::DisplayOf(s.declaration.path),
                   support::ValueOperationName(s.answers));
             },
-            [](const ExternalUnitMintedEntryTarget& e) -> std::string {
+            [](const ExternalBringUpTarget& e) -> std::string {
               return std::format(
-                  "external_unit_minted_entry={}::{}", e.unit_name,
-                  FormatMintedEntry(e.entry));
+                  "external_bring_up={}::{}", e.unit_name,
+                  FormatBringUpEntry(e.entry));
             },
             [](const ForeignSymbolTarget& f) -> std::string {
               return std::format("foreign_symbol=\"{}\"", f.linkage_name);

@@ -41,10 +41,37 @@ namespace lyra::lowering::mir_to_lir {
 
 namespace {
 
-// A definition every body of the unit states is one the link keeps one of;
-// any other is this body's own, defined once.
-auto LinkageOf(bool stated_by_every_body) -> lir::Linkage {
-  return stated_by_every_body ? lir::Linkage::kShared : lir::Linkage::kExternal;
+// A class every body of the unit states is one the link keeps one of; one
+// another unit names is this body's own, defined once; and one nothing outside
+// this artifact names -- what realizes a scope of this body, or what the
+// lowering built for its own use -- is linked within it alone.
+auto ClassLinkage(const mir::CompilationUnit& unit, mir::ClassId id)
+    -> lir::Linkage {
+  if (mir::IsStatedByEveryBody(unit, id)) return lir::Linkage::kShared;
+  if (mir::IsPublished(unit, id)) return lir::Linkage::kExternal;
+  return lir::Linkage::kInternal;
+}
+
+// A body of the namespace something outside this artifact calls -- by its
+// linkage name, its identifier, or as an entry the unit publishes -- is
+// defined here once; one reached only by its position is this artifact's own.
+auto UnitCallableLinkage(const mir::NamespaceReach& reach) -> lir::Linkage {
+  return std::visit(
+      Overloaded{
+          [](const mir::ReachedByLinkageName&) {
+            return lir::Linkage::kExternal;
+          },
+          [](const mir::ReachedByName&) { return lir::Linkage::kExternal; },
+          [](const mir::ReachedByBringUpEntry&) {
+            return lir::Linkage::kExternal;
+          },
+          [](const mir::ReachedAsObjectEntry&) {
+            return lir::Linkage::kExternal;
+          },
+          [](const mir::ReachedByPosition&) {
+            return lir::Linkage::kInternal;
+          }},
+      reach);
 }
 
 }  // namespace
@@ -127,7 +154,9 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
 
   // What every struct is made of is settled before any body lowers, since a
   // body reaching a component of one reads it -- a method of the struct
-  // included, which is why each method's function is only reserved here.
+  // included, which is why each method's function is only reserved here. A
+  // struct is a declaration of the unit another unit names (LRM 7.2), which no
+  // body's code adds to, so every body states it alike and the link keeps one.
   for (const mir::ExternalStruct& external : mir_->external_structs) {
     out_.external_structs.push_back(
         lir::ExternalStruct{
@@ -138,7 +167,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     const mir::StructDecl& decl = mir_->GetStruct(id);
     lir::Struct lowered{
         .path = decl.path,
-        .linkage = LinkageOf(mir::IsStatedByEveryBody(*mir_, id)),
+        .linkage = lir::Linkage::kShared,
         .elements = TranslateTypes(decl.elements),
         .methods = {}};
     for (const mir::StructMethod& method : decl.methods) {
@@ -213,6 +242,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
+    fn->linkage = UnitCallableLinkage(mir::NamespaceReachOf(*mir_, id));
     out_.functions.Add(*std::move(fn));
   }
 
@@ -272,6 +302,8 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
 
   // A closure's captures are the storage its values own, and its invoke is a
   // function like any other body's, reading them through the receiver it takes.
+  // Only the body that builds the closure names it, so it is linked within
+  // this artifact alone.
   for (const mir::ClosureId id : mir_->closures.Ids()) {
     const mir::ClosureDecl& decl = mir_->GetClosure(id);
     lir::Closure closure;
@@ -289,6 +321,7 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
+    fn->linkage = lir::Linkage::kInternal;
     out_.functions.Define(closure.invoke, *std::move(fn));
     out_.closures.Define(ClosureDeclaration(id), std::move(closure));
   }
@@ -332,17 +365,15 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   return std::move(out_);
 }
 
-auto MintedEntrySymbol(std::string_view unit_name, mir::MintedEntry entry)
+auto BringUpEntrySymbol(std::string_view unit_name, mir::BringUpEntry entry)
     -> std::string {
   switch (entry) {
-    case mir::MintedEntry::kInstallStorage:
+    case mir::BringUpEntry::kInstallStorage:
       return lir::NamespaceStorageInstallSymbol(unit_name);
-    case mir::MintedEntry::kInitializeStorage:
+    case mir::BringUpEntry::kInitializeStorage:
       return lir::NamespaceStorageInitializeSymbol(unit_name);
-    case mir::MintedEntry::kMakeObject:
-      return lir::ObjectEntrySymbol(unit_name);
   }
-  throw InternalError("mir_to_lir: unknown minted entry");
+  throw InternalError("mir_to_lir: unknown bring-up entry");
 }
 
 auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
@@ -356,12 +387,15 @@ auto UnitLowerer::UnitCallableSymbol(mir::CallableId id) const -> std::string {
             return lir::NamespaceCallableSymbol(
                 mir_->name, lir::SymbolPart::Name(r.name));
           },
-          // An entry the unit makes up is the body's: making an object of one
-          // body is making an object of that body's classes, and a namespace
-          // brought up is the one body it is compiled to.
-          [&](const mir::ReachedByMintedEntry& r) {
-            return MintedEntrySymbol(
-                lir::QualifierOf(out_, std::nullopt), r.entry);
+          // A namespace is brought up by the unit's name, which is how the
+          // design root calls it.
+          [&](const mir::ReachedByBringUpEntry& r) {
+            return BringUpEntrySymbol(mir_->name, r.entry);
+          },
+          // Making an object of one body is making an object of that body's
+          // classes, so the entry is the body's.
+          [&](const mir::ReachedAsObjectEntry&) {
+            return lir::ObjectEntrySymbol(mir_->name, mir_->body_name);
           },
           [&](const mir::ReachedByPosition& r) {
             return lir::NamespaceCallableSymbol(
@@ -448,7 +482,7 @@ auto UnitLowerer::LowerClass(mir::ClassId owner, const mir::Class& cls)
     -> diag::Result<lir::Class> {
   lir::Class out;
   out.path = cls.path;
-  out.linkage = LinkageOf(mir::IsStatedByEveryBody(*mir_, owner));
+  out.linkage = ClassLinkage(*mir_, owner);
   const std::string_view qualifier = lir::QualifierOf(out_, cls.path);
   out.base = cls.base.transform(
       [&](const mir::ClassRef& base) { return BaseType(base); });
@@ -598,7 +632,8 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
                     },
                     [&](const mir::ExternalObjectEntryRef& e) -> lir::Constant {
                       return {lir::ConstantExternalFunction{
-                          .symbol = lir::ObjectEntrySymbol(e.body_name),
+                          .symbol =
+                              lir::ObjectEntrySymbol(e.unit_name, e.body_name),
                           .prototype = TranslateType(expr.type)}};
                     },
                     [&](const mir::ClassConstantRef&) {

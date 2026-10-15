@@ -39,20 +39,14 @@ constexpr std::string_view kTrimMarker = "trimmed";
 constexpr std::string_view kActionCacheDir = "ac";
 constexpr std::string_view kContentDir = "cas";
 
-// Every entry the store holds: each file in each of its directories, which
-// takes in what an earlier build of this compiler kept under a layout of its
-// own, so trimming and clearing reach that too.
+// Every entry the store holds: each file in each of its two stores.
 auto EntriesOf(const std::filesystem::path& store)
     -> std::vector<std::filesystem::path> {
   std::vector<std::filesystem::path> entries;
-  std::error_code ec;
-  for (const auto& dir : std::filesystem::directory_iterator(store, ec)) {
-    std::error_code dir_ec;
-    if (!dir.is_directory(dir_ec)) {
-      continue;
-    }
+  for (const std::string_view dir : {kActionCacheDir, kContentDir}) {
+    std::error_code ec;
     for (const auto& entry :
-         std::filesystem::directory_iterator(dir.path(), dir_ec)) {
+         std::filesystem::directory_iterator(store / dir, ec)) {
       std::error_code entry_ec;
       if (entry.is_regular_file(entry_ec)) {
         entries.push_back(entry.path());
@@ -92,9 +86,7 @@ auto DigestOfFile(const std::filesystem::path& file)
   if (!std::filesystem::is_regular_file(file, ec)) {
     return IoError(std::format("failed to read '{}'", file.string()));
   }
-  stable_hash::StableHasher hasher;
-  hasher.AddText(ReadWholeFile(file));
-  return hasher.Finish();
+  return stable_hash::FingerprintOfText(ReadWholeFile(file));
 }
 
 // The output the action cache records for `digest`, if it is still in the
@@ -163,6 +155,30 @@ auto KeepCopy(
   return copied && *copied;
 }
 
+// Removes every entry unused for five days, at most once a day. A concurrent
+// build reading an entry either finds it whole, or finds it gone and performs
+// the action. Removing one costs that build time and nothing more.
+void TrimStore(const std::filesystem::path& store) {
+  const auto now = std::filesystem::file_time_type::clock::now();
+  const auto marker = store / kTrimMarker;
+  std::error_code ec;
+  const auto last_trim = std::filesystem::last_write_time(marker, ec);
+  if (!ec && now - last_trim < kTrimInterval) {
+    return;
+  }
+  // The marker moves first, so two builds finishing together do not both walk
+  // the store.
+  std::ofstream{marker}.flush();
+  std::filesystem::last_write_time(marker, now, ec);
+  for (const std::filesystem::path& entry : EntriesOf(store)) {
+    std::error_code entry_ec;
+    const auto used = std::filesystem::last_write_time(entry, entry_ec);
+    if (!entry_ec && now - used > kUnusedLifetime) {
+      std::filesystem::remove(entry, entry_ec);
+    }
+  }
+}
+
 // Performs the step and keeps what it produced. An output that cannot be kept
 // makes the next build slower and fails nothing, so this build then reads it
 // where the step wrote it, and the action is recorded only once its output is
@@ -227,25 +243,6 @@ void Action::InputFile(
   Input(label, ReadWholeFile(file));
 }
 
-void Action::InputTree(
-    std::string_view label, const std::filesystem::path& root) {
-  std::vector<std::filesystem::path> files;
-  std::error_code ec;
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(
-           root, std::filesystem::directory_options::follow_directory_symlink,
-           ec)) {
-    if (entry.is_regular_file()) {
-      files.push_back(entry.path());
-    }
-  }
-  std::ranges::sort(files);
-  Input(label, std::format("{}", files.size()));
-  for (const auto& file : files) {
-    Input("path", file.lexically_relative(root).generic_string());
-    InputFile("content", file);
-  }
-}
-
 void Action::InputExecutable(
     std::string_view label, const std::filesystem::path& exe) {
   std::error_code resolve_ec;
@@ -268,6 +265,67 @@ auto Action::Digest() const -> stable_hash::Fingerprint {
   return hasher_.Finish();
 }
 
+auto DigestOfTree(const std::filesystem::path& root)
+    -> stable_hash::Fingerprint {
+  std::vector<std::filesystem::path> files;
+  std::error_code ec;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(
+           root, std::filesystem::directory_options::follow_directory_symlink,
+           ec)) {
+    if (entry.is_regular_file()) {
+      files.push_back(entry.path());
+    }
+  }
+  std::ranges::sort(files);
+  stable_hash::StableHasher hasher;
+  hasher.AddNumber(files.size());
+  for (const auto& file : files) {
+    hasher.AddText(file.lexically_relative(root).generic_string());
+    hasher.AddText(ReadWholeFile(file));
+  }
+  return hasher.Finish();
+}
+
+// A thread's claim on performing one action. Settling it hands what the
+// action came to to every thread waiting on it; a claim never settled, because
+// the step threw, is withdrawn instead, so a waiting thread claims the action
+// itself rather than waiting on a result nobody is going to produce.
+class ActionCache::Claim {
+ public:
+  Claim(ActionCache& cache, const stable_hash::Fingerprint& digest)
+      : cache_(&cache), digest_(digest) {
+  }
+  Claim(const Claim&) = delete;
+  Claim(Claim&&) = delete;
+  auto operator=(const Claim&) -> Claim& = delete;
+  auto operator=(Claim&&) -> Claim& = delete;
+
+  ~Claim() {
+    if (published_) {
+      return;
+    }
+    {
+      const std::scoped_lock lock(cache_->mutex_);
+      cache_->in_flight_.erase(digest_);
+    }
+    cache_->settled_.notify_all();
+  }
+
+  void Settle(const diag::Result<ActionResult>& result) {
+    {
+      const std::scoped_lock lock(cache_->mutex_);
+      cache_->in_flight_.at(digest_) = result;
+    }
+    published_ = true;
+    cache_->settled_.notify_all();
+  }
+
+ private:
+  ActionCache* cache_;
+  stable_hash::Fingerprint digest_;
+  bool published_ = false;
+};
+
 ActionCache::ActionCache(
     std::optional<std::filesystem::path> store, std::filesystem::path scratch,
     bool reuse_kept)
@@ -284,26 +342,45 @@ auto ActionCache::Execute(const Action& action, ActionStep step)
       return *std::move(kept);
     }
   }
-  {
-    std::unique_lock lock(mutex_);
+  if (auto shared = AwaitOrClaim(digest)) {
+    return *std::move(shared);
+  }
+  Claim claim(*this, digest);
+  diag::Result<ActionResult> result =
+      Perform(store_, scratch_, digest, std::move(step));
+  claim.Settle(result);
+  return result;
+}
+
+// The entry for `digest` is looked for afresh on every wake, because a claim
+// withdrawn while this thread waited has erased it, and then this thread is
+// the one to claim it.
+auto ActionCache::AwaitOrClaim(const stable_hash::Fingerprint& digest)
+    -> std::optional<diag::Result<ActionResult>> {
+  std::unique_lock lock(mutex_);
+  while (true) {
     const auto [found, first] = in_flight_.try_emplace(digest);
-    if (!first) {
-      settled_.wait(lock, [&] { return found->second.has_value(); });
+    if (first) {
+      return std::nullopt;
+    }
+    if (found->second.has_value()) {
       diag::Result<ActionResult> shared = *found->second;
       if (shared) {
         shared->performed = false;
       }
       return shared;
     }
+    settled_.wait(lock);
   }
-  diag::Result<ActionResult> result =
-      Perform(store_, scratch_, digest, std::move(step));
-  {
-    const std::scoped_lock lock(mutex_);
-    in_flight_.at(digest) = result;
+}
+
+void ActionCache::Evict(const ActionResult& result) const {
+  if (!store_ ||
+      result.path != EntryPath(*store_, kContentDir, result.digest)) {
+    return;
   }
-  settled_.notify_all();
-  return result;
+  std::error_code ec;
+  std::filesystem::remove(result.path, ec);
 }
 
 auto LocateStore(const std::optional<std::filesystem::path>& override)
@@ -328,11 +405,6 @@ auto LocateStore(const std::optional<std::filesystem::path>& override)
     return *home / ".cache" / "lyra";
   }
   return std::nullopt;
-}
-
-void Discard(const std::filesystem::path& output) {
-  std::error_code ec;
-  std::filesystem::remove(output, ec);
 }
 
 auto TemporaryBeside(const std::filesystem::path& target)
@@ -371,27 +443,6 @@ auto CopyOut(const std::filesystem::path& from, const std::filesystem::path& to)
         std::format("failed to write '{}': {}", to.string(), ec.message()));
   }
   return true;
-}
-
-void TrimStore(const std::filesystem::path& store) {
-  const auto now = std::filesystem::file_time_type::clock::now();
-  const auto marker = store / kTrimMarker;
-  std::error_code ec;
-  const auto last_trim = std::filesystem::last_write_time(marker, ec);
-  if (!ec && now - last_trim < kTrimInterval) {
-    return;
-  }
-  // The marker moves first, so two builds finishing together do not both walk
-  // the store.
-  std::ofstream{marker}.flush();
-  std::filesystem::last_write_time(marker, now, ec);
-  for (const std::filesystem::path& entry : EntriesOf(store)) {
-    std::error_code entry_ec;
-    const auto used = std::filesystem::last_write_time(entry, entry_ec);
-    if (!entry_ec && now - used > kUnusedLifetime) {
-      std::filesystem::remove(entry, entry_ec);
-    }
-  }
 }
 
 auto ClearStore(const std::filesystem::path& store) -> std::size_t {

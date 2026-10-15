@@ -1,9 +1,11 @@
 #include "lyra/hir/verify.hpp"
 
+#include <cstdint>
 #include <format>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -280,6 +282,67 @@ TEST(HirVerifyTest, AConstantIsHeldByItsPattern) {
     const std::string message = error.what();
     EXPECT_NE(message.find("a constant pattern"), std::string::npos) << message;
   }
+}
+
+// A unit whose root holds one loop generate of `blocks` bodies, each standing
+// where `bodies` says.
+auto UnitWithLoop(std::uint32_t blocks, std::vector<LoopBody> bodies)
+    -> CompilationUnit {
+  CompilationUnit unit("U", "U");
+  Generate generate;
+  for (std::uint32_t i = 0; i < blocks; ++i) {
+    generate.blocks.Add(GenerateBlock{});
+  }
+  generate.counting = BlocksRepeat{
+      .variable = {},
+      .initial = AddLeaf(unit),
+      .condition = AddLeaf(unit),
+      .step = AddLeaf(unit),
+      .arguments = {},
+      .bodies = std::move(bodies)};
+  unit.root_scope.generates.Add(std::move(generate));
+  return unit;
+}
+
+auto BodyAt(std::uint32_t body, std::vector<std::int64_t> indices) -> LoopBody {
+  return LoopBody{
+      .body = StructuralScopeId{body},
+      .body_arguments = std::nullopt,
+      .indices = std::move(indices)};
+}
+
+// A loop of several bodies says where each one stands, every body once and no
+// value under two of them, while a loop of one body builds it at every index
+// and says nothing of where (LRM 27.4); each departure is refused by name.
+TEST(HirVerifyTest, ALoopSaysWhereEachOfSeveralBodiesStands) {
+  EXPECT_NO_THROW(Verify(UnitWithLoop(1, {BodyAt(0, {})})));
+  EXPECT_NO_THROW(Verify(UnitWithLoop(0, {})));
+  EXPECT_NO_THROW(Verify(UnitWithLoop(2, {BodyAt(0, {0, 2}), BodyAt(1, {1})})));
+
+  const auto refused = [](const CompilationUnit& unit, std::string_view says) {
+    try {
+      Verify(unit);
+      ADD_FAILURE() << "a loop that " << says << " was accepted";
+    } catch (const InternalError& error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find(says), std::string::npos) << message;
+    }
+  };
+  refused(
+      UnitWithLoop(2, {BodyAt(0, {2, 0}), BodyAt(1, {1})}),
+      "lists where body 0 stands out of order");
+  refused(
+      UnitWithLoop(2, {BodyAt(0, {0}), BodyAt(0, {1})}),
+      "holds 2 bodies and says where 2 of them stand");
+  refused(
+      UnitWithLoop(2, {BodyAt(0, {0, 1}), BodyAt(1, {1})}),
+      "stands two bodies at one value of its index");
+  refused(
+      UnitWithLoop(2, {BodyAt(0, {0}), BodyAt(1, {})}),
+      "holds several bodies and says nowhere that body 1 stands");
+  refused(
+      UnitWithLoop(1, {BodyAt(0, {0, 1})}),
+      "holds one body and lists where it stands");
 }
 
 // An id is a position in the arena of the scope that minted it, so a holder

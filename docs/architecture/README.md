@@ -68,7 +68,7 @@ If you are looking for a concept, this table points to the canonical doc.
 | ----------------------------------------------------------------------------------------------------- | ------------------------------- |
 | Primary optimization target; non-negotiable design constraints                                        | `north_star.md`                 |
 | Pipeline (HIR -> MIR -> LIR -> LLVM IR); compile-time vs runtime split                                | `compiler_overview.md`          |
-| What an artifact is and what names it; construction data; what an edit rebuilds                       | `compiling_a_design.md`         |
+| Artifacts and their names; signature, body, construction data; blocks built; what an edit rebuilds    | `compiling_a_design.md`         |
 | Compilation unit; class-level artifacts; instance records                                             | `compilation_unit_model.md`     |
 | Constructor vs simulation execution contexts; structural vs process                                   | `runtime_model.md`              |
 | Storage and binding vs construction; type-driven member walk                                          | `runtime_model.md`              |

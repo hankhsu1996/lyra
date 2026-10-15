@@ -12,6 +12,7 @@
 #include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/subprocess.hpp"
+#include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 
@@ -45,20 +46,21 @@ auto PreparationFlags(Optimization optimization) -> std::vector<std::string> {
 
 // The action that prepares a header: the compiler that prepares it, the
 // runtime tree it is prepared from -- where that tree is, because a prepared
-// header records the absolute paths of its inputs, and every byte under it --
-// and how it is prepared. Upgrading the compiler, switching runtime
-// installations, editing a header, or asking for something different to go
-// into the artifact each make a different action; that holds only while the
+// header records the absolute paths of its inputs, and the digest of every
+// byte under it -- and how it is prepared. Upgrading the compiler, switching
+// runtime installations, editing a header, or asking for something different to
+// go into the artifact each make a different action; that holds only while the
 // last covers the whole command line a preparation runs.
 auto PrepareHeader(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    Optimization optimization) -> Action {
+    const stable_hash::Fingerprint& runtime_headers, Optimization optimization)
+    -> Action {
   Action action("prepare header");
   action.InputExecutable("compiler", cxx);
   std::error_code ec;
   const auto root = std::filesystem::canonical(include_root, ec);
   action.Input("runtime root", (ec ? include_root : root).string());
-  action.InputTree("runtime headers", include_root);
+  action.InputDigest("runtime headers", runtime_headers);
   for (const auto& flag : PreparationFlags(optimization)) {
     action.Input("flag", flag);
   }
@@ -100,20 +102,21 @@ auto BuildAt(
 
 auto EnsureCached(
     const std::filesystem::path& cxx, const std::filesystem::path& include_root,
-    Policy policy, ActionCache& actions, Optimization optimization)
-    -> std::optional<std::filesystem::path> {
+    const stable_hash::Fingerprint& runtime_headers, Policy policy,
+    ActionCache& actions, Optimization optimization)
+    -> std::optional<ActionResult> {
   if (policy == Policy::kSkip || !actions.Keeps() || !IsClangCompiler(cxx)) {
     return std::nullopt;
   }
   auto prepared = actions.Execute(
-      PrepareHeader(cxx, include_root, optimization),
+      PrepareHeader(cxx, include_root, runtime_headers, optimization),
       [&](const std::filesystem::path& pch_path) {
         return BuildAt(cxx, include_root, pch_path, optimization);
       });
   if (!prepared) {
     return std::nullopt;
   }
-  return prepared->path;
+  return *std::move(prepared);
 }
 
 }  // namespace lyra::driver::pch

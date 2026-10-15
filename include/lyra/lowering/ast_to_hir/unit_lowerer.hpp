@@ -24,7 +24,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
-#include "lyra/hir/body_of_unit.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
@@ -36,6 +35,7 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type_import.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -586,7 +586,7 @@ class UnitLowerer {
   // asks for every instance.
   UnitLowerer(
       const LoweringFacts& facts, const slang::ast::Symbol& home,
-      hir::BodyOfUnit names, hir::UnitRole role,
+      hir::UnitBodyRef names, hir::UnitRole role,
       std::span<const slang::ast::InstanceBodySymbol* const> checked_against =
           {});
 
@@ -1088,6 +1088,14 @@ class UnitLowerer {
   [[nodiscard]] auto EvaluatorOf(const slang::ast::Symbol& holder) const
       -> hir::StructuralSubroutineId;
 
+  // The type a port (LRM 23.2.2) or a name a view offers declares, which for
+  // the name is the self-determined type of the expression it was written
+  // with (LRM 25.5.4). A unit reading the name places its selects by that
+  // range, so what crosses for it -- the value an evaluator returns, or the
+  // place a view names -- has this type, whatever its expression yields.
+  auto InternDeclaredPortType(const slang::ast::Symbol& port)
+      -> diag::Result<hir::TypeId>;
+
   // Interns this unit's record of a DPI-C import (LRM 35.4), classifying its
   // ABI projection on first sight and answering with the same id every later
   // time. Both the declaration walk and a call site reach an import through
@@ -1327,10 +1335,10 @@ class UnitLowerer {
       -> diag::Result<void>;
   auto PopulateClassBody(PendingClassBody& pending) -> diag::Result<void>;
 
-  // Every class a unit holds is replicated by one of its structural scopes, and
-  // every scope lowered lowers what it replicates. A block instance a body was
-  // not lowered from replicates the same classes as the one it was, so a copy
-  // left over is of a class already lowered, and none other is.
+  // Requires every class the unit holds to be defined once its scopes are
+  // lowered. Each class is replicated by a structural scope the unit lowers,
+  // which lowers the class's body; a block instance no body was lowered from
+  // replicates only classes the block it shares a body with defined.
   void RequireEveryClassBodyLowered() const;
 
   // Reads the signature of every class of another unit this one named, once
@@ -1711,6 +1719,11 @@ class UnitLowerer {
   auto WalkOwnDeclarations(Visit& visit)
       -> std::invoke_result_t<Visit&, const slang::ast::Symbol&>;
 
+  // The application of this unit that `scope` is or sits inside, or nothing
+  // where it is in none of them.
+  [[nodiscard]] auto ApplicationHolding(const slang::ast::Scope& scope) const
+      -> const slang::ast::Scope*;
+
   // The application of this unit that declares `param`, or the one the unit is
   // named for where none of them does.
   [[nodiscard]] auto ApplicationDeclaring(
@@ -1727,9 +1740,6 @@ class UnitLowerer {
   // The scope of every application the body is lowered and declared from, the
   // one it is named for first.
   std::vector<const slang::ast::Scope*> applications_;
-  // The bodies the body is checked against, which is what a declaration is
-  // asked against to learn whether this unit holds it.
-  std::unordered_set<const slang::ast::Symbol*> checked_bodies_;
   // The application being read, which is what a name leaving the instance is
   // resolved from.
   const slang::ast::Scope* lowering_;

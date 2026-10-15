@@ -333,8 +333,9 @@ the detail lives in the entry itself.
   published subroutine a virtual method each realization overrides, for why a class of a unit is
   identified by a path of steps and never by a composed name, and for why a unit's scope classes are
   nested in one another and written in the file that carries the unit's name. A file per class with
-  its name shortened by a digest, deciding by comparing published classes, and a non-virtual method
-  asking which realization the object is are rejected.
+  its name shortened by a digest, deciding by comparing published classes, finding a block's body by
+  comparing lowered blocks, and a non-virtual method asking which realization the object is are
+  rejected.
 - [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md)
   -- every instance one identity names lowers alike because the lowering reads nothing of it the
   identity does not hold, not because a check finds the copies alike. Read it for what the lowering
@@ -1143,8 +1144,10 @@ the detail lives in the entry itself.
   elaborated, so a body holds what its own instances built and no other's, and is lowered from one
   instance. Read it for why the direction changed -- a body holding every block any instance built,
   and then each block as an artifact of its own chosen by data the design root states, were both
-  held against rustc and C++ and went beyond them -- for what it cost on nineteen real designs, and
-  for why a value deciding what a child builds names the scope handing it, as `Leaf<i>` does.
+  held against rustc and C++ and went beyond them -- for what it cost on nineteen real designs, for
+  why a value deciding what a child builds names the scope handing it, as `Leaf<i>` does, and for
+  why reading what an instance built off its elaboration evaluates the instance's own generate
+  scheme rather than taking the instance graph as authority.
 - [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
   vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
   positions a connection joins -- is stated as the select the source wrote, so constructions
@@ -1160,8 +1163,8 @@ the detail lives in the entry itself.
   with its default inverted: a loop generate's blocks are one compiled class the constructor builds
   once per index, because the index reaches the block as a value construction supplies rather than
   as a constant folded into it. Read it for the comparison of lowered blocks it first decided by,
-  and why that was revised: which body a block is, is now named from the front end's record of where
-  its index is used, before any block lowers, and nothing is compared. The measurement that removed
+  and why that was revised: which body a block is, is named from the front end's record of where its
+  index is used, before any block lowers, and nothing is compared. The measurement that removed
   speed from the argument is there too, as is what a scope's construction receives: one entry for
   every class, because the constructing site may hold only the definition -- except a unit's own
   entry, which takes its values typed, since a parent works out that prototype from the child's

@@ -313,13 +313,13 @@ auto FunctionLowerer::LowerCallTarget(
                               t.declaration.unit_name, t.declaration.path,
                               t.answers)}};
                     },
-                    [&](const mir::ExternalUnitMintedEntryTarget& t)
+                    [&](const mir::ExternalBringUpTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       // It answers to no name, so its symbol is composed from
                       // the unit and which of them it is -- the same parts the
                       // unit that defines it composes.
                       return lir::CallTarget{lir::SymbolTarget{
-                          .symbol = MintedEntrySymbol(t.unit_name, t.entry)}};
+                          .symbol = BringUpEntrySymbol(t.unit_name, t.entry)}};
                     }},
                 d.target);
           },

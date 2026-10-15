@@ -286,24 +286,6 @@ auto CanBeSupplied(const slang::ast::ParameterSymbol& param) -> bool {
          !DeclaredInAClass(param);
 }
 
-// The parameters what a body compiles to uses, each entering a name by its own
-// value as a template argument does in C++ -- what rustc's polymorphization
-// called a definition's used generic parameters: those its signature, what the
-// body declares, uses, and apart, those only its body uses -- the statements of
-// its processes, continuous assignments and subroutines, which are how it is
-// compiled and no part of the signature.
-//
-// Apart from both are the parameters that decide which generate blocks the
-// body builds (LRM 27.4, 27.5). Which blocks were built is part of the name
-// itself, not the value that selected them, so these enter no name here; but
-// a scope building an instance of this body names which unit it is, so a value
-// it hands one of these is one its own signature uses.
-struct UsedParameters {
-  ParameterSet in_signature;
-  ParameterSet in_body;
-  ParameterSet deciding_what_is_built;
-};
-
 // Whether `scope` declares a class, itself or in a scope inside it. A child
 // instance's body is the child's, so it is not reached.
 auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
@@ -514,12 +496,7 @@ auto SpecializationPolicy::OfBody(
   if (const auto kept = per_body_.find(&body); kept != per_body_.end()) {
     return kept->second;
   }
-  PerBody out{
-      .own = ValueParametersOf(body),
-      .written_into = {},
-      .used_in_signature = {},
-      .used_in_body = {},
-      .deciding_what_is_built = {}};
+  PerBody out{.own = ValueParametersOf(body), .written_into = {}, .used = {}};
   ParameterEdges written_from;
   for (const slang::ast::ParameterSymbol* param : out.own) {
     written_from.emplace(param, DependenciesOf(*param, out.own));
@@ -530,10 +507,7 @@ auto SpecializationPolicy::OfBody(
       out.written_into.at(source).insert(param);
     }
   }
-  UsedParameters used = UsedParametersOf(body, out.own, written_from, *this);
-  out.used_in_signature = std::move(used.in_signature);
-  out.used_in_body = std::move(used.in_body);
-  out.deciding_what_is_built = std::move(used.deciding_what_is_built);
+  out.used = UsedParametersOf(body, out.own, written_from, *this);
   return per_body_.emplace(&body, std::move(out)).first->second;
 }
 
@@ -561,16 +535,12 @@ auto SpecializationPolicy::Classify(
     of_instance.emplace(
         value, &handed[at]->symbol.as<slang::ast::ParameterSymbol>());
   }
-  // A value given anywhere -- by the instantiation, a defparam, or a
-  // configuration (LRM 23.10) -- is one value the instance is handed. A
-  // parameter a block or a subroutine declares is the read body's own.
+  // A value given anywhere is one value the instance is handed. A parameter a
+  // block or a subroutine declares is the read body's own.
   const auto given_a_value = [&](const slang::ast::ParameterSymbol& param) {
     const auto its = of_instance.find(&param);
-    if (its == of_instance.end()) {
-      return param.isOverridden() || ValueSetElsewhere(read_through, param);
-    }
-    return its->second->isOverridden() ||
-           ValueSetElsewhere(inst.body, *its->second);
+    return its == of_instance.end() ? GivenAValue(read_through, param)
+                                    : GivenAValue(inst.body, *its->second);
   };
 
   // A header parameter of the read body stands for the instance's own.
@@ -578,16 +548,21 @@ auto SpecializationPolicy::Classify(
     const auto its = of_instance.find(param);
     return its == of_instance.end() ? param : its->second;
   };
-  PerInstance out;
-  for (const slang::ast::ParameterSymbol* param : text.used_in_signature) {
-    out.used_in_signature.insert(as_handed(param));
-  }
-  for (const slang::ast::ParameterSymbol* param : text.used_in_body) {
-    out.used_in_body.insert(as_handed(param));
-  }
-  for (const slang::ast::ParameterSymbol* param : text.deciding_what_is_built) {
-    out.deciding_what_is_built.insert(as_handed(param));
-  }
+  const auto all_as_handed = [&](const ParameterSet& of_body) {
+    ParameterSet mapped;
+    for (const slang::ast::ParameterSymbol* param : of_body) {
+      mapped.insert(as_handed(param));
+    }
+    return mapped;
+  };
+  PerInstance out{
+      .supplied = {},
+      .varying = {},
+      .used = UsedParameters{
+          .in_signature = all_as_handed(text.used.in_signature),
+          .in_body = all_as_handed(text.used.in_body),
+          .deciding_what_is_built =
+              all_as_handed(text.used.deciding_what_is_built)}};
   // A top-level instance is built by the design root, which hands nothing, and
   // is the only instance of its unit, so a value it is given is compiled in.
   // Every other instance is handed, in the order its body declares them, each
@@ -601,7 +576,7 @@ auto SpecializationPolicy::Classify(
     for (const slang::ast::ParameterSymbolBase* base : declared) {
       const auto* param = base->symbol.as_if<slang::ast::ParameterSymbol>();
       if (param == nullptr || param->isLocalParam() ||
-          text.used_in_signature.contains(param)) {
+          text.used.in_signature.contains(param)) {
         continue;
       }
       out.supplied.push_back(of_instance.at(param));
@@ -643,19 +618,19 @@ auto SpecializationPolicy::ValueSourceOf(
 auto SpecializationPolicy::IsUsedInSignature(
     const slang::ast::InstanceSymbol& inst,
     const slang::ast::ParameterSymbol& param) const -> bool {
-  return Of(inst).used_in_signature.contains(&param);
+  return Of(inst).used.in_signature.contains(&param);
 }
 
 auto SpecializationPolicy::DecidesWhatIsBuilt(
     const slang::ast::InstanceSymbol& inst,
     const slang::ast::ParameterSymbol& param) const -> bool {
-  return Of(inst).deciding_what_is_built.contains(&param);
+  return Of(inst).used.deciding_what_is_built.contains(&param);
 }
 
 auto SpecializationPolicy::IsUsedInBody(
     const slang::ast::InstanceSymbol& inst,
     const slang::ast::ParameterSymbol& param) const -> bool {
-  return Of(inst).used_in_body.contains(&param);
+  return Of(inst).used.in_body.contains(&param);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

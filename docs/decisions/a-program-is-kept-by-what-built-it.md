@@ -169,8 +169,8 @@ its one output, and a content-addressable storage, from a digest to the bytes it
 unit's object, a prepared header, a C++ file's object and the program are each one action's output;
 the link reads the bytes of what it links, so an object that comes out the same however it was
 reached leaves the program kept. An action is performed at most once in a build however many ask for
-it. Before this, each kind of entry was a directory named by a key its caller assembled by hand,
-three recipes for one question.
+it. Without it each kind of entry is a directory named by a key its caller assembles by hand, three
+recipes for one question.
 
 ## Rejected alternatives
 

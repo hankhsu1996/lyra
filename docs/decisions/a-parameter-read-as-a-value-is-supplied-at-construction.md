@@ -37,11 +37,11 @@ down, for a block's own constant computed from its index. A module boundary adde
 record did not face: a parent named the child it built without reading the child's body, so whatever
 decided sharing had to be known before the body was.
 
-That premise no longer holds. A parent is handed a construction table saying which body is made at
-each of its instantiations, and its code names no body, so two parents that differ only in which
-body of a child they make are one body, and what a value decides is a question about the child alone
--- except where it decides which generate blocks the child builds, which names the child's unit and
-so the parent's class
+That premise does not hold where a parent is handed a construction table saying which body is made
+at each of its instantiations: its code names no body, so two parents that differ only in which body
+of a child they make are one body, and what a value decides is a question about the child alone --
+except where it decides which generate blocks the child builds, which names the child's unit and so
+the parent's class
 ([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
 D4).
 
@@ -89,13 +89,13 @@ there, where a design element declared inside this one reads it, where it is rea
 hierarchical name, and where another deciding parameter is written from it -- including one the
 module's blocks or subroutines declare.
 
-**What relies on a parameter is the front end's own record, not a list kept here.** This record
-first listed the positions this compiler lowers as an expression, then the positions the front end
-settles a constant at. Both were lists of a language's positions kept beside the code that decides
-them, and both went stale: each time a construction learned to run something -- its conditions
+**What relies on a parameter is the front end's own record, not a list kept here.** A list of a
+language's positions kept beside the code that decides them -- the positions this compiler lowers as
+an expression, or those the front end settles a constant at -- goes stale: each time a construction
+learns to run something -- its conditions
 ([a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)),
 its loops ([one-body-built-at-every-index](one-body-built-at-every-index.md) D2) -- or the front end
-folded somewhere new, a parameter was classified wrongly and nothing showed it. So the front end
+folds somewhere new, a parameter is classified wrongly and nothing shows it. So the front end
 records, as it evaluates a constant the language requires, which parameters that evaluation read,
 and marks the reads that only decide which blocks a construction builds. Where it reads a type as a
 fact -- the type `type(...)` declares, an argument a system subroutine reads for its type alone, the
@@ -124,11 +124,10 @@ classified the same way as the instantiation's own, since LRM 23.10 makes the th
 a parameter one thing. What differs is only who writes the value the parent hands: the
 instantiation's expression is lowered where it is written, while a value given elsewhere was written
 in another scope, so the parent hands the constant it settled to, which its own key holds
-([specialization-identity](specialization-identity.md) decision 1). This record used to keep such a
-parameter in the key, on the ground that the value the parent would hand is not the one the
-parameter holds; that is true of the expression and not of the constant. A top-level instance is
-built by the design root, which hands nothing, and is the only instance of its unit, so every value
-it is given is compiled in.
+([specialization-identity](specialization-identity.md) decision 1). So such a parameter is not kept
+in the key: what the parent hands differs from what the parameter holds as an expression, never as
+the constant. A top-level instance is built by the design root, which hands nothing, and is the only
+instance of its unit, so every value it is given is compiled in.
 
 A class specialization or a virtual interface is chosen by the values a site hands it and shared by
 every site handing the same ones, so a parameter whose value is read into one is an argument; the
@@ -146,31 +145,28 @@ it is found.
 **What an instance's construction built is part of its unit's name**
 ([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
 D1), so every instance of a unit built the same blocks, and a unit is lowered and declared from the
-instance it is named for alone. This said, until 2026-10-14, that each instance handed values none
-before it was was lowered into its unit too, which held every alternative and loop body any of them
-built.
+instance it is named for alone.
 
 They agree by construction, because the lowering reads a value only through what the unit's identity
 holds or as one the object is built with; that is what D1 makes the classification answer. Where two
 of them still lower to anything else, the classification missed something the front end's record did
 not show, which is this compiler's defect: it is reported as one, naming the instance, and nothing
-falls back to a unit per instance. This record first held the instances against the unit and kept a
-definition whole wherever they differed, which made the comparison the answer and every
-classification a guess it corrected; with the record of D1 there is no guess left to correct, and a
-fall back would hide the one defect that remains.
+falls back to a unit per instance. Keeping a definition whole wherever its instances differ would
+make the comparison the answer and every classification a guess it corrects; with the record of D1
+there is no guess to correct, and a fall back would hide the one defect that remains.
 
 A class the design element holds is no exception. Each instance's copy is a type of its own (LRM
 8.25), but every copy at one place in the unit is the same text, so they are one class of the unit,
 declared from the instance the unit is named for. Within that instance, a class each of a loop's
-blocks declares is one class built from every block holding a copy and required to come out the same
-as everything else is. That is how clang merges a class two modules each define: the later
-definition is looked up in its context by name, found to be the same entity, and folded into the
-first (`ASTDeclReader::findExisting` and `ASTDeclMerger::MergeDefinitionData` in
-`clang/lib/Serialization/ASTReaderDecl.cpp`).
+blocks declares is one class of the unit, built from one block holding a copy; where the compile
+checks itself every copy builds it, and each has to come out the same. That is how clang merges a
+class two modules each define: the later definition is looked up in its context by name, found to be
+the same entity, and folded into the first (`ASTDeclReader::findExisting` and
+`ASTDeclMerger::MergeDefinitionData` in `clang/lib/Serialization/ASTReaderDecl.cpp`).
 
-An instance handed the same values as an earlier one is not read: the front end left it sharing that
-instance's body, or it builds what that instance does. Reading every instance through its own body
-and lowering each into its unit is how a compile is checked against itself, and the tests do that.
+An instance of a unit an earlier instance is already of is not read: it builds what that instance
+does. Reading every instance through its own body and lowering each into its unit is how a compile
+is checked against itself, and the tests do that.
 
 The agreement is only as good as the equality, so HIR equality is derived and exact: every node's
 `operator==` is the defaulted one, and a real value is held as the bits that represent it. A number
@@ -233,7 +229,7 @@ what makes it invalid is part of which unit it is.
 
 [one-body-built-at-every-index](one-body-built-at-every-index.md) D4 made a scope's entry take its
 values erased and counted, because the constructing site held only the definition and not the
-prototype. A parent now computes which values it hands and of which types from the same function the
+prototype. A parent computes which values it hands and of which types from the same function the
 child does, so for a unit the prototype is available and the values cross typed. A generate block's
 construction takes its one supplied value through the same list.
 
@@ -283,10 +279,10 @@ defect of the record, found where any defect is: the designs the tests hold to t
 - **Make every parameter a declaration.** Uniform, but every read of a parameter whose value the key
   already holds becomes a field read the run pays for, in exactly the loops a simulation spends its
   time in.
-- **Keep a definition whole where its instances lower apart.** This record did that while the
-  classification was a list kept here, when a miss was expected. Read off the front end's record, a
-  miss is a defect in this compiler or in that record, and a fall back that still builds the program
-  is what would keep it from ever being found.
+- **Keep a definition whole where its instances lower apart.** Sound while the classification is a
+  list kept here, when a miss is expected. Read off the front end's record, a miss is a defect in
+  this compiler or in that record, and a fall back that still builds the program is what would keep
+  it from ever being found.
 
 ## Consequences
 

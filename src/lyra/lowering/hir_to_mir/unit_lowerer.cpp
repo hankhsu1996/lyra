@@ -300,9 +300,9 @@ void GuardNamespaceInitialization(
                             .callee =
                                 mir::Direct{
                                     .target =
-                                        mir::ExternalUnitMintedEntryTarget{
+                                        mir::ExternalBringUpTarget{
                                             .unit_name = read,
-                                            .entry = mir::MintedEntry::
+                                            .entry = mir::BringUpEntry::
                                                 kInitializeStorage}},
                             .arguments = {}},
                     .type = unit.builtins.void_type})});

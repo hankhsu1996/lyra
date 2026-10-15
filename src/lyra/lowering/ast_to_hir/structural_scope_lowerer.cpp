@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Compilation.h>
@@ -66,11 +67,23 @@ namespace {
 // a defparam, a configuration (LRM 23.10.1, 33.4.3) -- which is handed as the
 // constant it settled to; or none at all, which leaves it to the default its
 // declaration states (LRM 23.10.2.2).
+//
+// Two sources are equal where they build elements of one instantiation alike.
+// The instantiation writes one assignment for every element (LRM 23.3.2), so
+// two written arguments are the same expression and two left to the default
+// are the same default, while a value given elsewhere is told apart by the
+// constant it settled to.
 struct WrittenAtInstantiation {
-  const slang::ast::Expression* written;
+  auto operator==(const WrittenAtInstantiation&) const -> bool = default;
 };
-struct GivenElsewhere {};
-struct LeftToDefault {};
+struct GivenElsewhere {
+  std::string settled;
+
+  auto operator==(const GivenElsewhere&) const -> bool = default;
+};
+struct LeftToDefault {
+  auto operator==(const LeftToDefault&) const -> bool = default;
+};
 struct ArgumentSource {
   const slang::ast::ParameterSymbol* parameter;
   std::variant<WrittenAtInstantiation, GivenElsewhere, LeftToDefault> from;
@@ -94,38 +107,25 @@ auto ConstructionOf(
   for (const slang::ast::ParameterSymbol* param :
        policy.SuppliedParametersOf(instance)) {
     ArgumentSource source{.parameter = param, .from = LeftToDefault{}};
-    if (const slang::ast::Expression* written =
-            ValueWrittenAtInstantiation(instance, *param)) {
-      source.from = WrittenAtInstantiation{.written = written};
-    } else if (
-        param->isOverridden() || ValueSetElsewhere(instance.body, *param)) {
-      source.from = GivenElsewhere{};
+    if (ValueWrittenAtInstantiation(instance, *param) != nullptr) {
+      source.from = WrittenAtInstantiation{};
+    } else if (GivenAValue(instance.body, *param)) {
+      source.from = GivenElsewhere{.settled = ValueIdentity(param->getValue())};
     }
-    built.arguments.push_back(source);
+    built.arguments.push_back(std::move(source));
   }
   return built;
 }
 
-// Whether two elements of one instantiation are built alike. The
-// instantiation writes one assignment for every element (LRM 23.3.2), so two
-// written arguments are the same expression and two left to the default are
-// the same default, and a value given elsewhere is told apart by the constant
-// it settled to.
+// Whether two elements of one instantiation are built alike. Each element
+// has parameters of its own, so the arguments are compared by where each gets
+// its value.
 auto BuiltAlike(const InstanceConstruction& a, const InstanceConstruction& b)
     -> bool {
-  const auto told_apart_by = [](const ArgumentSource& source) {
-    return std::visit(
-        Overloaded{
-            [](const WrittenAtInstantiation&) { return std::string{"w"}; },
-            [&](const GivenElsewhere&) {
-              return "g" + ValueIdentity(source.parameter->getValue());
-            },
-            [](const LeftToDefault&) { return std::string{"d"}; }},
-        source.from);
-  };
   return a.unit == b.unit && a.body == b.body &&
          std::ranges::equal(
-             a.arguments, b.arguments, {}, told_apart_by, told_apart_by);
+             a.arguments, b.arguments, {}, &ArgumentSource::from,
+             &ArgumentSource::from);
 }
 
 // What `child`'s instantiation says of each parameter it takes at
@@ -141,22 +141,37 @@ auto LowerParameterAssignments(
     -> diag::Result<std::vector<hir::ParameterValueAssignment>> {
   UnitLowerer& owner = lowerer.Owner();
   const auto span = frontend::PointSpanOf(child.location);
+  // Each value is handed at the type the child's unit published for it, which
+  // is what its object entry is declared with.
+  const hir::UnitSignature& signature =
+      owner.Signatures().Instantiated(built.unit);
+  const std::vector<hir::TypeId>& handed =
+      hir::DesignElementOf(signature).handed;
+  if (handed.size() != built.arguments.size()) {
+    throw InternalError(
+        std::format(
+            "ast_to_hir: '{}' is built with {} values where its unit publishes "
+            "{} -- please report this as a bug",
+            child.name, built.arguments.size(), handed.size()));
+  }
   std::vector<hir::ParameterValueAssignment> assignments;
-  for (const ArgumentSource& source : built.arguments) {
-    auto type = owner.InternType(source.parameter->getType(), span);
-    if (!type) return std::unexpected(std::move(type.error()));
+  for (std::size_t i = 0; i < built.arguments.size(); ++i) {
+    const ArgumentSource& source = built.arguments[i];
+    const hir::TypeId type = owner.ImportSignatureType(signature, handed[i]);
     auto value = std::visit(
         Overloaded{
-            [&](const WrittenAtInstantiation& written)
+            [&](const WrittenAtInstantiation&)
                 -> diag::Result<std::optional<hir::ExprId>> {
-              auto lowered = lowerer.LowerExpr(*written.written, frame);
+              auto lowered = lowerer.LowerExpr(
+                  *ValueWrittenAtInstantiation(child, *source.parameter),
+                  frame);
               if (!lowered) return std::unexpected(std::move(lowered.error()));
               return frame.Exprs().Add(*std::move(lowered));
             },
             [&](const GivenElsewhere&)
                 -> diag::Result<std::optional<hir::ExprId>> {
               auto constant = MakeConstantValueExpr(
-                  owner.Unit(), frame, source.parameter->getValue(), *type,
+                  owner.Unit(), frame, source.parameter->getValue(), type,
                   span);
               if (!constant) {
                 return std::unexpected(std::move(constant.error()));
@@ -170,7 +185,7 @@ auto LowerParameterAssignments(
         source.from);
     if (!value) return std::unexpected(std::move(value.error()));
     assignments.push_back(
-        hir::ParameterValueAssignment{.type = *type, .value = *value});
+        hir::ParameterValueAssignment{.type = type, .value = *value});
   }
   return assignments;
 }
@@ -725,12 +740,13 @@ auto StructuralScopeLowerer::PopulateNetMember(
 // unit that asks for the value: the expression names declarations that would
 // mean nothing where that unit's signature is read, so what crosses is the call
 // and the expression is lowered here, in the scope that wrote it. It is one
-// return of the expression and takes no formals.
+// return of the expression, as the type `holder` declares, and takes no
+// formals.
 auto StructuralScopeLowerer::DefineEvaluator(
     const slang::ast::Symbol& holder, std::string name,
     const slang::ast::Expression& expr, WalkFrame frame) -> diag::Result<void> {
   const auto span = frontend::PointSpanOf(holder.location);
-  auto result_type = owner_->InternExpressionType(expr, span);
+  auto result_type = owner_->InternDeclaredPortType(holder);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
 
   hir::ProceduralBody body;

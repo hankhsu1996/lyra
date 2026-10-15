@@ -8,7 +8,7 @@
 
 Accepted. The unification -- one shape for every value-change wait, over a per-leaf
 `(observable, bit_range)` set -- stands, and has since widened past value change. Four things it
-settled no longer hold. Where a leaf set comes from is revised by
+settled are revised. Where a leaf set comes from is revised by
 [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md).
 
 **The wait families are two, not three.** This entry's table put a named event's waiter list beside

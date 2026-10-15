@@ -10,7 +10,13 @@ Accepted; superseded for value parameters by
 [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md).
 F1's vehicle now exists -- a generate block's index and constants are declarations its construction
 fills -- and a value parameter read only as a value rides it. What stays as written here: a type
-parameter, and a value parameter whose value reaches something a class settles.
+parameter, and a value parameter whose value reaches something a class settles. The posture of "a
+concrete witness first, proven sharing second" does not describe generate bodies, which are named
+before any is lowered
+([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md));
+that record reads which blocks an instance built off its elaboration, and says why this is the
+evaluation of the instance's own generate scheme and not the instance graph Decision 2 forbids as
+authority.
 
 ## Why this decision matters
 

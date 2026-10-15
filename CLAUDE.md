@@ -62,8 +62,11 @@ slang driver, and a standalone `--` ends it; what follows is the simulation's ow
 21.6 plusargs go. `--backend cpp|llvm` picks the backend, `--release` trades build time for
 simulation speed, and `--time-trace` and `--stats-file` read where a run's cost went off the run
 itself. A build is kept in the user's cache directory by what it read, so `--rebuild` is how to
-build as though nothing were kept. `lyra --help` is the authoritative option list, and why each
-behaves as it does is in `docs/decisions/`.
+build as though nothing were kept. `-j` says how many units are lowered and compiled at once, one by
+default (`docs/decisions/a-build-is-told-how-wide-to-run.md`), and every text Lyra reads finds
+`__lyra__` defined as 1 beside the front end's `__slang__` (`docs/decisions/project-file.md` D10).
+`lyra --help` is the authoritative option list, and why each behaves as it does is in
+`docs/decisions/`.
 
 ## SystemVerilog version
 

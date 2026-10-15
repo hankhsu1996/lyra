@@ -48,8 +48,10 @@ and a call through `dyn Trait` does in Rust.
 A value parameter is an argument of the class only where something the class states uses it -- a
 width, a type, a constant a statement requires. Everywhere else it is a field the object is built
 with, read at run time, so a loop handing each child its index makes one class and one body, not one
-per index -- unless the index decides which generate blocks the child builds, which names the
-child's class and so the block's, one per index, as `Leaf<i>` does in C++.
+per index. The one exception is an index that decides which generate blocks the child builds. The
+child is then one unit per set of blocks its instances built, however many indices select each set;
+but the loop's block declares the child as a member of the child's unit, so the index names the
+block's class, one per index value, as `Leaf<i>` names one class per `i` in C++.
 
 ## The decisions
 
@@ -102,9 +104,15 @@ which renames nothing.
 
 Where the conditions differ: a template argument is written at type level, while a parameter's value
 follows the instance (a loop hands each child its index) -- so a name holds the values of the
-parameters the class uses, and one only read as a value is a constructor argument. And the front end
+parameters the class uses, and one only read as a value is a constructor argument. The front end
 elaborates every instance into a folded tree of its own, so what a body depends on is read off the
-reads the lowering makes, never predicted from the text.
+reads the lowering makes, never predicted from the text. And the generate blocks in a name are read
+off the front end's elaboration of each instance, where rustc names an `Instance` by its definition
+and arguments alone. What an instance built is a function of its definition and the values its
+generate scheme read, which the front end records, so this reads the result of evaluating the
+instance's own scheme, as a constant it evaluated is read; it never crosses into an instance the
+instance holds, whose blocks are that instance's own name. The cost is that a name cannot be worked
+out until the front end has elaborated the instance.
 
 ## Models this one replaces
 
@@ -126,7 +134,10 @@ reads the lowering makes, never predicted from the text.
    the same artifact.
 3. Which generate blocks an instance built is part of its name; how many blocks a loop counted out
    is not, and a value read as a value reaches the object when it is built.
-4. The count of artifacts follows distinct names; only construction data follows instances.
+4. The count of artifacts follows distinct names; only construction data follows instances. Where a
+   value a scope hands a child decides which generate blocks the child builds, the value names the
+   scope's class, so a loop handing each child its index for that purpose has a block class per
+   index value and its classes follow the loop's count.
 5. A build decides nothing by comparing artifacts; comparison checks the scheme, in tests.
 
 ## Forbidden Shapes

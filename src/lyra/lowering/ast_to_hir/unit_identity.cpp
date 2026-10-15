@@ -40,23 +40,33 @@
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
+#include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// FNV-1a, so producer and consumer agree on the name across separately
-// compiled units and across sessions. A process-seeded or pointer-derived
-// hash would not be reproducible across runs; this folds only the bytes.
-auto Fnv1a64(std::string_view bytes) -> std::uint64_t {
-  std::uint64_t hash = 0xcbf29ce484222325ULL;
-  for (const unsigned char byte : bytes) {
-    hash ^= byte;
-    hash *= 0x100000001b3ULL;
+// The digest a name carries of `bytes`: the first 64 bits of their stable
+// fingerprint, so producer and consumer agree on the name across separately
+// compiled units and across sessions. A unit's name and a block's are each
+// held against the key they were folded from, which is where two keys folding
+// to one digest would be caught.
+auto NameDigest(std::string_view bytes) -> std::uint64_t {
+  const stable_hash::Fingerprint fingerprint =
+      stable_hash::FingerprintOfText(bytes);
+  std::uint64_t digest = 0;
+  for (std::size_t i = 0; i < sizeof(digest); ++i) {
+    digest = (digest << 8U) | fingerprint.bytes.at(i);
   }
-  return hash;
+  return digest;
 }
+
+// The label a unit's key states the classes of the blocks its instance built
+// under, and the label a body's key states which body of its class each of
+// them is under.
+constexpr std::string_view kClassesOfBlocksBuilt = "<classes of blocks built>";
+constexpr std::string_view kBodiesOfBlocksBuilt = "<bodies of blocks built>";
 
 // A name and the digest of what was fixed under it, as one bounded identifier:
 // the name alone where nothing was fixed.
@@ -546,15 +556,15 @@ void CollectBlocksBuilt(
     // Where every block is of one kind, the construction builds that kind at
     // every index it counts out, and how many it counted is no part of what
     // is compiled; where they are of several, which stands at each index is.
-    const auto of_several = [&](auto kind) {
+    const auto differs_among_blocks = [&](auto kind) {
       return std::ranges::any_of(blocks, [&](const Named& named) {
         return kind(named) != kind(blocks.front());
       });
     };
     const bool classes_differ =
-        of_several([](const Named& named) { return named.as_class; });
+        differs_among_blocks([](const Named& named) { return named.as_class; });
     const bool bodies_differ =
-        of_several([](const Named& named) { return named.as_body; });
+        differs_among_blocks([](const Named& named) { return named.as_body; });
     for (const Named& named : blocks) {
       const std::string at = std::format("[{}]", LoopIndexOf(*named.block));
       take(
@@ -702,7 +712,9 @@ auto SpecializationKeyOf(
   if (BlocksBuilt built = BlocksBuiltBy(inst, policy).classes;
       !built.blocks.empty()) {
     key.inputs.push_back(
-        SpecializationInput{.name = "<generate>", .kind = std::move(built)});
+        SpecializationInput{
+            .name = std::string{kClassesOfBlocksBuilt},
+            .kind = std::move(built)});
   }
   policy.LeaveNaming();
   return key;
@@ -752,7 +764,7 @@ auto SpecializationPolicy::NameOf(const slang::ast::InstanceSymbol& inst) const
 
 auto SpecializationPolicy::ChecksItself() const -> bool {
   switch (bodies_read_) {
-    case support::BodiesRead::kElaborated:
+    case support::BodiesRead::kOnePerName:
       return false;
     case support::BodiesRead::kEveryInstance:
       return true;
@@ -778,6 +790,7 @@ void SpecializationPolicy::ReadBodyOf(
   per_instance_.erase(&inst);
   context_.erase(&inst);
   names_.erase(&inst);
+  body_names_.erase(&inst);
 }
 
 auto SpecializationPolicy::ContextOf(
@@ -854,14 +867,22 @@ auto SpecializationPolicy::BodyArgumentsOf(
       built.bodies != built.classes) {
     key.inputs.push_back(
         SpecializationInput{
-            .name = "<generate>", .kind = std::move(built.bodies)});
+            .name = std::string{kBodiesOfBlocksBuilt},
+            .kind = std::move(built.bodies)});
   }
   return ArgumentsDigest(key);
 }
 
 auto SpecializationPolicy::BodyNameOf(
     const slang::ast::InstanceSymbol& inst) const -> std::string {
-  return WithDigest(NameOf(inst), BodyArgumentsOf(inst));
+  if (const auto kept = body_names_.find(&inst); kept != body_names_.end()) {
+    return kept->second;
+  }
+  std::string name = WithDigest(NameOf(inst), BodyArgumentsOf(inst));
+  // A name asked while another is being worked out can differ from the one the
+  // instance has alone, so the answer is kept only when no name is in progress.
+  if (names_in_progress_.empty()) body_names_.emplace(&inst, name);
+  return name;
 }
 
 void SpecializationPolicy::EnterNaming(
@@ -894,7 +915,7 @@ auto SpecializationPolicy::LevelsOutTo(
 auto ArgumentsDigest(const SpecializationKey& key)
     -> std::optional<std::uint64_t> {
   if (key.inputs.empty()) return std::nullopt;
-  return Fnv1a64(KeyBytes(key));
+  return NameDigest(KeyBytes(key));
 }
 
 auto SpecializationName(const SpecializationKey& key) -> std::string {
@@ -1145,7 +1166,7 @@ auto CompilationUnitName(
       if (member.location.valid()) {
         const std::string path =
             sources->getFullPath(member.location.buffer()).string();
-        return std::format("$unit__{:016x}", Fnv1a64(path));
+        return std::format("$unit__{:016x}", NameDigest(path));
       }
     }
     throw InternalError(

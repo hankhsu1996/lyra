@@ -269,7 +269,7 @@ void StateDefinition(
 //   (Erased)&Child::sv_create
 auto ErasedObjectEntry(
     const mir::CompilationUnit& unit, mir::Block& block,
-    const hir::BodyOfUnit& made, mir::TypeId entry) -> mir::ExprId {
+    const hir::UnitBodyRef& made, mir::TypeId entry) -> mir::ExprId {
   const mir::ExprId declared = block.exprs.Add(
       mir::Expr{
           .data =
@@ -306,11 +306,11 @@ class ConstructionTables {
 
   // The table listing, at each instantiation, how the body `instantiated`
   // names there is made.
-  auto Of(std::span<const hir::BodyOfUnit> instantiated)
+  auto Of(std::span<const hir::UnitBodyRef> instantiated)
       -> mir::ClassConstantRef {
     std::vector<mir::ClassConstantRef> tables;
     tables.reserve(instantiated.size());
-    for (const hir::BodyOfUnit& made : instantiated) {
+    for (const hir::UnitBodyRef& made : instantiated) {
       tables.push_back(OfBody(made.body));
     }
 
@@ -323,7 +323,8 @@ class ConstructionTables {
         parts, *unit_, table, id_, *cls_,
         LibraryType(*unit_, Kind::kInstantiation), instantiated.size(),
         [&](mir::Block& entry, std::size_t i) {
-          unit_->ConsumeNamespaceOf(instantiated[i].body);
+          unit_->ConsumeObjectEntryOf(
+              instantiated[i].unit, instantiated[i].body);
           return Record(
               *unit_, entry, Kind::kInstantiation,
               {ErasedObjectEntry(
@@ -413,7 +414,7 @@ void StateScopeDefinition(
 
 auto StateConstructionTables(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
-    std::span<const hir::BodyOfUnit> own,
+    std::span<const hir::UnitBodyRef> own,
     const DesignInstantiations& instantiations,
     const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
     -> mir::ClassConstantRef {

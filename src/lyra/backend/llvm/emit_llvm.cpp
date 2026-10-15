@@ -69,7 +69,7 @@ auto EmitProgramEntry(const lir::CompilationUnit& design_root)
   auto* const make_root = llvm::cast<llvm::Constant>(
       module
           ->getOrInsertFunction(
-              lir::ObjectEntrySymbol(design_root.body_name),
+              lir::ObjectEntrySymbol(design_root.name, design_root.body_name),
               llvm::FunctionType::get(ptr_ty, {ptr_ty, ptr_ty}, false))
           .getCallee());
   llvm::Constant* const label_bytes =

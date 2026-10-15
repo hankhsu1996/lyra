@@ -503,7 +503,10 @@ auto RenderFreeCallableLinkage(const mir::NamespaceReach& reach)
             return R"(extern "C" )";
           },
           [](const mir::ReachedByName&) -> std::string_view { return ""; },
-          [](const mir::ReachedByMintedEntry&) -> std::string_view {
+          [](const mir::ReachedByBringUpEntry&) -> std::string_view {
+            return "";
+          },
+          [](const mir::ReachedAsObjectEntry&) -> std::string_view {
             return "";
           },
           [](const mir::ReachedByPosition&) -> std::string_view { return ""; }},
@@ -553,11 +556,11 @@ void RenderStruct(
     mir::StructId id, TargetText& declared, TargetText& defined) {
   const mir::StructDecl& decl = unit.GetStruct(id);
   const CppName name = CppStructName(decl);
-  // A method is defined in the code file of the body, where nothing need call
-  // it, since another unit does; so where every body states it, each
-  // definition is one the link keeps one of whether or not its file calls it.
-  const std::string_view specifiers =
-      mir::IsStatedByEveryBody(unit, id) ? "[[gnu::weak]] " : "";
+  // Every body's code file defines the methods, and another unit calls them
+  // with only the declaration in hand. So each definition is weak, and the
+  // link keeps one: an `inline` one would be emitted only by a file that calls
+  // it, which none of these need to.
+  const std::string_view specifiers = "[[gnu::weak]] ";
   const CppTupleComponents components{.unit = &unit, .of = decl.elements};
   const MintedWord base = CppTupleBaseName();
   Write(declared, "struct ", name, " : ", components, " {\n");
@@ -706,7 +709,10 @@ auto RenderUnitCallables(
             [&](const mir::ReachedByName&) -> UnitText& {
               return text.of_unit;
             },
-            [&](const mir::ReachedByMintedEntry&) -> UnitText& {
+            [&](const mir::ReachedByBringUpEntry&) -> UnitText& {
+              return text.of_unit;
+            },
+            [&](const mir::ReachedAsObjectEntry&) -> UnitText& {
               return text.of_body;
             },
             [&](const mir::ReachedByPosition&) -> UnitText& {

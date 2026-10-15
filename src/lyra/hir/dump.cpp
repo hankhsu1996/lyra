@@ -2846,10 +2846,10 @@ class HirDumper {
         s.data);
   }
 
-  static auto FormatBodiesBuiltAt(std::span<const BodyBuiltAt> bodies)
+  static auto FormatLoopBodies(std::span<const LoopBody> bodies)
       -> std::string {
     std::string out;
-    for (const BodyBuiltAt& built : bodies) {
+    for (const LoopBody& built : bodies) {
       std::string indices;
       for (const std::int64_t index : built.indices) {
         indices += std::format("{}{}", indices.empty() ? "" : ",", index);
@@ -2874,7 +2874,7 @@ class HirDumper {
                   "condition=Expr[{}] step=Expr[{}] {}{}",
                   r.variable.value, r.initial.value, r.condition.value,
                   r.step.value, FormatArguments(r.arguments),
-                  FormatBodiesBuiltAt(r.bodies));
+                  FormatLoopBodies(r.bodies));
             },
             [](const BlocksChoose& c) {
               std::string chosen =

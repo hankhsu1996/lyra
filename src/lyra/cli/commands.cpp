@@ -117,8 +117,7 @@ auto ResolveHostBuild(const CommandContext& ctx)
       .cxx = *std::move(cxx),
       .pch = ctx.args->pch,
       .optimization = ctx.args->optimization,
-      .compile_width = ctx.args->compile_width,
-      .store = ctx.args->store};
+      .compile_width = ctx.args->compile_width};
 }
 
 // The front end's own account of the design, upstream of every form Lyra
@@ -167,7 +166,7 @@ auto DesignOf(const CommandContext& ctx)
       std::move(ctx.elaborated->compilation),
       compiler::LoweringPolicy{
           .assertions = ctx.args->assertions,
-          .bodies_read = support::BodiesRead::kElaborated},
+          .bodies_read = support::BodiesRead::kOnePerName},
       *ctx.sink);
 }
 
@@ -452,15 +451,14 @@ auto LlvmProgramRecipe(
     return std::nullopt;
   }
   const program::ObjectBuild objects{
-      .optimization = host.optimization,
-      .code_generator = ThisCompiler(ctx),
-      .actions = &actions};
+      .optimization = ctx.args->optimization,
+      .code_generator = ThisCompiler(ctx)};
   program::ProgramSink sink;
   const status::Phase phase("Compiling");
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.elaborated->diag_sources, *ctx.sink, host.compile_width,
-      [&objects](mir::CompilationUnit unit) {
-        return program::BuildUnit(unit, objects);
+      [&objects, &actions](mir::CompilationUnit unit) {
+        return program::BuildUnit(unit, objects, actions);
       },
       [&sink](program::BuiltUnit unit) { sink.Collect(std::move(unit)); });
   if (!lowered) {
@@ -468,7 +466,7 @@ auto LlvmProgramRecipe(
   }
   auto built = [&] {
     const profiling::StageScope stage("generate root object");
-    return std::move(sink).Finish(lowered->root, objects);
+    return std::move(sink).Finish(lowered->root, objects, actions);
   }();
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
@@ -509,7 +507,7 @@ auto PlaceProgram(
   if (!runtime) {
     return false;
   }
-  driver::ActionCache actions(host->store, scratch, !ctx.args->rebuild);
+  driver::ActionCache actions(ctx.args->store, scratch, !ctx.args->rebuild);
   auto recipe = RecipeFor(ctx, *host, *runtime, scratch, actions);
   if (!recipe) {
     return false;

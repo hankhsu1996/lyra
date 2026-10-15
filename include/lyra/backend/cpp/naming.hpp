@@ -11,6 +11,7 @@
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class.hpp"
@@ -23,7 +24,6 @@
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
@@ -884,20 +884,25 @@ inline void WriteOne(TargetText& out, const StructRef& ref) {
   return VerbatimName{.text = linkage_name};
 }
 
-// The name of one of a unit's fixed entries, such as `sv_create`. The source
-// names none of them, but another unit calls them, so each has a fixed word
-// both units write.
-[[nodiscard]] inline auto CppMintedEntryName(mir::MintedEntry entry)
+// The name of one of a namespace unit's bring-up entries, such as
+// `sv_install_namespace_storage`. The source names neither, but the design
+// root calls them, so each has a fixed word both units write.
+[[nodiscard]] inline auto CppBringUpEntryName(mir::BringUpEntry entry)
     -> MintedWord {
   switch (entry) {
-    case mir::MintedEntry::kInstallStorage:
+    case mir::BringUpEntry::kInstallStorage:
       return MintedWord{.word = "install_namespace_storage"};
-    case mir::MintedEntry::kInitializeStorage:
+    case mir::BringUpEntry::kInitializeStorage:
       return MintedWord{.word = "initialize_namespace_storage"};
-    case mir::MintedEntry::kMakeObject:
-      return MintedWord{.word = "create"};
   }
-  throw InternalError("backend::cpp: unknown minted entry");
+  throw InternalError("backend::cpp: unknown bring-up entry");
+}
+
+// `sv_create`, the entry that makes an object of a body, in that body's
+// namespace. The source names none, but the design root's tables name it, so
+// it is a fixed word both units write.
+[[nodiscard]] inline auto CppObjectEntryName() -> MintedWord {
+  return MintedWord{.word = "create"};
 }
 
 // The name of a function in a unit's namespace, chosen by how other code
@@ -913,8 +918,11 @@ inline void WriteOne(TargetText& out, const StructRef& ref) {
           [](const mir::ReachedByName& r) -> CppName {
             return ToCppName(r.name);
           },
-          [](const mir::ReachedByMintedEntry& r) -> CppName {
-            return CppMintedEntryName(r.entry);
+          [](const mir::ReachedByBringUpEntry& r) -> CppName {
+            return CppBringUpEntryName(r.entry);
+          },
+          [](const mir::ReachedAsObjectEntry&) -> CppName {
+            return CppObjectEntryName();
           },
           [](const mir::ReachedByPosition& r) -> CppName {
             return MintedCppName("body", r.slot.value);

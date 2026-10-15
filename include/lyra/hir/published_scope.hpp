@@ -18,12 +18,12 @@
 namespace lyra::hir {
 
 // A loop generate whose blocks are all one application of its text: an array
-// of block instances of one class (LRM 27.4), which is the case where the
-// index is only ever read as a value. How many blocks there are and which
-// indices they stand at is what each construction of the holding scope counts
-// out, so the class says neither, and two objects of it may hold different
-// numbers of them. `class_path` is absent where no object of the holding class
-// counted a block.
+// of block instances of one class (LRM 27.4), which is the case where nothing
+// a block declares uses the index, whether its code reads it or not. How many
+// blocks there are and which indices they stand at is what each construction
+// of the holding scope counts out, so the class says neither, and two objects
+// of it may hold different numbers of them. `class_path` is absent where no
+// object of the holding class counted a block.
 struct PublishedLoopOfOneClass {
   std::string name;
   std::optional<support::DefPath> class_path;

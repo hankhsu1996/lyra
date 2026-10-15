@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "lyra/compiler/unit_pipeline.hpp"
-#include "lyra/hir/body_of_unit.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_member.hpp"
@@ -18,6 +17,7 @@
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_import.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
@@ -123,7 +123,7 @@ auto BuildDesignRootHir(
                       .array_dims = {},
                       .alternatives = {hir::InstanceAlternative{
                           .scope_class = scope_class,
-                          .body = top.body_name,
+                          .body = top.unit_name,
                           .assignments = {}}},
                       .taken = {0}});
     LeaveInputsUnconnected(root, signature, scope_class, instance);
@@ -175,7 +175,7 @@ auto PublishedObjectEntries(
     take(top.unit_name);
   }
   for (const auto& [_, made] : instantiations.by_body) {
-    for (const hir::BodyOfUnit& body : made) {
+    for (const hir::UnitBodyRef& body : made) {
       take(body.unit);
     }
   }

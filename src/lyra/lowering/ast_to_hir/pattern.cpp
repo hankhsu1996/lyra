@@ -23,15 +23,22 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// A pattern one level in is matched against a member, whose type is the one
+// its declaration states.
+template <ExprLowerer Lowerer>
+auto AddMemberPattern(
+    Lowerer& lowerer, WalkFrame frame, const slang::ast::Pattern& pattern,
+    const slang::ast::Type& member_type, diag::SourceSpan span)
+    -> diag::Result<hir::PatternId> {
+  auto subject = lowerer.Owner().InternType(member_type, span);
+  if (!subject) return std::unexpected(std::move(subject.error()));
+  return AddPattern(lowerer, frame, pattern, *subject, span);
+}
+
 template <ExprLowerer Lowerer>
 auto LowerPattern(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Pattern& pattern,
-    const slang::ast::Type& subject_type, diag::SourceSpan span)
-    -> diag::Result<hir::Pattern> {
-  auto subject_id_or = lowerer.Owner().InternType(subject_type, span);
-  if (!subject_id_or) return std::unexpected(std::move(subject_id_or.error()));
-  const hir::TypeId subject = *subject_id_or;
-
+    hir::TypeId subject, diag::SourceSpan span) -> diag::Result<hir::Pattern> {
   switch (pattern.kind) {
     case slang::ast::PatternKind::Invalid:
       return diag::Fail(
@@ -73,8 +80,8 @@ auto LowerPattern(
       // in.
       std::optional<hir::PatternId> payload;
       if (t.valuePattern != nullptr) {
-        auto inner_or =
-            AddPattern(lowerer, frame, *t.valuePattern, field.getType(), span);
+        auto inner_or = AddMemberPattern(
+            lowerer, frame, *t.valuePattern, field.getType(), span);
         if (!inner_or) return std::unexpected(std::move(inner_or.error()));
         payload = *inner_or;
       }
@@ -94,8 +101,8 @@ auto LowerPattern(
       std::vector<std::pair<std::size_t, hir::PatternId>> fields;
       fields.reserve(s.patterns.size());
       for (const auto& fp : s.patterns) {
-        auto sub_or =
-            AddPattern(lowerer, frame, *fp.pattern, fp.field->getType(), span);
+        auto sub_or = AddMemberPattern(
+            lowerer, frame, *fp.pattern, fp.field->getType(), span);
         if (!sub_or) return std::unexpected(std::move(sub_or.error()));
         fields.emplace_back(fp.field->fieldIndex, *sub_or);
       }
@@ -113,9 +120,9 @@ auto LowerPattern(
 template <ExprLowerer Lowerer>
 auto AddPattern(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Pattern& pattern,
-    const slang::ast::Type& subject_type, diag::SourceSpan span)
+    hir::TypeId subject, diag::SourceSpan span)
     -> diag::Result<hir::PatternId> {
-  auto lowered = LowerPattern(lowerer, frame, pattern, subject_type, span);
+  auto lowered = LowerPattern(lowerer, frame, pattern, subject, span);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
   const hir::PatternId id = frame.Patterns().Add(*std::move(lowered));
   if (pattern.kind == slang::ast::PatternKind::Variable) {
@@ -126,10 +133,10 @@ auto AddPattern(
 }
 
 template auto AddPattern(
-    ProcessLowerer&, WalkFrame, const slang::ast::Pattern&,
-    const slang::ast::Type&, diag::SourceSpan) -> diag::Result<hir::PatternId>;
+    ProcessLowerer&, WalkFrame, const slang::ast::Pattern&, hir::TypeId,
+    diag::SourceSpan) -> diag::Result<hir::PatternId>;
 template auto AddPattern(
-    StructuralScopeLowerer&, WalkFrame, const slang::ast::Pattern&,
-    const slang::ast::Type&, diag::SourceSpan) -> diag::Result<hir::PatternId>;
+    StructuralScopeLowerer&, WalkFrame, const slang::ast::Pattern&, hir::TypeId,
+    diag::SourceSpan) -> diag::Result<hir::PatternId>;
 
 }  // namespace lyra::lowering::ast_to_hir

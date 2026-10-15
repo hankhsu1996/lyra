@@ -76,9 +76,10 @@ auto RenderUnitClosures(
 
 // The functions of the unit's namespace as free functions, by who calls one:
 // what another unit names -- package functions and tasks, DPI-C imports, the
-// entry points of DPI-C exports -- in the unit's own namespace and header; the
-// entries the unit makes up, which make an object of one body and are that
-// body's, in its namespace and header; and those nothing outside this artifact
+// entry points of DPI-C exports, the entries a namespace is brought up
+// through -- in the unit's own namespace and header; the entry that makes an
+// object of one body, which is that body's, in its namespace and header; and
+// those nothing outside this artifact
 // names, declared and defined in its code file alone, so two bodies of one
 // unit each keep their own. An import is only declared; the user's C code
 // defines it.

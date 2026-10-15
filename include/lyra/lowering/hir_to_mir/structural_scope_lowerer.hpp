@@ -126,22 +126,25 @@ class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      const hir::StructuralScope& hir_scope, const hir::ScopeLayout& layout,
+      const hir::StructuralScope& hir_scope,
+      const hir::ScopeInstantiations& instantiations,
       std::optional<DesignRootInputs> design_root = std::nullopt)
       : owner_(&unit_lowerer),
         parent_(parent),
         hir_scope_(&hir_scope),
-        layout_(&layout),
+        instantiations_(&instantiations),
         design_root_(std::move(design_root)) {
   }
 
   // The lowering of `hir_scope`, a scope of the design hierarchy laid out in
-  // its unit's construction table as `layout` says, and of every scope it
-  // holds, each taking the identity of the class its unit published of it as it
-  // is built -- which is before any type translates, since a type may name one.
+  // its unit's construction table as `instantiations` says, and of every scope
+  // it holds, each taking the identity of the class its unit published of it as
+  // it is built -- which is before any type translates, since a type may name
+  // one.
   [[nodiscard]] static auto ForScope(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      const hir::StructuralScope& hir_scope, const hir::ScopeLayout& layout,
+      const hir::StructuralScope& hir_scope,
+      const hir::ScopeInstantiations& instantiations,
       std::optional<DesignRootInputs> design_root = std::nullopt)
       -> std::unique_ptr<StructuralScopeLowerer>;
 
@@ -209,8 +212,8 @@ class StructuralScopeLowerer {
   }
 
   // Where the scope's instantiations stand in its unit's construction table.
-  [[nodiscard]] auto Layout() const -> const hir::ScopeLayout& {
-    return *layout_;
+  [[nodiscard]] auto Instantiations() const -> const hir::ScopeInstantiations& {
+    return *instantiations_;
   }
 
   // Where the object the unit's object entry makes takes its construction
@@ -497,7 +500,7 @@ class StructuralScopeLowerer {
   UnitLowerer* owner_;
   const StructuralScopeLowerer* parent_;
   const hir::StructuralScope* hir_scope_;
-  const hir::ScopeLayout* layout_;
+  const hir::ScopeInstantiations* instantiations_;
   // Present only on the design root's own scope, the sole scope whose
   // elaboration spans the whole design: it brings up every namespace and
   // states every body's construction table as constants of its class.

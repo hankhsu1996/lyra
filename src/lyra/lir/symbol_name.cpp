@@ -200,9 +200,11 @@ auto NamespaceStorageInitializeSymbol(std::string_view unit_name)
       {SymbolPart::Name(unit_name)});
 }
 
-auto ObjectEntrySymbol(std::string_view unit_name) -> std::string {
+auto ObjectEntrySymbol(std::string_view unit_name, std::string_view body_name)
+    -> std::string {
   return SymbolName(
-      SymbolCategory::kObjectEntry, {SymbolPart::Name(unit_name)});
+      SymbolCategory::kObjectEntry,
+      {SymbolPart::Name(unit_name), SymbolPart::Name(body_name)});
 }
 
 auto NamespaceVariableSymbol(std::string_view unit_name, SymbolPart variable)

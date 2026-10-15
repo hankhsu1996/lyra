@@ -311,8 +311,9 @@ struct ConcurrentAssertionDecl {
 // 23.10.1, 33.4.3) -- or none, where it wrote nothing for the parameter or
 // wrote it with empty parentheses, which leaves the parameter to the default
 // its declaration states (LRM 23.10.2.2). The default is the child's own
-// expression, evaluated where the child declares it. `type` is the
-// parameter's, which the construction passes the value as.
+// expression, evaluated where the child declares it. `type` is the one the
+// child's unit published for the parameter, which its object entry takes the
+// value as.
 struct ParameterValueAssignment {
   TypeId type;
   std::optional<ExprId> value;
@@ -491,12 +492,12 @@ struct SingleBlock {
 // at a value is what the construction looks up when it builds there. A loop of
 // one body has nothing to look up and lists no values: it builds that body at
 // every index it counts out.
-struct BodyBuiltAt {
+struct LoopBody {
   StructuralScopeId body;
   std::optional<std::uint64_t> body_arguments;
   std::vector<std::int64_t> indices;
 
-  auto operator==(const BodyBuiltAt&) const -> bool = default;
+  auto operator==(const LoopBody&) const -> bool = default;
 };
 
 // A loop the construction runs, building a block at every index it counts out
@@ -519,7 +520,7 @@ struct BlocksRepeat {
   ExprId condition;
   ExprId step;
   std::vector<ExprId> arguments;
-  std::vector<BodyBuiltAt> bodies;
+  std::vector<LoopBody> bodies;
 
   auto operator==(const BlocksRepeat&) const -> bool = default;
 };
@@ -645,7 +646,7 @@ struct Generate {
         "named as a loop");
   }
   if (repeat->bodies.size() == 1) return repeat->bodies.front().body;
-  for (const BodyBuiltAt& built : repeat->bodies) {
+  for (const LoopBody& built : repeat->bodies) {
     if (std::ranges::binary_search(built.indices, index)) return built.body;
   }
   throw InternalError(

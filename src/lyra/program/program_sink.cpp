@@ -2305,14 +2305,14 @@ auto PipelineLevel(driver::Optimization optimization)
 // The object a module compiles to under this build: the output of the action
 // compiling it, performed now or found kept.
 auto CompileObject(
-    backend::llvm_backend::EmittedModule module, const ObjectBuild& build)
-    -> diag::Result<driver::ActionResult> {
+    backend::llvm_backend::EmittedModule module, const ObjectBuild& build,
+    driver::ActionCache& actions) -> diag::Result<driver::ActionResult> {
   const llvm::OptimizationLevel level = PipelineLevel(build.optimization);
-  driver::Action action("compile module");
+  driver::Action action("compile LLVM module");
   action.Input("module", module.Print());
   action.InputExecutable("code generator", build.code_generator);
   action.Input("pipeline level", std::format("O{}", std::to_underlying(level)));
-  return build.actions->Execute(
+  return actions.Execute(
       action, [&](const std::filesystem::path& object) -> diag::Result<void> {
         return backend::llvm_backend::WriteObjectFile(
             std::move(module), object, level);
@@ -2341,8 +2341,9 @@ auto ArtifactOf(const driver::ActionResult& object)
 
 }  // namespace
 
-auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
-    -> diag::Result<BuiltUnit> {
+auto BuildUnit(
+    const mir::CompilationUnit& unit, const ObjectBuild& build,
+    driver::ActionCache& actions) -> diag::Result<BuiltUnit> {
   auto emitted = EmitUnitModule(unit);
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
@@ -2350,7 +2351,7 @@ auto BuildUnit(const mir::CompilationUnit& unit, const ObjectBuild& build)
   auto object = [&] {
     const profiling::TimeTraceScope span(
         "generate object", [&] { return unit.body_name; });
-    return CompileObject(std::move(emitted->module), build);
+    return CompileObject(std::move(emitted->module), build, actions);
   }();
   if (!object) {
     return std::unexpected(std::move(object.error()));
@@ -2375,8 +2376,8 @@ void ProgramSink::Collect(BuiltUnit unit) {
 }
 
 auto ProgramSink::Finish(
-    const mir::CompilationUnit& root,
-    const ObjectBuild& build) && -> diag::Result<ProgramObjects> {
+    const mir::CompilationUnit& root, const ObjectBuild& build,
+    driver::ActionCache& actions) && -> diag::Result<ProgramObjects> {
   auto emitted = EmitUnitModule(root);
   if (!emitted) {
     return std::unexpected(std::move(emitted.error()));
@@ -2386,11 +2387,11 @@ auto ProgramSink::Finish(
   if (auto checked = CheckAgainstRuntime(entry); !checked) {
     return std::unexpected(std::move(checked.error()));
   }
-  auto root_object = CompileObject(std::move(emitted->module), build);
+  auto root_object = CompileObject(std::move(emitted->module), build, actions);
   if (!root_object) {
     return std::unexpected(std::move(root_object.error()));
   }
-  auto entry_object = CompileObject(std::move(entry), build);
+  auto entry_object = CompileObject(std::move(entry), build, actions);
   if (!entry_object) {
     return std::unexpected(std::move(entry_object.error()));
   }

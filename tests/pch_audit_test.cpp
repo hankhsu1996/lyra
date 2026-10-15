@@ -270,7 +270,8 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
       project / "cache", project / "scratch", true);
   const auto optimization = lyra::driver::Optimization::kIterate;
   auto built = lyra::driver::pch::EnsureCached(
-      *cxx, include_root, policy, actions, optimization);
+      *cxx, include_root, lyra::driver::DigestOfTree(include_root), policy,
+      actions, optimization);
   ASSERT_TRUE(built.has_value()) << "no precompiled header was produced";
 
   const auto unit = project / "unit.cpp";
@@ -295,19 +296,20 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
     return lyra::driver::RunProcessCaptured(*cxx, args);
   };
 
-  auto baseline = compile_against(*built);
+  auto baseline = compile_against(built->path);
   ASSERT_TRUE(baseline) << baseline.error();
   ASSERT_EQ(baseline->exit_code, 0) << baseline->stderr_text;
 
   WriteWhole(probe, ReadWhole(probe));
   AgeByADay(probe);
   auto after_rewrite = lyra::driver::pch::EnsureCached(
-      *cxx, include_root, policy, actions, optimization);
+      *cxx, include_root, lyra::driver::DigestOfTree(include_root), policy,
+      actions, optimization);
   ASSERT_TRUE(after_rewrite.has_value());
-  EXPECT_EQ(*after_rewrite, *built)
+  EXPECT_EQ(after_rewrite->path, built->path)
       << "the same bytes were given a different cache entry";
 
-  auto reused = compile_against(*after_rewrite);
+  auto reused = compile_against(after_rewrite->path);
   ASSERT_TRUE(reused) << reused.error();
   EXPECT_EQ(reused->exit_code, 0)
       << "a header rewritten byte for byte was read as a change:\n"
@@ -315,7 +317,7 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
 
   WriteWhole(probe, "#pragma once\n// omega\n");
   AgeByADay(probe);
-  auto stale = compile_against(*built);
+  auto stale = compile_against(built->path);
   ASSERT_TRUE(stale) << stale.error();
   EXPECT_NE(stale->exit_code, 0) << "a changed header was accepted by a "
                                     "precompiled header built before it";

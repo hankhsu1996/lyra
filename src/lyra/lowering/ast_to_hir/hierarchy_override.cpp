@@ -155,6 +155,12 @@ auto ValueSetElsewhere(
          body.hierarchyOverrideNode->paramOverrides.contains(syntax);
 }
 
+auto GivenAValue(
+    const slang::ast::InstanceBodySymbol& body,
+    const slang::ast::ParameterSymbol& param) -> bool {
+  return param.isOverridden() || ValueSetElsewhere(body, param);
+}
+
 auto ValueWrittenAtInstantiation(
     const slang::ast::InstanceSymbol& inst,
     const slang::ast::ParameterSymbol& param) -> const slang::ast::Expression* {
