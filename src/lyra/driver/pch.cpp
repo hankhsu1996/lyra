@@ -37,11 +37,10 @@ auto IsClangCompiler(const std::filesystem::path& cxx) -> bool {
 // command that prepares one and the action it is kept under cannot describe
 // different things.
 auto PreparationFlags(Optimization optimization) -> std::vector<std::string> {
-  return {
-      std::string(kCxxStandardFlag),
-      std::string(OptimizationFlag(optimization)),
-      std::string(kPchContentValidationFlag),
-      std::string(kPchInstantiateTemplatesFlag)};
+  std::vector<std::string> flags = DesignCompileFlags(optimization);
+  flags.emplace_back(kPchContentValidationFlag);
+  flags.emplace_back(kPchInstantiateTemplatesFlag);
+  return flags;
 }
 
 // The action that prepares a header: the compiler that prepares it, the

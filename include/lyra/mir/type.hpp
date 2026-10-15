@@ -837,9 +837,8 @@ class Type {
   // the holder's own hands.
   [[nodiscard]] auto IsRuntimeStoredValue() const -> bool;
 
-  // True for a value whose parts are each storage of its own, so a write to one
-  // lands in it where it lies. A part of any other value is a view, written by
-  // writing the whole it is a view of.
+  // True for a value whose parts each have an identity of their own, so a
+  // write in progress designates one and a reference can bind one.
   [[nodiscard]] auto PartsAreStorage() const -> bool;
 
   // True for a value whose bits lie contiguously (LRM 7.4.1), so a write into

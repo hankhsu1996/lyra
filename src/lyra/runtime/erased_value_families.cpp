@@ -33,7 +33,6 @@ constexpr auto FamiliesCover(support::ValueDomain domain) -> bool {
     case support::ValueDomain::kEmpty:
     case support::ValueDomain::kTuple:
     case support::ValueDomain::kUnion:
-    case support::ValueDomain::kTaggedUnion:
     case support::ValueDomain::kDynArray:
     case support::ValueDomain::kUnpackedArray:
     case support::ValueDomain::kQueue:
@@ -47,17 +46,13 @@ static_assert(FamiliesCover(support::ValueDomain::kLogicWide));
 
 }  // namespace
 
-template class ValueStorageCore<value::RuntimeUnion>;
-template class ValueStorageCore<value::RuntimeTaggedUnion>;
 template class ValueStorageCore<value::RuntimeDynamicArray>;
 template class ValueStorageCore<value::RuntimeQueue>;
 template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
 template class Cell<WordsStorage<value::StateDomain::kTwoState>>;
 template class Cell<WordsStorage<value::StateDomain::kFourState>>;
-template class Cell<LaidOutStorage<value::RuntimeTuple>>;
-template class Cell<ValueStorageCore<value::RuntimeUnion>>;
-template class Cell<ValueStorageCore<value::RuntimeTaggedUnion>>;
+template class Cell<LaidOutStorage<value::RuntimeRecord>>;
 template class Cell<ValueStorageCore<value::RuntimeDynamicArray>>;
 template class Cell<LaidOutStorage<value::RuntimeFixedArray>>;
 template class Cell<ValueStorageCore<value::RuntimeQueue>>;
@@ -65,19 +60,15 @@ template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
 template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
-template class TailCell<LaidOutStorage<value::RuntimeTuple>>;
+template class TailCell<LaidOutStorage<value::RuntimeRecord>>;
 template class TailCell<LaidOutStorage<value::RuntimeFixedArray>>;
-template class Var<value::RuntimeUnion>;
-template class Var<value::RuntimeTaggedUnion>;
 template class Var<value::RuntimeDynamicArray>;
 template class Var<value::RuntimeQueue>;
 template class Var<value::RuntimeAssociativeArray>;
 
 template class CellRareState<WordsStorage<value::StateDomain::kTwoState>>;
 template class CellRareState<WordsStorage<value::StateDomain::kFourState>>;
-template class CellRareState<LaidOutStorage<value::RuntimeTuple>>;
-template class CellRareState<ValueStorageCore<value::RuntimeUnion>>;
-template class CellRareState<ValueStorageCore<value::RuntimeTaggedUnion>>;
+template class CellRareState<LaidOutStorage<value::RuntimeRecord>>;
 template class CellRareState<ValueStorageCore<value::RuntimeDynamicArray>>;
 template class CellRareState<LaidOutStorage<value::RuntimeFixedArray>>;
 template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
@@ -85,67 +76,51 @@ template class CellRareState<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 template class VariableRef<value::WideBitVector>;
 template class VariableRef<value::WideLogicVector>;
-template class VariableRef<value::RuntimeUnion>;
-template class VariableRef<value::RuntimeTaggedUnion>;
 template class VariableRef<value::RuntimeDynamicArray>;
 template class VariableRef<value::RuntimeQueue>;
 template class VariableRef<value::RuntimeAssociativeArray>;
 
 template class ScopedMutation<VariableRef<value::WideBitVector>>;
 template class ScopedMutation<VariableRef<value::WideLogicVector>>;
-template class ScopedMutation<VariableRef<value::RuntimeUnion>>;
-template class ScopedMutation<VariableRef<value::RuntimeTaggedUnion>>;
 template class ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
 template class ScopedMutation<VariableRef<value::RuntimeQueue>>;
 template class ScopedMutation<VariableRef<value::RuntimeAssociativeArray>>;
 
 template class Takeovers<value::WideBitVector>;
 template class Takeovers<value::WideLogicVector>;
-template class Takeovers<value::RuntimeTuple>;
-template class Takeovers<value::RuntimeUnion>;
-template class Takeovers<value::RuntimeTaggedUnion>;
+template class Takeovers<value::RuntimeRecord>;
 template class Takeovers<value::RuntimeDynamicArray>;
 template class Takeovers<value::RuntimeFixedArray>;
 template class Takeovers<value::RuntimeQueue>;
 template class Takeovers<value::RuntimeAssociativeArray>;
 
-template class ValueCell<value::RuntimeUnion>;
-template class ValueCell<value::RuntimeTaggedUnion>;
 template class ValueCell<value::RuntimeDynamicArray>;
 template class ValueCell<value::RuntimeQueue>;
 template class ValueCell<value::RuntimeAssociativeArray>;
 
 template class SampledHistory<value::WideBitVector>;
 template class SampledHistory<value::WideLogicVector>;
-template class SampledHistory<value::RuntimeTuple>;
-template class SampledHistory<value::RuntimeUnion>;
-template class SampledHistory<value::RuntimeTaggedUnion>;
+template class SampledHistory<value::RuntimeRecord>;
 template class SampledHistory<value::RuntimeDynamicArray>;
 template class SampledHistory<value::RuntimeFixedArray>;
 template class SampledHistory<value::RuntimeQueue>;
 template class SampledHistory<value::RuntimeAssociativeArray>;
 
 template class ResolvedNet<value::WideLogicVector>;
-template class ResolvedNet<value::RuntimeTuple>;
-template class ResolvedNet<value::RuntimeUnion>;
+template class ResolvedNet<value::RuntimeRecord>;
 template class ResolvedNet<value::RuntimeFixedArray>;
 
 template class Driver<value::WideLogicVector>;
-template class Driver<value::RuntimeTuple>;
-template class Driver<value::RuntimeUnion>;
+template class Driver<value::RuntimeRecord>;
 template class Driver<value::RuntimeFixedArray>;
 
-template class CompletionSlot<value::RuntimeTuple>;
-template class CompletionSlot<value::RuntimeUnion>;
-template class CompletionSlot<value::RuntimeTaggedUnion>;
+template class CompletionSlot<value::RuntimeRecord>;
 template class CompletionSlot<value::RuntimeDynamicArray>;
 template class CompletionSlot<value::RuntimeFixedArray>;
 template class CompletionSlot<value::RuntimeQueue>;
 template class CompletionSlot<value::RuntimeAssociativeArray>;
 
-template class Coroutine<value::RuntimeTuple>;
-template class Coroutine<value::RuntimeUnion>;
-template class Coroutine<value::RuntimeTaggedUnion>;
+template class Coroutine<value::RuntimeRecord>;
 template class Coroutine<value::RuntimeDynamicArray>;
 template class Coroutine<value::RuntimeFixedArray>;
 template class Coroutine<value::RuntimeQueue>;

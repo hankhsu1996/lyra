@@ -361,17 +361,18 @@ class LirDumper {
               return std::format(
                   "dynamic_cast {}", FormatOperand(cast.operand));
             },
-            [&](const AggregateExtractInstr& extract) -> std::string {
+            [&](const UnionInstr& built) -> std::string {
               return std::format(
-                  "aggregate_extract {}, {}", FormatOperand(extract.aggregate),
-                  FormatSelector(extract.selector));
+                  "union({}: {})", built.member.value,
+                  FormatOperand(built.value));
             },
-            [&](const AggregateUpdateInstr& update) -> std::string {
+            [&](const VectorGetInstr& get) -> std::string {
               return std::format(
-                  "aggregate_update {}, {}, {}",
-                  FormatOperand(update.aggregate),
-                  FormatSelector(update.selector),
-                  FormatOperand(update.replacement));
+                  "vector_get {}, {}", FormatOperand(get.vector),
+                  FormatOperand(get.index));
+            },
+            [&](const DiscriminantInstr& read) -> std::string {
+              return std::format("discriminant {}", FormatPlace(read.place));
             },
             [&](const LoadInstr& load) -> std::string {
               return std::format("load {}", FormatPlace(load.place));
@@ -530,19 +531,6 @@ class LirDumper {
           step);
     }
     return out;
-  }
-
-  [[nodiscard]] static auto FormatSelector(const AggregateSelector& selector)
-      -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const Component& c) -> std::string {
-              return std::format("component {}", c.index.value);
-            },
-            [&](const ContainerElement& e) -> std::string {
-              return std::format("element({})", FormatOperands(e.operands));
-            }},
-        selector);
   }
 
   [[nodiscard]] static auto FormatOperand(const Operand& op) -> std::string {

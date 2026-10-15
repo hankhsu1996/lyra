@@ -132,10 +132,11 @@ value-domain projection is the representation it shares with a type that names n
    `mir.md` was saying; what stops being true is that it is the only heterogeneous aggregate.
 
 3. **The projection is what every value operation reads.** An unpacked aggregate projects to the
-   product: one realization, `lyra::value::Tuple<Ts...>` monomorphized or `RuntimeTuple` erased, and
-   the value representation is unchanged by this entry. A packed aggregate projects to the single
-   vector its members are placed in, reached through the same `IsIntegralPacked()` / `PackedShape()`
-   pair an enumeration already answers, so it is integral everywhere an integral is asked for.
+   product: one realization, monomorphized for the C++ backend or held as its bytes and its type by
+   the prebuilt library, and the value representation is unchanged by this entry. A packed aggregate
+   projects to the single vector its members are placed in, reached through the same
+   `IsIntegralPacked()` / `PackedShape()` pair an enumeration already answers, so it is integral
+   everywhere an integral is asked for.
 
 4. **Reaching a member stays positional.** A member is named by its declaration-order position, the
    selector a product component and a union member already share; no access node gains a name. What

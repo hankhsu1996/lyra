@@ -119,7 +119,7 @@ auto CallMakesValue(const CallTarget& target) -> bool {
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
     case support::EntryAnswer::kReferenceToContents:
-    case support::EntryAnswer::kPartOfTheReceiver:
+    case support::EntryAnswer::kReferenceToSampledContents:
       return false;
   }
   throw InternalError("lir: unknown entry answer");
@@ -148,7 +148,7 @@ auto CallBuildsExecution(const CallTarget& target) -> bool {
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
     case support::EntryAnswer::kReferenceToContents:
-    case support::EntryAnswer::kPartOfTheReceiver:
+    case support::EntryAnswer::kReferenceToSampledContents:
       return false;
   }
   throw InternalError("lir: unknown entry answer");
@@ -167,8 +167,9 @@ auto MakesValue(const Rvalue& value) -> bool {
           [](const DynamicCastInstr&) { return true; },
           [](const TupleInstr&) { return true; },
           [](const ClosureInstr&) { return true; },
-          [](const AggregateExtractInstr&) { return true; },
-          [](const AggregateUpdateInstr&) { return true; },
+          [](const UnionInstr&) { return true; },
+          [](const VectorGetInstr&) { return true; },
+          [](const DiscriminantInstr&) { return true; },
           [](const BinaryInstr&) { return true; },
           [](const UnaryInstr&) { return true; },
           [](const ArrayInstr&) { return true; },
@@ -221,10 +222,11 @@ auto PlaceType(
             },
             [&](const ComponentProjection& projection) {
               const std::optional<std::span<const TypeId>> components =
-                  ProductElements(unit, current);
+                  ComponentTypes(unit, current);
               if (!components.has_value()) {
                 throw InternalError(
-                    "lir: a component step over a type that is not a product");
+                    "lir: a component step over a type that is neither a "
+                    "product nor a union");
               }
               if (projection.index.value >= components->size()) {
                 throw InternalError("lir: component step out of range");

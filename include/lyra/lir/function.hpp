@@ -463,47 +463,22 @@ struct ArrayInstr {
   std::vector<Operand> elements;
 };
 
-// Names a member of an active-member value by its declaration-order position,
-// carrying no operands because the position is the whole coordinate. What a
-// read of a member that is not live answers with, and whether an update settles
-// which member is live, follow from the aggregate's type, the same way the
-// entry realizing a coordinate step does.
-struct Component {
-  base::ComponentIndex index;
+// Builds a union holding member `member` as `value`, every other byte of its
+// storage zero, and, for a tagged union, the tag naming that member (LRM 7.3,
+// 7.3.2): the peer of a tuple's build for a value whose type overlays its
+// members, as rustc's MIR builds a union or an enum's variant by an aggregate
+// naming the field or the variant. Its result is the union.
+struct UnionInstr {
+  base::ComponentIndex member;
+  Operand value;
 };
 
-// One element of a sequence of handles, at the index the program computes.
-// Which runtime entry realizes the step follows from the aggregate's type,
-// below this layer; the selector says only which subvalue is named.
-struct ContainerElement {
-  std::vector<Operand> operands;
-};
-
-using AggregateSelector = std::variant<Component, ContainerElement>;
-
-// Extracts a subvalue of an aggregate value, named by `selector`: a part that
-// is a view of the whole it belongs to rather than storage of its own -- a
-// member of a union, an object of a sequence of handles.
-// The subvalue is built out of the aggregate, not aliased. This is the read
-// half of value-aggregate access, the peer of LLVM's `extractvalue`; a part
-// that is storage of its own is a step of a place instead. The result's type
-// is the selected subvalue's type.
-struct AggregateExtractInstr {
-  Operand aggregate;
-  AggregateSelector selector;
-};
-
-// Produces an aggregate value equal to `aggregate` with the subvalue at
-// `selector` replaced by `replacement`. A pure value operation -- it never
-// mutates the operand -- so writing a part that is a view of its whole is a
-// store of the whole this builds. The peer of LLVM's `insertvalue`; a part
-// that is storage of its own is written where it lies instead, and so are bits
-// of an integral value held at a place. The result's type is the operand's
-// aggregate type.
-struct AggregateUpdateInstr {
-  Operand aggregate;
-  AggregateSelector selector;
-  Operand replacement;
+// One element of a sequence of handles, at the position the program computes.
+// The element is built out of the sequence, not aliased: a part that is
+// storage of its own is a step of a place instead.
+struct VectorGetInstr {
+  Operand vector;
+  Operand index;
 };
 
 // Where one declaration put one of its own members: the member's stable
@@ -546,17 +521,20 @@ struct MemberProjection {
 // Selects one element of whatever container the projection has reached, by the
 // coordinate the program computed -- an ordinal, or the index an associative
 // array is keyed by. Only a container that holds each element as storage of
-// its own is stepped into this way (LRM 7.4, 7.8, 7.10); a part that is a view
-// of its whole is reached by value projection instead. Which element the step
-// reaches depends on the access: a read of one that is not there reads the
-// default, and a write to one allocates or discards it by the container's own
-// rule, so the access, not the step, says which.
+// its own is stepped into this way (LRM 7.4, 7.8, 7.10); an element of a
+// sequence of handles is taken out of it by value instead. Which element the
+// step reaches depends on the access: a read of one that is not there reads
+// the default, and a write to one allocates or discards it by the container's
+// own rule, so the access, not the step, says which.
 struct ElementProjection {
   std::vector<Operand> coordinates;
 };
 
-// Selects one component of whatever product the projection has reached, by its
-// position. A component is storage of its own (LRM 7.2).
+// Selects one component of whatever product or union the projection has
+// reached, by its position. A product's component is storage of its own (LRM
+// 7.2); a union's member lies at the start of the union's storage, and where
+// the union is untagged its bits may be another member's, so a load through it
+// reads the value its type holds out of them.
 struct ComponentProjection {
   base::ComponentIndex index;
 };
@@ -586,6 +564,12 @@ struct Place {
 // object names the cell; the value the cell holds is the place one dereference
 // further, and reading that is what goes through the cell's own access.
 struct LoadInstr {
+  Place place;
+};
+
+// The tag of the tagged union at `place`, as a machine integer, as rustc's MIR
+// reads an enum's discriminant before it projects a variant.
+struct DiscriminantInstr {
   Place place;
 };
 
@@ -739,8 +723,8 @@ struct CloseVariablesInstr {
 // assignment: every instruction that yields one, a call to a callee answering
 // nothing included, whose value is the void one.
 using Rvalue = std::variant<
-    CallInstr, TupleInstr, ClosureInstr, ArrayInstr, AggregateExtractInstr,
-    AggregateUpdateInstr, LoadInstr, AddrOfInstr, BinaryInstr, UnaryInstr,
+    CallInstr, TupleInstr, UnionInstr, ClosureInstr, ArrayInstr, VectorGetInstr,
+    DiscriminantInstr, LoadInstr, AddrOfInstr, BinaryInstr, UnaryInstr,
     CastInstr, HandleCastInstr, DynamicCastInstr, ReceiveDepartureInstr,
     OpenVariablesInstr, VariableAddressInstr, UseInstr>;
 

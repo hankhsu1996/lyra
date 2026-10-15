@@ -10,8 +10,6 @@
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_tagged_union.hpp"
-#include "lyra/value/runtime_union.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type_of.hpp"
 
@@ -37,8 +35,6 @@ template class ValueTypeOf<Real>;
 template class ValueTypeOf<ShortReal>;
 template class ValueTypeOf<Chandle>;
 template class ValueTypeOf<Empty>;
-template class ValueTypeOf<RuntimeUnion>;
-template class ValueTypeOf<RuntimeTaggedUnion>;
 template class ValueTypeOf<RuntimeDynamicArray>;
 template class ValueTypeOf<RuntimeQueue>;
 template class ValueTypeOf<RuntimeAssociativeArray>;
@@ -59,10 +55,6 @@ constinit const lyra::value::ValueTypeOf<lyra::value::Chandle>
     lyra_rt_chandle_value_type;
 constinit const lyra::value::ValueTypeOf<lyra::value::Empty>
     lyra_rt_empty_value_type;
-constinit const lyra::value::ValueTypeOf<lyra::value::RuntimeUnion>
-    lyra_rt_union_value_type;
-constinit const lyra::value::ValueTypeOf<lyra::value::RuntimeTaggedUnion>
-    lyra_rt_tagged_union_value_type;
 constinit const lyra::value::ValueTypeOf<lyra::value::RuntimeDynamicArray>
     lyra_rt_dynarray_value_type;
 constinit const lyra::value::ValueTypeOf<lyra::value::RuntimeQueue>

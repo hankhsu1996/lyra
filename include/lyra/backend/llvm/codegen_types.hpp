@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/union_layout.hpp"
 
 namespace lyra::lir {
 struct CompilationUnit;
@@ -43,6 +45,15 @@ struct ArrayLayout {
   support::ObjectLayout storage{};
 };
 
+// How a union is laid out: its members overlaid at its start, as large as the
+// largest and aligned as the strictest, and for a tagged union the tag after
+// them at its own alignment (LRM 7.3, 7.3.2). `storage` is what the union takes
+// of whatever holds it.
+struct UnionLayout {
+  std::span<const lir::TypeId> members;
+  support::ObjectLayout storage{};
+};
+
 // An integral type as the value layer states one.
 [[nodiscard]] auto ShapeOf(const lir::IntegralType& integral)
     -> value::IntegralShape;
@@ -64,7 +75,8 @@ class CodeGenTypes {
   auto GetFunctionType(const FnAbi& abi) -> llvm::FunctionType*;
 
   // The storage a value an owner holds occupies. A tuple's is composed from
-  // its components'; a fixed-size unpacked array's is its elements'; an
+  // its components'; a fixed-size unpacked array's is its elements'; a
+  // union's is its members' overlaid, then a tagged union's tag; an
   // integral value's is the bytes the value layer lays a value of its width
   // and states out in; a machine integer's is that integer's; a sequence of
   // machine values is the values, as a C++ `std::array` is; every other owned
@@ -87,10 +99,18 @@ class CodeGenTypes {
   // is a compiler defect.
   [[nodiscard]] auto RequiredIntegralShapeOf(lir::TypeId type) const
       -> value::IntegralShape;
+  // Whether a value of `type` has positions above an integral's width that
+  // its representation keeps clear, which a read through a member of an
+  // untagged union then has to clear (LRM 7.3.2).
+  [[nodiscard]] auto KeepsAboveWidthsClear(lir::TypeId type) const -> bool;
   // Where each component of a tuple sits. Asked only of a product.
   auto LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout&;
   // Where the elements of a fixed-size unpacked array lie. Asked only of one.
   auto LayoutOfArray(lir::TypeId array) -> const ArrayLayout&;
+  // Where a union's members lie. Asked only of a union.
+  auto LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout&;
+  // Where a tagged union keeps its tag. Asked only of a tagged union.
+  auto TagOf(lir::TypeId tagged) -> value::TagPlacement;
 
   auto Ptr() const -> llvm::PointerType* {
     return ptr_ty_;
@@ -120,6 +140,7 @@ class CodeGenTypes {
   std::unordered_map<lir::TypeId, llvm::Type*> cache_;
   std::unordered_map<lir::TypeId, TupleLayout> tuples_;
   std::unordered_map<lir::TypeId, ArrayLayout> arrays_;
+  std::unordered_map<lir::TypeId, UnionLayout> unions_;
 };
 
 }  // namespace lyra::backend::llvm_backend

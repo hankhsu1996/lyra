@@ -157,10 +157,10 @@ struct UnpackedStructType {
   auto operator==(const UnpackedStructType&) const -> bool = default;
 };
 
-// LRM 7.3 unpacked union: one storage shared across the member types, with one
-// member usable at a time. `tagged` (LRM 7.3.2) marks a type-checked union that
-// carries a tag identifying the active member; an untagged union (the default)
-// is the type-loophole form with no tag. A tagged union may declare a `void`
+// LRM 7.3 unpacked union: one storage its member types overlay. `tagged` (LRM
+// 7.3.2) marks a type-checked union that carries a tag naming the member it
+// holds; an untagged union (the default) is the type-loophole form with no
+// tag, read through any member. A tagged union may declare a `void`
 // member (LRM 7.3.2) when all information is in the tag.
 struct UnpackedUnionType {
   std::vector<UnpackedAggregateField> fields;

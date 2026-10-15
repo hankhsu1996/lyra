@@ -144,11 +144,12 @@ class CodeGenTuples {
       lir::TypeId tuple, std::string_view slot,
       const VirtualSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
-  // The body of the slot building a structure's value before anything writes
-  // it.
-  auto DefaultBody(
+  // The body of a slot the library answers component by component through the
+  // entry `op`: building a structure's value before anything writes it, and
+  // clearing what each component keeps clear.
+  auto ComponentWiseBody(
       lir::TypeId tuple, std::string_view slot,
-      const VirtualSignature& stands_in_for) -> llvm::Constant*;
+      const VirtualSignature& stands_in_for, RuntimeOp op) -> llvm::Constant*;
   // The body of a slot a structure answers with nothing.
   auto NullBody(
       lir::TypeId tuple, std::string_view slot,

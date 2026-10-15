@@ -34,14 +34,6 @@ auto LayoutOf(const ValueType& element, std::size_t count) -> FixedArrayLayout {
   return FixedArrayLayoutOf(element.Size(), element.Align(), count);
 }
 
-auto Offset(const void* from, std::size_t bytes) -> const void* {
-  return std::bit_cast<const void*>(
-      std::bit_cast<std::uintptr_t>(from) + bytes);
-}
-auto Offset(void* from, std::size_t bytes) -> void* {
-  return std::bit_cast<void*>(std::bit_cast<std::uintptr_t>(from) + bytes);
-}
-
 // The elements of one array as the sequence algorithms read them, and write
 // them where the array may be written.
 template <typename Bytes>
@@ -227,6 +219,12 @@ auto FixedArrayType::BitIdentical(const void* lhs, const void* rhs) const
 
 auto FixedArrayType::HasUnknown(const void* value) const -> bool {
   return detail::SequenceHasUnknown(Elements(*this, value));
+}
+
+void FixedArrayType::ClearAboveWidths(void* value) const {
+  for (std::size_t i = 0; i < count_; ++i) {
+    element_->Type().ClearAboveWidths(ElementAt(value, i));
+  }
 }
 
 void FixedArrayType::BuildDefault(void* out) const {

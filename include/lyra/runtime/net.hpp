@@ -1226,8 +1226,8 @@ class ResolvedNet<T> : public Observable {
   }
 
   // A value of the net's own type handed as its bytes, as the net keeps one of
-  // its own: a tuple or an array is laid out by the type the net was built
-  // with.
+  // its own: a tuple, a union or an array is laid out by the type the net was
+  // built with.
   [[nodiscard]] auto ToOwned(const void* bytes) const -> T
     requires value::LaidOutByType<T>
   {

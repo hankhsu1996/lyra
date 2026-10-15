@@ -170,6 +170,9 @@ class CountedElementType final : public ValueType {
   [[nodiscard]] auto HasUnknown(const void* value) const -> bool override {
     return Inner().HasUnknown(value);
   }
+  void ClearAboveWidths(void* value) const override {
+    Inner().ClearAboveWidths(value);
+  }
 
   void BuildDefault(void* out) const override {
     Inner().BuildDefault(out);

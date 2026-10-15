@@ -89,11 +89,10 @@
 #include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_memory.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_tagged_union.hpp"
-#include "lyra/value/runtime_tuple.hpp"
-#include "lyra/value/runtime_union.hpp"
+#include "lyra/value/runtime_record.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/tuple_type.hpp"
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/wide.hpp"
@@ -326,8 +325,8 @@ void RefArmSampling(void* reference) {
 }
 
 template <value::LyraValue T>
-auto RefSampledLoad(void* reference, void* out) -> void* {
-  return Emplace(out, LentAt<T>(reference).SampledGet());
+auto RefSampledGet(void* reference) -> const void* {
+  return HandleTo(LentAt<T>(reference).SampledGet());
 }
 
 // A procedural continuous assignment on a whole variable (LRM 10.6), reached
@@ -377,6 +376,34 @@ void ArmWholeVariable(void* reference) {
   }
 }
 
+// Where the sampled value of a `T` a reference names lies (LRM 16.5.1), for a
+// value lying after what holds it: the variable keeps it apart once armed, and
+// storage nothing watches changes only where the reference is, so its sampled
+// value is its current one.
+template <class T>
+auto TailRefSampledGet(void* reference) -> const void* {
+  const ErasedReference& lent = ErasedAt(reference);
+  return std::visit(
+      Overloaded{
+          [&](std::monostate) -> const void* { return lent.storage; },
+          [&](VariableCell*) -> const void* {
+            if (!lent.whole) {
+              throw SimulationError(
+                  "a sampled value of part of a variable lent by reference "
+                  "is not yet supported");
+            }
+            return WholeVariable<typename VariableOf<T>::Type>(lent)
+                .SampledBytes();
+          },
+          [](GcObject*) -> const void* {
+            throw SimulationError(
+                "a sampled value of a class property lent by reference is not "
+                "yet supported");
+          },
+          [&](HeldByNet) -> const void* { return lent.storage; }},
+      lent.holder);
+}
+
 // The integral type an entry is told where it builds values of one and keeps
 // them with it -- a key of an associative memory, an element of a byte array.
 auto IntegralTypeAt(const void* type) -> const value::IntegralValueType& {
@@ -420,12 +447,6 @@ auto ArrayAt(const void* bytes, const void* type) -> value::FixedArrayView {
 auto OwnedArrayCopy(const void* bytes, const void* type)
     -> value::RuntimeFixedArray {
   return value::RuntimeFixedArray::CopyOf(ArrayTypeAt(type), bytes);
-}
-
-// The same of a tuple that crossed as its bytes with its type.
-auto OwnedTupleCopy(const void* bytes, const void* type)
-    -> value::RuntimeTuple {
-  return value::RuntimeTuple::CopyOf(TupleTypeAt(type), bytes);
 }
 
 // What an entry is told of an integral operand it reads as a number: how wide
@@ -555,48 +576,12 @@ void WideRefSet(void* reference, std::int64_t width, const void* value) {
   lent.Report(PartPath{}, ReplaceWhole(held, assign));
 }
 
-template <value::HeldAsWords T>
-auto WideRefSampledLoad(void* reference, std::int64_t width, void* out)
-    -> void* {
-  const ErasedReference& lent = ErasedAt(reference);
-  return std::visit(
-      Overloaded{
-          [&](std::monostate) -> void* {
-            const value::WideAt<T::kDomain> held = WideLentAt<T>(lent, width);
-            std::memcpy(out, held.bytes, held.ByteSize());
-            return out;
-          },
-          [&](VariableCell*) -> void* {
-            if (!lent.whole) {
-              throw SimulationError(
-                  "a sampled value of part of a variable lent by reference "
-                  "is not yet supported");
-            }
-            const auto& cell =
-                WholeVariable<typename VariableOf<T>::Type>(lent);
-            std::memcpy(
-                out, cell.SampledBytes(), cell.HeldStorage().ByteSize());
-            return out;
-          },
-          [](GcObject*) -> void* {
-            throw SimulationError(
-                "a sampled value of a class property lent by reference is not "
-                "yet supported");
-          },
-          [&](HeldByNet) -> void* {
-            const value::WideAt<T::kDomain> held = WideLentAt<T>(lent, width);
-            std::memcpy(out, held.bytes, held.ByteSize());
-            return out;
-          }},
-      lent.holder);
-}
-
 // A value lying after what holds it, lent by reference or by its holder as a
 // write reaches it: an integral value wider than a word, of which the write
-// reads bits by position, and a tuple or a fixed-size unpacked array, laid out
-// by its type. A copy is a value of its own, which is what a write the variable
-// turns away lands in (LRM 10.6). Each is lent told what its holder is told,
-// and lends the same of other bytes.
+// reads bits by position, and a value laid out by its type -- a tuple, a
+// union, a fixed-size unpacked array. A copy is a value of its own, which is
+// what a write the variable turns away lands in (LRM 10.6). Each is lent told
+// what its holder is told, and lends the same of other bytes.
 template <value::HeldAsWords T>
 class LentWide {
  public:
@@ -794,9 +779,10 @@ auto OpenTailCellWrite(void* cell, void* out) -> void* {
           VariableAt<T>(cell)});
 }
 
-// The same over a tuple and a fixed-size unpacked array, which a reference
-// names as their bytes where they lie: no object of the runtime's stands for
-// one there, since a component or an element of one is bytes of what holds it.
+// The same over a value laid out by its type -- a tuple, a union, a fixed-size
+// unpacked array -- which a reference names as its bytes where it lies: no
+// object of the runtime's stands for one there, since a component, a member or
+// an element of one is bytes of what holds it.
 // Nothing in those bytes says what they are, so an access that has to know is
 // told the type. `Owned` is the form the runtime holds such a value of its own
 // in, which is what a variable holding the whole of it keeps beneath a
@@ -823,40 +809,6 @@ void LaidOutRefSet(
   }
   type.Assign(lent.storage, value);
   lent.Report(PartPath{}, Change::Whole());
-}
-
-template <value::LaidOutByType Owned>
-auto LaidOutRefSampledLoad(
-    void* reference, const value::ValueType& type, void* out) -> void* {
-  const ErasedReference& lent = ErasedAt(reference);
-  return std::visit(
-      Overloaded{
-          [&](std::monostate) -> void* {
-            type.Copy(lent.storage, out);
-            return out;
-          },
-          [&](VariableCell*) -> void* {
-            if (!lent.whole) {
-              throw SimulationError(
-                  "a sampled value of part of a variable lent by reference "
-                  "is not yet supported");
-            }
-            type.Copy(
-                WholeVariable<typename VariableOf<Owned>::Type>(lent)
-                    .SampledBytes(),
-                out);
-            return out;
-          },
-          [](GcObject*) -> void* {
-            throw SimulationError(
-                "a sampled value of a class property lent by reference is not "
-                "yet supported");
-          },
-          [&](HeldByNet) -> void* {
-            type.Copy(lent.storage, out);
-            return out;
-          }},
-      lent.holder);
 }
 
 // A net and one of its drivers, behind the addresses the ABI carries them as.
@@ -936,6 +888,25 @@ auto OwnedCopy(const void* value, const void* type) -> value::AnyValue {
   return value::AnyValue::CopyOf(TypeAt(type), value);
 }
 
+// The same of a structure or a union that crossed as its bytes with its type,
+// held as the runtime holds one.
+auto OwnedRecordCopy(const void* bytes, const void* type)
+    -> value::RuntimeRecord {
+  return value::RuntimeRecord::CopyOf(TypeAt(type), bytes);
+}
+
+// A union that crossed as its bytes with `crossed`, its type, handed to an
+// operation over unions of `type`, which only another union of that type is.
+auto UnionAt(const void* bytes, const void* type, const void* crossed) -> const
+    void* {
+  if (TypeAt(crossed).Size() != TypeAt(type).Size()) {
+    throw InternalError(
+        "runtime: a union of one type is handed to an operation over unions "
+        "of another -- please report this as a bug");
+  }
+  return bytes;
+}
+
 // An index that crossed with its type, read where it lies.
 auto IndexAt(const void* index, const void* type) -> value::IndexView {
   return {.bytes = index, .type = &TypeAt(type)};
@@ -1011,8 +982,9 @@ auto LandWideDesignation(const void* designation, std::int64_t width) noexcept
   return landed.part;
 }
 
-// So is a tuple and a fixed-size unpacked array, whose bytes do not say what
-// they are, so the landing and each step into one are told its type.
+// So is a value laid out by its type -- a tuple, a union, a fixed-size
+// unpacked array -- whose bytes do not say what it is, so the landing and each
+// step into one are told its type.
 auto LandLaidOutDesignation(
     const void* designation, const value::ValueType& type) noexcept -> void* {
   const ErasedDesignation& landed = DesignationAt(designation);
@@ -2076,7 +2048,6 @@ using lyra::runtime::InstantiationTable;
 using lyra::runtime::IntegralTypeAt;
 using lyra::runtime::IntOf;
 using lyra::runtime::JoinNets;
-using lyra::runtime::LaidOutRefSampledLoad;
 using lyra::runtime::LaidOutRefSet;
 using lyra::runtime::LandDesignation;
 using lyra::runtime::LandLaidOutDesignation;
@@ -2135,7 +2106,7 @@ using lyra::runtime::ReferToCell;
 using lyra::runtime::ReferToProperty;
 using lyra::runtime::ReferToStorage;
 using lyra::runtime::RefGet;
-using lyra::runtime::RefSampledLoad;
+using lyra::runtime::RefSampledGet;
 using lyra::runtime::RefSet;
 using lyra::runtime::RefuseReport;
 using lyra::runtime::ReportHandles;
@@ -2154,6 +2125,7 @@ using lyra::runtime::ShowSource;
 using lyra::runtime::SimTimeInUnit;
 using lyra::runtime::SpawnAll;
 using lyra::runtime::STimeInUnit;
+using lyra::runtime::TailRefSampledGet;
 using lyra::runtime::TakeBranches;
 using lyra::runtime::TakeClosure;
 using lyra::runtime::TakeCondition;
@@ -2196,9 +2168,7 @@ using lyra::value::RuntimeAssociativeArray;
 using lyra::value::RuntimeDynamicArray;
 using lyra::value::RuntimeFixedArray;
 using lyra::value::RuntimeQueue;
-using lyra::value::RuntimeTaggedUnion;
-using lyra::value::RuntimeTuple;
-using lyra::value::RuntimeUnion;
+using lyra::value::RuntimeRecord;
 using lyra::value::ShortReal;
 using lyra::value::String;
 using lyra::value::TimeFormat;
@@ -2565,15 +2535,11 @@ auto lyra_rt_managedref_shared_cell_make(void* out) -> void* {
 }
 
 auto lyra_rt_tuple_shared_cell_make(const void* held_type, void* out) -> void* {
-  return MakeSharedCell<RuntimeTuple>(out, lyra::runtime::TypeAt(held_type));
+  return MakeSharedCell<RuntimeRecord>(out, lyra::runtime::TypeAt(held_type));
 }
 
-auto lyra_rt_union_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<RuntimeUnion>(out);
-}
-
-auto lyra_rt_tagged_union_shared_cell_make(void* out) -> void* {
-  return MakeSharedCell<RuntimeTaggedUnion>(out);
+auto lyra_rt_union_shared_cell_make(const void* held_type, void* out) -> void* {
+  return MakeSharedCell<RuntimeRecord>(out, lyra::runtime::TypeAt(held_type));
 }
 
 auto lyra_rt_dynarray_shared_cell_make(void* out) -> void* {
@@ -3403,13 +3369,11 @@ auto lyra_rt_managedref_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<ObjectRef>(cell, out);
 }
 auto lyra_rt_tuple_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<RuntimeTuple>(cell, out);
+  return ReferToCell<RuntimeRecord>(cell, out);
 }
+
 auto lyra_rt_union_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<RuntimeUnion>(cell, out);
-}
-auto lyra_rt_tagged_union_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<RuntimeTaggedUnion>(cell, out);
+  return ReferToCell<RuntimeRecord>(cell, out);
 }
 auto lyra_rt_dynarray_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<RuntimeDynamicArray>(cell, out);
@@ -3470,8 +3434,8 @@ void lyra_rt_string_ref_arm_sampling(void* reference) {
   RefArmSampling<String>(reference);
 }
 
-auto lyra_rt_string_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<String>(reference, out);
+auto lyra_rt_string_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<String>(reference);
 }
 
 auto lyra_rt_real_ref_get(void* reference) -> const void* {
@@ -3486,8 +3450,8 @@ void lyra_rt_real_ref_arm_sampling(void* reference) {
   RefArmSampling<Real>(reference);
 }
 
-auto lyra_rt_real_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Real>(reference, out);
+auto lyra_rt_real_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Real>(reference);
 }
 
 auto lyra_rt_shortreal_ref_get(void* reference) -> const void* {
@@ -3502,8 +3466,8 @@ void lyra_rt_shortreal_ref_arm_sampling(void* reference) {
   RefArmSampling<ShortReal>(reference);
 }
 
-auto lyra_rt_shortreal_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<ShortReal>(reference, out);
+auto lyra_rt_shortreal_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<ShortReal>(reference);
 }
 
 auto lyra_rt_chandle_ref_get(void* reference) -> const void* {
@@ -3518,8 +3482,8 @@ void lyra_rt_chandle_ref_arm_sampling(void* reference) {
   RefArmSampling<Chandle>(reference);
 }
 
-auto lyra_rt_chandle_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Chandle>(reference, out);
+auto lyra_rt_chandle_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Chandle>(reference);
 }
 
 auto lyra_rt_managedref_ref_get(void* reference) -> const void* {
@@ -3534,61 +3498,44 @@ void lyra_rt_managedref_ref_arm_sampling(void* reference) {
   RefArmSampling<ObjectRef>(reference);
 }
 
-auto lyra_rt_managedref_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<ObjectRef>(reference, out);
+auto lyra_rt_managedref_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<ObjectRef>(reference);
 }
 
 auto lyra_rt_tuple_ref_get(void* reference) -> const void* {
   return ErasedAt(reference).storage;
 }
 
+auto lyra_rt_union_ref_get(void* reference) -> const void* {
+  return ErasedAt(reference).storage;
+}
+
 void lyra_rt_tuple_ref_set(
     void* reference, const void* value, const void* value_type) {
-  LaidOutRefSet<RuntimeTuple>(
+  LaidOutRefSet<RuntimeRecord>(
       reference, lyra::runtime::TupleTypeAt(value_type), value);
 }
 
+void lyra_rt_union_ref_set(
+    void* reference, const void* value, const void* value_type) {
+  LaidOutRefSet<RuntimeRecord>(
+      reference, lyra::runtime::TypeAt(value_type), value);
+}
+
 void lyra_rt_tuple_ref_arm_sampling(void* reference) {
-  ArmWholeVariable<VariableOf<RuntimeTuple>::Type>(reference);
-}
-
-auto lyra_rt_tuple_ref_sampled_load(
-    void* reference, const void* answer_type, void* out) -> void* {
-  return LaidOutRefSampledLoad<RuntimeTuple>(
-      reference, lyra::runtime::TupleTypeAt(answer_type), out);
-}
-
-auto lyra_rt_union_ref_get(void* reference) -> const void* {
-  return RefGet<RuntimeUnion>(reference);
-}
-
-void lyra_rt_union_ref_set(void* reference, const void* value) {
-  RefSet<RuntimeUnion>(reference, value);
+  ArmWholeVariable<VariableOf<RuntimeRecord>::Type>(reference);
 }
 
 void lyra_rt_union_ref_arm_sampling(void* reference) {
-  RefArmSampling<RuntimeUnion>(reference);
+  ArmWholeVariable<VariableOf<RuntimeRecord>::Type>(reference);
 }
 
-auto lyra_rt_union_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<RuntimeUnion>(reference, out);
+auto lyra_rt_tuple_ref_sampled_get(void* reference) -> const void* {
+  return TailRefSampledGet<RuntimeRecord>(reference);
 }
 
-auto lyra_rt_tagged_union_ref_get(void* reference) -> const void* {
-  return RefGet<RuntimeTaggedUnion>(reference);
-}
-
-void lyra_rt_tagged_union_ref_set(void* reference, const void* value) {
-  RefSet<RuntimeTaggedUnion>(reference, value);
-}
-
-void lyra_rt_tagged_union_ref_arm_sampling(void* reference) {
-  RefArmSampling<RuntimeTaggedUnion>(reference);
-}
-
-auto lyra_rt_tagged_union_ref_sampled_load(void* reference, void* out)
-    -> void* {
-  return RefSampledLoad<RuntimeTaggedUnion>(reference, out);
+auto lyra_rt_union_ref_sampled_get(void* reference) -> const void* {
+  return TailRefSampledGet<RuntimeRecord>(reference);
 }
 
 auto lyra_rt_dynarray_ref_get(void* reference) -> const void* {
@@ -3603,8 +3550,8 @@ void lyra_rt_dynarray_ref_arm_sampling(void* reference) {
   RefArmSampling<RuntimeDynamicArray>(reference);
 }
 
-auto lyra_rt_dynarray_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<RuntimeDynamicArray>(reference, out);
+auto lyra_rt_dynarray_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<RuntimeDynamicArray>(reference);
 }
 
 auto lyra_rt_unpackedarray_ref_get(void* reference) -> const void* {
@@ -3620,10 +3567,8 @@ void lyra_rt_unpackedarray_ref_arm_sampling(void* reference) {
   ArmWholeVariable<VariableOf<RuntimeFixedArray>::Type>(reference);
 }
 
-auto lyra_rt_unpackedarray_ref_sampled_load(
-    void* reference, const void* answer_type, void* out) -> void* {
-  return LaidOutRefSampledLoad<RuntimeFixedArray>(
-      reference, ArrayTypeAt(answer_type), out);
+auto lyra_rt_unpackedarray_ref_sampled_get(void* reference) -> const void* {
+  return TailRefSampledGet<RuntimeFixedArray>(reference);
 }
 
 auto lyra_rt_queue_ref_get(void* reference) -> const void* {
@@ -3638,8 +3583,8 @@ void lyra_rt_queue_ref_arm_sampling(void* reference) {
   RefArmSampling<RuntimeQueue>(reference);
 }
 
-auto lyra_rt_queue_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<RuntimeQueue>(reference, out);
+auto lyra_rt_queue_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<RuntimeQueue>(reference);
 }
 
 auto lyra_rt_assocarray_ref_get(void* reference) -> const void* {
@@ -3654,8 +3599,8 @@ void lyra_rt_assocarray_ref_arm_sampling(void* reference) {
   RefArmSampling<RuntimeAssociativeArray>(reference);
 }
 
-auto lyra_rt_assocarray_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<RuntimeAssociativeArray>(reference, out);
+auto lyra_rt_assocarray_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<RuntimeAssociativeArray>(reference);
 }
 
 auto lyra_rt_string_cell_get(void* cell) -> const void* {
@@ -3675,8 +3620,8 @@ void lyra_rt_string_cell_arm_sampling(void* cell) {
   static_cast<Var<String>*>(cell)->ArmSampling();
 }
 
-auto lyra_rt_string_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, static_cast<Var<String>*>(cell)->SampledGet());
+auto lyra_rt_string_cell_sampled_get(void* cell) -> const void* {
+  return &static_cast<Var<String>*>(cell)->SampledGet();
 }
 
 auto lyra_rt_real_cell_get(void* cell) -> const void* {
@@ -3695,8 +3640,8 @@ void lyra_rt_real_cell_arm_sampling(void* cell) {
   static_cast<Var<Real>*>(cell)->ArmSampling();
 }
 
-auto lyra_rt_real_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, static_cast<Var<Real>*>(cell)->SampledGet());
+auto lyra_rt_real_cell_sampled_get(void* cell) -> const void* {
+  return &static_cast<Var<Real>*>(cell)->SampledGet();
 }
 
 auto lyra_rt_shortreal_cell_get(void* cell) -> const void* {
@@ -3716,8 +3661,8 @@ void lyra_rt_shortreal_cell_arm_sampling(void* cell) {
   static_cast<Var<ShortReal>*>(cell)->ArmSampling();
 }
 
-auto lyra_rt_shortreal_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, static_cast<Var<ShortReal>*>(cell)->SampledGet());
+auto lyra_rt_shortreal_cell_sampled_get(void* cell) -> const void* {
+  return &static_cast<Var<ShortReal>*>(cell)->SampledGet();
 }
 
 auto lyra_rt_string_cell_begin_takeover(void* cell, std::int64_t level)
@@ -3863,55 +3808,36 @@ auto lyra_rt_shortreal_sampled_history_at(
 void lyra_rt_tuple_sampled_history_install(
     void* history, const void* default_value, const void* default_value_type,
     std::int64_t depth) {
-  static_cast<SampledHistory<RuntimeTuple>*>(history)->Install(
-      lyra::runtime::OwnedTupleCopy(default_value, default_value_type), depth);
+  static_cast<SampledHistory<RuntimeRecord>*>(history)->Install(
+      lyra::runtime::OwnedRecordCopy(default_value, default_value_type), depth);
+}
+
+void lyra_rt_union_sampled_history_install(
+    void* history, const void* default_value, const void* default_value_type,
+    std::int64_t depth) {
+  static_cast<SampledHistory<RuntimeRecord>*>(history)->Install(
+      lyra::runtime::OwnedRecordCopy(default_value, default_value_type), depth);
 }
 
 void lyra_rt_tuple_sampled_history_push(void* history, const void* value) {
-  static_cast<SampledHistory<RuntimeTuple>*>(history)->PushBytes(value);
+  static_cast<SampledHistory<RuntimeRecord>*>(history)->PushBytes(value);
+}
+
+void lyra_rt_union_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<RuntimeRecord>*>(history)->PushBytes(value);
 }
 
 auto lyra_rt_tuple_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
-      out, static_cast<const SampledHistory<RuntimeTuple>*>(history)->At(
+      out, static_cast<const SampledHistory<RuntimeRecord>*>(history)->At(
                ticks_back));
-}
-
-void lyra_rt_union_sampled_history_install(
-    void* history, const void* default_value, std::int64_t depth) {
-  static_cast<SampledHistory<RuntimeUnion>*>(history)->Install(
-      Read<RuntimeUnion>(default_value), depth);
-}
-
-void lyra_rt_union_sampled_history_push(void* history, const void* value) {
-  static_cast<SampledHistory<RuntimeUnion>*>(history)->Push(
-      Read<RuntimeUnion>(value));
 }
 
 auto lyra_rt_union_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
-      out, static_cast<const SampledHistory<RuntimeUnion>*>(history)->At(
-               ticks_back));
-}
-
-void lyra_rt_tagged_union_sampled_history_install(
-    void* history, const void* default_value, std::int64_t depth) {
-  static_cast<SampledHistory<RuntimeTaggedUnion>*>(history)->Install(
-      Read<RuntimeTaggedUnion>(default_value), depth);
-}
-
-void lyra_rt_tagged_union_sampled_history_push(
-    void* history, const void* value) {
-  static_cast<SampledHistory<RuntimeTaggedUnion>*>(history)->Push(
-      Read<RuntimeTaggedUnion>(value));
-}
-
-auto lyra_rt_tagged_union_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<RuntimeTaggedUnion>*>(history)->At(
+      out, static_cast<const SampledHistory<RuntimeRecord>*>(history)->At(
                ticks_back));
 }
 
@@ -4700,8 +4626,8 @@ void lyra_rt_chandle_cell_arm_sampling(void* cell) {
   static_cast<Var<Chandle>*>(cell)->ArmSampling();
 }
 
-auto lyra_rt_chandle_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, static_cast<Var<Chandle>*>(cell)->SampledGet());
+auto lyra_rt_chandle_cell_sampled_get(void* cell) -> const void* {
+  return &static_cast<Var<Chandle>*>(cell)->SampledGet();
 }
 
 // A handle referring to nothing (LRM 8.4), a value of the domain like any
@@ -4774,8 +4700,8 @@ void lyra_rt_managedref_cell_arm_sampling(void* cell) {
   static_cast<Var<ObjectRef>*>(cell)->ArmSampling();
 }
 
-auto lyra_rt_managedref_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, static_cast<Var<ObjectRef>*>(cell)->SampledGet());
+auto lyra_rt_managedref_cell_sampled_get(void* cell) -> const void* {
+  return &static_cast<Var<ObjectRef>*>(cell)->SampledGet();
 }
 
 auto lyra_rt_managedref_cell_begin_takeover(void* cell, std::int64_t level)
@@ -4809,202 +4735,198 @@ void lyra_rt_managedref_ref_end_takeover(void* reference, std::int64_t level) {
 }
 
 void lyra_rt_tuple_cell_initialize(void* cell, const void* prototype) noexcept {
-  VariableAt<RuntimeTuple>(cell).Initialize(prototype);
-}
-
-void lyra_rt_tuple_cell_set(void* cell, const void* value) {
-  VariableAt<RuntimeTuple>(cell).SetBytes(value);
-}
-
-void lyra_rt_tuple_cell_arm_sampling(void* cell) {
-  VariableAt<RuntimeTuple>(cell).ArmSampling();
-}
-
-auto lyra_rt_tuple_cell_sampled_load(void* cell, void* out) -> void* {
-  const VariableOf<RuntimeTuple>::Type& held = VariableAt<RuntimeTuple>(cell);
-  held.HeldStorage().Type().Copy(held.SampledBytes(), out);
-  return out;
-}
-
-auto lyra_rt_tuple_value_cell_alloc(const void* held_type) noexcept -> void* {
-  return AllocateValueCell<RuntimeTuple>(lyra::runtime::TypeAt(held_type));
-}
-
-auto lyra_rt_union_make(
-    std::int64_t index, const void* value, const void* value_type, void* out)
-    -> void* {
-  return Emplace(
-      out, RuntimeUnion(
-               static_cast<std::size_t>(index),
-               lyra::runtime::OwnedCopy(value, value_type)));
-}
-
-auto lyra_rt_union_component(const void* value, std::int64_t index, void* out)
-    -> void* {
-  const lyra::value::AnyValue& member =
-      Read<RuntimeUnion>(value).Component(static_cast<std::size_t>(index));
-  return lyra::runtime::ElementInto(out, member.Type(), member.Bytes());
-}
-
-auto lyra_rt_union_with_component(
-    const void* value, std::int64_t index, const void* member,
-    const void* member_type, void* out) -> void* {
-  RuntimeUnion result = Read<RuntimeUnion>(value);
-  result.SetComponent(
-      static_cast<std::size_t>(index),
-      lyra::runtime::OwnedCopy(member, member_type));
-  return Emplace(out, std::move(result));
-}
-
-auto lyra_rt_union_eq(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<RuntimeUnion>(lhs) == Read<RuntimeUnion>(rhs));
-}
-
-auto lyra_rt_union_ne(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(Read<RuntimeUnion>(lhs) != Read<RuntimeUnion>(rhs));
-}
-
-auto lyra_rt_union_case_equal(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeUnion>(lhs).CaseEqual(Read<RuntimeUnion>(rhs)));
-}
-
-auto lyra_rt_union_is_unknown(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeUnion>(value).IsUnknown());
-}
-
-auto lyra_rt_union_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeUnion>*>(cell)->Get();
+  VariableAt<RuntimeRecord>(cell).Initialize(prototype);
 }
 
 void lyra_rt_union_cell_initialize(void* cell, const void* prototype) noexcept {
-  static_cast<Var<RuntimeUnion>*>(cell)->Initialize(
-      Read<RuntimeUnion>(prototype));
+  VariableAt<RuntimeRecord>(cell).Initialize(prototype);
+}
+
+void lyra_rt_tuple_cell_set(void* cell, const void* value) {
+  VariableAt<RuntimeRecord>(cell).SetBytes(value);
 }
 
 void lyra_rt_union_cell_set(void* cell, const void* value) {
-  static_cast<Var<RuntimeUnion>*>(cell)->Set(Read<RuntimeUnion>(value));
+  VariableAt<RuntimeRecord>(cell).SetBytes(value);
+}
+
+void lyra_rt_tuple_cell_arm_sampling(void* cell) {
+  VariableAt<RuntimeRecord>(cell).ArmSampling();
 }
 
 void lyra_rt_union_cell_arm_sampling(void* cell) {
-  static_cast<Var<RuntimeUnion>*>(cell)->ArmSampling();
+  VariableAt<RuntimeRecord>(cell).ArmSampling();
 }
 
-auto lyra_rt_union_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, static_cast<Var<RuntimeUnion>*>(cell)->SampledGet());
+auto lyra_rt_tuple_cell_sampled_get(void* cell) -> const void* {
+  return VariableAt<RuntimeRecord>(cell).SampledBytes();
 }
 
-auto lyra_rt_union_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<RuntimeUnion>>();
+auto lyra_rt_union_cell_sampled_get(void* cell) -> const void* {
+  return VariableAt<RuntimeRecord>(cell).SampledBytes();
 }
 
-void lyra_rt_union_value_cell_store(void* cell, const void* value) noexcept {
-  static_cast<ValueCell<RuntimeUnion>*>(cell)->Assign(
-      Read<RuntimeUnion>(value));
+auto lyra_rt_tuple_value_cell_alloc(const void* held_type) noexcept -> void* {
+  return AllocateValueCell<RuntimeRecord>(lyra::runtime::TypeAt(held_type));
 }
 
-auto lyra_rt_union_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<RuntimeUnion>*>(cell)->Storage();
+auto lyra_rt_union_value_cell_alloc(const void* held_type) noexcept -> void* {
+  return AllocateValueCell<RuntimeRecord>(lyra::runtime::TypeAt(held_type));
 }
 
-auto lyra_rt_tagged_union_make(
-    std::int64_t tag, const void* payload, const void* payload_type, void* out)
-    -> void* {
+auto lyra_rt_union_eq(
+    const void* lhs, const void* lhs_type, const void* rhs,
+    const void* rhs_type) -> std::uint8_t {
+  return Compared(
+      lyra::runtime::TypeAt(lhs_type).Equal(
+          lhs, lyra::runtime::UnionAt(rhs, lhs_type, rhs_type)));
+}
+
+auto lyra_rt_union_ne(
+    const void* lhs, const void* lhs_type, const void* rhs,
+    const void* rhs_type) -> std::uint8_t {
+  return Compared(
+      lyra::value::Inverted(
+          lyra::runtime::TypeAt(lhs_type).Equal(
+              lhs, lyra::runtime::UnionAt(rhs, lhs_type, rhs_type))));
+}
+
+auto lyra_rt_union_case_equal(
+    const void* lhs, const void* lhs_type, const void* rhs,
+    const void* rhs_type, void* out) -> void* {
   return Emplace(
-      out, RuntimeTaggedUnion(
-               static_cast<std::size_t>(tag),
-               lyra::runtime::OwnedCopy(payload, payload_type)));
+      out, lyra::value::Bit::FromBool(
+               lyra::runtime::TypeAt(lhs_type).CaseEqual(
+                   lhs, lyra::runtime::UnionAt(rhs, lhs_type, rhs_type))));
 }
 
-auto lyra_rt_tagged_union_component(
-    const void* value, std::int64_t index, void* out) -> void* {
-  const lyra::value::AnyValue& member =
-      Read<RuntimeTaggedUnion>(value).Component(
-          static_cast<std::size_t>(index));
-  return lyra::runtime::ElementInto(out, member.Type(), member.Bytes());
+auto lyra_rt_union_is_unknown(
+    const void* value, const void* value_type, void* out) -> void* {
+  return Emplace(
+      out, lyra::value::Bit::FromBool(
+               lyra::runtime::TypeAt(value_type).HasUnknown(value)));
 }
 
-auto lyra_rt_tagged_union_with_component(
-    const void* value, std::int64_t index, const void* member,
-    const void* member_type, void* out) -> void* {
-  RuntimeTaggedUnion result = Read<RuntimeTaggedUnion>(value);
-  result.SetComponent(
-      static_cast<std::size_t>(index),
-      lyra::runtime::OwnedCopy(member, member_type));
-  return Emplace(out, std::move(result));
+auto lyra_rt_union_bit_identical(
+    const void* lhs, const void* lhs_type, const void* rhs,
+    const void* rhs_type) -> bool {
+  return lyra::runtime::TypeAt(lhs_type).BitIdentical(
+      lhs, lyra::runtime::UnionAt(rhs, lhs_type, rhs_type));
 }
 
-// Whether the active tag is `index`, as the machine boolean that a check before
-// a member access, and a pattern, tests (LRM 11.9, 12.6). The runtime holds the
-// comparison, so no tag constant crosses the boundary.
-auto lyra_rt_tagged_union_tag_matches(const void* value, std::int64_t index)
+auto lyra_rt_union_has_unknown(const void* value, const void* value_type)
     -> bool {
-  return Read<RuntimeTaggedUnion>(value).Tag() ==
-         static_cast<std::size_t>(index);
+  return lyra::runtime::TypeAt(value_type).HasUnknown(value);
 }
 
-auto lyra_rt_tagged_union_eq(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(
-      Read<RuntimeTaggedUnion>(lhs) == Read<RuntimeTaggedUnion>(rhs));
+auto lyra_rt_union_bitstream_width(
+    const void* value, const void* value_type, void* out) -> void* {
+  lyra::runtime::TypeAt(value_type).BitstreamWidth(value, out);
+  return out;
 }
 
-auto lyra_rt_tagged_union_ne(const void* lhs, const void* rhs) -> std::uint8_t {
-  return Compared(
-      Read<RuntimeTaggedUnion>(lhs) != Read<RuntimeTaggedUnion>(rhs));
+auto lyra_rt_union_to_bitstream(
+    const void* value, const void* value_type, std::int64_t out_width,
+    bool out_is_four_state, void* out) -> void* {
+  return lyra::runtime::StreamInto(
+      out, out_width, out_is_four_state,
+      [&](const lyra::value::IntegralView& stream) {
+        lyra::runtime::TypeAt(value_type).WriteToStream(value, stream, 0);
+      });
 }
 
-auto lyra_rt_tagged_union_case_equal(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return Emplace(
-      out,
-      Read<RuntimeTaggedUnion>(lhs).CaseEqual(Read<RuntimeTaggedUnion>(rhs)));
+auto lyra_rt_union_count_bits(
+    const void* value, const void* value_type, const void* control_bits,
+    std::int64_t control_width, bool control_is_four_state, void* out)
+    -> void* {
+  const lyra::value::LoadedWords control =
+      BitsAt(control_bits, control_width, control_is_four_state);
+  lyra::runtime::TypeAt(value_type).CountBits(value, control.View(), out);
+  return out;
 }
 
-auto lyra_rt_tagged_union_is_unknown(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeTaggedUnion>(value).IsUnknown());
+auto lyra_rt_union_resolve_tri_state(
+    const void* lhs, const void* lhs_type, const void* rhs,
+    const void* rhs_type, const void* answer_type, void* out) -> void* {
+  lyra::runtime::TypeAt(answer_type)
+      .ResolveTriState(
+          lyra::runtime::UnionAt(lhs, answer_type, lhs_type),
+          lyra::runtime::UnionAt(rhs, answer_type, rhs_type), out);
+  return out;
 }
 
-auto lyra_rt_tagged_union_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeTaggedUnion>*>(cell)->Get();
+auto lyra_rt_union_resolve_wired_and(
+    const void* lhs, const void* lhs_type, const void* rhs,
+    const void* rhs_type, const void* answer_type, void* out) -> void* {
+  lyra::runtime::TypeAt(answer_type)
+      .ResolveWiredAnd(
+          lyra::runtime::UnionAt(lhs, answer_type, lhs_type),
+          lyra::runtime::UnionAt(rhs, answer_type, rhs_type), out);
+  return out;
 }
 
-void lyra_rt_tagged_union_cell_initialize(
-    void* cell, const void* prototype) noexcept {
-  static_cast<Var<RuntimeTaggedUnion>*>(cell)->Initialize(
-      Read<RuntimeTaggedUnion>(prototype));
+auto lyra_rt_union_resolve_wired_or(
+    const void* lhs, const void* lhs_type, const void* rhs,
+    const void* rhs_type, const void* answer_type, void* out) -> void* {
+  lyra::runtime::TypeAt(answer_type)
+      .ResolveWiredOr(
+          lyra::runtime::UnionAt(lhs, answer_type, lhs_type),
+          lyra::runtime::UnionAt(rhs, answer_type, rhs_type), out);
+  return out;
 }
 
-void lyra_rt_tagged_union_cell_set(void* cell, const void* value) {
-  static_cast<Var<RuntimeTaggedUnion>*>(cell)->Set(
-      Read<RuntimeTaggedUnion>(value));
+auto lyra_rt_union_dominating(
+    const void* stronger, const void* stronger_type, const void* weaker,
+    const void* weaker_type, const void* answer_type, void* out) -> void* {
+  lyra::runtime::TypeAt(answer_type)
+      .Dominating(
+          lyra::runtime::UnionAt(stronger, answer_type, stronger_type),
+          lyra::runtime::UnionAt(weaker, answer_type, weaker_type), out);
+  return out;
 }
 
-void lyra_rt_tagged_union_cell_arm_sampling(void* cell) {
-  static_cast<Var<RuntimeTaggedUnion>*>(cell)->ArmSampling();
+auto lyra_rt_union_filled_like(
+    const void* prototype, const void* prototype_type, const void* fill,
+    std::int64_t fill_width, bool fill_is_four_state, const void* answer_type,
+    void* out) -> void* {
+  const lyra::value::Logic every_bit =
+      lyra::runtime::FillAt(fill, fill_width, fill_is_four_state);
+  lyra::runtime::TypeAt(answer_type)
+      .FilledLike(
+          lyra::runtime::UnionAt(prototype, answer_type, prototype_type),
+          &every_bit, out);
+  return out;
 }
 
-auto lyra_rt_tagged_union_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(
-      out, static_cast<Var<RuntimeTaggedUnion>*>(cell)->SampledGet());
+auto lyra_rt_union_copy(const void* value, const void* value_type, void* out)
+    -> void* {
+  lyra::runtime::TypeAt(value_type).Copy(value, out);
+  return out;
 }
 
-auto lyra_rt_tagged_union_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<RuntimeTaggedUnion>>();
+auto lyra_rt_union_move(void* value, const void* value_type, void* out)
+    -> void* {
+  lyra::runtime::TypeAt(value_type).Move(value, out);
+  return out;
 }
 
-void lyra_rt_tagged_union_value_cell_store(
-    void* cell, const void* value) noexcept {
-  static_cast<ValueCell<RuntimeTaggedUnion>*>(cell)->Assign(
-      Read<RuntimeTaggedUnion>(value));
+void lyra_rt_union_assign(
+    void* storage, const void* storage_type, const void* value,
+    const void* value_type) {
+  lyra::runtime::TypeAt(storage_type)
+      .Assign(storage, lyra::runtime::UnionAt(value, storage_type, value_type));
 }
 
-auto lyra_rt_tagged_union_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<RuntimeTaggedUnion>*>(cell)->Storage();
+void lyra_rt_union_destroy(void* value, const void* value_type) noexcept {
+  lyra::runtime::TypeAt(value_type).Destroy(value);
+}
+
+void lyra_rt_clear_above_widths(const void* type, void* value) {
+  lyra::runtime::TypeAt(type).ClearAboveWidths(value);
+}
+
+void lyra_rt_tuple_clear_above_widths(const void* type, void* value) {
+  lyra::runtime::TupleTypeAt(type).ClearEachComponentAboveWidths(value);
 }
 
 // A tagged union's `void` member (LRM 7.3.2) carries a value with no bits.
@@ -5155,9 +5077,8 @@ void lyra_rt_dynarray_cell_arm_sampling(void* cell) {
   static_cast<Var<RuntimeDynamicArray>*>(cell)->ArmSampling();
 }
 
-auto lyra_rt_dynarray_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(
-      out, static_cast<Var<RuntimeDynamicArray>*>(cell)->SampledGet());
+auto lyra_rt_dynarray_cell_sampled_get(void* cell) -> const void* {
+  return &static_cast<Var<RuntimeDynamicArray>*>(cell)->SampledGet();
 }
 
 auto lyra_rt_dynarray_value_cell_alloc() noexcept -> void* {
@@ -5413,13 +5334,6 @@ auto lyra_rt_shortreal_bit_identical(const void* lhs, const void* rhs) -> bool {
 auto lyra_rt_chandle_bit_identical(const void* lhs, const void* rhs) -> bool {
   return lyra::runtime::BitIdentical<Chandle>(lhs, rhs);
 }
-auto lyra_rt_union_bit_identical(const void* lhs, const void* rhs) -> bool {
-  return lyra::runtime::BitIdentical<RuntimeUnion>(lhs, rhs);
-}
-auto lyra_rt_tagged_union_bit_identical(const void* lhs, const void* rhs)
-    -> bool {
-  return lyra::runtime::BitIdentical<RuntimeTaggedUnion>(lhs, rhs);
-}
 auto lyra_rt_dynarray_bit_identical(const void* lhs, const void* rhs) -> bool {
   return lyra::runtime::BitIdentical<RuntimeDynamicArray>(lhs, rhs);
 }
@@ -5452,12 +5366,6 @@ auto lyra_rt_shortreal_has_unknown(const void* value) -> bool {
 auto lyra_rt_chandle_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<Chandle>(value);
 }
-auto lyra_rt_union_has_unknown(const void* value) -> bool {
-  return lyra::runtime::HasUnknown<RuntimeUnion>(value);
-}
-auto lyra_rt_tagged_union_has_unknown(const void* value) -> bool {
-  return lyra::runtime::HasUnknown<RuntimeTaggedUnion>(value);
-}
 auto lyra_rt_dynarray_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<RuntimeDynamicArray>(value);
 }
@@ -5475,29 +5383,10 @@ auto lyra_rt_managedref_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<ObjectRef>(value);
 }
 
-auto lyra_rt_union_bitstream_width(const void* value, void* out) -> void* {
-  return lyra::runtime::StreamWidthOf<RuntimeUnion>(value, out);
-}
-auto lyra_rt_tagged_union_bitstream_width(const void* value, void* out)
-    -> void* {
-  return lyra::runtime::StreamWidthOf<RuntimeTaggedUnion>(value, out);
-}
 auto lyra_rt_managedref_bitstream_width(const void* value, void* out) -> void* {
   return lyra::runtime::StreamWidthOf<ObjectRef>(value, out);
 }
 
-auto lyra_rt_union_count_bits(
-    const void* value, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, void* out) -> void* {
-  return lyra::runtime::StreamCountBitsOf<RuntimeUnion>(
-      value, BitsAt(control_bits, control_width, control_is_four_state), out);
-}
-auto lyra_rt_tagged_union_count_bits(
-    const void* value, const void* control_bits, std::int64_t control_width,
-    bool control_is_four_state, void* out) -> void* {
-  return lyra::runtime::StreamCountBitsOf<RuntimeTaggedUnion>(
-      value, BitsAt(control_bits, control_width, control_is_four_state), out);
-}
 auto lyra_rt_managedref_count_bits(
     const void* value, const void* control_bits, std::int64_t control_width,
     bool control_is_four_state, void* out) -> void* {
@@ -5509,18 +5398,6 @@ auto lyra_rt_string_to_bitstream(
     const void* value, std::int64_t out_width, bool out_is_four_state,
     void* out) -> void* {
   return lyra::runtime::StreamOf<String>(
-      value, out_width, out_is_four_state, out);
-}
-auto lyra_rt_union_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeUnion>(
-      value, out_width, out_is_four_state, out);
-}
-auto lyra_rt_tagged_union_to_bitstream(
-    const void* value, std::int64_t out_width, bool out_is_four_state,
-    void* out) -> void* {
-  return lyra::runtime::StreamOf<RuntimeTaggedUnion>(
       value, out_width, out_is_four_state, out);
 }
 auto lyra_rt_dynarray_to_bitstream(
@@ -5548,11 +5425,6 @@ auto lyra_rt_managedref_to_bitstream(
       value, out_width, out_is_four_state, out);
 }
 
-auto lyra_rt_union_resolve_tri_state(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<RuntimeUnion>(
-      NetResolution::kTriState, lhs, rhs, out);
-}
 auto lyra_rt_unpackedarray_resolve_tri_state(
     const void* lhs, const void* lhs_type, const void* rhs,
     const void* rhs_type, const void* answer_type, void* out) -> void* {
@@ -5560,11 +5432,6 @@ auto lyra_rt_unpackedarray_resolve_tri_state(
       .ResolveTriState(
           ArrayAt(lhs, lhs_type).bytes, ArrayAt(rhs, rhs_type).bytes, out);
   return out;
-}
-auto lyra_rt_union_resolve_wired_and(
-    const void* lhs, const void* rhs, void* out) -> void* {
-  return lyra::runtime::Resolved<RuntimeUnion>(
-      NetResolution::kWiredAnd, lhs, rhs, out);
 }
 auto lyra_rt_unpackedarray_resolve_wired_and(
     const void* lhs, const void* lhs_type, const void* rhs,
@@ -5574,11 +5441,6 @@ auto lyra_rt_unpackedarray_resolve_wired_and(
           ArrayAt(lhs, lhs_type).bytes, ArrayAt(rhs, rhs_type).bytes, out);
   return out;
 }
-auto lyra_rt_union_resolve_wired_or(const void* lhs, const void* rhs, void* out)
-    -> void* {
-  return lyra::runtime::Resolved<RuntimeUnion>(
-      NetResolution::kWiredOr, lhs, rhs, out);
-}
 auto lyra_rt_unpackedarray_resolve_wired_or(
     const void* lhs, const void* lhs_type, const void* rhs,
     const void* rhs_type, const void* answer_type, void* out) -> void* {
@@ -5586,10 +5448,6 @@ auto lyra_rt_unpackedarray_resolve_wired_or(
       .ResolveWiredOr(
           ArrayAt(lhs, lhs_type).bytes, ArrayAt(rhs, rhs_type).bytes, out);
   return out;
-}
-auto lyra_rt_union_dominating(
-    const void* stronger, const void* weaker, void* out) -> void* {
-  return lyra::runtime::Dominating<RuntimeUnion>(stronger, weaker, out);
 }
 auto lyra_rt_unpackedarray_dominating(
     const void* stronger, const void* stronger_type, const void* weaker,
@@ -5599,12 +5457,6 @@ auto lyra_rt_unpackedarray_dominating(
           ArrayAt(stronger, stronger_type).bytes,
           ArrayAt(weaker, weaker_type).bytes, out);
   return out;
-}
-auto lyra_rt_union_filled_like(
-    const void* prototype, const void* fill, std::int64_t fill_width,
-    bool fill_is_four_state, void* out) -> void* {
-  return lyra::runtime::FilledLike<RuntimeUnion>(
-      prototype, fill, fill_width, fill_is_four_state, out);
 }
 auto lyra_rt_unpackedarray_filled_like(
     const void* prototype, const void* prototype_type, const void* fill,
@@ -5688,142 +5540,134 @@ void lyra_rt_unpackedarray_cell_arm_sampling(void* cell) {
   VariableAt<RuntimeFixedArray>(cell).ArmSampling();
 }
 
-auto lyra_rt_unpackedarray_cell_sampled_load(void* cell, void* out) -> void* {
-  const VariableOf<RuntimeFixedArray>::Type& held =
-      VariableAt<RuntimeFixedArray>(cell);
-  held.HeldStorage().Type().Copy(held.SampledBytes(), out);
-  return out;
+auto lyra_rt_unpackedarray_cell_sampled_get(void* cell) -> const void* {
+  return VariableAt<RuntimeFixedArray>(cell).SampledBytes();
 }
 
 void lyra_rt_tuple_aggregate_net_initialize_tri_state(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  ResolvedNet<RuntimeTuple>& resolved = NetOf<RuntimeTuple>(net);
+  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
+  resolved.InitializeTriState(resolved.ToOwned(prototype), fill, strength);
+}
+
+void lyra_rt_union_aggregate_net_initialize_tri_state(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
+  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
   resolved.InitializeTriState(resolved.ToOwned(prototype), fill, strength);
 }
 
 void lyra_rt_tuple_aggregate_net_initialize_wired_and(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  ResolvedNet<RuntimeTuple>& resolved = NetOf<RuntimeTuple>(net);
+  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
+  resolved.InitializeWiredAnd(resolved.ToOwned(prototype), fill, strength);
+}
+
+void lyra_rt_union_aggregate_net_initialize_wired_and(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
+  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
   resolved.InitializeWiredAnd(resolved.ToOwned(prototype), fill, strength);
 }
 
 void lyra_rt_tuple_aggregate_net_initialize_wired_or(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  ResolvedNet<RuntimeTuple>& resolved = NetOf<RuntimeTuple>(net);
+  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
+  resolved.InitializeWiredOr(resolved.ToOwned(prototype), fill, strength);
+}
+
+void lyra_rt_union_aggregate_net_initialize_wired_or(
+    void* net, const void* prototype, std::int64_t fill,
+    std::int64_t strength) {
+  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
   resolved.InitializeWiredOr(resolved.ToOwned(prototype), fill, strength);
 }
 
 void lyra_rt_tuple_aggregate_net_initialize_retaining(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  ResolvedNet<RuntimeTuple>& resolved = NetOf<RuntimeTuple>(net);
+  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
   resolved.InitializeRetaining(resolved.ToOwned(prototype), fill, strength);
-}
-
-auto lyra_rt_tuple_net_begin_takeover(void* net, std::int64_t level)
-    -> std::int64_t {
-  return NetOf<RuntimeTuple>(net).BeginTakeover(level);
-}
-
-auto lyra_rt_tuple_net_drive_takeover(
-    void* net, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return NetOf<RuntimeTuple>(net).DriveTakeoverBytes(level, generation, value);
-}
-
-void lyra_rt_tuple_net_end_takeover(void* net, std::int64_t level) {
-  NetOf<RuntimeTuple>(net).EndTakeover(level);
-}
-
-void lyra_rt_tuple_net_arm_sampling(void* net) {
-  NetOf<RuntimeTuple>(net).ArmSampling();
-}
-
-auto lyra_rt_tuple_net_sampled_load(void* net, void* out) -> void* {
-  return Emplace(out, NetOf<RuntimeTuple>(net).SampledGet());
-}
-
-auto lyra_rt_tuple_attach_driver(void* net, std::int64_t strength) -> void* {
-  return &NetOf<RuntimeTuple>(net).AttachDriver(strength);
-}
-
-auto lyra_rt_tuple_driver_get(void* driver) -> const void* {
-  return DriverOf<RuntimeTuple>(driver).Bytes();
-}
-
-void lyra_rt_tuple_driver_set(void* driver, const void* value) {
-  DriverOf<RuntimeTuple>(driver).SetBytes(value);
-}
-
-auto lyra_rt_union_net_get(void* net) -> const void* {
-  return NetOf<RuntimeUnion>(net).Shown();
-}
-
-void lyra_rt_union_aggregate_net_initialize_tri_state(
-    void* net, const void* prototype, std::int64_t fill,
-    std::int64_t strength) {
-  NetOf<RuntimeUnion>(net).InitializeTriState(
-      Read<RuntimeUnion>(prototype), fill, strength);
-}
-
-void lyra_rt_union_aggregate_net_initialize_wired_and(
-    void* net, const void* prototype, std::int64_t fill,
-    std::int64_t strength) {
-  NetOf<RuntimeUnion>(net).InitializeWiredAnd(
-      Read<RuntimeUnion>(prototype), fill, strength);
-}
-
-void lyra_rt_union_aggregate_net_initialize_wired_or(
-    void* net, const void* prototype, std::int64_t fill,
-    std::int64_t strength) {
-  NetOf<RuntimeUnion>(net).InitializeWiredOr(
-      Read<RuntimeUnion>(prototype), fill, strength);
 }
 
 void lyra_rt_union_aggregate_net_initialize_retaining(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  NetOf<RuntimeUnion>(net).InitializeRetaining(
-      Read<RuntimeUnion>(prototype), fill, strength);
+  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
+  resolved.InitializeRetaining(resolved.ToOwned(prototype), fill, strength);
+}
+
+auto lyra_rt_tuple_net_begin_takeover(void* net, std::int64_t level)
+    -> std::int64_t {
+  return NetOf<RuntimeRecord>(net).BeginTakeover(level);
 }
 
 auto lyra_rt_union_net_begin_takeover(void* net, std::int64_t level)
     -> std::int64_t {
-  return NetOf<RuntimeUnion>(net).BeginTakeover(level);
+  return NetOf<RuntimeRecord>(net).BeginTakeover(level);
+}
+
+auto lyra_rt_tuple_net_drive_takeover(
+    void* net, std::int64_t level, std::int64_t generation, const void* value)
+    -> bool {
+  return NetOf<RuntimeRecord>(net).DriveTakeoverBytes(level, generation, value);
 }
 
 auto lyra_rt_union_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return NetOf<RuntimeUnion>(net).DriveTakeover(
-      level, generation, Read<RuntimeUnion>(value));
+  return NetOf<RuntimeRecord>(net).DriveTakeoverBytes(level, generation, value);
+}
+
+void lyra_rt_tuple_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<RuntimeRecord>(net).EndTakeover(level);
 }
 
 void lyra_rt_union_net_end_takeover(void* net, std::int64_t level) {
-  NetOf<RuntimeUnion>(net).EndTakeover(level);
+  NetOf<RuntimeRecord>(net).EndTakeover(level);
+}
+
+void lyra_rt_tuple_net_arm_sampling(void* net) {
+  NetOf<RuntimeRecord>(net).ArmSampling();
 }
 
 void lyra_rt_union_net_arm_sampling(void* net) {
-  NetOf<RuntimeUnion>(net).ArmSampling();
+  NetOf<RuntimeRecord>(net).ArmSampling();
 }
 
-auto lyra_rt_union_net_sampled_load(void* net, void* out) -> void* {
-  return Emplace(out, NetOf<RuntimeUnion>(net).SampledGet());
+auto lyra_rt_tuple_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<RuntimeRecord>(net).SampledGet());
+}
+
+auto lyra_rt_union_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<RuntimeRecord>(net).SampledGet());
+}
+
+auto lyra_rt_tuple_attach_driver(void* net, std::int64_t strength) -> void* {
+  return &NetOf<RuntimeRecord>(net).AttachDriver(strength);
 }
 
 auto lyra_rt_union_attach_driver(void* net, std::int64_t strength) -> void* {
-  return &NetOf<RuntimeUnion>(net).AttachDriver(strength);
+  return &NetOf<RuntimeRecord>(net).AttachDriver(strength);
+}
+
+auto lyra_rt_tuple_driver_get(void* driver) -> const void* {
+  return DriverOf<RuntimeRecord>(driver).Bytes();
 }
 
 auto lyra_rt_union_driver_get(void* driver) -> const void* {
-  return &DriverOf<RuntimeUnion>(driver).Get();
+  return DriverOf<RuntimeRecord>(driver).Bytes();
+}
+
+void lyra_rt_tuple_driver_set(void* driver, const void* value) {
+  DriverOf<RuntimeRecord>(driver).SetBytes(value);
 }
 
 void lyra_rt_union_driver_set(void* driver, const void* value) {
-  DriverOf<RuntimeUnion>(driver).Set(Read<RuntimeUnion>(value));
+  DriverOf<RuntimeRecord>(driver).SetBytes(value);
 }
 
 void lyra_rt_unpackedarray_aggregate_net_initialize_tri_state(
@@ -5874,8 +5718,8 @@ void lyra_rt_unpackedarray_net_arm_sampling(void* net) {
   NetOf<RuntimeFixedArray>(net).ArmSampling();
 }
 
-auto lyra_rt_unpackedarray_net_sampled_load(void* net, void* out) -> void* {
-  return Emplace(out, NetOf<RuntimeFixedArray>(net).SampledGet());
+auto lyra_rt_unpackedarray_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<RuntimeFixedArray>(net).SampledGet());
 }
 
 auto lyra_rt_unpackedarray_attach_driver(void* net, std::int64_t strength)
@@ -6047,8 +5891,8 @@ void lyra_rt_queue_cell_arm_sampling(void* cell) {
   static_cast<Var<RuntimeQueue>*>(cell)->ArmSampling();
 }
 
-auto lyra_rt_queue_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, static_cast<Var<RuntimeQueue>*>(cell)->SampledGet());
+auto lyra_rt_queue_cell_sampled_get(void* cell) -> const void* {
+  return &static_cast<Var<RuntimeQueue>*>(cell)->SampledGet();
 }
 
 auto lyra_rt_queue_value_cell_alloc() noexcept -> void* {
@@ -6231,9 +6075,8 @@ void lyra_rt_assocarray_cell_arm_sampling(void* cell) {
   static_cast<Var<RuntimeAssociativeArray>*>(cell)->ArmSampling();
 }
 
-auto lyra_rt_assocarray_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(
-      out, static_cast<Var<RuntimeAssociativeArray>*>(cell)->SampledGet());
+auto lyra_rt_assocarray_cell_sampled_get(void* cell) -> const void* {
+  return &static_cast<Var<RuntimeAssociativeArray>*>(cell)->SampledGet();
 }
 
 auto lyra_rt_assocarray_value_cell_alloc() noexcept -> void* {
@@ -7215,13 +7058,11 @@ auto lyra_rt_managedref_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<ObjectRef>(cell, out);
 }
 auto lyra_rt_tuple_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenTailCellWrite<RuntimeTuple>(cell, out);
+  return OpenTailCellWrite<RuntimeRecord>(cell, out);
 }
+
 auto lyra_rt_union_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<RuntimeUnion>(cell, out);
-}
-auto lyra_rt_tagged_union_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<RuntimeTaggedUnion>(cell, out);
+  return OpenTailCellWrite<RuntimeRecord>(cell, out);
 }
 auto lyra_rt_dynarray_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<RuntimeDynamicArray>(cell, out);
@@ -7253,15 +7094,14 @@ auto lyra_rt_managedref_ref_open_for_write(void* reference, void* out)
 }
 auto lyra_rt_tuple_ref_open_for_write(
     void* reference, const void* tuple_type, void* out) -> void* {
-  return OpenTailRefWrite<RuntimeTuple>(
+  return OpenTailRefWrite<RuntimeRecord>(
       reference, lyra::runtime::TupleTypeAt(tuple_type), out);
 }
-auto lyra_rt_union_ref_open_for_write(void* reference, void* out) -> void* {
-  return OpenRefWrite<RuntimeUnion>(reference, out);
-}
-auto lyra_rt_tagged_union_ref_open_for_write(void* reference, void* out)
-    -> void* {
-  return OpenRefWrite<RuntimeTaggedUnion>(reference, out);
+
+auto lyra_rt_union_ref_open_for_write(
+    void* reference, const void* union_type, void* out) -> void* {
+  return OpenTailRefWrite<RuntimeRecord>(
+      reference, lyra::runtime::TypeAt(union_type), out);
 }
 auto lyra_rt_dynarray_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<RuntimeDynamicArray>(reference, out);
@@ -7279,10 +7119,11 @@ auto lyra_rt_assocarray_ref_open_for_write(void* reference, void* out)
   return OpenRefWrite<RuntimeAssociativeArray>(reference, out);
 }
 auto lyra_rt_tuple_driver_open_for_write(void* driver, void* out) -> void* {
-  return OpenTailDriverWrite<RuntimeTuple>(driver, out);
+  return OpenTailDriverWrite<RuntimeRecord>(driver, out);
 }
+
 auto lyra_rt_union_driver_open_for_write(void* driver, void* out) -> void* {
-  return OpenDriverWrite<RuntimeUnion>(driver, out);
+  return OpenTailDriverWrite<RuntimeRecord>(driver, out);
 }
 auto lyra_rt_unpackedarray_driver_open_for_write(void* driver, void* out)
     -> void* {
@@ -7305,10 +7146,11 @@ void lyra_rt_logic_wide_driver_drive_from_variable(void* driver, void* cell) {
   DriveFromVariable<LogicWide>(driver, cell);
 }
 void lyra_rt_tuple_driver_drive_from_variable(void* driver, void* cell) {
-  DriveFromVariable<RuntimeTuple>(driver, cell);
+  DriveFromVariable<RuntimeRecord>(driver, cell);
 }
+
 void lyra_rt_union_driver_drive_from_variable(void* driver, void* cell) {
-  DriveFromVariable<RuntimeUnion>(driver, cell);
+  DriveFromVariable<RuntimeRecord>(driver, cell);
 }
 void lyra_rt_unpackedarray_driver_drive_from_variable(
     void* driver, void* cell) {
@@ -7330,10 +7172,11 @@ void lyra_rt_logic_wide_driver_drive_from_net(void* driver, void* net) {
   DriveFromNet<LogicWide>(driver, net);
 }
 void lyra_rt_tuple_driver_drive_from_net(void* driver, void* net) {
-  DriveFromNet<RuntimeTuple>(driver, net);
+  DriveFromNet<RuntimeRecord>(driver, net);
 }
+
 void lyra_rt_union_driver_drive_from_net(void* driver, void* net) {
-  DriveFromNet<RuntimeUnion>(driver, net);
+  DriveFromNet<RuntimeRecord>(driver, net);
 }
 void lyra_rt_unpackedarray_driver_drive_from_net(void* driver, void* net) {
   DriveFromNet<RuntimeFixedArray>(driver, net);
@@ -7358,10 +7201,11 @@ void lyra_rt_logic_wide_driver_drive_from_reference(
   DriveFromReference<LogicWide>(driver, reference);
 }
 void lyra_rt_tuple_driver_drive_from_reference(void* driver, void* reference) {
-  DriveFromReference<RuntimeTuple>(driver, reference);
+  DriveFromReference<RuntimeRecord>(driver, reference);
 }
+
 void lyra_rt_union_driver_drive_from_reference(void* driver, void* reference) {
-  DriveFromReference<RuntimeUnion>(driver, reference);
+  DriveFromReference<RuntimeRecord>(driver, reference);
 }
 void lyra_rt_unpackedarray_driver_drive_from_reference(
     void* driver, void* reference) {
@@ -7383,10 +7227,11 @@ auto lyra_rt_logic_wide_net_reports_to(void* net) -> void* {
   return NetReportsTo<LogicWide>(net);
 }
 auto lyra_rt_tuple_net_reports_to(void* net) -> void* {
-  return NetReportsTo<RuntimeTuple>(net);
+  return NetReportsTo<RuntimeRecord>(net);
 }
+
 auto lyra_rt_union_net_reports_to(void* net) -> void* {
-  return NetReportsTo<RuntimeUnion>(net);
+  return NetReportsTo<RuntimeRecord>(net);
 }
 auto lyra_rt_unpackedarray_net_reports_to(void* net) -> void* {
   return NetReportsTo<RuntimeFixedArray>(net);
@@ -7407,10 +7252,11 @@ auto lyra_rt_logic_wide_driver_show_source(void* driver) -> bool {
   return ShowSource<LogicWide>(driver);
 }
 auto lyra_rt_tuple_driver_show_source(void* driver) -> bool {
-  return ShowSource<RuntimeTuple>(driver);
+  return ShowSource<RuntimeRecord>(driver);
 }
+
 auto lyra_rt_union_driver_show_source(void* driver) -> bool {
-  return ShowSource<RuntimeUnion>(driver);
+  return ShowSource<RuntimeRecord>(driver);
 }
 auto lyra_rt_unpackedarray_driver_show_source(void* driver) -> bool {
   return ShowSource<RuntimeFixedArray>(driver);
@@ -7503,11 +7349,10 @@ auto lyra_rt_tuple_land(
   return LandLaidOutDesignation(
       designation, lyra::runtime::TupleTypeAt(tuple_type));
 }
-auto lyra_rt_union_land(const void* designation) noexcept -> void* {
-  return LandDesignation<RuntimeUnion>(designation);
-}
-auto lyra_rt_tagged_union_land(const void* designation) noexcept -> void* {
-  return LandDesignation<RuntimeTaggedUnion>(designation);
+
+auto lyra_rt_union_land(
+    const void* designation, const void* union_type) noexcept -> void* {
+  return LandLaidOutDesignation(designation, lyra::runtime::TypeAt(union_type));
 }
 auto lyra_rt_dynarray_land(const void* designation) noexcept -> void* {
   return LandDesignation<RuntimeDynamicArray>(designation);
@@ -7544,12 +7389,6 @@ void lyra_rt_chandle_assign(void* storage, const void* value) {
 }
 void lyra_rt_empty_assign(void* storage, const void* value) {
   *static_cast<lyra::value::Empty*>(storage) = Read<lyra::value::Empty>(value);
-}
-void lyra_rt_union_assign(void* storage, const void* value) {
-  *static_cast<RuntimeUnion*>(storage) = Read<RuntimeUnion>(value);
-}
-void lyra_rt_tagged_union_assign(void* storage, const void* value) {
-  *static_cast<RuntimeTaggedUnion*>(storage) = Read<RuntimeTaggedUnion>(value);
 }
 void lyra_rt_dynarray_assign(void* storage, const void* value) {
   *static_cast<RuntimeDynamicArray*>(storage) =
@@ -7609,12 +7448,6 @@ auto lyra_rt_discarded_write(const void* element_type) -> void* {
 // by its storage going away, so it has no entry here.
 void lyra_rt_string_destroy(void* object) {
   std::destroy_at(static_cast<String*>(object));
-}
-void lyra_rt_union_destroy(void* object) {
-  std::destroy_at(static_cast<RuntimeUnion*>(object));
-}
-void lyra_rt_tagged_union_destroy(void* object) {
-  std::destroy_at(static_cast<RuntimeTaggedUnion*>(object));
 }
 void lyra_rt_dynarray_destroy(void* object) {
   std::destroy_at(static_cast<RuntimeDynamicArray*>(object));
@@ -7685,12 +7518,6 @@ auto lyra_rt_chandle_copy(const void* value, void* out) -> void* {
 auto lyra_rt_empty_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<lyra::value::Empty>(value));
 }
-auto lyra_rt_union_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeUnion>(value));
-}
-auto lyra_rt_tagged_union_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeTaggedUnion>(value));
-}
 auto lyra_rt_dynarray_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<RuntimeDynamicArray>(value));
 }
@@ -7756,12 +7583,6 @@ auto lyra_rt_chandle_move(void* value, void* out) -> void* {
 }
 auto lyra_rt_empty_move(void* value, void* out) -> void* {
   return Emplace(out, *static_cast<lyra::value::Empty*>(value));
-}
-auto lyra_rt_union_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<RuntimeUnion*>(value)));
-}
-auto lyra_rt_tagged_union_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<RuntimeTaggedUnion*>(value)));
 }
 auto lyra_rt_dynarray_move(void* value, void* out) -> void* {
   return Emplace(out, std::move(*static_cast<RuntimeDynamicArray*>(value)));
@@ -7840,14 +7661,13 @@ void lyra_rt_chandle_cell_construct(void* storage) {
   BuildAt<Var<Chandle>>(storage);
 }
 void lyra_rt_tuple_cell_construct(const void* held_type, void* storage) {
-  BuildAt<VariableOf<RuntimeTuple>::Type>(
+  BuildAt<VariableOf<RuntimeRecord>::Type>(
       storage, lyra::runtime::TypeAt(held_type));
 }
-void lyra_rt_union_cell_construct(void* storage) {
-  BuildAt<Var<RuntimeUnion>>(storage);
-}
-void lyra_rt_tagged_union_cell_construct(void* storage) {
-  BuildAt<Var<RuntimeTaggedUnion>>(storage);
+
+void lyra_rt_union_cell_construct(const void* held_type, void* storage) {
+  BuildAt<VariableOf<RuntimeRecord>::Type>(
+      storage, lyra::runtime::TypeAt(held_type));
 }
 void lyra_rt_dynarray_cell_construct(void* storage) {
   BuildAt<Var<RuntimeDynamicArray>>(storage);
@@ -7879,14 +7699,13 @@ void lyra_rt_chandle_value_cell_construct(void* storage) {
   BuildAt<ValueCell<Chandle>>(storage);
 }
 void lyra_rt_tuple_value_cell_construct(const void* held_type, void* storage) {
-  BuildAt<LocalOf<RuntimeTuple>::Type>(
+  BuildAt<LocalOf<RuntimeRecord>::Type>(
       storage, lyra::runtime::TypeAt(held_type));
 }
-void lyra_rt_union_value_cell_construct(void* storage) {
-  BuildAt<ValueCell<RuntimeUnion>>(storage);
-}
-void lyra_rt_tagged_union_value_cell_construct(void* storage) {
-  BuildAt<ValueCell<RuntimeTaggedUnion>>(storage);
+
+void lyra_rt_union_value_cell_construct(const void* held_type, void* storage) {
+  BuildAt<LocalOf<RuntimeRecord>::Type>(
+      storage, lyra::runtime::TypeAt(held_type));
 }
 void lyra_rt_dynarray_value_cell_construct(void* storage) {
   BuildAt<ValueCell<RuntimeDynamicArray>>(storage);
@@ -7906,10 +7725,13 @@ void lyra_rt_managedref_value_cell_construct(void* storage) {
   BuildAt<ValueCell<ObjectRef>>(storage);
 }
 void lyra_rt_tuple_net_construct(const void* held_type, void* storage) {
-  BuildAt<ResolvedNet<RuntimeTuple>>(storage, lyra::runtime::TypeAt(held_type));
+  BuildAt<ResolvedNet<RuntimeRecord>>(
+      storage, lyra::runtime::TypeAt(held_type));
 }
-void lyra_rt_union_net_construct(void* storage) {
-  BuildAt<ResolvedNet<RuntimeUnion>>(storage);
+
+void lyra_rt_union_net_construct(const void* held_type, void* storage) {
+  BuildAt<ResolvedNet<RuntimeRecord>>(
+      storage, lyra::runtime::TypeAt(held_type));
 }
 void lyra_rt_unpackedarray_net_construct(const void* held_type, void* storage) {
   BuildAt<ResolvedNet<RuntimeFixedArray>>(
@@ -7925,13 +7747,11 @@ void lyra_rt_shortreal_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<ShortReal>>(storage);
 }
 void lyra_rt_tuple_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<RuntimeTuple>>(storage);
+  BuildAt<SampledHistory<RuntimeRecord>>(storage);
 }
+
 void lyra_rt_union_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<RuntimeUnion>>(storage);
-}
-void lyra_rt_tagged_union_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<RuntimeTaggedUnion>>(storage);
+  BuildAt<SampledHistory<RuntimeRecord>>(storage);
 }
 void lyra_rt_dynarray_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<RuntimeDynamicArray>>(storage);
@@ -7983,13 +7803,11 @@ void lyra_rt_chandle_cell_destroy(void* storage) {
   std::destroy_at(static_cast<Var<Chandle>*>(storage));
 }
 void lyra_rt_tuple_cell_destroy(void* storage) {
-  std::destroy_at(&VariableAt<RuntimeTuple>(storage));
+  std::destroy_at(&VariableAt<RuntimeRecord>(storage));
 }
+
 void lyra_rt_union_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<RuntimeUnion>*>(storage));
-}
-void lyra_rt_tagged_union_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<RuntimeTaggedUnion>*>(storage));
+  std::destroy_at(&VariableAt<RuntimeRecord>(storage));
 }
 void lyra_rt_dynarray_cell_destroy(void* storage) {
   std::destroy_at(static_cast<Var<RuntimeDynamicArray>*>(storage));
@@ -8010,13 +7828,11 @@ void lyra_rt_string_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<ValueCell<String>*>(storage));
 }
 void lyra_rt_tuple_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<LocalOf<RuntimeTuple>::Type*>(storage));
+  std::destroy_at(static_cast<LocalOf<RuntimeRecord>::Type*>(storage));
 }
+
 void lyra_rt_union_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<ValueCell<RuntimeUnion>*>(storage));
-}
-void lyra_rt_tagged_union_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<ValueCell<RuntimeTaggedUnion>*>(storage));
+  std::destroy_at(static_cast<LocalOf<RuntimeRecord>::Type*>(storage));
 }
 void lyra_rt_dynarray_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<ValueCell<RuntimeDynamicArray>*>(storage));
@@ -8034,10 +7850,11 @@ void lyra_rt_managedref_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<ValueCell<ObjectRef>*>(storage));
 }
 void lyra_rt_tuple_net_destroy(void* storage) {
-  std::destroy_at(static_cast<ResolvedNet<RuntimeTuple>*>(storage));
+  std::destroy_at(static_cast<ResolvedNet<RuntimeRecord>*>(storage));
 }
+
 void lyra_rt_union_net_destroy(void* storage) {
-  std::destroy_at(static_cast<ResolvedNet<RuntimeUnion>*>(storage));
+  std::destroy_at(static_cast<ResolvedNet<RuntimeRecord>*>(storage));
 }
 void lyra_rt_unpackedarray_net_destroy(void* storage) {
   std::destroy_at(static_cast<ResolvedNet<RuntimeFixedArray>*>(storage));
@@ -8052,13 +7869,11 @@ void lyra_rt_shortreal_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<ShortReal>*>(storage));
 }
 void lyra_rt_tuple_sampled_history_destroy(void* storage) {
-  std::destroy_at(static_cast<SampledHistory<RuntimeTuple>*>(storage));
+  std::destroy_at(static_cast<SampledHistory<RuntimeRecord>*>(storage));
 }
+
 void lyra_rt_union_sampled_history_destroy(void* storage) {
-  std::destroy_at(static_cast<SampledHistory<RuntimeUnion>*>(storage));
-}
-void lyra_rt_tagged_union_sampled_history_destroy(void* storage) {
-  std::destroy_at(static_cast<SampledHistory<RuntimeTaggedUnion>*>(storage));
+  std::destroy_at(static_cast<SampledHistory<RuntimeRecord>*>(storage));
 }
 void lyra_rt_dynarray_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<RuntimeDynamicArray>*>(storage));
@@ -8112,8 +7927,8 @@ void lyra_rt_bit8_cell_set(void* cell, const void* value) {
 void lyra_rt_bit8_cell_arm_sampling(void* cell) {
   VariableAt<Bit8>(cell).ArmSampling();
 }
-auto lyra_rt_bit8_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, VariableAt<Bit8>(cell).SampledGet());
+auto lyra_rt_bit8_cell_sampled_get(void* cell) -> const void* {
+  return HandleTo(VariableAt<Bit8>(cell).SampledGet());
 }
 auto lyra_rt_bit8_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -8157,8 +7972,8 @@ void lyra_rt_bit8_ref_set(void* reference, const void* value) {
 void lyra_rt_bit8_ref_arm_sampling(void* reference) {
   RefArmSampling<Bit8>(reference);
 }
-auto lyra_rt_bit8_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Bit8>(reference, out);
+auto lyra_rt_bit8_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Bit8>(reference);
 }
 auto lyra_rt_bit8_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Bit8>(reference, out);
@@ -8214,8 +8029,8 @@ void lyra_rt_bit16_cell_set(void* cell, const void* value) {
 void lyra_rt_bit16_cell_arm_sampling(void* cell) {
   VariableAt<Bit16>(cell).ArmSampling();
 }
-auto lyra_rt_bit16_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, VariableAt<Bit16>(cell).SampledGet());
+auto lyra_rt_bit16_cell_sampled_get(void* cell) -> const void* {
+  return HandleTo(VariableAt<Bit16>(cell).SampledGet());
 }
 auto lyra_rt_bit16_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -8259,8 +8074,8 @@ void lyra_rt_bit16_ref_set(void* reference, const void* value) {
 void lyra_rt_bit16_ref_arm_sampling(void* reference) {
   RefArmSampling<Bit16>(reference);
 }
-auto lyra_rt_bit16_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Bit16>(reference, out);
+auto lyra_rt_bit16_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Bit16>(reference);
 }
 auto lyra_rt_bit16_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Bit16>(reference, out);
@@ -8316,8 +8131,8 @@ void lyra_rt_bit32_cell_set(void* cell, const void* value) {
 void lyra_rt_bit32_cell_arm_sampling(void* cell) {
   VariableAt<Bit32>(cell).ArmSampling();
 }
-auto lyra_rt_bit32_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, VariableAt<Bit32>(cell).SampledGet());
+auto lyra_rt_bit32_cell_sampled_get(void* cell) -> const void* {
+  return HandleTo(VariableAt<Bit32>(cell).SampledGet());
 }
 auto lyra_rt_bit32_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -8361,8 +8176,8 @@ void lyra_rt_bit32_ref_set(void* reference, const void* value) {
 void lyra_rt_bit32_ref_arm_sampling(void* reference) {
   RefArmSampling<Bit32>(reference);
 }
-auto lyra_rt_bit32_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Bit32>(reference, out);
+auto lyra_rt_bit32_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Bit32>(reference);
 }
 auto lyra_rt_bit32_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Bit32>(reference, out);
@@ -8418,8 +8233,8 @@ void lyra_rt_bit64_cell_set(void* cell, const void* value) {
 void lyra_rt_bit64_cell_arm_sampling(void* cell) {
   VariableAt<Bit64>(cell).ArmSampling();
 }
-auto lyra_rt_bit64_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, VariableAt<Bit64>(cell).SampledGet());
+auto lyra_rt_bit64_cell_sampled_get(void* cell) -> const void* {
+  return HandleTo(VariableAt<Bit64>(cell).SampledGet());
 }
 auto lyra_rt_bit64_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -8463,8 +8278,8 @@ void lyra_rt_bit64_ref_set(void* reference, const void* value) {
 void lyra_rt_bit64_ref_arm_sampling(void* reference) {
   RefArmSampling<Bit64>(reference);
 }
-auto lyra_rt_bit64_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Bit64>(reference, out);
+auto lyra_rt_bit64_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Bit64>(reference);
 }
 auto lyra_rt_bit64_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Bit64>(reference, out);
@@ -8521,8 +8336,8 @@ void lyra_rt_logic8_cell_set(void* cell, const void* value) {
 void lyra_rt_logic8_cell_arm_sampling(void* cell) {
   VariableAt<Logic8>(cell).ArmSampling();
 }
-auto lyra_rt_logic8_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, VariableAt<Logic8>(cell).SampledGet());
+auto lyra_rt_logic8_cell_sampled_get(void* cell) -> const void* {
+  return HandleTo(VariableAt<Logic8>(cell).SampledGet());
 }
 auto lyra_rt_logic8_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -8566,8 +8381,8 @@ void lyra_rt_logic8_ref_set(void* reference, const void* value) {
 void lyra_rt_logic8_ref_arm_sampling(void* reference) {
   RefArmSampling<Logic8>(reference);
 }
-auto lyra_rt_logic8_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Logic8>(reference, out);
+auto lyra_rt_logic8_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Logic8>(reference);
 }
 auto lyra_rt_logic8_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Logic8>(reference, out);
@@ -8645,8 +8460,8 @@ void lyra_rt_logic8_net_end_takeover(void* net, std::int64_t level) {
 void lyra_rt_logic8_net_arm_sampling(void* net) {
   NetOf<Logic8>(net).ArmSampling();
 }
-auto lyra_rt_logic8_net_sampled_load(void* net, void* out) -> void* {
-  return Emplace(out, NetOf<Logic8>(net).SampledGet());
+auto lyra_rt_logic8_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<Logic8>(net).SampledGet());
 }
 auto lyra_rt_logic8_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic8>(net).AttachDriver(strength);
@@ -8682,8 +8497,8 @@ void lyra_rt_logic16_cell_set(void* cell, const void* value) {
 void lyra_rt_logic16_cell_arm_sampling(void* cell) {
   VariableAt<Logic16>(cell).ArmSampling();
 }
-auto lyra_rt_logic16_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, VariableAt<Logic16>(cell).SampledGet());
+auto lyra_rt_logic16_cell_sampled_get(void* cell) -> const void* {
+  return HandleTo(VariableAt<Logic16>(cell).SampledGet());
 }
 auto lyra_rt_logic16_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -8727,8 +8542,8 @@ void lyra_rt_logic16_ref_set(void* reference, const void* value) {
 void lyra_rt_logic16_ref_arm_sampling(void* reference) {
   RefArmSampling<Logic16>(reference);
 }
-auto lyra_rt_logic16_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Logic16>(reference, out);
+auto lyra_rt_logic16_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Logic16>(reference);
 }
 auto lyra_rt_logic16_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Logic16>(reference, out);
@@ -8807,8 +8622,8 @@ void lyra_rt_logic16_net_end_takeover(void* net, std::int64_t level) {
 void lyra_rt_logic16_net_arm_sampling(void* net) {
   NetOf<Logic16>(net).ArmSampling();
 }
-auto lyra_rt_logic16_net_sampled_load(void* net, void* out) -> void* {
-  return Emplace(out, NetOf<Logic16>(net).SampledGet());
+auto lyra_rt_logic16_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<Logic16>(net).SampledGet());
 }
 auto lyra_rt_logic16_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic16>(net).AttachDriver(strength);
@@ -8844,8 +8659,8 @@ void lyra_rt_logic32_cell_set(void* cell, const void* value) {
 void lyra_rt_logic32_cell_arm_sampling(void* cell) {
   VariableAt<Logic32>(cell).ArmSampling();
 }
-auto lyra_rt_logic32_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, VariableAt<Logic32>(cell).SampledGet());
+auto lyra_rt_logic32_cell_sampled_get(void* cell) -> const void* {
+  return HandleTo(VariableAt<Logic32>(cell).SampledGet());
 }
 auto lyra_rt_logic32_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -8889,8 +8704,8 @@ void lyra_rt_logic32_ref_set(void* reference, const void* value) {
 void lyra_rt_logic32_ref_arm_sampling(void* reference) {
   RefArmSampling<Logic32>(reference);
 }
-auto lyra_rt_logic32_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Logic32>(reference, out);
+auto lyra_rt_logic32_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Logic32>(reference);
 }
 auto lyra_rt_logic32_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Logic32>(reference, out);
@@ -8969,8 +8784,8 @@ void lyra_rt_logic32_net_end_takeover(void* net, std::int64_t level) {
 void lyra_rt_logic32_net_arm_sampling(void* net) {
   NetOf<Logic32>(net).ArmSampling();
 }
-auto lyra_rt_logic32_net_sampled_load(void* net, void* out) -> void* {
-  return Emplace(out, NetOf<Logic32>(net).SampledGet());
+auto lyra_rt_logic32_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<Logic32>(net).SampledGet());
 }
 auto lyra_rt_logic32_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic32>(net).AttachDriver(strength);
@@ -9006,8 +8821,8 @@ void lyra_rt_logic64_cell_set(void* cell, const void* value) {
 void lyra_rt_logic64_cell_arm_sampling(void* cell) {
   VariableAt<Logic64>(cell).ArmSampling();
 }
-auto lyra_rt_logic64_cell_sampled_load(void* cell, void* out) -> void* {
-  return Emplace(out, VariableAt<Logic64>(cell).SampledGet());
+auto lyra_rt_logic64_cell_sampled_get(void* cell) -> const void* {
+  return HandleTo(VariableAt<Logic64>(cell).SampledGet());
 }
 auto lyra_rt_logic64_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -9051,8 +8866,8 @@ void lyra_rt_logic64_ref_set(void* reference, const void* value) {
 void lyra_rt_logic64_ref_arm_sampling(void* reference) {
   RefArmSampling<Logic64>(reference);
 }
-auto lyra_rt_logic64_ref_sampled_load(void* reference, void* out) -> void* {
-  return RefSampledLoad<Logic64>(reference, out);
+auto lyra_rt_logic64_ref_sampled_get(void* reference) -> const void* {
+  return RefSampledGet<Logic64>(reference);
 }
 auto lyra_rt_logic64_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<Logic64>(reference, out);
@@ -9131,8 +8946,8 @@ void lyra_rt_logic64_net_end_takeover(void* net, std::int64_t level) {
 void lyra_rt_logic64_net_arm_sampling(void* net) {
   NetOf<Logic64>(net).ArmSampling();
 }
-auto lyra_rt_logic64_net_sampled_load(void* net, void* out) -> void* {
-  return Emplace(out, NetOf<Logic64>(net).SampledGet());
+auto lyra_rt_logic64_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<Logic64>(net).SampledGet());
 }
 auto lyra_rt_logic64_attach_driver(void* net, std::int64_t strength) -> void* {
   return &NetOf<Logic64>(net).AttachDriver(strength);
@@ -9169,10 +8984,8 @@ void lyra_rt_bit_wide_cell_set(void* cell, const void* value) {
 void lyra_rt_bit_wide_cell_arm_sampling(void* cell) {
   lyra::runtime::VariableAt<BitWide>(cell).ArmSampling();
 }
-auto lyra_rt_bit_wide_cell_sampled_load(void* cell, void* out) -> void* {
-  const auto& held = lyra::runtime::VariableAt<BitWide>(cell);
-  std::memcpy(out, held.SampledBytes(), held.HeldStorage().ByteSize());
-  return out;
+auto lyra_rt_bit_wide_cell_sampled_get(void* cell) -> const void* {
+  return lyra::runtime::VariableAt<BitWide>(cell).SampledBytes();
 }
 auto lyra_rt_bit_wide_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -9220,9 +9033,8 @@ void lyra_rt_bit_wide_ref_set(
 void lyra_rt_bit_wide_ref_arm_sampling(void* reference) {
   ArmWholeVariable<lyra::runtime::VariableOf<BitWide>::Type>(reference);
 }
-auto lyra_rt_bit_wide_ref_sampled_load(
-    void* reference, std::int64_t width, void* out) -> void* {
-  return lyra::runtime::WideRefSampledLoad<BitWide>(reference, width, out);
+auto lyra_rt_bit_wide_ref_sampled_get(void* reference) -> const void* {
+  return TailRefSampledGet<BitWide>(reference);
 }
 auto lyra_rt_bit_wide_ref_open_for_write(
     void* reference, std::int64_t width, void* out) -> void* {
@@ -9289,10 +9101,8 @@ void lyra_rt_logic_wide_cell_set(void* cell, const void* value) {
 void lyra_rt_logic_wide_cell_arm_sampling(void* cell) {
   lyra::runtime::VariableAt<LogicWide>(cell).ArmSampling();
 }
-auto lyra_rt_logic_wide_cell_sampled_load(void* cell, void* out) -> void* {
-  const auto& held = lyra::runtime::VariableAt<LogicWide>(cell);
-  std::memcpy(out, held.SampledBytes(), held.HeldStorage().ByteSize());
-  return out;
+auto lyra_rt_logic_wide_cell_sampled_get(void* cell) -> const void* {
+  return lyra::runtime::VariableAt<LogicWide>(cell).SampledBytes();
 }
 auto lyra_rt_logic_wide_cell_begin_takeover(void* cell, std::int64_t level)
     -> std::int64_t {
@@ -9341,9 +9151,8 @@ void lyra_rt_logic_wide_ref_set(
 void lyra_rt_logic_wide_ref_arm_sampling(void* reference) {
   ArmWholeVariable<lyra::runtime::VariableOf<LogicWide>::Type>(reference);
 }
-auto lyra_rt_logic_wide_ref_sampled_load(
-    void* reference, std::int64_t width, void* out) -> void* {
-  return lyra::runtime::WideRefSampledLoad<LogicWide>(reference, width, out);
+auto lyra_rt_logic_wide_ref_sampled_get(void* reference) -> const void* {
+  return TailRefSampledGet<LogicWide>(reference);
 }
 auto lyra_rt_logic_wide_ref_open_for_write(
     void* reference, std::int64_t width, void* out) -> void* {
@@ -9430,8 +9239,8 @@ void lyra_rt_logic_wide_net_end_takeover(void* net, std::int64_t level) {
 void lyra_rt_logic_wide_net_arm_sampling(void* net) {
   NetOf<LogicWide>(net).ArmSampling();
 }
-auto lyra_rt_logic_wide_net_sampled_load(void* net, void* out) -> void* {
-  return Emplace(out, NetOf<LogicWide>(net).SampledGet());
+auto lyra_rt_logic_wide_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<LogicWide>(net).SampledGet());
 }
 auto lyra_rt_logic_wide_attach_driver(void* net, std::int64_t strength)
     -> void* {

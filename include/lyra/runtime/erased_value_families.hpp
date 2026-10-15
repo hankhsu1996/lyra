@@ -14,9 +14,7 @@
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_tagged_union.hpp"
-#include "lyra/value/runtime_tuple.hpp"
-#include "lyra/value/runtime_union.hpp"
+#include "lyra/value/runtime_record.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -29,17 +27,13 @@ namespace lyra::runtime {
 // library's own code refers to that copy. Code compiled with the design's types
 // holds none of them, which is why nothing it includes states these.
 
-extern template class ValueStorageCore<value::RuntimeUnion>;
-extern template class ValueStorageCore<value::RuntimeTaggedUnion>;
 extern template class ValueStorageCore<value::RuntimeDynamicArray>;
 extern template class ValueStorageCore<value::RuntimeQueue>;
 extern template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
 extern template class Cell<WordsStorage<value::StateDomain::kTwoState>>;
 extern template class Cell<WordsStorage<value::StateDomain::kFourState>>;
-extern template class Cell<LaidOutStorage<value::RuntimeTuple>>;
-extern template class Cell<ValueStorageCore<value::RuntimeUnion>>;
-extern template class Cell<ValueStorageCore<value::RuntimeTaggedUnion>>;
+extern template class Cell<LaidOutStorage<value::RuntimeRecord>>;
 extern template class Cell<ValueStorageCore<value::RuntimeDynamicArray>>;
 extern template class Cell<LaidOutStorage<value::RuntimeFixedArray>>;
 extern template class Cell<ValueStorageCore<value::RuntimeQueue>>;
@@ -47,10 +41,8 @@ extern template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 extern template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
 extern template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
-extern template class TailCell<LaidOutStorage<value::RuntimeTuple>>;
+extern template class TailCell<LaidOutStorage<value::RuntimeRecord>>;
 extern template class TailCell<LaidOutStorage<value::RuntimeFixedArray>>;
-extern template class Var<value::RuntimeUnion>;
-extern template class Var<value::RuntimeTaggedUnion>;
 extern template class Var<value::RuntimeDynamicArray>;
 extern template class Var<value::RuntimeQueue>;
 extern template class Var<value::RuntimeAssociativeArray>;
@@ -59,10 +51,7 @@ extern template class CellRareState<
     WordsStorage<value::StateDomain::kTwoState>>;
 extern template class CellRareState<
     WordsStorage<value::StateDomain::kFourState>>;
-extern template class CellRareState<LaidOutStorage<value::RuntimeTuple>>;
-extern template class CellRareState<ValueStorageCore<value::RuntimeUnion>>;
-extern template class CellRareState<
-    ValueStorageCore<value::RuntimeTaggedUnion>>;
+extern template class CellRareState<LaidOutStorage<value::RuntimeRecord>>;
 extern template class CellRareState<
     ValueStorageCore<value::RuntimeDynamicArray>>;
 extern template class CellRareState<LaidOutStorage<value::RuntimeFixedArray>>;
@@ -72,16 +61,12 @@ extern template class CellRareState<
 
 extern template class VariableRef<value::WideBitVector>;
 extern template class VariableRef<value::WideLogicVector>;
-extern template class VariableRef<value::RuntimeUnion>;
-extern template class VariableRef<value::RuntimeTaggedUnion>;
 extern template class VariableRef<value::RuntimeDynamicArray>;
 extern template class VariableRef<value::RuntimeQueue>;
 extern template class VariableRef<value::RuntimeAssociativeArray>;
 
 extern template class ScopedMutation<VariableRef<value::WideBitVector>>;
 extern template class ScopedMutation<VariableRef<value::WideLogicVector>>;
-extern template class ScopedMutation<VariableRef<value::RuntimeUnion>>;
-extern template class ScopedMutation<VariableRef<value::RuntimeTaggedUnion>>;
 extern template class ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
 extern template class ScopedMutation<VariableRef<value::RuntimeQueue>>;
 extern template class ScopedMutation<
@@ -89,51 +74,39 @@ extern template class ScopedMutation<
 
 extern template class Takeovers<value::WideBitVector>;
 extern template class Takeovers<value::WideLogicVector>;
-extern template class Takeovers<value::RuntimeTuple>;
-extern template class Takeovers<value::RuntimeUnion>;
-extern template class Takeovers<value::RuntimeTaggedUnion>;
+extern template class Takeovers<value::RuntimeRecord>;
 extern template class Takeovers<value::RuntimeDynamicArray>;
 extern template class Takeovers<value::RuntimeFixedArray>;
 extern template class Takeovers<value::RuntimeQueue>;
 extern template class Takeovers<value::RuntimeAssociativeArray>;
 
-extern template class ValueCell<value::RuntimeUnion>;
-extern template class ValueCell<value::RuntimeTaggedUnion>;
 extern template class ValueCell<value::RuntimeDynamicArray>;
 extern template class ValueCell<value::RuntimeQueue>;
 extern template class ValueCell<value::RuntimeAssociativeArray>;
 
 extern template class SampledHistory<value::WideBitVector>;
 extern template class SampledHistory<value::WideLogicVector>;
-extern template class SampledHistory<value::RuntimeTuple>;
-extern template class SampledHistory<value::RuntimeUnion>;
-extern template class SampledHistory<value::RuntimeTaggedUnion>;
+extern template class SampledHistory<value::RuntimeRecord>;
 extern template class SampledHistory<value::RuntimeDynamicArray>;
 extern template class SampledHistory<value::RuntimeFixedArray>;
 extern template class SampledHistory<value::RuntimeQueue>;
 extern template class SampledHistory<value::RuntimeAssociativeArray>;
 
 extern template class ResolvedNet<value::WideLogicVector>;
-extern template class ResolvedNet<value::RuntimeTuple>;
-extern template class ResolvedNet<value::RuntimeUnion>;
+extern template class ResolvedNet<value::RuntimeRecord>;
 extern template class ResolvedNet<value::RuntimeFixedArray>;
 
 extern template class Driver<value::WideLogicVector>;
-extern template class Driver<value::RuntimeTuple>;
-extern template class Driver<value::RuntimeUnion>;
+extern template class Driver<value::RuntimeRecord>;
 extern template class Driver<value::RuntimeFixedArray>;
 
-extern template class CompletionSlot<value::RuntimeTuple>;
-extern template class CompletionSlot<value::RuntimeUnion>;
-extern template class CompletionSlot<value::RuntimeTaggedUnion>;
+extern template class CompletionSlot<value::RuntimeRecord>;
 extern template class CompletionSlot<value::RuntimeDynamicArray>;
 extern template class CompletionSlot<value::RuntimeFixedArray>;
 extern template class CompletionSlot<value::RuntimeQueue>;
 extern template class CompletionSlot<value::RuntimeAssociativeArray>;
 
-extern template class Coroutine<value::RuntimeTuple>;
-extern template class Coroutine<value::RuntimeUnion>;
-extern template class Coroutine<value::RuntimeTaggedUnion>;
+extern template class Coroutine<value::RuntimeRecord>;
 extern template class Coroutine<value::RuntimeDynamicArray>;
 extern template class Coroutine<value::RuntimeFixedArray>;
 extern template class Coroutine<value::RuntimeQueue>;

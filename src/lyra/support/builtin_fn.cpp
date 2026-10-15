@@ -119,25 +119,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"AssignSlice"},
           .mutates_receiver = true,
           .operands = {kMachine, kPosition, kMachine, kTyped}};
-    case BuiltinFn::kComponent:
-      return {
-          .name = "component",
-          .declaration = Method{"Component"},
-          .selects = PartSelection::kComponent};
-    case BuiltinFn::kComponentRef:
-      return {
-          .name = "component_ref",
-          .declaration = Method{"ComponentRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kComponent};
     case BuiltinFn::kTagMatches:
-      return {.name = "tag_matches", .declaration = Method{"IsTagged"}};
-    case BuiltinFn::kMakeActiveMember:
-      return {
-          .name = "make",
-          .declaration = StaticFactory{"Make"},
-          .takes_a_type_argument = true,
-          .operands = {kHeld}};
+      return {.name = "tag_matches", .declaration = Method{"TagMatches"}};
     case BuiltinFn::kAssert:
       return {.name = "assert", .declaration = ValueFunction("Assert")};
     case BuiltinFn::kSize:
@@ -670,18 +653,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "aggregate_net_initialize_retaining",
           .declaration = Method{"InitializeRetaining"},
           .operands = {kMachine, kHeld}};
-    case BuiltinFn::kLoad:
+    case BuiltinFn::kGet:
       return {
           .name = "get",
           .declaration = Method{"Get"},
           .answer = EntryAnswer::kReferenceToContents};
-    case BuiltinFn::kStore:
+    case BuiltinFn::kSet:
       return {
           .name = "set",
           .declaration = Method{"Set"},
           .operands = {kMachine, kHeld}};
-    case BuiltinFn::kSampledLoad:
-      return {.name = "sampled_load", .declaration = Method{"SampledGet"}};
+    case BuiltinFn::kSampledGet:
+      return {
+          .name = "sampled_get",
+          .declaration = Method{"SampledGet"},
+          .answer = EntryAnswer::kReferenceToSampledContents};
     case BuiltinFn::kArmSampling:
       return {.name = "arm_sampling", .declaration = Method{"ArmSampling"}};
     case BuiltinFn::kOpenForWrite:

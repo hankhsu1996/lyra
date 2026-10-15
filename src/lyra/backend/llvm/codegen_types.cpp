@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <variant>
@@ -20,6 +21,7 @@
 #include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/union_layout.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -93,11 +95,12 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::StringType& t) { return address(t); },
           [&](const lir::RealType& t) { return address(t); },
           [&](const lir::ShortRealType& t) { return address(t); },
+          [&](const lir::EmptyType& t) { return address(t); },
+          // A product and a union, which this backend lays out itself from
+          // their components and members; each is held where it lies, like
+          // every value above.
           [&](const lir::UnionType& t) { return address(t); },
           [&](const lir::TaggedUnionType& t) { return address(t); },
-          [&](const lir::EmptyType& t) { return address(t); },
-          // A product, which this backend lays out itself from its
-          // components; it is held where it lies, like every value above.
           [&](const lir::TupleType& t) { return address(t); },
           [&](const lir::StructType& t) { return address(t); },
           [&](const lir::EventType& t) { return address(t); },
@@ -290,6 +293,9 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
   if (ty.Is<lir::UnpackedArrayType>()) {
     return LayoutOfArray(type).storage;
   }
+  if (ty.UnionMembers().has_value()) {
+    return LayoutOfUnion(type).storage;
+  }
   if (const auto* machine = ty.As<lir::MachineIntType>()) {
     const std::uint32_t bytes = lir::BitsOf(machine->width) / 8U;
     return support::ObjectLayout{
@@ -350,6 +356,79 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
                    .align = static_cast<std::uint32_t>(laid.align),
                    .ends_with_nothing_to_do = element.ends_with_nothing_to_do}})
       .first->second;
+}
+
+auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
+  if (const auto found = unions_.find(union_type); found != unions_.end()) {
+    return found->second;
+  }
+  const lir::Type& stated = unit_->types.Get(union_type);
+  const std::optional<std::span<const lir::TypeId>> members =
+      stated.UnionMembers();
+  if (!members.has_value()) {
+    throw InternalError(
+        "llvm codegen: a union layout asked of a type that is no union");
+  }
+  std::vector<support::ObjectLayout> held;
+  held.reserve(members->size());
+  for (const lir::TypeId member : *members) {
+    held.push_back(LayoutOf(member));
+  }
+  const bool ends_with_nothing_to_do = std::ranges::all_of(
+      held, &support::ObjectLayout::ends_with_nothing_to_do);
+  const value::OverlayLayout overlay = value::OverlayLayoutOf(held);
+  const value::OverlayLayout whole =
+      stated.Is<lir::TaggedUnionType>() ? [&] {
+        const value::TaggedUnionLayout tagged =
+            value::TaggedUnionLayoutOf(overlay, members->size());
+        return value::OverlayLayout{.size = tagged.size, .align = tagged.align};
+      }()
+                                        : overlay;
+  return unions_
+      .emplace(
+          union_type,
+          UnionLayout{
+              .members = *members,
+              .storage =
+                  {.size = whole.size,
+                   .align = whole.align,
+                   .ends_with_nothing_to_do = ends_with_nothing_to_do}})
+      .first->second;
+}
+
+auto CodeGenTypes::TagOf(lir::TypeId tagged) -> value::TagPlacement {
+  if (!unit_->types.Get(tagged).Is<lir::TaggedUnionType>()) {
+    throw InternalError(
+        "llvm codegen: a tag's placement asked of a type that is no tagged "
+        "union");
+  }
+  const std::span<const lir::TypeId> members = LayoutOfUnion(tagged).members;
+  return value::TaggedUnionLayoutOf(
+             value::OverlayLayoutOf(
+                 members | std::views::transform([&](lir::TypeId member) {
+                   return LayoutOf(member);
+                 })),
+             members.size())
+      .tag;
+}
+
+auto CodeGenTypes::KeepsAboveWidthsClear(lir::TypeId type) const -> bool {
+  if (const std::optional<value::IntegralShape> shape = IntegralShapeOf(type)) {
+    return shape->width != value::PlaneBytesFor(shape->width) * 8;
+  }
+  const lir::Type& stated = unit_->types.Get(type);
+  if (const auto* array = stated.As<lir::UnpackedArrayType>()) {
+    return KeepsAboveWidthsClear(array->element_type);
+  }
+  if (stated.Is<lir::UnionType>()) {
+    return false;
+  }
+  const std::optional<std::span<const lir::TypeId>> parts =
+      lir::ComponentTypes(*unit_, type);
+  return parts.has_value() &&
+         std::ranges::any_of(*parts, [&](lir::TypeId part) {
+           return KeepsAboveWidthsClear(part);
+         });
 }
 
 auto CodeGenTypes::LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout& {

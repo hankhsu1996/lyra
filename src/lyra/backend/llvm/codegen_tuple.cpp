@@ -37,7 +37,7 @@
 #include "lyra/support/value_operation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/tuple_type.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -113,10 +113,13 @@ static_assert(offsetof(value::TupleComponent, type) == sizeof(void*));
 // is refused where it is declared.
 struct NeverAskedOfAStructure {};
 
-// What storage of a structure holds before anything writes it: each component
-// at what its own type builds then, which the library reads off the components
-// the type lists.
-struct BuiltComponentByComponent {};
+// What the library answers for a structure one component at a time, reading
+// the components off the type, through the entry `entry`: what storage of one
+// holds before anything writes it, each component at what its own type builds
+// then; and what one keeps clear, what each component keeps clear.
+struct AnsweredComponentByComponent {
+  RuntimeOp entry;
+};
 
 // What a type is asked that a structure answers with nothing: the walk over
 // parts ordered by position, a structure's being components named by position
@@ -142,7 +145,7 @@ using IntegralCrossing = std::variant<
 
 using SlotFilling = std::variant<
     LifecycleStep, support::ValueOperation, NeverAskedOfAStructure,
-    BuiltComponentByComponent, AnsweredWithNothing>;
+    AnsweredComponentByComponent, AnsweredWithNothing>;
 
 // Where the virtual function `member` lies in its class's table, counted in
 // entries from the address point. A pointer to a virtual member function holds
@@ -208,8 +211,12 @@ auto TableSlots() -> std::vector<TableSlot> {
       Slot("bit_identical", &ValueType::BitIdentical, BuiltinFn::kBitIdentical),
       Slot("has_unknown", &ValueType::HasUnknown, BuiltinFn::kHasUnknown),
       Slot(
+          "clear_above_widths", &ValueType::ClearAboveWidths,
+          AnsweredComponentByComponent{
+              .entry = RuntimeOp::kTupleClearAboveWidths}),
+      Slot(
           "build_default", &ValueType::BuildDefault,
-          BuiltComponentByComponent{}),
+          AnsweredComponentByComponent{.entry = RuntimeOp::kTupleBuildDefault}),
       Slot(
           "bitstream_width", &ValueType::BitstreamWidth,
           BuiltinFn::kBitstreamWidth),
@@ -623,16 +630,14 @@ auto CodeGenTuples::ControlReadBody(
 }
 
 // The type is what lists the components, so the body hands it to the library
-// beside the storage it builds in.
-auto CodeGenTuples::DefaultBody(
+// beside the storage it acts on, through the entry `op`.
+auto CodeGenTuples::ComponentWiseBody(
     lir::TypeId tuple, std::string_view slot,
-    const VirtualSignature& stands_in_for) -> llvm::Constant* {
+    const VirtualSignature& stands_in_for, RuntimeOp op) -> llvm::Constant* {
   llvm::Function* const body = DeclareBody(tuple, slot, stands_in_for);
   llvm::IRBuilder<> b(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
-  ForwardToEntry(
-      b, RuntimeOp::kTupleBuildDefault, b.getVoidTy(),
-      {body->getArg(0), body->getArg(1)});
+  ForwardToEntry(b, op, b.getVoidTy(), {body->getArg(0), body->getArg(1)});
   b.CreateRetVoid();
   return body;
 }
@@ -781,8 +786,9 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
             [&](NeverAskedOfAStructure) -> llvm::Constant* {
               return filled_by(nullptr);
             },
-            [&](BuiltComponentByComponent) -> llvm::Constant* {
-              return DefaultBody(tuple, slot.name, slot.stands_in_for);
+            [&](AnsweredComponentByComponent by) -> llvm::Constant* {
+              return ComponentWiseBody(
+                  tuple, slot.name, slot.stands_in_for, by.entry);
             },
             [&](AnsweredWithNothing) -> llvm::Constant* {
               return NullBody(tuple, slot.name, slot.stands_in_for);

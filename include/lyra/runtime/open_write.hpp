@@ -9,6 +9,7 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/formation.hpp"
+#include "lyra/value/kept_copy.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
@@ -98,7 +99,7 @@ class OpenWrite {
     landing_of_ = &kLandingOf<Part>;
   }
 
-  // The same, for a tuple or a fixed-size unpacked array where it lies, which
+  // The same, for a value laid out by its type where it lies, which
   // is its bytes and nothing that says what they are: `type` states it. Its
   // value from before the write is a value of its own.
   void LandLaidOut(const value::ValueType& type, void* part) {
@@ -189,40 +190,19 @@ class OpenWrite {
   };
 
   // A part whose type the library is handed keeps its value from before the
-  // write in the landing's own room where it fits there, and in storage of its
-  // own past that, as the C++ backend's write keeps a part of a type it knows.
+  // write aside, as the C++ backend's write keeps a part of a type it knows.
   struct LaidOutLanding {
     LaidOutLanding(const value::ValueType& type, void* landed)
-        : type(&type), part(landed) {
-      if (KeptHere(type)) {
-        type.Copy(landed, here.data());
-      } else {
-        apart = value::AnyValue::CopyOf(type, landed);
-      }
-    }
-    LaidOutLanding(const LaidOutLanding&) = delete;
-    auto operator=(const LaidOutLanding&) -> LaidOutLanding& = delete;
-    LaidOutLanding(LaidOutLanding&&) = delete;
-    auto operator=(LaidOutLanding&&) -> LaidOutLanding& = delete;
-    ~LaidOutLanding() {
-      if (KeptHere(*type)) {
-        type->Destroy(here.data());
-      }
+        : type(&type), part(landed), kept(type, landed) {
     }
 
     [[nodiscard]] auto Before() const -> const void* {
-      return KeptHere(*type) ? here.data() : apart.Bytes();
-    }
-
-    static constexpr std::size_t kRoom = 128;
-    [[nodiscard]] static auto KeptHere(const value::ValueType& type) -> bool {
-      return type.Size() <= kRoom && type.Align() <= alignof(void*);
+      return kept.Bytes();
     }
 
     const value::ValueType* type;
     void* part;
-    alignas(void*) std::array<std::byte, kRoom> here{};
-    value::AnyValue apart;
+    value::KeptCopy kept;
   };
 
   template <value::HeldAsWords Wide>

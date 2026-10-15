@@ -44,8 +44,6 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "tuple";
     case ValueDomain::kUnion:
       return "union";
-    case ValueDomain::kTaggedUnion:
-      return "tagged_union";
     case ValueDomain::kDynArray:
       return "dynarray";
     case ValueDomain::kUnpackedArray:
@@ -81,45 +79,10 @@ auto IsIntegralLayout(ValueDomain domain) -> bool {
     case ValueDomain::kEmpty:
     case ValueDomain::kTuple:
     case ValueDomain::kUnion:
-    case ValueDomain::kTaggedUnion:
     case ValueDomain::kDynArray:
     case ValueDomain::kUnpackedArray:
     case ValueDomain::kQueue:
     case ValueDomain::kAssocArray:
-    case ValueDomain::kManagedRef:
-      return false;
-  }
-  throw InternalError("value domain: unknown domain");
-}
-
-auto PartsAreStorage(ValueDomain domain) -> bool {
-  switch (domain) {
-    case ValueDomain::kTuple:
-    case ValueDomain::kDynArray:
-    case ValueDomain::kUnpackedArray:
-    case ValueDomain::kQueue:
-    case ValueDomain::kAssocArray:
-      return true;
-    case ValueDomain::kBit8:
-    case ValueDomain::kBit16:
-    case ValueDomain::kBit32:
-    case ValueDomain::kBit64:
-    case ValueDomain::kLogic8:
-    case ValueDomain::kLogic16:
-    case ValueDomain::kLogic32:
-    case ValueDomain::kLogic64:
-    case ValueDomain::kBitWide:
-    case ValueDomain::kLogicWide:
-    case ValueDomain::kWildcardIndex:
-    case ValueDomain::kString:
-    case ValueDomain::kUnion:
-    case ValueDomain::kTaggedUnion:
-      return false;
-    // A value with no parts at all has none to be storage.
-    case ValueDomain::kReal:
-    case ValueDomain::kShortReal:
-    case ValueDomain::kChandle:
-    case ValueDomain::kEmpty:
     case ValueDomain::kManagedRef:
       return false;
   }

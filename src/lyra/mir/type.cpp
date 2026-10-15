@@ -388,9 +388,10 @@ auto Type::PartsAreStorage() const -> bool {
           [](const StructType&) { return true; },
 
           // A packed value is one vector however its bits are named (LRM
-          // 7.4.1), a string one sequence of characters (LRM 6.16), and a union
-          // holds one member at a time over storage its members share (LRM
-          // 7.3), so a part of any of them is a view of the whole.
+          // 7.4.1) and a string one sequence of characters (LRM 6.16), so a
+          // part of either is reached by the value's own operations; a union's
+          // member lies in the union's own storage with no identity of its own
+          // (LRM 7.3, 13.5.2), so nothing designates or lends one.
           [](const IntegralType&) { return false; },
           [](const EnumType&) { return false; },
           [](const StringType&) { return false; },

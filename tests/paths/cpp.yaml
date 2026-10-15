@@ -6,7 +6,7 @@
 # the record of what this path does not yet cover.
 #
 # A case may appear in this file or in the defect record, never both.
-07_aggregate_data_types/unpacked_union_common_initial_sequence: "reading an unpacked-union member other than the one last written is not yet supported"
+06_data_types/net_of_a_tagged_union: "a net holding a tagged union (LRM 6.7.1, 7.3.2) is not yet supported"
 08_classes/constructor_argument_directions: "a constructor with an output / inout / ref argument is not yet supported"
 09_processes/always_comb_writes_one_key_of_an_associative_array: "driven by always_comb procedure cannot be written to by any other process"
 10_assignments/net_delay: "a net delay (LRM 28.16) is not yet supported"

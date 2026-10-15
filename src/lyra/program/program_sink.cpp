@@ -267,8 +267,6 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_managedref_shared_cell_make);
   add("lyra_rt_tuple_shared_cell_make", &lyra_rt_tuple_shared_cell_make);
   add("lyra_rt_union_shared_cell_make", &lyra_rt_union_shared_cell_make);
-  add("lyra_rt_tagged_union_shared_cell_make",
-      &lyra_rt_tagged_union_shared_cell_make);
   add("lyra_rt_dynarray_shared_cell_make", &lyra_rt_dynarray_shared_cell_make);
   add("lyra_rt_unpackedarray_shared_cell_make",
       &lyra_rt_unpackedarray_shared_cell_make);
@@ -398,8 +396,6 @@ void BindWriteEntries(const auto& add) {
       &lyra_rt_managedref_cell_open_for_write);
   add("lyra_rt_tuple_cell_open_for_write", &lyra_rt_tuple_cell_open_for_write);
   add("lyra_rt_union_cell_open_for_write", &lyra_rt_union_cell_open_for_write);
-  add("lyra_rt_tagged_union_cell_open_for_write",
-      &lyra_rt_tagged_union_cell_open_for_write);
   add("lyra_rt_dynarray_cell_open_for_write",
       &lyra_rt_dynarray_cell_open_for_write);
   add("lyra_rt_unpackedarray_cell_open_for_write",
@@ -417,8 +413,6 @@ void BindWriteEntries(const auto& add) {
       &lyra_rt_managedref_ref_open_for_write);
   add("lyra_rt_tuple_ref_open_for_write", &lyra_rt_tuple_ref_open_for_write);
   add("lyra_rt_union_ref_open_for_write", &lyra_rt_union_ref_open_for_write);
-  add("lyra_rt_tagged_union_ref_open_for_write",
-      &lyra_rt_tagged_union_ref_open_for_write);
   add("lyra_rt_dynarray_ref_open_for_write",
       &lyra_rt_dynarray_ref_open_for_write);
   add("lyra_rt_unpackedarray_ref_open_for_write",
@@ -521,7 +515,6 @@ void BindWriteEntries(const auto& add) {
   add("lyra_rt_empty_land", &lyra_rt_empty_land);
   add("lyra_rt_tuple_land", &lyra_rt_tuple_land);
   add("lyra_rt_union_land", &lyra_rt_union_land);
-  add("lyra_rt_tagged_union_land", &lyra_rt_tagged_union_land);
   add("lyra_rt_dynarray_land", &lyra_rt_dynarray_land);
   add("lyra_rt_unpackedarray_land", &lyra_rt_unpackedarray_land);
   add("lyra_rt_queue_land", &lyra_rt_queue_land);
@@ -547,7 +540,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_managedref_cell_refer", &lyra_rt_managedref_cell_refer);
   add("lyra_rt_tuple_cell_refer", &lyra_rt_tuple_cell_refer);
   add("lyra_rt_union_cell_refer", &lyra_rt_union_cell_refer);
-  add("lyra_rt_tagged_union_cell_refer", &lyra_rt_tagged_union_cell_refer);
   add("lyra_rt_dynarray_cell_refer", &lyra_rt_dynarray_cell_refer);
   add("lyra_rt_unpackedarray_cell_refer", &lyra_rt_unpackedarray_cell_refer);
   add("lyra_rt_queue_cell_refer", &lyra_rt_queue_cell_refer);
@@ -561,78 +553,71 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_string_ref_get", &lyra_rt_string_ref_get);
   add("lyra_rt_string_ref_set", &lyra_rt_string_ref_set);
   add("lyra_rt_string_ref_arm_sampling", &lyra_rt_string_ref_arm_sampling);
-  add("lyra_rt_string_ref_sampled_load", &lyra_rt_string_ref_sampled_load);
+  add("lyra_rt_string_ref_sampled_get", &lyra_rt_string_ref_sampled_get);
   add("lyra_rt_real_ref_get", &lyra_rt_real_ref_get);
   add("lyra_rt_real_ref_set", &lyra_rt_real_ref_set);
   add("lyra_rt_real_ref_arm_sampling", &lyra_rt_real_ref_arm_sampling);
-  add("lyra_rt_real_ref_sampled_load", &lyra_rt_real_ref_sampled_load);
+  add("lyra_rt_real_ref_sampled_get", &lyra_rt_real_ref_sampled_get);
   add("lyra_rt_shortreal_ref_get", &lyra_rt_shortreal_ref_get);
   add("lyra_rt_shortreal_ref_set", &lyra_rt_shortreal_ref_set);
   add("lyra_rt_shortreal_ref_arm_sampling",
       &lyra_rt_shortreal_ref_arm_sampling);
-  add("lyra_rt_shortreal_ref_sampled_load",
-      &lyra_rt_shortreal_ref_sampled_load);
+  add("lyra_rt_shortreal_ref_sampled_get", &lyra_rt_shortreal_ref_sampled_get);
   add("lyra_rt_chandle_ref_get", &lyra_rt_chandle_ref_get);
   add("lyra_rt_chandle_ref_set", &lyra_rt_chandle_ref_set);
   add("lyra_rt_chandle_ref_arm_sampling", &lyra_rt_chandle_ref_arm_sampling);
-  add("lyra_rt_chandle_ref_sampled_load", &lyra_rt_chandle_ref_sampled_load);
+  add("lyra_rt_chandle_ref_sampled_get", &lyra_rt_chandle_ref_sampled_get);
   add("lyra_rt_managedref_ref_get", &lyra_rt_managedref_ref_get);
   add("lyra_rt_managedref_ref_set", &lyra_rt_managedref_ref_set);
   add("lyra_rt_managedref_ref_arm_sampling",
       &lyra_rt_managedref_ref_arm_sampling);
-  add("lyra_rt_managedref_ref_sampled_load",
-      &lyra_rt_managedref_ref_sampled_load);
+  add("lyra_rt_managedref_ref_sampled_get",
+      &lyra_rt_managedref_ref_sampled_get);
   add("lyra_rt_tuple_ref_get", &lyra_rt_tuple_ref_get);
-  add("lyra_rt_tuple_ref_set", &lyra_rt_tuple_ref_set);
-  add("lyra_rt_tuple_ref_arm_sampling", &lyra_rt_tuple_ref_arm_sampling);
-  add("lyra_rt_tuple_ref_sampled_load", &lyra_rt_tuple_ref_sampled_load);
   add("lyra_rt_union_ref_get", &lyra_rt_union_ref_get);
+  add("lyra_rt_tuple_ref_set", &lyra_rt_tuple_ref_set);
   add("lyra_rt_union_ref_set", &lyra_rt_union_ref_set);
+  add("lyra_rt_tuple_ref_arm_sampling", &lyra_rt_tuple_ref_arm_sampling);
   add("lyra_rt_union_ref_arm_sampling", &lyra_rt_union_ref_arm_sampling);
-  add("lyra_rt_union_ref_sampled_load", &lyra_rt_union_ref_sampled_load);
-  add("lyra_rt_tagged_union_ref_get", &lyra_rt_tagged_union_ref_get);
-  add("lyra_rt_tagged_union_ref_set", &lyra_rt_tagged_union_ref_set);
-  add("lyra_rt_tagged_union_ref_arm_sampling",
-      &lyra_rt_tagged_union_ref_arm_sampling);
-  add("lyra_rt_tagged_union_ref_sampled_load",
-      &lyra_rt_tagged_union_ref_sampled_load);
+  add("lyra_rt_tuple_ref_sampled_get", &lyra_rt_tuple_ref_sampled_get);
+  add("lyra_rt_union_ref_sampled_get", &lyra_rt_union_ref_sampled_get);
   add("lyra_rt_dynarray_ref_get", &lyra_rt_dynarray_ref_get);
   add("lyra_rt_dynarray_ref_set", &lyra_rt_dynarray_ref_set);
   add("lyra_rt_dynarray_ref_arm_sampling", &lyra_rt_dynarray_ref_arm_sampling);
-  add("lyra_rt_dynarray_ref_sampled_load", &lyra_rt_dynarray_ref_sampled_load);
+  add("lyra_rt_dynarray_ref_sampled_get", &lyra_rt_dynarray_ref_sampled_get);
   add("lyra_rt_unpackedarray_ref_get", &lyra_rt_unpackedarray_ref_get);
   add("lyra_rt_unpackedarray_ref_set", &lyra_rt_unpackedarray_ref_set);
   add("lyra_rt_unpackedarray_ref_arm_sampling",
       &lyra_rt_unpackedarray_ref_arm_sampling);
-  add("lyra_rt_unpackedarray_ref_sampled_load",
-      &lyra_rt_unpackedarray_ref_sampled_load);
+  add("lyra_rt_unpackedarray_ref_sampled_get",
+      &lyra_rt_unpackedarray_ref_sampled_get);
   add("lyra_rt_queue_ref_get", &lyra_rt_queue_ref_get);
   add("lyra_rt_queue_ref_set", &lyra_rt_queue_ref_set);
   add("lyra_rt_queue_ref_arm_sampling", &lyra_rt_queue_ref_arm_sampling);
-  add("lyra_rt_queue_ref_sampled_load", &lyra_rt_queue_ref_sampled_load);
+  add("lyra_rt_queue_ref_sampled_get", &lyra_rt_queue_ref_sampled_get);
   add("lyra_rt_assocarray_ref_get", &lyra_rt_assocarray_ref_get);
   add("lyra_rt_assocarray_ref_set", &lyra_rt_assocarray_ref_set);
   add("lyra_rt_assocarray_ref_arm_sampling",
       &lyra_rt_assocarray_ref_arm_sampling);
-  add("lyra_rt_assocarray_ref_sampled_load",
-      &lyra_rt_assocarray_ref_sampled_load);
+  add("lyra_rt_assocarray_ref_sampled_get",
+      &lyra_rt_assocarray_ref_sampled_get);
   add("lyra_rt_string_cell_get", &lyra_rt_string_cell_get);
   add("lyra_rt_string_cell_initialize", &lyra_rt_string_cell_initialize);
   add("lyra_rt_string_cell_set", &lyra_rt_string_cell_set);
   add("lyra_rt_string_cell_arm_sampling", &lyra_rt_string_cell_arm_sampling);
-  add("lyra_rt_string_cell_sampled_load", &lyra_rt_string_cell_sampled_load);
+  add("lyra_rt_string_cell_sampled_get", &lyra_rt_string_cell_sampled_get);
   add("lyra_rt_real_cell_get", &lyra_rt_real_cell_get);
   add("lyra_rt_real_cell_initialize", &lyra_rt_real_cell_initialize);
   add("lyra_rt_real_cell_set", &lyra_rt_real_cell_set);
   add("lyra_rt_real_cell_arm_sampling", &lyra_rt_real_cell_arm_sampling);
-  add("lyra_rt_real_cell_sampled_load", &lyra_rt_real_cell_sampled_load);
+  add("lyra_rt_real_cell_sampled_get", &lyra_rt_real_cell_sampled_get);
   add("lyra_rt_shortreal_cell_get", &lyra_rt_shortreal_cell_get);
   add("lyra_rt_shortreal_cell_initialize", &lyra_rt_shortreal_cell_initialize);
   add("lyra_rt_shortreal_cell_set", &lyra_rt_shortreal_cell_set);
   add("lyra_rt_shortreal_cell_arm_sampling",
       &lyra_rt_shortreal_cell_arm_sampling);
-  add("lyra_rt_shortreal_cell_sampled_load",
-      &lyra_rt_shortreal_cell_sampled_load);
+  add("lyra_rt_shortreal_cell_sampled_get",
+      &lyra_rt_shortreal_cell_sampled_get);
   add("lyra_rt_string_cell_begin_takeover",
       &lyra_rt_string_cell_begin_takeover);
   add("lyra_rt_string_cell_drive_takeover",
@@ -676,20 +661,14 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_shortreal_sampled_history_at);
   add("lyra_rt_tuple_sampled_history_install",
       &lyra_rt_tuple_sampled_history_install);
-  add("lyra_rt_tuple_sampled_history_push",
-      &lyra_rt_tuple_sampled_history_push);
-  add("lyra_rt_tuple_sampled_history_at", &lyra_rt_tuple_sampled_history_at);
   add("lyra_rt_union_sampled_history_install",
       &lyra_rt_union_sampled_history_install);
+  add("lyra_rt_tuple_sampled_history_push",
+      &lyra_rt_tuple_sampled_history_push);
   add("lyra_rt_union_sampled_history_push",
       &lyra_rt_union_sampled_history_push);
+  add("lyra_rt_tuple_sampled_history_at", &lyra_rt_tuple_sampled_history_at);
   add("lyra_rt_union_sampled_history_at", &lyra_rt_union_sampled_history_at);
-  add("lyra_rt_tagged_union_sampled_history_install",
-      &lyra_rt_tagged_union_sampled_history_install);
-  add("lyra_rt_tagged_union_sampled_history_push",
-      &lyra_rt_tagged_union_sampled_history_push);
-  add("lyra_rt_tagged_union_sampled_history_at",
-      &lyra_rt_tagged_union_sampled_history_at);
   add("lyra_rt_dynarray_sampled_history_install",
       &lyra_rt_dynarray_sampled_history_install);
   add("lyra_rt_dynarray_sampled_history_push",
@@ -805,10 +784,9 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dpi_open_array_handle", &lyra_rt_dpi_open_array_handle);
   add("lyra_rt_dpi_open_array_value", &lyra_rt_dpi_open_array_value);
   add("lyra_rt_string_destroy", &lyra_rt_string_destroy);
-  add("lyra_rt_union_destroy", &lyra_rt_union_destroy);
-  add("lyra_rt_tagged_union_destroy", &lyra_rt_tagged_union_destroy);
   add("lyra_rt_dynarray_destroy", &lyra_rt_dynarray_destroy);
   add("lyra_rt_unpackedarray_destroy", &lyra_rt_unpackedarray_destroy);
+  add("lyra_rt_union_destroy", &lyra_rt_union_destroy);
   add("lyra_rt_queue_destroy", &lyra_rt_queue_destroy);
   add("lyra_rt_assocarray_destroy", &lyra_rt_assocarray_destroy);
   add("lyra_rt_managedref_destroy", &lyra_rt_managedref_destroy);
@@ -831,10 +809,9 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_shortreal_assign", &lyra_rt_shortreal_assign);
   add("lyra_rt_chandle_assign", &lyra_rt_chandle_assign);
   add("lyra_rt_empty_assign", &lyra_rt_empty_assign);
-  add("lyra_rt_union_assign", &lyra_rt_union_assign);
-  add("lyra_rt_tagged_union_assign", &lyra_rt_tagged_union_assign);
   add("lyra_rt_dynarray_assign", &lyra_rt_dynarray_assign);
   add("lyra_rt_unpackedarray_assign", &lyra_rt_unpackedarray_assign);
+  add("lyra_rt_union_assign", &lyra_rt_union_assign);
   add("lyra_rt_queue_assign", &lyra_rt_queue_assign);
   add("lyra_rt_assocarray_assign", &lyra_rt_assocarray_assign);
   add("lyra_rt_managedref_assign", &lyra_rt_managedref_assign);
@@ -847,10 +824,9 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_shortreal_copy", &lyra_rt_shortreal_copy);
   add("lyra_rt_chandle_copy", &lyra_rt_chandle_copy);
   add("lyra_rt_empty_copy", &lyra_rt_empty_copy);
-  add("lyra_rt_union_copy", &lyra_rt_union_copy);
-  add("lyra_rt_tagged_union_copy", &lyra_rt_tagged_union_copy);
   add("lyra_rt_dynarray_copy", &lyra_rt_dynarray_copy);
   add("lyra_rt_unpackedarray_copy", &lyra_rt_unpackedarray_copy);
+  add("lyra_rt_union_copy", &lyra_rt_union_copy);
   add("lyra_rt_queue_copy", &lyra_rt_queue_copy);
   add("lyra_rt_assocarray_copy", &lyra_rt_assocarray_copy);
   add("lyra_rt_managedref_copy", &lyra_rt_managedref_copy);
@@ -871,10 +847,9 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_shortreal_move", &lyra_rt_shortreal_move);
   add("lyra_rt_chandle_move", &lyra_rt_chandle_move);
   add("lyra_rt_empty_move", &lyra_rt_empty_move);
-  add("lyra_rt_union_move", &lyra_rt_union_move);
-  add("lyra_rt_tagged_union_move", &lyra_rt_tagged_union_move);
   add("lyra_rt_dynarray_move", &lyra_rt_dynarray_move);
   add("lyra_rt_unpackedarray_move", &lyra_rt_unpackedarray_move);
+  add("lyra_rt_union_move", &lyra_rt_union_move);
   add("lyra_rt_queue_move", &lyra_rt_queue_move);
   add("lyra_rt_assocarray_move", &lyra_rt_assocarray_move);
   add("lyra_rt_managedref_move", &lyra_rt_managedref_move);
@@ -987,7 +962,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_chandle_cell_initialize", &lyra_rt_chandle_cell_initialize);
   add("lyra_rt_chandle_cell_set", &lyra_rt_chandle_cell_set);
   add("lyra_rt_chandle_cell_arm_sampling", &lyra_rt_chandle_cell_arm_sampling);
-  add("lyra_rt_chandle_cell_sampled_load", &lyra_rt_chandle_cell_sampled_load);
+  add("lyra_rt_chandle_cell_sampled_get", &lyra_rt_chandle_cell_sampled_get);
   add("lyra_rt_managedref_default", &lyra_rt_managedref_default);
   add("lyra_rt_managedref_value_cell_alloc",
       &lyra_rt_managedref_value_cell_alloc);
@@ -1001,8 +976,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_managedref_cell_set", &lyra_rt_managedref_cell_set);
   add("lyra_rt_managedref_cell_arm_sampling",
       &lyra_rt_managedref_cell_arm_sampling);
-  add("lyra_rt_managedref_cell_sampled_load",
-      &lyra_rt_managedref_cell_sampled_load);
+  add("lyra_rt_managedref_cell_sampled_get",
+      &lyra_rt_managedref_cell_sampled_get);
   add("lyra_rt_managedref_cell_begin_takeover",
       &lyra_rt_managedref_cell_begin_takeover);
   add("lyra_rt_managedref_cell_drive_takeover",
@@ -1026,48 +1001,17 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_process_suspend", &lyra_rt_process_suspend);
   add("lyra_rt_process_resume", &lyra_rt_process_resume);
   add("lyra_rt_tuple_cell_initialize", &lyra_rt_tuple_cell_initialize);
-  add("lyra_rt_tuple_cell_set", &lyra_rt_tuple_cell_set);
-  add("lyra_rt_tuple_cell_arm_sampling", &lyra_rt_tuple_cell_arm_sampling);
-  add("lyra_rt_tuple_cell_sampled_load", &lyra_rt_tuple_cell_sampled_load);
-  add("lyra_rt_tuple_value_cell_alloc", &lyra_rt_tuple_value_cell_alloc);
-  add("lyra_rt_union_make", &lyra_rt_union_make);
-  add("lyra_rt_union_component", &lyra_rt_union_component);
-  add("lyra_rt_union_with_component", &lyra_rt_union_with_component);
-  add("lyra_rt_union_eq", &lyra_rt_union_eq);
-  add("lyra_rt_union_ne", &lyra_rt_union_ne);
-  add("lyra_rt_union_case_equal", &lyra_rt_union_case_equal);
-  add("lyra_rt_union_is_unknown", &lyra_rt_union_is_unknown);
-  add("lyra_rt_union_cell_get", &lyra_rt_union_cell_get);
   add("lyra_rt_union_cell_initialize", &lyra_rt_union_cell_initialize);
+  add("lyra_rt_tuple_cell_set", &lyra_rt_tuple_cell_set);
   add("lyra_rt_union_cell_set", &lyra_rt_union_cell_set);
+  add("lyra_rt_tuple_cell_arm_sampling", &lyra_rt_tuple_cell_arm_sampling);
   add("lyra_rt_union_cell_arm_sampling", &lyra_rt_union_cell_arm_sampling);
-  add("lyra_rt_union_cell_sampled_load", &lyra_rt_union_cell_sampled_load);
+  add("lyra_rt_tuple_cell_sampled_get", &lyra_rt_tuple_cell_sampled_get);
+  add("lyra_rt_union_cell_sampled_get", &lyra_rt_union_cell_sampled_get);
+  add("lyra_rt_tuple_value_cell_alloc", &lyra_rt_tuple_value_cell_alloc);
   add("lyra_rt_union_value_cell_alloc", &lyra_rt_union_value_cell_alloc);
-  add("lyra_rt_union_value_cell_store", &lyra_rt_union_value_cell_store);
-  add("lyra_rt_union_value_cell_load", &lyra_rt_union_value_cell_load);
-  add("lyra_rt_tagged_union_make", &lyra_rt_tagged_union_make);
-  add("lyra_rt_tagged_union_component", &lyra_rt_tagged_union_component);
-  add("lyra_rt_tagged_union_with_component",
-      &lyra_rt_tagged_union_with_component);
-  add("lyra_rt_tagged_union_tag_matches", &lyra_rt_tagged_union_tag_matches);
-  add("lyra_rt_tagged_union_eq", &lyra_rt_tagged_union_eq);
-  add("lyra_rt_tagged_union_ne", &lyra_rt_tagged_union_ne);
-  add("lyra_rt_tagged_union_case_equal", &lyra_rt_tagged_union_case_equal);
-  add("lyra_rt_tagged_union_is_unknown", &lyra_rt_tagged_union_is_unknown);
-  add("lyra_rt_tagged_union_cell_get", &lyra_rt_tagged_union_cell_get);
-  add("lyra_rt_tagged_union_cell_initialize",
-      &lyra_rt_tagged_union_cell_initialize);
-  add("lyra_rt_tagged_union_cell_set", &lyra_rt_tagged_union_cell_set);
-  add("lyra_rt_tagged_union_cell_arm_sampling",
-      &lyra_rt_tagged_union_cell_arm_sampling);
-  add("lyra_rt_tagged_union_cell_sampled_load",
-      &lyra_rt_tagged_union_cell_sampled_load);
-  add("lyra_rt_tagged_union_value_cell_alloc",
-      &lyra_rt_tagged_union_value_cell_alloc);
-  add("lyra_rt_tagged_union_value_cell_store",
-      &lyra_rt_tagged_union_value_cell_store);
-  add("lyra_rt_tagged_union_value_cell_load",
-      &lyra_rt_tagged_union_value_cell_load);
+  add("lyra_rt_clear_above_widths", &lyra_rt_clear_above_widths);
+  add("lyra_rt_tuple_clear_above_widths", &lyra_rt_tuple_clear_above_widths);
   add("lyra_rt_empty_default", &lyra_rt_empty_default);
   add("lyra_rt_make_dynamic_array_new", &lyra_rt_make_dynamic_array_new);
   add("lyra_rt_make_dynamic_array_new_copy",
@@ -1096,8 +1040,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dynarray_cell_set", &lyra_rt_dynarray_cell_set);
   add("lyra_rt_dynarray_cell_arm_sampling",
       &lyra_rt_dynarray_cell_arm_sampling);
-  add("lyra_rt_dynarray_cell_sampled_load",
-      &lyra_rt_dynarray_cell_sampled_load);
+  add("lyra_rt_dynarray_cell_sampled_get", &lyra_rt_dynarray_cell_sampled_get);
   add("lyra_rt_dynarray_value_cell_alloc", &lyra_rt_dynarray_value_cell_alloc);
   add("lyra_rt_dynarray_value_cell_store", &lyra_rt_dynarray_value_cell_store);
   add("lyra_rt_dynarray_value_cell_load", &lyra_rt_dynarray_value_cell_load);
@@ -1139,7 +1082,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_cell_initialize", &lyra_rt_queue_cell_initialize);
   add("lyra_rt_queue_cell_set", &lyra_rt_queue_cell_set);
   add("lyra_rt_queue_cell_arm_sampling", &lyra_rt_queue_cell_arm_sampling);
-  add("lyra_rt_queue_cell_sampled_load", &lyra_rt_queue_cell_sampled_load);
+  add("lyra_rt_queue_cell_sampled_get", &lyra_rt_queue_cell_sampled_get);
   add("lyra_rt_queue_value_cell_alloc", &lyra_rt_queue_value_cell_alloc);
   add("lyra_rt_queue_value_cell_store", &lyra_rt_queue_value_cell_store);
   add("lyra_rt_queue_value_cell_load", &lyra_rt_queue_value_cell_load);
@@ -1173,6 +1116,8 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_unpackedarray_bitstream_width);
   add("lyra_rt_unpackedarray_to_bitstream",
       &lyra_rt_unpackedarray_to_bitstream);
+  add("lyra_rt_union_bitstream_width", &lyra_rt_union_bitstream_width);
+  add("lyra_rt_union_to_bitstream", &lyra_rt_union_to_bitstream);
   add("lyra_rt_from_bitstream", &lyra_rt_from_bitstream);
   add("lyra_rt_assocarray_count_bits", &lyra_rt_assocarray_count_bits);
   add("lyra_rt_assocarray_cell_get", &lyra_rt_assocarray_cell_get);
@@ -1181,8 +1126,8 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_assocarray_cell_set", &lyra_rt_assocarray_cell_set);
   add("lyra_rt_assocarray_cell_arm_sampling",
       &lyra_rt_assocarray_cell_arm_sampling);
-  add("lyra_rt_assocarray_cell_sampled_load",
-      &lyra_rt_assocarray_cell_sampled_load);
+  add("lyra_rt_assocarray_cell_sampled_get",
+      &lyra_rt_assocarray_cell_sampled_get);
   add("lyra_rt_assocarray_value_cell_alloc",
       &lyra_rt_assocarray_value_cell_alloc);
   add("lyra_rt_assocarray_value_cell_store",
@@ -1297,47 +1242,51 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_unpackedarray_ne", &lyra_rt_unpackedarray_ne);
   add("lyra_rt_unpackedarray_case_equal", &lyra_rt_unpackedarray_case_equal);
   add("lyra_rt_unpackedarray_is_unknown", &lyra_rt_unpackedarray_is_unknown);
+  add("lyra_rt_union_count_bits", &lyra_rt_union_count_bits);
+  add("lyra_rt_union_eq", &lyra_rt_union_eq);
+  add("lyra_rt_union_ne", &lyra_rt_union_ne);
+  add("lyra_rt_union_case_equal", &lyra_rt_union_case_equal);
+  add("lyra_rt_union_is_unknown", &lyra_rt_union_is_unknown);
   add("lyra_rt_unpackedarray_cell_initialize",
       &lyra_rt_unpackedarray_cell_initialize);
   add("lyra_rt_unpackedarray_cell_set", &lyra_rt_unpackedarray_cell_set);
   add("lyra_rt_unpackedarray_cell_arm_sampling",
       &lyra_rt_unpackedarray_cell_arm_sampling);
-  add("lyra_rt_unpackedarray_cell_sampled_load",
-      &lyra_rt_unpackedarray_cell_sampled_load);
+  add("lyra_rt_unpackedarray_cell_sampled_get",
+      &lyra_rt_unpackedarray_cell_sampled_get);
   add("lyra_rt_unpackedarray_value_cell_alloc",
       &lyra_rt_unpackedarray_value_cell_alloc);
   add("lyra_rt_tuple_aggregate_net_initialize_tri_state",
       &lyra_rt_tuple_aggregate_net_initialize_tri_state);
-  add("lyra_rt_tuple_aggregate_net_initialize_wired_and",
-      &lyra_rt_tuple_aggregate_net_initialize_wired_and);
-  add("lyra_rt_tuple_aggregate_net_initialize_wired_or",
-      &lyra_rt_tuple_aggregate_net_initialize_wired_or);
-  add("lyra_rt_tuple_aggregate_net_initialize_retaining",
-      &lyra_rt_tuple_aggregate_net_initialize_retaining);
-  add("lyra_rt_tuple_net_begin_takeover", &lyra_rt_tuple_net_begin_takeover);
-  add("lyra_rt_tuple_net_drive_takeover", &lyra_rt_tuple_net_drive_takeover);
-  add("lyra_rt_tuple_net_end_takeover", &lyra_rt_tuple_net_end_takeover);
-  add("lyra_rt_tuple_net_arm_sampling", &lyra_rt_tuple_net_arm_sampling);
-  add("lyra_rt_tuple_net_sampled_load", &lyra_rt_tuple_net_sampled_load);
-  add("lyra_rt_tuple_attach_driver", &lyra_rt_tuple_attach_driver);
-  add("lyra_rt_tuple_driver_get", &lyra_rt_tuple_driver_get);
-  add("lyra_rt_tuple_driver_set", &lyra_rt_tuple_driver_set);
-  add("lyra_rt_union_net_get", &lyra_rt_union_net_get);
   add("lyra_rt_union_aggregate_net_initialize_tri_state",
       &lyra_rt_union_aggregate_net_initialize_tri_state);
+  add("lyra_rt_tuple_aggregate_net_initialize_wired_and",
+      &lyra_rt_tuple_aggregate_net_initialize_wired_and);
   add("lyra_rt_union_aggregate_net_initialize_wired_and",
       &lyra_rt_union_aggregate_net_initialize_wired_and);
+  add("lyra_rt_tuple_aggregate_net_initialize_wired_or",
+      &lyra_rt_tuple_aggregate_net_initialize_wired_or);
   add("lyra_rt_union_aggregate_net_initialize_wired_or",
       &lyra_rt_union_aggregate_net_initialize_wired_or);
+  add("lyra_rt_tuple_aggregate_net_initialize_retaining",
+      &lyra_rt_tuple_aggregate_net_initialize_retaining);
   add("lyra_rt_union_aggregate_net_initialize_retaining",
       &lyra_rt_union_aggregate_net_initialize_retaining);
+  add("lyra_rt_tuple_net_begin_takeover", &lyra_rt_tuple_net_begin_takeover);
   add("lyra_rt_union_net_begin_takeover", &lyra_rt_union_net_begin_takeover);
+  add("lyra_rt_tuple_net_drive_takeover", &lyra_rt_tuple_net_drive_takeover);
   add("lyra_rt_union_net_drive_takeover", &lyra_rt_union_net_drive_takeover);
+  add("lyra_rt_tuple_net_end_takeover", &lyra_rt_tuple_net_end_takeover);
   add("lyra_rt_union_net_end_takeover", &lyra_rt_union_net_end_takeover);
+  add("lyra_rt_tuple_net_arm_sampling", &lyra_rt_tuple_net_arm_sampling);
   add("lyra_rt_union_net_arm_sampling", &lyra_rt_union_net_arm_sampling);
-  add("lyra_rt_union_net_sampled_load", &lyra_rt_union_net_sampled_load);
+  add("lyra_rt_tuple_net_sampled_get", &lyra_rt_tuple_net_sampled_get);
+  add("lyra_rt_union_net_sampled_get", &lyra_rt_union_net_sampled_get);
+  add("lyra_rt_tuple_attach_driver", &lyra_rt_tuple_attach_driver);
   add("lyra_rt_union_attach_driver", &lyra_rt_union_attach_driver);
+  add("lyra_rt_tuple_driver_get", &lyra_rt_tuple_driver_get);
   add("lyra_rt_union_driver_get", &lyra_rt_union_driver_get);
+  add("lyra_rt_tuple_driver_set", &lyra_rt_tuple_driver_set);
   add("lyra_rt_union_driver_set", &lyra_rt_union_driver_set);
   add("lyra_rt_unpackedarray_aggregate_net_initialize_tri_state",
       &lyra_rt_unpackedarray_aggregate_net_initialize_tri_state);
@@ -1355,8 +1304,8 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_unpackedarray_net_end_takeover);
   add("lyra_rt_unpackedarray_net_arm_sampling",
       &lyra_rt_unpackedarray_net_arm_sampling);
-  add("lyra_rt_unpackedarray_net_sampled_load",
-      &lyra_rt_unpackedarray_net_sampled_load);
+  add("lyra_rt_unpackedarray_net_sampled_get",
+      &lyra_rt_unpackedarray_net_sampled_get);
   add("lyra_rt_unpackedarray_attach_driver",
       &lyra_rt_unpackedarray_attach_driver);
   add("lyra_rt_unpackedarray_driver_get", &lyra_rt_unpackedarray_driver_get);
@@ -1383,12 +1332,10 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_real_bit_identical", &lyra_rt_real_bit_identical);
   add("lyra_rt_shortreal_bit_identical", &lyra_rt_shortreal_bit_identical);
   add("lyra_rt_chandle_bit_identical", &lyra_rt_chandle_bit_identical);
-  add("lyra_rt_union_bit_identical", &lyra_rt_union_bit_identical);
-  add("lyra_rt_tagged_union_bit_identical",
-      &lyra_rt_tagged_union_bit_identical);
   add("lyra_rt_dynarray_bit_identical", &lyra_rt_dynarray_bit_identical);
   add("lyra_rt_unpackedarray_bit_identical",
       &lyra_rt_unpackedarray_bit_identical);
+  add("lyra_rt_union_bit_identical", &lyra_rt_union_bit_identical);
   add("lyra_rt_queue_bit_identical", &lyra_rt_queue_bit_identical);
   add("lyra_rt_assocarray_bit_identical", &lyra_rt_assocarray_bit_identical);
   add("lyra_rt_managedref_bit_identical", &lyra_rt_managedref_bit_identical);
@@ -1396,41 +1343,33 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_real_has_unknown", &lyra_rt_real_has_unknown);
   add("lyra_rt_shortreal_has_unknown", &lyra_rt_shortreal_has_unknown);
   add("lyra_rt_chandle_has_unknown", &lyra_rt_chandle_has_unknown);
-  add("lyra_rt_union_has_unknown", &lyra_rt_union_has_unknown);
-  add("lyra_rt_tagged_union_has_unknown", &lyra_rt_tagged_union_has_unknown);
   add("lyra_rt_dynarray_has_unknown", &lyra_rt_dynarray_has_unknown);
   add("lyra_rt_unpackedarray_has_unknown", &lyra_rt_unpackedarray_has_unknown);
+  add("lyra_rt_union_has_unknown", &lyra_rt_union_has_unknown);
   add("lyra_rt_queue_has_unknown", &lyra_rt_queue_has_unknown);
   add("lyra_rt_assocarray_has_unknown", &lyra_rt_assocarray_has_unknown);
   add("lyra_rt_managedref_has_unknown", &lyra_rt_managedref_has_unknown);
-  add("lyra_rt_union_bitstream_width", &lyra_rt_union_bitstream_width);
-  add("lyra_rt_tagged_union_bitstream_width",
-      &lyra_rt_tagged_union_bitstream_width);
   add("lyra_rt_managedref_bitstream_width",
       &lyra_rt_managedref_bitstream_width);
-  add("lyra_rt_union_count_bits", &lyra_rt_union_count_bits);
-  add("lyra_rt_tagged_union_count_bits", &lyra_rt_tagged_union_count_bits);
   add("lyra_rt_managedref_count_bits", &lyra_rt_managedref_count_bits);
   add("lyra_rt_string_to_bitstream", &lyra_rt_string_to_bitstream);
-  add("lyra_rt_union_to_bitstream", &lyra_rt_union_to_bitstream);
-  add("lyra_rt_tagged_union_to_bitstream", &lyra_rt_tagged_union_to_bitstream);
   add("lyra_rt_dynarray_to_bitstream", &lyra_rt_dynarray_to_bitstream);
   add("lyra_rt_queue_to_bitstream", &lyra_rt_queue_to_bitstream);
   add("lyra_rt_assocarray_to_bitstream", &lyra_rt_assocarray_to_bitstream);
   add("lyra_rt_managedref_to_bitstream", &lyra_rt_managedref_to_bitstream);
-  add("lyra_rt_union_resolve_tri_state", &lyra_rt_union_resolve_tri_state);
   add("lyra_rt_unpackedarray_resolve_tri_state",
       &lyra_rt_unpackedarray_resolve_tri_state);
-  add("lyra_rt_union_resolve_wired_and", &lyra_rt_union_resolve_wired_and);
   add("lyra_rt_unpackedarray_resolve_wired_and",
       &lyra_rt_unpackedarray_resolve_wired_and);
-  add("lyra_rt_union_resolve_wired_or", &lyra_rt_union_resolve_wired_or);
   add("lyra_rt_unpackedarray_resolve_wired_or",
       &lyra_rt_unpackedarray_resolve_wired_or);
-  add("lyra_rt_union_dominating", &lyra_rt_union_dominating);
   add("lyra_rt_unpackedarray_dominating", &lyra_rt_unpackedarray_dominating);
-  add("lyra_rt_union_filled_like", &lyra_rt_union_filled_like);
   add("lyra_rt_unpackedarray_filled_like", &lyra_rt_unpackedarray_filled_like);
+  add("lyra_rt_union_resolve_tri_state", &lyra_rt_union_resolve_tri_state);
+  add("lyra_rt_union_resolve_wired_and", &lyra_rt_union_resolve_wired_and);
+  add("lyra_rt_union_resolve_wired_or", &lyra_rt_union_resolve_wired_or);
+  add("lyra_rt_union_dominating", &lyra_rt_union_dominating);
+  add("lyra_rt_union_filled_like", &lyra_rt_union_filled_like);
 }
 
 // What a declaration's storage publishes: building one member's storage where
@@ -1445,8 +1384,6 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_chandle_cell_construct", &lyra_rt_chandle_cell_construct);
   add("lyra_rt_tuple_cell_construct", &lyra_rt_tuple_cell_construct);
   add("lyra_rt_union_cell_construct", &lyra_rt_union_cell_construct);
-  add("lyra_rt_tagged_union_cell_construct",
-      &lyra_rt_tagged_union_cell_construct);
   add("lyra_rt_dynarray_cell_construct", &lyra_rt_dynarray_cell_construct);
   add("lyra_rt_unpackedarray_cell_construct",
       &lyra_rt_unpackedarray_cell_construct);
@@ -1464,8 +1401,6 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_tuple_value_cell_construct);
   add("lyra_rt_union_value_cell_construct",
       &lyra_rt_union_value_cell_construct);
-  add("lyra_rt_tagged_union_value_cell_construct",
-      &lyra_rt_tagged_union_value_cell_construct);
   add("lyra_rt_dynarray_value_cell_construct",
       &lyra_rt_dynarray_value_cell_construct);
   add("lyra_rt_unpackedarray_value_cell_construct",
@@ -1490,8 +1425,6 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_tuple_sampled_history_construct);
   add("lyra_rt_union_sampled_history_construct",
       &lyra_rt_union_sampled_history_construct);
-  add("lyra_rt_tagged_union_sampled_history_construct",
-      &lyra_rt_tagged_union_sampled_history_construct);
   add("lyra_rt_dynarray_sampled_history_construct",
       &lyra_rt_dynarray_sampled_history_construct);
   add("lyra_rt_unpackedarray_sampled_history_construct",
@@ -1518,7 +1451,6 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_chandle_cell_destroy", &lyra_rt_chandle_cell_destroy);
   add("lyra_rt_tuple_cell_destroy", &lyra_rt_tuple_cell_destroy);
   add("lyra_rt_union_cell_destroy", &lyra_rt_union_cell_destroy);
-  add("lyra_rt_tagged_union_cell_destroy", &lyra_rt_tagged_union_cell_destroy);
   add("lyra_rt_dynarray_cell_destroy", &lyra_rt_dynarray_cell_destroy);
   add("lyra_rt_unpackedarray_cell_destroy",
       &lyra_rt_unpackedarray_cell_destroy);
@@ -1528,8 +1460,6 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_string_value_cell_destroy", &lyra_rt_string_value_cell_destroy);
   add("lyra_rt_tuple_value_cell_destroy", &lyra_rt_tuple_value_cell_destroy);
   add("lyra_rt_union_value_cell_destroy", &lyra_rt_union_value_cell_destroy);
-  add("lyra_rt_tagged_union_value_cell_destroy",
-      &lyra_rt_tagged_union_value_cell_destroy);
   add("lyra_rt_dynarray_value_cell_destroy",
       &lyra_rt_dynarray_value_cell_destroy);
   add("lyra_rt_unpackedarray_value_cell_destroy",
@@ -1552,8 +1482,6 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_tuple_sampled_history_destroy);
   add("lyra_rt_union_sampled_history_destroy",
       &lyra_rt_union_sampled_history_destroy);
-  add("lyra_rt_tagged_union_sampled_history_destroy",
-      &lyra_rt_tagged_union_sampled_history_destroy);
   add("lyra_rt_dynarray_sampled_history_destroy",
       &lyra_rt_dynarray_sampled_history_destroy);
   add("lyra_rt_unpackedarray_sampled_history_destroy",
@@ -1581,7 +1509,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit8_cell_initialize", &lyra_rt_bit8_cell_initialize);
   add("lyra_rt_bit8_cell_set", &lyra_rt_bit8_cell_set);
   add("lyra_rt_bit8_cell_arm_sampling", &lyra_rt_bit8_cell_arm_sampling);
-  add("lyra_rt_bit8_cell_sampled_load", &lyra_rt_bit8_cell_sampled_load);
+  add("lyra_rt_bit8_cell_sampled_get", &lyra_rt_bit8_cell_sampled_get);
   add("lyra_rt_bit8_cell_begin_takeover", &lyra_rt_bit8_cell_begin_takeover);
   add("lyra_rt_bit8_cell_drive_takeover", &lyra_rt_bit8_cell_drive_takeover);
   add("lyra_rt_bit8_cell_end_takeover", &lyra_rt_bit8_cell_end_takeover);
@@ -1594,7 +1522,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit8_ref_get", &lyra_rt_bit8_ref_get);
   add("lyra_rt_bit8_ref_set", &lyra_rt_bit8_ref_set);
   add("lyra_rt_bit8_ref_arm_sampling", &lyra_rt_bit8_ref_arm_sampling);
-  add("lyra_rt_bit8_ref_sampled_load", &lyra_rt_bit8_ref_sampled_load);
+  add("lyra_rt_bit8_ref_sampled_get", &lyra_rt_bit8_ref_sampled_get);
   add("lyra_rt_bit8_ref_open_for_write", &lyra_rt_bit8_ref_open_for_write);
   add("lyra_rt_bit8_value_cell_alloc", &lyra_rt_bit8_value_cell_alloc);
   add("lyra_rt_bit8_value_cell_construct", &lyra_rt_bit8_value_cell_construct);
@@ -1614,7 +1542,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit16_cell_initialize", &lyra_rt_bit16_cell_initialize);
   add("lyra_rt_bit16_cell_set", &lyra_rt_bit16_cell_set);
   add("lyra_rt_bit16_cell_arm_sampling", &lyra_rt_bit16_cell_arm_sampling);
-  add("lyra_rt_bit16_cell_sampled_load", &lyra_rt_bit16_cell_sampled_load);
+  add("lyra_rt_bit16_cell_sampled_get", &lyra_rt_bit16_cell_sampled_get);
   add("lyra_rt_bit16_cell_begin_takeover", &lyra_rt_bit16_cell_begin_takeover);
   add("lyra_rt_bit16_cell_drive_takeover", &lyra_rt_bit16_cell_drive_takeover);
   add("lyra_rt_bit16_cell_end_takeover", &lyra_rt_bit16_cell_end_takeover);
@@ -1627,7 +1555,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit16_ref_get", &lyra_rt_bit16_ref_get);
   add("lyra_rt_bit16_ref_set", &lyra_rt_bit16_ref_set);
   add("lyra_rt_bit16_ref_arm_sampling", &lyra_rt_bit16_ref_arm_sampling);
-  add("lyra_rt_bit16_ref_sampled_load", &lyra_rt_bit16_ref_sampled_load);
+  add("lyra_rt_bit16_ref_sampled_get", &lyra_rt_bit16_ref_sampled_get);
   add("lyra_rt_bit16_ref_open_for_write", &lyra_rt_bit16_ref_open_for_write);
   add("lyra_rt_bit16_value_cell_alloc", &lyra_rt_bit16_value_cell_alloc);
   add("lyra_rt_bit16_value_cell_construct",
@@ -1649,7 +1577,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit32_cell_initialize", &lyra_rt_bit32_cell_initialize);
   add("lyra_rt_bit32_cell_set", &lyra_rt_bit32_cell_set);
   add("lyra_rt_bit32_cell_arm_sampling", &lyra_rt_bit32_cell_arm_sampling);
-  add("lyra_rt_bit32_cell_sampled_load", &lyra_rt_bit32_cell_sampled_load);
+  add("lyra_rt_bit32_cell_sampled_get", &lyra_rt_bit32_cell_sampled_get);
   add("lyra_rt_bit32_cell_begin_takeover", &lyra_rt_bit32_cell_begin_takeover);
   add("lyra_rt_bit32_cell_drive_takeover", &lyra_rt_bit32_cell_drive_takeover);
   add("lyra_rt_bit32_cell_end_takeover", &lyra_rt_bit32_cell_end_takeover);
@@ -1662,7 +1590,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit32_ref_get", &lyra_rt_bit32_ref_get);
   add("lyra_rt_bit32_ref_set", &lyra_rt_bit32_ref_set);
   add("lyra_rt_bit32_ref_arm_sampling", &lyra_rt_bit32_ref_arm_sampling);
-  add("lyra_rt_bit32_ref_sampled_load", &lyra_rt_bit32_ref_sampled_load);
+  add("lyra_rt_bit32_ref_sampled_get", &lyra_rt_bit32_ref_sampled_get);
   add("lyra_rt_bit32_ref_open_for_write", &lyra_rt_bit32_ref_open_for_write);
   add("lyra_rt_bit32_value_cell_alloc", &lyra_rt_bit32_value_cell_alloc);
   add("lyra_rt_bit32_value_cell_construct",
@@ -1684,7 +1612,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit64_cell_initialize", &lyra_rt_bit64_cell_initialize);
   add("lyra_rt_bit64_cell_set", &lyra_rt_bit64_cell_set);
   add("lyra_rt_bit64_cell_arm_sampling", &lyra_rt_bit64_cell_arm_sampling);
-  add("lyra_rt_bit64_cell_sampled_load", &lyra_rt_bit64_cell_sampled_load);
+  add("lyra_rt_bit64_cell_sampled_get", &lyra_rt_bit64_cell_sampled_get);
   add("lyra_rt_bit64_cell_begin_takeover", &lyra_rt_bit64_cell_begin_takeover);
   add("lyra_rt_bit64_cell_drive_takeover", &lyra_rt_bit64_cell_drive_takeover);
   add("lyra_rt_bit64_cell_end_takeover", &lyra_rt_bit64_cell_end_takeover);
@@ -1697,7 +1625,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit64_ref_get", &lyra_rt_bit64_ref_get);
   add("lyra_rt_bit64_ref_set", &lyra_rt_bit64_ref_set);
   add("lyra_rt_bit64_ref_arm_sampling", &lyra_rt_bit64_ref_arm_sampling);
-  add("lyra_rt_bit64_ref_sampled_load", &lyra_rt_bit64_ref_sampled_load);
+  add("lyra_rt_bit64_ref_sampled_get", &lyra_rt_bit64_ref_sampled_get);
   add("lyra_rt_bit64_ref_open_for_write", &lyra_rt_bit64_ref_open_for_write);
   add("lyra_rt_bit64_value_cell_alloc", &lyra_rt_bit64_value_cell_alloc);
   add("lyra_rt_bit64_value_cell_construct",
@@ -1719,7 +1647,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic8_cell_initialize", &lyra_rt_logic8_cell_initialize);
   add("lyra_rt_logic8_cell_set", &lyra_rt_logic8_cell_set);
   add("lyra_rt_logic8_cell_arm_sampling", &lyra_rt_logic8_cell_arm_sampling);
-  add("lyra_rt_logic8_cell_sampled_load", &lyra_rt_logic8_cell_sampled_load);
+  add("lyra_rt_logic8_cell_sampled_get", &lyra_rt_logic8_cell_sampled_get);
   add("lyra_rt_logic8_cell_begin_takeover",
       &lyra_rt_logic8_cell_begin_takeover);
   add("lyra_rt_logic8_cell_drive_takeover",
@@ -1735,7 +1663,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic8_ref_get", &lyra_rt_logic8_ref_get);
   add("lyra_rt_logic8_ref_set", &lyra_rt_logic8_ref_set);
   add("lyra_rt_logic8_ref_arm_sampling", &lyra_rt_logic8_ref_arm_sampling);
-  add("lyra_rt_logic8_ref_sampled_load", &lyra_rt_logic8_ref_sampled_load);
+  add("lyra_rt_logic8_ref_sampled_get", &lyra_rt_logic8_ref_sampled_get);
   add("lyra_rt_logic8_ref_open_for_write", &lyra_rt_logic8_ref_open_for_write);
   add("lyra_rt_logic8_value_cell_alloc", &lyra_rt_logic8_value_cell_alloc);
   add("lyra_rt_logic8_value_cell_construct",
@@ -1766,7 +1694,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic8_net_drive_takeover", &lyra_rt_logic8_net_drive_takeover);
   add("lyra_rt_logic8_net_end_takeover", &lyra_rt_logic8_net_end_takeover);
   add("lyra_rt_logic8_net_arm_sampling", &lyra_rt_logic8_net_arm_sampling);
-  add("lyra_rt_logic8_net_sampled_load", &lyra_rt_logic8_net_sampled_load);
+  add("lyra_rt_logic8_net_sampled_get", &lyra_rt_logic8_net_sampled_get);
   add("lyra_rt_logic8_attach_driver", &lyra_rt_logic8_attach_driver);
   add("lyra_rt_logic8_net_join", &lyra_rt_logic8_net_join);
   add("lyra_rt_logic8_driver_get", &lyra_rt_logic8_driver_get);
@@ -1778,7 +1706,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic16_cell_initialize", &lyra_rt_logic16_cell_initialize);
   add("lyra_rt_logic16_cell_set", &lyra_rt_logic16_cell_set);
   add("lyra_rt_logic16_cell_arm_sampling", &lyra_rt_logic16_cell_arm_sampling);
-  add("lyra_rt_logic16_cell_sampled_load", &lyra_rt_logic16_cell_sampled_load);
+  add("lyra_rt_logic16_cell_sampled_get", &lyra_rt_logic16_cell_sampled_get);
   add("lyra_rt_logic16_cell_begin_takeover",
       &lyra_rt_logic16_cell_begin_takeover);
   add("lyra_rt_logic16_cell_drive_takeover",
@@ -1796,7 +1724,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic16_ref_get", &lyra_rt_logic16_ref_get);
   add("lyra_rt_logic16_ref_set", &lyra_rt_logic16_ref_set);
   add("lyra_rt_logic16_ref_arm_sampling", &lyra_rt_logic16_ref_arm_sampling);
-  add("lyra_rt_logic16_ref_sampled_load", &lyra_rt_logic16_ref_sampled_load);
+  add("lyra_rt_logic16_ref_sampled_get", &lyra_rt_logic16_ref_sampled_get);
   add("lyra_rt_logic16_ref_open_for_write",
       &lyra_rt_logic16_ref_open_for_write);
   add("lyra_rt_logic16_value_cell_alloc", &lyra_rt_logic16_value_cell_alloc);
@@ -1831,7 +1759,7 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_logic16_net_drive_takeover);
   add("lyra_rt_logic16_net_end_takeover", &lyra_rt_logic16_net_end_takeover);
   add("lyra_rt_logic16_net_arm_sampling", &lyra_rt_logic16_net_arm_sampling);
-  add("lyra_rt_logic16_net_sampled_load", &lyra_rt_logic16_net_sampled_load);
+  add("lyra_rt_logic16_net_sampled_get", &lyra_rt_logic16_net_sampled_get);
   add("lyra_rt_logic16_attach_driver", &lyra_rt_logic16_attach_driver);
   add("lyra_rt_logic16_net_join", &lyra_rt_logic16_net_join);
   add("lyra_rt_logic16_driver_get", &lyra_rt_logic16_driver_get);
@@ -1843,7 +1771,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic32_cell_initialize", &lyra_rt_logic32_cell_initialize);
   add("lyra_rt_logic32_cell_set", &lyra_rt_logic32_cell_set);
   add("lyra_rt_logic32_cell_arm_sampling", &lyra_rt_logic32_cell_arm_sampling);
-  add("lyra_rt_logic32_cell_sampled_load", &lyra_rt_logic32_cell_sampled_load);
+  add("lyra_rt_logic32_cell_sampled_get", &lyra_rt_logic32_cell_sampled_get);
   add("lyra_rt_logic32_cell_begin_takeover",
       &lyra_rt_logic32_cell_begin_takeover);
   add("lyra_rt_logic32_cell_drive_takeover",
@@ -1861,7 +1789,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic32_ref_get", &lyra_rt_logic32_ref_get);
   add("lyra_rt_logic32_ref_set", &lyra_rt_logic32_ref_set);
   add("lyra_rt_logic32_ref_arm_sampling", &lyra_rt_logic32_ref_arm_sampling);
-  add("lyra_rt_logic32_ref_sampled_load", &lyra_rt_logic32_ref_sampled_load);
+  add("lyra_rt_logic32_ref_sampled_get", &lyra_rt_logic32_ref_sampled_get);
   add("lyra_rt_logic32_ref_open_for_write",
       &lyra_rt_logic32_ref_open_for_write);
   add("lyra_rt_logic32_value_cell_alloc", &lyra_rt_logic32_value_cell_alloc);
@@ -1896,7 +1824,7 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_logic32_net_drive_takeover);
   add("lyra_rt_logic32_net_end_takeover", &lyra_rt_logic32_net_end_takeover);
   add("lyra_rt_logic32_net_arm_sampling", &lyra_rt_logic32_net_arm_sampling);
-  add("lyra_rt_logic32_net_sampled_load", &lyra_rt_logic32_net_sampled_load);
+  add("lyra_rt_logic32_net_sampled_get", &lyra_rt_logic32_net_sampled_get);
   add("lyra_rt_logic32_attach_driver", &lyra_rt_logic32_attach_driver);
   add("lyra_rt_logic32_net_join", &lyra_rt_logic32_net_join);
   add("lyra_rt_logic32_driver_get", &lyra_rt_logic32_driver_get);
@@ -1908,7 +1836,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic64_cell_initialize", &lyra_rt_logic64_cell_initialize);
   add("lyra_rt_logic64_cell_set", &lyra_rt_logic64_cell_set);
   add("lyra_rt_logic64_cell_arm_sampling", &lyra_rt_logic64_cell_arm_sampling);
-  add("lyra_rt_logic64_cell_sampled_load", &lyra_rt_logic64_cell_sampled_load);
+  add("lyra_rt_logic64_cell_sampled_get", &lyra_rt_logic64_cell_sampled_get);
   add("lyra_rt_logic64_cell_begin_takeover",
       &lyra_rt_logic64_cell_begin_takeover);
   add("lyra_rt_logic64_cell_drive_takeover",
@@ -1926,7 +1854,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic64_ref_get", &lyra_rt_logic64_ref_get);
   add("lyra_rt_logic64_ref_set", &lyra_rt_logic64_ref_set);
   add("lyra_rt_logic64_ref_arm_sampling", &lyra_rt_logic64_ref_arm_sampling);
-  add("lyra_rt_logic64_ref_sampled_load", &lyra_rt_logic64_ref_sampled_load);
+  add("lyra_rt_logic64_ref_sampled_get", &lyra_rt_logic64_ref_sampled_get);
   add("lyra_rt_logic64_ref_open_for_write",
       &lyra_rt_logic64_ref_open_for_write);
   add("lyra_rt_logic64_value_cell_alloc", &lyra_rt_logic64_value_cell_alloc);
@@ -1961,7 +1889,7 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_logic64_net_drive_takeover);
   add("lyra_rt_logic64_net_end_takeover", &lyra_rt_logic64_net_end_takeover);
   add("lyra_rt_logic64_net_arm_sampling", &lyra_rt_logic64_net_arm_sampling);
-  add("lyra_rt_logic64_net_sampled_load", &lyra_rt_logic64_net_sampled_load);
+  add("lyra_rt_logic64_net_sampled_get", &lyra_rt_logic64_net_sampled_get);
   add("lyra_rt_logic64_attach_driver", &lyra_rt_logic64_attach_driver);
   add("lyra_rt_logic64_net_join", &lyra_rt_logic64_net_join);
   add("lyra_rt_logic64_driver_get", &lyra_rt_logic64_driver_get);
@@ -1975,8 +1903,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit_wide_cell_set", &lyra_rt_bit_wide_cell_set);
   add("lyra_rt_bit_wide_cell_arm_sampling",
       &lyra_rt_bit_wide_cell_arm_sampling);
-  add("lyra_rt_bit_wide_cell_sampled_load",
-      &lyra_rt_bit_wide_cell_sampled_load);
+  add("lyra_rt_bit_wide_cell_sampled_get", &lyra_rt_bit_wide_cell_sampled_get);
   add("lyra_rt_bit_wide_cell_begin_takeover",
       &lyra_rt_bit_wide_cell_begin_takeover);
   add("lyra_rt_bit_wide_cell_drive_takeover",
@@ -1995,7 +1922,7 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_bit_wide_ref_get", &lyra_rt_bit_wide_ref_get);
   add("lyra_rt_bit_wide_ref_set", &lyra_rt_bit_wide_ref_set);
   add("lyra_rt_bit_wide_ref_arm_sampling", &lyra_rt_bit_wide_ref_arm_sampling);
-  add("lyra_rt_bit_wide_ref_sampled_load", &lyra_rt_bit_wide_ref_sampled_load);
+  add("lyra_rt_bit_wide_ref_sampled_get", &lyra_rt_bit_wide_ref_sampled_get);
   add("lyra_rt_bit_wide_ref_open_for_write",
       &lyra_rt_bit_wide_ref_open_for_write);
   add("lyra_rt_bit_wide_value_cell_alloc", &lyra_rt_bit_wide_value_cell_alloc);
@@ -2024,8 +1951,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic_wide_cell_set", &lyra_rt_logic_wide_cell_set);
   add("lyra_rt_logic_wide_cell_arm_sampling",
       &lyra_rt_logic_wide_cell_arm_sampling);
-  add("lyra_rt_logic_wide_cell_sampled_load",
-      &lyra_rt_logic_wide_cell_sampled_load);
+  add("lyra_rt_logic_wide_cell_sampled_get",
+      &lyra_rt_logic_wide_cell_sampled_get);
   add("lyra_rt_logic_wide_cell_begin_takeover",
       &lyra_rt_logic_wide_cell_begin_takeover);
   add("lyra_rt_logic_wide_cell_drive_takeover",
@@ -2047,8 +1974,8 @@ void BindIntegralLayoutEntries(const auto& add) {
   add("lyra_rt_logic_wide_ref_set", &lyra_rt_logic_wide_ref_set);
   add("lyra_rt_logic_wide_ref_arm_sampling",
       &lyra_rt_logic_wide_ref_arm_sampling);
-  add("lyra_rt_logic_wide_ref_sampled_load",
-      &lyra_rt_logic_wide_ref_sampled_load);
+  add("lyra_rt_logic_wide_ref_sampled_get",
+      &lyra_rt_logic_wide_ref_sampled_get);
   add("lyra_rt_logic_wide_ref_open_for_write",
       &lyra_rt_logic_wide_ref_open_for_write);
   add("lyra_rt_logic_wide_value_cell_alloc",
@@ -2088,8 +2015,8 @@ void BindIntegralLayoutEntries(const auto& add) {
       &lyra_rt_logic_wide_net_end_takeover);
   add("lyra_rt_logic_wide_net_arm_sampling",
       &lyra_rt_logic_wide_net_arm_sampling);
-  add("lyra_rt_logic_wide_net_sampled_load",
-      &lyra_rt_logic_wide_net_sampled_load);
+  add("lyra_rt_logic_wide_net_sampled_get",
+      &lyra_rt_logic_wide_net_sampled_get);
   add("lyra_rt_logic_wide_attach_driver", &lyra_rt_logic_wide_attach_driver);
   add("lyra_rt_logic_wide_net_join", &lyra_rt_logic_wide_net_join);
   add("lyra_rt_logic_wide_driver_get", &lyra_rt_logic_wide_driver_get);

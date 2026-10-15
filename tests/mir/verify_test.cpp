@@ -673,7 +673,7 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
                           CallExpr{
                               .callee =
                                   Direct{
-                                      .target = support::BuiltinFn::kStore,
+                                      .target = support::BuiltinFn::kSet,
                                       .receiver = bits},
                               .arguments = {value}},
                       .type = u.builtins.void_type})});

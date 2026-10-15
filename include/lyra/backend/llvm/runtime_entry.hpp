@@ -42,7 +42,7 @@ auto HeldObjectOf(const lir::Type& type)
     -> std::optional<support::RuntimeObject>;
 
 // Whether a value of `type` is its bytes laid out by the type, which state
-// nothing of it: a tuple, and a fixed-size unpacked array.
+// nothing of it: a tuple, a union, and a fixed-size unpacked array.
 auto IsLaidOutByType(const lir::Type& type) -> bool;
 
 // The domain a LIR type is realized in, absent for a type whose values are not
@@ -92,25 +92,24 @@ class DomainSet {
 // the words of a wider value, and a designation of an integral value, are told
 // how wide the values held there are, after operand `after`, and an entry
 // making such storage, or a net of any integral value, is told it ahead of
-// whatever it takes. A
-// memory reached by a key is told the type its keys are built at (LRM 21.4.1),
-// a union the type of the member its callee names (LRM 7.3), and an
-// associative array built from a literal the type of the pairs its entries
-// cross as (LRM 7.9.11), each after the operand it concerns.
+// whatever it takes. A memory reached by a key is told the type its keys are
+// built at (LRM 21.4.1), and an associative array built from a literal the
+// type of the pairs its entries cross as (LRM 7.9.11), each after the operand
+// it concerns.
 struct ToldNothing {};
 struct ToldWidthMetadata {
   std::size_t after;
 };
 struct ToldWidthMetadataAhead {};
-// Storage holding a tuple or a fixed-size unpacked array laid out after it is
-// told the value's type ahead of whatever it takes where it is made, and an
-// entry acting on such storage once it is made is told nothing of the values
-// it is handed, which the storage keeps the type of.
+// Storage laying a value out after itself by the value's type is told that
+// type ahead of whatever it takes where it is made, and an entry acting on
+// such storage once it is made is told nothing of the values it is handed,
+// which the storage keeps the type of.
 struct ToldTypeMetadataAhead {};
 struct ToldByTheStorage {};
-// A tuple and a fixed-size unpacked array are their bytes laid out by their
-// type and nothing more, so a realization for one is told the type of every
-// such value it is handed as the value it is, after that value. Where it
+// A tuple, a union and a fixed-size unpacked array are their bytes laid out by
+// their type and nothing more, so a realization for one is told the type of
+// every such value it is handed as the value it is, after that value. Where it
 // reaches the value through a reference or a designation instead, which name
 // bytes lying in something else, it is told the type of the value reached,
 // after operand `reached_after`.
@@ -120,16 +119,13 @@ struct ToldLaidOutTypes {
 struct ToldKeyType {
   std::size_t after;
 };
-struct ToldMemberType {
-  std::size_t after;
-};
 struct ToldEntryType {
   std::size_t after;
 };
 using Told = std::variant<
     ToldNothing, ToldWidthMetadata, ToldWidthMetadataAhead,
     ToldTypeMetadataAhead, ToldByTheStorage, ToldLaidOutTypes, ToldKeyType,
-    ToldMemberType, ToldEntryType>;
+    ToldEntryType>;
 
 // The domains the library realizes an entry for that are told the same thing.
 // An entry states one of these per thing its realizations are told, and a
@@ -186,7 +182,6 @@ enum class RuntimeOp : std::uint8_t {
   // the integral value with the type it was written in, which no index type
   // states (LRM 7.8.1).
   kMakeWildcardIndex,
-  kWithComponent,
   kDefault,
   kFromLiteral,
   // A fixed-size unpacked array built from an element list, laid down as many
@@ -223,6 +218,11 @@ enum class RuntimeOp : std::uint8_t {
   kStreamRead,
   kStreamBuild,
   kTupleBuildDefault,
+  // What a read of storage another member of an untagged union may have
+  // written does to the value it reads, through that value's type (LRM
+  // 7.3.2), and what a structure's type does for it, component by component.
+  kClearAboveWidths,
+  kTupleClearAboveWidths,
   // Bits written into an integral value where they lie (LRM 11.5.1): into the
   // words of a value held at a place, and into the value a write in progress
   // designates, which hears which of them moved and is named by the domain
@@ -429,8 +429,8 @@ auto ToldOfAnOperator(support::ValueDomain domain) -> Told;
 // What the entry building a member's storage is told of the values held there,
 // ahead of the storage it is built in, as a cell the library makes is. Storage
 // laying the words of a value wider than a word out after itself is built at
-// their width, and storage laying a tuple or a fixed-size unpacked array out
-// after itself with its type, so the value has its place from the moment the
+// their width, and storage laying a value out after itself by the value's
+// type with that type, so the value has its place from the moment the
 // storage exists; and a net of any integral type is built at its width, which
 // is how many positions it has and which a layout of a narrower type does not
 // say.

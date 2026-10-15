@@ -573,10 +573,10 @@ class Var final : public Cell<ValueStorageCore<T>> {
 };
 
 // A variable whose value lies after it, held as `HeldAs` holds it -- the
-// words of an integral value wider than a word, or a tuple or a fixed-size
-// unpacked array laid out by its type -- told its width or type where it is
-// built. Generated code knows the type and reads and writes the value as its
-// bytes, so that is all this answers with.
+// words of an integral value wider than a word, or a tuple, a union or a
+// fixed-size unpacked array laid out by its type -- told its width or type
+// where it is built. Generated code knows the type and reads and writes the
+// value as its bytes, so that is all this answers with.
 template <class HeldAs>
 class TailCell final : public Cell<HeldAs> {
  public:

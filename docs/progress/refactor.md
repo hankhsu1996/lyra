@@ -1745,9 +1745,9 @@ enough to warrant its own focused review.
 - [ ] R114 -- A kind of value a storage family was never published for is reported to the user as a
       missing runtime library symbol. The check is real and fires at the right moment, but its
       audience is this compiler and its own library, and what it prints is a list of internal entry
-      names -- so someone who wrote an assertion over a class handle is told that
-      `lyra_rt_managedref_cell_sampled_load` does not exist. The error policy asks that an operation
-      a legal program requests and this tool does not carry out be refused by naming the construct.
+      names -- so someone who wrote an assertion over a class handle is told that an entry of the
+      library's for sampling it does not exist. The error policy asks that an operation a legal
+      program requests and this tool does not carry out be refused by naming the construct.
 
       Target: the refusal names the construct and the kind of value, and the symbol list stays where
       it helps, which is a build of this compiler rather than a run of someone's design. What has to
@@ -3048,20 +3048,37 @@ enough to warrant its own focused review.
       static members the compiler's expansion of the body reaches, which is the first thing to
       check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
       silencing the check. Not blocked.
-- [ ] R224 -- Whether an expression names storage is stated by MIR -- the node kind says whether an
-      expression is a place, bits of a value are no place but the value's own operations, and
-      nothing below MIR works out which expressions are places -- except for a union's member, which
-      is still reached by a pair of calls differing only in whether the part is read or written, a
-      write below one rebuilding the union around the part. Target: a union's member is a field step
-      on the place holding the union (`decisions/an-expression-names-storage-or-makes-a-value.md`).
-      Blocked on the union being laid out from its type on both backends. Until then a read through
-      a member takes the member out whole, so a select into a queue a tagged union holds copies the
-      queue at every read, which main does not do.
-- [ ] R234 -- The C++ backend reads a member of a union it is told to read as a value only once the
-      expression around the read is evaluated, so a call in a sibling operand that retags the union
-      in between makes the read land on the other member without the tag check firing; the execution
-      backend reads it where the read stands. Found while checking the tag check on the union
-      branch; main does the same.
+- [x] R224 -- Whether an expression names storage is stated by MIR for a union's member too: it is a
+      field step on the place holding the union, at the union's start, on both backends, so a select
+      into a member reads only what it selects and a write to one leaves the union in place.
+- [x] R234 -- A read through a member a tag guards is one access with its check: the whole of what
+      it selects below the member is read and kept among the steps that check the tag, so a sibling
+      operand retagging the union can no longer have the read land on a member the union no longer
+      holds, on either backend.
+
+- [ ] R235 -- An operation the execution backend's library carries out on values laid out by their
+      type -- comparing two unions or two fixed-size arrays, resolving two drivers of one -- is told
+      the type of every such operand it takes, although its operands share one type, which the
+      answer or the first operand already fixes. Each entry then reads the type of the others only
+      to check it or to discard it. The type an operation is over belongs to the call once, as a
+      generic function takes its type argument once however many arguments are of that type.
+
+- [ ] R236 -- A write through a member of a union a process waits on keeps the whole union from
+      before the write and compares the whole of it when the write ends, on both backends, where a
+      write through a structure's member keeps and compares only that member. A member has no
+      identity of its own, so the write cannot designate it, but what the write keeps and compares
+      could still narrow to the member while it reports the whole union as changed, since every
+      member is one storage.
+
+- [ ] R237 -- A method entered on something reached through a member a tag guards is handed a copy
+      of what it is entered on, kept with the check of the tag, so `size` of a queue a tagged union
+      holds copies the queue. A method that only reads could be entered where the queue lies,
+      between the check and the end of the read.
+
+- [ ] R238 -- Which type a library entry's realization is told of is carried beside the entry as an
+      optional type, and only an entry told something about a type reads it, refusing its absence
+      when it reads. Where the entry is chosen, what it is told could carry the type itself, so no
+      entry carries a type it is told nothing of.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

@@ -9,11 +9,11 @@
 
 namespace lyra::runtime {
 
-// The storage of a tuple or a fixed-size unpacked array, whose type the
-// library is told where the holder is built: the type, then the value laid out
-// by it, inline at the holder's tail or spilled into storage allocated where
-// the holder is built. So the value has one address for as long as the holder
-// lives.
+// The storage of a tuple, a union or a fixed-size unpacked array, whose type
+// the library is told where the holder is built: the type, then the value laid
+// out by it, inline at the holder's tail or spilled into storage allocated
+// where the holder is built. So the value has one address for as long as the
+// holder lives.
 //
 // The value is built where the holder is, at what its type builds before
 // anything writes it, as words storage fills its words; every value assigned

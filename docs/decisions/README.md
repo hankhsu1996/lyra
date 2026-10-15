@@ -129,12 +129,12 @@ the detail lives in the entry itself.
   header in the bytes, and an element default handed to each construction are rejected.
 - [a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md) -- on the
   execution backend a variable, a net and a procedural local of an integral value wider than a word,
-  a tuple or a fixed-size unpacked array are told its width or type where they are built and lay the
-  value out after themselves, or keep one address of storage they own past the in-place bound, so
-  the value has one address for the holder's life and generated code reads it through one pointer. A
-  tuple's bytes state nothing of its type. What the library keeps for itself stays a value of its
-  own. A library object standing for the value in the holder, and a family instantiated per type,
-  are rejected.
+  a tuple, a union or a fixed-size unpacked array are told its width or type where they are built
+  and lay the value out after themselves, or keep one address of storage they own past the in-place
+  bound, so the value has one address for the holder's life and generated code reads it through one
+  pointer. A tuple's bytes state nothing of its type. What the library keeps for itself stays a
+  value of its own. A library object standing for the value in the holder, and a family instantiated
+  per type, are rejected.
 - [a-new-expression-allocates-then-initializes](a-new-expression-allocates-then-initializes.md) -- a
   class `new`, an instance and a box are one MIR node that allocates storage and evaluates its
   initializer into it, as clang's `CXXNewExpr`; a construction never yields what owns storage. In

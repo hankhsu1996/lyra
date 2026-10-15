@@ -228,16 +228,14 @@ TEST(RuntimeSurface, AUnitCarriesNoneOfWhatTheLibraryDefines) {
     unit_namespaces.push_back(entry.path().stem().string());
     std::filesystem::path object = entry.path();
     object.replace_extension(".o");
+    std::vector<std::string> args =
+        lyra::driver::DesignCompileFlags(lyra::driver::Optimization::kIterate);
+    args.insert(
+        args.end(),
+        {"-I", (project / "runtime" / "include").string(), "-I",
+         project.string(), "-c", entry.path().string(), "-o", object.string()});
     compiles.push_back(
-        lyra::driver::ProcessRequest{
-            .exe = *cxx_or,
-            .args = {
-                std::string{lyra::driver::kCxxStandardFlag},
-                std::string{lyra::driver::OptimizationFlag(
-                    lyra::driver::Optimization::kIterate)},
-                "-I", (project / "runtime" / "include").string(), "-I",
-                project.string(), "-c", entry.path().string(), "-o",
-                object.string()}});
+        lyra::driver::ProcessRequest{.exe = *cxx_or, .args = std::move(args)});
     objects.push_back(std::move(object));
   }
   ASSERT_FALSE(objects.empty()) << "the design emitted no translation unit";

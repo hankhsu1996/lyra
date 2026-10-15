@@ -69,6 +69,13 @@ auto IntegralValueType::HasUnknown(const void* value) const -> bool {
   return lyra::value::HasUnknown(Load(value).View());
 }
 
+void IntegralValueType::ClearAboveWidths(void* value) const {
+  ScopedWordsWrite written(value, shape_);
+  const IntegralView words = written.MutableView();
+  ClearAboveWidth(words.value, words.width);
+  ClearAboveWidth(words.unknown, words.width);
+}
+
 void IntegralValueType::BuildDefault(void* out) const {
   WrittenWords built(shape_);
   FillDefault(built.MutableView());

@@ -99,6 +99,31 @@ struct FixedArrayTypeConstantLayout {
 };
 auto LayoutOfFixedArrayTypeConstant() -> FixedArrayTypeConstantLayout;
 
+// The same for the type of a union: beside what every value type states, how
+// many members, and the address of the list of the constants stating their
+// types; for a tagged union also where its tag lies and how many bytes it
+// takes.
+struct UnionTypeConstantLayout {
+  support::ObjectLayout object;
+  std::string table_symbol;
+  value::StatedAt value_size;
+  value::StatedAt value_align;
+  value::StatedAt count;
+  value::StatedAt members;
+};
+auto LayoutOfUnionTypeConstant() -> UnionTypeConstantLayout;
+struct TaggedUnionTypeConstantLayout {
+  support::ObjectLayout object;
+  std::string table_symbol;
+  value::StatedAt value_size;
+  value::StatedAt value_align;
+  value::StatedAt count;
+  value::StatedAt members;
+  value::StatedAt tag_offset;
+  value::StatedAt tag_bytes;
+};
+auto LayoutOfTaggedUnionTypeConstant() -> TaggedUnionTypeConstantLayout;
+
 // The same for the type of a queue, which opens with no table: where it states
 // the address of the constant stating its elements' type, and its bound.
 struct QueueTypeConstantLayout {

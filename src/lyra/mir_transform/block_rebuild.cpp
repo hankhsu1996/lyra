@@ -211,6 +211,10 @@ auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
             e.parts = each(std::move(e.parts));
             return e;
           },
+          [&](mir::UnionExpr e) -> mir::ExprData {
+            e.value = Expr(e.value);
+            return e;
+          },
           [&](mir::AwaitExpr e) -> mir::ExprData {
             e.execution = Expr(e.execution);
             return e;

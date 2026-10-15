@@ -523,14 +523,11 @@ class Type {
   // are is read from the unit, since a struct's are listed on its declaration.
   [[nodiscard]] auto IsProduct() const -> bool;
 
-  // True for a value that holds one of its members at a time (LRM 7.3 /
-  // 7.3.2), which is what makes reaching a member of one a choice of domain
-  // where reaching a product's component is not.
-  [[nodiscard]] auto IsUnion() const -> bool;
-
-  // The member types of a union, in declaration order. A type that is not a
-  // union is a caller error.
-  [[nodiscard]] auto UnionMemberTypes() const -> std::vector<TypeId>;
+  // The members of a union of either kind, in declaration order, each lying
+  // at the start of the union's storage (LRM 7.3, 7.3.2); nothing for any
+  // other type.
+  [[nodiscard]] auto UnionMembers() const
+      -> std::optional<std::span<const TypeId>>;
 
   // The type of the elements this one holds a sequence of, or nothing where it
   // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the

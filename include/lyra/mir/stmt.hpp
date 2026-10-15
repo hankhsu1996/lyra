@@ -221,11 +221,27 @@ struct Block {
   // for what it holds, the ask added here and the dereference left to add.
   auto WrapperContents(const TypePool& types, ExprId wrapper, TypeId value)
       -> Expr {
-    const TypeId reference = types.Intern(
-        Type{ReferenceType{
-            .referent = value, .mutability = Mutability::kReadOnly}});
     return MakeDerefExpr(
-        exprs.Add(MakeCellLoadCallExpr(wrapper, reference)), value);
+        exprs.Add(MakeCellGetCallExpr(
+            wrapper,
+            types.Intern(
+                Type{ReferenceType{
+                    .referent = value, .mutability = Mutability::kReadOnly}}))),
+        value);
+  }
+
+  // Where `wrapper` keeps what its storage held in the Preponed region of the
+  // current time slot (LRM 16.5.1), reached the same way: the dereference of
+  // the reference the wrapper answers to that value.
+  auto SampledWrapperContents(
+      const TypePool& types, ExprId wrapper, TypeId value) -> Expr {
+    return MakeDerefExpr(
+        exprs.Add(MakeCellSampledGetCallExpr(
+            wrapper,
+            types.Intern(
+                Type{ReferenceType{
+                    .referent = value, .mutability = Mutability::kReadOnly}}))),
+        value);
   }
 
   // `*pointer`, the storage `pointer` reaches.

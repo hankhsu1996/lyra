@@ -758,6 +758,7 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
             return not_data("a field access");
           },
           [&](const mir::ClosureExpr&) { return not_data("a closure"); },
+          [&](const mir::UnionExpr&) { return not_data("a union"); },
           [&](const mir::AwaitExpr&) { return not_data("an await"); },
           [&](const mir::WaitExpr&) { return not_data("a wait"); },
           [&](const mir::VectorGetExpr&) {

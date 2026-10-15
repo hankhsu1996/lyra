@@ -27,8 +27,7 @@ auto WidenedWith(StreamShape shape, StreamShape part) -> StreamShape {
 
 // Several kinds of type reach here -- one whose bit count only the running
 // program has, and one whose stream the value layer does not carry yet -- and
-// this cannot tell them apart, so it names neither. A union is among them and
-// its width its type does fix, so naming a dynamic size would be false for it.
+// this cannot tell them apart, so it names neither.
 auto RefuseUnfixedStream(diag::SourceSpan span)
     -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
@@ -65,6 +64,10 @@ auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
   if (const std::optional<std::span<const mir::TypeId>> parts =
           mir::ProductElements(unit, type)) {
     return FixedStreamShapeOfParts(unit, *parts);
+  }
+  // LRM 11.4.14.1: an untagged union streams as its first member.
+  if (const auto* overlay = resolved.As<mir::UnionType>()) {
+    return FixedStreamShapeOf(unit, overlay->members.front());
   }
   if (resolved.Is<mir::UnpackedArrayType>()) {
     const auto& array = resolved.Get<mir::UnpackedArrayType>();

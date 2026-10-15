@@ -49,10 +49,12 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -367,18 +369,31 @@ auto LowerBuiltinMethodCall(
   // A method that changes the object it acts on takes the place that object
   // stands in, so the change lands where the source named it; one that does not
   // is entered on the object where it lies, and reads it there if it takes it
-  // by value.
+  // by value. An object lying where another member of an untagged union may
+  // have written is changed in a copy read as its type holds a value, which is
+  // then written back, since the method reads what it changes (LRM 7.3.2).
   std::optional<mir::ExprId> receiver;
+  std::optional<AccessPath> written_back;
   if (b.receiver.has_value()) {
     const hir::Expr& object = hir_exprs.Get(*b.receiver);
     if (entry.mutates_receiver) {
       auto recv_or = lowerer.LowerLhsExpr(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver = PathPlace(lowerer.Owner().Unit(), block, *recv_or);
+      if (ReachesOverlaidStorage(*recv_or)) {
+        ReadThenWritten changed =
+            ReadThenWrite(lowerer.Owner(), frame, *std::move(recv_or));
+        const mir::TypeId type = block.exprs.Get(changed.incoming).type;
+        receiver = block.exprs.Add(
+            mir::MakeLocalRefExpr(DeclareLocal(frame, changed.incoming), type));
+        written_back = std::move(changed.place);
+      } else {
+        receiver = PathPlace(lowerer.Owner().Unit(), block, *recv_or);
+      }
     } else {
       auto recv_or = lowerer.LowerAsPlace(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver = block.exprs.Add(*std::move(recv_or));
+      receiver = mir::ReadIfOverlaid(
+          lowerer.Owner().Unit(), block, block.exprs.Add(*std::move(recv_or)));
     }
   }
   // How many bits a structure holds is its type's own function to answer (LRM
@@ -425,8 +440,23 @@ auto LowerBuiltinMethodCall(
         "accept a with-clause (LRM 7.12.1 family only)");
   }
 
-  return BuildBuiltinMethodCall(
+  mir::Expr call = BuildBuiltinMethodCall(
       unit_lowerer, block, b.method, receiver, std::move(args), result_type);
+  if (!written_back.has_value()) {
+    return call;
+  }
+  // What an untagged union may hold changes only through a method answering
+  // nothing -- an array's ordering methods (LRM 7.3, 7.12.2) -- so the write
+  // back is all the call stands for.
+  const mir::Type& answered = lowerer.Owner().Unit().types.Get(result_type);
+  if (!answered.Is<mir::VoidType>()) {
+    throw InternalError(
+        "LowerBuiltinMethodCall: a method changing overlaid storage answers a "
+        "value");
+  }
+  block.AppendStmt(mir::ExprStmt{.expr = block.exprs.Add(std::move(call))});
+  return BuildStoreExpr(
+      lowerer.Owner().Unit(), block, *written_back, block.Read(*receiver));
 }
 
 }  // namespace

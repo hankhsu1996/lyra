@@ -62,6 +62,31 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// Whether a value of `type` holds an unpacked tagged union anywhere in it. LRM
+// 6.7.1 admits one in a net's data type, and no resolution of its drivers is
+// carried out.
+auto HoldsTaggedUnion(const slang::ast::Type& type) -> bool {
+  const slang::ast::Type& canonical = type.getCanonicalType();
+  const auto any_field =
+      [](std::span<const slang::ast::FieldSymbol* const> fields) {
+        return std::ranges::any_of(
+            fields, [](const slang::ast::FieldSymbol* field) {
+              return HoldsTaggedUnion(field->getType());
+            });
+      };
+  if (const auto* overlay = canonical.as_if<slang::ast::UnpackedUnionType>()) {
+    return overlay->isTagged || any_field(overlay->fields);
+  }
+  if (const auto* product = canonical.as_if<slang::ast::UnpackedStructType>()) {
+    return any_field(product->fields);
+  }
+  if (const auto* array =
+          canonical.as_if<slang::ast::FixedSizeUnpackedArrayType>()) {
+    return HoldsTaggedUnion(array->elementType);
+  }
+  return false;
+}
+
 // Where one parameter an instance takes at construction gets its value: the
 // expression its instantiation wrote (LRM 23.10.2); a value given elsewhere --
 // a defparam, a configuration (LRM 23.10.1, 33.4.3) -- which is handed as the
@@ -700,6 +725,11 @@ auto StructuralScopeLowerer::PopulateNetMember(
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedTypeKind,
         "a net delay (LRM 28.16) is not yet supported");
+  }
+  if (HoldsTaggedUnion(net.getType())) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedTypeKind,
+        "a net holding a tagged union (LRM 6.7.1, 7.3.2) is not yet supported");
   }
 
   frame.current_structural_scope->structural_data_objects.Define(

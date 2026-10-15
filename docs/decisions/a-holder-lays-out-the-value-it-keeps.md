@@ -57,14 +57,14 @@ value's type is the condition both serve, so the library being prebuilt is no re
 ## Decision
 
 **D1. A holder is the library's part, then the value laid out by its type.** A holder of an integral
-value wider than a word, a tuple or a fixed-size unpacked array ends with the value, laid out as its
-type says. The code generator lays such a member out at the size the library states for a holder
-followed by a value of that size, as it lays out every other member from its type.
+value wider than a word, a tuple, a union or a fixed-size unpacked array ends with the value, laid
+out as its type says. The code generator lays such a member out at the size the library states for a
+holder followed by a value of that size, as it lays out every other member from its type.
 
 **D2. The holder is told the value's width or type where it is built.** A width for an integral
-value, the type's constant for a tuple and an array -- the same constant every entry acting on such
-a value is told. Every entry acting on a holder after it is built is told nothing of the values it
-is handed, since the holder keeps the type.
+value, the type's constant for a tuple, a union and an array -- the same constant every entry acting
+on such a value is told. Every entry acting on a holder after it is built is told nothing of the
+values it is handed, since the holder keeps the type.
 
 **D3. A value past the size a value may lie in what holds it is one address of storage the holder
 owns,** allocated where the holder is built and taken into afterwards, as a frame keeps one. The

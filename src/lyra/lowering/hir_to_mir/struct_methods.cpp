@@ -28,6 +28,7 @@
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -72,10 +73,15 @@ auto EveryPart(
 }
 
 // LRM 6.24.3: neither a real nor a chandle is a bit-stream type, and a value
-// holding one has no stream either.
+// holding one has no stream either. A stream takes an untagged union as its
+// first member and a tagged one not at all (LRM 11.4.14.1).
 auto HasBitStream(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
   const mir::Type& t = unit.types.Get(type);
+  if (const auto* overlay = t.As<mir::UnionType>()) {
+    return HasBitStream(unit, overlay->members.front());
+  }
   return !t.IsRealFamily() && !t.Is<mir::ChandleType>() &&
+         !t.Is<mir::TaggedUnionType>() &&
          EveryPart(unit, PartTypes(unit, type), HasBitStream);
 }
 
@@ -143,15 +149,16 @@ auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
 }
 
 // The reference a method takes `operand` by: to the storage it names where it
-// names one, and otherwise to its value, held for the full-expression as a C++
-// reference binds a temporary.
+// names storage a value is read from as it lies, and otherwise to its value,
+// held for the full-expression as a C++ reference binds a temporary.
 auto Borrow(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand)
     -> mir::ExprId {
+  const mir::ExprId object = mir::ReadIfOverlaid(unit, block, operand);
   return block.exprs.Add(
       mir::Expr{
-          .data = mir::BorrowExpr{.operand = operand},
-          .type = ReferenceTo(unit, block.exprs.Get(operand).type)});
+          .data = mir::BorrowExpr{.operand = object},
+          .type = ReferenceTo(unit, block.exprs.Get(object).type)});
 }
 
 // A call of the method the struct `declaration` names answers `answers` with.
@@ -664,8 +671,12 @@ auto BuildValueOperation(
   for (mir::ExprId& operand : operands) {
     operand = block.AsValue(unit.types, operand);
   }
-  return block.exprs.Add(MakeBuiltinCall(
-      unit, block, entry, receiver, std::move(operands), result));
+  const std::optional<mir::ExprId> object =
+      receiver.transform([&](mir::ExprId named) {
+        return mir::ReadIfOverlaid(unit, block, named);
+      });
+  return block.exprs.Add(
+      MakeBuiltinCall(unit, block, entry, object, std::move(operands), result));
 }
 
 auto BuildStructComparison(

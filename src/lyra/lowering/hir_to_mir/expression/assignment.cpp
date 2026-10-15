@@ -128,6 +128,7 @@ auto TargetOutlivesDeferredUpdate(const mir::Block& block, mir::ExprId expr_id)
           [&](const mir::MoveExpr&) { return not_a_target(); },
           [&](const mir::ClosureExpr&) { return not_a_target(); },
           [&](const mir::CompositeExpr&) { return not_a_target(); },
+          [&](const mir::UnionExpr&) { return not_a_target(); },
           [&](const mir::AwaitExpr&) { return not_a_target(); },
           [&](const mir::WaitExpr&) { return not_a_target(); },
           [&](const mir::VectorGetExpr&) { return not_a_target(); },

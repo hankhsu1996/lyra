@@ -61,17 +61,9 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 11.5.1: an integral value with the bits a position names replaced,
   // which is how bits of a value lying in no storage are written.
   kWithSlice,
-  // The same two directions over the member an active-member value holds,
-  // named by its declaration-order position. Reaching one for writing settles
-  // which member is held, which reading one does not, so the two are different
-  // operations on the value, reached through the domain its type names.
-  kComponent,
-  kComponentRef,
-  // Which member an active-member value holds, and building one that holds a
-  // given member. Only a value carrying an observable tag has the first, and a
-  // product has no counterpart for either.
+  // Whether a tagged union's tag names the member at a declaration-order
+  // position (LRM 11.9).
   kTagMatches,
-  kMakeActiveMember,
   // Raises the given message as a simulation error unless a machine boolean
   // holds: a check the language requires before an access (LRM 11.9, 25.9),
   // stated ahead of it as rustc's `Assert` stands before the projection it
@@ -331,21 +323,21 @@ enum class BuiltinFn : std::uint16_t {
   // shows, and a write publishes the change to whatever the wrapper relates
   // to in the object graph (LRM 4.3). A write through a reference to bits is
   // the same replacement, of the bits the reference names. Naming the wrapper
-  // itself is the bare
-  // place, which is how rebinding a reference stays a different program from
-  // writing through one.
+  // itself is the bare place, which is how rebinding a reference stays a
+  // different program from writing through one.
   //
   // Neither carries a runtime handle. The wrapper reaches the ambient one,
   // which has the standing of a stack pointer rather than of program data. A
   // stored value must already be at the cell's installed representation, which
   // is the store boundary's job upstream, not this entry's.
-  kLoad,
-  kStore,
+  kGet,
+  kSet,
   // Reading what a cell held in the Preponed region of the current time slot --
   // its value before anything in that slot ran (LRM 4.4.2.1, 16.5.1). It acts
-  // on the wrapper and carries no handle for the same reason as a read, but
-  // the cell keeps that value apart from its storage and answers a copy of it.
-  kSampledLoad,
+  // on the wrapper and carries no handle for the same reason as a read, and
+  // answers a reference to that value where the cell keeps it apart from its
+  // storage.
+  kSampledGet,
   // Arming a cell to answer for a sampled value at all, starting from its
   // default sampled value (LRM 16.5.1). A cell nothing samples is never armed
   // and carries neither the storage nor the work of maintaining it.
@@ -1208,23 +1200,23 @@ enum class CallEnding : std::uint8_t {
 // and `IndexMut::index_mut` `&mut Self::Output`; a read-only reference to what
 // a capability wrapper holds, whose dereference is the storage the wrapper
 // represents, as a `std::cell::Ref` dereferences to the value its cell holds;
-// or a part reached inside that object that is a view of it, which may be
-// written and descended into further. An entry may also answer with an
-// execution the engine drives (LRM 9.2), which a target building values in its
-// caller's storage builds there too, and which whoever drives it takes from
-// there rather than the caller ending it.
+// and a read-only reference to what that storage held when it was sampled
+// (LRM 16.5.1), which the library keeps apart from it and alone can find. An
+// entry may also answer with an execution the engine drives (LRM 9.2), which a
+// target building values in its caller's storage builds there too, and which
+// whoever drives it takes from there rather than the caller ending it.
 enum class EntryAnswer : std::uint8_t {
   kNewValue,
   kReadOnlyReferenceIntoTheReceiver,
   kMutableReferenceIntoTheReceiver,
   kReferenceToContents,
-  kPartOfTheReceiver,
+  kReferenceToSampledContents,
   kExecution,
 };
 
 // How an entry that reaches one part of the value it acts on names that part:
 // by a coordinate the program computes (LRM 7.4.5, 7.8, 7.10.1), by a
-// declaration-order position (LRM 7.2, 7.3), as a slice of consecutive
+// declaration-order position (LRM 7.2), as a slice of consecutive
 // elements (LRM 7.4.6), or as bits of an integral value (LRM 11.5.1), which
 // lie inside the value rather than being storage of their own. Reading the
 // part and writing into it name it the same way, so the entry for each shares
@@ -1354,7 +1346,7 @@ struct RuntimeEntry {
   EntryDeclaration declaration;
   // Whether the entry is generic over a type its operands do not settle: a
   // conversion's destination, the bits of a part, as many copies as fill the
-  // answer, the union a member goes into. A call to such an entry states that
+  // answer. A call to such an entry states that
   // type on its callee, as a call to a generic function states its type
   // arguments, and each target tells the entry the way it tells a type -- one
   // that resolves types where the call is written names it there, and one
@@ -1395,13 +1387,9 @@ struct RuntimeEntry {
   // lands and how it gets there is each target's own answer.
   bool mutates_receiver = false;
   // What the entry answers with. One answering with a reference into its
-  // receiver is realized as the address of the part where it lies. One
-  // answering with a part that is a view of its whole, rather than with that
-  // part's value, is one where what stands at the call may be written, which a
-  // target realizes as a read of the whole and a rebuild. Which entries it must
-  // do that for, and which answers a caller owns and ends, are this, so the
-  // property stays with the entry and not with each target that has to know
-  // it.
+  // receiver is realized as the address of the part where it lies. Which
+  // answers a caller owns and ends is this, so the property stays with the
+  // entry and not with each target that has to know it.
   EntryAnswer answer = EntryAnswer::kNewValue;
   // How the entry names the part it reaches, absent for an entry that reaches
   // none.

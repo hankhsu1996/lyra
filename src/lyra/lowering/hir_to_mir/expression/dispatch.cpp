@@ -68,6 +68,9 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
   const diag::FailureContext at(expr.span);
   const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
+  if (IsTagCheckedRead(lowerer, frame, expr)) {
+    return LowerTagCheckedRead(lowerer, frame, expr);
+  }
   auto raw_or = std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
@@ -219,7 +222,8 @@ auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     // every leaf read is built.
     if (frame.reads_as_of == ReadsAsOf::kPreponed &&
         KeepsSampledValue(lowerer, expr)) {
-      return mir::MakeCellSampledLoadCallExpr(cell_id, result_type);
+      return frame.current_block->SampledWrapperContents(
+          lowerer.Owner().Unit().types, cell_id, result_type);
     }
     // Reading what the wrapper holds names the storage it represents, which
     // is then read where a value is wanted.

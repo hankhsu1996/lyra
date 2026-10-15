@@ -180,6 +180,7 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
               value(part);
             }
           },
+          [&](const UnionExpr& e) { value(e.value); },
           [&](const AwaitExpr& e) { value(e.execution); },
           [&](const WaitExpr& e) { value(e.park); },
           [&](const VectorGetExpr& e) {
@@ -257,6 +258,7 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const MoveExpr&) { return false; },
           [](const ClosureExpr&) { return false; },
           [](const CompositeExpr&) { return false; },
+          [](const UnionExpr&) { return false; },
           [](const AwaitExpr&) { return false; },
           [](const WaitExpr&) { return false; },
           [](const VectorGetExpr&) { return false; }},
@@ -327,6 +329,7 @@ auto Describe(const ExprData& data) -> std::string {
             return "a closure construction";
           },
           [](const CompositeExpr&) -> std::string { return "a composite"; },
+          [](const UnionExpr&) -> std::string { return "a union literal"; },
           [](const AwaitExpr&) -> std::string { return "an await"; },
           [](const WaitExpr&) -> std::string { return "a wait"; },
           [](const VectorGetExpr&) -> std::string {
@@ -882,13 +885,13 @@ void VerifyEntryDeclarations(
     switch (declared.answer) {
       case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
       case support::EntryAnswer::kReferenceToContents:
+      case support::EntryAnswer::kReferenceToSampledContents:
         typed_as_reference(true);
         break;
       case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
         typed_as_reference(false);
         break;
       case support::EntryAnswer::kNewValue:
-      case support::EntryAnswer::kPartOfTheReceiver:
       case support::EntryAnswer::kExecution:
         break;
     }
@@ -1000,6 +1003,61 @@ void VerifyWritesLandInWritableStorage(
   }
 }
 
+// Storage with no address of its own -- a member of a union, and what lies
+// under one -- is never what a reference the program holds ends on (LRM
+// 13.5.2), so nothing takes its address. Storage another member of an
+// untagged union overlays holds bits that make a value of its type only once
+// read, so a borrow binds its read, and a call is entered on it only to reach
+// a part of it or to change it.
+void VerifyStorageWithoutAnAddress(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  const auto kind_of = [&](ExprId operand) {
+    return IsPlace(block.exprs.Get(operand).data)
+               ? KindOfPlace(unit, block, operand)
+               : PlaceKind::kOrdinary;
+  };
+  const auto refuse = [&](ExprId id, std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} {} (expression {} of its block) -- please report "
+            "this as a bug",
+            describe(), what, id.value));
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const ExprData& data = block.exprs.Get(id).data;
+    if (const auto* address = std::get_if<AddressOfExpr>(&data)) {
+      if (kind_of(address->operand) != PlaceKind::kOrdinary) {
+        refuse(id, "takes the address of storage with none of its own");
+      }
+    } else if (const auto* borrow = std::get_if<BorrowExpr>(&data)) {
+      if (kind_of(borrow->operand) == PlaceKind::kOverlaid) {
+        refuse(id, "borrows storage another member of a union overlays");
+      }
+    } else if (const auto* call = std::get_if<CallExpr>(&data)) {
+      const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
+      if (!receiver.has_value() || kind_of(*receiver) != PlaceKind::kOverlaid) {
+        continue;
+      }
+      // Only a step into a part, and a write of a window of elements, which
+      // writes what it is handed without reading what it replaces, are
+      // entered where overlaid storage lies; a method changing such storage
+      // reads what it changes, so it is entered on a read of it, written back.
+      const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
+      if (!entry.has_value() ||
+          (!SelectionOf(*call).has_value() &&
+           *entry != support::BuiltinFn::kAssignElementSlice)) {
+        refuse(
+            id,
+            "enters a call on storage another member of a union overlays "
+            "without reading it");
+      }
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyStorageWithoutAnAddress(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
 // An operation over integral values whose every operand is fixed before the
 // program runs has one value (LRM 11.2.1), which whatever builds the operation
 // states as that constant. One left standing would be evaluated by each target
@@ -1074,8 +1132,9 @@ void VerifyConstantsAreFolded(
             [](const AddressOfExpr&) {}, [](const BorrowExpr&) {},
             [](const MoveExpr&) {}, [](const CopyExpr&) {},
             [](const FieldAccessExpr&) {}, [](const ClosureExpr&) {},
-            [](const CompositeExpr&) {}, [](const AwaitExpr&) {},
-            [](const WaitExpr&) {}, [](const VectorGetExpr&) {}},
+            [](const CompositeExpr&) {}, [](const UnionExpr&) {},
+            [](const AwaitExpr&) {}, [](const WaitExpr&) {},
+            [](const VectorGetExpr&) {}},
         expr.data);
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -1155,7 +1214,7 @@ void VerifyLargeValuesLieInStorage(
   for (const ExprId id : block.exprs.Ids()) {
     if (made_in_storage.at(id.value) ||
         !IsTooLargeForAFrame(unit, block.exprs.Get(id).type) ||
-        ValueLiesInStorage(block, id)) {
+        ValueLiesInStorage(unit, block, id)) {
       continue;
     }
     throw InternalError(
@@ -1204,6 +1263,7 @@ void VerifyCode(
   VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
   VerifyPlacesAreRead(unit, *code.body, {}, describe);
   VerifyWritesLandInWritableStorage(unit, *code.body, describe);
+  VerifyStorageWithoutAnAddress(unit, *code.body, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
   VerifyTypeArguments(*code.body, describe);

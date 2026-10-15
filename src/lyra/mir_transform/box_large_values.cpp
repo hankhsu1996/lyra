@@ -81,8 +81,10 @@ auto HoldsALargeValue(const mir::CompilationUnit& unit, const mir::Block& block)
 // reading one where it lies. A conditional is the one that makes a value and
 // is still not made in a box here: one of a large type is rewritten to choose
 // its value's box, and is read through it.
-auto MakesAValue(const mir::Block& block, mir::ExprId id) -> bool {
-  return !mir::ValueLiesInStorage(block, id) &&
+auto MakesAValue(
+    const mir::CompilationUnit& unit, const mir::Block& block, mir::ExprId id)
+    -> bool {
+  return !mir::ValueLiesInStorage(unit, block, id) &&
          !std::holds_alternative<mir::ConditionalExpr>(
              block.exprs.Get(id).data);
 }
@@ -201,7 +203,7 @@ class BodyBoxing {
       const BlockRebuild& rebuild, mir::ExprId operand) const -> bool {
     return mir::IsTooLargeForAFrame(
                *unit_, rebuild.From().exprs.Get(operand).type) &&
-           MakesAValue(rebuild.From(), operand);
+           MakesAValue(*unit_, rebuild.From(), operand);
   }
 
   // `operand`, a node of the block `rebuild` builds from, carried over where
@@ -370,6 +372,11 @@ class BodyBoxing {
               for (mir::ExprId& part : carried.parts) {
                 part = value(part);
               }
+              return node(std::move(carried));
+            },
+            [&](const mir::UnionExpr& e) {
+              mir::UnionExpr carried = e;
+              carried.value = value(e.value);
               return node(std::move(carried));
             },
             [&](const mir::ClosureExpr& e) {

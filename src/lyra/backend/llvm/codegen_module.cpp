@@ -454,11 +454,12 @@ auto CodeGenModule::EmitLifecycle(
     throw InternalError("llvm codegen: unknown lifecycle step");
   }
   const support::ObjectLayout storage = types_.LayoutOf(type);
-  // An integral value, and a fixed-size unpacked array that ends with nothing
-  // to do, is its bytes where it is held, so every step that has anything to
-  // do is a copy of them.
+  // An integral value, and a fixed-size unpacked array or a union that ends
+  // with nothing to do, is its bytes where it is held, so every step that has
+  // anything to do is a copy of them.
   if (types_.IntegralShapeOf(type).has_value() ||
-      (ty.Is<lir::UnpackedArrayType>() && storage.ends_with_nothing_to_do)) {
+      ((ty.Is<lir::UnpackedArrayType>() || ty.UnionMembers().has_value()) &&
+       storage.ends_with_nothing_to_do)) {
     const llvm::Align align(storage.align);
     switch (step) {
       case LifecycleStep::kCopy:
@@ -1113,9 +1114,8 @@ auto CodeGenModule::BuildMemberStorage(
     support::DeclaredMemberStorage storage, llvm::Value* at)
     -> diag::Result<void> {
   const FnAbi abi{
-      .implicit_arg = ImplicitArgOf(
-          ToldBuilding(storage),
-          {.acted_on = ValuesHeldByMember(type), .member = std::nullopt}),
+      .implicit_arg =
+          ImplicitArgOf(ToldBuilding(storage), ValuesHeldByMember(type)),
       .named_part = std::nullopt,
       .args = {CallArranger::Direct(types_.Ptr())},
       .type_args = {},
@@ -1390,6 +1390,14 @@ auto CodeGenModule::TableAddressPoint(
       llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), point));
 }
 
+auto CodeGenModule::LibraryTableAddressPoint(std::string_view table)
+    -> llvm::Constant* {
+  auto* ptr_ty = types_.Ptr();
+  return llvm::ConstantExpr::getInBoundsGetElementPtr(
+      ptr_ty, module_->getOrInsertGlobal(table, ptr_ty),
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context_), kTableHeader));
+}
+
 auto CodeGenModule::DefineConstant(
     const std::string& symbol, llvm::Constant* value, lir::Linkage linkage)
     -> llvm::GlobalVariable* {
@@ -1435,11 +1443,6 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
   auto* ptr_ty = types_.Ptr();
   auto* i32 = llvm::Type::getInt32Ty(*context_);
   auto* i64 = llvm::Type::getInt64Ty(*context_);
-  const auto address_point = [&](std::string_view table) -> llvm::Constant* {
-    return llvm::ConstantExpr::getInBoundsGetElementPtr(
-        ptr_ty, module_->getOrInsertGlobal(table, ptr_ty),
-        llvm::ConstantInt::get(i64, kTableHeader));
-  };
   // What a cast reads of the class (C++ ABI 2.9.4): the table of the ABI's own
   // description, the class's name, and its bases. The name is the definition's
   // symbol, which no other class links under. The class it extends sits at its
@@ -1465,13 +1468,13 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
       return DefineConstant(
           symbol,
           llvm::ConstantStruct::getAnon(
-              {address_point(kClassTypeInfoTable), name}),
+              {LibraryTableAddressPoint(kClassTypeInfoTable), name}),
           linkage);
     }
     return DefineConstant(
         symbol,
         llvm::ConstantStruct::getAnon(
-            {address_point(kSingleBaseTypeInfoTable), name, *extended}),
+            {LibraryTableAddressPoint(kSingleBaseTypeInfoTable), name, *extended}),
         linkage);
   }
   std::vector<llvm::Constant*> bases;
@@ -1494,7 +1497,7 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
   return DefineConstant(
       symbol,
       llvm::ConstantStruct::getAnon(
-          {address_point(kMultipleBaseTypeInfoTable), name,
+          {LibraryTableAddressPoint(kMultipleBaseTypeInfoTable), name,
            llvm::ConstantInt::get(i32, kDiamondShaped),
            llvm::ConstantInt::get(i32, bases.size()),
            llvm::ConstantArray::get(
@@ -1684,6 +1687,9 @@ auto CodeGenModule::ValueTypeOf(lir::TypeId type)
   if (unit_->types.Get(type).Is<lir::UnpackedArrayType>()) {
     return GetAddrOfFixedArrayType(type);
   }
+  if (unit_->types.Get(type).UnionMembers().has_value()) {
+    return GetAddrOfUnionType(type);
+  }
   auto domain = DomainOf(type);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
@@ -1837,14 +1843,9 @@ auto CodeGenModule::GetAddrOfIntegralType(lir::TypeId type) -> llvm::Constant* {
   using value::IntegralShape;
   const runtime::IntegralTypeConstantLayout layout =
       runtime::LayoutOfIntegralTypeConstant();
-  auto* ptr_ty = types_.Ptr();
   const support::ObjectLayout storage = types_.LayoutOf(type);
   ConstantRecord out(*context_, layout.object.size);
-  out.Place(
-      0, llvm::ConstantExpr::getInBoundsGetElementPtr(
-             ptr_ty, module_->getOrInsertGlobal(layout.table_symbol, ptr_ty),
-             llvm::ConstantInt::get(
-                 llvm::Type::getInt64Ty(*context_), kTableHeader)));
+  out.Place(0, LibraryTableAddressPoint(layout.table_symbol));
   out.Place(
       layout.value_size.offset, Int(storage.size, layout.value_size.bytes));
   out.Place(
@@ -1887,16 +1888,9 @@ auto CodeGenModule::GetAddrOfFixedArrayType(lir::TypeId type)
   }
   const runtime::FixedArrayTypeConstantLayout layout =
       runtime::LayoutOfFixedArrayTypeConstant();
-  auto* ptr_ty = types_.Ptr();
-  auto* i64 = llvm::Type::getInt64Ty(*context_);
   const std::string name = std::format("lyra.array.{}", type.value);
-  const auto table = [&](const std::string& symbol) {
-    return llvm::ConstantExpr::getInBoundsGetElementPtr(
-        ptr_ty, module_->getOrInsertGlobal(symbol, ptr_ty),
-        llvm::ConstantInt::get(i64, kTableHeader));
-  };
   ConstantRecord out(*context_, layout.object.size);
-  out.Place(0, table(layout.table_symbol));
+  out.Place(0, LibraryTableAddressPoint(layout.table_symbol));
   out.Place(
       layout.value_size.offset,
       Int(array.storage.size, layout.value_size.bytes));
@@ -1905,13 +1899,71 @@ auto CodeGenModule::GetAddrOfFixedArrayType(lir::TypeId type)
       Int(array.storage.align, layout.value_align.bytes));
   out.Place(layout.count.offset, Int(array.count, layout.count.bytes));
   out.Place(layout.element.offset, *element);
-  out.Place(layout.parts.offset, table(layout.parts_table_symbol));
+  out.Place(
+      layout.parts.offset, LibraryTableAddressPoint(layout.parts_table_symbol));
   // The part answering for the elements names the constant it lies in.
   out.Place(layout.parts_owner.offset, DefinitionGlobal(name));
   llvm::GlobalVariable* defined =
       DefineConstant(name, std::move(out).Build(), lir::Linkage::kInternal);
   defined->setAlignment(llvm::Align(layout.object.align));
   fixed_array_types_.emplace(type, defined);
+  return defined;
+}
+
+auto CodeGenModule::GetAddrOfUnionType(lir::TypeId type)
+    -> diag::Result<llvm::Constant*> {
+  if (const auto found = union_types_.find(type); found != union_types_.end()) {
+    return found->second;
+  }
+  const UnionLayout& laid = types_.LayoutOfUnion(type);
+  auto* ptr_ty = types_.Ptr();
+  const std::string name = std::format("lyra.union.{}", type.value);
+  std::vector<llvm::Constant*> members;
+  members.reserve(laid.members.size());
+  for (const lir::TypeId member : laid.members) {
+    auto stated = ValueTypeOf(member);
+    if (!stated) {
+      return std::unexpected(std::move(stated.error()));
+    }
+    members.push_back(*stated);
+  }
+  auto* members_ty = llvm::ArrayType::get(ptr_ty, members.size());
+  llvm::GlobalVariable* listed = DefineConstant(
+      name + ".members", llvm::ConstantArray::get(members_ty, members));
+  listed->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  const auto with_members = [&](const auto& layout) {
+    ConstantRecord out(*context_, layout.object.size);
+    out.Place(0, LibraryTableAddressPoint(layout.table_symbol));
+    out.Place(
+        layout.value_size.offset,
+        Int(laid.storage.size, layout.value_size.bytes));
+    out.Place(
+        layout.value_align.offset,
+        Int(laid.storage.align, layout.value_align.bytes));
+    out.Place(
+        layout.count.offset, Int(laid.members.size(), layout.count.bytes));
+    out.Place(layout.members.offset, listed);
+    return out;
+  };
+  llvm::GlobalVariable* defined = nullptr;
+  if (unit_->types.Get(type).Is<lir::TaggedUnionType>()) {
+    const value::TagPlacement tag = types_.TagOf(type);
+    const runtime::TaggedUnionTypeConstantLayout layout =
+        runtime::LayoutOfTaggedUnionTypeConstant();
+    ConstantRecord out = with_members(layout);
+    out.Place(
+        layout.tag_offset.offset, Int(tag.offset, layout.tag_offset.bytes));
+    out.Place(layout.tag_bytes.offset, Int(tag.bytes, layout.tag_bytes.bytes));
+    defined = DefineConstant(name, std::move(out).Build());
+    defined->setAlignment(llvm::Align(layout.object.align));
+  } else {
+    const runtime::UnionTypeConstantLayout layout =
+        runtime::LayoutOfUnionTypeConstant();
+    defined = DefineConstant(name, with_members(layout).Build());
+    defined->setAlignment(llvm::Align(layout.object.align));
+  }
+  defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  union_types_.emplace(type, defined);
   return defined;
 }
 

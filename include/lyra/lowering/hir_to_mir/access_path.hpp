@@ -94,11 +94,13 @@ struct StepToComponent {
   base::ComponentIndex position;
 };
 
-// The member an unpacked union holds, by its declaration-order position (LRM
-// 7.3). The union holds one member at a time, so reading a member and writing
-// one are different operations on the union's value. In a tagged union the step
-// is valid only while the tag names the member (LRM 11.9), which a read or a
-// write taking it checks first.
+// A member of an unpacked union, by its declaration-order position (LRM 7.3).
+// Every member lies at the start of the union's storage, so reading it and
+// writing it are the one field step on the place the union lies in, as a
+// component's are; but it has no identity of its own, so a write in progress
+// lands on the union before taking it. In a tagged union the step is valid
+// only while the tag names the member (LRM 11.9), which a read or a write
+// taking it checks first.
 struct StepToUnionMember {
   base::ComponentIndex position;
   bool tagged = false;
@@ -375,6 +377,13 @@ struct SettledPath {
 // same part.
 [[nodiscard]] auto NamedIn(const SettledPath& settled, mir::Block& to)
     -> AccessPath;
+
+// Whether `path` reaches its part through a member of an untagged union, so the
+// part lies where another member's bits may lie (LRM 7.3.2) and is changed in
+// place only by a write that leaves it as its type holds a value. It asks of a
+// path what the place built from it states as its kind, for a caller that has
+// to choose before the place is built.
+[[nodiscard]] auto ReachesOverlaidStorage(const AccessPath& path) -> bool;
 
 // An operand a construct reads and then writes: the place the write lands in,
 // and the value it holds going in.

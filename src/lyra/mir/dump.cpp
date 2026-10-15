@@ -915,6 +915,11 @@ class MirDumper {
               return std::format(
                   "CompositeExpr parts=[{}]", FormatExprList(c.parts));
             },
+            [](const UnionExpr& u) -> std::string {
+              return std::format(
+                  "UnionExpr member={} value=Expr[{}]", u.member.value,
+                  u.value.value);
+            },
             [](const AwaitExpr& a) -> std::string {
               return std::format(
                   "AwaitExpr execution=Expr[{}]", a.execution.value);

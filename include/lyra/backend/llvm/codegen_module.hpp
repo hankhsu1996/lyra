@@ -420,6 +420,10 @@ class CodeGenModule {
   // of its tables is.
   auto TableAddressPoint(std::string_view definition, std::uint64_t point)
       -> llvm::Constant*;
+  // The address a value holds as where the table of the library class whose
+  // table is linked under `table` is: its first virtual function (C++ ABI
+  // 2.5.2).
+  auto LibraryTableAddressPoint(std::string_view table) -> llvm::Constant*;
   // How a value of `declared` is laid out.
   auto LayOut(const Declared& declared) -> diag::Result<RecordLayout>;
   // How the storage a closure's captures live in is laid out. A closure extends
@@ -463,6 +467,10 @@ class CodeGenModule {
   // how many elements, and the constant stating their type.
   auto GetAddrOfFixedArrayType(lir::TypeId type)
       -> diag::Result<llvm::Constant*>;
+  // The constant that states a union type to the library: its size, how many
+  // members, the constants stating their types, and for a tagged union where
+  // its tag lies. The module defines one per union type it hands over.
+  auto GetAddrOfUnionType(lir::TypeId type) -> diag::Result<llvm::Constant*>;
   // The constant that states `element` to the library as the type of an
   // array's elements: the type, and the function of this unit that builds the
   // value one starts as (LRM Table 7-1). The module defines one per element
@@ -485,6 +493,7 @@ class CodeGenModule {
       integral_constants_;
   std::unordered_map<lir::TypeId, llvm::GlobalVariable*> integral_types_;
   std::unordered_map<lir::TypeId, llvm::GlobalVariable*> fixed_array_types_;
+  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> union_types_;
   std::unordered_map<lir::TypeId, llvm::GlobalVariable*> element_types_;
   std::unordered_map<lir::TypeId, llvm::GlobalVariable*> queue_types_;
   std::unordered_map<lir::TypeId, RecordLayout> records_;

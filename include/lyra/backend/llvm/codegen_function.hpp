@@ -200,9 +200,11 @@ class CodeGenFunction {
       support::IntegralOp op, const lir::BuiltinTarget& target,
       const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  // Where component `index` of a tuple lives, given where the tuple does.
+  // Where component `index` of a tuple, or member `index` of a union, lives,
+  // given where the aggregate does.
   auto ComponentAddress(
-      lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value*;
+      lir::TypeId aggregate, llvm::Value* value, std::size_t index)
+      -> llvm::Value*;
 
   // The call settled against its convention, which alone decides whether the
   // callee builds its return value in a return slot, as clang's `EmitCall`
@@ -243,14 +245,33 @@ class CodeGenFunction {
   auto LowerTuple(
       const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  auto LowerAggregateExtract(
-      const lir::AggregateExtractInstr& extract, llvm::Value* out)
+  // A union laid out in place: its storage zeroed, the member it holds built
+  // at its start, and a tagged union's tag stored after its members.
+  auto LowerUnion(
+      const lir::UnionInstr& built, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  auto LowerAggregateUpdate(
-      const lir::AggregateUpdateInstr& update, llvm::Value* out)
+  auto LowerVectorGet(const lir::VectorGetInstr& get)
+      -> diag::Result<llvm::Value*>;
+  auto LowerDiscriminant(
+      const lir::DiscriminantInstr& read, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
+  // A load through a member of an untagged union, whose bits may be another
+  // member's (LRM 7.3.2): the value copied into `out` and every position its
+  // type keeps clear cleared there.
+  auto LowerOverlaidLoad(
+      const lir::LoadInstr& load, lir::TypeId result_type, llvm::Value* out)
+      -> diag::Result<llvm::Value*>;
+  // Whether `place` is reached through a member of an untagged union.
+  [[nodiscard]] auto ReachesOverlaidStorage(const lir::Place& place) const
+      -> bool;
+  // Every position above an integral's width in the value of `type` lying at
+  // `at` made clear, inline as the C++ rendering's clear is once a compiler
+  // inlines it: each integral's planes, each component of a product, each
+  // element of an array.
+  auto ClearAboveWidthsAt(lir::TypeId type, llvm::Value* at)
+      -> diag::Result<void>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   auto LowerUse(const lir::UseInstr& use, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
@@ -357,6 +378,10 @@ class CodeGenFunction {
   // The planes of `position`, which has to be stated as the position type
   // every ordinal of the layer above is brought to.
   auto LoadPosition(const OperandRef& position) -> Planes;
+  // The integral value of `shape` at `at` left as its type holds one, every
+  // position above its width clear.
+  void ClearIntegralAboveWidth(
+      llvm::Value* at, const value::IntegralShape& shape);
   // Where the element `position` names lies in the fixed-size unpacked array
   // lying at `array`: arithmetic on where the array lies. A position naming no
   // element reaches what the array's type answers for one (LRM 7.4.5), the
@@ -436,12 +461,6 @@ class CodeGenFunction {
   auto LowerClosure(
       const lir::ClosureInstr& built, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-
-  // Whether a type is the sequence of handles a declaration standing for
-  // several objects builds. It belongs to no value domain -- what it holds are
-  // objects, not values -- so an operation over one is answered by the entry
-  // that knows sequences rather than through the value model.
-  [[nodiscard]] auto IsHandleSequence(lir::TypeId type) const -> bool;
 
   // The address of the storage a member step reaches. A class's storage extends
   // its base's, so the step names the class that declares the member beside the

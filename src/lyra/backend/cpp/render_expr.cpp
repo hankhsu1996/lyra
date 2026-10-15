@@ -25,6 +25,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 
@@ -621,9 +622,21 @@ void RenderExpr(
             Write(view, out, "std::move(", m.operand, ")");
           },
           // C++ reads an lvalue where a value is wanted ([conv.lval]), so a
-          // read is the place's own spelling.
+          // read is the place's own spelling; storage another member of an
+          // untagged union overlays is read through the type mapping's read of
+          // it.
           [&](const mir::CopyExpr& c) {
-            Write(view, out, Operand{.expr = c.place, .at_least = at_least});
+            switch (mir::KindOfPlace(view.Unit(), view.Block(), c.place)) {
+              case mir::PlaceKind::kOrdinary:
+              case mir::PlaceKind::kNoAddress:
+                Write(
+                    view, out, Operand{.expr = c.place, .at_least = at_least});
+                return;
+              case mir::PlaceKind::kOverlaid:
+                Write(view, out, OverlaidReadCppFunction(), "(", c.place, ")");
+                return;
+            }
+            throw InternalError("backend::cpp: unknown place kind");
           },
           [&](const mir::FieldAccessExpr& m) {
             RenderFieldAccessExpr(view, m, out);
@@ -631,6 +644,13 @@ void RenderExpr(
           [&](const mir::ClosureExpr& cl) { RenderClosureExpr(view, cl, out); },
           [&](const mir::CompositeExpr& c) {
             RenderPartsAsBraceInit(view, expr.type, c.parts, out);
+          },
+          [&](const mir::UnionExpr& u) {
+            Write(
+                view, out,
+                CppUnionMemberMaker{
+                    .of = CppType(view.Unit(), expr.type), .member = u.member},
+                "(", u.value, ")");
           },
           [&](const mir::AwaitExpr& a) {
             const Enclosure enclosure(out, Precedence::kPrefix, at_least);

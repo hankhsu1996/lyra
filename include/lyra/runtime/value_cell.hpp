@@ -15,9 +15,9 @@ template <value::LyraValue T>
 class ValueCell : public ValueStorageCore<T> {};
 
 // The same of a value lying after the cell, held as `HeldAs` holds it -- the
-// words of an integral value wider than a word, or a tuple or a fixed-size
-// unpacked array -- told its width or type where the cell is built, and
-// holding what that type builds before anything writes it from then.
+// words of an integral value wider than a word, or a tuple, a union or a
+// fixed-size unpacked array -- told its width or type where the cell is built,
+// and holding what that type builds before anything writes it from then.
 template <class HeldAs>
 class TailLocal {
  public:

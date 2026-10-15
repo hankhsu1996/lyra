@@ -69,8 +69,8 @@ using TypeArg =
 
 // What a callee takes ahead of the arguments a call states. An entry making
 // storage for the words of a value wider than a word is told how wide the
-// values held there are, and one making storage for a tuple or a fixed-size
-// unpacked array is told its type.
+// values held there are, and one making storage for a value laid out by its
+// type is told that type.
 struct NoImplicitArg {};
 struct WidthMetadataArg {
   lir::TypeId of;
@@ -138,28 +138,19 @@ struct FnAbi {
 auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
     -> PassMode;
 
-// The types a call states that what the realization it enters is told of can
-// be read from. A call states only those its entry can be told of.
-struct ToldTypes {
-  // The type whose representation names the realization: the value the entry
-  // acts on, or, where it acts on storage, the values that storage holds.
-  std::optional<lir::TypeId> acted_on;
-  // The member a callee building or updating a union names.
-  std::optional<lir::TypeId> member;
-};
-
 // How operand `index`, of type `own` and read as `reading`, crosses where what
 // a realization is told concerns it -- with what it is told, or as it; nothing
 // where the realization is told nothing of that operand, which then crosses as
 // its reading says.
 auto ToldModeOf(
     const Told& told, std::size_t index, support::OperandReading reading,
-    const ToldTypes& types, lir::TypeId own, const lir::TypePool& pool)
-    -> std::optional<PassMode>;
+    std::optional<lir::TypeId> acted_on, lir::TypeId own,
+    const lir::TypePool& pool) -> std::optional<PassMode>;
 
 // What a realization told `told` takes ahead of its operands, which is of the
 // type the call states the entry acts on.
-auto ImplicitArgOf(const Told& told, const ToldTypes& types) -> ImplicitArg;
+auto ImplicitArgOf(const Told& told, std::optional<lir::TypeId> acted_on)
+    -> ImplicitArg;
 
 // What an entry is handed after its operands by a call answering a value of
 // `answered` that comes back as `ret`. It is what the entry's declaration says
@@ -182,7 +173,7 @@ auto TypeArgsOf(
 auto FnAbiOf(
     CodeGenModule& module, RuntimeOp op,
     std::span<const StatedOperand> operands, const Told& told,
-    const ToldTypes& types, std::optional<lir::TypeId> called_at,
+    std::optional<lir::TypeId> acted_on, std::optional<lir::TypeId> called_at,
     ReturnInfo ret) -> FnAbi;
 
 // The library entry a call or an access enters: the symbol it is published
@@ -191,7 +182,9 @@ auto FnAbiOf(
 struct LibraryEntry {
   std::string symbol;
   Told told;
-  ToldTypes types;
+  // The type whose representation names the realization: the value the entry
+  // acts on, or, where it acts on storage, the values that storage holds.
+  std::optional<lir::TypeId> acted_on;
 };
 
 // Arranges how the arguments of a call cross, apart from emitting the call, as
@@ -235,8 +228,8 @@ class CallArranger {
   // operand read as the thing it is is no integral value.
   [[nodiscard]] auto ArgOf(
       const support::OperandReadings& readings, std::size_t index,
-      lir::TypeId operand, const Told& told, const ToldTypes& types) const
-      -> ArgAbi;
+      lir::TypeId operand, const Told& told,
+      std::optional<lir::TypeId> acted_on) const -> ArgAbi;
 
  private:
   // How the answer of `call`, a value of `result_type`, comes back: built in
@@ -263,7 +256,8 @@ class CallArranger {
   // realization is told `told`, takes them.
   [[nodiscard]] auto ArgsAsRead(
       const lir::CallInstr& call, const support::OperandReadings& readings,
-      const Told& told, const ToldTypes& types) const -> std::vector<ArgAbi>;
+      const Told& told, std::optional<lir::TypeId> acted_on) const
+      -> std::vector<ArgAbi>;
 
   [[nodiscard]] auto OperandType(const lir::Operand& operand) const
       -> lir::TypeId;
@@ -299,11 +293,5 @@ auto WrapperOf(const lir::Type& type)
 // an entry reaching the storage be named once per representation rather than
 // per call.
 auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId>;
-
-// The type of a union's member `index`. Both union kinds hold their member
-// types positionally, so this reads either one.
-auto UnionMemberType(
-    const lir::CompilationUnit& unit, lir::TypeId union_type,
-    std::uint32_t index) -> lir::TypeId;
 
 }  // namespace lyra::backend::llvm_backend

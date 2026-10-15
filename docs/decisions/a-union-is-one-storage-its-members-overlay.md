@@ -109,11 +109,14 @@ step whichever kind it is in, and the tag is the only thing a tagged union adds.
 `assert(tag_matches(u, k))` with LRM 11.9's message, then the field step, of no-address kind. The
 check is rustc's `Assert`: a call that answers nothing, stated before the access, so the access
 reaches the union where it lies rather than through a value the check handed back. A read states it
-among the steps of the read, since it is part of evaluating the access (LRM 11.3.5), and a write as
-a statement before the write; a packed tagged union is checked the same way, over the tag bits. The
-step checks nothing, and the library only reports, as a compiler bug, a member reached under another
-tag. A whole tagged value is built by storing the member and then the tag, and assigning one ends
-the old value first; copying and ending follow the tag.
+among the steps of the read, since it is part of evaluating the access (LRM 11.3.5), and the whole
+read -- every select written below the member -- is taken and its value kept among those same steps,
+so nothing else the expression evaluates runs between the check and the read: a sibling operand
+retagging the union would otherwise have the read land on a member the union no longer holds. A
+write states it as a statement before the write lands. A packed tagged union is checked the same
+way, over the tag bits. The step checks nothing, and neither does the library. A whole tagged value
+is built by storing the member and then the tag, and assigning one ends the old value first; copying
+and ending follow the tag.
 
 ## Where Lyra differs, and why
 
@@ -151,3 +154,5 @@ the old value first; copying and ending follow the tag.
   untagged union run; a property read before its initializer holds the type's default.
 - A union too large for a frame is held through a box, as every value is: MIR's frame size counts
   the overlay, and the tag after it for a tagged union.
+- A union of any member count is one shape on both backends; nothing about it is stated as one
+  expression over every member, so no compiler's bound on such an expression limits a design.

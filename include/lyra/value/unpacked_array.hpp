@@ -12,6 +12,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/value/clear_above_widths.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
@@ -442,6 +443,13 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>, T> {
   }
   [[nodiscard]] auto MutableElements() -> std::span<T> {
     return {Items(), N};
+  }
+
+  // Each element's positions above its widths made clear.
+  void ClearAboveWidths() {
+    for (T& element : MutableElements()) {
+      lyra::value::ClearAboveWidths(element);
+    }
   }
 
  private:

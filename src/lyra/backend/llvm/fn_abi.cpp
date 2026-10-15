@@ -82,21 +82,6 @@ auto ValuesHeldBy(const lir::Type& type) -> std::optional<lir::TypeId> {
   return std::nullopt;
 }
 
-auto UnionMemberType(
-    const lir::CompilationUnit& unit, lir::TypeId union_type,
-    std::uint32_t index) -> lir::TypeId {
-  const lir::Type& ty = unit.types.Get(union_type);
-  if (!ty.IsUnion()) {
-    throw InternalError(
-        "llvm codegen: a union member selects into a non-union type");
-  }
-  const std::vector<lir::TypeId> members = ty.UnionMemberTypes();
-  if (index >= members.size()) {
-    throw InternalError("llvm codegen: a union member index is out of range");
-  }
-  return members[index];
-}
-
 CallArranger::CallArranger(CodeGenModule& module, const lir::Function& fn)
     : module_(&module), fn_(&fn) {
 }
@@ -151,12 +136,12 @@ auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
 
 auto ToldModeOf(
     const Told& told, std::size_t index, support::OperandReading reading,
-    const ToldTypes& types, lir::TypeId own, const lir::TypePool& pool)
-    -> std::optional<PassMode> {
+    std::optional<lir::TypeId> acted_on, lir::TypeId own,
+    const lir::TypePool& pool) -> std::optional<PassMode> {
   using Mode = std::optional<PassMode>;
   const auto held = [&] {
     return ToldOfType(
-        types.acted_on, "how wide the values the storage it acts on holds are");
+        acted_on, "how wide the values the storage it acts on holds are");
   };
   return std::visit(
       Overloaded{
@@ -174,8 +159,7 @@ auto ToldModeOf(
             if (t.reached_after == index) {
               return PassWithType{
                   .type = ToldOfType(
-                      types.acted_on,
-                      "the type of the value the storage holds")};
+                      acted_on, "the type of the value the storage holds")};
             }
             if (!IsLaidOutByType(pool.Get(own))) {
               return std::nullopt;
@@ -208,14 +192,6 @@ auto ToldModeOf(
                   "report this as a bug");
             }
             return PassWithType{.type = keyed->key_type};
-          },
-          [&](const ToldMemberType& t) -> Mode {
-            if (t.after != index) {
-              return std::nullopt;
-            }
-            return PassWithType{
-                .type =
-                    ToldOfType(types.member, "the member a union is to hold")};
           },
           [&](const ToldEntryType& t) -> Mode {
             if (t.after != index) {
@@ -335,19 +311,20 @@ auto TypeArgsToldAs(
 
 }  // namespace
 
-auto ImplicitArgOf(const Told& told, const ToldTypes& types) -> ImplicitArg {
+auto ImplicitArgOf(const Told& told, std::optional<lir::TypeId> acted_on)
+    -> ImplicitArg {
   return std::visit(
       Overloaded{
           [&](const ToldWidthMetadataAhead&) -> ImplicitArg {
             return WidthMetadataArg{
                 .of = ToldOfType(
-                    types.acted_on,
+                    acted_on,
                     "how wide the values the storage it makes holds are")};
           },
           [&](const ToldTypeMetadataAhead&) -> ImplicitArg {
             return TypeMetadataArg{
                 .of = ToldOfType(
-                    types.acted_on,
+                    acted_on,
                     "the type of the value the storage it makes holds")};
           },
           [](const ToldNothing&) -> ImplicitArg { return NoImplicitArg{}; },
@@ -361,7 +338,6 @@ auto ImplicitArgOf(const Told& told, const ToldTypes& types) -> ImplicitArg {
             return NoImplicitArg{};
           },
           [](const ToldKeyType&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldMemberType&) -> ImplicitArg { return NoImplicitArg{}; },
           [](const ToldEntryType&) -> ImplicitArg { return NoImplicitArg{}; }},
       told);
 }
@@ -371,7 +347,7 @@ auto TypeArgsOf(
     std::optional<lir::TypeId> called_at, lir::TypeId answered,
     const ReturnInfo& ret) -> std::vector<TypeArg> {
   switch (declared) {
-    // A realization for tuples or fixed-size unpacked arrays building one is
+    // A realization for values laid out by their type building one is
     // told its type, which its bytes do not state; whether one builds such a
     // value follows from the type a call answers at, which no declaration
     // holds.
@@ -397,7 +373,7 @@ auto TypeArgsOf(
 auto FnAbiOf(
     CodeGenModule& module, RuntimeOp op,
     std::span<const StatedOperand> operands, const Told& told,
-    const ToldTypes& types, std::optional<lir::TypeId> called_at,
+    std::optional<lir::TypeId> acted_on, std::optional<lir::TypeId> called_at,
     ReturnInfo ret) -> FnAbi {
   const support::OperandReadings readings = OperandReadingsOf(op);
   std::vector<ArgAbi> args;
@@ -412,7 +388,7 @@ auto FnAbiOf(
                   return ArgAbi{
                       .type = module.Types().Map(value.type),
                       .mode = ToldModeOf(
-                                  told, i, reading, types, value.type,
+                                  told, i, reading, acted_on, value.type,
                                   module.Unit().types)
                                   .value_or(PassModeOf(reading, value.type))};
                 },
@@ -438,7 +414,7 @@ auto FnAbiOf(
             operands[i]));
   }
   return FnAbi{
-      .implicit_arg = ImplicitArgOf(told, types),
+      .implicit_arg = ImplicitArgOf(told, acted_on),
       .named_part = std::nullopt,
       .args = std::move(args),
       .type_args = TypeArgsCalledAt(AnswerToldOf(op), called_at),
@@ -447,24 +423,27 @@ auto FnAbiOf(
 
 auto CallArranger::ArgOf(
     const support::OperandReadings& readings, std::size_t index,
-    lir::TypeId operand, const Told& told, const ToldTypes& types) const
-    -> ArgAbi {
+    lir::TypeId operand, const Told& told,
+    std::optional<lir::TypeId> acted_on) const -> ArgAbi {
   const support::OperandReading reading = readings.At(index);
   RequireReadAs(module_->Types(), reading, operand);
   return ArgAbi{
       .type = module_->Types().Map(operand),
-      .mode = ToldModeOf(
-                  told, index, reading, types, operand, module_->Unit().types)
-                  .value_or(llvm_backend::PassModeOf(reading, operand))};
+      .mode =
+          ToldModeOf(
+              told, index, reading, acted_on, operand, module_->Unit().types)
+              .value_or(llvm_backend::PassModeOf(reading, operand))};
 }
 
 auto CallArranger::ArgsAsRead(
     const lir::CallInstr& call, const support::OperandReadings& readings,
-    const Told& told, const ToldTypes& types) const -> std::vector<ArgAbi> {
+    const Told& told, std::optional<lir::TypeId> acted_on) const
+    -> std::vector<ArgAbi> {
   std::vector<ArgAbi> args;
   args.reserve(call.args.size());
   for (std::size_t i = 0; i < call.args.size(); ++i) {
-    args.push_back(ArgOf(readings, i, OperandType(call.args[i]), told, types));
+    args.push_back(
+        ArgOf(readings, i, OperandType(call.args[i]), told, acted_on));
   }
   return args;
 }
@@ -509,14 +488,14 @@ auto CallArranger::EntryOf(
     lir::TypeId result_type) const -> diag::Result<LibraryEntry> {
   using Named = diag::Result<LibraryEntry>;
   const auto over = [&](diag::Result<support::ValueDomain> domain,
-                        ToldTypes types) -> Named {
+                        std::optional<lir::TypeId> acted_on) -> Named {
     if (!domain) {
       return std::unexpected(std::move(domain.error()));
     }
     return LibraryEntry{
         .symbol = RuntimeSymbol(*domain, target.fn),
         .told = ToldOf(*domain, target.fn),
-        .types = types};
+        .acted_on = acted_on};
   };
   return std::visit(
       Overloaded{
@@ -524,24 +503,15 @@ auto CallArranger::EntryOf(
             return LibraryEntry{
                 .symbol = RuntimeSymbol(target.fn),
                 .told = ToldNothing{},
-                .types = {}};
+                .acted_on = std::nullopt};
           },
           [&](const NamedByValue& named) -> Named {
             return over(
                 module_->DomainOf(OperandType(call.args.at(named.operand))),
-                {});
+                std::nullopt);
           },
-          // A factory building a union is generic over the member it is to
-          // hold, which its callee names.
           [&](const NamedByResult&) -> Named {
-            ToldTypes types;
-            if (target.type_argument.has_value() &&
-                target.position.has_value()) {
-              types.member = UnionMemberType(
-                  module_->Unit(), *target.type_argument,
-                  target.position->value);
-            }
-            return over(module_->DomainOf(result_type), types);
+            return over(module_->DomainOf(result_type), std::nullopt);
           },
           // The operation acts on the wrapper itself rather than reaching
           // through it, and a wrapper classifies the same way whether it
@@ -562,14 +532,13 @@ auto CallArranger::EntryOf(
             return LibraryEntry{
                 .symbol = RuntimeSymbol(*domain, kind, target.fn),
                 .told = ToldOf(*domain, kind, target.fn),
-                .types = {.acted_on = held, .member = std::nullopt}};
+                .acted_on = held};
           },
           [&](const NamedByStorageDomain&) -> Named {
             const std::optional<lir::TypeId> held =
                 ValuesHeldBy(StorageReached(OperandType(call.args.at(0))));
             return over(
-                StorageDomainBehind(OperandType(call.args.at(0))),
-                {.acted_on = held, .member = std::nullopt});
+                StorageDomainBehind(OperandType(call.args.at(0))), held);
           },
           [&](const NamedByConversion&) -> Named {
             auto destination = module_->DomainOf(result_type);
@@ -583,7 +552,7 @@ auto CallArranger::EntryOf(
             return LibraryEntry{
                 .symbol = RuntimeSymbol(*destination, target.fn, *source),
                 .told = ToldNothing{},
-                .types = {}};
+                .acted_on = std::nullopt};
           },
           [&](const OverIntegralValues&) -> Named {
             return Unsupported(
@@ -827,10 +796,7 @@ auto CallArranger::ConstructionOf(
                     .operands = OperandReadingsOf(RuntimeOp::kSharedCellMake),
                     .told = told,
                     .answer_told = AnswerToldOf(RuntimeOp::kSharedCellMake),
-                    .implicit_arg = ImplicitArgOf(
-                        told,
-                        ToldTypes{
-                            .acted_on = cell->value, .member = std::nullopt})};
+                    .implicit_arg = ImplicitArgOf(told, cell->value)};
               }
               case lir::PointerOwnership::kBorrowed:
                 return no_construct();
@@ -957,7 +923,7 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
       return std::unexpected(std::move(domain.error()));
     }
     const Told told = ToldOf(*domain, op);
-    const ToldTypes held{.acted_on = value, .member = std::nullopt};
+    const std::optional<lir::TypeId> held = value;
     return FnAbi{
         .implicit_arg = ImplicitArgOf(told, held),
         .named_part = std::nullopt,
@@ -992,10 +958,10 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
             const support::RuntimeEntry declared =
                 support::RuntimeEntryOf(t.fn);
             return FnAbi{
-                .implicit_arg = ImplicitArgOf(entry->told, entry->types),
+                .implicit_arg = ImplicitArgOf(entry->told, entry->acted_on),
                 .named_part = named_part_of(t, declared),
                 .args = ArgsAsRead(
-                    call, declared.operands, entry->told, entry->types),
+                    call, declared.operands, entry->told, entry->acted_on),
                 .type_args = TypeArgsOf(
                     types, entry->told, declared.answer_told, t.type_argument,
                     result_type, ret),
@@ -1040,7 +1006,7 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
             const support::OperandReadings readings =
                 OperandReadingsOf(RuntimeOp::kInsertDesignatedBits);
             const Told told = ToldOf(*domain, RuntimeOp::kInsertDesignatedBits);
-            const ToldTypes held{.acted_on = t.value, .member = std::nullopt};
+            const std::optional<lir::TypeId> held = t.value;
             return FnAbi{
                 .implicit_arg = NoImplicitArg{},
                 .named_part = std::nullopt,

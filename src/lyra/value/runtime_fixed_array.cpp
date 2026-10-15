@@ -1,7 +1,6 @@
 #include "lyra/value/runtime_fixed_array.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <span>
 #include <string_view>
@@ -11,9 +10,9 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/fixed_array_type.hpp"
-#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -45,7 +44,7 @@ auto FromBytes(std::string_view bytes, const FixedArrayType& type)
 }  // namespace
 
 RuntimeFixedArray::RuntimeFixedArray(AnyValue value)
-    : value_(std::move(value)) {
+    : LaidOutValue<RuntimeFixedArray>(std::move(value)) {
 }
 
 auto RuntimeFixedArray::CopyOf(const FixedArrayType& type, const void* laid_out)
@@ -79,112 +78,14 @@ auto RuntimeFixedArray::FromIntegral(
   return FromBytes(BytesOf(bits), type);
 }
 
-auto RuntimeFixedArray::Bytes() const -> const void* {
-  return value_.Bytes();
-}
-
-auto RuntimeFixedArray::Bytes() -> void* {
-  return value_.Bytes();
-}
-
-auto RuntimeFixedArray::CopyInto(void* out) const -> void* {
-  Type().Copy(Bytes(), out);
-  return out;
-}
-
-auto RuntimeFixedArray::MoveInto(void* out) && -> void* {
-  Type().Move(Bytes(), out);
-  value_ = AnyValue();
-  return out;
-}
-
-auto RuntimeFixedArray::IntoAnyValue() && -> AnyValue {
-  return std::exchange(value_, AnyValue());
-}
-
 auto RuntimeFixedArray::Type() const -> const FixedArrayType& {
-  const FixedArrayType* type = value_.Type().AsFixedArray();
+  const FixedArrayType* type = LaidOutValue::Type().AsFixedArray();
   if (type == nullptr) {
     throw InternalError(
         "RuntimeFixedArray: an array holds a value of another kind -- please "
         "report this as a bug");
   }
   return *type;
-}
-
-auto RuntimeFixedArray::IsBitIdenticalTo(const void* bytes) const -> bool {
-  return Type().BitIdentical(Bytes(), bytes);
-}
-
-void RuntimeFixedArray::AssignBytes(const void* bytes) {
-  Type().Assign(Bytes(), bytes);
-}
-
-auto RuntimeFixedArray::operator==(const RuntimeFixedArray& other) const
-    -> FourStateBit {
-  return value_ == other.value_;
-}
-
-auto RuntimeFixedArray::operator!=(const RuntimeFixedArray& other) const
-    -> FourStateBit {
-  return value_ != other.value_;
-}
-
-auto RuntimeFixedArray::CaseEqual(const RuntimeFixedArray& other) const -> Bit {
-  return value_.CaseEqual(other.value_);
-}
-
-auto RuntimeFixedArray::ResolveTriState(const RuntimeFixedArray& other) const
-    -> RuntimeFixedArray {
-  return RuntimeFixedArray(value_.ResolveTriState(other.value_));
-}
-
-auto RuntimeFixedArray::ResolveWiredAnd(const RuntimeFixedArray& other) const
-    -> RuntimeFixedArray {
-  return RuntimeFixedArray(value_.ResolveWiredAnd(other.value_));
-}
-
-auto RuntimeFixedArray::ResolveWiredOr(const RuntimeFixedArray& other) const
-    -> RuntimeFixedArray {
-  return RuntimeFixedArray(value_.ResolveWiredOr(other.value_));
-}
-
-auto RuntimeFixedArray::Dominating(const RuntimeFixedArray& weaker) const
-    -> RuntimeFixedArray {
-  return RuntimeFixedArray(value_.Dominating(weaker.value_));
-}
-
-auto RuntimeFixedArray::FilledLike(
-    const RuntimeFixedArray& prototype, const Logic& fill)
-    -> RuntimeFixedArray {
-  return RuntimeFixedArray(AnyValue::FilledLike(prototype.value_, fill));
-}
-
-auto RuntimeFixedArray::IsBitIdentical(const RuntimeFixedArray& other) const
-    -> bool {
-  return value_.IsBitIdentical(other.value_);
-}
-
-auto RuntimeFixedArray::HasUnknown() const -> bool {
-  return value_.HasUnknown();
-}
-
-auto RuntimeFixedArray::IsUnknown() const -> Bit {
-  return value_.IsUnknown();
-}
-
-auto RuntimeFixedArray::BitstreamWidth() const -> Int {
-  return value_.BitstreamWidth();
-}
-
-auto RuntimeFixedArray::CountBits(const ConstIntegralView& control_bits) const
-    -> Int {
-  return value_.CountBits(control_bits);
-}
-
-auto RuntimeFixedArray::WriteToStream(
-    const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
-  return value_.WriteToStream(stream, filled);
 }
 
 }  // namespace lyra::value

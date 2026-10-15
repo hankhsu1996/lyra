@@ -10,9 +10,9 @@ namespace lyra::runtime {
 
 // The storage a holder keeps a value of `T` in: the value itself, for a type
 // known where it is compiled, and at the holder's tail the words of an
-// integral value wider than a word, or a tuple or a fixed-size unpacked array
-// laid out by its type, whose width or type the library is told where it
-// builds the holder.
+// integral value wider than a word, or a tuple, a union or a fixed-size
+// unpacked array laid out by its type, whose width or type the library is told
+// where it builds the holder.
 template <class T>
 struct StorageFor {
   using Type = ValueStorageCore<T>;

@@ -286,10 +286,11 @@ struct ClosureFieldTarget {
   auto operator==(const ClosureFieldTarget&) const -> bool = default;
 };
 
-// A component of a product -- a struct's member, a tuple's component -- by its
-// declaration-order position (LRM 7.2). A product has no arena naming its
-// components: where each lies is the product type's layout, which the
-// receiver's type states, as rustc projects a field by its index alone.
+// A component of a product -- a struct's member, a tuple's component -- or a
+// member of a union or a tagged union, by its declaration-order position (LRM
+// 7.2, 7.3). Neither has an arena naming its parts: where each lies is the
+// type's layout, which the receiver's type states, as rustc projects a field of
+// a struct or a union by its index alone.
 struct ComponentFieldTarget {
   base::ComponentIndex position;
 
@@ -306,8 +307,8 @@ using FieldRef =
     std::variant<ClassFieldTarget, ClosureFieldTarget, ComponentFieldTarget>;
 
 // The part a call acts on where the call itself fixes it: a component of a
-// product or the member an active-member value holds, by position, or a
-// property of an object, by the class declaring it. A closure's captures are
+// product or a member of a tagged union, by position, or a property of an
+// object, by the class declaring it. A closure's captures are
 // reached only from inside the closure, so no call names one.
 using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 
@@ -503,15 +504,15 @@ struct CopyExpr {
 };
 
 // Field access on an explicit receiver: `receiver.field`. The receiver is the
-// object of whichever declaration the field names, or the product whose
-// component it is, as a place; a product a computation makes is held for the
-// full-expression, as C++ materializes the base of a member access. An object
-// a handle, a pointer, or a write in progress reaches is first dereferenced to
-// it, so `p->field` is this node over `*p`, as in rustc's MIR, where a field is
-// projected from a place that is itself a dereference. So a backend never asks
-// "what is the current receiver?", never asks whether the receiver must first
-// be opened, and never derives which arena declares the name from what the
-// receiver's type turns out to be.
+// object of whichever declaration the field names, or the product or union
+// whose component or member it is, as a place; a value a computation makes is
+// held for the full-expression, as C++ materializes the base of a member
+// access. An object a handle, a pointer, or a write in progress reaches is
+// first dereferenced to it, so `p->field` is this node over `*p`, as in rustc's
+// MIR, where a field is projected from a place that is itself a dereference. So
+// a backend never asks "what is the current receiver?", never asks whether the
+// receiver must first be opened, and never derives which arena declares the
+// name from what the receiver's type turns out to be.
 //
 // One node serves reading the field and writing it. Which of the two an
 // occurrence is follows from where it stands -- a value position reads, an
@@ -530,11 +531,23 @@ struct FieldAccessExpr {
 // meaning is the type it initializes -- a product from its components, a
 // contiguous element list from its elements. Each of those has exactly one way
 // to be built, so the type answers completely and nothing chooses. A value that
-// has more than one way to come into existence is not this node: it is a
-// library type, and it comes into existence through its own constructor with
-// this list among the arguments.
+// has more than one way to come into existence is not this node: a union is
+// built by the expression naming its member, and a library type through its own
+// constructor with this list among the arguments.
 struct CompositeExpr {
   std::vector<ExprId> parts;
+};
+
+// A union's value holding the member at `member` as `value`, which an
+// assignment pattern or a tagged union expression names (LRM 7.3, 11.9), as
+// clang's initializer list names the field of a union it initializes and
+// rustc's aggregate the field a union expression gives. Every other byte of the
+// union's storage is zero, since a read through another member may read it
+// (LRM 7.3.2), and a tagged union's tag names the member. `Expr::type` is the
+// union.
+struct UnionExpr {
+  base::ComponentIndex member;
+  ExprId value;
 };
 
 // Waiting for an execution to reach its end (LRM 13.3 task enable): the
@@ -697,7 +710,7 @@ using ExprData = std::variant<
     MachineFloatLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     DynamicCastExpr, ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr,
     DerefExpr, AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, FieldAccessExpr,
-    ClosureExpr, CompositeExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
+    ClosureExpr, CompositeExpr, UnionExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
 
 struct Expr {
   ExprData data;
@@ -840,29 +853,9 @@ struct Expr {
       .type = void_type};
 }
 
-// `subject.index` -- the member an active-member value holds at a
-// declaration-order position. In an untagged union a read of a member that is
-// not the one held answers by the value's own semantics, which reach the call
-// through the domain its type names; a tagged union's member is reached only
-// behind a check of its tag (LRM 11.9).
-[[nodiscard]] inline auto MakeComponentExpr(
-    ExprId subject, base::ComponentIndex index, TypeId component) -> Expr {
-  return Expr{
-      .data =
-          CallExpr{
-              .callee =
-                  Direct{
-                      .target = support::BuiltinFn::kComponent,
-                      .receiver = subject,
-                      .part = index},
-              .arguments = {}},
-      .type = component};
-}
-
-// Whether the member an active-member value holds is the one at `index`. Only a
-// value carrying an observable tag has this; a product has no counterpart. The
-// answer is a machine boolean, so a caller wanting a one-bit integral converts
-// it and the type here is not its to choose.
+// Whether the tag of the tagged union `subject` names the member at `index`
+// (LRM 11.9). The answer is a machine boolean, so a caller wanting a one-bit
+// integral converts it and the type here is not its to choose.
 [[nodiscard]] inline auto MakeTagMatchesExpr(
     ExprId subject, base::ComponentIndex index, TypeId machine_boolean)
     -> Expr {
@@ -878,20 +871,10 @@ struct Expr {
       .type = machine_boolean};
 }
 
-// An active-member value whose live member is the one at `index`, carrying
-// `value`.
-[[nodiscard]] inline auto MakeActiveMemberExpr(
-    ExprId value, base::ComponentIndex index, TypeId built) -> Expr {
+[[nodiscard]] inline auto MakeUnionExpr(
+    ExprId value, base::ComponentIndex member, TypeId built) -> Expr {
   return Expr{
-      .data =
-          CallExpr{
-              .callee =
-                  Direct{
-                      .target = support::BuiltinFn::kMakeActiveMember,
-                      .part = index,
-                      .type_argument = built},
-              .arguments = {value}},
-      .type = built};
+      .data = UnionExpr{.member = member, .value = value}, .type = built};
 }
 
 // Asking a capability wrapper for what its storage holds, answering
@@ -899,31 +882,32 @@ struct Expr {
 // operation on the wrapper rather than a way of naming its storage: the
 // wrapper decides what it shows, which is why a bare wrapper place -- the
 // wrapper read as a value, or rebound -- stays a different program.
-[[nodiscard]] inline auto MakeCellLoadCallExpr(ExprId cell, TypeId reference)
+[[nodiscard]] inline auto MakeCellGetCallExpr(ExprId cell, TypeId reference)
     -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee =
-                  Direct{.target = support::BuiltinFn::kLoad, .receiver = cell},
+                  Direct{.target = support::BuiltinFn::kGet, .receiver = cell},
               .arguments = {}},
       .type = reference};
 }
 
-// Reading what a capability wrapper's storage held in the Preponed region of
-// the current time slot (LRM 16.5.1). The wrapper keeps that value apart from
-// its storage and answers a copy of it, so the call answers the value.
-[[nodiscard]] inline auto MakeCellSampledLoadCallExpr(ExprId cell, TypeId value)
-    -> Expr {
+// What a capability wrapper's storage held in the Preponed region of the
+// current time slot (LRM 16.5.1). The wrapper keeps that value apart from its
+// storage and answers a reference to it, as an ordinary read answers one to the
+// storage, so a select into it reads only the part it names.
+[[nodiscard]] inline auto MakeCellSampledGetCallExpr(
+    ExprId cell, TypeId reference) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee =
                   Direct{
-                      .target = support::BuiltinFn::kSampledLoad,
+                      .target = support::BuiltinFn::kSampledGet,
                       .receiver = cell},
               .arguments = {}},
-      .type = value};
+      .type = reference};
 }
 
 // Arming a capability wrapper to answer for a sampled value (LRM 16.5.1), and

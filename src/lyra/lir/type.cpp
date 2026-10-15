@@ -522,14 +522,11 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // is or a declaration names it.
           [](const TupleType&) -> Held { return ValueDomain::kTuple; },
           [](const StructType&) -> Held { return ValueDomain::kTuple; },
-          // An untagged union erases its tag and gives a cross-member read the
-          // component default; a tagged union keeps the tag observable and
-          // faults a mismatched access (LRM 7.3 / 7.3.2), so the two are
-          // different runtime values.
+          // A union of either kind is the storage its members overlay, laid
+          // out by its type, which says whether a tag follows them (LRM 7.3,
+          // 7.3.2).
           [](const UnionType&) -> Held { return ValueDomain::kUnion; },
-          [](const TaggedUnionType&) -> Held {
-            return ValueDomain::kTaggedUnion;
-          },
+          [](const TaggedUnionType&) -> Held { return ValueDomain::kUnion; },
           // A tagged union's `void` member (LRM 7.3.2) is a value carrying no
           // bits, a value of its own so a build's payload is uniform whatever
           // the member type.
@@ -692,18 +689,14 @@ auto Type::IsProduct() const -> bool {
   return Is<TupleType>() || Is<StructType>();
 }
 
-auto Type::IsUnion() const -> bool {
-  return Is<UnionType>() || Is<TaggedUnionType>();
-}
-
-auto Type::UnionMemberTypes() const -> std::vector<TypeId> {
+auto Type::UnionMembers() const -> std::optional<std::span<const TypeId>> {
   if (const auto* untagged = As<UnionType>()) {
-    return untagged->members;
+    return std::span<const TypeId>{untagged->members};
   }
   if (const auto* tagged = As<TaggedUnionType>()) {
-    return tagged->members;
+    return std::span<const TypeId>{tagged->members};
   }
-  throw InternalError("lir: type is not a union");
+  return std::nullopt;
 }
 
 auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {

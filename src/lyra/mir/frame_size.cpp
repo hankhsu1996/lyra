@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <ranges>
 #include <span>
 #include <vector>
 
@@ -14,6 +15,7 @@
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/empty.hpp"
+#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/index_order.hpp"
@@ -24,6 +26,7 @@
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/union_layout.hpp"
 
 namespace lyra::mir {
 
@@ -100,9 +103,9 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> Layout;
 auto Sequence(const CompilationUnit& unit, TypeId element, std::uint64_t count)
     -> Layout {
   const Layout one = LayoutOf(unit, element);
-  const std::uint64_t stride =
-      (one.size + one.align - 1) / one.align * one.align;
-  return Layout{.size = stride * count, .align = one.align};
+  const value::FixedArrayLayout laid =
+      value::FixedArrayLayoutOf(one.size, one.align, count);
+  return Layout{.size = laid.size, .align = laid.align};
 }
 
 // Values side by side, as a C++ struct lays its members out.
@@ -115,34 +118,16 @@ auto Product(const CompilationUnit& unit, std::span<const TypeId> parts)
         (whole.size + part.align - 1) / part.align * part.align + part.size;
     whole.align = std::max(whole.align, part.align);
   }
+  whole.size = (whole.size + whole.align - 1) / whole.align * whole.align;
   return whole;
 }
 
-// Values sharing one storage, which is as large as the largest.
+// Values sharing one storage, each at its start.
 auto Overlay(const CompilationUnit& unit, std::span<const TypeId> members)
-    -> Layout {
-  Layout whole{.size = 0, .align = 1};
-  for (const TypeId member : members) {
-    const Layout part = LayoutOf(unit, member);
-    whole.size = std::max(whole.size, part.size);
-    whole.align = std::max(whole.align, part.align);
-  }
-  return whole;
-}
-
-// A tagged union's members overlaid, then its tag at the tag's alignment: the
-// smallest unsigned integer that counts the members.
-auto TaggedOverlay(const CompilationUnit& unit, std::span<const TypeId> members)
-    -> Layout {
-  const Layout overlay = Overlay(unit, members);
-  std::uint64_t tag = 1;
-  while (tag < sizeof(std::uint64_t) &&
-         members.size() > (std::uint64_t{1} << (tag * 8))) {
-    tag *= 2;
-  }
-  return Layout{
-      .size = ((overlay.size + tag - 1) / tag * tag) + tag,
-      .align = std::max(overlay.align, tag)};
+    -> value::OverlayLayout {
+  return value::OverlayLayoutOf(
+      members | std::views::transform(
+                    [&](TypeId member) { return LayoutOf(unit, member); }));
 }
 
 // A value laid out by what it holds is that; a value of the library's is the
@@ -175,9 +160,14 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> Layout {
             }
             return Product(unit, captures);
           },
-          [&](const UnionType& t) { return Overlay(unit, t.members); },
+          [&](const UnionType& t) {
+            const value::OverlayLayout overlay = Overlay(unit, t.members);
+            return Layout{.size = overlay.size, .align = overlay.align};
+          },
           [&](const TaggedUnionType& t) {
-            return TaggedOverlay(unit, t.members);
+            const value::TaggedUnionLayout tagged = value::TaggedUnionLayoutOf(
+                Overlay(unit, t.members), t.members.size());
+            return Layout{.size = tagged.size, .align = tagged.align};
           },
           [](const DynamicArrayType&) {
             return LayoutOfClass<value::RuntimeDynamicArray>();

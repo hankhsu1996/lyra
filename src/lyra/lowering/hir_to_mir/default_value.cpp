@@ -160,7 +160,7 @@ auto BuildDefaultValueExpr(
   // two source declarations with the same component types share one type.
   const auto first_member_default = [&](mir::TypeId first) -> mir::Expr {
     constexpr base::ComponentIndex kFirstMember{0};
-    return mir::MakeActiveMemberExpr(
+    return mir::MakeUnionExpr(
         block.exprs.Add(BuildDefaultValueExpr(unit, block, first)),
         kFirstMember, type);
   };

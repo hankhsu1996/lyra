@@ -67,6 +67,11 @@ class CodeGenFunction::IntegralEmitter {
   // The planes of the value of type `shape` lying at `at`, each loaded as the
   // integer its bytes are and cut to the value's width.
   auto LoadPlanes(llvm::Value* at, const value::IntegralShape& shape) -> Planes;
+  // The value of type `shape` lying at `at` laid back out there as its type
+  // holds one, every position above its width clear.
+  void ClearAboveWidth(llvm::Value* at, const value::IntegralShape& shape) {
+    StorePlanes(LoadPlanes(at, shape), at, shape);
+  }
 
  private:
   // The types `op` applied to `operands` and answering at `answer_type` is
@@ -382,6 +387,11 @@ auto CodeGenFunction::LoadPosition(const OperandRef& position) -> Planes {
         "as a position -- please report this as a bug");
   }
   return IntegralEmitter(*this).LoadPlanes(position.value, *stated);
+}
+
+void CodeGenFunction::ClearIntegralAboveWidth(
+    llvm::Value* at, const value::IntegralShape& shape) {
+  IntegralEmitter(*this).ClearAboveWidth(at, shape);
 }
 
 auto CodeGenFunction::StoreBitsOnPlanes(

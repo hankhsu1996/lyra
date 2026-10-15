@@ -86,6 +86,7 @@ class IntegralValueType final : public ValueType {
   [[nodiscard]] auto BitIdentical(const void* lhs, const void* rhs) const
       -> bool override;
   [[nodiscard]] auto HasUnknown(const void* value) const -> bool override;
+  void ClearAboveWidths(void* value) const override;
 
   void BuildDefault(void* out) const override;
 

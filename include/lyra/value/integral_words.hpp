@@ -1438,7 +1438,10 @@ constexpr void Extract(
 
 // LRM 11.5.1: writes `src` into `dst` at `start`, landing only on the
 // positions of `dst` that `within` names and leaving every other position as
-// it stands. Answers the positions written, none where it reaches none.
+// it stands. Answers the positions written, none where it reaches none. The
+// value written into is left clear above its width even where it was not, as
+// it is where another member of an untagged union wrote the storage it lies
+// in (LRM 7.3.2): a write leaves the value its type holds.
 template <
     PlaneWord WrittenWord, std::size_t kWrittenValueWords,
     std::size_t kWrittenUnknownWords>
@@ -1451,6 +1454,8 @@ constexpr auto InsertWithin(
   if (written) {
     detail::WriteRun(dst, src, start, *written);
   }
+  ClearAboveWidth(dst.value, dst.width);
+  ClearAboveWidth(dst.unknown, dst.width);
   return written;
 }
 

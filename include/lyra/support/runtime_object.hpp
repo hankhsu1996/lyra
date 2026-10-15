@@ -39,9 +39,9 @@ enum class LibraryObject : std::uint8_t {
 // An object generated code holds by value: it gives the object storage in its
 // own frame, the library builds the object there, and the object ends where
 // the program that made it says. A value of every domain is one, and so is
-// each library object -- except a tuple and a fixed-size unpacked array, which
-// generated code lays out itself as the type states; the object of each of
-// those domains is how the library holds one.
+// each library object -- except a tuple, a union and a fixed-size unpacked
+// array, which generated code lays out itself as the type states; the object
+// of each of those domains is how the library holds one.
 // What the library keeps for the whole run, and storage an owner holds, is
 // reached by address instead and is not one of these.
 //

@@ -34,8 +34,9 @@ namespace lyra::lowering::hir_to_mir {
 
 // The step `aggregate.member` takes (LRM 7.2, 7.3). An unpacked aggregate's
 // member is named by its declaration-order position: a structure's is a
-// component, storage of its own, and a union's is the member it holds. A
-// packed aggregate's member is bits of the one vector the aggregate is.
+// component, storage of its own, and a union's lies at the union's own start,
+// with no identity of its own. A packed aggregate's member is bits of the one
+// vector the aggregate is.
 [[nodiscard]] auto MemberStep(
     UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
     base::ComponentIndex index, mir::TypeId part_type) -> DescentStep;
@@ -93,6 +94,21 @@ template <ExprLowerer Lowerer>
 auto LowerHirClassPropertyAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::ClassPropertyAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr>;
+
+// A read through a member a tag guards (LRM 11.9), where the union lies in
+// storage and is read as it is now, is one access: its whole path is taken,
+// every tag it passes checked, and the part it selects read and kept, all in
+// one block of steps, so nothing the enclosing expression evaluates -- a
+// sibling operand retagging the union -- runs between a check and the read it
+// guards. A receiver or a borrow reached this way takes the value kept, since
+// a member is never a reference target (LRM 13.5.2).
+template <ExprLowerer Lowerer>
+auto IsTagCheckedRead(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::Expr& select) -> bool;
+template <ExprLowerer Lowerer>
+auto LowerTagCheckedRead(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& select)
+    -> diag::Result<mir::Expr>;
 
 // A select named as a part rather than read: the path its base names, one step
 // deeper. Each adds the same step the read of it takes, so what comes back is

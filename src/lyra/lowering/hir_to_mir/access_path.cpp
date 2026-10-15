@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -153,18 +154,19 @@ auto ComponentStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   throw InternalError("access path: unknown step use");
 }
 
-// A union's member is no storage of its own (LRM 7.3), so nothing is
-// designated within a write of one or lent by reference.
-auto EntryToMember(StepUse use) -> support::BuiltinFn {
+// A union's member lies at the start of the union's storage, so reading it and
+// writing it are the one field step on the place the union lies in (LRM 7.3);
+// it has no identity of its own, so nothing is designated within a write of
+// one or lent by reference (LRM 13.5.2).
+auto UnionMemberStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   switch (use) {
     case StepUse::kRead:
-      return support::BuiltinFn::kComponent;
     case StepUse::kWrite:
-      return support::BuiltinFn::kComponentRef;
+      return mir::ComponentFieldTarget{.position = position};
     case StepUse::kDesignate:
     case StepUse::kLend:
       throw InternalError(
-          "access path: a union's member is no storage of its own, and this "
+          "access path: a union's member has no identity of its own, and this "
           "descent designates or lends one");
   }
   throw InternalError("access path: unknown step use");
@@ -264,11 +266,8 @@ auto StepTakenFor(
           [&](const StepToComponent& component) {
             return ComponentStep(use, component.position);
           },
-          [&](const StepToUnionMember& member) -> StepTaken {
-            return StepCall{
-                .entry = EntryToMember(use),
-                .part = mir::CallPart{member.position},
-                .arguments = {}};
+          [&](const StepToUnionMember& member) {
+            return UnionMemberStep(use, member.position);
           }},
       step.to);
 }
@@ -463,6 +462,7 @@ auto NamedAgain(const mir::Block& from, mir::Block& to, mir::ExprId id)
           [&](const mir::MoveExpr&) { return computes(); },
           [&](const mir::ClosureExpr&) { return computes(); },
           [&](const mir::CompositeExpr&) { return computes(); },
+          [&](const mir::UnionExpr&) { return computes(); },
           [&](const mir::AwaitExpr&) { return computes(); },
           [&](const mir::WaitExpr&) { return computes(); },
           [&](const mir::VectorGetExpr&) { return computes(); }},
@@ -949,6 +949,7 @@ auto SettledPlace(
           [&](const mir::MoveExpr&) { return computed(); },
           [&](const mir::ClosureExpr&) { return computed(); },
           [&](const mir::CompositeExpr&) { return computed(); },
+          [&](const mir::UnionExpr&) { return computed(); },
           [&](const mir::AwaitExpr&) { return computed(); },
           [&](const mir::WaitExpr&) { return computed(); },
           [&](const mir::VectorGetExpr&) { return computed(); }},
@@ -1039,6 +1040,13 @@ auto NamedIn(const SettledPath& settled, mir::Block& to) -> AccessPath {
     });
   }
   return path;
+}
+
+auto ReachesOverlaidStorage(const AccessPath& path) -> bool {
+  return std::ranges::any_of(path.descent, [](const DescentStep& step) {
+    const auto* member = std::get_if<StepToUnionMember>(&step.to);
+    return member != nullptr && !member->tagged;
+  });
 }
 
 auto ReadThenWrite(
@@ -1241,7 +1249,7 @@ auto StoreBitsExpr(
           mir::CallExpr{
               .callee =
                   mir::Direct{
-                      .target = support::BuiltinFn::kStore,
+                      .target = support::BuiltinFn::kSet,
                       .receiver = reference},
               .arguments = {value}},
       .type = unit.builtins.void_type};
@@ -1277,7 +1285,7 @@ auto BuildStoreExpr(
             mir::CallExpr{
                 .callee =
                     mir::Direct{
-                        .target = support::BuiltinFn::kStore,
+                        .target = support::BuiltinFn::kSet,
                         .receiver = wrapper},
                 .arguments = {rhs_id}},
         .type = unit.builtins.void_type};

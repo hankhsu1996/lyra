@@ -5,8 +5,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "lyra/value/runtime_fixed_array.hpp"
-#include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
 // A value and the handle generated code holds it by. A handle is the address
@@ -43,8 +42,9 @@ auto HandleTo(T& value) -> void* {
 // where it lies. An integral value of a type the library states is its bytes,
 // so it is read where it lies too. An integral value wider than a word is
 // bytes whose extent only what holds one knows, so it is read by its holder,
-// and a tuple and a fixed-size unpacked array are bytes whose type only what
-// hands them over knows, so each is read with that type.
+// and a value laid out by its type -- a tuple, a union, a fixed-size unpacked
+// array -- is bytes whose type only what hands them over knows, so each is
+// read with that type.
 template <typename T>
 auto Read(const void* handle) -> const T& {
   static_assert(
@@ -52,17 +52,16 @@ auto Read(const void* handle) -> const T& {
       "an integral value wider than a word is read at the width its holder "
       "was told");
   static_assert(
-      !std::same_as<T, value::RuntimeFixedArray> &&
-          !std::same_as<T, value::RuntimeTuple>,
-      "a tuple and a fixed-size unpacked array are read with the type their "
-      "bytes do not state");
+      !value::LaidOutByType<T>,
+      "a value laid out by its type is read with the type its bytes do not "
+      "state");
   return *static_cast<const T*>(handle);
 }
 
 // A value the runtime holds in a form of its own, which lays the bytes
-// generated code holds one by out in storage it is handed: a tuple, the words
-// of an integral value wider than a word, and the elements of a fixed-size
-// unpacked array.
+// generated code holds one by out in storage it is handed: a tuple or a union,
+// the words of an integral value wider than a word, and the elements of a
+// fixed-size unpacked array.
 template <typename T>
 concept LaysItsBytesOut = requires(const T& kept, T given, void* out) {
   { kept.CopyInto(out) } -> std::convertible_to<void*>;

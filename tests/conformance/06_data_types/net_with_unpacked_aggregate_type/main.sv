@@ -6,6 +6,10 @@
 // continuous assignment, and it reads element-wise or member-wise like any
 // other aggregate. Independent elements may be driven by separate continuous
 // assignments (LRM 6.5), which is how a structure gets one driver per member.
+// A union's members are one storage, so drivers on different members of one
+// union net are drivers of that storage, which resolves as its first member
+// does (LRM 7.3): where they agree the bit passes through, where they differ
+// it is x.
 typedef struct {
   logic [3:0] tag;
   logic [7:0] payload;
@@ -38,11 +42,14 @@ module Top;
   wire frame_t whole;
   wire frame_t split;
   wire slot_t chosen;
+  wire slot_t contested;
 
   assign whole = '{4'h6, 8'hc3};
   assign split.tag = 4'h9;
   assign split.payload = 8'h5a;
   assign chosen.wide = 8'he1;
+  assign contested.narrow = 4'b0011;
+  assign contested.wide = 8'b0000_1010;
 
   Child child (
       .request(request),
@@ -88,6 +95,8 @@ module Top;
       $fatal(1, "split.payload was %h, expected 5a", split.payload);
     if (chosen.wide !== 8'he1)
       $fatal(1, "chosen.wide was %h, expected e1", chosen.wide);
+    if (contested.narrow !== 4'bx01x)
+      $fatal(1, "contested.narrow was %b, expected x01x", contested.narrow);
     if (first_probe !== 1'bz)
       $fatal(1, "first_probe was %b, expected z", first_probe);
     if (second_probe !== 1'bz)

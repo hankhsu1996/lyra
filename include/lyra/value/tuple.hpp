@@ -1,8 +1,11 @@
 #pragma once
 
+#include <array>
 #include <concepts>
 #include <cstddef>
 #include <utility>
+
+#include "lyra/value/clear_above_widths.hpp"
 
 namespace lyra::value {
 
@@ -96,6 +99,21 @@ class Tuple {
   template <std::size_t I>
   [[nodiscard]] auto Component() && -> decltype(auto) {
     return detail::ComponentAt<I>(std::move(data_));
+  }
+
+  // Each component's positions above its widths made clear, through a table
+  // for the reason the components are bases.
+  void ClearAboveWidths() {
+    using Clear = void (*)(Tuple&);
+    static constexpr auto kClears =
+        []<std::size_t... I>(std::index_sequence<I...>) {
+          return std::array<Clear, sizeof...(I)>{+[](Tuple& product) {
+            lyra::value::ClearAboveWidths(product.template Component<I>());
+          }...};
+        }(std::index_sequence_for<Ts...>{});
+    for (const Clear clear : kClears) {
+      clear(*this);
+    }
   }
 
  private:

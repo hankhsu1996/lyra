@@ -23,8 +23,6 @@ template <typename Host>
 class RealValue;
 class Chandle;
 class AnyValue;
-class RuntimeUnion;
-class RuntimeTaggedUnion;
 class RuntimeDynamicArray;
 class RuntimeQueue;
 class RuntimeAssociativeArray;
@@ -174,6 +172,10 @@ class ValueTypeOf final : public ValueType {
   }
   [[nodiscard]] auto HasUnknown(const void* value) const -> bool override {
     return Of(value).HasUnknown();
+  }
+  // A value the library holds as an object of its own lies in no union a
+  // design overlays with other members, and keeps nothing clear.
+  void ClearAboveWidths(void*) const override {
   }
 
   // A value held with the type it was written in is of no type of its own, so

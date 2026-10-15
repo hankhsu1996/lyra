@@ -16,7 +16,6 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/value_domain.hpp"
 
 namespace lyra::lir {
 
@@ -36,24 +35,17 @@ auto LentValues(const CompilationUnit& unit, TypeId storage) -> TypeId {
   return storage;
 }
 
-// A part reached by value projection is a view of its whole -- a bit of a
-// packed value, a member of a union. A part that is
-// storage of its own (LRM 7.2, 7.4, 7.8, 7.10) is a step of a place instead,
-// because a write has to land in it and a value built out of it is a copy no
-// write reaches.
-void RequireViewedPart(
-    const CompilationUnit& unit, const Function& fn, const Operand& aggregate) {
-  const std::optional<TypeId> type = OperandType(fn, aggregate);
-  if (!type) {
-    throw InternalError("lir verify: a projected aggregate has no type");
-  }
-  const std::optional<Holding> held = unit.types.Get(*type).HeldAs();
-  const auto* domain =
-      held.has_value() ? std::get_if<support::ValueDomain>(&*held) : nullptr;
-  if (domain != nullptr && support::PartsAreStorage(*domain)) {
+// An element is built by value out of a sequence of handles only. A part that
+// is storage of its own (LRM 7.2, 7.3, 7.4, 7.8, 7.10) is a step of a place
+// instead, because a write has to land in it and a value built out of it is a
+// copy no write reaches.
+void RequireHandleSequence(
+    const CompilationUnit& unit, const Function& fn, const Operand& vector) {
+  const std::optional<TypeId> type = OperandType(fn, vector);
+  if (!type || !unit.types.Get(*type).Is<VectorType>()) {
     throw InternalError(
-        "lir verify: a part that is storage of its own is projected by value "
-        "rather than reached as a step of a place");
+        "lir verify: an element is taken by value out of something other than "
+        "a sequence of handles");
   }
 }
 
@@ -298,11 +290,25 @@ void VerifyRvalue(
                   "lir verify: cast changes its value's representation");
             }
           },
-          [&](const AggregateExtractInstr& extract) {
-            RequireViewedPart(unit, fn, extract.aggregate);
+          [&](const VectorGetInstr& get) {
+            RequireHandleSequence(unit, fn, get.vector);
           },
-          [&](const AggregateUpdateInstr& update) {
-            RequireViewedPart(unit, fn, update.aggregate);
+          [&](const UnionInstr& built) {
+            const std::optional<std::span<const TypeId>> members =
+                unit.types.Get(result_type).UnionMembers();
+            if (!members.has_value() || built.member.value >= members->size()) {
+              throw InternalError(
+                  "lir verify: a union is built holding a member its type "
+                  "does not have");
+            }
+          },
+          [&](const DiscriminantInstr& read) {
+            if (!unit.types.Get(PlaceType(unit, fn, read.place))
+                     .Is<TaggedUnionType>()) {
+              throw InternalError(
+                  "lir verify: a tag is read of something that is no tagged "
+                  "union");
+            }
           },
           [](const HandleCastInstr&) {}, [](const DynamicCastInstr&) {},
           [&](const CallInstr& call) {

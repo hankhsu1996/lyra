@@ -55,10 +55,9 @@
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_tagged_union.hpp"
-#include "lyra/value/runtime_tuple.hpp"
-#include "lyra/value/runtime_union.hpp"
+#include "lyra/value/runtime_record.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/union_type.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -125,11 +124,8 @@ auto WithValueClass(ValueDomain domain, F f)
     case ValueDomain::kEmpty:
       return f.template operator()<value::Empty>();
     case ValueDomain::kTuple:
-      return f.template operator()<value::RuntimeTuple>();
     case ValueDomain::kUnion:
-      return f.template operator()<value::RuntimeUnion>();
-    case ValueDomain::kTaggedUnion:
-      return f.template operator()<value::RuntimeTaggedUnion>();
+      return f.template operator()<value::RuntimeRecord>();
     case ValueDomain::kDynArray:
       return f.template operator()<value::RuntimeDynamicArray>();
     case ValueDomain::kUnpackedArray:
@@ -168,10 +164,6 @@ struct AdmitsNet
 
 template <BitAddressed T>
 struct AdmitsNet<T> : std::bool_constant<T::kFourState> {};
-
-// The library publishes no net over a tagged union, so none is laid out.
-template <>
-struct AdmitsNet<value::RuntimeTaggedUnion> : std::false_type {};
 
 // `Storage` over the value class of `domain`, where `Admits` holds of that
 // class.
@@ -468,6 +460,31 @@ auto LayoutOfFixedArrayTypeConstant() -> FixedArrayTypeConstantLayout {
       .element = stated.ElementStatedAt(),
       .parts = stated.PartsStatedAt(),
       .parts_owner = stated.PartsOwnerStatedAt()};
+}
+
+auto LayoutOfUnionTypeConstant() -> UnionTypeConstantLayout {
+  const value::UnionType stated(1, 1, {});
+  return UnionTypeConstantLayout{
+      .object = Of<value::UnionType>(),
+      .table_symbol = std::string("_ZTV") + typeid(value::UnionType).name(),
+      .value_size = stated.SizeStatedAt(),
+      .value_align = stated.AlignStatedAt(),
+      .count = stated.CountStatedAt(),
+      .members = stated.MembersStatedAt()};
+}
+
+auto LayoutOfTaggedUnionTypeConstant() -> TaggedUnionTypeConstantLayout {
+  const value::TaggedUnionType stated(1, 1, {}, 0, 1);
+  return TaggedUnionTypeConstantLayout{
+      .object = Of<value::TaggedUnionType>(),
+      .table_symbol =
+          std::string("_ZTV") + typeid(value::TaggedUnionType).name(),
+      .value_size = stated.SizeStatedAt(),
+      .value_align = stated.AlignStatedAt(),
+      .count = stated.CountStatedAt(),
+      .members = stated.MembersStatedAt(),
+      .tag_offset = stated.TagOffsetStatedAt(),
+      .tag_bytes = stated.TagBytesStatedAt()};
 }
 
 auto LayoutOfQueueTypeConstant() -> QueueTypeConstantLayout {

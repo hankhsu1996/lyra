@@ -48,6 +48,16 @@ struct StatedAt {
   std::size_t bytes;
 };
 
+// The storage `bytes` past `from`, where a part laid out by a type lies.
+[[nodiscard]] inline auto Offset(const void* from, std::size_t bytes) -> const
+    void* {
+  return std::bit_cast<const void*>(
+      std::bit_cast<std::uintptr_t>(from) + bytes);
+}
+[[nodiscard]] inline auto Offset(void* from, std::size_t bytes) -> void* {
+  return std::bit_cast<void*>(std::bit_cast<std::uintptr_t>(from) + bytes);
+}
+
 // Where `whole` states its member `member`.
 template <typename Whole, typename Member>
 [[nodiscard]] auto StatedAtIn(const Whole* whole, const Member& member)
@@ -121,6 +131,11 @@ class ValueType {
   [[nodiscard]] virtual auto BitIdentical(
       const void* lhs, const void* rhs) const -> bool = 0;
   [[nodiscard]] virtual auto HasUnknown(const void* value) const -> bool = 0;
+  // Every position of the value that its type keeps clear made clear: what
+  // lies above each integral's width, in both planes. A value of the type is
+  // held so; one read out of storage another member of an untagged union may
+  // have written is made so (LRM 7.3.2).
+  virtual void ClearAboveWidths(void* value) const = 0;
 
   // The value storage of the type holds before anything writes it, which the
   // type alone fixes: a singular type's default (LRM 6.4, Table 6-7), an empty

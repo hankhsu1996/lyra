@@ -55,6 +55,7 @@ auto IsPlace(const ExprData& data) -> bool {
           [](const CopyExpr&) { return false; },
           [](const ClosureExpr&) { return false; },
           [](const CompositeExpr&) { return false; },
+          [](const UnionExpr&) { return false; },
           [](const AwaitExpr&) { return false; },
           [](const WaitExpr&) { return false; },
           [](const VectorGetExpr&) { return false; }},

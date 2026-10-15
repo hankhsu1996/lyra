@@ -146,13 +146,11 @@ merged node.
         object rather than over a value: a class object is reached through a managed reference and
         has no value-layer representation, so the product traversal every other aggregate shares
         does not reach it.
-  - [ ] An unpacked union anywhere in a stream. LRM 11.4.14.1 streams its first-declared member
-        whatever member is live, and the front end already resolves that much. What blocks it is the
-        union's own storage: this pipeline keeps only the active member and reports a read of any
-        other, so the first member's bits are not there to read when a later member is live --
-        streaming a union needs the member overlay the storage model does not have. Worth knowing
-        before it is taken up: LRM 6.24.3 sizes a union by its largest member while 11.4.14.1
-        streams its first, and for `union { byte narrow; int wide; }` those are 32 bits and 8.
+  - [x] An unpacked union in a stream streams its first-declared member whatever member was last
+        written, packing and unpacking (LRM 11.4.14.1).
+  - [ ] A structure or an array holding an unpacked union in a stream. The front end refuses it as
+        no bit-stream type, reading LRM 6.24.3's list as leaving a union out, while LRM 11.4.14.1
+        says how a union streams wherever it stands.
 
 ### Assignment families
 

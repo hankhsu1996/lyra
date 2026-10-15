@@ -292,11 +292,12 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     13.5.2); overlaid, at or below a member of an untagged union, whose bits may be another member's
     -- and each node's kind follows from its operand's. Storage is read by a read node, written by
     an assignment whose target is a place, and referred to by a borrow, and each is realized by the
-    place's kind. _Programming-language consequence: this is value category -- a THIR expression's
-    place-or-value category in rustc, a value kind and an object kind on every clang expression --
-    and like theirs it is a fact of the expression, so no consumer works out from a finished tree
-    which expressions name storage, and no pair of nodes or entries differs only by whether it is
-    read or written._
+    place's kind. A method changing overlaid storage changes a read of it, held in a local, which is
+    then written back, so what lands holds what its type requires. _Programming-language
+    consequence: this is value category -- a THIR expression's place-or-value category in rustc, a
+    value kind and an object kind on every clang expression -- and like theirs it is a fact of the
+    expression, so no consumer works out from a finished tree which expressions name storage, and no
+    pair of nodes or entries differs only by whether it is read or written._
 
 ## Boundary to Adjacent Layers
 

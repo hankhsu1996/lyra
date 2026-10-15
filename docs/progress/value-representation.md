@@ -17,14 +17,14 @@ against the run before it; the figures are in the pull requests that measured th
 - [x] A runtime facility that acts on a value of any type -- formatting, DPI conversion, file and
       memory-image reading and writing, sampled history, a wait's comparison -- is handed the
       functions the compiler generated for that type. A value held beside its type's constant
-      survives on the execution backend where a union holds its member, an associative array its
-      key, and a closure or a `with` clause its answer.
+      survives on the execution backend where an associative array holds its key, and a closure or a
+      `with` clause its answer.
 - [x] A write reports the range it reached, and a wait decided at the write tests that range against
       what it watches on the words, without materializing either side.
 - [x] On the execution backend, a queue, a dynamic array, an associative array and a fixed-size
       array hold their elements as raw storage acted on through the element type's generated
-      functions, a union holds its member with the member's type, and a value whose representation
-      an entry cannot know crosses as itself and its type.
+      functions, and a value whose representation an entry cannot know crosses as itself and its
+      type.
 
 ## Phase 2: a packed value is its words
 
@@ -48,8 +48,9 @@ against the run before it; the figures are in the pull requests that measured th
       both backends.
 - [x] Writing a character of a string changes that character where the string lies, on both
       backends, as the string's own `putc` does.
-- [ ] Writing a member of an unpacked union costs the part written. On the execution backend it
-      reads the whole union, builds a new one around the member and stores it back. Not measured.
+- [ ] Writing a member of an unpacked union costs the part written. On both backends the store lies
+      where the member lies, but a union something waits on keeps the whole union from before the
+      write and compares all of it when the write ends.
 - [ ] No one-word operation costs more than it did while the value library's word functions were
       marked to be inlined always, and a shift of a value of several words stays inline in an
       optimized C++ build. Under clang at `-O2` the one-word operations together cost fewer
@@ -105,7 +106,7 @@ against the run before it; the figures are in the pull requests that measured th
       what it makes it builds where its caller keeps it, and what it must keep aside while it works
       it keeps in storage of its own. A callable answering a value makes it where its caller takes
       it. A design whose every value is twice the stack it runs on runs on both backends.
-- [ ] A union is laid out flat on both backends.
+- [x] A union is laid out flat on both backends.
 - [x] A wait on part of an unpacked aggregate is passed over by a write that reached another part of
       it, and a write visits only the waits on what it reached.
 - [x] On the C++ backend a fixed-size unpacked array is its elements in place at every size, the
@@ -180,15 +181,13 @@ against the run before it; the figures are in the pull requests that measured th
       read before its initializer runs (LRM 8.7) reads that value.
 - [x] A tuple's bytes no longer open with its type: every holder of one -- a cell, a reference, a
       designated part, a net, a sampled history -- states the type of what it holds.
-- [ ] The execution backend lays out a cell of an unpacked union from the union's type. Until it
-      does, a property of a union type, or of a structure holding one, read before its initializer
-      runs stops the execution backend with an internal error, where LRM 7.3 gives the union its
-      first member's default and the C++ backend answers it.
-- [ ] An unpacked union is one storage its members overlay, laid out from its type. A structure
-      member's common initial sequence then reads what was written through another member (LRM 7.3),
-      a union streams its first-declared member whichever is live (LRM 11.4.14.1), and a net's
-      drivers on different members fold as its first member. All three are refused today, since a
-      union holds only its live member.
+- [x] The execution backend lays out a cell of an unpacked union from the union's type, so a
+      property of a union type, or of a structure holding one, read before its initializer runs
+      reads the union's first member's default (LRM 7.3) on both backends.
+- [x] An unpacked union is one storage its members overlay, laid out from its type. A structure
+      member's common initial sequence reads what was written through another member (LRM 7.3), a
+      union streams its first-declared member whichever was written last (LRM 11.4.14.1), and a
+      net's drivers on different members fold as its first member, on both backends.
 - [x] Runtime scalars that were packed values -- descriptors, seeds, counts, a takeover's generation
       -- are machine integers, and a constant passed as one is a constant of that machine integer. A
       delay's amount is not one of them: it crosses as its bits with its width, because an unknown

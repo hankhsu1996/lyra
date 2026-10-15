@@ -499,6 +499,12 @@ class FunctionLowerer {
   auto LowerReferenceIntoReceiver(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
+  // Whether a tagged union's tag names the member a call names (LRM 11.9): the
+  // tag read where the union lies, as rustc reads an enum's discriminant, and
+  // compared with that member's position.
+  auto LowerTagMatches(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
   // A reference to what a capability wrapper holds: the address of the
   // storage the wrapper represents.
   auto LowerReferenceToContents(
@@ -529,28 +535,9 @@ class FunctionLowerer {
   // A method that changes the object it is applied to. The entry changes the
   // object where it lies, and answers with whatever result of its own the
   // method states -- a queue pop yields the element it removed (LRM 7.10.2.4).
-  // An object that is a view of its whole is read out, changed, and written
-  // back as a write to a view is.
   auto LowerMutatingCall(
       const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
       mir::TypeId type) -> diag::Result<lir::Operand>;
-  // Reading what a target holds, changing it, and putting the result back,
-  // reaching the target exactly once. Which kind of storage the target names --
-  // a part of a value aggregate, or storage the chain reaches -- is answered
-  // here and nowhere else, so no site that changes what a target holds reaches
-  // one twice, once to read and once to write. `change` is handed a way to read
-  // the old value and the type it has, and answers with what to put back; one
-  // that never reads emits no read at all, which is how a plain write reaches
-  // this. A read may be a call, which can depart like any other. What this
-  // yields is the write, whose type is void; a caller in expression position
-  // states the value its own expression has, out of what it kept while `change`
-  // ran.
-  using ValueReader = std::function<diag::Result<lir::Operand>()>;
-  using ValueChange = std::function<diag::Result<lir::Operand>(
-      const ValueReader&, lir::TypeId)>;
-  auto UpdateTarget(
-      const mir::Block& block, mir::ExprId target, const ValueChange& change)
-      -> diag::Result<lir::Operand>;
   // A store of `value` through the reference to bits `reference` (LRM
   // 11.5.1): the `slice_mut` steps it was taken by, followed back to what the
   // first was taken on, and the bits written there.
@@ -563,28 +550,6 @@ class FunctionLowerer {
   auto LowerBitsParts(
       const mir::Block& block, std::span<const mir::CallExpr* const> steps)
       -> diag::Result<std::vector<lir::BitsPart>>;
-  // Whether a target reaches, somewhere along its chain, a part that is a view
-  // of its whole rather than storage of its own.
-  [[nodiscard]] auto ReachesViewedPart(
-      const mir::Block& block, mir::ExprId target) const -> bool;
-  // Whether `part` is itself such a part: a call answering a part of the value
-  // it is taken on, where a part that is storage of its own is the dereference
-  // of a reference into it.
-  [[nodiscard]] auto IsViewedPart(
-      const mir::Block& block, mir::ExprId part) const -> bool;
-  // Updating a part, other than bits, whose chain passes through a view: what
-  // the part is taken from is updated in turn, with the part changed inside
-  // it. Out of a view, the part is extracted and the whole rebuilt around it;
-  // out of a value a view reached, the value is held in a slot and the part
-  // written where it lies there, the step into it taken after the whole is
-  // read.
-  auto UpdateThroughView(
-      const mir::Block& block, mir::ExprId target, const ValueChange& change)
-      -> diag::Result<lir::Operand>;
-  // Which subvalue one reaching call names, in the vocabulary this layer's
-  // aggregate instructions take: a union's member, by its position.
-  static auto LowerValuePartSelector(const mir::CallExpr& call)
-      -> lir::AggregateSelector;
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;

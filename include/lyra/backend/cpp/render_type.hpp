@@ -7,6 +7,7 @@
 
 #include "lyra/backend/cpp/precedence.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -30,6 +31,11 @@ namespace lyra::backend::cpp {
 // `co_await Suspension{call(...)}`. The call returns whether it parked, and C++
 // can only suspend by awaiting something.
 [[nodiscard]] auto SuspensionCppType() -> std::string_view;
+
+// What reads a value out of storage another member of an untagged union may
+// have written, `lyra::value::ReadOverlaid(place)`: the value the bits there
+// stand for at the place's type (LRM 7.3.2).
+[[nodiscard]] auto OverlaidReadCppFunction() -> std::string_view;
 
 // A MIR type, written into the output as its C++ type. An enum is written as
 // its base type; there is no C++ enum. It holds a view of the unit, which
@@ -105,6 +111,16 @@ struct CppConstructorName {
 };
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor);
+
+// What builds a union of this type holding its member `member`, before the
+// member's value: `T::template Make<I>`, which places the member at the start
+// of the union's storage and every other byte zero.
+struct CppUnionMemberMaker {
+  CppType of;
+  base::ComponentIndex member;
+};
+
+void WriteOne(TargetText& out, const CppUnionMemberMaker& maker);
 
 // What takes ownership of the storage a `new` allocated, applied to the
 // pointer `new` yields: `std::unique_ptr<T>(new T(init))` for a uniquely

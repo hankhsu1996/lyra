@@ -128,8 +128,9 @@ another member's. A place's kind follows from its node and the kind of the place
 field step on a union gives no-address or overlaid and on anything else its operand's kind, a
 dereference gives ordinary -- so it is computed from the node rather than stored beside it, as rustc
 reads such facts off a place's projections. A reference the program holds ends only on ordinary
-storage; a borrow and the object a call is entered on take storage with none by reading it first and
-holding its value for the full-expression.
+storage. A borrow lasts only the full-expression, so it may end on storage with no address of its
+own; overlaid storage is read first, by a borrow and by the object a non-mutating call is entered
+on, and that value is held for the full-expression, so what they see holds what its type requires.
 
 ### D6. A read is a node
 
@@ -199,8 +200,9 @@ holds a value, as rustc's `Operand::Copy` and `Operand::Move` do.
   designation, go; the array read / write forms stay, answering references.
 - `IsPlaceExpression`, MIR-to-LIR's `NamesStorage`, `ReadsWhereItLies` and `StoragePartAccess` go:
   category is the node kind, and the kind of storage follows from the place's nodes.
-- MIR-to-LIR stops rebuilding a whole value to change a part of storage; extract and insert remain
-  for a part of a value that lies in no storage.
+- MIR-to-LIR stops rebuilding a whole value to change a part of storage, and a value whose part is
+  reached is held where it can be, so no update rebuilds a value around a part; an extract remains
+  only for an element of a sequence of handles.
 - The verifier gains a rule: an assignment's target is a place.
 - Bits are written through a reference type of their own over the bits' type, which no backend names
   as a type: it lives only as the receiver of `slice_mut` and of `set`, and each target realizes the

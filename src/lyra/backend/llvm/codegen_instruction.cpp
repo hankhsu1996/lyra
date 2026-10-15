@@ -130,6 +130,10 @@ auto CodeGenFunction::LowerRvalue(
             return LowerTuple(
                 tuple, result_type, EnsureDestination(destination));
           },
+          [&](const lir::UnionInstr& built) -> Lowered {
+            return LowerUnion(
+                built, result_type, EnsureDestination(destination));
+          },
           [&](const lir::ClosureInstr& built) -> Lowered {
             return LowerClosure(
                 built, result_type, EnsureDestination(destination));
@@ -137,14 +141,18 @@ auto CodeGenFunction::LowerRvalue(
           [&](const lir::ArrayInstr& array) -> Lowered {
             return LowerArray(array, destination);
           },
-          [&](const lir::AggregateExtractInstr& extract) -> Lowered {
-            return LowerAggregateExtract(
-                extract, EnsureDestination(destination));
+          [&](const lir::VectorGetInstr& get) -> Lowered {
+            return LowerVectorGet(get);
           },
-          [&](const lir::AggregateUpdateInstr& update) -> Lowered {
-            return LowerAggregateUpdate(update, EnsureDestination(destination));
+          [&](const lir::DiscriminantInstr& read) -> Lowered {
+            return LowerDiscriminant(read, result_type);
           },
           [&](const lir::LoadInstr& load) -> Lowered {
+            if (ReachesOverlaidStorage(load.place) &&
+                module_->Types().KeepsAboveWidthsClear(result_type)) {
+              return LowerOverlaidLoad(
+                  load, result_type, EnsureDestination(destination));
+            }
             return LowerLoad(load, result_type);
           },
           [&](const lir::AddrOfInstr& addr) -> Lowered {
@@ -273,7 +281,7 @@ auto CodeGenFunction::ContentsOf(
   }
   const std::array<llvm::Value*, 1> args{wrapper};
   return CallEntry(
-      RuntimeSymbol(domain, kind, support::BuiltinFn::kLoad),
+      RuntimeSymbol(domain, kind, support::BuiltinFn::kGet),
       module_->Types().Ptr(), Addresses(1), args);
 }
 
@@ -305,7 +313,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   const lir::TypeId stored = OperandType(store.value);
   // What a store is told is of the values its storage holds, which are of the
   // stored value's type.
-  const ToldTypes told_types{.acted_on = stored, .member = std::nullopt};
+  const std::optional<lir::TypeId> acted_on = stored;
   // The store `symbol` names, made on the storage `args` holds as `arranged`
   // says it crosses, with the stored value crossing after it as a store whose
   // realization is told `told` reads the operand that follows the storage it
@@ -315,7 +323,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
           std::vector<llvm::Value*> args,
           const support::OperandReadings& readings, const Told& told,
           llvm::Value* value) -> diag::Result<llvm::Value*> {
-    arranged.push_back(arranger_.ArgOf(readings, 1, stored, told, told_types));
+    arranged.push_back(arranger_.ArgOf(readings, 1, stored, told, acted_on));
     auto crossed = module_->BuildCallArg(arranged.back().mode, value, args);
     if (!crossed) {
       return std::unexpected(std::move(crossed.error()));
@@ -371,13 +379,13 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   }
   // The wrapper and then the value, each as the wrapper's store reads it.
   const support::OperandReadings readings =
-      support::RuntimeEntryOf(support::BuiltinFn::kStore).operands;
+      support::RuntimeEntryOf(support::BuiltinFn::kSet).operands;
   const Told told =
-      ToldOf(through.domain, through.kind, support::BuiltinFn::kStore);
+      ToldOf(through.domain, through.kind, support::BuiltinFn::kSet);
   const lir::TypeId wrapper_type =
       ReachedType(store.place, std::ssize(store.place.chain) - 1);
   std::vector<ArgAbi> arranged{
-      arranger_.ArgOf(readings, 0, wrapper_type, told, told_types)};
+      arranger_.ArgOf(readings, 0, wrapper_type, told, acted_on)};
   std::vector<llvm::Value*> wrapper_args;
   auto wrapper_crossed =
       module_->BuildCallArg(arranged.front().mode, *address, wrapper_args);
@@ -385,7 +393,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     return std::unexpected(std::move(wrapper_crossed.error()));
   }
   return stored_by(
-      RuntimeSymbol(through.domain, through.kind, support::BuiltinFn::kStore),
+      RuntimeSymbol(through.domain, through.kind, support::BuiltinFn::kSet),
       std::move(arranged), std::move(wrapper_args), readings, told, *value);
 }
 
@@ -431,7 +439,8 @@ auto CodeGenFunction::LowerUse(
 // opened through its own access, an element step into a fixed-size unpacked
 // array is arithmetic on where the array lies and into any other container
 // asks the value reached so far for the element it names, the way the access
-// needs it, and a component step lies at an offset in the product.
+// needs it, and a component step lies at an offset in the product, or at the
+// union's own start for a member of one.
 auto CodeGenFunction::ResolvePlaceAddress(
     const lir::Place& place, Access access) -> diag::Result<llvm::Value*> {
   auto step = place.chain.begin();
@@ -551,9 +560,9 @@ auto CodeGenFunction::ResolvePlaceAddress(
                   step.symbol, module_->Types().Ptr(), std::move(arranged),
                   args);
             },
-            // A component step is taken only over a product, and a product's
-            // type lays it out, so its component lies at an offset from it,
-            // whoever holds the product.
+            // A component step is taken over a product or a union, whose type
+            // lays it out, so its component lies at an offset from it -- every
+            // member of a union at none -- whoever holds it.
             [&](const lir::ComponentProjection& component)
                 -> diag::Result<llvm::Value*> {
               return ComponentAddress(reached, address, component.index.value);
@@ -762,10 +771,6 @@ auto CodeGenFunction::LowerAddrOf(
   }
   return BuildInto(
       RuntimeSymbol(RuntimeOp::kReferStorage), Addresses(1), {storage}, out);
-}
-
-auto CodeGenFunction::IsHandleSequence(lir::TypeId type) const -> bool {
-  return module_->Unit().types.Get(type).Is<lir::VectorType>();
 }
 
 auto CodeGenFunction::LowerBinary(
@@ -1872,123 +1877,173 @@ auto CodeGenFunction::SelectorArgs(
   return {};
 }
 
-auto CodeGenFunction::LowerAggregateExtract(
-    const lir::AggregateExtractInstr& extract, llvm::Value* out)
+// A sequence of handles belongs to no value domain, so which object a position
+// names is answered by the entry that knows the sequence rather than by a
+// value's own element read.
+auto CodeGenFunction::LowerVectorGet(const lir::VectorGetInstr& get)
     -> diag::Result<llvm::Value*> {
-  auto aggregate = LowerOperand(extract.aggregate);
-  if (!aggregate) {
-    return std::unexpected(std::move(aggregate.error()));
+  auto vector = LowerOperand(get.vector);
+  if (!vector) {
+    return std::unexpected(std::move(vector.error()));
   }
-  const lir::TypeId container = OperandType(extract.aggregate);
-  // A sequence of handles belongs to no value domain, so which object a
-  // coordinate names is answered by the entry that knows the sequence rather
-  // than by a value's own element read.
-  if (IsHandleSequence(container)) {
-    const auto* element = std::get_if<lir::ContainerElement>(&extract.selector);
-    if (element == nullptr || element->operands.size() != 1) {
-      throw InternalError(
-          "llvm codegen: a sequence of handles is reached by one coordinate, "
-          "which is what the step naming an element carries");
-    }
-    auto index = LowerOperand(element->operands.front());
-    if (!index) {
-      return std::unexpected(std::move(index.error()));
-    }
-    const std::array<llvm::Value*, 2> args{*aggregate, *index};
-    return CallEntry(
-        RuntimeSymbol(RuntimeOp::kSequenceElement), module_->Types().Ptr(),
-        {CallArranger::Direct(module_->Types().Ptr()),
-         CallArranger::Direct(
-             module_->Types().Map(OperandType(element->operands.front())))},
-        args);
+  auto index = LowerOperand(get.index);
+  if (!index) {
+    return std::unexpected(std::move(index.error()));
   }
-  auto domain = DomainOf(container);
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
-  }
-  // A member of an active-member value is named by its index alone, and the
-  // aggregate's own domain is what names the entry that answers.
-  const auto positional = [&](base::ComponentIndex index) -> llvm::Value* {
-    return BuildInto(
-        RuntimeSymbol(*domain, support::BuiltinFn::kComponent),
-        {CallArranger::Direct(module_->Types().Ptr()),
-         CallArranger::Direct(builder_.getInt64Ty())},
-        {*aggregate, builder_.getInt64(index.value)}, out);
-  };
-  return std::visit(
-      Overloaded{
-          [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            return positional(component.index);
-          },
-          [&](const lir::ContainerElement&) -> diag::Result<llvm::Value*> {
-            return Unsupported(
-                "llvm codegen: an element is projected by value only out of a "
-                "sequence of handles");
-          }},
-      extract.selector);
+  const std::array<llvm::Value*, 2> args{*vector, *index};
+  return CallEntry(
+      RuntimeSymbol(RuntimeOp::kSequenceElement), module_->Types().Ptr(),
+      {CallArranger::Direct(module_->Types().Ptr()),
+       CallArranger::Direct(module_->Types().Map(OperandType(get.index)))},
+      args);
 }
 
-auto CodeGenFunction::LowerAggregateUpdate(
-    const lir::AggregateUpdateInstr& update, llvm::Value* out)
+auto CodeGenFunction::LowerUnion(
+    const lir::UnionInstr& built, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  auto aggregate = LowerOperand(update.aggregate);
-  if (!aggregate) {
-    return std::unexpected(std::move(aggregate.error()));
+  const UnionLayout& layout = module_->Types().LayoutOfUnion(result_type);
+  auto value = LowerOperand(built.value);
+  if (!value) {
+    return std::unexpected(std::move(value.error()));
   }
-  auto replacement = LowerOperand(update.replacement);
-  if (!replacement) {
-    return std::unexpected(std::move(replacement.error()));
+  builder_.CreateMemSet(
+      out, builder_.getInt8(0), layout.storage.size,
+      llvm::Align(layout.storage.align));
+  auto copied = CopyValue(layout.members[built.member.value], *value, out);
+  if (!copied) {
+    return copied;
   }
-  const lir::TypeId container = OperandType(update.aggregate);
-  const lir::TypeId replacement_type = OperandType(update.replacement);
-  auto domain = DomainOf(container);
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
+  if (module_->Unit().types.Get(result_type).Is<lir::TaggedUnionType>()) {
+    const value::TagPlacement tag = module_->Types().TagOf(result_type);
+    builder_.CreateStore(
+        builder_.getIntN(8 * tag.bytes, built.member.value),
+        builder_.CreateConstInBoundsGEP1_64(
+            builder_.getInt8Ty(), out, tag.offset));
   }
-  // The aggregate with one part replaced, built in `out` by the entry `op`
-  // names in the aggregate's domain. That entry reads the aggregate, what
-  // names the part, and then what takes its place, which `args` holds all but
-  // the last of as `named_by` operands, crossing as `arranged` says.
-  const auto replaced =
-      [&](RuntimeOp op, const ToldTypes& told_types,
-          std::vector<ArgAbi> arranged, std::vector<llvm::Value*> args,
-          std::size_t named_by) -> diag::Result<llvm::Value*> {
-    arranged.push_back(arranger_.ArgOf(
-        OperandReadingsOf(op), 1 + named_by, replacement_type,
-        ToldOf(*domain, op), told_types));
-    auto crossed =
-        module_->BuildCallArg(arranged.back().mode, *replacement, args);
-    if (!crossed) {
-      return std::unexpected(std::move(crossed.error()));
+  return out;
+}
+
+auto CodeGenFunction::LowerDiscriminant(
+    const lir::DiscriminantInstr& read, lir::TypeId result_type)
+    -> diag::Result<llvm::Value*> {
+  const lir::TypeId tagged = lir::PlaceType(module_->Unit(), *fn_, read.place);
+  // The union is read where it lies, which a load of a value laid out by its
+  // type answers with.
+  auto address = LowerLoad(lir::LoadInstr{.place = read.place}, tagged);
+  if (!address) {
+    return std::unexpected(std::move(address.error()));
+  }
+  const value::TagPlacement placed = module_->Types().TagOf(tagged);
+  llvm::Value* const tag = builder_.CreateLoad(
+      builder_.getIntNTy(8 * placed.bytes),
+      builder_.CreateConstInBoundsGEP1_64(
+          builder_.getInt8Ty(), *address, placed.offset));
+  return builder_.CreateZExt(tag, module_->Types().Map(result_type));
+}
+
+auto CodeGenFunction::LowerOverlaidLoad(
+    const lir::LoadInstr& load, lir::TypeId result_type, llvm::Value* out)
+    -> diag::Result<llvm::Value*> {
+  auto address = LowerLoad(load, result_type);
+  if (!address) {
+    return std::unexpected(std::move(address.error()));
+  }
+  auto copied = CopyValue(result_type, *address, out);
+  if (!copied) {
+    return copied;
+  }
+  auto cleared = ClearAboveWidthsAt(result_type, out);
+  if (!cleared) {
+    return std::unexpected(std::move(cleared.error()));
+  }
+  return out;
+}
+
+auto CodeGenFunction::ClearAboveWidthsAt(lir::TypeId type, llvm::Value* at)
+    -> diag::Result<void> {
+  CodeGenTypes& types = module_->Types();
+  if (!types.KeepsAboveWidthsClear(type)) {
+    return {};
+  }
+  if (const std::optional<value::IntegralShape> shape =
+          types.IntegralShapeOf(type)) {
+    ClearIntegralAboveWidth(at, *shape);
+    return {};
+  }
+  const lir::Type& stated = module_->Unit().types.Get(type);
+  if (stated.Is<lir::UnpackedArrayType>()) {
+    const ArrayLayout& layout = types.LayoutOfArray(type);
+    llvm::Function* const fn = builder_.GetInsertBlock()->getParent();
+    llvm::LLVMContext& context = builder_.getContext();
+    llvm::BasicBlock* const before = builder_.GetInsertBlock();
+    llvm::BasicBlock* const each =
+        llvm::BasicBlock::Create(context, "clear_element", fn);
+    llvm::BasicBlock* const done =
+        llvm::BasicBlock::Create(context, "elements_cleared", fn);
+    builder_.CreateBr(each);
+    builder_.SetInsertPoint(each);
+    llvm::PHINode* const position =
+        builder_.CreatePHI(builder_.getInt64Ty(), 2);
+    position->addIncoming(builder_.getInt64(0), before);
+    auto element = ClearAboveWidthsAt(
+        layout.element,
+        builder_.CreateInBoundsGEP(
+            builder_.getInt8Ty(), at,
+            builder_.CreateMul(position, builder_.getInt64(layout.stride))));
+    if (!element) {
+      return element;
     }
-    return BuildInto(
-        RuntimeSymbol(*domain, op), std::move(arranged), std::move(args), out);
-  };
-  return std::visit(
-      Overloaded{
-          // A member is replaced by naming its index and the value that takes
-          // its place. Whether the write then makes the member live or faults
-          // a mismatched tag follows from the domain the entry is named in.
-          [&](const lir::Component& component) -> diag::Result<llvm::Value*> {
-            return replaced(
-                RuntimeOp::kWithComponent,
-                ToldTypes{
-                    .acted_on = std::nullopt,
-                    .member = UnionMemberType(
-                        module_->Unit(), container, component.index.value)},
-                {CallArranger::Direct(module_->Types().Ptr()),
-                 CallArranger::Direct(builder_.getInt64Ty())},
-                {*aggregate, builder_.getInt64(component.index.value)}, 1);
-          },
-          // Only a sequence of handles could be rebuilt around one element,
-          // and nothing asks for that: an element of an array is written where
-          // it lies.
-          [&](const lir::ContainerElement&) -> diag::Result<llvm::Value*> {
-            return Unsupported(
-                "llvm codegen: an array rebuilt around one element replaced is "
-                "not yet supported");
-          }},
-      update.selector);
+    llvm::Value* const next =
+        builder_.CreateAdd(position, builder_.getInt64(1));
+    position->addIncoming(next, builder_.GetInsertBlock());
+    builder_.CreateCondBr(
+        builder_.CreateICmpULT(next, builder_.getInt64(layout.count)), each,
+        done);
+    builder_.SetInsertPoint(done);
+    return {};
+  }
+  // Which member a tagged union holds is its tag's to say while the program
+  // runs, so the library clears the member that tag names.
+  if (stated.Is<lir::TaggedUnionType>()) {
+    auto described = module_->ValueTypeOf(type);
+    if (!described) {
+      return std::unexpected(std::move(described.error()));
+    }
+    const std::array<llvm::Value*, 2> args{*described, at};
+    CallEntry(
+        RuntimeSymbol(RuntimeOp::kClearAboveWidths), types.Void(),
+        {CallArranger::Direct(types.Ptr()), CallArranger::Direct(types.Ptr())},
+        args);
+    return {};
+  }
+  const std::optional<std::span<const lir::TypeId>> components =
+      lir::ProductElements(module_->Unit(), type);
+  if (!components.has_value()) {
+    throw InternalError(
+        "llvm codegen: positions above a width are kept clear only in an "
+        "integral, an array, a product or a tagged union -- please report "
+        "this as a bug");
+  }
+  for (std::size_t i = 0; i < components->size(); ++i) {
+    auto component =
+        ClearAboveWidthsAt((*components)[i], ComponentAddress(type, at, i));
+    if (!component) {
+      return component;
+    }
+  }
+  return {};
+}
+
+auto CodeGenFunction::ReachesOverlaidStorage(const lir::Place& place) const
+    -> bool {
+  for (std::ptrdiff_t i = 0; i < std::ssize(place.chain); ++i) {
+    if (std::holds_alternative<lir::ComponentProjection>(
+            place.chain[static_cast<std::size_t>(i)]) &&
+        module_->Unit().types.Get(ReachedType(place, i)).Is<lir::UnionType>()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 auto CodeGenFunction::LowerOperand(const lir::Operand& operand)

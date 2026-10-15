@@ -33,6 +33,10 @@ auto SuspensionCppType() -> std::string_view {
   return "lyra::runtime::Suspension";
 }
 
+auto OverlaidReadCppFunction() -> std::string_view {
+  return "lyra::value::ReadOverlaid";
+}
+
 namespace {
 
 auto RuntimeClassCppType(support::RuntimeClass klass) -> std::string_view {
@@ -619,6 +623,10 @@ void WriteNull(
           },
           [&](NullAsNullAddress) { out += "nullptr"; }},
       spelling);
+}
+
+void WriteOne(TargetText& out, const CppUnionMemberMaker& maker) {
+  Write(out, maker.of, "::template Make<", maker.member.value, ">");
 }
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor) {

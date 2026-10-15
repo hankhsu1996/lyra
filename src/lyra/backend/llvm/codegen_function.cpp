@@ -295,10 +295,16 @@ auto CodeGenFunction::RelocateValue(
 }
 
 auto CodeGenFunction::ComponentAddress(
-    lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value* {
+    lir::TypeId aggregate, llvm::Value* value, std::size_t index)
+    -> llvm::Value* {
+  // Every member of a union lies at its start (LRM 7.3), as C reaches one by
+  // retyping the union's own address.
+  if (module_->Unit().types.Get(aggregate).UnionMembers().has_value()) {
+    return value;
+  }
   return builder_.CreateConstInBoundsGEP1_64(
       builder_.getInt8Ty(), value,
-      module_->Types().LayoutOfTuple(tuple).offsets.at(index));
+      module_->Types().LayoutOfTuple(aggregate).offsets.at(index));
 }
 
 auto CodeGenFunction::Variables() -> diag::Result<const RecordLayout*> {

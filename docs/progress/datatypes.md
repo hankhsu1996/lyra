@@ -13,27 +13,27 @@ arrays, the integral-family declaration initializers, parameter references in ex
 including its methods wherever they may be written are complete. The variable-size aggregate family
 (dynamic array, queue, associative array) is complete as a value surface; what an element reference
 into one has to survive is not, and is recorded with the conformance gaps below. Unpacked struct and
-union, tagged and untagged, are complete, with one gap on the C++ backend: a union declaring more
-than 256 members, tagged or not, emits a project that does not compile, because what holds its one
-live member is stated over all of them at once and the host compiler bounds how long such a
-statement may be. A structure of that many members had the same gap and no longer does; the
-execution backend runs both. An untagged union whose member holds a string, a class handle or an
-event, however deep in arrays, structures and unions, is refused as unsupported: the standard admits
-one only in a tagged union (LRM 7.3), and the front end, which refuses the other kinds, lets these
-three through. Default initialization (LRM Table 6-7) and value representation, including a wide
-value carrying X/Z across the 64-bit word boundary, are complete. Chandle is complete. Bit-stream
-casting is complete between fixed-size types; the dynamically sized form is the one gap, recorded
-below. Dynamic casting is complete for every operand family, in both of its spellings.
+union, tagged and untagged, are complete, of any member count, including a read of an untagged union
+through a member other than the one last written, and every whole-value use of one reading its first
+member (LRM 7.3, 11.4.14.1, 21.2.1.6). An untagged union whose member holds a string, a class handle
+or an event, however deep in arrays, structures and unions, is refused as unsupported: the standard
+admits one only in a tagged union (LRM 7.3), and the front end, which refuses the other kinds, lets
+these three through. Default initialization (LRM Table 6-7) and value representation, including a
+wide value carrying X/Z across the 64-bit word boundary, are complete. Chandle is complete.
+Bit-stream casting is complete between fixed-size types; the dynamically sized form is the one gap,
+recorded below. Dynamic casting is complete for every operand family, in both of its spellings.
 
 ## Tagged union
 
 LRM 7.3.2: a tagged union carries a tag naming the active member, and every read and write of a
-member checks it -- a write where it lands, a nonblocking assignment when its update is applied and
-an output argument when it is copied back. Construction (`tagged Member value`, or the bare
-`tagged Member` of a void member), member read and write including nested and compound writes,
-whole-value copy, equality, and Table 6-7 default initialization are complete for the unpacked form,
-as is pattern matching over one (LRM 12.6). The packed form, whose bit layout the LRM fixes, is
-tracked as `packed.md` P4.
+member checks it -- a read together with the whole of what it selects below the member, so nothing
+else the expression evaluates comes between the two, a write where it lands, a nonblocking
+assignment when its update is applied and an output argument when it is copied back. A member of a
+dynamic type, a string among them, is copied, replaced and ended by the tag. Construction
+(`tagged Member value`, or the bare `tagged Member` of a void member), member read and write
+including nested and compound writes, whole-value copy, equality, and Table 6-7 default
+initialization are complete for the unpacked form, as is pattern matching over one (LRM 12.6). The
+packed form, whose bit layout the LRM fixes, is tracked as `packed.md` P4.
 
 ## Enum
 
@@ -111,9 +111,8 @@ total width convert into each other without either naming the other's members.
         LRM 6.24.3's greedy rule for a dynamically sized destination. It waits on the same thing the
         streaming operator's dynamic form does -- a type naming bits whose number the program fixes
         -- and on nothing of its own, so the two close together.
-  - [ ] A cast whose operand or casting type is a union, or a class. Both wait on the value layer
-        carrying a bit stream for those at all, which is also what `$bits` of one waits on; neither
-        is specific to casting.
+  - [x] A cast whose operand or casting type is a union, or a class, is refused by the front end:
+        LRM 6.24.3 makes neither a bit-stream type.
 
 ## Dynamic casting
 

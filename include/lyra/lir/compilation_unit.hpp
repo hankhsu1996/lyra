@@ -388,4 +388,16 @@ struct CompilationUnit {
   return std::nullopt;
 }
 
+// The parts a component step reaches in a value of `type`, by position: a
+// product's components, or a union's members; nothing for any other type.
+[[nodiscard]] inline auto ComponentTypes(
+    const CompilationUnit& unit, TypeId type)
+    -> std::optional<std::span<const TypeId>> {
+  if (const std::optional<std::span<const TypeId>> components =
+          ProductElements(unit, type)) {
+    return components;
+  }
+  return unit.types.Get(type).UnionMembers();
+}
+
 }  // namespace lyra::lir
