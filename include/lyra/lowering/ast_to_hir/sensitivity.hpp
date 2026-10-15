@@ -39,23 +39,16 @@ enum class PartAddressing : std::uint8_t { kBits, kSelects, kWholeOnly };
 // what an access is taken for where the part it reached cannot be stated.
 struct WholePart {};
 
-// The bits the source's own selects name: the longest static prefixes (LRM
-// 11.5.3) of the symbol in the analyzed node, which together make up exactly
-// the bits the analysis reported. Where an index in one is a value each
-// construction of the body is given, the prefix still says which bits the next
-// construction reaches, and the bits one elaboration settled do not.
+// The parts the source's own selects name: the longest static prefixes (LRM
+// 11.5.3) of the symbol in the analyzed node, as the source wrote them. Where
+// an index in one is a value each construction of the body is given, the
+// prefix says which part each construction reaches, and where it lands is
+// answered where the prefix is evaluated.
 struct SelectedParts {
   std::vector<const slang::ast::Expression*> prefixes;
 };
 
-// Bits of a packed vector, first and last bit, that no select in the analyzed
-// node names.
-struct UnselectedBits {
-  std::uint64_t first = 0;
-  std::uint64_t last = 0;
-};
-
-using StatedPart = std::variant<WholePart, SelectedParts, UnselectedBits>;
+using StatedPart = std::variant<WholePart, SelectedParts>;
 
 // One part of a declaration a text reads or writes: which symbol, which part
 // of it, and the names the analyzed text reaches it by.
@@ -94,13 +87,12 @@ struct NodeAccesses {
 // a parameter or a generate index happens to settle rules none out, so every
 // construction of one body reads alike and wakes on what the standard lists.
 //
-// `containing_symbol` is a slang plumbing requirement: slang's flow analysis
-// builds a name-lookup `EvalContext` from `symbol.getParentScope()`, so the
-// analyzer needs any symbol whose parent scope covers the analyzed node.
-// The choice of symbol does not change the returned read set; pass whatever
-// symbol the caller already has on hand to wrap the node (a `ProceduralBlock`
-// for waits inside a procedure, a `ContinuousAssignSymbol` for an `assign`
-// rhs, and so on).
+// `containing_symbol` gives the scope a selector is evaluated in to tell
+// whether it is a constant expression, so any symbol whose parent scope covers
+// the analyzed node serves. The choice does not change the returned read set;
+// pass whatever symbol the caller already has on hand to wrap the node (a
+// `ProceduralBlock` for waits inside a procedure, a `ContinuousAssignSymbol`
+// for an `assign` rhs, and so on).
 //
 // Results are cached, so repeated queries on the same AST pointer are free.
 class SensitivityAnalyzer {

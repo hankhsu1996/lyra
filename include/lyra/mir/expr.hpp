@@ -13,6 +13,7 @@
 #include "lyra/mir/behavior_ordinal.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_id.hpp"
+#include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable_id.hpp"
 #include "lyra/mir/class_constant_id.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -22,7 +23,6 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
 #include "lyra/mir/local_ref.hpp"
-#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/static_property_id.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
@@ -220,16 +220,18 @@ struct ExternalUnitCallableTarget {
   auto operator==(const ExternalUnitCallableTarget&) const -> bool = default;
 };
 
-// Identity of a body of another unit that answers to no name -- bringing that
-// unit's namespace up, or making one of its objects. The source declares none
-// of them, so none can be named (LRM 5.6.1); the two ends agree on which is
-// meant by which of them it is, so this is its own identity space rather than a
-// name in the unit's.
-struct ExternalUnitMintedEntryTarget {
+// Identity of a body another unit's namespace publishes for bringing its cells
+// up. The source declares neither of them, so neither can be named (LRM
+// 5.6.1); the two ends agree on which is meant by which of them it is, so this
+// is its own identity space rather than a name in the unit's. Making one of a
+// unit's objects is never called this way: which body is made at an
+// instantiation is decided where the program is assembled, so a construction
+// reads the entry off the table it was handed.
+struct ExternalBringUpTarget {
   std::string unit_name;
-  MintedEntry entry;
+  BringUpEntry entry;
 
-  auto operator==(const ExternalUnitMintedEntryTarget&) const -> bool = default;
+  auto operator==(const ExternalBringUpTarget&) const -> bool = default;
 };
 
 // Identity of a method another compilation unit declares on a class -- an
@@ -310,8 +312,8 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 // (`BuiltinFn`), another compilation unit's namespace
 // (`ExternalUnitCallableTarget`) or one of its classes
 // (`ExternalUnitClassMethodTarget`), a declared struct's methods
-// (`StructMethodTarget`), the bodies of another unit that answer to no name
-// (`ExternalUnitMintedEntryTarget`), and the DPI-C name space
+// (`StructMethodTarget`), the bodies another unit's namespace is brought up
+// through (`ExternalBringUpTarget`), and the DPI-C name space
 // (`ForeignSymbolTarget`, LRM 35.4). Inside this unit a body is named by its
 // position and outside it by what the namespace published, so the two
 // namespace alternatives are total and do not overlap. Nothing here says
@@ -320,7 +322,7 @@ using CallPart = std::variant<base::ComponentIndex, ClassFieldTarget>;
 using DirectTarget = std::variant<
     CallableTarget, UnitCallableTarget, support::BuiltinFn,
     ExternalUnitCallableTarget, ExternalUnitClassMethodTarget,
-    StructMethodTarget, ExternalUnitMintedEntryTarget, ForeignSymbolTarget>;
+    StructMethodTarget, ExternalBringUpTarget, ForeignSymbolTarget>;
 
 // A direct call whose callee is settled at compile time. The single shape for
 // every direct invocation: a user method, a built-in, a subroutine of this
@@ -624,6 +626,17 @@ struct FunctionRef {
   CallableTarget body;
 };
 
+// The entry that makes an object of one body of another unit, named as the
+// code it is, as `FunctionRef` names a body of this unit. The source declares
+// no such entry, so it is named by the body it makes and the unit that body
+// realizes, and every target spells it from both. `Expr::type` is the machine
+// function type the unit published the entry with, not the prototype-erased
+// type a construction table holds it at, which is a conversion of this.
+struct ExternalObjectEntryRef {
+  std::string unit_name;
+  std::string body_name;
+};
+
 // Which declared thing a reference names. The alternatives differ in the table
 // that resolves the name -- a body's own bindings, a class's arena, another
 // unit's signature, the constants this unit holds -- and that is the
@@ -632,7 +645,8 @@ struct FunctionRef {
 using ReferenceTarget = std::variant<
     LocalRef, DefinitionRef, EnumTableRef, IntegralConstantRef,
     StaticPropertyRef, StaticVariableRef, ExternalUnitVariableRef,
-    ExternalStaticPropertyRef, ClassConstantRef, FunctionRef>;
+    ExternalStaticPropertyRef, ClassConstantRef, FunctionRef,
+    ExternalObjectEntryRef>;
 
 // Names a declared thing. Reading it loads what the name reaches, assigning to
 // it stores there, and taking its address yields a pointer to it -- one node

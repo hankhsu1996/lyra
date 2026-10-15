@@ -101,9 +101,9 @@ void WriteMemberSignatureTail(
 template <typename Owner, typename Member>
 void RenderMemberFunctionDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    const Owner& owner, const Member& member, const mir::CallableCode& code,
-    TargetText& out) {
-  Write(out, "auto ", owner, "::", member);
+    std::string_view specifiers, const Owner& owner, const Member& member,
+    const mir::CallableCode& code, TargetText& out) {
+  Write(out, specifiers, "auto ", owner, "::", member);
   WriteMemberSignatureTail(unit, code, out);
   out += " ";
   WriteBody(out, [&] {
@@ -188,11 +188,11 @@ void RenderClassCallableDecl(
 // A class function's definition. A pure virtual has none.
 void RenderClassCallableDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    mir::ClassId cls_id, const mir::Class& s, mir::CallableId id,
-    const mir::CallableDecl& m, TargetText& out) {
+    std::string_view specifiers, mir::ClassId cls_id, const mir::Class& s,
+    mir::CallableId id, const mir::CallableDecl& m, TargetText& out) {
   if (!std::holds_alternative<mir::DefinedHere>(mir::FormOf(m))) return;
   RenderMemberFunctionDef(
-      unit, report, CppClassPath(unit, cls_id),
+      unit, report, specifiers, CppClassPath(unit, cls_id),
       CppClassCallableName(unit, s, id), m.code, out);
 }
 
@@ -208,7 +208,7 @@ void RenderClassCallableDef(
 void RenderConstructor(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
     mir::ClassId cls_id, const mir::Class& s, const mir::ConstructorDecl& ctor,
-    TargetText& signature, TargetText& code) {
+    std::string_view specifiers, TargetText& signature, TargetText& code) {
   const mir::CallableCode& ctor_code = ctor.code;
   if (!ctor_code.receiver.has_value()) {
     throw InternalError(
@@ -224,7 +224,7 @@ void RenderConstructor(
   WriteParameters(unit, ctor_code, formals, signature);
   signature += ");\n";
 
-  Write(code, CppClassPath(unit, cls_id), "::", cpp_name, "(");
+  Write(code, specifiers, CppClassPath(unit, cls_id), "::", cpp_name, "(");
   WriteParameters(unit, ctor_code, formals, code);
   code += ")";
   if (s.base.has_value()) {
@@ -248,7 +248,7 @@ void RenderConstructor(
 void RenderClassConstant(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
     mir::TypeId type, const CppName& name, const mir::ValueBuild& build,
-    TargetText& announced, TargetText& defined) {
+    VariableForm defined_as, TargetText& announced, TargetText& defined) {
   WriteDeclaration(
       announced, VariableDeclaration{
                      .form = VariableForm::kStaticDataMemberDeclaration,
@@ -259,7 +259,7 @@ void RenderClassConstant(
   WriteDeclaration(
       defined,
       VariableDeclaration{
-          .form = VariableForm::kStaticDataMemberDefinition,
+          .form = defined_as,
           .constness = Constness::kConst,
           .type = CppType(unit, type),
           .name = name,
@@ -342,6 +342,17 @@ void AppendClassInDependencyOrder(
   const std::span<const mir::ClassId> declares_inside =
       nesting.declares_inside[id.value];
   const TargetText::Section defined(text.definitions);
+  // A class every body states alike is what a scope published, defined beside
+  // its declaration, since a referrer reads its definition too.
+  if (mir::IsStatedByEveryBody(unit, id)) {
+    PublishedClass published{.id = id, .text = TargetText{}};
+    TargetText definitions;
+    RenderClass(
+        unit, report, id, cls, declares_inside, published.text, definitions);
+    AppendSection(published.text, definitions);
+    text.published.push_back(std::move(published));
+    return;
+  }
   if (mir::IsPublished(unit, id)) {
     PublishedClass published{.id = id, .text = TargetText{}};
     RenderClass(
@@ -359,6 +370,10 @@ void RenderClass(
     const mir::CompilationUnit& unit, UnitRenderReport& report, mir::ClassId id,
     const mir::Class& s, std::span<const mir::ClassId> declares_inside,
     TargetText& signature, TargetText& code) {
+  // A class every body states is defined in its header, so each definition of
+  // it is inline, where every one of them is kept as one.
+  const bool stated_by_every_body = mir::IsStatedByEveryBody(unit, id);
+  const std::string_view specifiers = stated_by_every_body ? "inline " : "";
   TargetText& out = signature;
   Write(out, "class ", CppClassPath(unit, id));
   if (s.is_final) {
@@ -405,14 +420,16 @@ void RenderClass(
   if (s.constructor.has_value()) {
     const TargetText::Section declared(out);
     const TargetText::Section defined(code);
-    RenderConstructor(unit, report, id, s, *s.constructor, out, code);
+    RenderConstructor(
+        unit, report, id, s, *s.constructor, specifiers, out, code);
   }
 
   // The destructor is virtual, because whoever ends a value holds it as the
-  // class every value extends, or as an interface class. It is defined in the
-  // code file so it is the class's key function, and the class's table and
-  // type description are emitted there once rather than in every file that
-  // casts to it.
+  // class every value extends, or as an interface class. Defined out of line
+  // and not inline, it is the class's key function, and the class's table and
+  // type description are emitted with it once rather than in every file that
+  // casts to it; defined inline, they are emitted wherever it is, and kept as
+  // one.
   {
     const TargetText::Section ended(out);
     out.OpenLine();
@@ -424,7 +441,7 @@ void RenderClass(
     const TargetText::Section defined(code);
     code.OpenLine();
     Write(
-        code, CppClassPath(unit, id), "::~", CppClassName(unit, id),
+        code, specifiers, CppClassPath(unit, id), "::~", CppClassName(unit, id),
         "() = default;\n");
   }
 
@@ -447,7 +464,8 @@ void RenderClass(
       const mir::CallableDecl& callable = s.callables.Get(callable_id);
       RenderClassCallableDecl(unit, s, callable_id, callable, out);
       const TargetText::Section defined(code);
-      RenderClassCallableDef(unit, report, id, s, callable_id, callable, code);
+      RenderClassCallableDef(
+          unit, report, specifiers, id, s, callable_id, callable, code);
     }
   }
 
@@ -456,15 +474,19 @@ void RenderClass(
   {
     const TargetText::Section constants(out);
     const TargetText::Section defined(code);
+    const VariableForm defined_as =
+        stated_by_every_body ? VariableForm::kInlineStaticDataMemberDefinition
+                             : VariableForm::kStaticDataMemberDefinition;
     for (const mir::ClassConstantId constant : s.constants.Ids()) {
       const mir::ClassConstantDecl& decl = s.constants.Get(constant);
       RenderClassConstant(
           unit, report, id, decl.type, CppClassConstantName(constant),
-          decl.initializer, out, code);
+          decl.initializer, defined_as, out, code);
     }
     RenderClassConstant(
         unit, report, id, mir::ClassDefinitionType(unit.types),
-        CppDefinitionName(), s.object_definition_initializer, out, code);
+        CppDefinitionName(), s.object_definition_initializer, defined_as, out,
+        code);
   }
 
   out.Outdent();
@@ -481,7 +503,10 @@ auto RenderFreeCallableLinkage(const mir::NamespaceReach& reach)
             return R"(extern "C" )";
           },
           [](const mir::ReachedByName&) -> std::string_view { return ""; },
-          [](const mir::ReachedByMintedEntry&) -> std::string_view {
+          [](const mir::ReachedByBringUpEntry&) -> std::string_view {
+            return "";
+          },
+          [](const mir::ReachedAsObjectEntry&) -> std::string_view {
             return "";
           },
           [](const mir::ReachedByPosition&) -> std::string_view { return ""; }},
@@ -531,6 +556,11 @@ void RenderStruct(
     mir::StructId id, TargetText& declared, TargetText& defined) {
   const mir::StructDecl& decl = unit.GetStruct(id);
   const CppName name = CppStructName(decl);
+  // Every body's code file defines the methods, and another unit calls them
+  // with only the declaration in hand. So each definition is weak, and the
+  // link keeps one: an `inline` one would be emitted only by a file that calls
+  // it, which none of these need to.
+  const std::string_view specifiers = "[[gnu::weak]] ";
   const CppTupleComponents components{.unit = &unit, .of = decl.elements};
   const MintedWord base = CppTupleBaseName();
   Write(declared, "struct ", name, " : ", components, " {\n");
@@ -552,7 +582,8 @@ void RenderStruct(
     Write(declared, StaticPrefix(method.code), "auto ", member);
     WriteMemberSignatureTail(unit, method.code, declared);
     declared += ";\n";
-    RenderMemberFunctionDef(unit, report, name, member, method.code, defined);
+    RenderMemberFunctionDef(
+        unit, report, specifiers, name, member, method.code, defined);
   }
   declared.Outdent();
   declared += "};\n";
@@ -662,18 +693,37 @@ auto RenderUnitClosures(
 // namespace, and inside it an export's entry point can name the unit's classes
 // the way every other body does.
 auto RenderUnitCallables(
-    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitText {
-  UnitText text;
+    const mir::CompilationUnit& unit, UnitRenderReport& report)
+    -> UnitCallables {
+  UnitCallables text;
   // All are declared before any class, because a class's body may call one,
   // and defined after the classes, because an export's entry point uses them.
   // An import has no body here; the user's C code defines it.
   for (const mir::CallableId id : unit.callables.Ids()) {
     const mir::CallableDecl& callable = unit.callables.Get(id);
-    RenderFreeCallableSignature(unit, id, callable, text.signature);
-    text.signature += ";\n";
+    UnitText& out = std::visit(
+        Overloaded{
+            [&](const mir::ReachedByLinkageName&) -> UnitText& {
+              return text.of_unit;
+            },
+            [&](const mir::ReachedByName&) -> UnitText& {
+              return text.of_unit;
+            },
+            [&](const mir::ReachedByBringUpEntry&) -> UnitText& {
+              return text.of_unit;
+            },
+            [&](const mir::ReachedAsObjectEntry&) -> UnitText& {
+              return text.of_body;
+            },
+            [&](const mir::ReachedByPosition&) -> UnitText& {
+              return text.of_artifact;
+            }},
+        mir::NamespaceReachOf(unit, id));
+    RenderFreeCallableSignature(unit, id, callable, out.signature);
+    out.signature += ";\n";
     if (std::holds_alternative<mir::DefinedHere>(mir::FormOf(callable))) {
-      const TargetText::Section defined(text.code);
-      RenderFreeCallable(unit, report, id, callable, text.code);
+      const TargetText::Section defined(out.code);
+      RenderFreeCallable(unit, report, id, callable, out.code);
     }
   }
   return text;

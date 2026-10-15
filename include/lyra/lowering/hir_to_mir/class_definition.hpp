@@ -1,15 +1,19 @@
 #pragma once
 
+#include <functional>
+#include <map>
 #include <span>
+#include <string>
 
+#include "lyra/hir/unit_body_ref.hpp"
+#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
-#include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -36,5 +40,19 @@ void StateNamedClassDefinition(
 void StateScopeDefinition(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
     std::span<const mir::NamedCallable> exports);
+
+// States, as constants of class `id` of the design's root unit, the
+// construction table of every body `instantiations` names that an object is
+// made of below `own` -- the bodies the root makes at its own instantiations,
+// in its table's order -- and that of the root itself, which it answers with.
+// Each body's table is stated once however many instantiations make it, and an
+// entry holds that body's object entry, at the type `entry_types` gives its
+// unit's entry, with its prototype erased.
+auto StateConstructionTables(
+    mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
+    std::span<const hir::UnitBodyRef> own,
+    const DesignInstantiations& instantiations,
+    const std::map<std::string, mir::TypeId, std::less<>>& entry_types)
+    -> mir::ClassConstantRef;
 
 }  // namespace lyra::lowering::hir_to_mir

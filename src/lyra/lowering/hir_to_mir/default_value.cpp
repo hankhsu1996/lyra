@@ -390,6 +390,9 @@ auto BuildDefaultValueExpr(
           [&](const mir::EvaluationAttemptsType&) -> mir::Expr {
             return holds_no_declared_value("an assertion's attempts");
           },
+          [&](const mir::LoopBlocksType&) -> mir::Expr {
+            return holds_no_declared_value("the blocks a loop built");
+          },
           [&](const mir::RuntimeEffectsType&) -> mir::Expr {
             return holds_no_declared_value("the effects a body runs under");
           },

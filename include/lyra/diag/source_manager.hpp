@@ -43,4 +43,11 @@ class SourceManager {
       bool use_color) const -> std::string = 0;
 };
 
+// The place a running design's report names for `span`, as
+// "basename:line:col": a report names its source file and not the file's
+// absolute path, as the examples of LRM 20.10 do. Empty where the span is no
+// place.
+[[nodiscard]] auto RuntimeOriginOf(
+    SourceSpan span, const SourceManager& sources) -> std::string;
+
 }  // namespace lyra::diag

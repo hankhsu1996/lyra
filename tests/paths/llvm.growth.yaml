@@ -11,21 +11,6 @@
 # the machine as well, so one listed is owed even on a run that stayed under the
 # bound, and only the change fixing that cost takes its line out.
 instance_array: [bytes]
-loop_holding_a_sized_block:
-  - bytes
-  - lir.classes
-  - lir.constants
-  - lir.functions
-  - lir.integral constants
-  - lir.members
-  - lir.types
-  - mir.callables
-  - mir.class constants
-  - mir.classes
-  - mir.constructors
-  - mir.fields
-  - mir.integral constants
-  - mir.types
 loop_of_children_sized_by_index:
   - lir.classes
   - lir.constants
@@ -40,7 +25,6 @@ loop_of_clocked_procedures_sized_by_index:
   - lir.closures
   - lir.constants
   - lir.functions
-  - lir.integral constants
   - lir.members
   - lir.types
   - mir.callables
@@ -50,18 +34,12 @@ loop_of_clocked_procedures_sized_by_index:
   - mir.closures
   - mir.constructors
   - mir.fields
-  - mir.integral constants
   - mir.types
-loop_of_instances: [bodies lowered]
-loop_of_instances_built_by_parameter: [bodies lowered]
-loop_of_instances_reading_their_block: [bodies lowered]
-loop_of_instances_reading_upward: [bodies lowered]
 loop_reaching_its_neighbour:
   - bytes
   - lir.classes
   - lir.constants
   - lir.functions
-  - lir.integral constants
   - lir.members
   - lir.types
   - mir.callables
@@ -69,35 +47,15 @@ loop_reaching_its_neighbour:
   - mir.classes
   - mir.constructors
   - mir.fields
-  - mir.integral constants
   - mir.types
   - time lower units
-loop_sized_from_a_table:
-  - bytes
-  - lir.classes
-  - lir.constants
-  - lir.functions
-  - lir.integral constants
-  - lir.members
-  - lir.types
-  - mir.callables
-  - mir.class constants
-  - mir.classes
-  - mir.constructors
-  - mir.fields
-  - mir.integral constants
-  - mir.types
 loop_sizing_by_index:
   - lir.classes
   - lir.constants
   - lir.functions
-  - lir.integral constants
-  - lir.members
   - lir.types
   - mir.callables
   - mir.class constants
   - mir.classes
   - mir.constructors
-  - mir.fields
-  - mir.integral constants
   - mir.types

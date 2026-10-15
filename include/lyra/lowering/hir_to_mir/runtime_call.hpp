@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 
-#include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -19,13 +18,6 @@ struct Block;
 }  // namespace lyra::mir
 
 namespace lyra::lowering::hir_to_mir {
-
-// Formats `span` as "basename:line:col" for the runtime diagnostic origin tag.
-// A diagnostic names its source file and not the file's absolute path, as the
-// examples of LRM 20.10 do, so the runtime origin uses the basename. Empty when
-// the span is no place.
-[[nodiscard]] auto FormatRuntimeOriginString(
-    diag::SourceSpan span, const diag::SourceManager& mgr) -> std::string;
 
 // Builds the engine-handle expression `lyra::runtime::current_runtime()`:
 // a zero-argument free-function call the owning Engine backs with a per-

@@ -294,11 +294,12 @@ void WriteDirectCallee(
                 CppStructRef(t.declaration.unit_name, t.declaration.path),
                 "::", CppStructMethodName(t.answers));
           },
-          // One of another unit's fixed entries: `::Pkg::sv_create`.
-          [&](const mir::ExternalUnitMintedEntryTarget& t) {
+          // One of another unit's bring-up entries:
+          // `::Pkg::sv_initialize_namespace_storage`.
+          [&](const mir::ExternalBringUpTarget& t) {
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName, CppUnitScope(t.unit_name),
-                "::", CppMintedEntryName(t.entry));
+                "::", CppBringUpEntryName(t.entry));
           },
           // A DPI-C symbol is program-global, so it is spelled unqualified
           // (LRM 35.4); the prototype it resolves against is declared once in

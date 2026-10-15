@@ -69,6 +69,27 @@ namespace lyra::lowering::ast_to_hir {
   return alternatives;
 }
 
+// The construct `written` stands for in `elaboration`, another elaboration of
+// the text holding it: the generate the source wrote at the same place, which
+// the front end numbers alike in every elaboration of that text. For a
+// conditional that is the first block of the construct, as it is in the
+// elaboration being walked.
+template <typename Construct>
+[[nodiscard]] auto CounterpartIn(
+    const slang::ast::Scope& elaboration, const Construct& written)
+    -> const Construct& {
+  for (const auto& member : elaboration.members()) {
+    const auto* counterpart = member.as_if<Construct>();
+    if (counterpart != nullptr &&
+        counterpart->constructIndex == written.constructIndex) {
+      return *counterpart;
+    }
+  }
+  throw InternalError(
+      "CounterpartIn: every elaboration of one text holds every generate "
+      "construct the text wrote");
+}
+
 // The value a loop's index stood at for `block`, one of the blocks the loop
 // counted out, which is how a name selects it (LRM 27.4). A genvar holds an
 // integer (LRM 27.4), so the value always fits.
@@ -126,7 +147,22 @@ namespace lyra::lowering::ast_to_hir {
     return std::string{
         array == nullptr ? std::string_view{} : array->asSymbol().name};
   }
-  return std::string{block.name};
+  return block.getExternalName();
+}
+
+// The name LRM 27.6 gives a generate construct's block or loop in the scope
+// holding it, whether or not the block was built: a block the source left
+// unnamed is named by where its construct stands, and the front end spells
+// that name only on the blocks it built.
+[[nodiscard]] inline auto ExternalNameOfGenerate(
+    const slang::ast::Symbol& member) -> std::optional<std::string> {
+  if (const auto* block = member.as_if<slang::ast::GenerateBlockSymbol>()) {
+    return block->getExternalName();
+  }
+  if (const auto* loop = member.as_if<slang::ast::GenerateBlockArraySymbol>()) {
+    return loop->getExternalName();
+  }
+  return std::nullopt;
 }
 
 // Which one `block` is among the generate blocks of its scope that carry its
@@ -146,13 +182,11 @@ namespace lyra::lowering::ast_to_hir {
   }
   const slang::ast::Scope* scope = written->getParentScope();
   if (scope == nullptr) return 0;
+  const std::optional<std::string> label = ExternalNameOfGenerate(*written);
   std::uint32_t earlier = 0;
   for (const auto& member : scope->members()) {
     if (&member == written) return earlier;
-    const bool is_generate_block =
-        member.kind == slang::ast::SymbolKind::GenerateBlock ||
-        member.kind == slang::ast::SymbolKind::GenerateBlockArray;
-    if (is_generate_block && member.name == written->name) ++earlier;
+    if (ExternalNameOfGenerate(member) == label) ++earlier;
   }
   throw InternalError(
       "LabelDisambiguatorOf: a generate block is a member of the scope "

@@ -16,6 +16,7 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/published_scope.hpp"
@@ -23,7 +24,8 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
-#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
+#include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -61,29 +63,21 @@ struct PublishedField {
 // and one per disable target holding what a `disable` of it ends.
 struct PublishedScopeLayout {
   base::Translation<hir::PublishedMemberId, mir::FieldId> members;
-  base::Translation<hir::PublishedGenerateId, mir::FieldId> generates;
+  base::Translation<hir::PublishedLoopId, mir::FieldId> loops;
+  base::Translation<hir::PublishedChoiceId, mir::FieldId> choices;
   base::Translation<hir::PublishedDisableTargetId, mir::FieldId>
       disable_targets;
 };
 
-// The method of a scope's published class that enters the subroutine the scope
-// published at `published`: the class reserves one per published subroutine,
-// at the position the signature gave it. The declaring scope builds the method
-// there and a body of the same unit calls it there, so both read it from
-// here.
+// The virtual method of a scope's published class the subroutine the scope
+// published at `published` is: the class introduces one per published
+// subroutine, at the position the signature gave it, and leaves it to each
+// class realizing the scope. A realizing class overrides it there and a call
+// names it there, so both read it from here.
 [[nodiscard]] inline auto PublishedMethodOf(hir::PublishedCallableId published)
     -> mir::CallableId {
   return mir::CallableId{published.value};
 }
-
-// One class realizing a class the unit published of its scopes: what a scope
-// lowered to, extending the published class with what the lowering adds, and
-// its body for each subroutine the class published, by the position the
-// signature gave the subroutine.
-struct ScopeRealization {
-  mir::ClassId id{};
-  base::Translation<hir::PublishedCallableId, mir::CallableId> subroutines;
-};
 
 // What this unit knows of a scope class some unit published: the class, the
 // type each of its fields holds, and where it placed each thing the scope
@@ -94,16 +88,21 @@ struct ScopeClassLayout {
   PublishedScopeLayout published;
 };
 
+// A subroutine a scope published, as the class it published states it: the
+// identifier a referrer spells it by, and what a call of it passes and yields.
+struct PublishedSubroutine {
+  std::string name;
+  mir::CallableCode prototype;
+};
+
 // A class this unit published of its scopes. Several scopes may be published
-// as one class -- the block instances of one application of a generate block
-// that lowered apart (LRM 27.3) -- so what the signature fixes is held once:
-// where it placed what was published, and the identifier a referrer spells
-// each published subroutine by, in the order the signature gave them. The
-// classes realizing it follow, in the order their scopes were lowered.
+// as one class -- the bodies of one generate block whose code uses its index
+// (LRM 27.3) -- so what the signature fixes is held once: where it
+// placed what was published, and each subroutine it published, in the order
+// the signature gave them.
 struct PublishedScope {
   ScopeClassLayout layout;
-  std::vector<std::string> subroutine_names;
-  std::vector<ScopeRealization> realizations;
+  base::Translation<hir::PublishedCallableId, PublishedSubroutine> subroutines;
 };
 
 // Lowers one HIR compilation unit into one MIR compilation unit, holding that
@@ -117,7 +116,9 @@ class UnitLowerer {
   UnitLowerer(
       const hir::CompilationUnit& hir,
       const diag::SourceManager& source_manager)
-      : hir_(&hir), source_manager_(&source_manager) {
+      : hir_(&hir),
+        source_manager_(&source_manager),
+        construction_layout_(hir) {
   }
 
   // Lowers a unit whose instances exist as objects: its body (variables,
@@ -130,8 +131,9 @@ class UnitLowerer {
   // 10.5). Which namespaces those are is read off the signatures the root
   // consumes and passed in; the lowering turns each into cross-unit calls, so
   // this input stays at the design-root boundary and never reaches a source
-  // unit's lowering.
-  auto RunDesignRoot(DesignNamespaces namespaces)
+  // unit's lowering. So do the instantiations, from which the root states
+  // every body's construction table, its own among them.
+  auto RunDesignRoot(DesignRootInputs design_root)
       -> diag::Result<mir::CompilationUnit>;
 
   // Lowers a unit that roots no object -- a package (LRM 26) or the `$unit`
@@ -154,6 +156,12 @@ class UnitLowerer {
 
   [[nodiscard]] auto Hir() const -> const hir::CompilationUnit& {
     return *hir_;
+  }
+
+  // The order this unit's construction table lists its instantiations in.
+  [[nodiscard]] auto ConstructionLayout() const
+      -> const hir::ConstructionTableLayout& {
+    return construction_layout_;
   }
 
   // Where a construct was written, which a diagnostic the lowering emits names
@@ -194,23 +202,19 @@ class UnitLowerer {
   [[nodiscard]] auto PublishedScopeClassAt(
       const support::DefPath& class_path) const -> mir::ClassId;
 
-  // Takes the identity of the class the unit published of one of its scopes,
-  // which is one class for every scope published under one path. The lowering
-  // of the scope takes it as it is built, which is before any type translates.
-  auto TakePublishedScopeClass(const hir::ScopePublication& published)
+  // Takes the identity of the class the unit published under `class_path`,
+  // which is one class for every scope published under it. The lowering of the
+  // scope takes it as it is built, which is before any type translates.
+  auto TakePublishedScopeClass(const support::DefPath& class_path)
       -> mir::ClassId;
 
-  // Where the class `published` places what `scope` published, laying the
-  // class out from the scope's signature the first time a scope published as
-  // it asks. Every scope published as one class states one signature, so
-  // whichever asks first settles the same shape.
+  // Where the class `published` places what its scopes published, laying the
+  // class out from `signature` the first time it is asked. Every scope
+  // published as one class states one signature, so whichever asks first
+  // settles the same shape.
   auto SettlePublishedScope(
-      mir::ClassId published, const hir::StructuralScope& scope)
+      mir::ClassId published, const hir::ScopeClassSignature& signature)
       -> const PublishedScopeLayout&;
-
-  // Records that `realization` realizes the class `published`, once its own
-  // class is settled in the unit.
-  void AddRealization(mir::ClassId published, ScopeRealization realization);
 
   // Every class the unit published of its scopes.
   [[nodiscard]] auto PublishedScopes() const
@@ -379,14 +383,14 @@ class UnitLowerer {
       -> mir::DirectTarget;
 
   // A subroutine a unit published on the object its instances are (LRM 23.6,
-  // 25.7): a method of that unit's published class, called directly, since the
-  // unit an instance is of is settled where the call compiles. A method of
-  // this unit's own class is named by its position, as any of its callables
-  // is; another unit's by what that unit published. Reaching the object is
-  // already the dependency, so nothing further is recorded here.
-  [[nodiscard]] auto MakeExternalUnitMethodTarget(
+  // 25.7): a virtual method of that unit's published class, which the class
+  // the object is answers. A slot of this unit's own class is named by its
+  // position, as any of its callables is; another unit's by the position its
+  // signature gave the subroutine. Reaching the object is already the
+  // dependency, so nothing further is recorded here.
+  [[nodiscard]] auto PublishedSubroutineSlot(
       hir::ExternalScopeClassId scope_class,
-      hir::PublishedCallableId callable) const -> mir::DirectTarget;
+      hir::PublishedCallableId callable) const -> mir::VirtualSlot;
 
   // Mints a fresh owner-site id for a synthesized binding origin -- a carrier a
   // lowering creates that has no source-level variable (an activation handle, a
@@ -433,11 +437,12 @@ class UnitLowerer {
 
  private:
   // Lowers a scope whose root is an object type into the unit's top class,
-  // which the unit then names as its root. The namespace list is empty for a
-  // source module and names every namespace of the design for the design root
-  // (LRM 26.2 / 10.5), whose Initialize phase turns each into a cross-unit
-  // install and initialize call.
-  auto PopulateModuleRoot(DesignNamespaces namespaces) -> diag::Result<void>;
+  // which the unit then names as its root. `design_root` is present for the
+  // design root alone, whose Initialize phase turns each namespace of the
+  // design into a cross-unit install and initialize call (LRM 26.2 / 10.5) and
+  // which states every construction table.
+  auto PopulateModuleRoot(std::optional<DesignRootInputs> design_root)
+      -> diag::Result<void>;
 
   // Everything one class declaration can be named by before it settles: its
   // own identity, the object type that names it, and one identity per method a
@@ -488,6 +493,7 @@ class UnitLowerer {
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;
+  hir::ConstructionTableLayout construction_layout_;
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, mir::TypeId> type_translations_;
   base::Translation<hir::ClassId, ClassTranslation> class_translations_;

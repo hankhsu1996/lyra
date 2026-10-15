@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <set>
 #include <span>
@@ -12,10 +13,10 @@
 #include <vector>
 
 #include <slang/ast/Compilation.h>
-#include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/Symbol.h>
+#include <slang/ast/expressions/CallExpression.h>
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/CompilationUnitSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
@@ -184,12 +185,13 @@ auto LowerPackedUnion(
   };
 }
 
-// LRM 7.2.2: a member declaration may carry a constant default value, used in
-// place of the member type's Table 7-1 default when the enclosing struct is
-// default-constructed. Slang has bound and constant-checked it; evaluate it and
-// fold it into the member's value-form metadata, the same shape an enum member
-// carries its value -- the default is a value the type holds, not an
-// expression.
+// LRM 7.2.2: a member declaration may carry a default value, a constant
+// expression used in place of the member type's Table 7-1 default when the
+// enclosing struct is default-constructed. It is held in the member's
+// value-form metadata, the shape an enum member carries its value in: the
+// default is a value the type holds, not an expression. The front end
+// evaluated it when the type was declared, which is what records the
+// parameters it was computed from, so the value read here is that one.
 auto LowerMemberDefault(
     const slang::ast::FieldSymbol& field, diag::SourceSpan span)
     -> diag::Result<std::optional<hir::ConstantValue>> {
@@ -197,9 +199,15 @@ auto LowerMemberDefault(
   if (init == nullptr) {
     return std::optional<hir::ConstantValue>{};
   }
-  slang::ast::EvalContext eval_context(field);
-  const slang::ConstantValue constant = init->eval(eval_context);
-  auto value_or = MakeConstantValue(constant, span);
+  const slang::ConstantValue* constant = init->getConstant();
+  if (constant == nullptr) {
+    throw InternalError(
+        std::format(
+            "LowerMemberDefault: the default of member '{}' was evaluated as "
+            "a constant where its type was declared, and kept nothing",
+            field.name));
+  }
+  auto value_or = MakeConstantValue(*constant, span);
   if (!value_or) {
     return std::unexpected(std::move(value_or.error()));
   }
@@ -1360,12 +1368,12 @@ auto UnitLowerer::ResolveClassRef(
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return it->second;
   }
-  const slang::ast::Symbol& home = UnitHomeOf(cls);
-  if (&home != home_) {
+  if (!Owns(cls)) {
     const auto [it, _] = class_cache_.emplace(
-        &cls, hir::ClassRef{hir::ExternalClassRef{
-                  .unit_name = CompilationUnitName(home, Specialization()),
-                  .class_path = DefPathOf(cls, Specialization())}});
+        &cls,
+        hir::ClassRef{hir::ExternalClassRef{
+            .unit_name = CompilationUnitName(UnitHomeOf(cls), Specialization()),
+            .class_path = DefPathOf(cls, Specialization())}});
     return it->second;
   }
   // A local class not yet minted (e.g. a class nested inside a generate
@@ -1388,8 +1396,18 @@ auto UnitLowerer::InternLocalClass(
   if (const auto it = class_cache_.find(&cls); it != class_cache_.end()) {
     return std::get<hir::LocalClassRef>(it->second).class_id;
   }
+  // A class is one declaration of its unit wherever its text was elaborated: a
+  // class an instance declares is a type of that instance's own (LRM 8.25),
+  // and each block of a loop builds its own copy, yet every such copy at one
+  // path is the same text compiled once. So a copy at a path already declared
+  // is that class, built again here so what it names is named alike.
+  support::DefPath path = DefPathOf(cls, Specialization());
+  const auto declared = own_classes_by_path_.find(path);
   const hir::ClassId id =
-      unit_.classes.Declare(DefPathOf(cls, Specialization()));
+      declared == own_classes_by_path_.end()
+          ? unit_.classes.Declare(std::move(path))
+          : std::get<hir::LocalClassRef>(class_cache_.at(declared->second))
+                .class_id;
   class_cache_.emplace(&cls, hir::ClassRef{hir::LocalClassRef{.class_id = id}});
   own_classes_by_path_.emplace(unit_.classes.PathOf(id), &cls);
 
@@ -1670,21 +1688,22 @@ auto UnitLowerer::PopulateClassBodiesReplicatedBy(
 }
 
 void UnitLowerer::RequireEveryClassBodyLowered() const {
-  if (pending_class_bodies_.empty()) return;
   std::string left;
   for (const auto& [scope, bodies] : pending_class_bodies_) {
     for (const PendingClassBody& body : bodies) {
+      if (unit_.classes.IsDefined(body.id)) continue;
       left += std::format(
           "{}'{}' in '{}'", left.empty() ? "" : ", ",
           SpecializationName(*body.cls, Specialization()),
           scope->asSymbol().name);
     }
   }
+  if (left.empty()) return;
   throw InternalError(
       std::format(
           "UnitLowerer::RequireEveryClassBodyLowered: every class this unit "
-          "holds is replicated by a structural scope of it, and every such "
-          "scope lowers the classes it replicates; left: {}",
+          "holds is replicated by a structural scope of it, and every scope "
+          "lowered lowers the classes it replicates; left: {}",
           left));
 }
 
@@ -1892,7 +1911,21 @@ auto UnitLowerer::PopulateClassBody(PendingClassBody& pending)
   }
   decl.constructor = std::move(constructor);
 
-  unit_.classes.Define(pending.id, std::move(*pending.decl));
+  // Where the compile checks itself, every application of the unit builds the
+  // class at its path, each from its own copy of the text (LRM 8.25), and they
+  // agree on everything the class holds for the same reason their scopes
+  // agree: the lowering reads a value only through the unit's identity or as
+  // one the object is built with.
+  if (!unit_.classes.IsDefined(pending.id)) {
+    unit_.classes.Define(pending.id, std::move(*pending.decl));
+  } else if (!(unit_.classes.Get(pending.id) == *pending.decl)) {
+    throw InternalError(
+        std::format(
+            "UnitLowerer::PopulateClassBody: two applications of unit '{}' "
+            "build the class '{}' differently, so the lowering read a value "
+            "the unit's identity does not hold -- please report this as a bug",
+            unit_.name, support::DisplayOf(unit_.classes.PathOf(pending.id))));
+  }
   return {};
 }
 
@@ -1912,6 +1945,113 @@ auto UnitLowerer::InternType(
   const hir::TypeId id = unit_.types.Intern(*std::move(type_or));
   type_cache_.emplace(canonical, id);
   return id;
+}
+
+namespace {
+
+// Whether `expr` yields a value with no range of its own, which no select or
+// key is ever read against: what LRM 11.4 calls an operator, a conversion (LRM
+// 6.24), an assignment used as an expression, a part-select, a concatenation, a
+// replication, a stream, a set membership test, a value range, a min:typ:max
+// choice, what a system subroutine returns, and an unbased unsized literal,
+// whose every bit is the one it spells at whatever width its context gives it
+// (LRM 5.7.1).
+auto HasNoRangeOfItsOwn(const slang::ast::Expression& expr) -> bool {
+  switch (expr.kind) {
+    case slang::ast::ExpressionKind::UnaryOp:
+    case slang::ast::ExpressionKind::BinaryOp:
+    case slang::ast::ExpressionKind::ConditionalOp:
+    case slang::ast::ExpressionKind::Conversion:
+    case slang::ast::ExpressionKind::Assignment:
+    case slang::ast::ExpressionKind::RangeSelect:
+    case slang::ast::ExpressionKind::Concatenation:
+    case slang::ast::ExpressionKind::Replication:
+    case slang::ast::ExpressionKind::Streaming:
+    case slang::ast::ExpressionKind::Inside:
+    case slang::ast::ExpressionKind::ValueRange:
+    case slang::ast::ExpressionKind::MinTypMax:
+    case slang::ast::ExpressionKind::UnbasedUnsizedIntegerLiteral:
+      return true;
+    case slang::ast::ExpressionKind::Call:
+      return expr.as<slang::ast::CallExpression>().isSystemCall();
+    case slang::ast::ExpressionKind::Invalid:
+    case slang::ast::ExpressionKind::IntegerLiteral:
+    case slang::ast::ExpressionKind::RealLiteral:
+    case slang::ast::ExpressionKind::TimeLiteral:
+    case slang::ast::ExpressionKind::NullLiteral:
+    case slang::ast::ExpressionKind::UnboundedLiteral:
+    case slang::ast::ExpressionKind::StringLiteral:
+    case slang::ast::ExpressionKind::NamedValue:
+    case slang::ast::ExpressionKind::HierarchicalValue:
+    case slang::ast::ExpressionKind::ElementSelect:
+    case slang::ast::ExpressionKind::MemberAccess:
+    case slang::ast::ExpressionKind::DataType:
+    case slang::ast::ExpressionKind::TypeReference:
+    case slang::ast::ExpressionKind::ArbitrarySymbol:
+    case slang::ast::ExpressionKind::LValueReference:
+    case slang::ast::ExpressionKind::SimpleAssignmentPattern:
+    case slang::ast::ExpressionKind::StructuredAssignmentPattern:
+    case slang::ast::ExpressionKind::ReplicatedAssignmentPattern:
+    case slang::ast::ExpressionKind::EmptyArgument:
+    case slang::ast::ExpressionKind::Dist:
+    case slang::ast::ExpressionKind::NewArray:
+    case slang::ast::ExpressionKind::NewClass:
+    case slang::ast::ExpressionKind::NewCovergroup:
+    case slang::ast::ExpressionKind::CopyClass:
+    case slang::ast::ExpressionKind::ClockingEvent:
+    case slang::ast::ExpressionKind::AssertionInstance:
+    case slang::ast::ExpressionKind::TaggedUnion:
+      return false;
+  }
+  throw InternalError("HasNoRangeOfItsOwn: unknown slang ExpressionKind");
+}
+
+}  // namespace
+
+auto UnitLowerer::InternExpressionType(
+    const slang::ast::Expression& expr, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  return HasNoRangeOfItsOwn(expr) ? InternResultType(*expr.type, span)
+                                  : InternType(*expr.type, span);
+}
+
+auto UnitLowerer::InternResultType(
+    const slang::ast::Type& type, diag::SourceSpan span)
+    -> diag::Result<hir::TypeId> {
+  // The type the operand handed up is translated and not interned: its
+  // outermost range is one a value outside the name may have placed, and a type
+  // interned with it would make what the unit holds follow the instance it was
+  // lowered from. Only that range is renumbered.
+  const slang::ast::SymbolKind kind = type.getCanonicalType().kind;
+  if (kind != slang::ast::SymbolKind::PackedArrayType &&
+      kind != slang::ast::SymbolKind::FixedSizeUnpackedArrayType) {
+    return InternType(type, span);
+  }
+  auto handed = TranslateType(*this, type, span);
+  if (!handed) return std::unexpected(std::move(handed.error()));
+  const auto from_zero = [](std::int64_t left, std::int64_t right,
+                            std::uint64_t count) {
+    const auto last = static_cast<std::int64_t>(count) - 1;
+    return left >= right ? std::pair{last, std::int64_t{0}}
+                         : std::pair{std::int64_t{0}, last};
+  };
+  if (const auto* packed = handed->As<hir::PackedArrayType>()) {
+    const auto [left, right] = from_zero(
+        packed->dim.left, packed->dim.right, packed->dim.ElementCount());
+    hir::PackedArrayType numbered = *packed;
+    numbered.dim = hir::PackedRange{.left = left, .right = right};
+    return unit_.types.Intern(hir::Type{std::move(numbered)});
+  }
+  if (const auto* unpacked = handed->As<hir::UnpackedArrayType>()) {
+    const auto [left, right] = from_zero(
+        unpacked->dim.left, unpacked->dim.right, unpacked->dim.ElementCount());
+    hir::UnpackedArrayType numbered = *unpacked;
+    numbered.dim = hir::UnpackedRange{.left = left, .right = right};
+    return unit_.types.Intern(hir::Type{std::move(numbered)});
+  }
+  throw InternalError(
+      "UnitLowerer::InternResultType: an array type translated to something "
+      "other than an array -- please report this as a bug");
 }
 
 }  // namespace lyra::lowering::ast_to_hir

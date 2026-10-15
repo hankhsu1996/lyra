@@ -691,7 +691,7 @@ auto LowerSystemCall(
       // 6.19.5.3/4). When the user omits the step, the call keeps the one
       // argument the source wrote and the default is supplied where the
       // method is answered, so no literal is injected here.
-      auto type_id = unit_lowerer.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(call, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -711,7 +711,7 @@ auto LowerSystemCall(
       // LRM 6.16.1 through 6.16.15 -- string intrinsic methods, each acting
       // on the string; the remaining operands are the SV method parameters
       // (e.g. substr's `i, j`).
-      auto type_id = unit_lowerer.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(call, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -727,7 +727,7 @@ auto LowerSystemCall(
     // slot in which the event was last triggered. Result type is bit (1'b0
     // / 1'b1) -- slang already typed the expression; we just route the
     // call through the named-event method.
-    auto type_id = unit_lowerer.InternType(*call.type, span);
+    auto type_id = unit_lowerer.InternExpressionType(call, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
         .type = *type_id,
@@ -746,7 +746,7 @@ auto LowerSystemCall(
     // 7.12 one.
     if (auto kind = LowerQueueMethodName(name, arg_ids.size() - 1);
         kind.has_value()) {
-      auto type_id = unit_lowerer.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(call, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -766,7 +766,7 @@ auto LowerSystemCall(
           .template Is<hir::AssociativeArrayType>()) {
     if (auto kind = LowerAssociativeMethodName(name, arg_ids.size() - 1);
         kind.has_value()) {
-      auto type_id = unit_lowerer.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(call, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -795,7 +795,7 @@ auto LowerSystemCall(
   };
   if (receives_array_method()) {
     if (auto kind = LowerArrayMethodName(name); kind.has_value()) {
-      auto type_id = unit_lowerer.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(call, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       std::optional<hir::WithClause> with_clause;
       if (std::holds_alternative<slang::ast::CallExpression::IteratorCallInfo>(
@@ -836,7 +836,7 @@ auto LowerSystemCall(
   // is folded by the downstream optimizer, never in lowering.
   if (info.subroutine != nullptr &&
       info.subroutine->knownNameId == slang::parsing::KnownSystemName::Clog2) {
-    auto type_id = unit_lowerer.InternType(*call.type, span);
+    auto type_id = unit_lowerer.InternExpressionType(call, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
         .type = *type_id,
@@ -857,7 +857,7 @@ auto LowerSystemCall(
     auto real_fn = LowerRealMathName(known);
     if (!real_fn.has_value()) real_fn = LowerRealConversionName(known);
     if (real_fn.has_value()) {
-      auto type_id = unit_lowerer.InternType(*call.type, span);
+      auto type_id = unit_lowerer.InternExpressionType(call, span);
       if (!type_id) return std::unexpected(std::move(type_id.error()));
       return hir::Expr{
           .type = *type_id,
@@ -872,7 +872,7 @@ auto LowerSystemCall(
   // runtime call.
   if (info.subroutine != nullptr &&
       info.subroutine->knownNameId == slang::parsing::KnownSystemName::Itor) {
-    auto type_id = unit_lowerer.InternType(*call.type, span);
+    auto type_id = unit_lowerer.InternExpressionType(call, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
         .type = *type_id,
@@ -903,7 +903,7 @@ auto LowerSystemCall(
       throw InternalError(
           "item.index receiver is not an active with-clause iterator");
     }
-    auto type_id = unit_lowerer.InternType(*call.type, span);
+    auto type_id = unit_lowerer.InternExpressionType(call, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
         .type = *type_id,
@@ -925,7 +925,7 @@ auto LowerSystemCall(
            slang::parsing::KnownSystemName::Signed ||
        info.subroutine->knownNameId ==
            slang::parsing::KnownSystemName::Unsigned)) {
-    auto type_id = unit_lowerer.InternType(*call.type, span);
+    auto type_id = unit_lowerer.InternExpressionType(call, span);
     if (!type_id) return std::unexpected(std::move(type_id.error()));
     return hir::Expr{
         .type = *type_id,
@@ -1013,7 +1013,7 @@ auto LowerSubroutineCall(
   // A static method acts on no object; an instance method acts on the handle
   // `thisClass` carries.
   if (const auto imported = DetectImportedRuntimeMethod(*sym)) {
-    auto result_type = unit_lowerer.InternType(*call.type, span);
+    auto result_type = unit_lowerer.InternExpressionType(call, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     std::optional<hir::ExprId> receiver;
     if (const slang::ast::Expression* this_class = call.thisClass();
@@ -1055,7 +1055,7 @@ auto LowerSubroutineCall(
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
     auto callee = unit_lowerer.MakeMethodCallee(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
-    auto static_result_type = unit_lowerer.InternType(*call.type, span);
+    auto static_result_type = unit_lowerer.InternExpressionType(call, span);
     if (!static_result_type) {
       return std::unexpected(std::move(static_result_type.error()));
     }
@@ -1102,7 +1102,7 @@ auto LowerSubroutineCall(
         sym->getParentScope()->asSymbol().as<slang::ast::ClassType>();
     auto callee = unit_lowerer.MakeMethodCallee(declaring_class, *sym, span);
     if (!callee) return std::unexpected(std::move(callee.error()));
-    auto method_result_type = unit_lowerer.InternType(*call.type, span);
+    auto method_result_type = unit_lowerer.InternExpressionType(call, span);
     if (!method_result_type) {
       return std::unexpected(std::move(method_result_type.error()));
     }
@@ -1140,7 +1140,7 @@ auto LowerSubroutineCall(
             "current scope stack");
       }
     }
-    auto import_result_type = unit_lowerer.InternType(*call.type, span);
+    auto import_result_type = unit_lowerer.InternExpressionType(call, span);
     if (!import_result_type) {
       return std::unexpected(std::move(import_result_type.error()));
     }
@@ -1170,7 +1170,7 @@ auto LowerSubroutineCall(
     auto interface =
         unit_lowerer.NamespaceCalleeInterface(unit_name, *sym, span);
     if (!interface) return std::unexpected(std::move(interface.error()));
-    auto result_type = unit_lowerer.InternType(*call.type, span);
+    auto result_type = unit_lowerer.InternExpressionType(call, span);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     return hir::Expr{
         .type = *result_type,
@@ -1209,7 +1209,7 @@ auto LowerSubroutineCall(
   // which is what a bare climb already was.
   auto reach = unit_lowerer.ReachOwnScope(frame, *sym->getParentScope(), span);
   if (!reach) return std::unexpected(std::move(reach.error()));
-  auto result_type = unit_lowerer.InternType(*call.type, span);
+  auto result_type = unit_lowerer.InternExpressionType(call, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
   return hir::Expr{
       .type = *result_type,

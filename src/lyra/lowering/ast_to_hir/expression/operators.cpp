@@ -91,7 +91,7 @@ auto LowerConversionExpr(
   auto operand_or = lowerer.LowerExpr(conv.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
-  auto type_id = lowerer.Owner().InternType(*conv.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(conv, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -116,7 +116,7 @@ auto LowerUnaryExpr(
   auto operand_or = lowerer.LowerExpr(un.operand(), frame);
   if (!operand_or) return std::unexpected(std::move(operand_or.error()));
   const hir::ExprId operand_id = frame.Exprs().Add(*std::move(operand_or));
-  auto type_id = lowerer.Owner().InternType(*un.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(un, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -138,7 +138,7 @@ auto LowerBinaryExpr(
   auto rhs_or = lowerer.LowerExpr(bin.right(), frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
-  auto type_id = lowerer.Owner().InternType(*bin.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(bin, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,
@@ -166,7 +166,7 @@ auto LowerConditionalExpr(
   auto else_or = lowerer.LowerExpr(cond.right(), frame);
   if (!else_or) return std::unexpected(std::move(else_or.error()));
   const hir::ExprId else_id = frame.Exprs().Add(*std::move(else_or));
-  auto type_id = lowerer.Owner().InternType(*cond.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(cond, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
   return hir::Expr{
       .type = *type_id,

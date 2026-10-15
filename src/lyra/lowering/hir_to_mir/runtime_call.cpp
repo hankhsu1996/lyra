@@ -1,7 +1,5 @@
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 
-#include <filesystem>
-#include <format>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,15 +15,6 @@
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
-
-auto FormatRuntimeOriginString(
-    diag::SourceSpan span, const diag::SourceManager& mgr) -> std::string {
-  const auto at = mgr.PositionOf(span);
-  if (!at) return {};
-  return std::format(
-      "{}:{}:{}", std::filesystem::path{at->file}.filename().string(), at->line,
-      at->column);
-}
 
 auto BuildCurrentRuntimeCallExpr(const UnitLowerer& unit_lowerer) -> mir::Expr {
   return mir::MakeCurrentRuntimeCallExpr(unit_lowerer.Unit().builtins.effects);
@@ -167,8 +156,7 @@ void AppendToolReportStmt(
   const mir::ExprId diagnostic_id =
       block.exprs.Add(BuildDiagnosticCallExpr(unit, block));
   const mir::ExprId origin_id = BuildStringValueExpr(
-      unit, block,
-      FormatRuntimeOriginString(span, unit_lowerer.SourceManager()));
+      unit, block, diag::RuntimeOriginOf(span, unit_lowerer.SourceManager()));
   const mir::ExprId text_id =
       BuildStringValueExpr(unit, block, std::move(text));
   block.AppendStmt(

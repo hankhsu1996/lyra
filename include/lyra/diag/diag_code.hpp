@@ -54,9 +54,6 @@ enum class DiagCode : std::uint32_t {
   kInternalFailure,
 
   kWarningPedantic,
-
-  kRemarkLostSharing,
-  kRemarkMissedSharing,
 };
 
 struct DiagCodeInfo {

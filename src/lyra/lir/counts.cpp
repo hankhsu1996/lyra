@@ -14,12 +14,13 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // Every member of the unit is taken apart by name, so a member added to it
   // does not compile here until it is said what kind of thing it is, or that
   // it is none.
-  const auto& [name, types, classes, closures, structs, external_structs, external_classes, functions, type_defaults, static_storage, constants, enum_tables, integral_constants, root] =
+  const auto& [name, body_name, types, classes, closures, structs, external_structs, external_classes, functions, type_defaults, static_storage, constants, enum_tables, integral_constants, root] =
       unit;
 
   std::uint64_t members = 0;
   for (const Class& cls : classes) {
-    const auto& [path, base, own, dispatch, implements, conforming] = cls;
+    const auto& [path, linkage, base, own, dispatch, implements, conforming] =
+        cls;
     members += own.size();
   }
   std::uint64_t captures = 0;

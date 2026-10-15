@@ -65,32 +65,6 @@ announces itself, a record that prunes you does not.
 north star fixes, what a measurement establishes. Against a previous answer a conflict is a
 question, and the newer requirement is the reason to suspect the record rather than the derivation.
 
-## Why a prohibition is the part that goes wrong
-
-A derivation establishes that **a requirement selected a shape**. It does not establish that no
-other shape is admissible. Those are different claims and only the first was proved, so a Forbidden
-Shapes entry is an inference from "I picked S" to "everything else is wrong" -- a step that does not
-follow, made on the day the record was written rather than by going stale later.
-
-The cost arrives when requirements widen. A design derived under a narrow set records its
-prohibitions unconditionally, because the set it rested on was ambient and felt like the world
-rather than like a premise. Later a wider requirement cannot be met by the old shape, the
-prohibition is still there and still reads as authority, and what gets built is a band-aid around it
-instead of the design the new requirement asked for.
-
-**So a prohibition is written as the requirement it serves.** Not "X is a forbidden shape" but "X
-fails R". It is as useful to a reader avoiding a known mistake; it is self-invalidating wherever R
-is not in force, because the premise now travels with the conclusion; and it is checkable, since the
-later designer asks "is R one of my requirements?" rather than "am I allowed to do X?". A
-prohibition that cannot be restated that way was never derived, and dropping it costs nothing.
-
-That also makes the sweep possible. When a requirement widens, the work is to find which recorded
-conclusions rest on the narrower one -- which is a search for the requirement, and only searchable
-once prohibitions name theirs.
-
-**Reading rule, for everything already written: a forbidden shape or an invariant that does not name
-the requirement it serves is a hypothesis, not a constraint.** Weigh it; do not obey it.
-
 ## The motivations, in one line each
 
 - **HIR** -- so that "what did the user write" has exactly one answer, and it is SystemVerilog.
@@ -110,7 +84,18 @@ front of you, and that is what to write down first: for this construct, in each 
 vocabulary, what that layer must state and what it must not. Write one for every layer the change
 crosses, before naming a single field.
 
-Two things fall out of having written them, and neither is reachable without.
+**Before the contracts, write the program the construct becomes**, the way a careful person would
+write it by hand in modern C++, and read the grammar the language gives the construct. Each layer's
+shape is then derived from that program, so every concept it introduces is one the program visibly
+has. A shape built upward from what the next layer happens to consume carries that consumer's
+mechanics as concepts of their own, each kept in step by hand. A parameter an instantiation may
+leave to its default was first built as a value, a "was it assigned" boolean and a variant saying
+which values carry one, known separately to the parent, the object entry and the constructor;
+written by hand it is one constructor parameter of type `std::optional<int>` initializing its member
+with `value_or(W * 2)`, and the grammar `.P( [ param_expression ] )` already said the value may be
+absent (LRM 23.10.2.2).
+
+Two things fall out of having written the contracts, and neither is reachable without.
 
 **The lowering between two layers then has exactly one job, and it fits in a sentence.** If the
 sentence needs an "and", the two contracts are not written yet -- and the work will get divided
@@ -341,7 +326,7 @@ bits long.
 
 ## Falsifying a proposed shape
 
-Four checks, all cheap:
+Six checks, all cheap:
 
 - **Could a mechanical LLVM IR backend translate this without deciding anything?** If a consumer
   needs an `if` to work out what a node means, the node is under-specified. This is the sharpest
@@ -412,6 +397,32 @@ A body that fails one of these is usually reporting on the shape around it rathe
 lines -- the repeated lines were a concept nobody had named, the second job was a decision made in
 two places -- so the fix starts from the sections above. Rearranging the lines until they pass
 leaves the cause where it was.
+
+## Why a prohibition is the part that goes wrong
+
+A derivation establishes that **a requirement selected a shape**. It does not establish that no
+other shape is admissible. Those are different claims and only the first was proved, so a Forbidden
+Shapes entry is an inference from "I picked S" to "everything else is wrong" -- a step that does not
+follow, made on the day the record was written rather than by going stale later.
+
+The cost arrives when requirements widen. A design derived under a narrow set records its
+prohibitions unconditionally, because the set it rested on was ambient and felt like the world
+rather than like a premise. Later a wider requirement cannot be met by the old shape, the
+prohibition is still there and still reads as authority, and what gets built is a band-aid around it
+instead of the design the new requirement asked for.
+
+**So a prohibition is written as the requirement it serves.** Not "X is a forbidden shape" but "X
+fails R". It is as useful to a reader avoiding a known mistake; it is self-invalidating wherever R
+is not in force, because the premise now travels with the conclusion; and it is checkable, since the
+later designer asks "is R one of my requirements?" rather than "am I allowed to do X?". A
+prohibition that cannot be restated that way was never derived, and dropping it costs nothing.
+
+That also makes the sweep possible. When a requirement widens, the work is to find which recorded
+conclusions rest on the narrower one -- which is a search for the requirement, and only searchable
+once prohibitions name theirs.
+
+**Reading rule, for everything already written: a forbidden shape or an invariant that does not name
+the requirement it serves is a hypothesis, not a constraint.** Weigh it; do not obey it.
 
 ## Do not mint a rule from a fix
 

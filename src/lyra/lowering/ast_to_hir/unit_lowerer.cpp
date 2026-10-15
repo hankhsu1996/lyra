@@ -39,11 +39,13 @@
 #include "lyra/diag/source_span.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/structural_scope.hpp"
+#include "lyra/hir/unit_signature.hpp"
+#include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/verify.hpp"
 #include "lyra/lowering/ast_to_hir/generate_construct.hpp"
 #include "lyra/lowering/ast_to_hir/instance_array_shape.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
-#include "lyra/lowering/ast_to_hir/one_body.hpp"
 #include "lyra/lowering/ast_to_hir/statement/assertions.hpp"
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
@@ -86,30 +88,42 @@ auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
   return std::string(home.name);
 }
 
+// `scopes`, then every body of `others` not among them, in order.
+auto WithOthers(
+    std::vector<const slang::ast::Scope*> scopes,
+    std::span<const slang::ast::InstanceBodySymbol* const> others)
+    -> std::vector<const slang::ast::Scope*> {
+  for (const slang::ast::InstanceBodySymbol* other : others) {
+    if (!std::ranges::contains(scopes, other)) scopes.push_back(other);
+  }
+  return scopes;
+}
+
 }  // namespace
 
 UnitLowerer::UnitLowerer(
     const LoweringFacts& facts, const slang::ast::Symbol& home,
-    std::string name, hir::UnitRole role,
-    std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from)
+    hir::UnitBodyRef names, hir::UnitRole role,
+    std::span<const slang::ast::InstanceBodySymbol* const> checked_against)
     : facts_(facts),
       home_(&home),
       scope_(&ScopeLoweredFor(home)),
+      applications_(WithOthers({scope_}, checked_against)),
       lowering_(scope_),
-      unit_{std::move(name)} {
+      unit_{std::move(names.unit), std::move(names.body)} {
   unit_.role = role;
   unit_.source_name = SourceNameOf(home);
   unit_.library_binding = LibraryBindingOf(scope_->asSymbol());
   signature_.unit_name = unit_.name;
-  applications_.push_back(scope_);
-  applications_.insert(
-      applications_.end(), also_lowered_from.begin(), also_lowered_from.end());
-  also_lowered_from_.insert(also_lowered_from.begin(), also_lowered_from.end());
 }
 
 auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
   const slang::ast::Symbol& home = UnitHomeOf(decl);
-  return &home == home_ || also_lowered_from_.contains(&home);
+  return &home == home_ ||
+         std::ranges::any_of(
+             applications_, [&](const slang::ast::Scope* application) {
+               return &application->asSymbol() == &home;
+             });
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {
@@ -171,35 +185,32 @@ auto UnitLowerer::LowerBodies(const hir::UnitSignatures& signatures)
     -> diag::Result<hir::CompilationUnit> {
   signatures_ = &signatures;
   const auto in_unit = diag::FailureContext::InUnit(unit_.name);
-  std::optional<hir::StructuralScope> one_body;
+  auto own = LowerScopeOf(*scope_);
+  if (!own) return std::unexpected(std::move(own.error()));
+  unit_.root_scope = *std::move(own);
+  // Every application holds what the body's name holds, which includes the
+  // blocks it built, and the lowering reads a value only through that name or
+  // as one the object is built with, so every one of them lowers to the same
+  // scope.
   for (const slang::ast::Scope* application : applications_) {
+    if (application == scope_) continue;
     auto built = LowerScopeOf(*application);
     if (!built) return std::unexpected(std::move(built.error()));
-    one_body = one_body.has_value() ? OneBodyOf(*one_body, *built)
-                                    : std::optional{*std::move(built)};
-    if (!one_body.has_value()) {
+    if (*built != unit_.root_scope) {
       throw InternalError(
           std::format(
-              "UnitLowerer::LowerBodies: unit '{}' is lowered from "
-              "applications that were found to be one body, and '{}' is not "
-              "one with those before it",
-              unit_.name, application->asSymbol().getHierarchicalPath()));
+              "UnitLowerer::LowerBodies: '{}' is an application of body '{}' "
+              "and lowers to something else than '{}' does, so the lowering "
+              "read a value the body's name does not hold -- please report "
+              "this as a bug",
+              application->asSymbol().getHierarchicalPath(), unit_.name,
+              scope_->asSymbol().getHierarchicalPath()));
     }
   }
-  unit_.root_scope = *std::move(one_body);
   RequireEveryClassBodyLowered();
   ReadSignaturesOfNamedClasses();
   hir::Verify(unit_);
   return std::move(unit_);
-}
-
-auto UnitLowerer::LowerScopeBuiltBy(
-    const slang::ast::InstanceBodySymbol& application,
-    const hir::UnitSignatures& signatures)
-    -> diag::Result<hir::StructuralScope> {
-  signatures_ = &signatures;
-  const auto in_unit = diag::FailureContext::InUnit(unit_.name);
-  return LowerScopeOf(application);
 }
 
 auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
@@ -208,17 +219,24 @@ auto UnitLowerer::LowerScopeOf(const slang::ast::Scope& application)
       "lower to HIR", [&] { return unit_.name; });
   lowering_ = &application;
   WalkFrame frame;
-  StructuralScopeLowerer root(*this, application);
+  StructuralScopeLowerer root(*this, {&application});
   return root.Run(frame);
+}
+
+auto UnitLowerer::ApplicationHolding(const slang::ast::Scope& scope) const
+    -> const slang::ast::Scope* {
+  for (const slang::ast::Scope* level = &scope; level != nullptr;
+       level = level->asSymbol().getParentScope()) {
+    if (std::ranges::contains(applications_, level)) return level;
+  }
+  return nullptr;
 }
 
 auto UnitLowerer::ApplicationDeclaring(const slang::ast::ParameterSymbol& param)
     const -> const slang::ast::Scope& {
-  for (const slang::ast::Scope* level = param.getParentScope();
-       level != nullptr; level = level->asSymbol().getParentScope()) {
-    if (also_lowered_from_.contains(&level->asSymbol())) return *level;
-  }
-  return *scope_;
+  const slang::ast::Scope* holding =
+      ApplicationHolding(*param.getParentScope());
+  return holding != nullptr ? *holding : *scope_;
 }
 
 auto UnitLowerer::InternOwnClassDeclarations() -> diag::Result<void> {
@@ -272,6 +290,10 @@ void UnitLowerer::DeclareStructuralIdentities(
     if (!Owns(member)) continue;
     DeclareMemberIdentities(member, decls, published, frame);
   }
+  // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
+  // name one whose body lowers later, lives in another process entirely, or
+  // stands in a block instance its body was not lowered from.
+  DeclareProceduralScopes(scope, scope, *this, decls.procedural_scopes);
 }
 
 void UnitLowerer::DeclareBlockIdentities(
@@ -362,6 +384,20 @@ void UnitLowerer::DeclareMemberIdentities(
           ScopePublicationRecord::DataObject{.symbol = &value, .id = id});
       return;
     }
+    // A parameter whose value differs between the objects built from this
+    // scope is held by each of them, so a hierarchical name reaches it there
+    // as it reaches a variable (LRM 23.6). One the specialization fixes is a
+    // constant of the unit, which a name reaching it reads as one.
+    case SymbolKind::Parameter: {
+      const auto& param = member.as<slang::ast::ParameterSymbol>();
+      if (!DiffersPerObject(param)) return;
+      const hir::StructuralDataObjectId id =
+          decls.structural_data_objects.Declare();
+      MapStructuralDataObjectBinding(param, frame, id);
+      published.members.emplace_back(
+          ScopePublicationRecord::DataObject{.symbol = &param, .id = id});
+      return;
+    }
     // An interface port names an instance another unit builds and this one's
     // parent binds (LRM 25.3); its identity comes with the record of that
     // unit's object, which is reachable only once bodies lower.
@@ -422,7 +458,6 @@ void UnitLowerer::DeclareMemberIdentities(
     case SymbolKind::ForwardingTypedef:
     case SymbolKind::NetType:
     case SymbolKind::TypeParameter:
-    case SymbolKind::Parameter:
     case SymbolKind::Specparam:
     case SymbolKind::DefParam:
     case SymbolKind::Genvar:
@@ -514,14 +549,14 @@ void UnitLowerer::DeclareLoopGenerate(
   loop_generates_.emplace(&array, generate);
   published.generates.emplace_back(
       ScopePublicationRecord::Loop{.id = generate, .loop = &array});
-  std::uint32_t block = 0;
   for (const auto* entry : array.entries) {
     MapOwnedChildBinding(
         *entry, frame,
         hir::OwnedChildStep{
-            .names = hir::GenerateLoopRef{.generate = generate},
-            .selects = {block}});
-    ++block;
+            .names =
+                hir::GenerateLoopRef{
+                    .generate = generate, .index = LoopIndexOf(*entry)},
+            .selects = {}});
     DeclareBlockIdentities(*entry, published);
   }
 }
@@ -755,9 +790,15 @@ auto UnitLowerer::DeclaringScopeChain(const slang::ast::Scope& scope) const
   return chain;
 }
 
+auto UnitLowerer::InReadingOrder(std::vector<const slang::ast::Scope*> built)
+    const -> std::vector<const slang::ast::Scope*> {
+  if (Specialization().ChecksItself()) std::ranges::reverse(built);
+  return built;
+}
+
 auto UnitLowerer::HeldByAnotherDesignElement(
     const slang::ast::ClassType& cls) const -> bool {
-  return BelongsToAnInstance(cls) && &UnitHomeOf(cls) != home_;
+  return BelongsToAnInstance(cls) && !Owns(cls);
 }
 
 auto UnitLowerer::TakesDeclaringInstance(
@@ -854,14 +895,19 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
         "UnitLowerer::TakePublication: the class a scope published is stated "
         "while the unit declares, and handed to its scope once");
   }
+  const std::size_t published_loops = stated->second.loops.size();
+  const std::size_t published_choices = stated->second.choices.size();
   hir::ScopePublication publication{
       .signature = std::move(stated->second),
       .members =
           base::Translation<hir::PublishedMemberId, hir::PublishedDecl>{
               published.members.size()},
-      .generates =
-          base::Translation<hir::PublishedGenerateId, hir::GenerateId>{
-              published.generates.size()},
+      .loops =
+          base::Translation<hir::PublishedLoopId, hir::GenerateId>{
+              published_loops},
+      .choices =
+          base::Translation<hir::PublishedChoiceId, hir::GenerateId>{
+              published_choices},
       .disable_targets =
           base::Translation<
               hir::PublishedDisableTargetId, hir::ProceduralScopeId>{
@@ -905,8 +951,15 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
   }
   for (const ScopePublicationRecord::Construct& construct :
        published.generates) {
-    publication.generates.Append(
-        std::visit([](const auto& built) { return built.id; }, construct));
+    std::visit(
+        Overloaded{
+            [&](const ScopePublicationRecord::Loop& loop) {
+              publication.loops.Append(loop.id);
+            },
+            [&](const ScopePublicationRecord::Choice& choice) {
+              publication.choices.Append(choice.id);
+            }},
+        construct);
   }
   for (const ScopePublicationRecord::DisableTarget& target :
        published.disable_targets) {
@@ -1015,6 +1068,20 @@ auto UnitLowerer::EvaluatorOf(const slang::ast::Symbol& holder) const
         "its identity with the unit's other structural declarations");
   }
   return it->second;
+}
+
+auto UnitLowerer::InternDeclaredPortType(const slang::ast::Symbol& port)
+    -> diag::Result<hir::TypeId> {
+  const auto span = frontend::PointSpanOf(port.location);
+  if (const auto* declared = port.as_if<slang::ast::PortSymbol>()) {
+    return InternType(declared->getType(), span);
+  }
+  if (const auto* offered = port.as_if<slang::ast::ModportPortSymbol>()) {
+    return InternType(offered->getType(), span);
+  }
+  throw InternalError(
+      "UnitLowerer::InternDeclaredPortType: only a port and a name a view "
+      "offers declare a port's type");
 }
 
 void UnitLowerer::MapSubroutineBinding(

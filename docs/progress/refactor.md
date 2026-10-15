@@ -1769,69 +1769,14 @@ enough to warrant its own focused review.
       called with its own arguments. The shared prototype, its erased arguments and the two dead
       parameters are gone, and no consumer asks what kind of function it is looking at.
 
-- [ ] R117 -- The semantic layer states the elaborated blocks of a loop generate wherever they are
-      not one body, rather than stating the loop the source wrote. That layer exists so that what
-      the user wrote has exactly one answer, and the user wrote a loop; the blocks are what the
-      front end produced to answer its own questions. Everything awkward about the lowering follows
-      from taking them as the form.
-
-      Target: the semantic layer states the loop and one body, always. What makes one body enough is
-      that an elaboration-time value reaches it as a construction input rather than as a constant,
-      and a body that needs a constant anyway refuses -- falling back to the concrete form, which
-      stays only as the correctness escape the top-level objectives require. No question about the
-      source is asked, because there is nothing to choose between.
-
-      What was blocking it is done: a name reaching `g[k]` now means the k-th elaborated block, and
-      which compiled scope that is, is resolved where the construct is realized. So no pass commits
-      to a form before the blocks exist, and the prediction is gone with everything it needed --
-      every block is lowered, the lowered scopes are compared with each other, and one of them is
-      kept where they agree. That costs what the prediction cost, because both forms already lowered
-      every block, and it removes the failure the prediction could not be relieved of: a hole in it
-      refused a legal program as a compiler bug, which the top-level objectives forbid.
-
-      What remains is the rest of the target. The semantic layer still states the blocks where they
-      did not lower alike, rather than stating the loop and letting a body that needs a fixed value
-      fall back on its own; and the half that widens what can be shared is still every site that
-      stops folding the index.
-
-      The commonest reason blocks did not lower alike is gone: a conditional written inside the
-      loop selects a different alternative at different indices, and the construct now holds the
-      conditionals the source wrote, nested as the source nested them, so the construction runs
-      them against the index rather than being handed the answer. Each condition is stated once,
-      and the ordering the standard gives a `case` is kept as the order of its items rather than
-      restated on each of them. That reaches every conditional the language has: a two-alternative
-      `if`, an `if ... else if` chain, a `case`, a conditional that produced no block at some
-      index, and one written inside another's selected side, whose blocks belong to the outer
-      construct. What cannot come from an index that did not select an alternative is its body,
-      which is why the bodies are still read together across the indices.
-
-      One position on that half is measured and has a tension worth stating before anyone moves it.
-      A block declaring a class keeps the blocks apart, because a class takes an identity of the
-      whole unit and one is minted per elaborated declaration, so blocks alike in everything else
-      hold different ones. That identity also carries which block declared it, and it has to: a
-      unit holds its classes in one flat name space, a loop's blocks answer to the construct's
-      label and their index rather than to labels of their own, so without the index every block's
-      class reached the same identifier -- which the C++ backend emitted as several definitions of
-      one class and the host compiler refused. So the index is load-bearing for the blocks kept
-      apart and would name one block while serving all of them if they were shared. Sharing here
-      means the identity stops being settled before the blocks are compared, which is the same
-      shape as keying a record by what it states rather than by which declaration spelled it.
-
-      A block instance is now an application of its block, named from the source, and blocks of one
-      application are objects of one published class whether or not their code came out alike. The
-      class-declaring block is the one position still told apart by its index, for the reason above
-      seen from the other side: a class's bodies are compiled against the scope its block lowered
-      to, and how many scopes that is, is known only after the blocks are compared.
-
-      Measured, because the argument for the shape was twice made from an assumption instead. At 256
-      iterations the whole semantic and generic-IR pipeline is under half a second and the elaborated
-      duplication inside it costs 0.019s; the optimizer and code generation cost 4.2s and compiling
-      the emitted target 16.8s. Duplication is free everywhere above the artifact, so lowering every
-      block costs nothing worth weighing -- and the speed argument that twice chose a worse shape was
-      about a few percent of the cost.
-
-      Why the previous shape could not be finished, rather than merely improved, and what the field
-      does instead, are in `one-body-built-at-every-index`.
+- [x] R117 -- The semantic layer states the loop generate the source wrote, with the bodies its
+      blocks are built from and, where its blocks are several bodies, the values of its index each
+      one stands at. Which body a block is is named before any body lowers, from its text and from
+      whether what the block declares or its code uses its index, so blocks of one name are one body
+      and nothing is decided by comparing lowered scopes. A block that uses its index nowhere is the
+      one body every index builds; a conditional inside the loop is held as the source nested it and
+      run against the index by the construction. Why the earlier shape, which compared every lowered
+      block, could not be finished is in `one-body-built-at-every-index`.
 
 - [ ] R119 -- The positions where this compiler still settles an elaboration-time value into the
       artifact, rather than supplying it to the artifact. Each is a place the front end had an
@@ -1858,8 +1803,8 @@ enough to warrant its own focused review.
 
       A container's declared extent sits in the type the same way, and both of them -- a
       fixed unpacked extent and a queue's declared bound -- are ordinary members of that answer
-      rather than positions to move. What they turned up instead was a defect in how one body is
-      decided, which is R117's subject and is recorded there.
+      rather than positions to move. What they turned up instead was a defect in how one body was
+      decided, gone with the comparison it lived in.
 
       Audited and needing nothing. An assignment pattern's keys are lowered already, whichever form
       the pattern takes; where a key names a member or a type rather than a value, it names
@@ -2890,14 +2835,6 @@ enough to warrant its own focused review.
       declares a local it names. Not blocked. No corpus case writes either run, so the check that
       holds every case's written text to the nesting a C++ compiler must accept does not see them.
 
-- [ ] R190 -- Two instances that agree on everything a unit is told apart by and still lower apart
-      end the compile as a compiler bug, where two block instances of one application that lower
-      apart are one published class realized twice and the program runs. Both are the same event --
-      an identity computed from the source that the lowering did not bear out -- and the top-level
-      objectives give it one answer: a correct program is never refused because sharing could not be
-      applied. Target: a unit realized more than once the way a block's class is, its published
-      class named by the identity and each realization beneath it. Not blocked.
-
 - [ ] R191 -- What a unit declares is identified by a path of steps and no longer by a composed
       name, but two neighbours on the same axis still compose strings. A unit's own name joins a
       library to its cell, a nested design element to the one declaring it, a specialization of a
@@ -3074,20 +3011,13 @@ enough to warrant its own focused review.
       about fifty times faster. Target: a concatenation states all its operands and writes each into
       its answer once. Not blocked.
 
-- [ ] R219 -- One value, a unit's name, both says which unit a parent means and decides which
-      instances share one compiled artifact, where the incremental-build contract makes those two
-      values: a key for what is computed and a fingerprint for whether it came out the same. The
-      name has to exist before any unit is lowered, since a parent writes it, so which instances
-      will come out alike is predicted from the source before lowering and then checked by lowering
-      them. Everything built around the prediction follows from that: the list of where the front
-      end folds a parameter, the fall back that keeps a definition whole when the prediction misses,
-      the second fall back for a unit holding a class, and the remark on a unit per value that
-      decides nothing, which runs the right comparison and may only report it. High priority.
-      Target: a parent names a child by what its instantiation states, every value included, which
-      needs no reading of the child's body; each distinct such key is lowered with every parameter a
-      value its object is built with; and keys whose lowered forms are the same share everything
-      after. No parameter is classified beforehand. First to find out: where emitted code and what a
-      unit publishes take the name for the artifact. Not blocked.
+- [x] R219 -- A unit's name says which unit a parent means, and it is decided before any unit
+      lowers: from its definition, the values its declarations and code rely on, and the generate
+      blocks it built, read off the front end's record, with a miss reported as a compiler bug.
+      Whether a result is reused is a second value, the digest of what its action read -- an emitted
+      module's text, a C++ file and what it includes, the objects a link reads -- so a result that
+      comes out the same however it was reached is reused, and nothing is shared by comparing
+      lowered forms.
 
 - [ ] R220 -- On the execution backend, what a continuous assignment writes to part of a forced
       variable through a reference to the whole of it is kept nowhere, so the release does not show
@@ -3102,6 +3032,106 @@ enough to warrant its own focused review.
       a failure of the compiler's own. Target: a write a takeover turns away is kept beneath it
       wherever the write names a part of the variable, however the variable was reached. Not
       blocked.
+
+The entries from R221 on come from one audit of the lowering against the front end: places where
+this compiler works out again, or steps around, something the front end already knows or could keep.
+Each says whether it was confirmed by running a program, confirmed by reading the front end's
+source, or not yet tried.
+
+- [x] R221 -- A select whose position lands out of bounds was found by evaluating the position a
+      second time and checking it against the declared range, and the parameters that put it there
+      by walking the position, which missed one read inside a constant function's body. The front
+      end decides the same thing where it binds the select; it now records that position as a
+      required constant, through a change carried in its fork, and the classifier reads which
+      selects it found out of bounds and evaluates nothing itself. Such a select makes its block a
+      body of its own, which is accepted for a construct that rare. Keeping the front end's longest
+      static prefix where a select is out of bounds (LRM 11.5.3 has such a prefix in its own
+      example) would let the block share its body instead, and was weighed and not done.
+
+- [ ] R222 -- A hierarchical name's select of a loop generate's block is lowered as the index the
+      front end resolved, so blocks that each read their neighbour are a body each, and the route is
+      rebuilt from the target's parents rather than read off the path the lookup produced. Target:
+      the route is read off that path, the select is stated as the expression the source wrote and
+      evaluated where the reference is settled, and the resolved index stays only where the loop's
+      blocks are of several classes. Needs the front end to keep a path's selector expressions, a
+      change carried twice before and taken out each time for want of a reader. Not yet tried.
+
+- [ ] R223 -- An assertion written at module level is recognized by the shape of the procedure the
+      front end made for it, and only the concurrent form is recognized, so a deferred immediate
+      assertion there, which runs as if inside an `always_comb` (LRM 16.4.4), is lowered as a
+      procedure that loops without waiting. The front end records which procedures came from an
+      assertion item. Confirmed by running: `assert #0 (a);` in a module body did not end in sixty
+      seconds on the execution backend. Target: read that record, and lower such an assertion as the
+      `always_comb` it is.
+
+- [ ] R224 -- An override of a pure virtual method is searched for again by name on the ground that
+      the front end leaves the link unset. It does not: its lookup of a class member answers a
+      prototype with the subroutine it declares, so the link is set and the signature checked, and
+      the search never finds anything. Confirmed by reading the front end's source. Target: delete
+      the search.
+
+- [ ] R225 -- Methods the language defines on built-in types are told apart by their names, where
+      the front end gives each built-in an identity, and the same lowering already switches on that
+      identity for some of them. Four smaller things the front end answers are worked out again here
+      too: whether an argument is an lvalue, the instance a scope stands in, the built-in package,
+      and whether two types are one by being written once. Not yet tried. Target: read the front
+      end's answers.
+
+- [ ] R226 -- Where an upward name lands, and which names leave a body, are worked out again from
+      the rules of LRM 23.8, where the front end's lookup knows the scope it matched in and the
+      front end records each body's upward names. A call by an upward simple name has no
+      hierarchical reference at all, so it is likely refused; not yet tried. Target: the front end
+      states both, a change carried in its fork.
+
+- [ ] R227 -- What a body reads is recovered by walking the body a second time and matching each
+      path against the bit runs the front end's data-flow analysis kept, because the analysis keeps
+      the runs and drops the paths. The second walk also sees paths the analysis leaves out. Target:
+      the analysis hands each reference it counts to a consumer that asks for them, a change carried
+      in the fork in the shape of the hooks it already has. Confirmed by reading.
+
+- [ ] R228 -- Which bind directive inserted an instance is recovered by climbing the syntax tree
+      from the instance, where the front end held the directive when it built the instance and
+      dropped it. Target: the instance keeps it, a change carried in the fork. Confirmed by reading.
+
+- [ ] R229 -- Whether a defparam, a value given on the command line or a configuration set a
+      parameter is worked out again by looking the parameter up in the front end's override tree,
+      and for a type parameter it is guessed, which can take one written at the instantiation for
+      one set elsewhere and cost the sharing of a unit. The front end decides both and keeps only
+      that a configuration set a value parameter. Target: the front end keeps both facts for both
+      kinds of parameter. Confirmed by reading.
+
+- [ ] R230 -- Five smaller facts the front end held and dropped are recovered here: the operator of
+      a compound assignment, by taking apart the tree the front end built for it; an assignment
+      pattern's default, by noticing elements that share one expression; whether a connection took
+      the port's default, by comparing expressions; whether a parameter's type follows its value, by
+      reading its syntax; and which file a compilation unit is, from its first member, which can sit
+      in an included file and so name two units alike. Target: the front end keeps each. Confirmed
+      by reading; the last not yet tried.
+
+- [ ] R231 -- A dynamic array's `new[]` is refused on the right of a continuous assignment here,
+      because the front end accepts it where the grammar admits it only in a declaration and a
+      blocking assignment (LRM 7.5.1, A.6.2); the nonblocking position is accepted by both.
+      Confirmed by running the front end's check. Target: the front end diagnoses it, reported
+      upstream, and the refusal here goes.
+
+- [x] R232 -- A unit's name counted the constants its code was compiled for as well as those its
+      declarations hold, so an edit to a body that made a parameter fix something new renamed the
+      unit, and every unit reaching it by a hierarchical name saw a different class. Done: a unit is
+      named by the handed values what it declares uses, as a generate block is, and is compiled to
+      one body for each set of values its code uses. Each body is a compilation of its own that
+      states the classes the unit published alike, the design root makes each instance from the body
+      its code needs, and a published subroutine reaches the body of the object it is called on. A
+      parameter read as a value reads what the instance was built with, and a scope that declares a
+      class has one body.
+
+- [ ] R233 -- Whether a constant the front end evaluated belongs to what a scope declares or to what
+      its code runs is told only by where the evaluation's expression sits, because the front end
+      records the scope it evaluated in and not the declaration it evaluated for. A scope does not
+      tell a statement block's static variable from its automatic one, nor a subroutine's arguments
+      from its locals, so only the expressions statements hold are counted as code, and an automatic
+      variable whose width a loop's index or a parameter fixes is counted as declared: its block or
+      unit is a class of its own per value where a realization would do. Target: the front end
+      records, with each evaluation, the declaration it was made for.
 
 ## Out of Scope
 

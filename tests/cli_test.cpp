@@ -1078,6 +1078,48 @@ TEST(LyraRun, AnErrorInTimeZeroInitializationIsReported) {
       << "stdout: " << run.stdout_text;
 }
 
+// `$printtimescale` with no argument names the design element it is called in
+// by the name that element was declared under (LRM 20.4.2, whose example
+// prints `a_dat` for module `a_dat`). Two instances whose parameters make them
+// two compiled units are still one design element, so both print one name, and
+// nothing a run prints tells which units the compiler made.
+TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "`timescale 1ns / 1ps\n"
+                     << "module Halved #(parameter int P = 2);\n"
+                     << "  logic [P/2:0] held;\n"
+                     << "  initial $printtimescale;\n"
+                     << "endmodule\n"
+                     << "module Test;\n"
+                     << "  Halved #(.P(2)) narrow ();\n"
+                     << "  Halved #(.P(4)) wide ();\n"
+                     << "endmodule\n";
+
+  const std::vector<std::string> args = {
+      "run",
+      "--backend",
+      "llvm",
+      "--top",
+      "Test",
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  ASSERT_EQ(run.termination, TerminationKind::kExitedNormally)
+      << run.stdout_text << run.stderr_text;
+  constexpr std::string_view kNamed = "Time scale of (Halved) is 1ns / 1ps\n";
+  const std::size_t first = run.stdout_text.find(kNamed);
+  ASSERT_NE(first, std::string::npos) << "stdout: " << run.stdout_text;
+  EXPECT_NE(
+      run.stdout_text.find(kNamed, first + kNamed.size()), std::string::npos)
+      << "stdout: " << run.stdout_text;
+}
+
 // Procedures that keep waking each other with no delay between them are legal
 // text the standard only warns of (LRM 9.2.2, 12.7.6), and a tool that stops
 // such a run owes its reader the one thing they cannot find alone: which
@@ -1551,15 +1593,21 @@ auto CountEntries(const std::filesystem::path& dir) -> std::size_t {
                   entries, std::filesystem::directory_iterator{}));
 }
 
-// How many programs a store keeps.
-auto KeptPrograms(const std::filesystem::path& store) -> std::size_t {
-  return CountEntries(store / "programs");
+// How many actions a store holds a result of.
+auto KeptActions(const std::filesystem::path& store) -> std::size_t {
+  return CountEntries(store / "ac");
 }
 
-// A program is kept under what built it, so building a design again reuses
-// the one kept, and building a changed design, or the same one compiled at
-// another level, keeps a second; how wide it was built changes nothing it
-// holds, so that keeps none. `build` writes the
+// The actions building a design of one module on the LLVM backend performs:
+// compiling the module's unit, the design root and the program's entry, and
+// linking what they produced.
+constexpr std::size_t kActionsBuildingOneModule = 4;
+
+// Every step of a build is kept under what it read, so building a design again
+// performs nothing new; compiling it at another level changes what every step
+// reads, and changing the module's text changes only what its unit's compile
+// and the link read. How wide it was built changes nothing any step reads, so
+// that keeps none. `build` writes the
 // one file it was asked for and `run` writes nothing, and nothing kept can be
 // reached through what a command handed back: clearing the store leaves both
 // the built program and a later run whole.
@@ -1585,24 +1633,24 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   ASSERT_EQ(first.exit_code, 0) << first.stderr_text;
   EXPECT_TRUE(std::filesystem::is_regular_file(work / "Test"))
       << "an anonymous design with one top names its program after the top";
-  EXPECT_EQ(KeptPrograms(store), 1U);
+  EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule);
 
   auto again = RunLyraFrom(lyra, work, "build " + common + " design.sv");
   ASSERT_EQ(again.exit_code, 0) << again.stderr_text;
-  EXPECT_EQ(KeptPrograms(store), 1U)
-      << "an unchanged design built again keeps no second program";
+  EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
+      << "an unchanged design built again performed a step anew";
 
   auto wider = RunLyraFrom(lyra, work, "build -j 4 " + common + " design.sv");
   ASSERT_EQ(wider.exit_code, 0) << wider.stderr_text;
-  EXPECT_EQ(KeptPrograms(store), 1U)
-      << "a design built wider is the same program, and keeps no second";
+  EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
+      << "a design built wider performed a step anew";
 
   auto released =
       RunLyraFrom(lyra, work, "build --release " + common + " design.sv");
   ASSERT_EQ(released.exit_code, 0) << released.stderr_text;
-  EXPECT_EQ(KeptPrograms(store), 2U)
-      << "a design compiled at another level was handed the program kept for "
-         "the first";
+  EXPECT_EQ(KeptActions(store), 2 * kActionsBuildingOneModule)
+      << "a design compiled at another level was handed what was kept for the "
+         "first";
 
   write_design(2);
   auto changed = RunLyraFrom(lyra, work, "run " + common + " design.sv");
@@ -1610,7 +1658,9 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   EXPECT_NE(changed.stdout_text.find("value=2"), std::string::npos)
       << "a changed design ran the program kept for the old one: "
       << changed.stdout_text;
-  EXPECT_EQ(KeptPrograms(store), 3U);
+  EXPECT_EQ(KeptActions(store), (2 * kActionsBuildingOneModule) + 2)
+      << "a change to the module's text performed anew a step that does not "
+         "read it";
 
   EXPECT_EQ(CountEntries(work), 2U)
       << "the working directory holds the design and the one program built, "
@@ -1619,7 +1669,8 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   auto cleared = RunLyraFrom(
       lyra, work, std::format("cache clear --cache-dir '{}'", store.string()));
   ASSERT_EQ(cleared.exit_code, 0) << cleared.stderr_text;
-  EXPECT_EQ(KeptPrograms(store), 0U);
+  EXPECT_EQ(KeptActions(store), 0U);
+  EXPECT_EQ(CountEntries(store / "cas"), 0U);
   const auto held = RunChildProcess(work / "Test", {}, 30s);
   EXPECT_EQ(held.exit_code, 0) << held.stderr_text;
   EXPECT_NE(held.stdout_text.find("value=1"), std::string::npos)
@@ -1676,8 +1727,8 @@ TEST(LyraCommandLine, LeavesBehindOnlyWhatItWasAskedFor) {
   ASSERT_EQ(ran.exit_code, 0) << ran.stderr_text;
   EXPECT_EQ(CountEntries(temporary), 0U)
       << "a run left what it built in the temporary directory";
-  EXPECT_EQ(KeptPrograms(store), 1U)
-      << "the program is kept in the platform's cache directory";
+  EXPECT_EQ(KeptActions(store), kActionsBuildingOneModule)
+      << "what the run built is kept in the platform's cache directory";
 
   const auto built = run("build --backend llvm -o program design.sv");
   ASSERT_EQ(built.exit_code, 0) << built.stderr_text;

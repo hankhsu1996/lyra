@@ -5,8 +5,6 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
-#include "lyra/lowering/hir_to_mir/class_definition.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/class.hpp"
@@ -14,7 +12,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -51,21 +48,28 @@ void CompleteWith(
   }
 }
 
-// Ends `body`, a block of `code`, by calling `callable` of class `id` on the
-// object `code` was handed first, viewed as that class, with what it was
-// handed after the object.
-void EnterBodyOn(
-    const mir::CompilationUnit& unit, const mir::CallableCode& code,
-    mir::Block& body, mir::ClassId id, const mir::Class& cls,
-    mir::CallableId callable) {
-  const mir::LocalId handed = code.params.front();
+// The entry calling `callable` of class `id` on the object, and no other body
+// in its place: handed the object as `object`, it views it as the class and
+// passes on what it takes after the object.
+auto ForwardingBody(
+    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
+    mir::CallableId callable, mir::TypeId object) -> mir::CallableCode {
+  const mir::CallableCode& target = cls.callables.Get(callable).code;
+  mir::CallableCode code = mir::CallableCode::Defined();
+  const mir::LocalId handed = code.AddLocal(object);
+  code.params = {handed};
+  code.result_type = target.result_type;
+  for (const mir::LocalId formal : target.ParamsAfterReceiver()) {
+    code.params.push_back(code.AddLocal(target.locals.Get(formal).type));
+  }
+
+  mir::Block& body = code.Body();
   const mir::ExprId self = body.exprs.Add(
       mir::Expr{
           .data =
               mir::CastExpr{
-                  .operand = body.exprs.Add(
-                      mir::MakeLocalRefExpr(
-                          handed, code.locals.Get(handed).type))},
+                  .operand =
+                      body.exprs.Add(mir::MakeLocalRefExpr(handed, object))},
           .type = cls.self_pointer_type});
   std::vector<mir::ExprId> args;
   for (const mir::LocalId param : std::span{code.params}.subspan(1)) {
@@ -85,79 +89,10 @@ void EnterBodyOn(
                   .arguments = std::move(args)},
           .type = code.result_type});
   CompleteWith(unit, body, call, code.result_type);
-}
-
-// A body taking the object as `object` and then what `target` takes after its
-// receiver, resulting in what `target` does, with nothing in it yet.
-auto TakingWhatItTakes(const mir::CallableCode& target, mir::TypeId object)
-    -> mir::CallableCode {
-  mir::CallableCode code = mir::CallableCode::Defined();
-  code.params = {code.AddLocal(object)};
-  code.result_type = target.result_type;
-  for (const mir::LocalId formal : target.ParamsAfterReceiver()) {
-    code.params.push_back(code.AddLocal(target.locals.Get(formal).type));
-  }
-  return code;
-}
-
-// The entry calling `callable` of class `id` on the object, and no other body
-// in its place: handed the object as `object`, it views it as the class and
-// passes on what it takes after the object.
-auto ForwardingBody(
-    const mir::CompilationUnit& unit, mir::ClassId id, const mir::Class& cls,
-    mir::CallableId callable, mir::TypeId object) -> mir::CallableCode {
-  mir::CallableCode code =
-      TakingWhatItTakes(cls.callables.Get(callable).code, object);
-  EnterBodyOn(unit, code, code.Body(), id, cls, callable);
   return code;
 }
 
 }  // namespace
-
-auto ForwardingMethod(
-    const mir::CompilationUnit& unit,
-    std::span<const mir::CallableTarget> bodies, mir::TypeId object)
-    -> mir::CallableCode {
-  if (bodies.empty()) {
-    throw InternalError(
-        "ForwardingMethod: a class a unit published of a scope is realized by "
-        "at least one class");
-  }
-  const mir::CallableTarget& last = bodies.back();
-  mir::CallableCode code = TakingWhatItTakes(
-      unit.GetClass(last.owner).callables.Get(last.slot).code, object);
-  code.receiver = code.params.front();
-  mir::Block& body = code.Body();
-  for (const mir::CallableTarget& one : bodies.first(bodies.size() - 1)) {
-    const mir::LocalId handed = code.params.front();
-    const mir::ExprId is_this_one = body.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kIsOfClass,
-                            .receiver = BuildObjectDeref(
-                                unit, body,
-                                body.exprs.Add(
-                                    mir::MakeLocalRefExpr(handed, object)))},
-                    .arguments = {BuildDefinitionRead(
-                        unit, body,
-                        mir::IntraUnitClassRef{.class_id = one.owner})}},
-            .type = unit.builtins.machine_bool});
-    mir::Block entered;
-    EnterBodyOn(
-        unit, code, entered, one.owner, unit.GetClass(one.owner), one.slot);
-    body.AppendStmt(
-        mir::IfStmt{
-            .condition = is_this_one,
-            .then_scope = body.child_scopes.Add(std::move(entered)),
-            .else_scope = std::nullopt});
-  }
-  EnterBodyOn(
-      unit, code, body, last.owner, unit.GetClass(last.owner), last.slot);
-  return code;
-}
 
 auto EntryOf(
     const mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,

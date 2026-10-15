@@ -63,6 +63,13 @@ using OverrideEffect = std::variant<
     const slang::ast::InstanceBodySymbol& body,
     const slang::ast::ParameterSymbol& param) -> bool;
 
+// Whether `param` of `body` holds a value given anywhere other than its own
+// declaration: by the instantiation, a defparam, or a configuration (LRM
+// 23.10, 33.4.3).
+[[nodiscard]] auto GivenAValue(
+    const slang::ast::InstanceBodySymbol& body,
+    const slang::ast::ParameterSymbol& param) -> bool;
+
 // The expression `inst`'s own instantiation wrote for `param`, where that is
 // what the parameter holds; nothing where it was given elsewhere or not at all.
 [[nodiscard]] auto ValueWrittenAtInstantiation(

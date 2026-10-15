@@ -2,6 +2,7 @@
 
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <slang/ast/Expression.h>
@@ -30,7 +31,15 @@ namespace lyra::lowering::ast_to_hir {
 // Per-structural-scope lowerer: produces one hir::StructuralScope populated
 // with the members of a slang scope (variables, subroutines, processes,
 // continuous assigns, generates). Constructed once per structural scope (the
-// unit root plus one per nested generate scope); runs once via Run(frame).
+// unit root plus one per body of a nested generate); runs once via Run(frame).
+//
+// A generate body may be built by several block instances of one instance
+// (LRM 27.4), each its own elaboration of the same text, and a construct inside
+// it may have selected a different alternative or counted a different number
+// of blocks in each (LRM 27.5). The body holds what any of them built, so the
+// lowerer is handed every elaboration, in the order the lowering reads them;
+// it walks the first, and takes each nested part from the first of them that
+// built it.
 //
 // Run stack-allocates the output scope, threads `&scope` through the WalkFrame
 // so per-member handlers write to it via `frame.current_structural_scope`, and
@@ -38,17 +47,23 @@ namespace lyra::lowering::ast_to_hir {
 class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
-      UnitLowerer& unit_lowerer, const slang::ast::Scope& slang_scope)
+      UnitLowerer& unit_lowerer,
+      std::vector<const slang::ast::Scope*> elaborations)
       : owner_(&unit_lowerer),
-        slang_scope_(&slang_scope),
-        frame_(unit_lowerer.LookupScopeFrame(slang_scope)) {
+        elaborations_(std::move(elaborations)),
+        slang_scope_(elaborations_.front()),
+        frame_(unit_lowerer.LookupScopeFrame(*slang_scope_)) {
   }
 
   // Stack-allocates the output `hir::StructuralScope`, walks every member of
-  // `slang_scope_` into it, and returns it. `parent_frame` is the caller's walk
-  // frame; this scope's own ScopeFrameId and `&scope` are pushed by Run before
-  // dispatching to per-member helpers.
+  // the elaboration it is lowered from into it, and returns it. `parent_frame`
+  // is the caller's walk frame; this scope's own ScopeFrameId and `&scope` are
+  // pushed by Run before dispatching to per-member helpers.
   auto Run(WalkFrame parent_frame) -> diag::Result<hir::StructuralScope>;
+
+  [[nodiscard]] auto LoweredFrom() const -> const slang::ast::Scope& {
+    return *slang_scope_;
+  }
 
   // This scope's identity on the walk, which a declaration added to it is
   // bound against.
@@ -71,6 +86,9 @@ class StructuralScopeLowerer {
  private:
   auto DeclareDifferingParameters(hir::StructuralScope& scope, WalkFrame frame)
       -> diag::Result<void>;
+  auto SuppliedDeclarationOf(
+      const slang::ast::ParameterSymbol& parameter, WalkFrame frame)
+      -> diag::Result<hir::StructuralDataObjectKind>;
   auto DeclareSettledValue(
       hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
       hir::StructuralDataObjectKind kind) -> diag::Result<void>;
@@ -144,6 +162,7 @@ class StructuralScopeLowerer {
       -> diag::Result<hir::Generate>;
 
   UnitLowerer* owner_;
+  std::vector<const slang::ast::Scope*> elaborations_;
   const slang::ast::Scope* slang_scope_;
   ScopeFrameId frame_;
 };

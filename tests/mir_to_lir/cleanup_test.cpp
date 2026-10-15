@@ -36,6 +36,7 @@ auto UnitWithCleanupCalling(support::BuiltinFn in_cleanup)
     -> mir::CompilationUnit {
   mir::CompilationUnit unit;
   unit.name = "U";
+  unit.body_name = "U";
   unit.content = mir::BroughtUpNamespace{
       .install_storage = AddEmptyBody(unit),
       .initialize_storage = AddEmptyBody(unit)};
@@ -64,6 +65,7 @@ auto UnitWithCleanupCalling(support::BuiltinFn in_cleanup)
 auto UnitCallingTwice(support::BuiltinFn callee) -> mir::CompilationUnit {
   mir::CompilationUnit unit;
   unit.name = "U";
+  unit.body_name = "U";
   unit.content = mir::BroughtUpNamespace{
       .install_storage = AddEmptyBody(unit),
       .initialize_storage = AddEmptyBody(unit)};

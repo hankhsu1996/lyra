@@ -18,25 +18,25 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/mir/behavior_ordinal.hpp"
+#include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
-#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
-// The symbol a body of a unit that answers to no name is emitted and linked
-// under. It is composed from the unit and which of them it is, never from a
-// name, so the unit that defines it and whoever calls it arrive at the same
-// string with nothing shared between them.
-[[nodiscard]] auto MintedEntrySymbol(
-    std::string_view unit_name, mir::MintedEntry entry) -> std::string;
+// The symbol a namespace unit's bring-up entry is emitted and linked under. It
+// is composed from the unit and which of them it is, never from a name, so the
+// unit that defines it and whoever calls it arrive at the same string with
+// nothing shared between them.
+[[nodiscard]] auto BringUpEntrySymbol(
+    std::string_view unit_name, mir::BringUpEntry entry) -> std::string;
 
 // Per-unit lowerer for the MIR-to-LIR pass. Reads the source MIR, owns the
 // in-progress LIR unit, and memoizes type translation so each distinct MIR type
@@ -49,6 +49,7 @@ class UnitLowerer {
   // lowering happens, and everything else here is minted as the pass runs.
   explicit UnitLowerer(const mir::CompilationUnit& mir) : mir_(&mir) {
     out_.name = mir.name;
+    out_.body_name = mir.body_name;
   }
 
   auto Run() -> diag::Result<lir::CompilationUnit>;
@@ -120,6 +121,10 @@ class UnitLowerer {
   // virtual has no implementation here, so neither is a function of this unit.
   [[nodiscard]] auto MethodFunction(
       mir::ClassId owner, mir::CallableId callable) const -> lir::FunctionId;
+
+  // The symbol a constant of a class of this unit is linked under.
+  [[nodiscard]] auto ClassConstantSymbolOf(
+      const mir::ClassConstantRef& constant) const -> std::string;
 
   // The behavior a MIR dispatch slot names, as LIR names one: the declaration
   // that introduced it, and which of that declaration's introductions it is.

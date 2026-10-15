@@ -151,8 +151,9 @@ auto EmittedCompileInputs(
 // The units the build of a design after its edit made again, the build before
 // the edit having left what it made.
 //
-// The C++ backend keeps no object, so there a unit is made again where what its
-// translation units are handed differs. The execution backend keeps each
+// The C++ backend keeps each emitted file's object under what its compile
+// reads, so there a unit is made again where what its translation units are
+// handed differs. The execution backend keeps each
 // unit's object, and its own report says which it made.
 auto UnitsMadeAgain(
     const std::filesystem::path& lyra, const IncrementalCase& incremental,

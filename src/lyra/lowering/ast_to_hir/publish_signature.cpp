@@ -5,6 +5,7 @@
 #include <map>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -26,6 +27,7 @@
 #include <slang/ast/symbols/ClassSymbols.h>
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/ast/symbols/MemberSymbols.h>
+#include <slang/ast/symbols/ParameterSymbols.h>
 #include <slang/ast/symbols/PortSymbols.h>
 #include <slang/ast/symbols/SubroutineSymbols.h>
 #include <slang/ast/symbols/ValueSymbol.h>
@@ -208,7 +210,7 @@ auto PublishPath(
   std::vector<hir::PublishedSelector> path;
   path.reserve(steps.size());
   for (const auto* step : std::views::reverse(steps)) {
-    auto projected = lowerer.InternType(*step->type, span);
+    auto projected = lowerer.InternExpressionType(*step, span);
     if (!projected) return std::unexpected(std::move(projected.error()));
     if (const auto* select =
             step->as_if<slang::ast::ElementSelectExpression>()) {
@@ -244,134 +246,49 @@ auto PublishPath(
   return path;
 }
 
-// One conditional construct as two block instances of one application left
-// it: every alternative either of them built, in the order the source wrote
-// them. Nothing where the two are not the same construct, or name different
-// classes for one alternative.
-auto EitherBuilt(
-    const hir::PublishedChoice& ours, const hir::PublishedChoice& theirs)
-    -> std::optional<hir::PublishedChoice> {
-  if (ours.construct != theirs.construct) return std::nullopt;
-  hir::PublishedChoice either{.construct = ours.construct, .blocks = {}};
-  auto mine = ours.blocks.begin();
-  auto other = theirs.blocks.begin();
-  while (mine != ours.blocks.end() || other != theirs.blocks.end()) {
-    if (other == theirs.blocks.end() ||
-        (mine != ours.blocks.end() && mine->position < other->position)) {
-      either.blocks.push_back(*mine++);
-    } else if (mine == ours.blocks.end() || other->position < mine->position) {
-      either.blocks.push_back(*other++);
-    } else {
-      if (!(*mine == *other)) return std::nullopt;
-      either.blocks.push_back(*mine++);
-      ++other;
-    }
-  }
-  return either;
-}
-
-// The blocks of one loop, as the class at each index a block stood at: the
-// indices in ascending order, and the classes in the order that names them.
-auto BlocksCounted(
+// A loop as the class of the block standing at each index it counted out. A
+// loop whose blocks are all of one class says that class and nothing of where
+// they stand, since each construction counts its own (LRM 27.4); one that
+// counted none is the empty case of that.
+auto PublishedLoopOf(
     std::string name, const std::map<std::int64_t, support::DefPath>& at)
-    -> hir::PublishedLoopByIndex {
-  hir::PublishedLoopByIndex counted{
-      .name = std::move(name), .classes = {}, .blocks = {}};
-  std::map<support::DefPath, std::uint32_t> class_at;
+    -> hir::PublishedLoop {
+  std::vector<support::DefPath> classes;
+  std::vector<hir::PublishedLoopBlock> blocks;
   for (const auto& [index, class_path] : at) {
-    const auto [known, first] = class_at.try_emplace(
-        class_path, static_cast<std::uint32_t>(counted.classes.size()));
-    if (first) counted.classes.push_back(class_path);
-    counted.blocks.push_back(
-        hir::PublishedLoopBlock{.index = index, .class_at = known->second});
+    const auto known = std::ranges::find(classes, class_path);
+    blocks.push_back(
+        hir::PublishedLoopBlock{
+            .index = index,
+            .class_at = static_cast<std::uint32_t>(known - classes.begin())});
+    if (known == classes.end()) classes.push_back(class_path);
   }
-  return counted;
+  if (classes.size() > 1) {
+    return hir::PublishedLoopByIndex{
+        .name = std::move(name),
+        .classes = std::move(classes),
+        .blocks = std::move(blocks)};
+  }
+  return hir::PublishedLoopOfOneClass{
+      .name = std::move(name),
+      .class_path = classes.empty()
+                        ? std::nullopt
+                        : std::optional{std::move(classes.front())}};
 }
 
-// One loop as two block instances of one application left it: every block
-// either of them counted out. How many blocks a loop counts is each
-// construction's own, so the two may have counted different indices. Nothing
-// where the two are not the same loop, or name different classes at one index.
-auto EitherCounted(
-    const hir::PublishedLoopByIndex& ours,
-    const hir::PublishedLoopByIndex& theirs)
-    -> std::optional<hir::PublishedLoopByIndex> {
-  if (ours.name != theirs.name) return std::nullopt;
-  std::map<std::int64_t, support::DefPath> at;
-  for (const hir::PublishedLoopByIndex* counted : {&ours, &theirs}) {
-    for (const hir::PublishedLoopBlock& block : counted->blocks) {
-      const support::DefPath& class_path = counted->classes.at(block.class_at);
-      const auto [known, first] = at.try_emplace(block.index, class_path);
-      if (!first && known->second != class_path) return std::nullopt;
-    }
+// The construct of kind `Construct` a scope's record holds under `id`. Every
+// elaboration of one text records its constructs under the ids the source
+// order gives them, so one id names the same construct in each.
+template <typename Construct>
+auto ConstructOf(const ScopePublicationRecord& record, hir::GenerateId id)
+    -> const Construct& {
+  for (const ScopePublicationRecord::Construct& construct : record.generates) {
+    const auto* found = std::get_if<Construct>(&construct);
+    if (found != nullptr && found->id == id) return *found;
   }
-  return BlocksCounted(ours.name, at);
-}
-
-// What a class says of each loop once every block instance of its application
-// has been heard: a loop whose blocks are all one class says that class and
-// nothing of where they stand.
-void StateLoopsOfOneClass(hir::ScopeClassSignature& cls) {
-  base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId> generates;
-  for (const hir::PublishedGenerate& generate : cls.generates) {
-    const auto* counted = std::get_if<hir::PublishedLoopByIndex>(&generate);
-    if (counted == nullptr || counted->classes.size() > 1) {
-      generates.Add(generate);
-      continue;
-    }
-    std::optional<support::DefPath> class_path;
-    for (const support::DefPath& only : counted->classes) class_path = only;
-    generates.Add(
-        hir::PublishedLoopOfOneClass{
-            .name = counted->name, .class_path = std::move(class_path)});
-  }
-  cls.generates = std::move(generates);
-}
-
-// Adds to `into`, the class the block instances of one application published
-// so far, what one more of them built. They are built from one text, so they
-// state the same class, and differ only in what each one's construction
-// decided: which alternative of a conditional it chose (LRM 27.5), and how
-// many blocks of a loop it counted out (LRM 27.4). The class publishes every
-// alternative and every block any of them built. False where they differ in
-// anything else, which leaves `into` as it was.
-auto AddWhatWasBuilt(
-    hir::ScopeClassSignature& into, const hir::ScopeClassSignature& built)
-    -> bool {
-  if (into.generates.size() != built.generates.size()) return false;
-  base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId> generates;
-  for (const hir::PublishedGenerateId id : into.generates.Ids()) {
-    const hir::PublishedGenerate& theirs = built.generates.Get(id);
-    auto one = std::visit(
-        Overloaded{
-            [](const hir::PublishedLoopOfOneClass&)
-                -> std::optional<hir::PublishedGenerate> {
-              throw InternalError(
-                  "PublishSignature: a loop was stated as one class before "
-                  "every block instance of its application was heard");
-            },
-            [&](const hir::PublishedLoopByIndex& counted)
-                -> std::optional<hir::PublishedGenerate> {
-              const auto* other =
-                  std::get_if<hir::PublishedLoopByIndex>(&theirs);
-              if (other == nullptr) return std::nullopt;
-              return EitherCounted(counted, *other);
-            },
-            [&](const hir::PublishedChoice& choice)
-                -> std::optional<hir::PublishedGenerate> {
-              const auto* other = std::get_if<hir::PublishedChoice>(&theirs);
-              if (other == nullptr) return std::nullopt;
-              return EitherBuilt(choice, *other);
-            }},
-        into.generates.Get(id));
-    if (!one.has_value()) return false;
-    generates.Add(*std::move(one));
-  }
-  hir::ScopeClassSignature rest = built;
-  rest.generates = into.generates;
-  if (!(rest == into)) return false;
-  into.generates = std::move(generates);
-  return true;
+  throw InternalError(
+      "PublishSignature: every elaboration of one text records every generate "
+      "construct the text wrote");
 }
 
 }  // namespace
@@ -381,10 +298,13 @@ void UnitLowerer::PublishClassSignatures() {
   // by its declarations (LRM 26.2), and a design element's through a
   // hierarchical name reaching an object of it (LRM 23.6). One a design element
   // declares is a type of each instance (LRM 6.22), which every instance of
-  // this unit declares alike, so what it publishes is one class.
+  // this unit declares alike, so what it publishes is one class, however many
+  // of its applications built it.
+  std::set<support::DefPath> published_paths;
   const auto publish_class = [&](const slang::ast::ClassType& cls) {
     const auto it = own_class_signatures_.find(&cls);
-    if (it == own_class_signatures_.end()) {
+    if (it == own_class_signatures_.end() ||
+        !published_paths.insert(it->second.class_path).second) {
       return;
     }
     hir::TypeImportMemo published;
@@ -447,10 +367,9 @@ auto UnitLowerer::PublishedCallableOf(
     -> diag::Result<hir::PublishedCallable> {
   // An expression another unit asks for the value of is evaluated in a
   // function of this unit that takes nothing.
-  const auto evaluator = [&](std::string name, const slang::ast::Type& type,
-                             const slang::ast::Symbol& holder)
+  const auto evaluator = [&](std::string name, const slang::ast::Symbol& holder)
       -> diag::Result<hir::PublishedCallable> {
-    auto result_type = InternType(type, frontend::PointSpanOf(holder.location));
+    auto result_type = InternDeclaredPortType(holder);
     if (!result_type) return std::unexpected(std::move(result_type.error()));
     return hir::PublishedCallable{
         .name = std::move(name),
@@ -479,21 +398,12 @@ auto UnitLowerer::PublishedCallableOf(
                 .result_type = *result_type};
           },
           [&](const ScopePublicationRecord::PortDefault& port) {
-            return evaluator(
-                PortDefaultName(port.port->name), port.port->getType(),
-                *port.port);
+            return evaluator(PortDefaultName(port.port->name), *port.port);
           },
-          [&](const ScopePublicationRecord::ViewRead& read)
-              -> diag::Result<hir::PublishedCallable> {
-            const auto* connection = read.port->getConnectionExpr();
-            if (connection == nullptr) {
-              throw InternalError(
-                  "PublishSignature: a name the view defines is the "
-                  "expression it was written with");
-            }
+          [&](const ScopePublicationRecord::ViewRead& read) {
             return evaluator(
                 ModportReadName(read.modport->name, read.port->name),
-                *connection->type, *read.port);
+                *read.port);
           }},
       callable);
 }
@@ -508,7 +418,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
 
   auto& element = signature_.unit.emplace<hir::PublishedDesignElement>(
       hir::PublishedDesignElement{
-          .ports = {}, .instance_class = {}, .blocks = {}});
+          .ports = {}, .handed = {}, .instance_class = {}, .blocks = {}});
   const ScopePublicationRecord& root = PublicationOf(*scope_);
 
   hir::TypeImportMemo published;
@@ -517,11 +427,21 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
       hir::TypePoolOwner{.unit_name = unit_.name, .classes = &unit_.classes},
       signature_.types, published);
 
-  // The ports are read off every application the unit is lowered from, since
-  // a port's direction decides what the declaration it reaches holds in each
-  // of them. What they state is the text's, so the unit publishes the list of
-  // the application it is named for, and a port whose type differs between two
-  // of them is a member of the unit's own class that does.
+  // What an instance is handed is the parameters its instantiation may assign
+  // that the unit's name does not hold, the list a parent hands them in.
+  for (const slang::ast::ParameterSymbol* handed :
+       Specialization().SuppliedParametersOf(InstantiationOf(*body))) {
+    auto type =
+        InternType(handed->getType(), frontend::PointSpanOf(handed->location));
+    if (!type) return std::unexpected(std::move(type.error()));
+    element.handed.push_back(importer.Import(*type));
+  }
+
+  // The ports are read off every application the unit is declared from -- the
+  // one it is named for, and where the compile is checked against itself each
+  // other one -- since a port's direction decides what the declaration it
+  // reaches holds in each of them. What they state is the text's, so the unit
+  // publishes the list of the application it is named for.
   for (const slang::ast::Scope* application : applications_) {
     const auto& built_by =
         application->asSymbol().as<slang::ast::InstanceBodySymbol>();
@@ -664,29 +584,56 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   // A hierarchical name reaches any named declaration of the element from
   // anywhere in the design (LRM 23.6), and an interface port reaches every name
   // the interface declares (LRM 25.3), so what a design element publishes is
-  // every scope it holds -- its own and each generate block's (LRM 27). The
-  // block instances of one application are objects of one class, so the class
-  // is published once, stating what any of them built. Each scope keeps the
-  // class in this unit's own types as well, which is what its own published
-  // class is laid out from.
-  std::vector<hir::ScopeClassSignature> classes;
-  std::map<support::DefPath, std::size_t> class_at;
+  // every scope it holds -- its own and each generate block's (LRM 27). Within
+  // one application the block instances of one class differ only in what their
+  // constructions built, and the class is published once, stating what any of
+  // them built. Every other application of the body built the same blocks, so
+  // it publishes the same classes. Each scope keeps the class in this unit's
+  // own types as well, which is what its own published class is laid out from.
+  struct PublishedClasses {
+    std::vector<std::vector<const slang::ast::Scope*>> scopes;
+    std::vector<hir::ScopeClassSignature> classes;
+    std::map<support::DefPath, std::size_t> class_at;
+  };
+  std::unordered_map<const slang::ast::Scope*, PublishedClasses> by_application;
   for (const slang::ast::Scope* scope : publishing_scopes_) {
-    auto own = PublishScopeClass(PublicationOf(*scope));
-    if (!own) return std::unexpected(std::move(own.error()));
-    const auto [known, first] =
-        class_at.try_emplace(own->class_path, classes.size());
-    if (first) {
-      classes.push_back(*std::move(own));
-    } else if (!AddWhatWasBuilt(classes[known->second], *own)) {
-      if (own->class_path == root.class_path) {
-        applications_published_apart_ = true;
-      } else {
-        blocks_published_apart_ = true;
-      }
+    const slang::ast::Scope* application = ApplicationHolding(*scope);
+    if (application == nullptr) {
+      throw InternalError(
+          "UnitLowerer::PublishSignature: a scope the unit publishes is in "
+          "none of the applications it is declared from");
+    }
+    PublishedClasses& into = by_application[application];
+    const auto [known, first] = into.class_at.try_emplace(
+        PublicationOf(*scope).class_path, into.scopes.size());
+    if (first) into.scopes.emplace_back();
+    into.scopes[known->second].push_back(scope);
+  }
+  for (const slang::ast::Scope* application : applications_) {
+    PublishedClasses& published_by = by_application.at(application);
+    for (const std::vector<const slang::ast::Scope*>& scopes :
+         published_by.scopes) {
+      auto cls = PublishScopeClass(InReadingOrder(scopes));
+      if (!cls) return std::unexpected(std::move(cls.error()));
+      published_by.classes.push_back(*std::move(cls));
     }
   }
-  for (hir::ScopeClassSignature& cls : classes) StateLoopsOfOneClass(cls);
+  const PublishedClasses& named = by_application.at(scope_);
+  for (const auto& [application, published_by] : by_application) {
+    if (application == scope_) continue;
+    if (published_by.classes != named.classes) {
+      throw InternalError(
+          std::format(
+              "UnitLowerer::PublishSignature: '{}' is an application of body "
+              "'{}' and publishes other classes than '{}' does, so a value the "
+              "body's name does not hold reached what it publishes -- please "
+              "report this as a bug",
+              application->asSymbol().getHierarchicalPath(), unit_.name,
+              scope_->asSymbol().getHierarchicalPath()));
+    }
+  }
+  const std::vector<hir::ScopeClassSignature>& classes = named.classes;
+  const std::map<support::DefPath, std::size_t>& class_at = named.class_at;
   for (const slang::ast::Scope* scope : publishing_scopes_) {
     scope_classes_.emplace(
         scope, classes[class_at.at(PublicationOf(*scope).class_path)]);
@@ -704,13 +651,16 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
   return {};
 }
 
-auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
+auto UnitLowerer::PublishScopeClass(
+    std::span<const slang::ast::Scope* const> scopes)
     -> diag::Result<hir::ScopeClassSignature> {
+  const ScopePublicationRecord& published = PublicationOf(*scopes.front());
   hir::ScopeClassSignature cls{
       .class_path = published.class_path,
       .members = {},
       .callables = {},
-      .generates = {},
+      .loops = {},
+      .choices = {},
       .disable_targets = {},
       .modports = {}};
 
@@ -847,34 +797,48 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
     cls.callables.Add(*std::move(own));
   }
 
+  // What a construct built is each block any scope of the class built: a loop
+  // may count out a different number of blocks in each, and a conditional
+  // select a different alternative (LRM 27.4, 27.5).
   for (const ScopePublicationRecord::Construct& construct :
        published.generates) {
-    cls.generates.Add(
-        std::visit(
-            Overloaded{
-                [&](const ScopePublicationRecord::Loop& loop)
-                    -> hir::PublishedGenerate {
-                  std::map<std::int64_t, support::DefPath> at;
-                  for (const auto* entry : loop.loop->entries) {
-                    at.emplace(
-                        LoopIndexOf(*entry), PublicationOf(*entry).class_path);
-                  }
-                  return BlocksCounted(std::string{loop.loop->name}, at);
-                },
-                [&](const ScopePublicationRecord::Choice& choice)
-                    -> hir::PublishedGenerate {
-                  hir::PublishedChoice chosen{
-                      .construct = choice.construct, .blocks = {}};
-                  for (const auto* alternative : choice.built) {
-                    chosen.blocks.push_back(
-                        hir::PublishedAlternative{
-                            .position = AlternativePositionOf(*alternative),
-                            .class_path =
-                                PublicationOf(*alternative).class_path});
-                  }
-                  return chosen;
-                }},
-            construct));
+    std::visit(
+        Overloaded{
+            [&](const ScopePublicationRecord::Loop& loop) {
+              std::map<std::int64_t, support::DefPath> at;
+              for (const slang::ast::Scope* scope : scopes) {
+                const auto& counted = ConstructOf<ScopePublicationRecord::Loop>(
+                    PublicationOf(*scope), loop.id);
+                for (const auto* entry : counted.loop->entries) {
+                  at.try_emplace(
+                      LoopIndexOf(*entry), PublicationOf(*entry).class_path);
+                }
+              }
+              cls.loops.Add(PublishedLoopOf(std::string{loop.loop->name}, at));
+            },
+            [&](const ScopePublicationRecord::Choice& choice) {
+              std::map<std::uint32_t, support::DefPath> built;
+              for (const slang::ast::Scope* scope : scopes) {
+                const auto& selected =
+                    ConstructOf<ScopePublicationRecord::Choice>(
+                        PublicationOf(*scope), choice.id);
+                for (const auto* alternative : selected.built) {
+                  built.try_emplace(
+                      AlternativePositionOf(*alternative),
+                      PublicationOf(*alternative).class_path);
+                }
+              }
+              hir::PublishedChoice chosen{
+                  .construct = choice.construct, .blocks = {}};
+              for (auto& [position, class_path] : built) {
+                chosen.blocks.push_back(
+                    hir::PublishedAlternative{
+                        .position = position,
+                        .class_path = std::move(class_path)});
+              }
+              cls.choices.Add(std::move(chosen));
+            }},
+        construct);
   }
 
   for (const ScopePublicationRecord::DisableTarget& target :
@@ -962,7 +926,7 @@ auto UnitLowerer::PublishScopeClass(const ScopePublicationRecord& published)
         Overloaded{
             [&](const ScopePublicationRecord::ViewPlace&)
                 -> diag::Result<hir::PublishedModportPort> {
-              auto interned = InternType(*connection->type, span);
+              auto interned = InternDeclaredPortType(port);
               if (!interned) {
                 return std::unexpected(std::move(interned.error()));
               }

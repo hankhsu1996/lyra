@@ -115,6 +115,10 @@ auto RuntimeLibraryKindName(RuntimeLibraryKind kind) -> const char* {
       return "scope info";
     case RuntimeLibraryKind::kScopeCallable:
       return "scope callable";
+    case RuntimeLibraryKind::kConstructionTable:
+      return "construction table";
+    case RuntimeLibraryKind::kInstantiation:
+      return "instantiation";
   }
   throw InternalError("lir::RuntimeLibraryKindName: unknown kind");
 }
@@ -220,6 +224,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ObservableType& t) { Combine(seed, t.value); },
           [&](const SampledHistoryType& t) { Combine(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
+          [](const LoopBlocksType&) {},
           [&](const OpenWriteType& t) { Combine(seed, t.value); },
           [&](const DesignationType& t) { Combine(seed, t.value); }});
   return seed;
@@ -273,6 +278,7 @@ auto Type::KindName() const -> std::string_view {
           [](const EvaluationAttemptsType&) {
             return "concurrent assertion attempts";
           },
+          [](const LoopBlocksType&) { return "loop generate blocks"; },
           [](const OpenWriteType&) { return "open write"; },
           [](const DesignationType&) { return "designation"; }});
 }
@@ -329,6 +335,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const DriverType&) { return names_none(); },
           [&](const SampledHistoryType&) { return names_none(); },
           [&](const EvaluationAttemptsType&) { return names_none(); },
+          [&](const LoopBlocksType&) { return names_none(); },
           [&](const OpenWriteType&) { return names_none(); },
           [&](const DesignationType&) { return names_none(); },
           [&](const EventType&) { return names_none(); },
@@ -394,6 +401,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const DriverType&) -> Element { return std::nullopt; },
           [](const SampledHistoryType&) -> Element { return std::nullopt; },
           [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
+          [](const LoopBlocksType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
           [](const DesignationType&) -> Element { return std::nullopt; },
 
@@ -430,16 +438,6 @@ auto Type::Pointee() const -> std::optional<TypeId> {
   }
   if (const auto* managed = As<ManagedRefType>()) {
     return managed->pointee;
-  }
-  return std::nullopt;
-}
-
-auto Type::Address() const -> std::optional<AddressKind> {
-  if (Is<MachineFunctionType>()) {
-    return AddressKind::kCode;
-  }
-  if (Pointee().has_value()) {
-    return AddressKind::kStorage;
   }
   return std::nullopt;
 }
@@ -489,6 +487,8 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kObjectDefinition:
       case RuntimeLibraryKind::kScopeInfo:
       case RuntimeLibraryKind::kScopeCallable:
+      case RuntimeLibraryKind::kConstructionTable:
+      case RuntimeLibraryKind::kInstantiation:
         return false;
     }
     throw InternalError("lir: unknown runtime library kind");
@@ -496,7 +496,7 @@ auto Type::IsAddressOnly() const -> bool {
   return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
          Is<CrossUnitClassType>() || Is<RuntimeClassType>() ||
          Is<EventType>() || Is<SampledHistoryType>() ||
-         Is<EvaluationAttemptsType>();
+         Is<EvaluationAttemptsType>() || Is<LoopBlocksType>();
 }
 
 auto Type::HeldAs() const -> std::optional<Holding> {
@@ -609,10 +609,12 @@ auto Type::HeldAs() const -> std::optional<Holding> {
               case RuntimeLibraryKind::kObjectWrite:
                 return LibraryObject::kObjectWrite;
               // Kept by the run -- an enumeration's members, a class's
-              // record, the time format -- or reached inside something else --
-              // a buffer's chunk, an image's handle, the effect a departure
-              // carries, the target a disable names, the timer a delayed
-              // continuous assignment propagates through.
+              // record, the time format, a construction table -- or reached
+              // inside something else -- a buffer's chunk, an image's handle,
+              // the effect a departure carries, the target a disable names,
+              // the timer a delayed continuous assignment propagates through.
+              case RuntimeLibraryKind::kConstructionTable:
+              case RuntimeLibraryKind::kInstantiation:
               case RuntimeLibraryKind::kEnumeration:
               case RuntimeLibraryKind::kTimeFormat:
               case RuntimeLibraryKind::kDpiBitChunk:
@@ -650,6 +652,7 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const DriverType&) -> Held { return std::nullopt; },
           [](const SampledHistoryType&) -> Held { return std::nullopt; },
           [](const EvaluationAttemptsType&) -> Held { return std::nullopt; },
+          [](const LoopBlocksType&) -> Held { return std::nullopt; },
           [](const RuntimeEffectsType&) -> Held { return std::nullopt; },
           [](const FilesType&) -> Held { return std::nullopt; },
           [](const DiagnosticType&) -> Held { return std::nullopt; },

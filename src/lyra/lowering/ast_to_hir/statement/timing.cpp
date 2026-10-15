@@ -341,7 +341,7 @@ auto LowerIntraAssignmentStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::AssignmentExpression& as, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
-  auto type_or = proc.Owner().InternType(*as.type, span);
+  auto type_or = proc.Owner().InternExpressionType(as, span);
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   const hir::TypeId type = *type_or;
 

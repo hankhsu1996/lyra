@@ -1,5 +1,4 @@
 #include <span>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -302,6 +301,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [](const mir::EvaluationAttemptsType&) -> lir::Type {
             return lir::Type{lir::EvaluationAttemptsType{}};
           },
+          [](const mir::LoopBlocksType&) -> lir::Type {
+            return lir::Type{lir::LoopBlocksType{}};
+          },
           [&](const mir::StructType& s) -> lir::Type {
             return lir::Type{lir::StructType{
                 .declaration = std::visit(
@@ -382,6 +384,10 @@ auto UnitLowerer::TranslateRuntimeLibrary(mir::RuntimeLibraryKind kind)
       return mirror(lir::RuntimeLibraryKind::kScopeInfo);
     case mir::RuntimeLibraryKind::kScopeCallable:
       return mirror(lir::RuntimeLibraryKind::kScopeCallable);
+    case mir::RuntimeLibraryKind::kConstructionTable:
+      return mirror(lir::RuntimeLibraryKind::kConstructionTable);
+    case mir::RuntimeLibraryKind::kInstantiation:
+      return mirror(lir::RuntimeLibraryKind::kInstantiation);
   }
   throw InternalError("TranslateRuntimeLibrary: unknown RuntimeLibraryKind");
 }

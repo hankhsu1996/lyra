@@ -282,12 +282,6 @@ auto LeafPartOf(
                 .width = int_literal(named.positions->width),
                 .exact = named.exact};
           },
-          [&](const hir::WatchedBits& bits) -> diag::Result<LeafPart> {
-            return LeafPart{
-                .steps = StepArray(unit, block, {}),
-                .first = int_literal(bits.first),
-                .width = int_literal(bits.last - bits.first + 1)};
-          },
       },
       part);
 }

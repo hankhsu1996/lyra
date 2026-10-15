@@ -122,15 +122,16 @@ auto NamespaceCallableSymbol(std::string_view unit_name, SymbolPart callable)
     -> std::string;
 
 // The symbols of the bodies a unit publishes that the source declares none of:
-// the two its namespace is brought up through, and the one that makes an object
-// of it. None is composed from a name, because none has one; a category over
-// the unit alone is what lets the unit that defines one and whoever calls it
-// arrive at the same symbol with nothing shared between them, and a unit
-// publishes at most one of each.
+// the two its namespace is brought up through, and for each body it is
+// compiled to the one that makes an object of that body. None is composed from
+// a name, because none has one; a category over the unit, and the body where
+// there is one per body, is what lets the unit that defines one and whoever
+// calls it arrive at the same symbol with nothing shared between them.
 auto NamespaceStorageInstallSymbol(std::string_view unit_name) -> std::string;
 auto NamespaceStorageInitializeSymbol(std::string_view unit_name)
     -> std::string;
-auto ObjectEntrySymbol(std::string_view unit_name) -> std::string;
+auto ObjectEntrySymbol(std::string_view unit_name, std::string_view body_name)
+    -> std::string;
 // A unit's own storage. A package variable answers to the identifier the source
 // declared, which is what another unit reaches it by; the cell a subroutine's
 // static-lifetime local keeps answers to none, and takes its position instead.
@@ -146,6 +147,14 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
 // no name of its own, and nothing outside the unit reaches the function.
 auto TypeDefaultSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string;
+
+// The name what `unit` defines is qualified by: the unit's own for a
+// declaration another unit names, `path` being how it is named, which every
+// body of the unit states alike; the body's for what was built for one body's
+// own use, which no other body states and whose position is its only identity.
+auto QualifierOf(
+    const CompilationUnit& unit, const std::optional<support::DefPath>& path)
+    -> std::string_view;
 
 // The symbol `type`'s definition is linked under, or nothing where the type
 // names no declaration a value is built from. The definition is the compiler's

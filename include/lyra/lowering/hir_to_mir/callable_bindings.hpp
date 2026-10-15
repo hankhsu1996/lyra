@@ -59,8 +59,8 @@ struct BodyBindingRef {
 };
 
 // The per-body capture policy: how this body views each origin it captures. The
-// receiver and the declaring instance are stable design-wide handles
-// (snapshot); a synthesized activation handle is owned
+// receiver, the declaring instance and the construction table are stable
+// design-wide handles (snapshot); a synthesized activation handle is owned
 // (refcount copy); an origin in the construction-scope set -- a `fork` branch's
 // own block-item declarations -- is snapshotted; any other enclosing origin
 // aliases the live cell. A non-fork closure leaves the set empty, so every
@@ -72,6 +72,7 @@ struct CapturePolicy {
     switch (origin.kind) {
       case BindingOriginId::Kind::kReceiver:
       case BindingOriginId::Kind::kDeclaringInstance:
+      case BindingOriginId::Kind::kConstructionTable:
         return CaptureView::kSnapshot;
       case BindingOriginId::Kind::kSynthesized:
         return CaptureView::kOwning;

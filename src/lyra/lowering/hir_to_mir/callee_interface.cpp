@@ -4,6 +4,7 @@
 #include <expected>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -153,6 +154,93 @@ auto SubroutineCallTypeOf(
   return CallTypeOf(
       unit_lowerer, interface.kind, result_type,
       CalleeFormalsOf(unit_lowerer, interface));
+}
+
+namespace {
+
+// The variable a subroutine's declaration states for one of its formals.
+struct FormalVariable {
+  hir::ProceduralVarId var;
+  std::optional<std::string> name;
+};
+
+// One formal as a prototype declares it: its value type and direction, and its
+// variable where the prototype is read off a declaration rather than off what
+// a unit published.
+struct PrototypeFormal {
+  hir::TypeId type;
+  hir::ParamDirection direction;
+  std::optional<FormalVariable> declared;
+};
+
+// A prototype taking `self`, then each of `formals` that is a parameter, then
+// where a call of `kind` reports what it reads, and yielding `call_type`.
+auto BuildPrototype(
+    UnitLowerer& unit_lowerer, mir::TypeId self, hir::SubroutineKind kind,
+    std::span<const PrototypeFormal> formals, mir::TypeId call_type)
+    -> mir::CallableCode {
+  mir::CallableCode code;
+  CallableBindings bindings(unit_lowerer.Unit(), code);
+  std::vector<mir::LocalId> params{
+      bindings.Declare(BindingOriginId::Receiver(), self)};
+  params.reserve(formals.size() + 2);
+  for (const PrototypeFormal& formal : formals) {
+    const std::optional<mir::TypeId> type =
+        ParamTypeOf(unit_lowerer, formal.type, formal.direction);
+    if (!type.has_value()) continue;
+    params.push_back(
+        formal.declared.has_value()
+            ? bindings.DeclareProcedural(
+                  BindingOriginId::Procedural(formal.declared->var),
+                  formal.declared->name, *type)
+            : bindings.DeclareAnonymous(*type));
+  }
+  if (const std::optional<mir::TypeId> report =
+          ReportParamTypeOf(unit_lowerer.Unit(), kind)) {
+    params.push_back(bindings.DeclareAnonymous(*report));
+  }
+  code.params = std::move(params);
+  code.result_type = call_type;
+  return code;
+}
+
+}  // namespace
+
+auto PrototypeOf(
+    UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl,
+    mir::TypeId self) -> mir::CallableCode {
+  std::vector<PrototypeFormal> formals;
+  formals.reserve(decl.params.size());
+  for (const hir::SubroutineParam& param : decl.params) {
+    const hir::ProceduralVarDecl& var =
+        decl.body.procedural_vars.Get(param.var);
+    formals.push_back(
+        PrototypeFormal{
+            .type = var.type,
+            .direction = param.direction,
+            .declared = FormalVariable{.var = param.var, .name = var.name}});
+  }
+  return BuildPrototype(
+      unit_lowerer, self, decl.kind, formals,
+      SubroutineCallTypeOf(unit_lowerer, decl));
+}
+
+auto PrototypeOf(
+    UnitLowerer& unit_lowerer, const hir::PublishedCallable& published,
+    mir::TypeId self) -> mir::CallableCode {
+  std::vector<PrototypeFormal> formals;
+  formals.reserve(published.interface.params.size());
+  for (const hir::ExternalCalleeParam& param : published.interface.params) {
+    formals.push_back(
+        PrototypeFormal{
+            .type = param.type,
+            .direction = param.direction,
+            .declared = std::nullopt});
+  }
+  return BuildPrototype(
+      unit_lowerer, self, published.interface.kind, formals,
+      SubroutineCallTypeOf(
+          unit_lowerer, published.interface, published.result_type));
 }
 
 auto ProjectCompletionComponent(

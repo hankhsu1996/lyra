@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -46,7 +47,12 @@ struct BuiltinHirTypes {
 };
 
 struct CompilationUnit {
+  // The unit, which is what it publishes and what every referrer names.
   std::string name;
+  // The body of the unit this compiles: the unit's own name where the unit is
+  // compiled to one body, and otherwise that name with the digest of the values
+  // its instances are handed that its code uses.
+  std::string body_name;
   // The identifier the source declares this unit's design element, package or
   // class under, which is what its author knows it by. Units of one definition
   // compiled once per specialization share it, and a unit the source gave no
@@ -78,13 +84,20 @@ struct CompilationUnit {
   // entry in each. One entry per declaration; a repeat is the same entry.
   base::Arena<ForeignImportDecl, ForeignImportId> foreign_imports;
 
-  explicit CompilationUnit(std::string name)
-      : name(std::move(name)), builtins(MakeBuiltins(types)) {
+  CompilationUnit(std::string name, std::string body_name)
+      : name(std::move(name)),
+        body_name(std::move(body_name)),
+        builtins(MakeBuiltins(types)) {
   }
 
-  // Two units are one when every node below them is, which is what decides
-  // that instances lowered apart can share one artifact.
   auto operator==(const CompilationUnit&) const -> bool = default;
+
+  // Whether a reference to the unit named `unit_name` is one to this unit: a
+  // hierarchical name reaching another instance of this same application names
+  // it the way a reference to any other unit does, by its name.
+  [[nodiscard]] auto IsItself(std::string_view unit_name) const -> bool {
+    return unit_name == name;
+  }
 
  private:
   // The single-bit leaves and the predefined-width integers are the primitive

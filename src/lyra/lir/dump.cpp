@@ -172,6 +172,8 @@ class LirDumper {
         return "internal";
       case Linkage::kExternal:
         return "external";
+      case Linkage::kShared:
+        return "shared";
     }
     throw InternalError("lir dump: unknown linkage");
   }
@@ -212,6 +214,9 @@ class LirDumper {
             },
             [&](const ConstantFunction& c) {
               return std::format("&{}", unit_->functions.Get(c.function).name);
+            },
+            [](const ConstantExternalFunction& c) {
+              return std::format("&{}", c.symbol);
             },
             [](const ConstantAddress& c) {
               return std::format("&{}", c.symbol);

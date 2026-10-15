@@ -14,6 +14,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/construction_table_layout.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_hops.hpp"
@@ -22,7 +23,7 @@
 #include "lyra/lowering/hir_to_mir/class_decl_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/declared_callable.hpp"
 #include "lyra/lowering/hir_to_mir/declared_scope.hpp"
-#include "lyra/lowering/hir_to_mir/design_namespaces.hpp"
+#include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
@@ -49,14 +50,21 @@ struct ChildStructuralScopeBinding {
 };
 
 // What one generate construct settled: the member holding what it built, and
-// each scope it compiled to, reached by that scope's own id. The member holds
-// the base every scope extends -- one, or a sequence of them for a loop --
-// because which class a block was built as is the block's to say, and a step
-// reaching one views it as that class.
+// each scope it compiled to, reached by that scope's own id. A loop's member
+// holds its blocks by the value each one's index stood at; any other holds the
+// one block it built. Either holds the base every scope extends, because which
+// class a block was built as is the block's to say, and a step reaching one
+// views it as that class.
 struct GenerateBinding {
   mir::ClassFieldTarget handle;
   base::Translation<hir::StructuralScopeId, ChildStructuralScopeBinding> blocks;
 };
+
+// Where the object an entry makes takes its construction table from: supplied
+// by whoever asks for the object, or a constant the unit states of itself.
+struct ConstructionTableSupplied {};
+using ConstructionTableSource =
+    std::variant<ConstructionTableSupplied, mir::ClassConstantRef>;
 
 // A value whoever builds a scope hands it: the declaration it fills, and the
 // type the constructor takes it as.
@@ -65,17 +73,25 @@ struct ConstructionValue {
   mir::TypeId type;
 };
 
-// How a hierarchical route reaches an owned child: the parent's borrowed
-// handle on it, and the child's own lowerer. The handle's type carries the
-// declaration's multiplicity, so each select of the element naming the child
-// indexes the handle. `target_scope` is present when the artifact owns the
-// child's body -- the handle then holds the base every scope extends, the step
-// views what it reached as that scope's class, and whatever the route names
-// next resolves against that scope -- and absent when the child is another
-// compilation unit, whose objects are reached through what that unit
-// published, each access naming the class the route states it reaches.
+// A block of a loop generate: the member holding the loop's blocks, and the
+// value the block's index stood at, which that member answers for (LRM 27.4).
+struct LoopBlockAt {
+  mir::ClassFieldTarget blocks;
+  std::int64_t index = 0;
+};
+
+// How a hierarchical route reaches an owned child, and the child's own
+// lowerer. `reach` is the parent's borrowed handle on the child, whose type
+// carries the declaration's multiplicity so each select of the element naming
+// the child indexes it, or for a block of a loop the member the block is asked
+// of. `target_scope` is present when the artifact owns the child's body --
+// what the step reached is then the base every scope extends, the step views
+// it as that scope's class, and whatever the route names next resolves against
+// that scope -- and absent when the child is another compilation unit, whose
+// objects are reached through what that unit published, each access naming
+// the class the route states it reaches.
 struct OwnedChildAnchor {
-  mir::ClassFieldTarget borrowed_handle{};
+  std::variant<mir::ClassFieldTarget, LoopBlockAt> reach;
   const StructuralScopeLowerer* target_scope = nullptr;
 };
 
@@ -110,20 +126,26 @@ class StructuralScopeLowerer {
  public:
   StructuralScopeLowerer(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      const hir::StructuralScope& hir_scope, DesignNamespaces namespaces = {})
+      const hir::StructuralScope& hir_scope,
+      const hir::ScopeInstantiations& instantiations,
+      std::optional<DesignRootInputs> design_root = std::nullopt)
       : owner_(&unit_lowerer),
         parent_(parent),
         hir_scope_(&hir_scope),
-        namespaces_(std::move(namespaces)) {
+        instantiations_(&instantiations),
+        design_root_(std::move(design_root)) {
   }
 
-  // The lowering of `hir_scope`, a scope of the design hierarchy, and of every
-  // scope it holds, each taking the identity of the class its unit published
-  // of it as it is built -- which is before any type translates, since a type
-  // may name one.
+  // The lowering of `hir_scope`, a scope of the design hierarchy laid out in
+  // its unit's construction table as `instantiations` says, and of every scope
+  // it holds, each taking the identity of the class its unit published of it as
+  // it is built -- which is before any type translates, since a type may name
+  // one.
   [[nodiscard]] static auto ForScope(
       UnitLowerer& unit_lowerer, const StructuralScopeLowerer* parent,
-      const hir::StructuralScope& hir_scope, DesignNamespaces namespaces = {})
+      const hir::StructuralScope& hir_scope,
+      const hir::ScopeInstantiations& instantiations,
+      std::optional<DesignRootInputs> design_root = std::nullopt)
       -> std::unique_ptr<StructuralScopeLowerer>;
 
   // Mints this class's identity, builds its structural shape, publishes the
@@ -136,10 +158,9 @@ class StructuralScopeLowerer {
     return published_class_id_;
   }
 
-  // Settles every class `unit_lowerer`'s unit published of its scopes, once
-  // every class realizing one is settled: its published members, and a method
-  // per published subroutine entering the body of whichever realizing class
-  // the object is.
+  // Settles every class `unit_lowerer`'s unit published of its scopes: its
+  // published members, and a virtual method per published subroutine, which
+  // each class realizing it overrides.
   static void DefinePublishedClasses(UnitLowerer& unit_lowerer);
 
   // The values whoever builds this scope hands it, in the order they are
@@ -190,6 +211,20 @@ class StructuralScopeLowerer {
     return *hir_scope_;
   }
 
+  // Where the scope's instantiations stand in its unit's construction table.
+  [[nodiscard]] auto Instantiations() const -> const hir::ScopeInstantiations& {
+    return *instantiations_;
+  }
+
+  // Where the object the unit's object entry makes takes its construction
+  // table from: handed in by whoever asks for the object, or, for the design
+  // root, which nothing instantiates (LRM 23.3.1), the table the root states
+  // of itself. Settled once the bodies are populated.
+  [[nodiscard]] auto ConstructionTable() const
+      -> const ConstructionTableSource& {
+    return construction_table_;
+  }
+
   // The scope's time unit (LRM 3.14.2), which a time query scales its result
   // to. Named as the procedural pass names it, so a handler shared by both
   // passes reads it the same way.
@@ -235,8 +270,7 @@ class StructuralScopeLowerer {
       -> const StructuralScopeLowerer& {
     const StructuralScopeLowerer* scope = &EnclosingScopeAtHops(hops);
     for (const hir::OwnedChildStep& step : descent) {
-      const OwnedChildAnchor anchor =
-          scope->TranslateOwnedChild(step.names, step.selects);
+      const OwnedChildAnchor anchor = scope->TranslateOwnedChild(step.names);
       if (anchor.target_scope == nullptr) {
         throw InternalError(
             "StructuralScopeLowerer::ScopeAt: a descent step reached an "
@@ -340,19 +374,15 @@ class StructuralScopeLowerer {
   }
 
   // Resolves a path element naming one of this scope's owned children to how
-  // the route reaches it: this scope's borrowed handle on it, and the child's
-  // own lowerer when the artifact owns the child's body.
-  [[nodiscard]] auto TranslateOwnedChild(
-      const hir::OwnedChildRef& names,
-      std::span<const std::uint32_t> selects) const -> OwnedChildAnchor {
+  // the route reaches it, and the child's own lowerer when the artifact owns
+  // the child's body.
+  [[nodiscard]] auto TranslateOwnedChild(const hir::OwnedChildRef& names) const
+      -> OwnedChildAnchor {
     // A path names a block; which compiled scope that is, is the construct's
     // own answer.
     const auto block_of = [&](hir::GenerateId generate,
                               hir::StructuralScopeId scope) {
-      const GenerateBinding& binding = generate_bindings_.Get(generate);
-      return OwnedChildAnchor{
-          .borrowed_handle = binding.handle,
-          .target_scope = binding.blocks.Get(scope).lowerer};
+      return generate_bindings_.Get(generate).blocks.Get(scope).lowerer;
     };
     return std::visit(
         Overloaded{
@@ -361,20 +391,33 @@ class StructuralScopeLowerer {
               // artifact lowers no scope for it; what the object holds is
               // reached through what that unit published.
               return OwnedChildAnchor{
-                  .borrowed_handle = instance_member_fields_.Get(id),
+                  .reach = instance_member_fields_.Get(id),
                   .target_scope = nullptr};
             },
+            // A loop's block is asked of the loop's member by the value its
+            // index stood at, since which block that is was settled by this
+            // scope running the loop (LRM 27.4).
             [&](const hir::GenerateLoopRef& loop) -> OwnedChildAnchor {
-              return block_of(
-                  loop.generate,
-                  hir::LoopBlockScopeOf(
-                      HirScope().generates.Get(loop.generate), selects));
+              return OwnedChildAnchor{
+                  .reach =
+                      LoopBlockAt{
+                          .blocks =
+                              generate_bindings_.Get(loop.generate).handle,
+                          .index = loop.index},
+                  .target_scope = block_of(
+                      loop.generate,
+                      hir::LoopBlockScopeOf(
+                          HirScope().generates.Get(loop.generate),
+                          loop.index))};
             },
             [&](const hir::GenerateBlockRef& block) -> OwnedChildAnchor {
-              return block_of(
-                  block.generate, hir::ChosenBlockScopeOf(
-                                      HirScope().generates.Get(block.generate),
-                                      block.alternative));
+              return OwnedChildAnchor{
+                  .reach = generate_bindings_.Get(block.generate).handle,
+                  .target_scope = block_of(
+                      block.generate,
+                      hir::ChosenBlockScopeOf(
+                          HirScope().generates.Get(block.generate),
+                          block.alternative))};
             },
         },
         names);
@@ -457,10 +500,12 @@ class StructuralScopeLowerer {
   UnitLowerer* owner_;
   const StructuralScopeLowerer* parent_;
   const hir::StructuralScope* hir_scope_;
-  // Non-empty only on the design root's own scope, the sole scope whose
-  // elaboration spans the whole design. Every source unit's scope and every
-  // nested scope leaves it empty.
-  DesignNamespaces namespaces_;
+  const hir::ScopeInstantiations* instantiations_;
+  // Present only on the design root's own scope, the sole scope whose
+  // elaboration spans the whole design: it brings up every namespace and
+  // states every body's construction table as constants of its class.
+  std::optional<DesignRootInputs> design_root_;
+  ConstructionTableSource construction_table_ = ConstructionTableSupplied{};
   base::Translation<hir::StructuralDataObjectId, mir::ClassFieldTarget>
       data_object_fields_;
   base::Translation<hir::SampledHistoryId, mir::FieldId>
@@ -489,16 +534,12 @@ class StructuralScopeLowerer {
   std::vector<ConstructionValue> construction_values_;
   // What the unit published of the object this scope is -- an instance of the
   // unit, or a generate block inside one: what it published as its first
-  // fields, in the order the signature states them, and a method per published
-  // subroutine. The class above extends it with everything the lowering adds. A
-  // referrer compiles against this one and holds nothing else, so what the unit
-  // adds while lowering its bodies moves no field a referrer reads.
+  // fields, in the order the signature states them, and a virtual method per
+  // published subroutine, which the class above overrides. The class above
+  // extends it with everything the lowering adds. A referrer compiles against
+  // this one and holds nothing else, so what the unit adds while lowering its
+  // bodies moves no field a referrer reads.
   mir::ClassId published_class_id_{};
-  // This scope's body for each subroutine it published, by the position its
-  // signature gave the subroutine. Settled while the shape is declared, where
-  // a subroutine's identity is taken; read where the published class is built.
-  base::Translation<hir::PublishedCallableId, mir::CallableId>
-      published_subroutines_;
   // The lowering of each block of each generate construct this scope holds,
   // by the construct's position and then the block's, built with this one.
   std::vector<std::vector<std::unique_ptr<StructuralScopeLowerer>>>
@@ -580,6 +621,15 @@ struct ReachedObject {
 auto ApplyInstanceSelects(
     UnitLowerer& unit_lowerer, mir::Block& block, ReachedObject reached,
     std::span<const std::uint32_t> selects) -> ReachedObject;
+
+// The block of a loop generate a hierarchical name reaches, asked of
+// `blocks`, the member holding the loop's blocks, by `index`, the value its
+// index stood at (LRM 23.6, 27.4): as a scope of the design hierarchy, which
+// the caller views as the class it knows the block to be. Which block that is
+// was settled by the object running the loop.
+auto ReachLoopBlock(
+    const UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId blocks,
+    std::int64_t index) -> mir::ExprId;
 
 // From `object`, a pointer to the object of `scope`, down the owned children
 // `descent` names: each element the same descent a route makes, so the object

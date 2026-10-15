@@ -53,12 +53,13 @@ namespace lyra::backend::llvm_backend {
 
 CodeGenModule::CodeGenModule(const lir::CompilationUnit& unit)
     : context_(std::make_unique<llvm::LLVMContext>()),
-      // A module carries the name of the unit it holds, because the party
+      // A module carries the name of the body it holds, because the party
       // composing the program derives names of its own from it -- one that
       // collects what runs before the program starts gives its result a name
       // made from this one, so two modules sharing an identifier are two
-      // artifacts that cannot be composed together.
-      module_(std::make_unique<llvm::Module>(unit.name, *context_)),
+      // artifacts that cannot be composed together, and two bodies of one
+      // unit are two artifacts.
+      module_(std::make_unique<llvm::Module>(unit.body_name, *context_)),
       unit_(&unit),
       types_(*context_, unit),
       tuples_(*this, types_, unit),
@@ -98,13 +99,14 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
       [&](lir::TypeId type, const Declared& declared,
           std::span<const lir::ConformingBehavior> conforming)
       -> diag::Result<void> {
-    if (auto ended = EmitDestructors(declared); !ended) {
+    const lir::Linkage linkage = DeclaredLinkage(type);
+    if (auto ended = EmitDestructors(declared, linkage); !ended) {
       return ended;
     }
     if (auto table = EmitTable(type, declared, conforming); !table) {
       return table;
     }
-    return EmitConstructorPrologue(declared);
+    return EmitConstructorPrologue(declared, linkage);
   };
   for (const lir::ClassId id : unit_->classes.Ids()) {
     const lir::TypeId type =
@@ -144,41 +146,64 @@ auto CodeGenModule::Run() -> diag::Result<EmittedModule> {
   return EmittedModule{std::move(context_), std::move(module_)};
 }
 
-namespace {
-
-// What the linker is told to do where a second artifact defines the same name.
-// A definition several of them write is one the session keeps one of, which is
-// what every target spells as a weak definition; one this artifact owns is
+// A definition several artifacts write is one the link keeps one of, which
+// is what every target spells as a weak definition; one this artifact owns is
 // written once and a repeat of it is a program that does not link.
-auto LinkageOf(lir::Definition definition) -> llvm::GlobalValue::LinkageTypes {
-  switch (definition) {
-    case lir::Definition::kOwned:
-      return llvm::Function::ExternalLinkage;
-    case lir::Definition::kShared:
-      return llvm::Function::WeakODRLinkage;
+auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes {
+  switch (linkage) {
+    case lir::Linkage::kInternal:
+      return llvm::GlobalValue::InternalLinkage;
+    case lir::Linkage::kExternal:
+      return llvm::GlobalValue::ExternalLinkage;
+    case lir::Linkage::kShared:
+      return llvm::GlobalValue::WeakODRLinkage;
   }
-  throw InternalError("llvm codegen: unknown definition kind");
+  throw InternalError("llvm codegen: unknown linkage");
 }
 
-}  // namespace
-
-auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
-  const lir::Function& fn = unit_->functions.Get(id);
-  std::vector<llvm::Type*> params;
-  params.reserve(fn.params.size());
-  for (const lir::ValueId param : fn.params) {
-    params.push_back(types_.Map(fn.values.Get(param).type));
+auto CodeGenModule::FunctionTypeOf(
+    std::span<const lir::TypeId> params, lir::TypeId result)
+    -> llvm::FunctionType* {
+  std::vector<llvm::Type*> mapped;
+  mapped.reserve(params.size() + 1);
+  for (const lir::TypeId param : params) {
+    mapped.push_back(types_.Map(param));
   }
   // A body answering a value its caller will own builds that value in storage
   // the caller gives, handed over last, and answers with it -- the shape every
   // runtime entry answering one has.
-  if (unit_->types.Get(fn.result_type).IsOwnedValue()) {
-    params.push_back(types_.Ptr());
+  if (unit_->types.Get(result).IsOwnedValue()) {
+    mapped.push_back(types_.Ptr());
   }
-  auto* fn_ty =
-      llvm::FunctionType::get(types_.Map(fn.result_type), params, false);
+  return llvm::FunctionType::get(types_.Map(result), mapped, false);
+}
+
+auto CodeGenModule::ExternalFunction(
+    const std::string& symbol, lir::TypeId prototype) -> llvm::Function* {
+  const auto* function =
+      unit_->types.Get(prototype).As<lir::MachineFunctionType>();
+  if (function == nullptr) {
+    throw InternalError(
+        "llvm codegen: another module's function is declared at a type that "
+        "is no function's -- please report this as a bug");
+  }
+  return llvm::cast<llvm::Function>(
+      module_
+          ->getOrInsertFunction(
+              symbol, FunctionTypeOf(function->params, function->result))
+          .getCallee());
+}
+
+auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
+  const lir::Function& fn = unit_->functions.Get(id);
+  std::vector<lir::TypeId> params;
+  params.reserve(fn.params.size());
+  for (const lir::ValueId param : fn.params) {
+    params.push_back(fn.values.Get(param).type);
+  }
   llvm::Function* declared = llvm::Function::Create(
-      fn_ty, LinkageOf(fn.definition), fn.name, module_.get());
+      FunctionTypeOf(params, fn.result_type), LinkageOf(fn.linkage), fn.name,
+      module_.get());
   // A body the runtime calls back through a tuple's table answers a
   // predicate as a C++ `bool`, which is read as a whole byte.
   if (unit_->types.Get(fn.result_type).Is<lir::MachineBoolType>()) {
@@ -542,6 +567,9 @@ auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
             [&](const lir::ConstantFunction& c) -> llvm::Constant* {
               return UnitFunction(c.function);
             },
+            [&](const lir::ConstantExternalFunction& c) -> llvm::Constant* {
+              return ExternalFunction(c.symbol, c.prototype);
+            },
             [&](const lir::ConstantAddress& c) -> llvm::Constant* {
               return DefinitionGlobal(c.symbol);
             },
@@ -586,11 +614,11 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
             "please report this as a bug",
             stated));
   };
-  llvm::GlobalVariable* data = std::visit(
+  std::visit(
       Overloaded{
           [&](const lir::ConstantRecord& record) {
             llvm::GlobalVariable* defined =
-                DefineConstant(symbol, RecordData(record));
+                DefineConstant(symbol, RecordData(record), constant.linkage);
             defined->setAlignment(
                 llvm::Align(LayoutOfLibraryRecord(record.kind).alignment));
             return defined;
@@ -617,6 +645,9 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
                       [&](const lir::ConstantString&) {
                         not_whole("a string");
                       },
+                      [&](const lir::ConstantExternalFunction&) {
+                        not_whole("another unit's function");
+                      },
                       [&](const lir::ConstantAddress&) {
                         not_whole("an address");
                       },
@@ -629,9 +660,11 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
                                          ? llvm::Type::getInt8Ty(*context_)
                                          : elements.front()->getType();
             llvm::GlobalVariable* defined = DefineConstant(
-                symbol, llvm::ConstantArray::get(
-                            llvm::ArrayType::get(element_ty, elements.size()),
-                            elements));
+                symbol,
+                llvm::ConstantArray::get(
+                    llvm::ArrayType::get(element_ty, elements.size()),
+                    elements),
+                constant.linkage);
             defined->setAlignment(llvm::Align(align));
             return defined;
           },
@@ -641,16 +674,11 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
           [&](const lir::ConstantFunction&) {
             return not_whole("a function's address");
           },
+          [&](const lir::ConstantExternalFunction&) {
+            return not_whole("a function's address");
+          },
           [&](const lir::ConstantAddress&) { return not_whole("an address"); }},
       constant.initializer.value);
-  switch (constant.linkage) {
-    case lir::Linkage::kInternal:
-      data->setLinkage(llvm::GlobalValue::InternalLinkage);
-      break;
-    case lir::Linkage::kExternal:
-      data->setLinkage(llvm::GlobalValue::ExternalLinkage);
-      break;
-  }
 }
 
 auto CodeGenModule::ExtendedClassOf(const Declared& declared) const
@@ -687,6 +715,19 @@ auto CodeGenModule::DeclarationOf(lir::TypeId type) const -> Declared {
           "llvm codegen: {} is read as a declaration a value holds part of -- "
           "please report this as a bug",
           named.KindName()));
+}
+
+auto CodeGenModule::DeclaredLinkage(lir::TypeId type) const -> lir::Linkage {
+  const lir::Type& declared = unit_->types.Get(type);
+  if (const auto* object = declared.As<lir::ObjectType>()) {
+    return unit_->classes.Get(object->class_id).linkage;
+  }
+  if (const auto* structure = declared.As<lir::StructType>()) {
+    if (const auto* own = std::get_if<lir::StructId>(&structure->declaration)) {
+      return unit_->structs.Get(*own).linkage;
+    }
+  }
+  return lir::Linkage::kExternal;
 }
 
 auto CodeGenModule::DeclaredClass(lir::ClassId id) const -> Declared {
@@ -976,6 +1017,7 @@ auto CodeGenModule::HoldsItsBytesInline(
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
+    case support::MemberStorageKind::kLoopBlocks:
       return false;
   }
   throw InternalError("llvm codegen: unknown member storage kind");
@@ -1052,8 +1094,8 @@ auto CodeGenModule::ValueFunction(const std::string& symbol)
           .getCallee());
 }
 
-auto CodeGenModule::EmitConstructorPrologue(const Declared& declared)
-    -> diag::Result<void> {
+auto CodeGenModule::EmitConstructorPrologue(
+    const Declared& declared, lir::Linkage linkage) -> diag::Result<void> {
   auto record = LayOut(declared);
   if (!record) {
     return std::unexpected(std::move(record.error()));
@@ -1065,6 +1107,7 @@ auto CodeGenModule::EmitConstructorPrologue(const Declared& declared)
   const TablePoints& points = table_points_.at(declared.definition);
   llvm::Function* fn =
       ValueFunction(lir::ConstructorPrologueSymbol(declared.definition));
+  fn->setLinkage(LinkageOf(linkage));
   llvm::IRBuilder<> builder(llvm::BasicBlock::Create(*context_, "", fn));
   llvm::Value* value = fn->getArg(0);
   const auto table_at = [&](std::uint64_t offset, std::uint64_t point) {
@@ -1088,8 +1131,8 @@ auto CodeGenModule::EmitConstructorPrologue(const Declared& declared)
   return {};
 }
 
-auto CodeGenModule::EmitDestructors(const Declared& declared)
-    -> diag::Result<void> {
+auto CodeGenModule::EmitDestructors(
+    const Declared& declared, lir::Linkage linkage) -> diag::Result<void> {
   auto record = LayOut(declared);
   if (!record) {
     return std::unexpected(std::move(record.error()));
@@ -1102,6 +1145,7 @@ auto CodeGenModule::EmitDestructors(const Declared& declared)
                           const auto& write) -> diag::Result<void> {
     llvm::Function* fn =
         ValueFunction(lir::DestructorSymbol(declared.definition, which));
+    fn->setLinkage(LinkageOf(linkage));
     llvm::IRBuilder<> builder(llvm::BasicBlock::Create(*context_, "", fn));
     diag::Result<void> written = write(builder, fn->getArg(0));
     if (!written) {
@@ -1275,7 +1319,8 @@ auto CodeGenModule::TableAddressPoint(
 }
 
 auto CodeGenModule::DefineConstant(
-    const std::string& symbol, llvm::Constant* value) -> llvm::GlobalVariable* {
+    const std::string& symbol, llvm::Constant* value, lir::Linkage linkage)
+    -> llvm::GlobalVariable* {
   llvm::GlobalVariable* declared = module_->getNamedGlobal(symbol);
   if (declared != nullptr && declared->hasInitializer()) {
     throw InternalError(
@@ -1296,6 +1341,7 @@ auto CodeGenModule::DefineConstant(
       module_->getOrInsertGlobal(symbol, value->getType()));
   defined->setConstant(true);
   defined->setInitializer(value);
+  defined->setLinkage(LinkageOf(linkage));
   if (declared != nullptr) {
     declared->replaceAllUsesWith(defined);
     declared->eraseFromParent();
@@ -1329,6 +1375,7 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
   // library defines; each interface class it names is a virtual base, found
   // through the offset its table holds for it.
   const Declared declared = DeclarationOf(type);
+  const lir::Linkage linkage = DeclaredLinkage(type);
   llvm::Constant* name = NameConstant(declared.definition);
   std::optional<llvm::Constant*> extended;
   if (const std::optional<lir::TypeId> declared_base =
@@ -1344,13 +1391,16 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
   if (declared.implements.empty()) {
     if (!extended.has_value()) {
       return DefineConstant(
-          symbol, llvm::ConstantStruct::getAnon(
-                      {address_point(kClassTypeInfoTable), name}));
+          symbol,
+          llvm::ConstantStruct::getAnon(
+              {address_point(kClassTypeInfoTable), name}),
+          linkage);
     }
     return DefineConstant(
         symbol,
         llvm::ConstantStruct::getAnon(
-            {address_point(kSingleBaseTypeInfoTable), name, *extended}));
+            {address_point(kSingleBaseTypeInfoTable), name, *extended}),
+        linkage);
   }
   std::vector<llvm::Constant*> bases;
   const auto base_entry = [&](llvm::Constant* base, std::int64_t offset_flags) {
@@ -1370,12 +1420,14 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
   }
   auto* base_ty = llvm::StructType::get(ptr_ty, i64);
   return DefineConstant(
-      symbol, llvm::ConstantStruct::getAnon(
-                  {address_point(kMultipleBaseTypeInfoTable), name,
-                   llvm::ConstantInt::get(i32, kDiamondShaped),
-                   llvm::ConstantInt::get(i32, bases.size()),
-                   llvm::ConstantArray::get(
-                       llvm::ArrayType::get(base_ty, bases.size()), bases)}));
+      symbol,
+      llvm::ConstantStruct::getAnon(
+          {address_point(kMultipleBaseTypeInfoTable), name,
+           llvm::ConstantInt::get(i32, kDiamondShaped),
+           llvm::ConstantInt::get(i32, bases.size()),
+           llvm::ConstantArray::get(
+               llvm::ArrayType::get(base_ty, bases.size()), bases)}),
+      linkage);
 }
 
 auto CodeGenModule::EmitTable(
@@ -1479,7 +1531,8 @@ auto CodeGenModule::EmitTable(
   DefineConstant(
       lir::DispatchTableSymbol(declared.definition),
       llvm::ConstantArray::get(
-          llvm::ArrayType::get(ptr_ty, entries.size()), entries));
+          llvm::ArrayType::get(ptr_ty, entries.size()), entries),
+      DeclaredLinkage(type));
   table_points_.emplace(declared.definition, std::move(points));
   return {};
 }
@@ -1540,7 +1593,10 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
       offsetof(ClosureDefinition, size),
       Int(captures->size, sizeof(ClosureDefinition::size)));
   out.Place(offsetof(ClosureDefinition, end_captures), end);
-  DefineConstant(symbol, std::move(out).Build())
+  // The definition and what ends the captures are named wherever the invoke
+  // is, and nowhere else.
+  end->setLinkage(LinkageOf(invoke.linkage));
+  DefineConstant(symbol, std::move(out).Build(), invoke.linkage)
       ->setAlignment(llvm::Align(alignof(ClosureDefinition)));
   return {};
 }
@@ -1776,8 +1832,8 @@ auto CodeGenModule::GetAddrOfFixedArrayType(lir::TypeId type)
   out.Place(layout.parts.offset, table(layout.parts_table_symbol));
   // The part answering for the elements names the constant it lies in.
   out.Place(layout.parts_owner.offset, DefinitionGlobal(name));
-  llvm::GlobalVariable* defined = DefineConstant(name, std::move(out).Build());
-  defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  llvm::GlobalVariable* defined =
+      DefineConstant(name, std::move(out).Build(), lir::Linkage::kInternal);
   defined->setAlignment(llvm::Align(layout.object.align));
   fixed_array_types_.emplace(type, defined);
   return defined;
@@ -1813,8 +1869,8 @@ auto CodeGenModule::GetAddrOfQueueType(lir::TypeId queue)
       layout.bound.offset,
       Int(static_cast<std::uint64_t>(bound), layout.bound.bytes));
   llvm::GlobalVariable* defined = DefineConstant(
-      std::format("lyra.queue.{}", queue.value), std::move(out).Build());
-  defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
+      std::format("lyra.queue.{}", queue.value), std::move(out).Build(),
+      lir::Linkage::kInternal);
   defined->setAlignment(llvm::Align(layout.object.align));
   queue_types_.emplace(queue, defined);
   return defined;
@@ -1854,8 +1910,8 @@ auto CodeGenModule::GetAddrOfElementType(lir::TypeId element)
   out.Place(layout.type.offset, *type);
   out.Place(layout.build_default.offset, UnitFunction(stated->function));
   out.Place(layout.scratch.offset, scratch);
-  llvm::GlobalVariable* defined = DefineConstant(name, std::move(out).Build());
-  defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  llvm::GlobalVariable* defined =
+      DefineConstant(name, std::move(out).Build(), lir::Linkage::kInternal);
   defined->setAlignment(llvm::Align(layout.object.align));
   element_types_.emplace(element, defined);
   return defined;

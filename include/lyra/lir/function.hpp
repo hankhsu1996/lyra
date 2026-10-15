@@ -18,6 +18,7 @@
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
+#include "lyra/lir/linkage.hpp"
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -819,14 +820,6 @@ struct BasicBlock {
   Terminator terminator;
 };
 
-// Whether this artifact is the only one that writes the function's definition.
-// A name no unit owns is defined by every unit that declares it, from the name
-// and the prototype alone, so each writes the same text and whatever resolves
-// names across artifacts keeps one of them (LRM 35.4). Everything else is
-// written once, and a second definition of it would be a program that does not
-// link.
-enum class Definition : std::uint8_t { kOwned, kShared };
-
 // A callable lowered to a CFG. `name` is unique across the unit, so it is the
 // symbol the function is emitted and linked under; a consumer never composes
 // one from where the function is listed. `values` holds every value of the
@@ -844,7 +837,7 @@ struct Function {
   std::vector<TypeId> variables;
   TypeId result_type;
   std::vector<BasicBlock> blocks;
-  Definition definition = Definition::kOwned;
+  Linkage linkage = Linkage::kExternal;
 };
 
 // The type of an operand: the type of the value a use names, of a constant, or

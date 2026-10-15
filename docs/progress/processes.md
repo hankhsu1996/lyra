@@ -147,9 +147,9 @@ under each item, and the conformance gaps at the end.
       update that itself schedules work leaves it for a later pass of the same slot (LRM 10.4.2).
   - [ ] A non-blocking assignment whose target is an automatic-lifetime procedural local (LRM
         13.3.2) is rejected; the deferred-commit closure would outlive the local's activation.
-- [x] P7 -- Continuous assignment `assign x = y;` (LRM 10.3). Read set is precomputed by slang's
-      flow analysis (LRM 10.3.2 reads identical to LRM 9.2.2.2.1). Drive strength (LRM 10.3.4) is
-      honoured on a net target; concat LHS rides on the procedural side.
+- [x] P7 -- Continuous assignment `assign x = y;` (LRM 10.3). Read set is what the right-hand side
+      reads (LRM 10.3.2 reads identical to LRM 9.2.2.2.1). Drive strength (LRM 10.3.4) is honoured
+      on a net target; concat LHS rides on the procedural side.
   - [x] A delay on a continuous assignment, written on the `assign` or on a net declaration that
         assigns (LRM 10.3.3). Each value the right-hand side takes reaches the target that long
         after the change, and one replaced by a different value before then never arrives, so a
@@ -288,11 +288,10 @@ under each item, and the conformance gaps at the end.
         15.5.5.1, 15.5.5.2), and an event read as a value, as an operand or as a condition (LRM
         15.5.5.3). It once reached the source backend and came out as C++ the host compiler
         rejected.
-- [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). Sensitivity is precomputed by
-      slang's flow analysis on `cond` as a standalone expression. The "skip suspend if cond is
-      already true" semantic falls out of the lowering. `wait fork;` (LRM 9.6.1) is a distinct
-      process-control construct belonging to the fork surface; `wait_order(...)` (LRM 15.5.4) is out
-      of scope.
+- [x] P11 -- `wait (cond) body` level-sensitive control (LRM 9.4.3). Sensitivity is what `cond`
+      reads. The "skip suspend if cond is already true" semantic falls out of the lowering.
+      `wait fork;` (LRM 9.6.1) is a distinct process-control construct belonging to the fork
+      surface; `wait_order(...)` (LRM 15.5.4) is out of scope.
 
 ### Concurrency
 

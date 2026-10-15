@@ -41,7 +41,6 @@ auto SeverityOf(diag::DiagKind kind) -> slang::DiagnosticSeverity {
     case diag::DiagKind::kWarning:
       return slang::DiagnosticSeverity::Warning;
     case diag::DiagKind::kNote:
-    case diag::DiagKind::kRemark:
       return slang::DiagnosticSeverity::Note;
   }
   throw InternalError("SeverityOf: invalid DiagKind");

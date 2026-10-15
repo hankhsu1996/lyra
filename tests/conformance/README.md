@@ -228,15 +228,13 @@ absence cannot tell "this path refuses the construct" from "nobody has tagged it
 
 A compiler bug is neither. A run that reports one fails whatever the records say, because "not
 implemented yet" and "implemented wrongly" recorded the same way would leave nothing able to report
-coverage. So does a run that remarks it lost sharing: the program is right, but a definition was
-compiled once per parameter value because its instances lowered apart after they were predicted to
-share one unit, and nothing the case checks can see that.
+coverage.
 
-The compiler holds each instance of a design to the compiled unit it shares, and a run where one
-lowers differently fails as a compiler bug. Two instances that share a unit while lowering
-differently are one of them built as the other, and a case sees that only where it happens to check
-the instance that came out wrong -- which is why a case about something that differs between
-instances checks an instance other than the first.
+Every case is also lowered reading each instance through a body of its own, each held to the
+compiled unit it shares, and one that lowers differently fails as a compiler bug. Two instances that
+share a unit while lowering differently are one of them built as the other, and a case sees that
+only where it happens to check the instance that came out wrong -- which is why a case about
+something that differs between instances checks an instance other than the first.
 
 ## Where a path answers wrongly
 

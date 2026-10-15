@@ -2,7 +2,11 @@
 
 Date: 2026-09-22 Status: accepted; the rejection of one member covering every alternative is
 reversed by
-[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) D3
+[a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) D3;
+what a unit holds of a conditional is revised 2026-10-14 by
+[a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md):
+the alternatives its own instances built, which are part of its name; and the blocks of one loop are
+one body lowered once rather than compared and merged (its D5)
 
 ## Context
 
@@ -74,11 +78,12 @@ conditions where the source wrote n. Measured on an 8-item `case` inside a loop,
 comparisons against 7; on a 32-item one, 239,407 bytes of bodies against 181,418.
 
 A construct outside any loop is stated the same way. Its conditions read what the instance was built
-with, so two instances of one unit may select different alternatives exactly as two blocks of one
-loop do, and the unit holds every alternative any of them selected
-([a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
-D2). What selects a block is a fact about the source in either position, and a layer that states it
-for one and not the other has two shapes for one rule.
+with, as a loop's blocks' conditions do; which alternative an instance selected is part of its
+unit's name
+([a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
+D1), so the unit holds the one its instances selected. What selects a block is a fact about the
+source in either position, and a layer that states it for one and not the other has two shapes for
+one rule.
 
 ### D2. The alternatives come from the source; only the bodies are collected across indices
 

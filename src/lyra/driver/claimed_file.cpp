@@ -9,7 +9,7 @@
 #include <utility>
 
 #include "lyra/diag/diag_code.hpp"
-#include "lyra/driver/artifact_store.hpp"
+#include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/signals.hpp"
 
 namespace lyra::driver {

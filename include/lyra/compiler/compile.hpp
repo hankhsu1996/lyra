@@ -37,9 +37,7 @@ struct FrontEndResult {
 // Choices about how to lower that the design does not make for itself.
 struct LoweringPolicy {
   support::AssertionPolicy assertions = support::AssertionPolicy::kCheck;
-  support::BodiesRead bodies_read = support::BodiesRead::kElaborated;
-  lowering::ast_to_hir::MissedSharing missed_sharing =
-      lowering::ast_to_hir::MissedSharing::kNotLookedFor;
+  support::BodiesRead bodies_read = support::BodiesRead::kOnePerName;
 };
 
 // Reads everything the driver was pointed at and elaborates it, rendering

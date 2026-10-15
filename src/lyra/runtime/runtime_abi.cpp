@@ -26,6 +26,7 @@
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/construction_table.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
@@ -39,6 +40,7 @@
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/host_command.hpp"
+#include "lyra/runtime/loop_blocks.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/nba_region.hpp"
 #include "lyra/runtime/net.hpp"
@@ -2146,6 +2148,7 @@ using lyra::runtime::ChannelCancellation;
 using lyra::runtime::ClosureDefinition;
 using lyra::runtime::ClosureValue;
 using lyra::runtime::Compared;
+using lyra::runtime::ConstructionTable;
 using lyra::runtime::ControlEffect;
 using lyra::runtime::Coroutine;
 using lyra::runtime::current_runtime;
@@ -2183,6 +2186,8 @@ using lyra::runtime::HandleTo;
 using lyra::runtime::HierarchySegment;
 using lyra::runtime::HistoryAt;
 using lyra::runtime::InsertDesignatedBits;
+using lyra::runtime::InstantiationEntry;
+using lyra::runtime::InstantiationTable;
 using lyra::runtime::IntegralTypeAt;
 using lyra::runtime::IntOf;
 using lyra::runtime::JoinNets;
@@ -2195,6 +2200,7 @@ using lyra::runtime::Logic32;
 using lyra::runtime::Logic64;
 using lyra::runtime::Logic8;
 using lyra::runtime::LogicWide;
+using lyra::runtime::LoopBlocks;
 using lyra::runtime::MakeForeignExecution;
 using lyra::runtime::MakeSharedCell;
 using lyra::runtime::NamedEvent;
@@ -3326,9 +3332,12 @@ auto lyra_rt_enclosing_scope(void* self, const void* definition) -> void* {
       static_cast<const ObjectDefinition*>(definition));
 }
 
-auto lyra_rt_is_of_class(void* self, const void* definition) -> bool {
-  return static_cast<Scope*>(self)->IsOfClass(
-      static_cast<const ObjectDefinition*>(definition));
+void lyra_rt_loop_blocks_add(void* blocks, std::int64_t index, void* block) {
+  static_cast<LoopBlocks*>(blocks)->Add(index, static_cast<Scope*>(block));
+}
+
+auto lyra_rt_loop_blocks_at(const void* blocks, std::int64_t index) -> void* {
+  return static_cast<const LoopBlocks*>(blocks)->At(index);
 }
 
 auto lyra_rt_sequence_make(LyraSpan handles) -> void* {
@@ -3433,6 +3442,16 @@ auto lyra_rt_run_program(
         return std::unique_ptr<Scope>(
             static_cast<Scope*>(make(parent, &segment)));
       });
+}
+
+auto lyra_rt_instantiation_entry(const void* table, std::int64_t at)
+    -> LyraMethodEntry {
+  return InstantiationEntry(static_cast<const ConstructionTable*>(table), at);
+}
+
+auto lyra_rt_instantiation_table(const void* table, std::int64_t at) -> const
+    void* {
+  return InstantiationTable(static_cast<const ConstructionTable*>(table), at);
 }
 
 auto lyra_rt_refer_storage(void* storage, void* out) -> void* {
@@ -8086,6 +8105,9 @@ void lyra_rt_evaluation_attempts_construct(void* storage) {
 void lyra_rt_timer_construct(void* storage) {
   BuildAt<Timer>(storage);
 }
+void lyra_rt_loop_blocks_construct(void* storage) {
+  BuildAt<LoopBlocks>(storage);
+}
 void lyra_rt_channel_cancellation_construct(void* storage) {
   BuildAt<ChannelCancellation>(storage);
 }
@@ -8214,6 +8236,9 @@ void lyra_rt_evaluation_attempts_destroy(void* storage) {
 }
 void lyra_rt_timer_destroy(void* storage) {
   std::destroy_at(static_cast<Timer*>(storage));
+}
+void lyra_rt_loop_blocks_destroy(void* storage) {
+  std::destroy_at(static_cast<LoopBlocks*>(storage));
 }
 
 // The holders over each layout an integral value no wider than a word has. A

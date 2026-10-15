@@ -133,7 +133,7 @@ auto LowerDynamicCastExpr(
   }
   const hir::ExprId source = frame.Exprs().Add(*std::move(source_or));
 
-  auto type_id = lowerer.Owner().InternType(*call.type, span);
+  auto type_id = lowerer.Owner().InternExpressionType(call, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   return hir::Expr{

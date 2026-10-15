@@ -83,25 +83,30 @@ signature names the scope it belongs to. The publication is derived from the uni
 and never waits for a body.
 
 **D2. A scope is two classes: the published part, and the realization extending it.** The published
-part holds the published members first, in the order the publication states, and one method per
-subroutine that forwards to the body. The realization adds what lowering adds (fact 4). A referrer
-compiles against the published part alone and never needs the object's size, since the element's own
-entry makes every object of it; an edit to a body changes the realization and no header. No method
-of either is virtual.
+part holds the published members first, in the order the publication states, and one virtual method
+per subroutine, which the realization overrides with the body. The realization adds what lowering
+adds (fact 4). A referrer compiles against the published part alone and never needs the object's
+size, since the element's own entry makes every object of it; an edit to a body changes the
+realization and no header. Revised 2026-10-12 by
+[a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md): each
+published subroutine is virtual, since a referrer knows the published class and not which of the
+classes realizing it the object is, and once a published class may be realized more than once that
+is the object's to answer.
 
 **D3. A referrer reaches another element by typed steps only.** A route is an anchor, steps and a
 leaf, and no part of it carries a string. A step is one element of the path the source wrote (LRM
 23.6): the declaration it names, and the selects written beside that name, one per dimension of what
 the name holds. A step onto an instance is the published member for it, selected; a step into a
-loop's block is the construct's entry, selected by the block's position and viewed as that block's
+loop's block names the loop and the value its index stood at, as the source does (LRM 27.4), the
+loop's entry answers which of the blocks the object built that is, and the block is viewed as its
 published class; a step into a block that stands alone or that a conditional chose names the block
 by its label, which needs no select (LRM 27.5), and views the construct's entry as that block's
-class. A leaf is a published member, a published disable target, or a direct call to a published
-subroutine. A construction of a class another instance declares, and a call of a method of that
-class itself, are handed that instance by the same kind of route. That route starts where the name
-the class's type came through landed, or, for a type handed down by a parameter, at the enclosing
-instance it belongs to -- never at whichever landing happens to hold the instance, which differs
-between instances of one unit (fact 7). A name the scope did not publish is refused where it
+class. A leaf is a published member, a published disable target, or a call through the object to a
+published subroutine. A construction of a class another instance declares, and a call of a method of
+that class itself, are handed that instance by the same kind of route. That route starts where the
+name the class's type came through landed, or, for a type handed down by a parameter, at the
+enclosing instance it belongs to -- never at whichever landing happens to hold the instance, which
+differs between instances of one unit (fact 7). A name the scope did not publish is refused where it
 compiles.
 
 **D4. An upward name starts at the enclosing instance of the class the front end's search landed on,
@@ -114,7 +119,8 @@ instances whose upward names land on different classes are different units (fact
 published under its own name, with the names of blocks found to compile alike kept as aliases of one
 class, made the set of names depend on a comparison of bodies, so a body edit changed a header --
 the requirement above, failed. A block instance is an application of its block, named from the front
-end alone, and blocks of one application that lower apart are that class realized more than once.
+end alone, and which realization of that class a block is, is named from the front end as well, by
+the value of its index where its code uses it.
 
 **D6. Nothing resolves a hierarchical name while the design runs.** No scope registers a signal, a
 static or a disable target by name, no scope or class carries a table of subroutine or member names,
@@ -148,9 +154,9 @@ and the runtime has no by-name child search. A scope keeps its hierarchy segment
   other's headers, not a cycle in either stage. D3 and D4 are reversed, and so is D5's second leaf,
   a disable target the scope answers for by name.
 - [a-referrer-calls-rather-than-navigates](a-referrer-calls-rather-than-navigates.md) D1 to D4 are
-  reversed: a referrer reads a member at its offset and calls a subroutine directly. Its requirement
-  -- a change to what a unit keeps to itself moves no referrer -- holds through D2 here, and its D5,
-  the element's own entry making the object, stands.
+  reversed: a referrer reads a member at its offset and calls a published subroutine. Its
+  requirement -- a change to what a unit keeps to itself moves no referrer -- holds through D2 here,
+  and its D5, the element's own entry making the object, stands.
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) D2, a segment past the layout
   answered by name, is reversed by D3. Its other decisions stand.
 - [structural-access-on-an-opaque-object](structural-access-on-an-opaque-object.md) and

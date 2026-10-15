@@ -14,6 +14,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
+#include "lyra/mir/bring_up_entry.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -26,7 +27,6 @@
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/foreign_linkage.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/minted_entry.hpp"
 #include "lyra/mir/static_variable_id.hpp"
 #include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/struct_id.hpp"
@@ -94,9 +94,10 @@ struct NamedStaticVariable {
 }
 
 // What one unit read of another's signature. A unit publishes its namespace --
-// the cells and bodies it declares outside any class of it (LRM 26.2) -- and
-// each class it published, and a referrer reads one of those rather than the
-// whole, so what it depends on is that much and no more.
+// the cells and bodies it declares outside any class of it (LRM 26.2) -- each
+// class it published, and for each body it is compiled to the entry that makes
+// an object of that body. A referrer reads one of those rather than the whole,
+// so what it depends on is that much and no more.
 struct ConsumedNamespace {
   std::string unit_name;
 
@@ -110,15 +111,15 @@ struct ConsumedClass {
   auto operator==(const ConsumedClass&) const -> bool = default;
 };
 
-using ConsumedSignature = std::variant<ConsumedNamespace, ConsumedClass>;
+struct ConsumedObjectEntry {
+  std::string unit_name;
+  std::string body_name;
 
-// Which unit a consumption reached, whichever of the two it was.
-[[nodiscard]] inline auto UnitConsumed(const ConsumedSignature& consumed)
-    -> const std::string& {
-  return std::visit(
-      [](const auto& one) -> const std::string& { return one.unit_name; },
-      consumed);
-}
+  auto operator==(const ConsumedObjectEntry&) const -> bool = default;
+};
+
+using ConsumedSignature =
+    std::variant<ConsumedNamespace, ConsumedClass, ConsumedObjectEntry>;
 
 // The body that builds the default value of `type` (LRM Table 6-7, Table 7-1),
 // taking nothing and answering the value. A declaration states its variable's
@@ -261,15 +262,23 @@ struct BuiltinMirTypes {
 };
 
 struct CompilationUnit {
-  // The unit's own name -- its module, package, or interface name. A backend
-  // names the unit's emitted artifact from this, so a unit whose root is a
-  // namespace rather than a class (a package) still has a stable identity
-  // independent of any member.
+  // The unit's own name -- its module, package, or interface name, with what
+  // was fixed for it. Every declaration another unit may name is named under
+  // it, so a unit whose root is a namespace rather than a class (a package)
+  // still has a stable identity independent of any member.
   std::string name;
+  // Which body of the unit this is: its own name where the unit is compiled to
+  // one body, and otherwise that name with the digest of the values its
+  // instances' code uses. Its bodies each state the declarations the unit
+  // names, alike, and what only one body holds -- the classes realizing its
+  // scopes, their entries, the artifact it is emitted as -- is named under
+  // this.
+  std::string body_name;
   // The identifier the source declares the unit under, which several units
   // share where one definition is compiled once per specialization, and which
   // a unit the source gave no identifier lacks. It is what a person is told
-  // the compiler is working on; nothing is named from it.
+  // the compiler is working on, and the design element name `$printtimescale`
+  // prints (LRM 20.4.2); nothing compiled is named from it.
   std::string source_name;
   TypePool types;
   // The values this unit settles before the program runs, each held once and
@@ -542,6 +551,14 @@ struct CompilationUnit {
             .class_path = std::move(class_path)});
   }
 
+  // Only the design root names an object entry, and never its own.
+  void ConsumeObjectEntryOf(std::string unit_name, std::string body_name) {
+    Consume(
+        ConsumedObjectEntry{
+            .unit_name = std::move(unit_name),
+            .body_name = std::move(body_name)});
+  }
+
   void Consume(ConsumedSignature consumed) {
     if (std::ranges::find(consumed_signatures, consumed) ==
         consumed_signatures.end()) {
@@ -574,6 +591,21 @@ struct CompilationUnit {
 [[nodiscard]] inline auto IsPublished(const CompilationUnit& unit, ClassId id)
     -> bool {
   return unit.GetClass(id).path.has_value();
+}
+
+// Whether every body the unit is compiled to states this class alike, so that
+// a program holds one of them whichever of the bodies it links: what the
+// unit's declarations alone build, rather than what one body's code adds.
+//
+// That is what a scope of the design hierarchy published -- an instance's
+// class, or a generate block's. A class the source declared reaches the scope
+// declaring it as that scope's body compiled it, and a scope declaring one has
+// one body.
+[[nodiscard]] inline auto IsStatedByEveryBody(
+    const CompilationUnit& unit, ClassId id) -> bool {
+  const Class& cls = unit.GetClass(id);
+  return cls.path.has_value() && cls.base.has_value() &&
+         std::holds_alternative<ObjectTreeRootRef>(*cls.base);
 }
 
 // The class some unit declares that `cls` extends, where it extends one -- the
@@ -623,10 +655,11 @@ struct CompilationUnit {
 // What spells one body of a unit's namespace: the linkage name the source wrote
 // in the DPI-C name space, which is program-global and belongs to no unit (LRM
 // 35.4); the identifier the unit's own namespace answers (LRM 26.3); which of
-// the two bring-up entries it is; or, where nothing names it, the position it
+// the two bring-up entries it is; being the entry that makes an object of the
+// body this unit is compiled to; or, where nothing names it, the position it
 // sits at.
 //
-// The position is the general case and the three before it are the special
+// The position is the general case and the four before it are the special
 // ones. A namespace holds what the source declared and what the compiler
 // synthesized alike, in one pool for bodies and one for cells; the position is
 // what every entry of either has, and an identifier is a relation over that
@@ -638,9 +671,12 @@ struct ReachedByLinkageName {
 struct ReachedByName {
   std::string_view name;
 };
-struct ReachedByMintedEntry {
-  MintedEntry entry;
+struct ReachedByBringUpEntry {
+  BringUpEntry entry;
 };
+// Each body a unit is compiled to has its own, so the entry is spelled from the
+// unit and the body.
+struct ReachedAsObjectEntry {};
 // A body nothing names, spelled from where it sits. A target mints the spelling
 // into a range no source name reaches; nothing outside this unit can ask for
 // it, which is why a position suffices.
@@ -649,8 +685,8 @@ struct ReachedByPosition {
 };
 
 using NamespaceReach = std::variant<
-    ReachedByLinkageName, ReachedByName, ReachedByMintedEntry,
-    ReachedByPosition>;
+    ReachedByLinkageName, ReachedByName, ReachedByBringUpEntry,
+    ReachedAsObjectEntry, ReachedByPosition>;
 
 // How `id` is spelled. Every target names it from this one answer, so no two
 // arrive at different names for one body and none works out for itself which
@@ -663,15 +699,15 @@ using NamespaceReach = std::variant<
   }
   if (const BroughtUpNamespace* ns = BroughtUpNamespaceOf(unit)) {
     if (id == ns->install_storage) {
-      return ReachedByMintedEntry{MintedEntry::kInstallStorage};
+      return ReachedByBringUpEntry{BringUpEntry::kInstallStorage};
     }
     if (id == ns->initialize_storage) {
-      return ReachedByMintedEntry{MintedEntry::kInitializeStorage};
+      return ReachedByBringUpEntry{BringUpEntry::kInitializeStorage};
     }
   }
   if (const RootedTree* tree = RootedTreeOf(unit)) {
     if (id == tree->object_entry) {
-      return ReachedByMintedEntry{MintedEntry::kMakeObject};
+      return ReachedAsObjectEntry{};
     }
   }
   if (const std::optional<std::string_view> name =

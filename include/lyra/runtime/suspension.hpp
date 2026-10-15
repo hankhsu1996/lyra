@@ -29,7 +29,7 @@ class Suspension {
 
   [[nodiscard]] auto await_ready() const noexcept -> bool;
 
-  static void await_suspend(std::coroutine_handle<> frame) noexcept;
+  void await_suspend(std::coroutine_handle<> frame) const noexcept;
 
   void await_resume() const;
 

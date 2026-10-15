@@ -10,9 +10,9 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/compiler/stack.hpp"
+#include "lyra/base/stack_thread.hpp"
 
-namespace lyra::compiler {
+namespace lyra::base {
 
 // Calls `produce(i)` for every index below `count` on at most `width` threads
 // at once, and hands each result to `consume` in index order, whichever
@@ -56,4 +56,4 @@ void ProduceInOrder(
   }
 }
 
-}  // namespace lyra::compiler
+}  // namespace lyra::base

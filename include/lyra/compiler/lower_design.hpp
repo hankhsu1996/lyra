@@ -6,16 +6,20 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
+#include "lyra/base/parallel.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/design_root.hpp"
-#include "lyra/compiler/parallel.hpp"
 #include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
+#include "lyra/hir/construction_table_layout.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/status/status.hpp"
@@ -66,7 +70,7 @@ void LowerToHir(
   using Produced = std::invoke_result_t<Produce, hir::CompilationUnit>;
   const profiling::StageScope stage("lower units");
   status::Pieces(design.units.UnitCount());
-  ProduceInOrder(
+  base::ProduceInOrder(
       design.units.UnitCount(), width,
       [&](std::size_t i) -> Produced {
         Produced produced = diag::ContainFailure([&]() -> Produced {
@@ -74,9 +78,9 @@ void LowerToHir(
           if (!unit) {
             return std::unexpected(std::move(unit.error()));
           }
-          // The unit is handed on below, so the name it is known by here is a
-          // copy that lasts as long as the work on it.
-          const std::string name = unit->name;
+          // The unit is handed on below, so the name of the body it compiles
+          // is a copy that lasts as long as the work on it.
+          const std::string name = unit->body_name;
           const auto in_unit = diag::FailureContext::InUnit(name);
           const status::Piece piece(unit->source_name);
           return produce(*std::move(unit));
@@ -105,16 +109,37 @@ auto LowerToSemantic(
     diag::DiagnosticSink& sink, std::size_t width, Produce produce,
     Consume consume) -> std::optional<SemanticDesign> {
   using Produced = std::invoke_result_t<Produce, mir::CompilationUnit>;
+  // What a body elaborated at its instantiations is the one fact of it the
+  // design root reads, so it travels with what the consumer made of the unit,
+  // and the two arrive together and in the design's order.
+  struct Lowered {
+    std::string body;
+    std::vector<hir::UnitBodyRef> instantiated;
+    typename Produced::value_type produced;
+  };
+  lowering::hir_to_mir::DesignInstantiations instantiations;
   LowerToHir(
       design, sink, width,
-      [&](const hir::CompilationUnit& hir_unit) -> Produced {
+      [&](const hir::CompilationUnit& hir_unit) -> diag::Result<Lowered> {
         auto unit = LowerUnitToSemantic(hir_unit, sources);
         if (!unit) {
           return std::unexpected(std::move(unit.error()));
         }
-        return produce(*std::move(unit));
+        Produced produced = produce(*std::move(unit));
+        if (!produced) {
+          return std::unexpected(std::move(produced.error()));
+        }
+        return Lowered{
+            .body = hir_unit.body_name,
+            .instantiated =
+                hir::ConstructionTableLayout(hir_unit).Instantiated(),
+            .produced = *std::move(produced)};
       },
-      consume);
+      [&](Lowered lowered) {
+        instantiations.by_body.emplace(
+            std::move(lowered.body), std::move(lowered.instantiated));
+        consume(std::move(lowered.produced));
+      });
   if (sink.HasErrors()) {
     return std::nullopt;
   }
@@ -123,7 +148,8 @@ auto LowerToSemantic(
   auto root = [&] {
     const profiling::StageScope stage("design root");
     return SynthesizeDesignRoot(
-        design.units.Tops(), design.units.Signatures(), sources);
+        design.units.Tops(), design.units.Signatures(),
+        std::move(instantiations), sources);
   }();
   if (!root) {
     sink.Report(std::move(root.error()));

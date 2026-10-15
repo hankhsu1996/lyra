@@ -14,6 +14,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/pattern.hpp"
+#include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/ast_to_hir/walk_frame.hpp"
@@ -31,14 +32,13 @@ namespace lyra::lowering::ast_to_hir {
 // in the pattern's own scope, so nothing here reaches for a declaration arena.
 // One template over the pass class serves both contexts.
 //
-// `subject_type` is the type of the value the pattern is matched against; the
-// node records it, so a consumer descending the tree does not walk the
-// subject's type alongside the pattern.
+// `subject` is the type of the value the pattern is matched against, as the
+// lowered subject states it; the node records it, so a consumer descending the
+// tree does not walk the subject's type alongside the pattern.
 template <ExprLowerer Lowerer>
 auto AddPattern(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::Pattern& pattern,
-    const slang::ast::Type& subject_type, diag::SourceSpan span)
-    -> diag::Result<hir::PatternId>;
+    hir::TypeId subject, diag::SourceSpan span) -> diag::Result<hir::PatternId>;
 
 // Lowers a whole predicate clause sequence. One loop for every `if` / `?:`
 // in either context: the plain LRM 12.4 predicate is the one-clause,
@@ -62,7 +62,8 @@ auto LowerConditionClauses(
     std::optional<hir::PatternId> pattern_id;
     if (condition.pattern != nullptr) {
       auto pattern_or = AddPattern(
-          lowerer, frame, *condition.pattern, *condition.expr->type, span);
+          lowerer, frame, *condition.pattern, frame.Exprs().Get(expr_id).type,
+          span);
       if (!pattern_or) return std::unexpected(std::move(pattern_or.error()));
       pattern_id = *pattern_or;
     }

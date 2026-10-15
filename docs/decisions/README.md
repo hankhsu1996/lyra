@@ -246,7 +246,9 @@ the detail lives in the entry itself.
   to rule no path out by a constant: what a body waits on is what its text reads, so every
   construction of one body waits alike and wakes on a read its constants exclude. **How an implicit
   list takes in what its called functions read is revised by
-  [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).**
+  [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md), and where
+  a read set comes from by
+  [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md).**
 - [runtime-effects-as-generic-calls](runtime-effects-as-generic-calls.md) -- runtime effects lower
   to ordinary `CallExpr` with the engine handle as one argument.
 - [ambient-runtime-services](ambient-runtime-services.md) -- generated code reaches the runtime
@@ -314,24 +316,34 @@ the detail lives in the entry itself.
 
 - [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md) --
   every scope a name can step into publishes every declaration a name can reach, as a class the
-  referrer reaches by typed steps, offsets and direct calls; an upward name starts at the enclosing
-  instance of the class it landed on, which tells the unit apart; a loop's blocks keep their own
-  names over shared code; nothing resolves a hierarchical name while the design runs. Resolving by
-  name at elaboration, handing over the size, a dispatched base class, a behaviors-only promise, and
-  keying by the climb's path are rejected. **Its D5, a loop's blocks each under their own name, is
-  reversed by the next entry.**
+  referrer reaches by typed steps, offsets and calls through the object; an upward name starts at
+  the enclosing instance of the class it landed on, which tells the unit apart; a loop's blocks keep
+  their own names over shared code; nothing resolves a hierarchical name while the design runs.
+  Resolving by name at elaboration, handing over the size, a dispatched base class, a behaviors-only
+  promise, and keying by the climb's path are rejected. **Its D5, a loop's blocks each under their
+  own name, is reversed by the next entry.**
 - [a-generate-block-is-a-nested-definition](a-generate-block-is-a-nested-definition.md) -- a
   generate block is a definition nested in the scope holding it, and a block instance is an
   application of it, named from the front end by the function that names a unit: one published class
   per application, a loop an array of them, a child naming the block that holds it one unit. Read it
-  for what an index decides -- the constants the front end settled from it, and nothing where it is
-  only read, selects an alternative, or sits in a body's code -- for why blocks of one application
-  that lower apart are one class realized more than once, with a published subroutine entering the
-  body of whichever realization the object is, for why a class of a unit is identified by a path of
-  steps and never by a composed name, and for why a unit's scope classes are nested in one another
-  and written in the file that carries the unit's name. A file per class with its name shortened by
-  a digest, deciding by comparing published classes, and a virtual method per published subroutine
-  are rejected.
+  for what an index decides -- its value where what the block declares relies on it, and nothing
+  where it is only read, selects an alternative, or sits in what a body's statements run -- for why
+  blocks of one application whose code relies on their index are one class realized more than once,
+  each realization named from the front end before any body lowers and nothing compared, with a
+  published subroutine a virtual method each realization overrides, for why a class of a unit is
+  identified by a path of steps and never by a composed name, and for why a unit's scope classes are
+  nested in one another and written in the file that carries the unit's name. A file per class with
+  its name shortened by a digest, deciding by comparing published classes, finding a block's body by
+  comparing lowered blocks, and a non-virtual method asking which realization the object is are
+  rejected.
+- [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md)
+  -- every instance one identity names lowers alike because the lowering reads nothing of it the
+  identity does not hold, not because a check finds the copies alike. Read it for what the lowering
+  may take from an instance's tree, why the front end records what settled a type wherever it reads
+  one as a fact, why an operation's result is typed by its width and numbered from zero through one
+  function, and why a read set is collected from the text rather than from the front end's flow
+  analysis. Keying on every evaluation the front end made, predicting which queries the lowering
+  answers, recording every fact's provenance, and patching the flow analysis are rejected.
 - [hierarchical-reference-routing](hierarchical-reference-routing.md) -- one semantic shape per
   hierarchical reference; per-segment classification by layout visibility; sealed endpoint on the
   hot path. **Its D2 is reversed by
@@ -1037,7 +1049,8 @@ the detail lives in the entry itself.
   offset, a by-name lookup, and free entries over an opaque handle are rejected. **Its D1 to D4 are
   reversed by
   [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
-  where a referrer reads a published member at its offset and calls a published subroutine directly.
+  where a referrer reads a published member at its offset and calls a published subroutine through
+  the object.
 - [publishing-part-of-a-member](publishing-part-of-a-member.md) -- a connection point names a
   projection of a published member, a folded value, or nothing; a signature carries a closed
   selector path and never an expression, an interface publishes its modports, and the referrer
@@ -1106,34 +1119,57 @@ the detail lives in the entry itself.
   [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md).
 - [a-parameter-read-as-a-value-is-supplied-at-construction](a-parameter-read-as-a-value-is-supplied-at-construction.md)
   -- a value parameter is read as the expression the source wrote and handed to the instance when it
-  is built, so instances handed different values are one unit; only a reference where the front end
-  settled a constant keeps it in the key. Read it for why a module boundary forces a prediction the
-  loop record could decline -- the parent names the child without reading the child's body -- and
-  for how the prediction is kept from deciding correctness: every instance handed new values is
-  lowered and held against its unit, one body with it where they differ only in what their
-  constructions built, a difference keeping the definition whole. Read it also for why the list is
-  of where the front end folds and not of where this compiler evaluates, and for the remark on a
-  unit per value that decides nothing. It rejects naming a child by its body's hash, grouping by
-  comparing across the design, declaring every parameter, and reporting a miss as an error.
+  is built, so instances handed different values are one unit; a parameter something compiled relies
+  on is an argument and keeps its value in the key. Read it for why a module boundary forces a
+  prediction the loop record could decline -- the parent names the child without reading the child's
+  body -- and for why the prediction is read off the front end's record of which parameters each
+  constant evaluation read rather than written as a list of positions. Every instance of a unit
+  built the same generate blocks, so a unit is lowered from the instance it is named for; a check
+  lowering every instance holds the rest to it, and a disagreement is a compiler defect. It rejects
+  naming a child by its body's hash, grouping by comparing across the design, declaring every
+  parameter, and keeping a definition whole where its instances lower apart. **Its D1 and D2 are
+  revised by
+  [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
+- [a-unit-is-compiled-to-a-body-per-value-its-code-relies-on](a-unit-is-compiled-to-a-body-per-value-its-code-relies-on.md)
+  -- a unit is named by the values of the parameters what it declares relies on and compiled to one
+  body per value of those only its code relies on, as a block is. Read it for why a parameter read
+  as a value reads the object's own, why each body is a compilation of its own that states the
+  published classes alike and the link keeps one, why a scope declaring a class has one body, and
+  why a parameter handed to a child's argument is an argument of the scope building it. A name
+  holding the constants settled at each place, a unit of its own for what is published, and every
+  body in one compilation are rejected.
+- [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md)
+  -- which generate blocks an instance built is part of its unit's name, as the branch an
+  `if constexpr` keeps is part of a C++ instantiation: an alternative not selected is not
+  elaborated, so a body holds what its own instances built and no other's, and is lowered from one
+  instance. Read it for why the direction changed -- a body holding every block any instance built,
+  and then each block as an artifact of its own chosen by data the design root states, were both
+  held against rustc and C++ and went beyond them -- for what it cost on nineteen real designs, for
+  why a value deciding what a child builds names the scope handing it, as `Leaf<i>` does, and for
+  why reading what an instance built off its elaboration evaluates the instance's own generate
+  scheme rather than taking the instance graph as authority.
 - [a-part-is-the-select-the-source-wrote](a-part-is-the-select-the-source-wrote.md) -- a part of a
   vector a genvar or a parameter selects -- the bits a wait watches, a part-select's type, the
   positions a connection joins -- is stated as the select the source wrote, so constructions
   differing only in that value share one body. Which bits are watched stays the front end's answer,
   and every construction is still compared. Watching the whole variable, computing the read set from
-  the source, and passing settled ranges at construction are rejected.
+  the source, and passing settled ranges at construction are rejected. **Which bits are watched, the
+  comparison, and the rejection of a read set computed from the source are revised by
+  [the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md).**
 - [generate-variable-specialization](generate-variable-specialization.md) -- a generate variable is
   a specialization input like a parameter; demoting it to a runtime input is a proof-gated
   optimization. Its conservative default is superseded on the loop axis by the next entry.
 - [one-body-built-at-every-index](one-body-built-at-every-index.md) -- the loop axis of that record,
   with its default inverted: a loop generate's blocks are one compiled class the constructor builds
   once per index, because the index reaches the block as a value construction supplies rather than
-  as a constant folded into it. Read it for the shape that makes that safe -- one mechanism decides
-  which blocks qualify and a second proves the decision by lowering the rest and comparing, so a
-  hole in the first costs a build rather than a wrong program -- and for why a question asked of the
-  source can never be completed. The measurement that removed speed from the argument is there too,
-  as is what a scope's construction receives: one entry for every class, because the constructing
-  site may hold only the definition -- except a unit's own entry, which takes its values typed,
-  since a parent works out that prototype from the child's instantiation.
+  as a constant folded into it. Read it for the comparison of lowered blocks it first decided by,
+  and why that was revised: which body a block is, is named from the front end's record of where its
+  index is used, before any block lowers, and nothing is compared. The measurement that removed
+  speed from the argument is there too, as is what a scope's construction receives: one entry for
+  every class, because the constructing site may hold only the definition -- except a unit's own
+  entry, which takes its values typed, since a parent works out that prototype from the child's
+  instantiation. **Its D2, blocks of one name taken into one body, is narrowed to one instance by
+  [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
 - [a-conditional-generate-chooses-at-construction](a-conditional-generate-chooses-at-construction.md)
   -- the entry above completed for the commonest reason a loop's blocks differ, which is a
   conditional written inside it: the construct holds the conditionals the source wrote, nested as
@@ -1147,7 +1183,9 @@ the detail lives in the entry itself.
   nothing, which is true outside a loop and false inside one. **Its rejection of one member covering
   every alternative is reversed by
   [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**,
-  where every generate construct holds one entry a step views as the block it names.
+  where every generate construct holds one entry a step views as the block it names. **What a unit
+  holds of a conditional outside a loop is revised by
+  [a-unit-is-named-by-the-generate-blocks-it-built](a-unit-is-named-by-the-generate-blocks-it-built.md).**
 - [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) -- the rule both
   entries above turned out to be cases of. The front end evaluates whatever it can, so an already
   computed answer sits beside nearly every expression, and taking one decides where that value

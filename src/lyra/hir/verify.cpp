@@ -1,5 +1,7 @@
 #include "lyra/hir/verify.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>
@@ -62,8 +64,7 @@ void ReachSensitivityEntry(const SensitivityEntry& entry, const auto& reach) {
           [](const WatchedWhole&) {},
           [&](const WatchedSelect& part) {
             reach(part.prefix, Slot::kSensitivity);
-          },
-          [](const WatchedBits&) {}},
+          }},
       entry.part);
 }
 
@@ -1041,6 +1042,11 @@ void ReachFromDataObjects(ArenaReaches& reaches, const StructuralScope& scope) {
             [](const StructuralGenvarDecl&) {},
             [](const StructuralConstructionValueDecl&) {},
             [&](const StructuralParameterDecl& decl) {
+              if (decl.default_value.has_value()) {
+                from_parameter(*decl.default_value, Slot::kOperand);
+              }
+            },
+            [&](const StructuralLocalparamDecl& decl) {
               from_parameter(decl.initializer, Slot::kOperand);
             }},
         object.kind);
@@ -1058,13 +1064,6 @@ void ReachFromGenerate(ArenaReaches& reaches, const Generate& generate) {
   std::visit(
       Overloaded{
           [](const SingleBlock&) {},
-          [&](const BlocksStandAlone& stand_alone) {
-            for (const StandAloneBlock& block : stand_alone.counted) {
-              for (const ExprId argument : block.arguments) {
-                from_block(argument, Slot::kOperand);
-              }
-            }
-          },
           [&](const BlocksRepeat& loop) {
             from_loop(loop.initial, Slot::kOperand);
             from_loop(loop.condition, Slot::kOperand);
@@ -1099,8 +1098,10 @@ void ReachFromConnections(ArenaReaches& reaches, const StructuralScope& scope) {
       ReachFrom(reaches, std::nullopt, "an instance's construction");
   for (const InstanceMemberDecl& instance : scope.instance_members) {
     for (const InstanceAlternative& alternative : instance.alternatives) {
-      for (const ExprId argument : alternative.arguments) {
-        from_instance(argument, Slot::kOperand);
+      for (const ParameterValueAssignment& assigned : alternative.assignments) {
+        if (assigned.value.has_value()) {
+          from_instance(*assigned.value, Slot::kOperand);
+        }
       }
     }
   }
@@ -1162,40 +1163,63 @@ void VerifyInstanceMembers(
   }
 }
 
-// A loop a construction runs holds the one body it builds, or none where it
-// counted no block; every block built on its own is one of the bodies its
-// construct holds.
+// A loop of several bodies states where each one stands, every body once, and
+// no value of its index under two of them; a loop of one body builds it at
+// every index and states none, and a loop that counted no block holds none.
 void VerifyLoopGenerates(
     const StructuralScope& scope, const std::string& label,
     std::vector<std::string>& lines) {
   for (const Generate& generate : scope.generates) {
-    const std::size_t bodies = generate.blocks.size();
-    std::visit(
-        Overloaded{
-            [](const SingleBlock&) {}, [](const BlocksChoose&) {},
-            [&](const BlocksRepeat&) {
-              if (bodies > 1) {
-                lines.push_back(
-                    std::format(
-                        "hir verify: a loop generate of {} that a "
-                        "construction runs holds {} bodies",
-                        label, bodies));
-              }
-            },
-            [&](const BlocksStandAlone& stand_alone) {
-              const bool every_one_built = std::ranges::all_of(
-                  stand_alone.counted, [&](const StandAloneBlock& block) {
-                    return block.body.value < bodies;
-                  });
-              if (!every_one_built) {
-                lines.push_back(
-                    std::format(
-                        "hir verify: a loop generate of {} names a body "
-                        "outside the {} it holds",
-                        label, bodies));
-              }
-            }},
-        generate.counting);
+    const auto* loop = std::get_if<BlocksRepeat>(&generate.counting);
+    if (loop == nullptr) continue;
+    const bool several = loop->bodies.size() > 1;
+    std::vector<std::uint32_t> named;
+    std::vector<std::int64_t> indices;
+    for (const LoopBody& built : loop->bodies) {
+      named.push_back(built.body.value);
+      if (several && built.indices.empty()) {
+        lines.push_back(
+            std::format(
+                "hir verify: a loop generate of {} holds several bodies and "
+                "says nowhere that body {} stands",
+                label, built.body.value));
+      }
+      if (!several && !built.indices.empty()) {
+        lines.push_back(
+            std::format(
+                "hir verify: a loop generate of {} holds one body and lists "
+                "where it stands",
+                label));
+      }
+      if (!std::ranges::is_sorted(built.indices)) {
+        lines.push_back(
+            std::format(
+                "hir verify: a loop generate of {} lists where body {} stands "
+                "out of order",
+                label, built.body.value));
+      }
+      indices.insert(indices.end(), built.indices.begin(), built.indices.end());
+    }
+    std::ranges::sort(named);
+    std::ranges::sort(indices);
+    const bool every_body_once = std::ranges::equal(
+        named, std::views::iota(
+                   std::uint32_t{0},
+                   static_cast<std::uint32_t>(generate.blocks.size())));
+    if (!every_body_once) {
+      lines.push_back(
+          std::format(
+              "hir verify: a loop generate of {} holds {} bodies and says "
+              "where {} of them stand",
+              label, generate.blocks.size(), named.size()));
+    }
+    if (std::ranges::adjacent_find(indices) != indices.end()) {
+      lines.push_back(
+          std::format(
+              "hir verify: a loop generate of {} stands two bodies at one "
+              "value of its index",
+              label));
+    }
   }
 }
 

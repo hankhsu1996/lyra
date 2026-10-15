@@ -27,7 +27,6 @@ auto Said(DiagKind kind, const std::string& message) -> std::string {
     case DiagKind::kHostError:
     case DiagKind::kWarning:
     case DiagKind::kNote:
-    case DiagKind::kRemark:
       return message;
   }
   throw InternalError("diag::Said: invalid DiagKind");
@@ -43,8 +42,6 @@ auto IsShown(DiagKind kind, const RenderOptions& opts) -> bool {
       return true;
     case DiagKind::kWarning:
       return opts.show_warnings;
-    case DiagKind::kRemark:
-      return opts.show_remarks;
   }
   throw InternalError("diag::IsShown: invalid DiagKind");
 }
@@ -103,7 +100,6 @@ auto RenderDiagnostics(
         ++warning_count;
         break;
       case DiagKind::kNote:
-      case DiagKind::kRemark:
         break;
     }
     out += RenderDiagnostic(d, source_manager, opts);

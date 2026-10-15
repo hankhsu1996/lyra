@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <format>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -39,23 +40,33 @@
 #include "lyra/lowering/ast_to_hir/hierarchy_override.hpp"
 #include "lyra/lowering/ast_to_hir/instance_context.hpp"
 #include "lyra/lowering/ast_to_hir/library_cell.hpp"
+#include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// FNV-1a, so producer and consumer agree on the name across separately
-// compiled units and across sessions. A process-seeded or pointer-derived
-// hash would not be reproducible across runs; this folds only the bytes.
-auto Fnv1a64(std::string_view bytes) -> std::uint64_t {
-  std::uint64_t hash = 0xcbf29ce484222325ULL;
-  for (const unsigned char byte : bytes) {
-    hash ^= byte;
-    hash *= 0x100000001b3ULL;
+// The digest a name carries of `bytes`: the first 64 bits of their stable
+// fingerprint, so producer and consumer agree on the name across separately
+// compiled units and across sessions. A unit's name and a block's are each
+// held against the key they were folded from, which is where two keys folding
+// to one digest would be caught.
+auto NameDigest(std::string_view bytes) -> std::uint64_t {
+  const stable_hash::Fingerprint fingerprint =
+      stable_hash::FingerprintOfText(bytes);
+  std::uint64_t digest = 0;
+  for (std::size_t i = 0; i < sizeof(digest); ++i) {
+    digest = (digest << 8U) | fingerprint.bytes.at(i);
   }
-  return hash;
+  return digest;
 }
+
+// The label a unit's key states the classes of the blocks its instance built
+// under, and the label a body's key states which body of its class each of
+// them is under.
+constexpr std::string_view kClassesOfBlocksBuilt = "<classes of blocks built>";
+constexpr std::string_view kBodiesOfBlocksBuilt = "<bodies of blocks built>";
 
 // A name and the digest of what was fixed under it, as one bounded identifier:
 // the name alone where nothing was fixed.
@@ -421,6 +432,13 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
             },
             [](const BoundToCell& v) {
               return std::format("<cell {}>", v.cell);
+            },
+            [](const BlocksBuilt& v) {
+              std::string built = "<built";
+              for (const std::string& block : v.blocks) {
+                built += std::format(" {}:{}", block.size(), block);
+              }
+              return built + ">";
             }},
         input.kind);
     bytes += ';';
@@ -431,7 +449,7 @@ auto KeyBytes(const SpecializationKey& key) -> std::string {
 // Where a name that left an instance lands, as one input to that instance's
 // key: the class of the scope it lands in, or where that scope stands relative
 // to an instance whose name is being worked out.
-auto ResolveBitRange(
+auto LandingOf(
     const slang::ast::Scope& scope, const SpecializationPolicy& policy)
     -> SpecializationInputKind {
   support::DefPath blocks;
@@ -479,23 +497,104 @@ auto OverrideInput(
       effect);
 }
 
-}  // namespace
+// The generate blocks one instance built, stated twice: once as the classes
+// they are objects of, which is what the instance declares, and once with
+// which body of its class each is as well, which is what its code is.
+struct BlocksOfAnInstance {
+  BlocksBuilt classes;
+  BlocksBuilt bodies;
+};
 
-auto DeclaresAClass(const slang::ast::Scope& scope) -> bool {
-  return std::ranges::any_of(
-      scope.members(), [](const slang::ast::Symbol& member) {
-        if (member.kind == slang::ast::SymbolKind::ClassType ||
-            member.kind == slang::ast::SymbolKind::GenericClassDef) {
-          return true;
-        }
-        if (const auto* block =
-                member.as_if<slang::ast::GenerateBlockSymbol>()) {
-          return !block->isUninstantiated && DeclaresAClass(*block);
-        }
-        const auto* loop = member.as_if<slang::ast::GenerateBlockArraySymbol>();
-        return loop != nullptr && DeclaresAClass(*loop);
+// The blocks `scope` built below itself, each named from the instance down by
+// the steps reaching it. An instance it holds is not crossed: what that
+// instance built is that instance's own.
+void CollectBlocksBuilt(
+    const slang::ast::Scope& scope, const std::string& class_prefix,
+    const std::string& body_prefix, const SpecializationPolicy& policy,
+    BlocksOfAnInstance& out) {
+  struct Named {
+    const slang::ast::GenerateBlockSymbol* block;
+    std::string as_class;
+    std::string as_body;
+  };
+  const auto name = [&](const slang::ast::GenerateBlockSymbol& block) {
+    const support::GenerateBlockStep step = policy.BlockStepOf(block);
+    const std::optional<std::uint64_t> body = policy.BodyArgumentsOf(block);
+    // A label may be an escaped identifier holding any character (LRM 5.6.1),
+    // so a step is written the way every other path in a key is.
+    const std::string at =
+        DefPathIdentity(support::Extended(support::DefPath{}, step));
+    std::string as_class = class_prefix + at;
+    std::string as_body =
+        body.has_value() ? std::format("{}{}@{:016x};", body_prefix, at, *body)
+                         : body_prefix + at;
+    return Named{
+        .block = &block,
+        .as_class = std::move(as_class),
+        .as_body = std::move(as_body)};
+  };
+  const auto take = [&](const Named& named, const std::string& as_class,
+                        const std::string& as_body) {
+    out.classes.blocks.push_back(as_class);
+    out.bodies.blocks.push_back(as_body);
+    CollectBlocksBuilt(
+        *named.block, named.as_class, named.as_body, policy, out);
+  };
+  for (const slang::ast::Symbol& member : scope.members()) {
+    if (const auto* block = member.as_if<slang::ast::GenerateBlockSymbol>()) {
+      if (block->isUninstantiated) continue;
+      const Named named = name(*block);
+      take(named, named.as_class, named.as_body);
+      continue;
+    }
+    const auto* loop = member.as_if<slang::ast::GenerateBlockArraySymbol>();
+    if (loop == nullptr) continue;
+    std::vector<Named> blocks;
+    for (const slang::ast::GenerateBlockSymbol* entry : loop->entries) {
+      blocks.push_back(name(*entry));
+    }
+    // Where every block is of one kind, the construction builds that kind at
+    // every index it counts out, and how many it counted is no part of what
+    // is compiled; where they are of several, which stands at each index is.
+    const auto differs_among_blocks = [&](auto kind) {
+      return std::ranges::any_of(blocks, [&](const Named& named) {
+        return kind(named) != kind(blocks.front());
       });
+    };
+    const bool classes_differ =
+        differs_among_blocks([](const Named& named) { return named.as_class; });
+    const bool bodies_differ =
+        differs_among_blocks([](const Named& named) { return named.as_body; });
+    for (const Named& named : blocks) {
+      const std::string at = std::format("[{}]", LoopIndexOf(*named.block));
+      take(
+          named, classes_differ ? named.as_class + at : named.as_class,
+          bodies_differ ? named.as_body + at : named.as_body);
+    }
+  }
 }
+
+// What `inst` built, read off the body the instance is read through. A
+// top-level instance is the only one of its unit and every value it is given
+// is in the name already, so what it built follows from the rest and enters
+// no name.
+auto BlocksBuiltBy(
+    const slang::ast::InstanceSymbol& inst, const SpecializationPolicy& policy)
+    -> BlocksOfAnInstance {
+  BlocksOfAnInstance built;
+  if (inst.isTopLevel()) return built;
+  const slang::ast::InstanceBodySymbol* body = &inst.body;
+  if (!policy.HasBodyOfItsOwn(inst)) body = inst.getCanonicalBody();
+  CollectBlocksBuilt(*body, "", "", policy, built);
+  for (BlocksBuilt* list : {&built.classes, &built.bodies}) {
+    std::ranges::sort(list->blocks);
+    const auto repeated = std::ranges::unique(list->blocks);
+    list->blocks.erase(repeated.begin(), repeated.end());
+  }
+  return built;
+}
+
+}  // namespace
 
 auto InstantiationOf(const slang::ast::InstanceBodySymbol& body)
     -> const slang::ast::InstanceSymbol& {
@@ -571,6 +670,7 @@ auto SpecializationKeyOf(
       case ParameterValueSource::kFixedBySpecialization:
         key.inputs.push_back(ParameterInput(*value, policy));
         break;
+      // Its value names at most the body the unit is compiled to.
       case ParameterValueSource::kSuppliedAtConstruction:
         key.inputs.push_back(
             SpecializationInput{
@@ -595,17 +695,26 @@ auto SpecializationKeyOf(
     key.inputs.push_back(
         SpecializationInput{
             .name = std::format("^{}", written),
-            .kind = ResolveBitRange(*context.climbs[written].scope, policy)});
+            .kind = LandingOf(*context.climbs[written].scope, policy)});
   }
   for (const NameLandingBelow& name : context.names_below) {
     key.inputs.push_back(
         SpecializationInput{
             .name = std::format("{}.^{}", name.path, name.written),
-            .kind = ResolveBitRange(*name.scope, policy)});
+            .kind = LandingOf(*name.scope, policy)});
   }
   for (const OverriddenBelow& overridden : context.overridden_below) {
     key.inputs.push_back(
         OverrideInput(overridden.path, overridden.effect, policy));
+  }
+  // What a block declares is part of what the instance declares, so the
+  // classes of the blocks it built name the unit.
+  if (BlocksBuilt built = BlocksBuiltBy(inst, policy).classes;
+      !built.blocks.empty()) {
+    key.inputs.push_back(
+        SpecializationInput{
+            .name = std::string{kClassesOfBlocksBuilt},
+            .kind = std::move(built)});
   }
   policy.LeaveNaming();
   return key;
@@ -653,11 +762,20 @@ auto SpecializationPolicy::NameOf(const slang::ast::InstanceSymbol& inst) const
   return name;
 }
 
+auto SpecializationPolicy::ChecksItself() const -> bool {
+  switch (bodies_read_) {
+    case support::BodiesRead::kOnePerName:
+      return false;
+    case support::BodiesRead::kEveryInstance:
+      return true;
+  }
+  return false;
+}
+
 auto SpecializationPolicy::HasBodyOfItsOwn(
     const slang::ast::InstanceSymbol& inst) const -> bool {
   const slang::ast::InstanceBodySymbol* shared = inst.getCanonicalBody();
-  if (bodies_read_ == support::BodiesRead::kEveryInstance ||
-      shared == nullptr || read_anyway_.contains(&inst)) {
+  if (ChecksItself() || shared == nullptr || read_anyway_.contains(&inst)) {
     return true;
   }
   // What is written elsewhere reaches one instance and not another (LRM
@@ -672,6 +790,7 @@ void SpecializationPolicy::ReadBodyOf(
   per_instance_.erase(&inst);
   context_.erase(&inst);
   names_.erase(&inst);
+  body_names_.erase(&inst);
 }
 
 auto SpecializationPolicy::ContextOf(
@@ -692,19 +811,9 @@ auto SpecializationPolicy::BlockStepOf(
     return kept->second;
   }
   SpecializationKey key{.definition = GenerateBlockLabel(block), .inputs = {}};
-  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block)) {
-    if (DeclaresAClass(block)) {
-      key.inputs.push_back(ParameterInput(*index, *this));
-    } else {
-      std::uint32_t place = 0;
-      for (const std::string& folded :
-           WhatItDecides(InstanceHolding(block), *index)) {
-        key.inputs.push_back(
-            SpecializationInput{
-                .name = std::format("{}#{}", index->name, place++),
-                .kind = FixedValue{.value = folded}});
-      }
-    }
+  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block);
+      index != nullptr && IsUsedInSignature(InstanceHolding(block), *index)) {
+    key.inputs.push_back(ParameterInput(*index, *this));
   }
   for (const OverriddenBelow& overridden :
        OverridesBelow(block, context_, ReadThroughItsOwnBody())) {
@@ -729,6 +838,51 @@ auto SpecializationPolicy::BlockStepOf(
   }
   block_steps_.emplace(&block, step);
   return step;
+}
+
+auto SpecializationPolicy::BodyArgumentsOf(
+    const slang::ast::GenerateBlockSymbol& block) const
+    -> std::optional<std::uint64_t> {
+  SpecializationKey key{.definition = GenerateBlockLabel(block), .inputs = {}};
+  if (const slang::ast::ParameterSymbol* index = LoopIndexParameterOf(block);
+      index != nullptr && IsUsedInBody(InstanceHolding(block), *index)) {
+    key.inputs.push_back(ParameterInput(*index, *this));
+  }
+  return ArgumentsDigest(key);
+}
+
+auto SpecializationPolicy::BodyArgumentsOf(
+    const slang::ast::InstanceSymbol& inst) const
+    -> std::optional<std::uint64_t> {
+  SpecializationKey key{.definition = NameOf(inst), .inputs = {}};
+  for (const slang::ast::ParameterSymbol* supplied :
+       SuppliedParametersOf(inst)) {
+    if (IsUsedInBody(inst, *supplied)) {
+      key.inputs.push_back(ParameterInput(*supplied, *this));
+    }
+  }
+  // Which body each block built is, where that says more than the classes the
+  // unit's name already holds.
+  if (BlocksOfAnInstance built = BlocksBuiltBy(inst, *this);
+      built.bodies != built.classes) {
+    key.inputs.push_back(
+        SpecializationInput{
+            .name = std::string{kBodiesOfBlocksBuilt},
+            .kind = std::move(built.bodies)});
+  }
+  return ArgumentsDigest(key);
+}
+
+auto SpecializationPolicy::BodyNameOf(
+    const slang::ast::InstanceSymbol& inst) const -> std::string {
+  if (const auto kept = body_names_.find(&inst); kept != body_names_.end()) {
+    return kept->second;
+  }
+  std::string name = WithDigest(NameOf(inst), BodyArgumentsOf(inst));
+  // A name asked while another is being worked out can differ from the one the
+  // instance has alone, so the answer is kept only when no name is in progress.
+  if (names_in_progress_.empty()) body_names_.emplace(&inst, name);
+  return name;
 }
 
 void SpecializationPolicy::EnterNaming(
@@ -761,7 +915,7 @@ auto SpecializationPolicy::LevelsOutTo(
 auto ArgumentsDigest(const SpecializationKey& key)
     -> std::optional<std::uint64_t> {
   if (key.inputs.empty()) return std::nullopt;
-  return Fnv1a64(KeyBytes(key));
+  return NameDigest(KeyBytes(key));
 }
 
 auto SpecializationName(const SpecializationKey& key) -> std::string {
@@ -1012,7 +1166,7 @@ auto CompilationUnitName(
       if (member.location.valid()) {
         const std::string path =
             sources->getFullPath(member.location.buffer()).string();
-        return std::format("$unit__{:016x}", Fnv1a64(path));
+        return std::format("$unit__{:016x}", NameDigest(path));
       }
     }
     throw InternalError(

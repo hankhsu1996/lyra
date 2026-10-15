@@ -7,6 +7,7 @@
 #include <format>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -16,9 +17,12 @@
 #include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/parallel.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/dpi/abi_header.hpp"
+#include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/file_output.hpp"
 #include "lyra/driver/pch.hpp"
@@ -26,6 +30,7 @@
 #include "lyra/driver/runtime_export.hpp"
 #include "lyra/driver/subprocess.hpp"
 #include "lyra/profiling/time_trace.hpp"
+#include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/runtime_prelude.hpp"
 #include "lyra/support/statistics.hpp"
@@ -354,170 +359,140 @@ auto CopyDpiSources(
   return {};
 }
 
-// One compile the build has to run, what the link takes from it, the file to
-// name if it fails, and what the design's author calls what is being compiled.
-//
-// `plain` needs nothing prepared in advance and therefore always works. `fast`
-// is the same compile handed a precompiled header, which the compiler may
-// refuse for reasons about the header rather than about the source. A build
-// that could prepare no header has no fast form, so the two are separate
-// rather than one command line with a flag.
-struct CompileStep {
-  ProcessRequest plain;
-  std::optional<ProcessRequest> fast;
-  std::string subject;
-  std::string source_name;
-  std::string object;
-};
-
-// What compiling one translation unit costs the host compiler, as a request
-// rather than a run, so the caller decides how many happen at once.
-auto UnitCompileStep(
-    const std::filesystem::path& dir, const TranslationUnit& unit,
-    const std::filesystem::path& include_root, const HostBuild& host,
-    const std::optional<std::filesystem::path>& prelude) -> CompileStep {
-  const std::string& source = unit.relpath;
-  const std::string object = (dir / kObjectDir / (source + ".o")).string();
-  const auto command =
-      [&](const std::optional<std::filesystem::path>& prepared) {
-        std::vector<std::string> args = {
-            std::string(kCxxStandardFlag),
-            std::string(OptimizationFlag(host.optimization)), "-I",
-            include_root.string()};
-        if (prepared.has_value()) {
-          args.emplace_back("-include-pch");
-          args.push_back(prepared->string());
-          args.emplace_back(kPchContentValidationFlag);
-        }
-        args.emplace_back("-c");
-        args.push_back((dir / source).string());
-        args.emplace_back("-o");
-        args.push_back(object);
-        return ProcessRequest{.exe = host.cxx, .args = std::move(args)};
-      };
-  return CompileStep{
-      .plain = command(std::nullopt),
-      .fast = prelude.has_value()
-                  ? std::optional<ProcessRequest>{command(prelude)}
-                  : std::nullopt,
-      .subject = source,
-      .source_name = unit.source_name,
-      .object = object};
+// Everything the compiler is told when a translation unit is compiled, short
+// of the prepared header it may be offered and the file names. One list, so the
+// command that compiles a file and the action it is kept under cannot describe
+// different things.
+auto CompileFlags(
+    const std::filesystem::path& include_root, Optimization optimization)
+    -> std::vector<std::string> {
+  return {
+      std::string(kCxxStandardFlag),
+      std::string(OptimizationFlag(optimization)), "-I", include_root.string()};
 }
 
-// Runs every compile, as many at once as this host was told to take, and
-// reports every one that failed rather than the first. A build whose emitted
-// text does not compile is a defect in Lyra, and seeing all of them at once is
-// what saves the run it would otherwise take to find the next.
-//
-// A header compiled in advance may not decide whether a build succeeds, so a
-// compile that failed with one is run again without it before its output counts
-// as a failure. A compile that then succeeds was refused the header rather than
-// the source, and the header is dropped so the next build makes a fresh one.
-// Where no header was offered there is nothing to run again, and the second
-// pass is empty without being asked to be.
-auto RunCompileSteps(
-    std::span<const CompileStep> steps, const HostBuild& host,
-    const std::optional<std::filesystem::path>& prelude) -> diag::Result<void> {
-  std::vector<ProcessRequest> requests;
-  std::vector<std::string> names;
-  requests.reserve(steps.size());
-  names.reserve(steps.size());
-  for (const CompileStep& step : steps) {
-    std::error_code ec;
-    const std::filesystem::path home =
-        std::filesystem::path(step.object).parent_path();
-    std::filesystem::create_directories(home, ec);
-    if (ec) {
-      return diag::Fail(
-          diag::DiagCode::kHostIoError,
-          std::format(
-              "failed to create '{}': {}", home.string(), ec.message()));
-    }
-    requests.push_back(step.fast.value_or(step.plain));
-    names.push_back(step.source_name);
+// The action compiling `unit`: the file, every file of the project it
+// includes, each under its path, and what else the compiler reads or is told.
+// A prepared header is no input, since nothing a compile produces may depend on
+// whether it was offered one.
+auto CompileFile(
+    const std::filesystem::path& dir, const TranslationUnit& unit,
+    const stable_hash::Fingerprint& runtime_headers,
+    const std::filesystem::path& cxx, std::span<const std::string> flags)
+    -> Action {
+  Action action("compile C++ file");
+  action.InputFile("source", dir / unit.relpath);
+  for (const std::string& included : unit.includes) {
+    action.Input("included", included);
+    action.InputFile("content", dir / included);
   }
-  const status::Phase phase("Compiling C++");
-  auto results = RunProcessesCaptured(requests, host.compile_width, names);
-  if (!results) {
-    return IoError(std::move(results.error()));
+  action.InputDigest("runtime headers", runtime_headers);
+  action.InputExecutable("compiler", cxx);
+  for (const std::string& flag : flags) {
+    action.Input("flag", flag);
   }
+  return action;
+}
 
-  std::vector<std::size_t> retried;
-  for (std::size_t i = 0; i < steps.size(); ++i) {
-    if ((*results)[i].exit_code != 0 && steps[i].fast.has_value()) {
-      retried.push_back(i);
+// Compiles `source` to `object`. A header compiled in advance may not decide
+// whether a build succeeds, so a compile that failed with one is run again
+// without it before its output counts as a failure; one that then succeeds was
+// refused the header rather than the source, and the header is dropped so the
+// next build prepares a fresh one.
+auto CompileOne(
+    const std::filesystem::path& source, const std::filesystem::path& object,
+    const std::filesystem::path& cxx, std::span<const std::string> flags,
+    const std::optional<ActionResult>& prelude, const ActionCache& actions)
+    -> diag::Result<void> {
+  const auto run = [&](const ActionResult* prepared) {
+    std::vector<std::string> args(flags.begin(), flags.end());
+    if (prepared != nullptr) {
+      args.emplace_back("-include-pch");
+      args.push_back(prepared->path.string());
+      args.emplace_back(kPchContentValidationFlag);
+    }
+    args.emplace_back("-c");
+    args.push_back(source.string());
+    args.emplace_back("-o");
+    args.push_back(object.string());
+    return RunProcessCaptured(cxx, args);
+  };
+  if (prelude.has_value()) {
+    auto fast = run(&*prelude);
+    if (!fast) {
+      return IoError(std::move(fast.error()));
+    }
+    if (fast->exit_code == 0) {
+      return {};
     }
   }
-  if (!retried.empty()) {
-    std::vector<ProcessRequest> plain;
-    plain.reserve(retried.size());
-    for (std::size_t i : retried) {
-      plain.push_back(steps[i].plain);
-    }
-    auto plain_results = RunProcessesCaptured(plain, host.compile_width);
-    if (!plain_results) {
-      return IoError(std::move(plain_results.error()));
-    }
-    bool the_header_was_refused = false;
-    for (std::size_t k = 0; k < retried.size(); ++k) {
-      the_header_was_refused |= (*plain_results)[k].exit_code == 0;
-      (*results)[retried[k]] = std::move((*plain_results)[k]);
-    }
-    if (the_header_was_refused && prelude.has_value()) {
-      pch::Discard(*prelude);
-    }
+  auto plain = run(nullptr);
+  if (!plain) {
+    return IoError(std::move(plain.error()));
   }
-
-  std::string failures;
-  for (std::size_t i = 0; i < steps.size(); ++i) {
-    if ((*results)[i].exit_code == 0) {
-      continue;
-    }
-    if (!failures.empty()) {
-      failures += "\n";
-    }
-    failures += std::format(
-        "compiling '{}' failed:\n{}", steps[i].subject,
-        (*results)[i].stderr_text);
+  if (plain->exit_code != 0) {
+    return diag::Fail(
+        diag::DiagCode::kHostBuildFailed,
+        std::format(
+            "compiling '{}' failed:\n{}", source.filename().string(),
+            plain->stderr_text));
   }
-  if (!failures.empty()) {
-    return diag::Fail(diag::DiagCode::kHostBuildFailed, std::move(failures));
+  if (prelude.has_value()) {
+    actions.Evict(*prelude);
   }
   return {};
 }
 
 }  // namespace
 
-auto CompileProgram(
+auto CompileTranslationUnits(
     const std::filesystem::path& dir,
     std::span<const TranslationUnit> translation_units,
-    const RuntimeLocation& runtime,
-    std::span<const std::filesystem::path> foreign_objects,
-    const std::filesystem::path& program, const HostBuild& host)
-    -> diag::Result<void> {
+    const RuntimeLocation& runtime, const HostBuild& host, ActionCache& actions)
+    -> diag::Result<std::vector<ActionResult>> {
+  const stable_hash::Fingerprint runtime_headers =
+      DigestOfTree(runtime.include_root);
+  const std::vector<std::string> flags =
+      CompileFlags(runtime.include_root, host.optimization);
   // The prelude is compiled before anything reads it, so several compiles
   // cannot each find it missing and race to build the same file.
-  const std::optional<std::filesystem::path> prelude = pch::EnsureCached(
-      host.cxx, runtime.include_root, host.pch, host.store, host.optimization);
+  const std::optional<ActionResult> prelude = pch::EnsureCached(
+      host.cxx, runtime.include_root, runtime_headers, host.pch, actions,
+      host.optimization);
 
-  std::vector<CompileStep> steps;
-  steps.reserve(translation_units.size());
-  for (const TranslationUnit& unit : translation_units) {
-    steps.push_back(
-        UnitCompileStep(dir, unit, runtime.include_root, host, prelude));
+  const status::Phase phase("Compiling C++");
+  status::Pieces(translation_units.size());
+  std::vector<ActionResult> compiled;
+  compiled.reserve(translation_units.size());
+  // A build whose emitted text does not compile is a defect in Lyra, and
+  // seeing every such file at once is what saves the run it would otherwise
+  // take to find the next.
+  std::string failures;
+  base::ProduceInOrder(
+      translation_units.size(), host.compile_width,
+      [&](std::size_t i) -> diag::Result<ActionResult> {
+        const TranslationUnit& unit = translation_units[i];
+        const status::Piece piece(unit.source_name);
+        return actions.Execute(
+            CompileFile(dir, unit, runtime_headers, host.cxx, flags),
+            [&](const std::filesystem::path& object) {
+              return CompileOne(
+                  dir / unit.relpath, object, host.cxx, flags, prelude,
+                  actions);
+            });
+      },
+      [&](diag::Result<ActionResult> result) {
+        if (!result) {
+          failures += (failures.empty() ? "" : "\n");
+          failures += result.error().primary.message;
+          return;
+        }
+        compiled.push_back(*std::move(result));
+      });
+  if (!failures.empty()) {
+    return diag::Fail(diag::DiagCode::kHostBuildFailed, std::move(failures));
   }
-  if (auto r = RunCompileSteps(steps, host, prelude); !r) {
-    return r;
-  }
-
-  std::vector<std::filesystem::path> objects;
-  objects.reserve(steps.size() + foreign_objects.size());
-  for (const CompileStep& step : steps) {
-    objects.emplace_back(step.object);
-  }
-  objects.insert(objects.end(), foreign_objects.begin(), foreign_objects.end());
-  return LinkProgram(objects, runtime.lib, program, host.cxx);
+  return compiled;
 }
 
 auto LinkProgram(
@@ -548,7 +523,8 @@ auto LinkProgram(
 
 auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
     -> diag::Result<EmittedUnit> {
-  const profiling::TimeTraceScope span("emit C++", [&] { return unit.name; });
+  const profiling::TimeTraceScope span(
+      "emit C++", [&] { return unit.body_name; });
   diag::DiagnosticSink refused;
   const backend::cpp::CppUnitArtifacts artifacts =
       backend::cpp::EmitCppUnit(unit, refused);
@@ -556,42 +532,64 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
     status::Errors(refused.Diagnostics().size());
     return RefusedUnit{.refusals = refused.Diagnostics()};
   }
-  WrittenUnit written{
-      .files = {},
-      .translation_unit =
-          {.relpath = artifacts.code.relpath, .source_name = unit.source_name},
-      .dpi_fragment = dpi::AbiFragmentOf(unit)};
-  std::vector<support::Artifact> recorded;
-  const auto write = [&](const backend::cpp::CppArtifact& file,
-                         support::ArtifactKind kind) -> diag::Result<void> {
-    if (auto r = WriteArtifact(file); !r) {
-      return r;
-    }
-    written.files.push_back(file.relpath);
-    recorded.push_back(
-        support::Artifact{
-            .kind = kind,
-            .name = file.relpath,
-            .bytes = file.content.size(),
-            .made = true});
-    return {};
-  };
-  for (const backend::cpp::CppArtifact& declarations : artifacts.declarations) {
-    if (auto r = write(declarations, support::ArtifactKind::kCppHeader); !r) {
-      return std::unexpected(std::move(r.error()));
-    }
-  }
-  if (auto r = write(artifacts.code, support::ArtifactKind::kCppSource); !r) {
+  if (auto r = WriteArtifact(artifacts.code); !r) {
     return std::unexpected(std::move(r.error()));
   }
-  support::RecordUnit(unit.name, std::move(recorded));
-  return written;
+  support::RecordUnit(
+      unit.body_name, {support::Artifact{
+                          .kind = support::ArtifactKind::kCppSource,
+                          .name = artifacts.code.relpath,
+                          .bytes = artifacts.code.content.size(),
+                          .made = true}});
+  return WrittenUnit{
+      .body_name = unit.body_name,
+      .files = {artifacts.code.relpath},
+      .translation_unit =
+          {.relpath = artifacts.code.relpath,
+           .source_name = unit.source_name,
+           .includes = artifacts.code.includes},
+      .dpi_fragment = dpi::AbiFragmentOf(unit),
+      .declarations = artifacts.declarations};
+}
+
+void CppProjectSink::WriteDeclarations(WrittenUnit& written) {
+  std::vector<support::Artifact> recorded;
+  for (const backend::cpp::CppArtifact& declaration : written.declarations) {
+    const stable_hash::Fingerprint says =
+        stable_hash::FingerprintOfText(declaration.content);
+    const auto [stated, first] =
+        declared_.try_emplace(declaration.relpath, says);
+    if (!first) {
+      if (stated->second != says) {
+        throw InternalError(
+            std::format(
+                "backend::cpp: '{}' states '{}' differently from another body "
+                "of its unit -- please report this as a bug",
+                written.body_name, declaration.relpath));
+      }
+      continue;
+    }
+    if (auto r = WriteArtifact(declaration); !r) {
+      refusals_->Report(std::move(r.error()));
+      continue;
+    }
+    includes_of_.emplace(declaration.relpath, declaration.includes);
+    written_.push_back(declaration.relpath);
+    recorded.push_back(
+        support::Artifact{
+            .kind = support::ArtifactKind::kCppHeader,
+            .name = declaration.relpath,
+            .bytes = declaration.content.size(),
+            .made = true});
+  }
+  support::RecordUnit(written.body_name, std::move(recorded));
 }
 
 void CppProjectSink::Collect(EmittedUnit unit) {
   std::visit(
       Overloaded{
           [&](WrittenUnit& written) {
+            WriteDeclarations(written);
             written_.insert(
                 written_.end(), std::make_move_iterator(written.files.begin()),
                 std::make_move_iterator(written.files.end()));
@@ -626,13 +624,43 @@ auto CppProjectSink::Finish(const mir::CompilationUnit& root)
   }
   Collect(
       WrittenUnit{
+          .body_name = root.body_name,
           .files = {host_main.relpath},
-          .translation_unit = {.relpath = host_main.relpath, .source_name = {}},
-          .dpi_fragment = std::nullopt});
+          .translation_unit =
+              {.relpath = host_main.relpath,
+               .source_name = {},
+               .includes = host_main.includes},
+          .dpi_fragment = std::nullopt,
+          .declarations = {}});
   if (formatting_ == SourceFormatting::kOn) {
     return FormatSources(written_, dir_);
   }
   return {};
+}
+
+auto CppProjectSink::TakeSources() -> EmittedCppSources {
+  for (TranslationUnit& unit : translation_units_) {
+    std::set<std::string> reached;
+    std::vector<std::string> pending = std::move(unit.includes);
+    while (!pending.empty()) {
+      std::string file = std::move(pending.back());
+      pending.pop_back();
+      if (!reached.insert(file).second) continue;
+      const auto found = includes_of_.find(file);
+      if (found == includes_of_.end()) {
+        throw InternalError(
+            std::format(
+                "backend::cpp: '{}' includes '{}', which the project does not "
+                "hold -- please report this as a bug",
+                unit.relpath, file));
+      }
+      pending.insert(pending.end(), found->second.begin(), found->second.end());
+    }
+    unit.includes.assign(reached.begin(), reached.end());
+  }
+  return EmittedCppSources{
+      .translation_units = std::move(translation_units_),
+      .dpi_fragments = std::move(dpi_fragments_)};
 }
 
 auto CppProjectSink::WriteArtifact(const backend::cpp::CppArtifact& file) const

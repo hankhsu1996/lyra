@@ -77,10 +77,11 @@ auto PublishedMemberRoute(
 // The value an omitted input port takes (LRM 23.2.2.4): its default, which is
 // evaluated in the child's scope and not this one, so the child is asked for it
 // -- a call on the child object, as a defaulted argument is supplied at a call
-// site.
+// site. The call has the type the child publishes for the evaluation, and the
+// port takes that value as it takes any value connected to it.
 auto PortDefault(
     UnitLowerer& unit_lowerer, const ConnectedChild& child,
-    hir::PublishedCallableId evaluate, hir::TypeId type) -> hir::Expr {
+    hir::PublishedCallableId evaluate) -> hir::Expr {
   const hir::TypeId object_type =
       unit_lowerer.ScopeClassTypeOf(child.scope_class);
   const ScopeRoute onto_child{
@@ -89,7 +90,10 @@ auto PortDefault(
       .place = InExternalScope{.scope_class = child.scope_class, .within = {}},
       .open = {}};
   return hir::Expr{
-      .type = type,
+      .type = unit_lowerer.Unit()
+                  .external_scope_classes.Get(child.scope_class)
+                  .signature.callables.Get(evaluate)
+                  .result_type,
       .data =
           hir::CallExpr{
               .callee =
@@ -497,7 +501,7 @@ auto ConnectDataPort(
               "publishes the subroutine evaluating it");
         }
         peer = frame.Exprs().Add(
-            PortDefault(unit_lowerer, child, *declared.default_value, type_id));
+            PortDefault(unit_lowerer, child, *declared.default_value));
         break;
       }
       auto peer_or = scope.LowerExpr(*expr, frame);

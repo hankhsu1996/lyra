@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
@@ -199,7 +200,7 @@ auto BuildTotalityReportScope(
               NounFor(arm_kind).one)});
   AppendReportEmit(
       unit_lowerer.Unit(), closure.Body(), std::move(items),
-      FormatRuntimeOriginString(span, unit_lowerer.SourceManager()));
+      diag::RuntimeOriginOf(span, unit_lowerer.SourceManager()));
   SubmitToObservedRegion(unit_lowerer, scope, closure.BuildVoid());
   return scope;
 }
@@ -260,7 +261,7 @@ auto BuildUniquenessCheck(
       unit_lowerer, block,
       BuildUniquenessReportBody(
           unit_lowerer, frame, check, arm_kind, arms,
-          FormatRuntimeOriginString(span, unit_lowerer.SourceManager())));
+          diag::RuntimeOriginOf(span, unit_lowerer.SourceManager())));
   return locals;
 }
 

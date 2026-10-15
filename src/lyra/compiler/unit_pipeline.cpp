@@ -18,7 +18,7 @@ namespace lyra::compiler {
 
 void RecordSemanticForm(const mir::CompilationUnit& unit) {
   if (support::RecordsStatistics()) {
-    support::RecordCounts(unit.name, "mir", mir::CountsOf(unit));
+    support::RecordCounts(unit.body_name, "mir", mir::CountsOf(unit));
   }
 }
 
@@ -26,7 +26,7 @@ auto LowerUnitToSemantic(
     const hir::CompilationUnit& unit, const diag::SourceManager& source_manager)
     -> diag::Result<mir::CompilationUnit> {
   const profiling::TimeTraceScope span(
-      "lower to MIR", [&] { return unit.name; });
+      "lower to MIR", [&] { return unit.body_name; });
   lowering::hir_to_mir::UnitLowerer lowerer(unit, source_manager);
   auto semantic = unit.role == hir::UnitRole::kNamespace
                       ? lowerer.RunNamespace()
@@ -43,14 +43,15 @@ auto LowerUnitToSemantic(
 auto LowerUnitToExecutable(const mir::CompilationUnit& unit)
     -> diag::Result<lir::CompilationUnit> {
   const profiling::TimeTraceScope span(
-      "lower to LIR", [&] { return unit.name; });
+      "lower to LIR", [&] { return unit.body_name; });
   auto executable = lowering::mir_to_lir::LowerUnit(unit);
   if (!executable) {
     return std::unexpected(std::move(executable.error()));
   }
   lir::Verify(*executable);
   if (support::RecordsStatistics()) {
-    support::RecordCounts(executable->name, "lir", lir::CountsOf(*executable));
+    support::RecordCounts(
+        executable->body_name, "lir", lir::CountsOf(*executable));
   }
   return executable;
 }

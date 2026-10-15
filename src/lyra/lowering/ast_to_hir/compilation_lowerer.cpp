@@ -3,12 +3,9 @@
 #include <cstdint>
 #include <expected>
 #include <format>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <ranges>
-#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -34,12 +31,11 @@
 #include "lyra/diag/sink.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/compilation_unit.hpp"
-#include "lyra/hir/dump.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/lowering/ast_to_hir/declaration_scopes.hpp"
 #include "lyra/lowering/ast_to_hir/lower.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
-#include "lyra/lowering/ast_to_hir/one_body.hpp"
 #include "lyra/lowering/ast_to_hir/sensitivity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
@@ -48,60 +44,30 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// One application of a unit: the unit, and the value of each argument its
-// constructor is passed, in declaration order. Two instances that are one
-// application are alike in every respect, so this is what tells a witness worth
-// lowering from one that would repeat work already done.
-struct Application {
-  std::string unit;
-  std::vector<std::string> arguments;
-
-  auto operator<=>(const Application&) const = default;
-};
-
-auto ApplicationOf(
-    const slang::ast::InstanceSymbol& inst, std::string unit,
-    const SpecializationPolicy& policy) -> Application {
-  Application application{.unit = std::move(unit), .arguments = {}};
-  for (const slang::ast::ParameterSymbol* param :
-       policy.SuppliedParametersOf(inst)) {
-    application.arguments.push_back(ValueIdentity(param->getValue()));
-  }
-  return application;
-}
-
-// An instance read through a body of its own: the body, and the application of
-// its unit it is. The body belongs to an instance the unit's name was computed
-// from, so what the unit compiles against and what it was named for are one
+// An instance read through a body of its own: what the front end elaborated
+// for it, the unit it is an object of, and the name of the body it is compiled
+// to. What was elaborated belongs to an instance the names were computed from,
+// so what the unit compiles against and what it was named for are one
 // application of a definition. A body the frontend elaborated for a different
 // definition's application states different types at the same positions, which
 // is a unit nothing in the design asked for.
 struct CollectedUnit {
-  const slang::ast::InstanceBodySymbol* body;
-  Application application;
-
-  [[nodiscard]] auto Name() const -> const std::string& {
-    return application.unit;
-  }
+  const slang::ast::InstanceBodySymbol* elaborated;
+  std::string unit;
+  std::string body;
 };
 
-// What the collection found: the distinct units, and every other instance
-// read through a body of its own, each of which shares one of them. A unit is
-// one text compiled for all of its instances, and that is sound only if each
-// is one body with what the unit holds, so each of these is held against it.
-// An instance the front end left sharing another's body is not among them: it
-// is one application with an instance that is.
+// What the collection found: the distinct bodies, and, where the compile
+// checks itself, every other instance read through a body of its own, each of
+// which is compiled to one of them. An instance the front end left sharing
+// another's body is not among them.
 //
-// The two kinds differ in what a difference means. A witness was handed values
-// none of the unit's earlier instances was. What it builds may differ, since
-// those values decide which blocks its construction builds, and the unit then
-// holds what it built as well; a difference in anything else is those values
-// reaching the body, and keeping them in the unit's identity separates the
-// two. A repeat is one application with an earlier instance, so nothing a unit
-// is told apart by separates them and a difference has no such answer.
+// A repeat is one body with an instance found before it: the body's name holds
+// everything that changes what is compiled, the blocks its construction built
+// included, so it builds what that instance does and is read only to check the
+// compile against itself.
 struct Collected {
   std::vector<CollectedUnit> units;
-  std::vector<CollectedUnit> witnesses;
   std::vector<CollectedUnit> repeats;
 };
 
@@ -111,19 +77,20 @@ struct Collected {
 // through, so an instance nested in a generate block is reached without this
 // code knowing the container taxonomy.
 //
-// What an instance's specialization is called decides the dedup, because the
-// name stands for what identifies a unit: a definition and everything fixed for
-// it, which is what a referrer can compute about the child it constructs. Two
-// instances agreeing on it are one unit however many bodies the frontend chose
-// to build -- it declines to share one when a name inside reaches outward,
-// since the resolution differs per instance, but that resolution is settled per
-// instance at construction and never inside the unit, so the unit itself is the
-// same.
+// Two instances are compiled to one body exactly when they agree on that
+// body's name, because the name stands for what identifies it: a definition,
+// everything fixed for it that the unit declares, and the values its code
+// uses. Two instances agreeing on it are one body however many bodies the
+// frontend chose to elaborate -- it declines to share one when a name inside
+// reaches outward, since the resolution differs per instance, but that
+// resolution is settled per instance at construction and never inside the unit,
+// so what is compiled is the same.
 //
 // Descending reaches an occurrence's own body, so a child is collected under
-// what its own parent fixed for it. An occurrence the front end left sharing
-// another's body is not descended into where it is one application with an
-// instance already found: what is below it was collected under that one.
+// what its own parent fixed for it. An occurrence whose body is one already
+// found is not descended into, whether or not the front end left it sharing
+// that body: what is below it was collected under the instance found first,
+// and only the compile checking itself reads it again.
 //
 // A virtual interface's type names an interface together with its parameters
 // (LRM 25.9), and code reaching through one compiles against that unit's
@@ -136,8 +103,10 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
   }
 
   const SpecializationPolicy* policy;
+  // An interface every virtual interface of one type names is one instance
+  // however many declarations name it, and is collected once.
+  std::unordered_set<const slang::ast::InstanceSymbol*> met;
   std::unordered_set<std::string> named;
-  std::set<Application> applications;
   Collected found;
 
   // Every declared variable, class property and subroutine argument.
@@ -172,33 +141,25 @@ struct UnitCollector : slang::ast::ASTVisitor<UnitCollector> {
   }
 
   void handle(const slang::ast::InstanceSymbol& inst) {
-    std::string name = policy->NameOf(inst);
+    if (!met.insert(&inst).second) return;
+    std::string body = policy->BodyNameOf(inst);
     if (!policy->HasBodyOfItsOwn(inst)) {
-      // One application with an instance already found: nothing of it is
-      // read, not its body and so nothing below it either.
-      if (named.contains(name) &&
-          applications.contains(ApplicationOf(inst, name, *policy))) {
-        return;
-      }
-      // The first instance its unit is met through, or the first handed
-      // these values: either is read through its own body after all, and
-      // named by what that body says. Which values are the same is this
-      // compiler's answer and not the front end's.
+      // One body with an instance already found: nothing of it is read, not
+      // its body and so nothing below it either.
+      if (named.contains(body)) return;
+      // The first instance its body is met through is read through its own
+      // body after all, and named by what that body says.
       policy->ReadBodyOf(inst);
-      name = policy->NameOf(inst);
+      body = policy->BodyNameOf(inst);
     }
-    const bool fresh = named.insert(name).second;
-    Application application = ApplicationOf(inst, std::move(name), *policy);
-    const bool repeat = !applications.insert(application).second;
-    std::vector<CollectedUnit>* collected_as = &found.witnesses;
-    if (fresh) {
-      collected_as = &found.units;
-    } else if (repeat) {
-      collected_as = &found.repeats;
-    }
-    collected_as->push_back(
-        CollectedUnit{
-            .body = &inst.body, .application = std::move(application)});
+    const bool fresh = named.insert(body).second;
+    if (!fresh && !policy->ChecksItself()) return;
+    (fresh ? found.units : found.repeats)
+        .push_back(
+            CollectedUnit{
+                .elaborated = &inst.body,
+                .unit = policy->NameOf(inst),
+                .body = std::move(body)});
     visitDefault(inst);
   }
 };
@@ -309,10 +270,9 @@ auto CollectSpecializationHomes(
     const LowerCompilationFacts& facts, const Collected& collected,
     const SpecializationPolicy& policy) -> SpecializationHomes {
   BindsEveryExpression binder;
-  for (const auto* bodies :
-       {&collected.units, &collected.witnesses, &collected.repeats}) {
+  for (const auto* bodies : {&collected.units, &collected.repeats}) {
     for (const CollectedUnit& unit : *bodies) {
-      unit.body->visit(binder);
+      unit.elaborated->visit(binder);
     }
   }
   SpecializationHomes homes;
@@ -423,318 +383,19 @@ auto TopLevelUnits(
   return tops;
 }
 
-using Definitions = std::unordered_set<const slang::ast::DefinitionSymbol*>;
-
-// The bodies of `unit` lowered exactly as a unit of its own would be, against
-// what the design's units published.
-auto LowerBodiesOf(
-    const LoweringFacts& facts, const CollectedUnit& unit,
-    const hir::UnitSignatures& signatures)
-    -> diag::Result<hir::CompilationUnit> {
-  UnitLowerer lowerer(
-      facts, *unit.body, unit.Name(), hir::UnitRole::kObjectRoot, {});
-  if (auto declared = lowerer.Declare(); !declared) {
-    return std::unexpected(std::move(declared.error()));
-  }
-  return lowerer.LowerBodies(signatures);
-}
-
-// The bodies a unit is lowered from beside the one it is named for, by unit.
-using AlsoLoweredFrom = std::unordered_map<
+// The instances each compiled body is checked against, by the body's name.
+using BodiesCheckedAgainst = std::unordered_map<
     std::string, std::vector<const slang::ast::InstanceBodySymbol*>>;
 
-// Whether the unit of `body` holds a class: one the design element declares
-// (LRM 8.3), or a specialization of a generic placed in it. Such a class is
-// declared once per unit, from one body, so what two bodies holding one build
-// cannot be lowered into one unit and held scope against scope; they are held
-// to each other only as two units compared whole.
-auto HoldsAClass(
-    const slang::ast::InstanceBodySymbol& body,
-    const PlacedSpecializations& placed) -> bool {
-  return DeclaresAClass(body) || placed.contains(&body);
-}
-
-// Every witness of each unit, where the unit and all of them can be lowered
-// into one unit.
-auto WitnessesLoweredWithTheirUnits(
-    const Collected& collected, const PlacedSpecializations& placed)
-    -> AlsoLoweredFrom {
-  AlsoLoweredFrom also;
-  std::unordered_set<std::string_view> compared_whole;
-  for (const CollectedUnit& unit : collected.units) {
-    if (HoldsAClass(*unit.body, placed)) compared_whole.insert(unit.Name());
-  }
-  for (const CollectedUnit& witness : collected.witnesses) {
-    if (HoldsAClass(*witness.body, placed)) {
-      compared_whole.insert(witness.Name());
-    }
-  }
-  for (const CollectedUnit& witness : collected.witnesses) {
-    if (!compared_whole.contains(witness.Name())) {
-      also[witness.Name()].push_back(witness.body);
-    }
-  }
-  return also;
-}
-
-// Where two units' dumps first part, as a clause for a report: the line they
-// disagree on, the line one goes on with, or that neither shows the difference.
-// Two units that compare unequal say nothing about where, and whoever reads
-// the report has only the two instances' names to start from otherwise.
-auto WhereTheyFirstDiffer(
-    const hir::CompilationUnit& unit, const hir::CompilationUnit& instance)
-    -> std::string {
-  const std::string of_unit = hir::DumpHir(unit);
-  const std::string of_instance = hir::DumpHir(instance);
-  std::string_view left = of_unit;
-  std::string_view right = of_instance;
-  while (!left.empty() && !right.empty()) {
-    const std::string_view left_line = left.substr(0, left.find('\n'));
-    const std::string_view right_line = right.substr(0, right.find('\n'));
-    if (left_line != right_line) {
-      return std::format(
-          ": the unit states `{}` where the instance states `{}`", left_line,
-          right_line);
-    }
-    left.remove_prefix(std::min(left.size(), left_line.size() + 1));
-    right.remove_prefix(std::min(right.size(), right_line.size() + 1));
-  }
-  if (left.empty() && right.empty()) {
-    return ": the two differ in something the dump of a unit does not state";
-  }
-  const std::string_view longer = left.empty() ? right : left;
-  return std::format(
-      ": the {} goes on to state `{}` where the other ends",
-      left.empty() ? "instance" : "unit", longer.substr(0, longer.find('\n')));
-}
-
-// Says that `definition` is compiled once per parameter value, once however
-// many of its instances were found apart.
-void RemarkOnInstancesApart(
-    const slang::ast::DefinitionSymbol& definition, std::string_view found,
-    Definitions& apart, diag::DiagnosticSink& sink) {
-  if (!apart.insert(&definition).second) return;
-  sink.Report(
-      diag::Make(
-          frontend::PointSpanOf(definition.location),
-          diag::DiagCode::kRemarkLostSharing,
-          std::format(
-              "sharing lost: '{}' is compiled once per parameter value, "
-              "because instances handed different values {} apart",
-              definition.name, found)));
-}
-
-// What holding every instance against the unit it shares found: the
-// definitions a witness of which is not one body with its unit, and for each
-// unit the witnesses that built something the unit did not yet hold, which are
-// the ones it is lowered from beside the instance it is named for.
-//
-// A unit whose witnesses could not be declared into it is compared with each
-// of them whole, and holds what the one instance it is named for built. A
-// witness that differs from it there may only have built other blocks, which
-// such a unit cannot hold, so its definition is first declared again as
-// `built_by_one_instance`, where what decides the blocks an instance builds
-// names its unit. One that still differs after that is apart.
-struct InstancesHeldToTheirUnits {
-  Definitions apart;
-  Definitions built_by_one_instance;
-  AlsoLoweredFrom adding;
-};
-
-// The bodies among `others` that built something `one_body` and the bodies
-// before them did not hold, each lowered into `lowerer`'s unit and held
-// against what is held so far. Nothing where one of them is not one body with
-// it, or does not lower.
-auto BodiesThatAdd(
-    UnitLowerer& lowerer, hir::StructuralScope one_body,
-    std::span<const slang::ast::InstanceBodySymbol* const> others,
-    const hir::UnitSignatures& signatures)
-    -> std::optional<std::vector<const slang::ast::InstanceBodySymbol*>> {
-  std::vector<const slang::ast::InstanceBodySymbol*> adding;
-  for (const slang::ast::InstanceBodySymbol* other : others) {
-    const auto built = lowerer.LowerScopeBuiltBy(*other, signatures);
-    if (!built) return std::nullopt;
-    auto both = OneBodyOf(one_body, *built);
-    if (!both.has_value()) return std::nullopt;
-    if (*both == one_body) continue;
-    adding.push_back(other);
-    one_body = *std::move(both);
-  }
-  return adding;
-}
-
-// Each unit with witnesses is lowered here and each of its witnesses with it,
-// one at a time and dropped after, so only one unit and one witness are ever
-// resident; the unit is lowered again in its own turn.
-//
-// A witness was handed values its unit's earlier instances were not, and what
-// those values decide when an object is built is no part of the unit: which
-// alternative of a conditional generate stands, and how many blocks a loop
-// counts out (LRM 27.4, 27.5). So a witness is one body with its unit where
-// the two differ in nothing else, and the unit then holds what either built.
-// `lowered_with` holds the witnesses of each unit that were declared into it,
-// which is what lets the two be held against each other scope by scope; a unit
-// with none of its witnesses there is compared with each of them whole.
-//
-// Where a witness is not one body with its unit, something in its body held a
-// value it was handed, and the definition is declared again with every
-// parameter in its key, each value its own unit -- so the program is the one
-// each instance describes and only the sharing is lost, which is said as a
-// remark against the definition. A failure to lower is left to the unit's own
-// turn to report: a unit that fails has nothing to hold a witness against, and
-// a witness that fails where its unit did not has lowered apart, so its
-// definition is kept whole and the witness reports in a turn of its own.
-//
-// A repeat is held to the instance it is one application with, exactly, and
-// has no such answer. It agrees with that instance on everything a unit is
-// told apart by and on every value it is handed, so one that lowers to
-// something else was told apart by nothing: the identity is missing what
-// distinguishes them, or the lowering states one text two ways. Either is this
-// compiler's defect, and sharing the unit anyway would build one of the two
-// instances as the other.
-auto HoldInstancesToTheirUnits(
-    const LoweringFacts& facts, const Collected& collected,
-    const AlsoLoweredFrom& lowered_with,
-    const Definitions& already_built_by_one_instance,
-    const hir::UnitSignatures& signatures, diag::DiagnosticSink& sink)
-    -> InstancesHeldToTheirUnits {
-  std::unordered_map<std::string_view, std::vector<const CollectedUnit*>>
-      witnesses_of;
-  for (const CollectedUnit& witness : collected.witnesses) {
-    witnesses_of[witness.Name()].push_back(&witness);
-  }
-  std::map<Application, std::vector<const CollectedUnit*>> repeats_of;
+// The instances each compiled body is lowered from beside the one it is named
+// for, which come out the same as that one: every repeat, which is where one
+// that lowers to anything else is found.
+auto CheckedAgainstOf(const Collected& collected) -> BodiesCheckedAgainst {
+  BodiesCheckedAgainst checked;
   for (const CollectedUnit& repeat : collected.repeats) {
-    repeats_of[repeat.application].push_back(&repeat);
+    checked[repeat.body].push_back(repeat.elaborated);
   }
-  const auto hold_repeats_to = [&](const CollectedUnit& first) {
-    const auto repeats = repeats_of.find(first.application);
-    if (repeats == repeats_of.end()) return;
-    const auto own = LowerBodiesOf(facts, first, signatures);
-    if (!own) return;
-    for (const CollectedUnit* repeat : repeats->second) {
-      const auto lowered = LowerBodiesOf(facts, *repeat, signatures);
-      if (lowered && *lowered == *own) continue;
-      throw InternalError(
-          std::format(
-              "HoldInstancesToTheirUnits: instance '{}' shares unit '{}' with "
-              "instance '{}', which it agrees with on everything a unit is "
-              "told apart by and on every value it is handed, and lowers to "
-              "something that instance does not{}",
-              repeat->body->getHierarchicalPath(), first.Name(),
-              first.body->getHierarchicalPath(),
-              lowered ? WhereTheyFirstDiffer(*own, *lowered)
-                      : std::string{", because it does not lower at all"}));
-    }
-  };
-
-  InstancesHeldToTheirUnits held;
-  for (const CollectedUnit& unit : collected.units) {
-    hold_repeats_to(unit);
-    const auto witnesses = witnesses_of.find(unit.Name());
-    if (witnesses == witnesses_of.end()) continue;
-    for (const CollectedUnit* witness : witnesses->second) {
-      hold_repeats_to(*witness);
-    }
-    const auto& definition = unit.body->getDefinition();
-
-    const auto with = lowered_with.find(unit.Name());
-    if (with == lowered_with.end()) {
-      const auto whole = LowerBodiesOf(facts, unit, signatures);
-      if (!whole) continue;
-      for (const CollectedUnit* witness : witnesses->second) {
-        const auto lowered = LowerBodiesOf(facts, *witness, signatures);
-        if (lowered && *lowered == *whole) continue;
-        if (already_built_by_one_instance.contains(&definition)) {
-          RemarkOnInstancesApart(definition, "lowered", held.apart, sink);
-        } else {
-          held.built_by_one_instance.insert(&definition);
-        }
-        break;
-      }
-      continue;
-    }
-
-    UnitLowerer lowerer(
-        facts, *unit.body, unit.Name(), hir::UnitRole::kObjectRoot,
-        with->second);
-    if (!lowerer.Declare()) continue;
-    auto one_body = lowerer.LowerScopeBuiltBy(*unit.body, signatures);
-    if (!one_body) continue;
-    auto adding =
-        BodiesThatAdd(lowerer, *std::move(one_body), with->second, signatures);
-    if (!adding.has_value()) {
-      RemarkOnInstancesApart(definition, "lowered", held.apart, sink);
-    } else if (!adding->empty()) {
-      held.adding.emplace(unit.Name(), *std::move(adding));
-    }
-  }
-  return held;
-}
-
-// Whether `body` holds, anywhere below it, an instance whose unit is named
-// through the unit of `body`'s own definition: an instance of that definition
-// (LRM 27.5 lets a conditional generate end such a recursion), or of a design
-// element declared inside another (LRM 23.4), whose name starts with the unit
-// of the instance declaring it.
-auto HoldsAnInstanceNamedThroughItsUnit(
-    const slang::ast::InstanceBodySymbol& body) -> bool {
-  struct Finder : slang::ast::ASTVisitor<Finder> {
-    const slang::ast::DefinitionSymbol* definition = nullptr;
-    bool found = false;
-    void handle(const slang::ast::InstanceSymbol& child) {
-      const slang::ast::DefinitionSymbol& of = child.getDefinition();
-      if (&of == definition) found = true;
-      for (const slang::ast::Scope* level = of.getParentScope();
-           level != nullptr && !found;
-           level = level->asSymbol().getParentScope()) {
-        found = level->asSymbol().kind == slang::ast::SymbolKind::InstanceBody;
-      }
-      if (!found) visitDefault(child);
-    }
-  };
-  Finder finder;
-  finder.definition = &body.getDefinition();
-  body.visit(finder);
-  return finder.found;
-}
-
-// The definitions a unit of which found, declaring, two scopes it took for
-// objects of one class publishing different ones: two block instances taken
-// for one application of their generate block, or two instances taken for one
-// unit. Such a unit states a signature no body can be held against, and its
-// definition is declared again with every parameter and every index of its
-// loops deciding by its own value -- so the program is the one each scope
-// describes and only the sharing is lost, which is said as a remark against
-// the definition.
-auto DefinitionsPublishedApart(
-    std::span<const std::unique_ptr<UnitLowerer>> lowerers,
-    diag::DiagnosticSink& sink) -> Definitions {
-  Definitions apart;
-  for (const std::unique_ptr<UnitLowerer>& lowerer : lowerers) {
-    if (!lowerer->BlocksPublishedApart() &&
-        !lowerer->ApplicationsPublishedApart()) {
-      continue;
-    }
-    const auto& definition = lowerer->SourceScope()
-                                 .asSymbol()
-                                 .as<slang::ast::InstanceBodySymbol>()
-                                 .getDefinition();
-    if (lowerer->ApplicationsPublishedApart()) {
-      RemarkOnInstancesApart(definition, "published", apart, sink);
-    } else if (apart.insert(&definition).second) {
-      sink.Report(
-          diag::Make(
-              frontend::PointSpanOf(definition.location),
-              diag::DiagCode::kRemarkLostSharing,
-              std::format(
-                  "sharing lost: every generate block of '{}' is compiled "
-                  "once per index, because blocks built at different indices "
-                  "published apart",
-                  definition.name)));
-    }
-  }
-  return apart;
+  return checked;
 }
 
 }  // namespace
@@ -753,9 +414,6 @@ struct DeclaredDesign::Units {
   LoweringFacts facts;
   std::vector<TopLevelUnit> tops;
   std::vector<std::unique_ptr<UnitLowerer>> lowerers;
-  // Where the design elements' units start among the lowerers, which follow
-  // in the order the collection found them.
-  std::size_t first_design_element = 0;
   hir::UnitSignatures signatures;
   // Held while a unit reads the frontend, which elaborates on first read.
   std::mutex reading_front_end;
@@ -769,36 +427,38 @@ struct DeclaredDesign::Units {
             specialization_homes.placed) {
   }
 
-  // The lowerer of a design element's unit, over the instance it is named for
-  // and the others `also_lowered_from` holds for it.
+  // The lowerer of one body of a design element's unit, over the instance it
+  // is named for, checked against the others `checked_against` holds for it.
   [[nodiscard]] auto LowererOf(
-      const CollectedUnit& unit, const AlsoLoweredFrom& also_lowered_from) const
+      const CollectedUnit& collected,
+      const BodiesCheckedAgainst& checked_against) const
       -> std::unique_ptr<UnitLowerer> {
-    const auto others = also_lowered_from.find(unit.Name());
+    const auto others = checked_against.find(collected.body);
     return std::make_unique<UnitLowerer>(
-        facts, *unit.body, unit.Name(), hir::UnitRole::kObjectRoot,
-        others == also_lowered_from.end()
+        facts, *collected.elaborated,
+        hir::UnitBodyRef{.unit = collected.unit, .body = collected.body},
+        hir::UnitRole::kObjectRoot,
+        others == checked_against.end()
             ? std::span<const slang::ast::InstanceBodySymbol* const>{}
             : std::span<const slang::ast::InstanceBodySymbol* const>{
                   others->second});
   }
 
   // Declares every unit the design has under the specialization policy held
-  // here, replacing whatever an earlier policy declared. A design element's
-  // unit is declared from every instance `also_lowered_from` holds for it, so
-  // what it publishes states what each of them built and a name reaching into
-  // any of them finds it. Whether any failed is the sink's answer.
+  // here. Every body of a design element's unit declares what the unit
+  // publishes, from the instance it is named for: the unit's name holds
+  // everything the declarations depend on, the blocks its instances built
+  // included, so every body states it alike and the design keeps the first.
+  // One stating anything else is this compiler's defect, which the compile
+  // looks for where it checks itself. Whether any failed is the sink's answer.
   void DeclareEveryUnit(
       const LowerCompilationFacts& front_end_facts, const Collected& collected,
-      const AlsoLoweredFrom& also_lowered_from, diag::DiagnosticSink& sink) {
-    lowerers.clear();
-    signatures = hir::UnitSignatures{};
+      const BodiesCheckedAgainst& checked_against, diag::DiagnosticSink& sink) {
     for (const auto* package : CollectPackages(front_end_facts)) {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
-              facts, *package, std::string{package->name},
-              hir::UnitRole::kNamespace,
-              std::span<const slang::ast::InstanceBodySymbol* const>{}));
+              facts, *package, hir::UnitBodyRef::Sole(package->name),
+              hir::UnitRole::kNamespace));
     }
     for (const auto* cu : CollectCompilationUnits(front_end_facts)) {
       // A `$unit` scope is lowered, emitted, and initialized exactly as a
@@ -807,20 +467,20 @@ struct DeclaredDesign::Units {
       // separate kind.
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
-              facts, *cu, CompilationUnitName(*cu, specialization),
-              hir::UnitRole::kNamespace,
-              std::span<const slang::ast::InstanceBodySymbol* const>{}));
+              facts, *cu,
+              hir::UnitBodyRef::Sole(CompilationUnitName(*cu, specialization)),
+              hir::UnitRole::kNamespace));
     }
     for (const slang::ast::ClassType* spec : specialization_homes.own_units) {
       lowerers.push_back(
           std::make_unique<UnitLowerer>(
-              facts, *spec, CompilationUnitName(*spec, specialization),
-              hir::UnitRole::kNamespace,
-              std::span<const slang::ast::InstanceBodySymbol* const>{}));
+              facts, *spec,
+              hir::UnitBodyRef::Sole(
+                  CompilationUnitName(*spec, specialization)),
+              hir::UnitRole::kNamespace));
     }
-    first_design_element = lowerers.size();
-    for (const CollectedUnit& unit : collected.units) {
-      lowerers.push_back(LowererOf(unit, also_lowered_from));
+    for (const CollectedUnit& body : collected.units) {
+      lowerers.push_back(LowererOf(body, checked_against));
     }
 
     // Every unit declares before any unit lowers a body, because a body may
@@ -833,182 +493,47 @@ struct DeclaredDesign::Units {
         sink.Report(std::move(declared.error()));
         continue;
       }
-      signatures.Publish(lowerer->TakeSignature());
-    }
-  }
-
-  // Leaves each design element's unit lowered from the instances that built
-  // something of it and no others. Every witness was declared into its unit so
-  // that what the unit published is complete before any body is read; one that
-  // built nothing the unit did not already hold has nothing more to give, and
-  // a unit is held until its turn, so what it is held with is kept to what its
-  // lowering reads. The unit publishes again from the instances it keeps, so
-  // what every other unit reads of it is what its own lowering states.
-  void KeepTheInstancesThatAdd(
-      const Collected& collected, const AlsoLoweredFrom& declared_with,
-      const AlsoLoweredFrom& adding, diag::DiagnosticSink& sink) {
-    for (std::size_t at = 0; at < collected.units.size(); ++at) {
-      const CollectedUnit& unit = collected.units[at];
-      const auto declared = declared_with.find(unit.Name());
-      if (declared == declared_with.end()) continue;
-      const auto kept = adding.find(unit.Name());
-      if (kept != adding.end() &&
-          kept->second.size() == declared->second.size()) {
+      hir::UnitSignature signature = lowerer->TakeSignature();
+      const hir::UnitSignature* kept = signatures.Find(signature.unit_name);
+      if (kept == nullptr) {
+        signatures.Publish(std::move(signature));
         continue;
       }
-      std::unique_ptr<UnitLowerer> lowerer = LowererOf(unit, adding);
-      if (auto redeclared = lowerer->Declare(); !redeclared) {
-        sink.Report(std::move(redeclared.error()));
-        continue;
+      if (specialization.ChecksItself() && *kept != signature) {
+        throw InternalError(
+            std::format(
+                "DeclaredDesign: two bodies of unit '{}' publish different "
+                "declarations, though its name holds everything they depend on",
+                signature.unit_name));
       }
-      signatures.Replace(lowerer->TakeSignature());
-      lowerers[first_design_element + at] = std::move(lowerer);
-    }
-  }
-
-  // Says which definitions were compiled into more units than their instances
-  // need. The units of one definition are lowered into one unit under a policy
-  // that hands that definition every value it is given, and held against each
-  // other as the instances of one unit are. Where they come out one body,
-  // whatever told them apart decided nothing that was compiled.
-  //
-  // It is a check and never an answer: a definition's units stay as they were
-  // named, because naming a unit by how the design's other instances of it
-  // lowered would make a parent's text depend on instances it does not hold.
-  // Only what the trial cannot be run on is left out, and none of it says
-  // anything was missed: a definition kept whole, which an earlier comparison
-  // already found apart; one holding a class, whose bodies cannot be lowered
-  // into one unit; and one holding an instance named through its own unit,
-  // which the trial would name as nothing the design declared.
-  void RemarkOnSharingMissed(
-      const Collected& collected, diag::DiagnosticSink& sink) {
-    std::vector<const slang::ast::DefinitionSymbol*> in_order;
-    std::unordered_map<
-        const slang::ast::DefinitionSymbol*, std::vector<const CollectedUnit*>>
-        units_of;
-    for (const CollectedUnit& unit : collected.units) {
-      const auto& definition = unit.body->getDefinition();
-      std::vector<const CollectedUnit*>& its = units_of[&definition];
-      if (its.empty()) in_order.push_back(&definition);
-      its.push_back(&unit);
-    }
-    for (const slang::ast::DefinitionSymbol* definition : in_order) {
-      const std::vector<const CollectedUnit*>& its = units_of.at(definition);
-      if (its.size() < 2 || specialization.KeepsWhole(*definition)) continue;
-      if (std::ranges::any_of(its, [&](const CollectedUnit* unit) {
-            return HoldsAClass(*unit->body, specialization_homes.placed) ||
-                   HoldsAnInstanceNamedThroughItsUnit(*unit->body);
-          })) {
-        continue;
-      }
-      const SpecializationPolicy handed_every_value =
-          specialization.HandingEveryValueTo(*definition);
-      const LoweringFacts trial(
-          sensitivity, facts.AssertionPolicy(), handed_every_value,
-          specialization_homes.placed);
-      std::vector<const slang::ast::InstanceBodySymbol*> others;
-      for (const CollectedUnit* unit : its | std::views::drop(1)) {
-        others.push_back(unit->body);
-      }
-      UnitLowerer lowerer(
-          trial, *its.front()->body, its.front()->Name(),
-          hir::UnitRole::kObjectRoot, others);
-      if (!lowerer.Declare() || lowerer.BlocksPublishedApart() ||
-          lowerer.ApplicationsPublishedApart()) {
-        continue;
-      }
-      auto one_body = lowerer.LowerScopeBuiltBy(*its.front()->body, signatures);
-      if (!one_body ||
-          !BodiesThatAdd(lowerer, *std::move(one_body), others, signatures)
-               .has_value()) {
-        continue;
-      }
-      sink.Report(
-          diag::Make(
-              frontend::PointSpanOf(definition->location),
-              diag::DiagCode::kRemarkMissedSharing,
-              std::format(
-                  "sharing missed: '{}' is compiled {} times, and its "
-                  "instances are one body where each is built with the values "
-                  "it is given",
-                  definition->name, its.size())));
     }
   }
 };
 
-// A definition whose instances lowered apart, or whose block instances
-// published apart, is declared again kept whole. A definition kept whole is
-// supplied nothing at construction and tells every index of its loops apart,
-// so neither can happen to it again. One whose unit holds what a single
-// instance built is declared again as that before it is kept whole. Both sets
-// grow every time round and a definition enters each once: at worst every
-// definition is kept whole and each parameter value is its own unit. Nothing
-// else reads the frontend until this returns, so the check reads it without
+// Nothing else reads the frontend until this returns, so it is read without
 // taking turns.
 auto DeclaredDesign::Declare(
     std::unique_ptr<slang::ast::Compilation> front_end,
     support::AssertionPolicy assertion_policy, support::BodiesRead bodies_read,
-    MissedSharing missed_sharing, diag::DiagnosticSink& sink)
-    -> std::optional<DeclaredDesign> {
+    diag::DiagnosticSink& sink) -> std::optional<DeclaredDesign> {
   auto units = std::make_unique<Units>(std::move(front_end), assertion_policy);
   const LowerCompilationFacts facts(*units->front_end, assertion_policy);
 
-  Definitions kept_whole;
-  Definitions built_by_one_instance;
-  for (;;) {
-    units->specialization =
-        SpecializationPolicy(kept_whole, bodies_read, built_by_one_instance);
-    auto tops = TopLevelUnits(facts, units->specialization);
-    if (!tops) {
-      sink.Report(std::move(tops.error()));
-      return std::nullopt;
-    }
-    const Collected collected = CollectUnits(facts, units->specialization);
-    units->specialization_homes =
-        CollectSpecializationHomes(facts, collected, units->specialization);
-    const AlsoLoweredFrom declared_with = WitnessesLoweredWithTheirUnits(
-        collected, units->specialization_homes.placed);
-    units->DeclareEveryUnit(facts, collected, declared_with, sink);
-    if (sink.HasErrors()) {
-      return std::nullopt;
-    }
-    // What the signatures already show is settled before any body is lowered
-    // against them.
-    Definitions apart = DefinitionsPublishedApart(units->lowerers, sink);
-    if (apart.empty()) {
-      InstancesHeldToTheirUnits held = HoldInstancesToTheirUnits(
-          units->facts, collected, declared_with, built_by_one_instance,
-          units->signatures, sink);
-      apart = std::move(held.apart);
-      const bool settled = apart.empty() && held.built_by_one_instance.empty();
-      built_by_one_instance.merge(held.built_by_one_instance);
-      if (settled) {
-        units->KeepTheInstancesThatAdd(
-            collected, declared_with, held.adding, sink);
-        if (sink.HasErrors()) {
-          return std::nullopt;
-        }
-        switch (missed_sharing) {
-          case MissedSharing::kNotLookedFor:
-            break;
-          case MissedSharing::kLookedFor:
-            units->RemarkOnSharingMissed(collected, sink);
-            break;
-        }
-        units->tops = *std::move(tops);
-        return DeclaredDesign(std::move(units));
-      }
-    }
-    for (const slang::ast::DefinitionSymbol* definition : apart) {
-      if (!kept_whole.insert(definition).second) {
-        throw InternalError(
-            std::format(
-                "DeclaredDesign::Declare: '{}' was kept whole and still "
-                "lowered apart, so declaring it once more cannot settle it",
-                definition->name));
-      }
-    }
+  units->specialization = SpecializationPolicy(bodies_read);
+  auto tops = TopLevelUnits(facts, units->specialization);
+  if (!tops) {
+    sink.Report(std::move(tops.error()));
+    return std::nullopt;
   }
+  const Collected collected = CollectUnits(facts, units->specialization);
+  units->specialization_homes =
+      CollectSpecializationHomes(facts, collected, units->specialization);
+  units->DeclareEveryUnit(facts, collected, CheckedAgainstOf(collected), sink);
+  if (sink.HasErrors()) {
+    return std::nullopt;
+  }
+  units->tops = *std::move(tops);
+  return DeclaredDesign(std::move(units));
 }
 
 DeclaredDesign::DeclaredDesign(std::unique_ptr<Units> units)

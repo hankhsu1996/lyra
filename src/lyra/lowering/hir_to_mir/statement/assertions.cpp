@@ -9,6 +9,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/source_manager.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -200,7 +201,7 @@ auto LowerCoverStmt(
       block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
   const mir::ExprId site_id = BuildStringValueExpr(
       unit, block,
-      FormatRuntimeOriginString(span, process.Owner().SourceManager()));
+      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
   const mir::ExprId outcome_id =
       block.exprs.Add(mir::MakeLocalRefExpr(succeeded, bool_type));
   const mir::ExprId record_id = block.exprs.Add(

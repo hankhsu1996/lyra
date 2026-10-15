@@ -16,7 +16,7 @@ auto Suspension::await_ready() const noexcept -> bool {
 }
 
 // NOLINTNEXTLINE(readability-named-parameter)
-void Suspension::await_suspend(std::coroutine_handle<>) noexcept {
+void Suspension::await_suspend(std::coroutine_handle<>) const noexcept {
 }
 
 void Suspension::await_resume() const {

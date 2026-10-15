@@ -6,9 +6,14 @@ Define how incremental compilation works at the architectural level: what is cac
 defined across sessions, how reuse is determined, and what shape the work takes so that units
 compile in parallel.
 
-This is a contract the compiler does not yet realize: today a change recompiles everything. The
-rules here constrain every layer regardless, because they are what keeps a later query-based
-implementation possible -- a design that assumes whole-design recompilation forecloses it.
+The compiler realizes this contract only below the lowering. Each step from a unit's emitted text
+onwards -- compiling a unit's module or an emitted file to an object, linking the program -- is an
+action kept under the digest of everything it reads, so a build after an edit compiles and links
+only what came out different, and that digest is the only fingerprint there is: a name the emitted
+text still spells changes it. The front end and every lowering run whole on every build, with no
+query memoized and no key finer than a unit. The rules here constrain every layer regardless,
+because they are what keeps a query-based implementation of the rest possible -- a design that
+assumes whole-design lowering forecloses it.
 
 ## Owns
 
@@ -37,9 +42,12 @@ implementation possible -- a design that assumes whole-design recompilation fore
    forbidden. Query results are memoized under their stable keys.
 2. **Stable keys are ownership-based.** A query key is derived from ownership (compilation unit,
    callable, type, etc.). Keys do not depend on traversal order or insertion position.
-3. **Fingerprints capture semantic meaning, not syntax spelling.** A fingerprint excludes
-   non-semantic details such as identifier names, source spans, and source positions. Renaming a
-   variable does not change the fingerprint if the semantics are unchanged.
+3. **Fingerprints capture what a compiled program can tell, not syntax spelling.** A fingerprint
+   excludes every name and every source position the program never reads: renaming a local variable,
+   or moving text no report prints a position of, does not change it. A name or a place the program
+   does read is part of what it means and is included -- in SystemVerilog `%m` prints scope names
+   (LRM 21.2.1.3), `%p` prints member names, and a report prints its file and line (LRM 20.10) -- as
+   is a name another unit links against.
 4. **Identity has two roles: matching and semantic equivalence.** A key answers "what is being
    computed" and matches a current entity to its previous self. A fingerprint answers "has the
    meaning changed" and decides whether the cached result can be reused. The two are distinct values
@@ -154,8 +162,8 @@ before every unit's bodies. The same asymmetry, read at two scopes.
 An automatic variable is renamed inside one callable of one compilation unit:
 
 - The callable's key is unchanged, because ownership is unchanged.
-- The callable's fingerprint is unchanged, because the semantics are unchanged; only the name
-  differs.
+- The callable's fingerprint is unchanged, because no program compiled from it reads the name; only
+  the spelling differs.
 - The cached result for that callable is reused.
 - Every other callable in the unit and every other compilation unit are unaffected.
 

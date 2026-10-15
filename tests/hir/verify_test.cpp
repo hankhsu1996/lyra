@@ -1,9 +1,11 @@
 #include "lyra/hir/verify.hpp"
 
+#include <cstdint>
 #include <format>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -83,7 +85,7 @@ auto AddLeaf(const CompilationUnit& unit, ProceduralBody& body) -> ExprId {
 // of what `fill` answers with, each holding that entry.
 template <typename Fill>
 auto UnitWithProcess(const Fill& fill) -> CompilationUnit {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   Process process;
   ProceduralBody& body = process.body;
   std::vector<StmtId> statements;
@@ -107,7 +109,7 @@ auto UnitWithProcess(const Fill& fill) -> CompilationUnit {
 // operands of one operation is refused, and the refusal names the expression,
 // where it is, and what reaches it.
 TEST(HirVerifyTest, AnExpressionReachedFromTwoPlacesIsRefused) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId shared = AddLeaf(unit);
   Assign(unit, target, AddSum(unit, shared, shared));
@@ -132,7 +134,7 @@ TEST(HirVerifyTest, AnExpressionReachedFromTwoPlacesIsRefused) {
 }
 
 TEST(HirVerifyTest, DistinctOperandsAreAccepted) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId lhs = AddLeaf(unit);
   const ExprId rhs = AddLeaf(unit);
@@ -144,7 +146,7 @@ TEST(HirVerifyTest, DistinctOperandsAreAccepted) {
 // reached through it: one of them standing under a held expression as well is
 // reached once.
 TEST(HirVerifyTest, AnExpressionNothingHoldsReachesNothing) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId lhs = AddLeaf(unit);
   const ExprId rhs = AddLeaf(unit);
@@ -156,7 +158,7 @@ TEST(HirVerifyTest, AnExpressionNothingHoldsReachesNothing) {
 // A sensitivity describes what its holder waits on in terms of expressions the
 // holder already reaches, so naming one there is no second place it stands at.
 TEST(HirVerifyTest, ADescriptionIsNoPlace) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId lhs = AddLeaf(unit);
   const ExprId rhs = AddLeaf(unit);
@@ -167,7 +169,7 @@ TEST(HirVerifyTest, ADescriptionIsNoPlace) {
 // A description is still held to naming an expression its arena has, and the
 // refusal says it was a description that named it.
 TEST(HirVerifyTest, ADescriptionOutsideTheArenaIsRefused) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   const ExprId source = AddLeaf(unit);
   Assign(unit, target, source, {ExprId{source.value + 7}});
@@ -282,10 +284,71 @@ TEST(HirVerifyTest, AConstantIsHeldByItsPattern) {
   }
 }
 
+// A unit whose root holds one loop generate of `blocks` bodies, each standing
+// where `bodies` says.
+auto UnitWithLoop(std::uint32_t blocks, std::vector<LoopBody> bodies)
+    -> CompilationUnit {
+  CompilationUnit unit("U", "U");
+  Generate generate;
+  for (std::uint32_t i = 0; i < blocks; ++i) {
+    generate.blocks.Add(GenerateBlock{});
+  }
+  generate.counting = BlocksRepeat{
+      .variable = {},
+      .initial = AddLeaf(unit),
+      .condition = AddLeaf(unit),
+      .step = AddLeaf(unit),
+      .arguments = {},
+      .bodies = std::move(bodies)};
+  unit.root_scope.generates.Add(std::move(generate));
+  return unit;
+}
+
+auto BodyAt(std::uint32_t body, std::vector<std::int64_t> indices) -> LoopBody {
+  return LoopBody{
+      .body = StructuralScopeId{body},
+      .body_arguments = std::nullopt,
+      .indices = std::move(indices)};
+}
+
+// A loop of several bodies says where each one stands, every body once and no
+// value under two of them, while a loop of one body builds it at every index
+// and says nothing of where (LRM 27.4); each departure is refused by name.
+TEST(HirVerifyTest, ALoopSaysWhereEachOfSeveralBodiesStands) {
+  EXPECT_NO_THROW(Verify(UnitWithLoop(1, {BodyAt(0, {})})));
+  EXPECT_NO_THROW(Verify(UnitWithLoop(0, {})));
+  EXPECT_NO_THROW(Verify(UnitWithLoop(2, {BodyAt(0, {0, 2}), BodyAt(1, {1})})));
+
+  const auto refused = [](const CompilationUnit& unit, std::string_view says) {
+    try {
+      Verify(unit);
+      ADD_FAILURE() << "a loop that " << says << " was accepted";
+    } catch (const InternalError& error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find(says), std::string::npos) << message;
+    }
+  };
+  refused(
+      UnitWithLoop(2, {BodyAt(0, {2, 0}), BodyAt(1, {1})}),
+      "lists where body 0 stands out of order");
+  refused(
+      UnitWithLoop(2, {BodyAt(0, {0}), BodyAt(0, {1})}),
+      "holds 2 bodies and says where 2 of them stand");
+  refused(
+      UnitWithLoop(2, {BodyAt(0, {0, 1}), BodyAt(1, {1})}),
+      "stands two bodies at one value of its index");
+  refused(
+      UnitWithLoop(2, {BodyAt(0, {0}), BodyAt(1, {})}),
+      "holds several bodies and says nowhere that body 1 stands");
+  refused(
+      UnitWithLoop(1, {BodyAt(0, {0, 1})}),
+      "holds one body and lists where it stands");
+}
+
 // An id is a position in the arena of the scope that minted it, so a holder
 // naming one the arena does not have is refused.
 TEST(HirVerifyTest, AnExpressionOutsideTheArenaIsRefused) {
-  CompilationUnit unit("U");
+  CompilationUnit unit("U", "U");
   const ExprId target = AddLeaf(unit);
   Assign(unit, target, ExprId{target.value + 7});
   try {

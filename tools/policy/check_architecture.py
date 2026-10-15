@@ -216,13 +216,9 @@ Rules:
         not a reason to read one: it says the value is known, not that the
         artifact has to hold it. What a unit publishes about its ports and
         what a type is are exempt: both are part of the unit's identity, so a
-        value deciding either is already one artifact per value. So is what
-        tells two applications of a generate block apart: where a block's
-        index decides what the block declares, the constant settled from it
-        there is read as the identity itself, which makes fewer artifacts
-        than the index would and never one more. A port's default is not
-        among them -- it is evaluated for each instance that leaves the port
-        unconnected (LRM 23.2.2.4).
+        value deciding either is already one artifact per value. A port's
+        default is not among them -- it is evaluated for each instance that
+        leaves the port unconnected (LRM 23.2.2.4).
         Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
         include/lyra/lowering/ast_to_hir.
 
@@ -240,16 +236,39 @@ Rules:
         Scope: every .cpp/.hpp under src/lyra/backend/cpp and
         include/lyra/backend/cpp.
 
-  A025  HIR equality is derived and exact. Whether two instances handed
-        different values may share one unit is decided by comparing the HIR
-        each lowers to, so the comparison is what keeps the program right. A
-        hand-written `operator==` can leave a field out, and a floating-point
-        member compares as a number, which calls 0.0 and -0.0 one value and
-        two identical NaNs two; either way two different programs compare
-        equal, or one program compares unequal to itself. So every
-        `operator==` a HIR node declares is `= default`, and a real value is
-        held as the bits that represent it.
+  A025  HIR equality is derived and exact. Every instance of a body is held
+        to lowering alike where the compile is checked against itself, so the
+        comparison is what finds a lowering that read a value the body's name
+        does not hold. A hand-written `operator==` can leave a field out, and
+        a floating-point member compares as a number, which calls 0.0 and
+        -0.0 one value and two identical NaNs two; either way two different
+        programs compare equal, or one program compares unequal to itself. So
+        every `operator==` a HIR node declares is `= default`, and a real
+        value is held as the bits that represent it.
         Scope: include/lyra/hir/**.
+
+  A026  Nothing reads what the front end folded where the language did not
+        ask for a constant. It records which parameters each evaluation it
+        was required to make read, and that record is what keeps a parameter
+        in a unit's key. A fold it made on its own -- a conditional operator
+        whose condition happened to be constant, a sequence it found can
+        never match -- is recorded nowhere, so code compiled from it holds a
+        value the unit was never told apart by. Read the expression instead.
+        Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
+        include/lyra/lowering/ast_to_hir.
+
+  A027  An expression's type is interned through the one function that
+        decides what it is: the type a declaration or the expression's own
+        text states, or, for what an operation yields, the width, signedness
+        and element count the standard fixes, numbered from zero. The front
+        end hands an operation a range it took from an operand or settled from
+        a select's base, which two instances given one name do not share, so a
+        lowering that interns it holds a value its unit was never told apart
+        by. Interning `*e.type` directly takes that range whichever kind of
+        expression `e` is. What a unit publishes about its ports is exempt,
+        as in A023: the front end records what settled it.
+        Scope: every .cpp/.hpp under src/lyra/lowering/ast_to_hir and
+        include/lyra/lowering/ast_to_hir.
 
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
@@ -1045,16 +1064,11 @@ A023_PATTERN = re.compile(r"(?:->|\.)\s*(?:getConstant|eval)\s*\(")
 # Where reading one is not the lowering of a body. What a unit publishes about
 # its ports and what a type is are part of the unit's identity: a value that
 # decides either is one a parameter keeps in the key, so the artifact is already
-# one per value and reading the value costs no second one. What a parameter
-# decides is the same identity one step earlier: the file working that out
-# lowers nothing, and reads a settled constant only where a generate block's
-# index was found to decide a declaration, to tell two applications of the
-# block apart by it. Everything else is the case the rule is for, a port's
-# default included -- it is written in the header, but it is evaluated for each
-# instance that leaves the port unconnected (LRM 23.2.2.4), and so is a body's
-# expression like any other.
+# one per value and reading the value costs no second one. Everything else is
+# the case the rule is for, a port's default included -- it is written in the
+# header, but it is evaluated for each instance that leaves the port unconnected
+# (LRM 23.2.2.4), and so is a body's expression like any other.
 A023_EXEMPT = (
-    "src/lyra/lowering/ast_to_hir/parameter_value_source.cpp",
     "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
     "src/lyra/lowering/ast_to_hir/type.cpp",
 )
@@ -1238,11 +1252,70 @@ def check_a025(repo_root: Path) -> list[str]:
     for path, rel in iter_files(repo_root, "include/lyra/hir"):
         for lineno, reason in a025_violations(path.read_text()):
             errors.append(
-                f"  {rel}:{lineno}: A025 {reason}; whether two instances share "
-                f"a unit is decided by comparing their HIR, so the comparison "
-                f"has to be derived and exact -- default it, and hold a real "
-                f"value as its bits"
+                f"  {rel}:{lineno}: A025 {reason}; instances lowered into one "
+                f"unit are held to lowering alike by comparing their HIR, so "
+                f"the comparison has to be derived and exact -- default it, "
+                f"and hold a real value as its bits"
             )
+    return errors
+
+
+# Rule A026
+# What the front end keeps of a fold it made on its own: a conditional
+# operator's known side and the flags it is chosen by, and a sequence's finding
+# that it never matches. A member read and a call are both matched, and a
+# value's own `isTrue()` -- a question about a constant already in hand -- is
+# not, since it is called rather than read.
+A026_PATTERN = re.compile(
+    r"(?:->|\.)\s*(?:knownSide\s*\(|isConst\b(?!\s*\()|isTrue\b(?!\s*\()"
+    r"|isAlwaysFalse\b)")
+
+
+def check_a026(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(
+            repo_root,
+            "src/lyra/lowering/ast_to_hir",
+            "include/lyra/lowering/ast_to_hir"):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if A026_PATTERN.search(strip_comment(line)):
+                errors.append(
+                    f"  {rel}:{lineno}: A026 reads a fold the front end made "
+                    f"where nothing asked for a constant, which no record of "
+                    f"what decides a unit holds; lower the expression"
+                )
+    return errors
+
+
+# Rule A027
+# An expression's front-end type handed to the interner directly: `*e.type`,
+# `*e->type`, however the expression is reached. A HIR type id is a value and is
+# never dereferenced, so the pattern matches only the front end's type pointer.
+A027_PATTERN = re.compile(r"\bInternType\s*\(\s*\*[\w.\->()\[\]]*(?:\.|->)type\b")
+
+# The definition of the deciding function, and what a unit publishes about its
+# ports (see A023's exemption).
+A027_EXEMPT = (
+    "src/lyra/lowering/ast_to_hir/publish_signature.cpp",
+    "src/lyra/lowering/ast_to_hir/type.cpp",
+)
+
+
+def check_a027(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(
+            repo_root,
+            "src/lyra/lowering/ast_to_hir",
+            "include/lyra/lowering/ast_to_hir"):
+        if rel in A027_EXEMPT:
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if A027_PATTERN.search(strip_comment(line)):
+                errors.append(
+                    f"  {rel}:{lineno}: A027 interns an expression's front-end "
+                    f"type directly, which keeps a range an operation's "
+                    f"instances need not share; use InternExpressionType"
+                )
     return errors
 
 
@@ -1782,6 +1855,43 @@ def run_self_tests() -> bool:
             "    return std::bit_cast<double>(bits);\n  }\n};\n"),
         "A025 a function body naming a double names no member")
 
+    # A026
+    ok &= expect(
+        A026_PATTERN.search("  if (cond.isConst) return *cond.knownSide();"),
+        "A026 a conditional's fold flag is reported")
+    ok &= expect(
+        A026_PATTERN.search("  const Expression* side = e->knownSide();"),
+        "A026 a conditional's known side is reported")
+    ok &= expect(
+        A026_PATTERN.search("  if (e.isTrue) {"),
+        "A026 which side the fold chose is reported")
+    ok &= expect(
+        A026_PATTERN.search("  return result.isAlwaysFalse;"),
+        "A026 a sequence found never to match is reported")
+    ok &= expect(
+        not A026_PATTERN.search("  if (value.isTrue()) {"),
+        "A026 asking a constant in hand whether it is true is clean")
+    ok &= expect(
+        not A026_PATTERN.search("  if (conversion.isConstCast) {"),
+        "A026 a longer name sharing the prefix is clean")
+    ok &= expect(
+        not A026_PATTERN.search(
+            strip_comment("  // e.knownSide() is the fold being avoided")),
+        "A026 a comment naming the fold is not a read")
+    # A027
+    ok &= expect(
+        A027_PATTERN.search("  auto t = lowerer.Owner().InternType(*sel.type, span);"),
+        "A027 an expression's type interned directly is reported")
+    ok &= expect(
+        A027_PATTERN.search("  auto t = InternType(*call.arguments()[0]->type, span);"),
+        "A027 a type reached through an arrow is reported")
+    ok &= expect(
+        not A027_PATTERN.search("  auto t = InternType(symbol.getType(), span);"),
+        "A027 a declaration's type is clean")
+    ok &= expect(
+        not A027_PATTERN.search("  auto t = InternExpressionType(sel, span);"),
+        "A027 the deciding function is clean")
+
     return ok
 
 
@@ -1813,6 +1923,8 @@ CHECKS = [
     ("A023 expression taken for its folded value", check_a023),
     ("A024 backend text composed as a value", check_a024),
     ("A025 HIR equality not derived exactly", check_a025),
+    ("A026 front end's own fold read", check_a026),
+    ("A027 expression type interned directly", check_a027),
 ]
 
 

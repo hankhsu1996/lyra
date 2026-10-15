@@ -752,16 +752,25 @@ enum class BuiltinFn : std::uint16_t {
   // instance or a generate block, or past the topmost a top-level instance of
   // it. Called once per reference in the resolve phase.
   kEnclosingScope,
-  // Whether the receiver, a scope of the design hierarchy, is an object of the
-  // class handed in or of one extending it. A class a unit published of a
-  // scope may be realized by several classes of that unit, and a body entered
-  // on the object as the published class asks which of them it is.
-  kIsOfClass,
+  // The blocks one loop generate built, the receiver (LRM 27.4): filing the
+  // block built where the index stood at the value handed in, as the object
+  // holding the loop builds it, and the block a hierarchical name reaching
+  // that value asks for (LRM 23.6). Where a block stands among the loop's is
+  // the holding object's own answer, so a name carries only the value.
+  kLoopBlocksAdd,
+  kLoopBlocksAt,
   // A constructor hands a freshly-built child to its parent to own: this
   // consumes the built child (a unique pointer) and returns the parent-owned
   // handle -- the child's own `Segment()` supplies the LRM display form, so the
   // parent never re-states it.
   kAddOwnedChild,
+  // How the instance at one instantiation is made, read off the construction
+  // table the object being built was handed: the entry making it, as a code
+  // address whose prototype the construction restores, and the table it is
+  // constructed with. Which body of which unit is made there is decided where
+  // the program is assembled, so no compiled body names it.
+  kInstantiationEntry,
+  kInstantiationTable,
   // Extends a sequence still being composed by one element, answering with
   // what it became. A declaration standing for several objects counts them out
   // as it builds them (LRM 23.3.2), and what the member finally holds is the

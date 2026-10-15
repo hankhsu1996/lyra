@@ -593,34 +593,10 @@ auto ClassDeclLowerer::PopulateBodies(
     const auto method_dispatch =
         shape.callable_signatures.Get(declared.callable).virtual_dispatch;
     if (method.is_prototype) {
-      mir::CallableCode proto_code;
-      CallableBindings proto_bindings(unit_lowerer.Unit(), proto_code);
-      const mir::LocalId proto_self_id = proto_bindings.Declare(
-          BindingOriginId::Receiver(), shape.self_pointer_type);
-      std::vector<mir::LocalId> proto_params{proto_self_id};
-      proto_params.reserve(method.params.size() + 1);
-      for (const auto& hir_param : method.params) {
-        const auto& hir_var = method.body.procedural_vars.Get(hir_param.var);
-        const std::optional<mir::TypeId> param_type =
-            ParamTypeOf(unit_lowerer, hir_var.type, hir_param.direction);
-        if (!param_type.has_value()) {
-          continue;
-        }
-        const mir::LocalId param_id = proto_bindings.DeclareProcedural(
-            BindingOriginId::Procedural(hir_param.var), hir_var.name,
-            *param_type);
-        proto_params.push_back(param_id);
-      }
-      if (const std::optional<mir::TypeId> report_type =
-              ReportParamTypeOf(unit_lowerer.Unit(), method.kind)) {
-        proto_params.push_back(proto_bindings.DeclareAnonymous(*report_type));
-      }
-      proto_code.params = std::move(proto_params);
       // A prototype declares the interface its definitions implement, so it
       // reads that interface from the same declaration they do.
-      proto_code.result_type = SubroutineCallTypeOf(unit_lowerer, method);
-      // `proto_code.body` stays absent: this declaration does not define the
-      // method, and the deriving class supplies it.
+      mir::CallableCode proto_code =
+          PrototypeOf(unit_lowerer, method, shape.self_pointer_type);
       mir_class.callables.Define(
           declared.callable, mir::CallableDecl{
                                  .code = std::move(proto_code),

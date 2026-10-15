@@ -1,6 +1,6 @@
 # A program is kept by what built it
 
-Date: 2026-09-23 Status: accepted
+Date: 2026-09-23 Status: accepted; D2 and D9 revised and D10 added 2026-10-12
 
 ## The requirement
 
@@ -60,22 +60,19 @@ another reads.
 
 ### D2. An entry is named by what the expensive step reads, never by the SystemVerilog sources
 
-For the C++ path the name is computed from the emitted project -- every file the host compile reads
-from it -- together with the runtime's headers and library, the foreign sources' objects, the host
-compiler's identity, and the settings the compile runs under. For the LLVM path it is computed from
-the names of the objects the program links (D9), the runtime library, the foreign objects, and the
-host driver the link runs under. How many compiles run at once is in no name, because the objects
-are the same however many there were. The compiler's own build is part of an LLVM object's name and
-not of the C++ path's, because on the LLVM path the code generator is Lyra itself, while on the C++
-path it is the host compiler, which is named already.
+A program is named, on either path, from the bytes of the objects it links (D9), the runtime
+library, the foreign objects, and the host driver the link runs under. How many compiles run at once
+is in no name, because the objects are the same however many there were. The compiler's own build is
+part of an LLVM object's name and not of a C++ file's, because on the LLVM path the code generator
+is Lyra itself, while on the C++ path it is the host compiler, which is named already.
 
 This makes the name complete by construction. Tracking what the front end read -- every file an
 `` `include `` reached, every define in effect -- is a second authority over the same question, and
 the first input it misses is a stale program that runs without a word. A program cache has no
 fallback the way a prepared header has one: a stale header is refused and the compile runs again,
 while a stale program is simply executed. The cost is that the front half of the pipeline always
-runs; the saving is the compile and the link, which is where the time goes. On the LLVM path a kept
-program saves the link and the kept objects save the compile.
+runs; the saving is the compile and the link, which is where the time goes. A kept program saves the
+link and the kept objects save the compile.
 
 The one input no name here can see is the system the host compiler brings with it -- its standard
 library and its C runtime. The compiler's identity stands in for it, as it does for the prepared
@@ -159,9 +156,21 @@ join left after the barrier is the link. Measured on Ibex at `-j 4`: 6.9 s from 
 s when every object is kept and the program is not, 2.5 s when the program is kept too; what is left
 in the last two is lowering the design to know the names.
 
-The C++ path does not do the same yet, because a translation unit includes other units' headers, so
-what one compile reads is not one unit's output alone; its program is named from the whole emitted
-project as before.
+The C++ path does the same per emitted file: a compile reads the file and every file of the project
+it includes, besides the runtime's headers, the compiler and the level, and those are what its
+object is kept under. So an edit to one unit's body recompiles that unit's file, and a file
+including only what another unit declares is untouched by an edit to that unit's body.
+
+### D10. Every kept result is an action's output
+
+Added 2026-10-12. The store holds two things, as Bazel's remote execution API and LLVM's CAS do: an
+action cache, from the digest of an action -- a step and every input it reads -- to the digest of
+its one output, and a content-addressable storage, from a digest to the bytes it is the digest of. A
+unit's object, a prepared header, a C++ file's object and the program are each one action's output;
+the link reads the bytes of what it links, so an object that comes out the same however it was
+reached leaves the program kept. An action is performed at most once in a build however many ask for
+it. Without it each kind of entry is a directory named by a key its caller assembles by hand, three
+recipes for one question.
 
 ## Rejected alternatives
 

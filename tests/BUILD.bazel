@@ -225,11 +225,11 @@ cc_test(
 )
 
 cc_test(
-    name = "compiler_parallel_test",
-    srcs = ["compiler/parallel_test.cpp"],
+    name = "base_parallel_test",
+    srcs = ["base/parallel_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
-        "//:compiler",
+        "//:base",
         "@googletest//:gtest_main",
     ],
 )
@@ -302,6 +302,18 @@ cc_test(
         "@llvm-project//llvm:Analysis",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
+    ],
+)
+
+cc_test(
+    name = "driver_action_cache_test",
+    srcs = ["driver/action_cache_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:diag",
+        "//:driver",
+        "@googletest//:gtest_main",
     ],
 )
 
@@ -646,8 +658,7 @@ cc_test(
 )
 
 # The same two compilations, held to stating the same thing where the written
-# text cannot show a difference: the form two copies of one body are compared
-# in to decide whether they are one artifact.
+# text cannot show a difference: the form each lowers every unit to.
 cc_test(
     name = "repeatable_lowering_test",
     srcs = [

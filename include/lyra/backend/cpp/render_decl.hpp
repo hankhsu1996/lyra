@@ -74,11 +74,24 @@ struct UnitClosures {
 auto RenderUnitClosures(
     const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitClosures;
 
-// The functions of the unit's namespace -- package functions and tasks, DPI-C
-// imports, and the entry points of DPI-C exports -- as free functions. An
-// import is only declared; the user's C code defines it.
+// The functions of the unit's namespace as free functions, by who calls one:
+// what another unit names -- package functions and tasks, DPI-C imports, the
+// entry points of DPI-C exports, the entries a namespace is brought up
+// through -- in the unit's own namespace and header; the entry that makes an
+// object of one body, which is that body's, in its namespace and header; and
+// those nothing outside this artifact
+// names, declared and defined in its code file alone, so two bodies of one
+// unit each keep their own. An import is only declared; the user's C code
+// defines it.
+struct UnitCallables {
+  UnitText of_unit;
+  UnitText of_body;
+  UnitText of_artifact;
+};
+
 auto RenderUnitCallables(
-    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitText;
+    const mir::CompilationUnit& unit, UnitRenderReport& report)
+    -> UnitCallables;
 
 // The structs the unit declares, each the C++ type every unit naming it spells
 // it as, with its methods as members. Each goes into a header of its own, which

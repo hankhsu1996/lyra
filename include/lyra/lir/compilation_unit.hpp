@@ -20,6 +20,7 @@
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/integral_constant_id.hpp"
+#include "lyra/lir/linkage.hpp"
 #include "lyra/lir/struct_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
@@ -92,6 +93,14 @@ struct ConstantFunction {
   FunctionId function;
 };
 
+// The address of a function another unit emits, linked under `symbol`: an
+// entry of that unit's that answers to no name, declared at `prototype`, the
+// type that unit published it with.
+struct ConstantExternalFunction {
+  std::string symbol;
+  TypeId prototype;
+};
+
 // The address of data linked under `symbol`: a constant of this unit, or a
 // class's definition, which another unit may emit.
 struct ConstantAddress {
@@ -116,13 +125,9 @@ struct ConstantArray {
 struct Constant {
   std::variant<
       ConstantInt, ConstantNull, ConstantString, ConstantFunction,
-      ConstantAddress, ConstantRecord, ConstantArray>
+      ConstantExternalFunction, ConstantAddress, ConstantRecord, ConstantArray>
       value;
 };
-
-// Who may name a symbol of data: only the unit defining it, or any unit of the
-// program.
-enum class Linkage : std::uint8_t { kInternal, kExternal };
 
 // Read-only data this unit defines, linked under `symbol` and holding
 // `initializer` from before the program starts. Everything naming it -- another
@@ -150,6 +155,9 @@ struct Class {
   // from the class's own position where it is not, so the two ranges never
   // meet.
   std::optional<support::DefPath> path;
+  // How everything this class links under is linked: its definition, its
+  // description and dispatch table, and its bodies.
+  Linkage linkage = Linkage::kExternal;
   // The type of what this class's members are placed after -- the class it
   // extends, of this unit or another, or a class of the runtime library -- and
   // absent for an interface class, which holds no storage and of which no value
@@ -224,6 +232,9 @@ struct StructMethod {
 // copied, moved and ended.
 struct Struct {
   support::DefPath path;
+  // How everything this struct links under is linked: its type and its
+  // methods.
+  Linkage linkage = Linkage::kExternal;
   std::vector<TypeId> elements;
   std::vector<StructMethod> methods;
 };
@@ -272,6 +283,9 @@ struct CompilationUnit {
   // so a reader holding two units needs the pool named to know which one an id
   // belongs to.
   std::string name;
+  // Which body of the unit this is, carried the same way: what only this body
+  // holds is linked under it, and it is the artifact's name.
+  std::string body_name;
   TypePool types;
   base::Registry<Class, ClassId> classes;
   base::Registry<Closure, ClosureId> closures;

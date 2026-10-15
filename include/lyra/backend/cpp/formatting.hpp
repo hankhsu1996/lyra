@@ -14,23 +14,27 @@ namespace lyra::backend::cpp {
 // Which C++ declaration a variable is written as. Each is one of the forms the
 // language has, named as the language names it:
 //
-//   kNonStaticDataMember           T name{};                 in a class
-//   kInlineStaticDataMember        inline static T name{};   in a class
-//   kStaticDataMemberDeclaration   static T name;            in a class
-//   kStaticDataMemberDefinition    T Class::name = value;    at namespace scope
-//   kExternDeclaration             extern T name;            at namespace scope
-//   kNamespaceScopeDefinition      T name = value;           at namespace scope
+//   kNonStaticDataMember                T name{};                       class
+//   kInlineStaticDataMember             inline static T name{};         class
+//   kStaticDataMemberDeclaration        static T name;                  class
+//   kStaticDataMemberDefinition         T Class::name = value; namespace
+//   kInlineStaticDataMemberDefinition   inline T Class::name = value; namespace
+//   kExternDeclaration                  extern T name; namespace
+//   kNamespaceScopeDefinition           T name = value; namespace
 //
 // An inline static data member is defined where the class is, however many
 // files include it. One that is not inline is declared in the class and defined
 // once outside it, which is what a member whose value names something only the
-// code file declares has to be. A variable of the namespace another unit may
-// name is declared `extern` in the header and defined in the code file.
+// code file declares has to be; or defined outside it inline, after the class
+// in the header, where every file stating the class defines it alike. A
+// variable of the namespace another unit may name is declared `extern` in the
+// header and defined in the code file.
 enum class VariableForm : std::uint8_t {
   kNonStaticDataMember,
   kInlineStaticDataMember,
   kStaticDataMemberDeclaration,
   kStaticDataMemberDefinition,
+  kInlineStaticDataMemberDefinition,
   kExternDeclaration,
   kNamespaceScopeDefinition,
 };
@@ -68,6 +72,8 @@ struct VariableDeclaration {
       return "static ";
     case VariableForm::kStaticDataMemberDefinition:
       return "";
+    case VariableForm::kInlineStaticDataMemberDefinition:
+      return "inline ";
     case VariableForm::kExternDeclaration:
       return "extern ";
     case VariableForm::kNamespaceScopeDefinition:
@@ -110,6 +116,7 @@ inline void WriteDeclaration(
     case VariableForm::kNonStaticDataMember:
     case VariableForm::kInlineStaticDataMember:
     case VariableForm::kStaticDataMemberDefinition:
+    case VariableForm::kInlineStaticDataMemberDefinition:
     case VariableForm::kNamespaceScopeDefinition:
       out += "{}";
       break;
@@ -159,6 +166,20 @@ void AppendSectionInNamespace(
   OpenNamespace(out, name);
   out += section;
   CloseNamespace(out, name);
+}
+
+// The same, inside the namespace with no name, whose declarations no other file
+// can name: what only this file states, which another file stating something
+// of the same name keeps apart from it.
+inline void AppendSectionInUnnamedNamespace(
+    TargetText& out, const TargetText& section) {
+  if (section.View().empty()) {
+    return;
+  }
+  const TargetText::Section placed(out);
+  out += "namespace {\n";
+  out += section;
+  out += "}  // namespace\n";
 }
 
 }  // namespace lyra::backend::cpp

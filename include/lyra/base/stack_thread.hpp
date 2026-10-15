@@ -6,7 +6,7 @@
 #include <pthread.h>
 #include <vector>
 
-namespace lyra::compiler {
+namespace lyra::base {
 
 // The front end and every lowering walk an expression by recursing into its
 // operands, and a run of one binary operator is as deep as it is long, so the
@@ -43,4 +43,4 @@ class StackThread {
   bool joined_ = false;
 };
 
-}  // namespace lyra::compiler
+}  // namespace lyra::base

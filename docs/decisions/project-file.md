@@ -259,10 +259,10 @@ true of this invocation, or of this machine      -> the command line
 Lyra's spelling of it: **does the option change what program is elaborated and lowered, or how this
 run produces and executes it?** Sources, include directories, defines, library search, the top, the
 compilation-unit model, the language version and the assertion policy all change the program. `-o`,
-`--backend`, `--release`, `--rebuild`, `--no-pch`, `--format`, `--color`, `--jobs`, `--remarks`,
-`--cxx` and `--cache-dir` change only how this run produces, executes or reports on it -- and
-`--backend` cannot change the program at all, since North Star invariant 3 makes correctness
-independent of which path lowers it.
+`--backend`, `--release`, `--rebuild`, `--no-pch`, `--format`, `--color`, `--jobs`, `--cxx` and
+`--cache-dir` change only how this run produces, executes or reports on it -- and `--backend` cannot
+change the program at all, since North Star invariant 3 makes correctness independent of which path
+lowers it.
 
 Every established manifest format draws the same line, and draws it as a file boundary: Cargo splits
 `Cargo.toml` from `.cargo/config.toml`, npm splits `package.json` from `.npmrc`. A manifest is
@@ -280,8 +280,8 @@ D1. `lyra.toml` declares a library -- a named object whose parts are its sources
     simply no declaration, never a mode and never a failure.
 
 D2. A field is admitted only if it is true of the design for everyone who builds it. An invocation
-    property (`-o`, `--release`, `--rebuild`, `--backend`, `--format`, `--color` / `--no-color`,
-    `--remarks`) and a machine property (`--cxx`, `--cache-dir`, `--no-pch`, `--jobs`) are refused
+    property (`-o`, `--release`, `--rebuild`, `--backend`, `--format`, `--color` / `--no-color`)
+    and a machine property (`--cxx`, `--cache-dir`, `--no-pch`, `--jobs`) are refused
     by name.
 
 D3. Every relative path resolves against the directory of the manifest that declares it, never
@@ -313,6 +313,12 @@ D8. An unknown key, and a key naming a property D2 refuses, is an error that nam
 D9. The manifest supplies compiler inputs and nothing else. It never changes the simulation's
     environment: the program runs in the user's working directory, with the argv given after `--`,
     identically whether or not a manifest was used.
+
+D10. Every text of a build -- the library being built, a library it depends on, and a file named on
+    the command line -- is read with `__lyra__` defined as 1, beside the front end's own
+    `__slang__`, so a source selects on the tool that will run it by the first and on the parser
+    reading it by the second. The name is the tool's own: an invocation's `-U` takes either away,
+    and its `-D` gives neither another value. No macro states a version, since Lyra shows none.
 ```
 
 ## The schema

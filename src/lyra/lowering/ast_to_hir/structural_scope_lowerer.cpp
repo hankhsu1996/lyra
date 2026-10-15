@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Compilation.h>
@@ -62,81 +63,131 @@ namespace lyra::lowering::ast_to_hir {
 namespace {
 
 // Where one parameter an instance takes at construction gets its value: the
-// expression its instantiation wrote (LRM 23.10.2), or none where the value
-// was given elsewhere -- a defparam, a configuration (LRM 23.10.1, 33.4.3) --
-// and is then handed as the constant it settled to.
+// expression its instantiation wrote (LRM 23.10.2); a value given elsewhere --
+// a defparam, a configuration (LRM 23.10.1, 33.4.3) -- which is handed as the
+// constant it settled to; or none at all, which leaves it to the default its
+// declaration states (LRM 23.10.2.2).
+//
+// Two sources are equal where they build elements of one instantiation alike.
+// The instantiation writes one assignment for every element (LRM 23.3.2), so
+// two written arguments are the same expression and two left to the default
+// are the same default, while a value given elsewhere is told apart by the
+// constant it settled to.
+struct WrittenAtInstantiation {
+  auto operator==(const WrittenAtInstantiation&) const -> bool = default;
+};
+struct GivenElsewhere {
+  std::string settled;
+
+  auto operator==(const GivenElsewhere&) const -> bool = default;
+};
+struct LeftToDefault {
+  auto operator==(const LeftToDefault&) const -> bool = default;
+};
 struct ArgumentSource {
   const slang::ast::ParameterSymbol* parameter;
-  const slang::ast::Expression* written;
+  std::variant<WrittenAtInstantiation, GivenElsewhere, LeftToDefault> from;
 };
 
 // How one instance is built: the unit it is an instance of, and where each
 // parameter it takes at construction gets its value, in the unit's own order.
 struct InstanceConstruction {
   std::string unit;
+  std::string body;
   std::vector<ArgumentSource> arguments;
 };
 
 auto ConstructionOf(
     const slang::ast::InstanceSymbol& instance,
     const SpecializationPolicy& policy) -> InstanceConstruction {
-  InstanceConstruction built{.unit = policy.NameOf(instance), .arguments = {}};
+  InstanceConstruction built{
+      .unit = policy.NameOf(instance),
+      .body = policy.BodyNameOf(instance),
+      .arguments = {}};
   for (const slang::ast::ParameterSymbol* param :
        policy.SuppliedParametersOf(instance)) {
-    built.arguments.push_back(
-        ArgumentSource{
-            .parameter = param,
-            .written = ValueWrittenAtInstantiation(instance, *param)});
+    ArgumentSource source{.parameter = param, .from = LeftToDefault{}};
+    if (ValueWrittenAtInstantiation(instance, *param) != nullptr) {
+      source.from = WrittenAtInstantiation{};
+    } else if (GivenAValue(instance.body, *param)) {
+      source.from = GivenElsewhere{.settled = ValueIdentity(param->getValue())};
+    }
+    built.arguments.push_back(std::move(source));
   }
   return built;
 }
 
-// Whether two elements of one instantiation are built alike. The
-// instantiation writes one assignment for every element (LRM 23.3.2), so two
-// written arguments are the same expression, and a value given elsewhere is
-// told apart by the constant it settled to.
+// Whether two elements of one instantiation are built alike. Each element
+// has parameters of its own, so the arguments are compared by where each gets
+// its value.
 auto BuiltAlike(const InstanceConstruction& a, const InstanceConstruction& b)
     -> bool {
-  return a.unit == b.unit &&
+  return a.unit == b.unit && a.body == b.body &&
          std::ranges::equal(
-             a.arguments, b.arguments,
-             [](const ArgumentSource& x, const ArgumentSource& y) {
-               if ((x.written == nullptr) != (y.written == nullptr)) {
-                 return false;
-               }
-               return x.written != nullptr ||
-                      ValueIdentity(x.parameter->getValue()) ==
-                          ValueIdentity(y.parameter->getValue());
-             });
+             a.arguments, b.arguments, {}, &ArgumentSource::from,
+             &ArgumentSource::from);
 }
 
-// The arguments `child`'s constructor is passed, built as `built` says. The
-// front end binds the instantiation's own assignment where it is written (LRM
-// 23.10.2), so that is lowered here, against this scope's names. A value given
-// elsewhere was written in another scope and is part of what this unit is, so
-// it is handed as the constant it settled to.
-auto LowerConstructorArguments(
+// What `child`'s instantiation says of each parameter it takes at
+// construction, as `built` says. The front end binds the instantiation's own
+// assignment where it is written (LRM 23.10.2), so that is lowered here,
+// against this scope's names. A value given elsewhere was written in another
+// scope and is part of what this unit is, so it is handed as the constant it
+// settled to. A default is the child's own expression, so for one this scope
+// states only that no value was assigned.
+auto LowerParameterAssignments(
     StructuralScopeLowerer& lowerer, const InstanceConstruction& built,
     const slang::ast::InstanceSymbol& child, WalkFrame frame)
-    -> diag::Result<std::vector<hir::Expr>> {
+    -> diag::Result<std::vector<hir::ParameterValueAssignment>> {
   UnitLowerer& owner = lowerer.Owner();
-  std::vector<hir::Expr> arguments;
-  for (const ArgumentSource& source : built.arguments) {
-    if (source.written != nullptr) {
-      auto lowered = lowerer.LowerExpr(*source.written, frame);
-      if (!lowered) return std::unexpected(std::move(lowered.error()));
-      arguments.push_back(*std::move(lowered));
-      continue;
-    }
-    const auto span = frontend::PointSpanOf(child.location);
-    auto type = owner.InternType(source.parameter->getType(), span);
-    if (!type) return std::unexpected(std::move(type.error()));
-    auto value = MakeConstantValueExpr(
-        owner.Unit(), frame, source.parameter->getValue(), *type, span);
-    if (!value) return std::unexpected(std::move(value.error()));
-    arguments.push_back(*std::move(value));
+  const auto span = frontend::PointSpanOf(child.location);
+  // Each value is handed at the type the child's unit published for it, which
+  // is what its object entry is declared with.
+  const hir::UnitSignature& signature =
+      owner.Signatures().Instantiated(built.unit);
+  const std::vector<hir::TypeId>& handed =
+      hir::DesignElementOf(signature).handed;
+  if (handed.size() != built.arguments.size()) {
+    throw InternalError(
+        std::format(
+            "ast_to_hir: '{}' is built with {} values where its unit publishes "
+            "{} -- please report this as a bug",
+            child.name, built.arguments.size(), handed.size()));
   }
-  return arguments;
+  std::vector<hir::ParameterValueAssignment> assignments;
+  for (std::size_t i = 0; i < built.arguments.size(); ++i) {
+    const ArgumentSource& source = built.arguments[i];
+    const hir::TypeId type = owner.ImportSignatureType(signature, handed[i]);
+    auto value = std::visit(
+        Overloaded{
+            [&](const WrittenAtInstantiation&)
+                -> diag::Result<std::optional<hir::ExprId>> {
+              auto lowered = lowerer.LowerExpr(
+                  *ValueWrittenAtInstantiation(child, *source.parameter),
+                  frame);
+              if (!lowered) return std::unexpected(std::move(lowered.error()));
+              return frame.Exprs().Add(*std::move(lowered));
+            },
+            [&](const GivenElsewhere&)
+                -> diag::Result<std::optional<hir::ExprId>> {
+              auto constant = MakeConstantValueExpr(
+                  owner.Unit(), frame, source.parameter->getValue(), type,
+                  span);
+              if (!constant) {
+                return std::unexpected(std::move(constant.error()));
+              }
+              return frame.Exprs().Add(*std::move(constant));
+            },
+            [](const LeftToDefault&)
+                -> diag::Result<std::optional<hir::ExprId>> {
+              return std::nullopt;
+            }},
+        source.from);
+    if (!value) return std::unexpected(std::move(value.error()));
+    assignments.push_back(
+        hir::ParameterValueAssignment{.type = type, .value = *value});
+  }
+  return assignments;
 }
 
 }  // namespace
@@ -149,7 +200,7 @@ auto LowerConstructorArguments(
 // name.
 //
 // Every element is described by how it is built, and elements built alike are
-// one alternative. Each alternative's arguments are lowered once and stored
+// one alternative. Each alternative's assignments are lowered once and stored
 // among this scope's expressions, which is where the construction reads them.
 auto StructuralScopeLowerer::BuildInstanceMember(
     const slang::ast::Symbol& declared,
@@ -175,19 +226,15 @@ auto StructuralScopeLowerer::BuildInstanceMember(
           static_cast<std::uint32_t>(known - distinct.begin()));
       continue;
     }
-    auto arguments = LowerConstructorArguments(*this, built, *element, frame);
-    if (!arguments) return std::unexpected(std::move(arguments.error()));
-    std::vector<hir::ExprId> stored;
-    stored.reserve(arguments->size());
-    for (hir::Expr& value : *arguments) {
-      stored.push_back(frame.Exprs().Add(std::move(value)));
-    }
+    auto assignments = LowerParameterAssignments(*this, built, *element, frame);
+    if (!assignments) return std::unexpected(std::move(assignments.error()));
     member.taken.push_back(
         static_cast<std::uint32_t>(member.alternatives.size()));
     member.alternatives.push_back(
         hir::InstanceAlternative{
             .scope_class = owner_->ExternalScopeClassOf(built.unit),
-            .arguments = std::move(stored)});
+            .body = built.body,
+            .assignments = *std::move(assignments)});
     distinct.push_back(std::move(built));
   }
   return member;
@@ -208,6 +255,7 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   scope.processes = std::move(declarations.processes);
   scope.generates = std::move(declarations.generates);
   scope.instance_members = std::move(declarations.instance_members);
+  scope.procedural_scopes = std::move(declarations.procedural_scopes);
   scope.replicated_classes = owner_->TakeReplicatedClasses(*slang_scope_);
   const WalkFrame frame =
       parent_frame.WithStructuralFrame(frame_, slang_scope_, &scope)
@@ -219,11 +267,6 @@ auto StructuralScopeLowerer::Run(WalkFrame parent_frame)
   // elaboration gave it.
   auto parameters = DeclareDifferingParameters(scope, frame);
   if (!parameters) return std::unexpected(std::move(parameters.error()));
-
-  // A `disable` names a block or task by static identity (LRM 9.6.2), so it can
-  // name one whose body lowers later, or lives in another process entirely.
-  DeclareProceduralScopes(
-      *slang_scope_, *slang_scope_, *owner_, scope.procedural_scopes);
 
   // Structural members (variables, instances, generates, subroutine bodies)
   // are lowered before the members that name them (processes, continuous
@@ -291,8 +334,10 @@ auto StructuralScopeLowerer::DeclareDifferingParameters(
       case ParameterValueSource::kFixedBySpecialization:
         break;
       case ParameterValueSource::kSuppliedAtConstruction: {
-        auto declared = DeclareSettledValue(
-            scope, *parameter, hir::StructuralConstructionValueDecl{});
+        auto kind = SuppliedDeclarationOf(*parameter, frame);
+        if (!kind) return std::unexpected(std::move(kind.error()));
+        auto declared =
+            DeclareSettledValue(scope, *parameter, *std::move(kind));
         if (!declared) return std::unexpected(std::move(declared.error()));
         break;
       }
@@ -309,7 +354,7 @@ auto StructuralScopeLowerer::DeclareDifferingParameters(
         if (!lowered) return std::unexpected(std::move(lowered.error()));
         auto declared = DeclareSettledValue(
             scope, *parameter,
-            hir::StructuralParameterDecl{
+            hir::StructuralLocalparamDecl{
                 .initializer = frame.Exprs().Add(*std::move(lowered))});
         if (!declared) return std::unexpected(std::move(declared.error()));
         break;
@@ -319,22 +364,42 @@ auto StructuralScopeLowerer::DeclareDifferingParameters(
   return {};
 }
 
-// Declares a value the scope settles before its walk begins, and binds the
-// symbol to it so every name reaching the symbol resolves to the declaration
-// rather than to what one elaboration gave it.
+// What a parameter the construction supplies is declared as: a loop's index,
+// which the loop always hands (LRM 27.4), or a parameter an instantiation
+// assigns or leaves to the default it is declared with (LRM 6.20.1, 23.10.2).
+// The default is the declaration's whichever value this body's instantiation
+// gave, lowered here against this scope's names, so one written from an
+// earlier parameter reads the value this object holds. One that is not valid
+// here is one no instance of this unit is left to, since what makes it invalid
+// -- a type, a value something compiled holds -- is part of which unit it is.
+auto StructuralScopeLowerer::SuppliedDeclarationOf(
+    const slang::ast::ParameterSymbol& parameter, WalkFrame frame)
+    -> diag::Result<hir::StructuralDataObjectKind> {
+  if (parameter.isFromGenvar()) return hir::StructuralConstructionValueDecl{};
+  const slang::ast::Expression* declared = parameter.getDefaultValue();
+  if (declared == nullptr || declared->bad()) {
+    return hir::StructuralParameterDecl{.default_value = std::nullopt};
+  }
+  auto lowered = LowerExpr(*declared, frame);
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  return hir::StructuralParameterDecl{
+      .default_value = frame.Exprs().Add(*std::move(lowered))};
+}
+
+// Fills the declaration of a value the scope settles before its walk begins,
+// which every name reaching the symbol resolves to rather than to what one
+// elaboration gave it.
 auto StructuralScopeLowerer::DeclareSettledValue(
     hir::StructuralScope& scope, const slang::ast::ValueSymbol& value,
     hir::StructuralDataObjectKind kind) -> diag::Result<void> {
   auto type_or = owner_->InternType(
       value.getType(), frontend::PointSpanOf(value.location));
   if (!type_or) return std::unexpected(std::move(type_or.error()));
-  const hir::StructuralDataObjectId declared =
-      scope.structural_data_objects.Add(
-          hir::StructuralDataObjectDecl{
-              .name = std::string{value.name},
-              .type = *type_or,
-              .kind = std::move(kind)});
-  owner_->MapStructuralDataObjectBinding(value, frame_, declared);
+  scope.structural_data_objects.Define(
+      owner_->ReservedDataObject(value), hir::StructuralDataObjectDecl{
+                                             .name = std::string{value.name},
+                                             .type = *type_or,
+                                             .kind = std::move(kind)});
   return {};
 }
 
@@ -675,12 +740,13 @@ auto StructuralScopeLowerer::PopulateNetMember(
 // unit that asks for the value: the expression names declarations that would
 // mean nothing where that unit's signature is read, so what crosses is the call
 // and the expression is lowered here, in the scope that wrote it. It is one
-// return of the expression and takes no formals.
+// return of the expression, as the type `holder` declares, and takes no
+// formals.
 auto StructuralScopeLowerer::DefineEvaluator(
     const slang::ast::Symbol& holder, std::string name,
     const slang::ast::Expression& expr, WalkFrame frame) -> diag::Result<void> {
   const auto span = frontend::PointSpanOf(holder.location);
-  auto result_type = owner_->InternType(*expr.type, span);
+  auto result_type = owner_->InternDeclaredPortType(holder);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
 
   hir::ProceduralBody body;

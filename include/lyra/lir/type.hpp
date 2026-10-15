@@ -44,11 +44,6 @@ enum class PointerOwnership : std::uint8_t { kUnique, kShared, kBorrowed };
 
 enum class Mutability : std::uint8_t { kMutable, kReadOnly };
 
-// What an address names. The two do not convert into one another -- no language
-// this compiles through guarantees that a code address survives a trip through
-// a data one -- so retyping an address preserves which of them it is.
-enum class AddressKind : std::uint8_t { kStorage, kCode };
-
 enum class RuntimeLibraryKind : std::uint8_t {
   kEnumeration,
   kPrintItem,
@@ -80,6 +75,10 @@ enum class RuntimeLibraryKind : std::uint8_t {
   // The structures a definition is made of, which only a constant names.
   kScopeInfo,
   kScopeCallable,
+  // What a constructor is handed and what one of its entries is. A body hands
+  // a table's address to the library and never reads inside it.
+  kConstructionTable,
+  kInstantiation,
 };
 
 // An integral value's type: how many bits it has, whether they are read as
@@ -380,6 +379,13 @@ struct EvaluationAttemptsType {
   auto operator==(const EvaluationAttemptsType&) const -> bool = default;
 };
 
+// Storage holding the blocks one loop generate built, each under the value its
+// index stood at. It names no value, because what it holds is the blocks
+// themselves, which a name reaching one asks it for.
+struct LoopBlocksType {
+  auto operator==(const LoopBlocksType&) const -> bool = default;
+};
+
 // A write in progress into the storage a capability wrapper stands for, whose
 // contents are values of `value` (LRM 11.5.1). It is an object the writer holds
 // and owes the end of, and it names no place itself: the whole of those
@@ -440,7 +446,7 @@ class Type {
       RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
       VectorType, TupleType, StructType, UnionType, TaggedUnionType,
       ResolvedType, DriverType, ObservableType, SampledHistoryType,
-      EvaluationAttemptsType, OpenWriteType, DesignationType>;
+      EvaluationAttemptsType, LoopBlocksType, OpenWriteType, DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -463,12 +469,6 @@ class Type {
   // narrow relation of indirection -- storage that lives elsewhere -- which is
   // what an address-of yields.
   [[nodiscard]] auto Pointee() const -> std::optional<TypeId>;
-
-  // Which kind of address this type names, or nothing where it names none.
-  // Wider than the storage relation above, since a code address points at no
-  // storage and is an address regardless; what asks is a retype of an address,
-  // which requires one on each side and the same kind on both.
-  [[nodiscard]] auto Address() const -> std::optional<AddressKind>;
 
   // The type of the storage a dereference reaches. That is a reference's
   // referent, and also what a capability wrapper represents -- a wrapper is not

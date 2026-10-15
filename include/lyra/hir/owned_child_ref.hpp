@@ -29,16 +29,20 @@ struct InstanceMemberId {
       -> std::strong_ordering = default;
 };
 
-// A loop generate (LRM 27.4), which holds one block per iteration it counted
-// out; a path picks one of them with an instance select.
+// The block of a loop generate whose index stood at `index` (LRM 27.4), which
+// is how a hierarchical name picks one of the blocks the loop counted out.
+// Where among them that block stands is the holding object's to answer, since
+// it is what ran the loop; the name carries only what the language gave it.
 //
-// A path names the construct and selects a block of it, never the scope the
-// block compiled to: a loop whose blocks agree compiles to one scope and one
-// whose blocks disagree to one each, and both reach the same elaborated block.
-// Which scope that is stays the construct's own answer, so no name has to be
-// spelled before it exists.
+// A path names the construct and the block, never the scope the block compiled
+// to: a loop whose blocks are of one name compiles to one scope and one whose
+// blocks are of several to one per name, and both reach the same elaborated
+// block. Which scope
+// that is stays the construct's own answer, so no name has to be spelled
+// before it exists.
 struct GenerateLoopRef {
   GenerateId generate;
+  std::int64_t index = 0;
 
   auto operator==(const GenerateLoopRef&) const -> bool = default;
 };
@@ -64,11 +68,11 @@ using OwnedChildRef =
 
 // One element of a hierarchical path (LRM 23.6): what it names, and the
 // instance selects written after it. Each select picks one instance out of
-// what the name stands for -- an instance array (LRM 23.3.2), an interface
-// port carrying a range (LRM 25.3), the blocks of a loop generate -- and is
-// the position of that instance, the value the source wrote being spent where
-// the name resolves, as a declared range is. Something that stands for one
-// object takes none, which is the empty case rather than a shape of its own.
+// what the name stands for -- an instance array (LRM 23.3.2) or an interface
+// port carrying a range (LRM 25.3) -- and is the position of that instance,
+// the value the source wrote being spent where the name resolves, as a
+// declared range is. Something that stands for one object takes none, which is
+// the empty case rather than a shape of its own.
 template <typename Names>
 struct PathElement {
   Names names;

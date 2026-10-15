@@ -14,6 +14,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/class_definition.hpp"
+#include "lyra/runtime/construction_table.hpp"
 #include "lyra/runtime/scope_info.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -110,6 +111,20 @@ void AppendRecord(
   AppendFieldsOf(out, at, record, base, scope);
 }
 
+void AppendRecord(
+    std::vector<FieldLayout>& out, std::uint64_t at,
+    const runtime::Instantiation& record) {
+  const auto& [entry, table] = record;
+  AppendFieldsOf(out, at, record, entry, table);
+}
+
+void AppendRecord(
+    std::vector<FieldLayout>& out, std::uint64_t at,
+    const runtime::ConstructionTable& record) {
+  const auto& [instantiations] = record;
+  AppendFieldsOf(out, at, record, instantiations);
+}
+
 // A field that is itself a structure stands for its own fields.
 template <typename Field>
 void AppendField(
@@ -145,6 +160,10 @@ auto LayoutOfLibraryRecord(lir::RuntimeLibraryKind kind)
       return LayoutOf<runtime::ScopeInfo>();
     case lir::RuntimeLibraryKind::kScopeCallable:
       return LayoutOf<runtime::ScopeCallable>();
+    case lir::RuntimeLibraryKind::kConstructionTable:
+      return LayoutOf<runtime::ConstructionTable>();
+    case lir::RuntimeLibraryKind::kInstantiation:
+      return LayoutOf<runtime::Instantiation>();
     case lir::RuntimeLibraryKind::kEnumeration:
     case lir::RuntimeLibraryKind::kPrintItem:
     case lir::RuntimeLibraryKind::kPrintLiteralItem:

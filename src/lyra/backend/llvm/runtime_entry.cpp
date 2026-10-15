@@ -736,6 +736,7 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
+    case support::MemberStorageKind::kLoopBlocks:
       return Symbol(std::format("{}_{}", kind, RuntimeOpName(op)));
   }
   throw InternalError("llvm codegen: unknown member storage kind");
@@ -759,6 +760,7 @@ auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool {
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
+    case support::MemberStorageKind::kLoopBlocks:
       return false;
   }
   throw InternalError("llvm codegen: unknown member storage kind");
@@ -918,6 +920,8 @@ auto MemberStorageKindOf(
               // What a constant is made of, which no member holds.
               case lir::RuntimeLibraryKind::kScopeInfo:
               case lir::RuntimeLibraryKind::kScopeCallable:
+              case lir::RuntimeLibraryKind::kConstructionTable:
+              case lir::RuntimeLibraryKind::kInstantiation:
                 return std::nullopt;
             }
             throw InternalError("llvm codegen: unknown runtime library kind");
@@ -929,6 +933,10 @@ auto MemberStorageKindOf(
           [](const lir::EvaluationAttemptsType&)
               -> std::optional<support::MemberStorageKind> {
             return support::MemberStorageKind::kEvaluationAttempts;
+          },
+          [](const lir::LoopBlocksType&)
+              -> std::optional<support::MemberStorageKind> {
+            return support::MemberStorageKind::kLoopBlocks;
           },
           // A class handle is a value the member holds rather than a pointer it
           // merely points with: the object stays alive because the member
@@ -1038,6 +1046,7 @@ auto DeclaredStorageOf(
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
+    case support::MemberStorageKind::kLoopBlocks:
       return declared(support::ValueDomain::kEmpty);
   }
   throw InternalError("runtime abi: unknown member storage kind");
@@ -1791,8 +1800,11 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFinish:
     case support::BuiltinFn::kStop:
     case support::BuiltinFn::kEnclosingScope:
-    case support::BuiltinFn::kIsOfClass:
+    case support::BuiltinFn::kLoopBlocksAdd:
+    case support::BuiltinFn::kLoopBlocksAt:
     case support::BuiltinFn::kAddOwnedChild:
+    case support::BuiltinFn::kInstantiationEntry:
+    case support::BuiltinFn::kInstantiationTable:
     case support::BuiltinFn::kExtendSequence:
     // Recovering the object a handle names, or a handle naming the object a
     // body runs on. Each is one library function serving every class, so the

@@ -309,6 +309,11 @@ void RenderReferenceExpr(
             Write(
                 out, CppClassPath(view.Unit(), r.body.owner),
                 "::", CppClassCallableName(view.Unit(), owner, r.body.slot));
+          },
+          [&](const mir::ExternalObjectEntryRef& r) {
+            Write(
+                out, CppBodyScope(r.unit_name, r.body_name),
+                "::", CppObjectEntryName());
           }},
       reference.target);
 }

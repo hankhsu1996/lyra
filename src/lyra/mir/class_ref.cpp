@@ -103,6 +103,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> DeclaredClassRef {
           [&](const ObjectWriteType&) { return not_an_object(); },
           [&](const SampledHistoryType&) { return not_an_object(); },
           [&](const EvaluationAttemptsType&) { return not_an_object(); },
+          [&](const LoopBlocksType&) { return not_an_object(); },
           [&](const StructType&) { return not_an_object(); },
           [&](const ClosureType&) { return not_an_object(); }});
 }

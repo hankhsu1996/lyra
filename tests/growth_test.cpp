@@ -126,7 +126,7 @@ struct GrowthCase {
 constexpr std::string_view kUnits = "units";
 constexpr std::string_view kFiles = "files";
 constexpr std::string_view kBytes = "bytes";
-// A unit's own body and every one lowered only to be held against a unit.
+// A unit's own body and every other instance's lowered into it beside.
 constexpr std::string_view kBodiesLowered = "bodies lowered";
 
 // What one compile left behind and spent, as the run itself recorded it.

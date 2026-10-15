@@ -650,12 +650,14 @@ auto CodeGenTuples::TypeOf(lir::TypeId tuple) -> llvm::GlobalVariable* {
   // one.
   std::span<const lir::StructMethod> methods;
   if (const auto* structure = unit_->types.Get(tuple).As<lir::StructType>()) {
-    type->setLinkage(llvm::GlobalValue::ExternalLinkage);
     const auto* own = std::get_if<lir::StructId>(&structure->declaration);
     if (own == nullptr) {
+      type->setLinkage(llvm::GlobalValue::ExternalLinkage);
       return type;
     }
-    methods = unit_->structs.Get(*own).methods;
+    const lir::Struct& declared = unit_->structs.Get(*own);
+    type->setLinkage(LinkageOf(declared.linkage));
+    methods = declared.methods;
   }
 
   const TupleLayout& layout = types_->LayoutOfTuple(tuple);

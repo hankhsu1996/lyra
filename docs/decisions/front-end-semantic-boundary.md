@@ -12,7 +12,10 @@ declaration that unit published, and by-name only when it is not. **D3's by-name
 by [a-design-element-publishes-its-declarations](a-design-element-publishes-its-declarations.md)**:
 every scope a name can step into publishes what a name can reach, so every segment is typed. The
 second immediate change, an `always_comb`'s list taken from `getSensitivityList()`, is revised by
-[an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).
+[an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md). Where D2
+takes a read set from -- the front end's flow analysis -- is replaced by
+[the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md);
+its split by consumer stands.
 
 D1's forbidden shape held on the read path from the day this was written and on the write path only
 from 2026-09-10, when the last classifier reading the declaration table's membership was removed --

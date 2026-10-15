@@ -113,15 +113,9 @@ auto NamedHopInto(const slang::ast::Symbol& symbol) -> std::optional<NamedHop> {
     // A loop's block is named by its construct, and the value its index stood
     // at picks it out (LRM 27.4).
     if (block->getArrayIndex() != nullptr) {
-      const auto& loop = block->getParentScope()
-                             ->asSymbol()
-                             .as<slang::ast::GenerateBlockArraySymbol>();
-      const auto counted = std::ranges::find(loop.entries, block);
       return LoopBlockHop{
-          .loop = std::string{loop.name},
-          .index = LoopIndexOf(*block),
-          .position = static_cast<std::uint32_t>(
-              std::ranges::distance(loop.entries.begin(), counted))};
+          .loop = std::string{block->getParentScope()->asSymbol().name},
+          .index = LoopIndexOf(*block)};
     }
     return ChosenBlockHop{
         .construct = block->constructIndex,
@@ -215,24 +209,21 @@ auto AddCoordinate(DescentHop& hop, std::uint32_t position) -> bool {
       hop);
 }
 
-// Where a scope published the generate block a name selects: the construct,
-// the select picking the block out of it, and the class the block was
-// published as.
-struct PublishedBlockAt {
-  hir::PublishedGenerateId generate;
-  std::vector<std::uint32_t> selects;
+// Where a scope published the block of a loop a name reaches: the loop, and
+// the class the block was published as.
+struct PublishedLoopBlockAt {
+  hir::PublishedLoopId loop;
   support::DefPath class_path;
 };
 
-// A loop's block is selected by its place among the blocks the object holding
-// it counted out, and its class is the loop's one class or, where the loop has
-// several, the one standing at the value its index stood at (LRM 27.4).
-// Nothing where the scope published no such block.
-auto FindPublishedBlock(
-    const base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId>&
-        generates,
-    const LoopBlockHop& hop) -> std::optional<PublishedBlockAt> {
-  for (const hir::PublishedGenerateId at : generates.Ids()) {
+// A loop's block is the one standing at the value its index stood at, and its
+// class is the loop's one class or, where the loop has several, the one
+// standing at that value (LRM 27.4). Nothing where the scope published no such
+// block.
+auto FindPublishedLoopBlock(
+    const base::Arena<hir::PublishedLoop, hir::PublishedLoopId>& loops,
+    const LoopBlockHop& hop) -> std::optional<PublishedLoopBlockAt> {
+  for (const hir::PublishedLoopId at : loops.Ids()) {
     auto class_path = std::visit(
         Overloaded{
             [&](const hir::PublishedLoopOfOneClass& loop)
@@ -249,50 +240,37 @@ auto FindPublishedBlock(
                 }
               }
               return std::nullopt;
-            },
-            [](const hir::PublishedChoice&) -> std::optional<support::DefPath> {
-              return std::nullopt;
             }},
-        generates.Get(at));
+        loops.Get(at));
     if (class_path.has_value()) {
-      return PublishedBlockAt{
-          .generate = at,
-          .selects = {hop.position},
-          .class_path = *std::move(class_path)};
+      return PublishedLoopBlockAt{
+          .loop = at, .class_path = *std::move(class_path)};
     }
   }
   return std::nullopt;
 }
 
+// Where a scope published the one block a construct building at most one
+// holds: the construct, and the class the block was published as.
+struct PublishedChoiceAt {
+  hir::PublishedChoiceId choice;
+  support::DefPath class_path;
+};
+
 // A block that stands alone or was chosen by a conditional is found by where
 // the source wrote it, and is the one block its construct holds in the scope
 // the name stands in (LRM 27.5).
-auto FindPublishedBlock(
-    const base::Arena<hir::PublishedGenerate, hir::PublishedGenerateId>&
-        generates,
-    const ChosenBlockHop& hop) -> std::optional<PublishedBlockAt> {
-  for (const hir::PublishedGenerateId at : generates.Ids()) {
-    auto found = std::visit(
-        Overloaded{
-            [](const hir::PublishedLoopOfOneClass&)
-                -> std::optional<PublishedBlockAt> { return std::nullopt; },
-            [](const hir::PublishedLoopByIndex&)
-                -> std::optional<PublishedBlockAt> { return std::nullopt; },
-            [&](const hir::PublishedChoice& choice)
-                -> std::optional<PublishedBlockAt> {
-              if (choice.construct != hop.construct) return std::nullopt;
-              for (const hir::PublishedAlternative& block : choice.blocks) {
-                if (block.position == hop.position) {
-                  return PublishedBlockAt{
-                      .generate = at,
-                      .selects = {},
-                      .class_path = block.class_path};
-                }
-              }
-              return std::nullopt;
-            }},
-        generates.Get(at));
-    if (found.has_value()) return found;
+auto FindPublishedChoice(
+    const base::Arena<hir::PublishedChoice, hir::PublishedChoiceId>& choices,
+    const ChosenBlockHop& hop) -> std::optional<PublishedChoiceAt> {
+  for (const hir::PublishedChoiceId at : choices.Ids()) {
+    const hir::PublishedChoice& choice = choices.Get(at);
+    if (choice.construct != hop.construct) continue;
+    for (const hir::PublishedAlternative& block : choice.blocks) {
+      if (block.position == hop.position) {
+        return PublishedChoiceAt{.choice = at, .class_path = block.class_path};
+      }
+    }
   }
   return std::nullopt;
 }
@@ -1088,26 +1066,20 @@ auto UnitLowerer::DescendPublishedFrom(
     return true;
   };
 
-  // A hop into a generate block is a step through the construct the scope
-  // published it under, onto the class that block was published as.
-  const auto into_block = [&](const InExternalScope& on,
-                              const auto& block) -> bool {
-    const hir::ExternalScopeClass& record =
-        unit_.external_scope_classes.Get(on.scope_class);
-    auto found = FindPublishedBlock(record.signature.generates, block);
-    if (!found.has_value()) return false;
-    const std::string unit_name = record.unit_name;
-    const hir::ExternalScopeClassId result_class =
-        ExternalScopeClassOf(unit_name, found->class_path);
+  // A hop into a generate block lands on the class that block was published
+  // as, which this unit records under the unit holding the block; the step
+  // names the block as the hop says.
+  const auto class_of_block = [&](const InExternalScope& on,
+                                  const support::DefPath& class_path) {
+    const std::string unit_name =
+        unit_.external_scope_classes.Get(on.scope_class).unit_name;
+    return ExternalScopeClassOf(unit_name, class_path);
+  };
+  const auto step_into_block = [&](hir::ExternalScopeRef names,
+                                   hir::ExternalScopeClassId result_class) {
     descended.open.clear();
     descended.steps.push_back(
-        hir::ExternalStep{
-            .names =
-                hir::ExternalGenerateRef{
-                    .scope_class = on.scope_class,
-                    .generate = found->generate,
-                    .result_class = result_class},
-            .selects = std::move(found->selects)});
+        hir::ExternalStep{.names = std::move(names), .selects = {}});
     descended.place =
         InExternalScope{.scope_class = result_class, .within = {}};
     return true;
@@ -1124,11 +1096,43 @@ auto UnitLowerer::DescendPublishedFrom(
             [&](InstanceHop& instance) {
               return !past_procedural && onto_instance(*on, instance);
             },
+            // A loop's block is named as the source names it, by the loop and
+            // the value its index stood at, and the loop's member answers
+            // which of the blocks the object built that is (LRM 27.4).
             [&](const LoopBlockHop& block) {
-              return !past_procedural && into_block(*on, block);
+              if (past_procedural) return false;
+              const auto found = FindPublishedLoopBlock(
+                  unit_.external_scope_classes.Get(on->scope_class)
+                      .signature.loops,
+                  block);
+              if (!found.has_value()) return false;
+              const hir::ExternalScopeClassId result_class =
+                  class_of_block(*on, found->class_path);
+              return step_into_block(
+                  hir::ExternalGenerateLoopRef{
+                      .scope_class = on->scope_class,
+                      .loop = found->loop,
+                      .index = block.index,
+                      .result_class = result_class},
+                  result_class);
             },
+            // The one block a construct building at most one holds is the one
+            // the member published for the construct holds (LRM 27.5).
             [&](const ChosenBlockHop& block) {
-              return !past_procedural && into_block(*on, block);
+              if (past_procedural) return false;
+              const auto found = FindPublishedChoice(
+                  unit_.external_scope_classes.Get(on->scope_class)
+                      .signature.choices,
+                  block);
+              if (!found.has_value()) return false;
+              const hir::ExternalScopeClassId result_class =
+                  class_of_block(*on, found->class_path);
+              return step_into_block(
+                  hir::ExternalGenerateBlockRef{
+                      .scope_class = on->scope_class,
+                      .choice = found->choice,
+                      .result_class = result_class},
+                  result_class);
             },
             [&](ProceduralHop& procedural) {
               on->within.push_back(std::move(procedural.step));
@@ -1584,11 +1588,6 @@ auto UnitLowerer::SensitivityEntriesOf(
                             .prefix = frame.Exprs().Add(*std::move(lowered))});
                   }
                   return parts;
-                },
-                [](const UnselectedBits& bits)
-                    -> diag::Result<std::vector<hir::WatchedPart>> {
-                  return std::vector<hir::WatchedPart>{
-                      hir::WatchedBits{.first = bits.first, .last = bits.last}};
                 }},
             read.part);
       },

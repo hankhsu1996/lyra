@@ -733,6 +733,12 @@ auto lyra_rt_add_owned_child(void* parent, void* child) -> void*;
 // or past the topmost a top-level instance of it.
 auto lyra_rt_enclosing_scope(void* self, const void* definition) -> void*;
 
+// The blocks one loop generate built (LRM 27.4): filing the block built where
+// the index stood at `index`, and the block a name reaching that value asks for
+// (LRM 23.6).
+void lyra_rt_loop_blocks_add(void* blocks, std::int64_t index, void* block);
+auto lyra_rt_loop_blocks_at(const void* blocks, std::int64_t index) -> void*;
+
 // Writes bits into an integral value where it lies (LRM 11.5.1): the
 // `bits_width` bits at `bits`, at the position `start` names within the last
 // of the parts `outer_parts` spans, outermost first, of the value `whole_width`
@@ -749,10 +755,6 @@ void lyra_rt_insert_bits(
 // given back. Giving back none is nothing.
 auto lyra_rt_alloc_bytes(std::uint64_t size) -> void*;
 void lyra_rt_dealloc_bytes(void* bytes, std::uint64_t size);
-
-// Whether the scope `self` is an object of the class `definition` describes or
-// of one extending it.
-auto lyra_rt_is_of_class(void* self, const void* definition) -> bool;
 
 // The sequence of handles a declaration standing for several objects builds,
 // in the order its coordinates count, and the handle at a position in one. A
@@ -775,6 +777,14 @@ auto lyra_rt_sequence_element(const void* sequence, std::int64_t index)
 auto lyra_rt_run_program(
     std::int32_t argc, char** argv, void* (*make)(void*, const void*),
     const void* name) -> std::int32_t;
+
+// How the instance at instantiation `at` of a construction table is made
+// (`lyra::runtime::ConstructionTable`): the entry making it, and the table it
+// is constructed with.
+auto lyra_rt_instantiation_entry(const void* table, std::int64_t at)
+    -> LyraMethodEntry;
+auto lyra_rt_instantiation_table(const void* table, std::int64_t at) -> const
+    void*;
 
 // A reference, built in the storage the caller gives: where a value lies, and
 // what holds that storage, if anyone is told about it. A body holding a
@@ -2639,6 +2649,7 @@ void lyra_rt_named_event_construct(void* storage);
 void lyra_rt_cancellation_target_construct(void* storage);
 void lyra_rt_evaluation_attempts_construct(void* storage);
 void lyra_rt_timer_construct(void* storage);
+void lyra_rt_loop_blocks_construct(void* storage);
 void lyra_rt_channel_cancellation_construct(void* storage);
 void lyra_rt_shared_pointer_construct(void* storage);
 void lyra_rt_string_cell_destroy(void* storage);
@@ -2680,6 +2691,7 @@ void lyra_rt_named_event_destroy(void* storage);
 void lyra_rt_cancellation_target_destroy(void* storage);
 void lyra_rt_evaluation_attempts_destroy(void* storage);
 void lyra_rt_timer_destroy(void* storage);
+void lyra_rt_loop_blocks_destroy(void* storage);
 
 // The holders over each layout an integral value no wider than a word has: the
 // storage unit one plane takes -- 8, 16, 32 or 64 bits -- and whether an

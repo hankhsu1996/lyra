@@ -1,18 +1,19 @@
 // Lowering one unchanged design twice states one thing. The written program
 // repeating does not show it: nothing below the first semantic form reads where
 // that form put each of its parts, so two lowerings that differ only there
-// write the same text. What does read it is the comparison that decides whether
-// two copies of one body are one compiled artifact, which holds two scopes
-// equal position for position -- so a form that moves on its own costs sharing
-// while every program stays right, and nothing a design simulates or a build
-// writes reports it.
+// write the same text. What does read it is holding two lowerings of one body
+// equal position for position, which the check of the compile against itself
+// does -- so a form that moves on its own refuses a correct design there, and
+// nothing a design simulates or a build writes reports it elsewhere.
 //
-// What is compared is each unit's own form, by the equality sharing is decided
-// with, in the order the design lists its units.
+// What is compared is each unit's own form, by that equality, in the order the
+// design lists its units.
 //
 // The two lowerings also differ in which instances they read. The first reads
 // the bodies the front end elaborated and names every other instance where it
-// is written, as a build does. The second reads every instance's body and
+// is written, and lowers each part of a generate body from the first block
+// instance that built it, as a build does. The second reads every instance's
+// body, lowers each part from the last block instance that built it, and
 // holds each to the unit it shares, so a design where an instance left unread
 // would have lowered apart from its unit stops there, and the two are then
 // held to having found the same units stating the same things.
@@ -112,7 +113,7 @@ class RepeatableLoweringTest : public testing::Test {
     Compilation second = Elaborate(*case_);
 
     const std::optional<LoweredUnits> first_units =
-        Lower(first, 1, BodiesRead::kElaborated);
+        Lower(first, 1, BodiesRead::kOnePerName);
     const std::optional<LoweredUnits> second_units =
         Lower(second, kWide, BodiesRead::kEveryInstance);
     if (!first_units.has_value() && !second_units.has_value()) {
@@ -145,7 +146,7 @@ TEST(RepeatableLowering, ADesignWrittenToShowAnOrderingStatesOneThing) {
   Compilation second = Elaborate(design);
 
   const std::optional<LoweredUnits> first_units =
-      Lower(first, 1, BodiesRead::kElaborated);
+      Lower(first, 1, BodiesRead::kOnePerName);
   const std::optional<LoweredUnits> second_units =
       Lower(second, kWide, BodiesRead::kEveryInstance);
   ASSERT_TRUE(first_units.has_value() && second_units.has_value())

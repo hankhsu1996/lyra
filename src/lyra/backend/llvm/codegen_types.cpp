@@ -118,6 +118,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::ResolvedType& t) { return address(t); },
           [&](const lir::SampledHistoryType& t) { return address(t); },
           [&](const lir::EvaluationAttemptsType& t) { return address(t); },
+          [&](const lir::LoopBlocksType& t) { return address(t); },
           [&](const lir::RuntimeEffectsType& t) { return address(t); },
           [&](const lir::FilesType& t) { return address(t); },
           [&](const lir::DiagnosticType& t) { return address(t); },

@@ -1158,11 +1158,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kEnclosingScope:
       return {
           .name = "enclosing_scope", .declaration = Method{"EnclosingScope"}};
-    case BuiltinFn::kIsOfClass:
-      return {.name = "is_of_class", .declaration = Method{"IsOfClass"}};
+    case BuiltinFn::kLoopBlocksAdd:
+      return {.name = "loop_blocks_add", .declaration = Method{"Add"}};
+    case BuiltinFn::kLoopBlocksAt:
+      return {.name = "loop_blocks_at", .declaration = Method{"At"}};
     case BuiltinFn::kAddOwnedChild:
       return {
           .name = "add_owned_child", .declaration = Method{"AddOwnedChild"}};
+    case BuiltinFn::kInstantiationEntry:
+      return {
+          .name = "instantiation_entry",
+          .declaration = RuntimeFunction("InstantiationEntry")};
+    case BuiltinFn::kInstantiationTable:
+      return {
+          .name = "instantiation_table",
+          .declaration = RuntimeFunction("InstantiationTable")};
     case BuiltinFn::kExtendSequence:
       return {
           .name = "sequence_extend",

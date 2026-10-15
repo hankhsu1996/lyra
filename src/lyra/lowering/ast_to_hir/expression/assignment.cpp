@@ -78,7 +78,7 @@ auto LowerAssignmentExpr(
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));
   const hir::ExprId lhs_id = frame.Exprs().Add(*std::move(lhs_or));
 
-  auto type_id = unit_lowerer.InternType(*as.type, span);
+  auto type_id = unit_lowerer.InternExpressionType(as, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   auto timing_or = LowerAssignTiming(lowerer, frame, as, span);
@@ -111,7 +111,7 @@ auto LowerAssignmentExpr(
   auto rhs_or = lowerer.LowerExpr(*applied.operand, frame);
   if (!rhs_or) return std::unexpected(std::move(rhs_or.error()));
   const hir::ExprId rhs_id = frame.Exprs().Add(*std::move(rhs_or));
-  auto applied_at = unit_lowerer.InternType(*applied.applied_at, span);
+  auto applied_at = unit_lowerer.InternResultType(*applied.applied_at, span);
   if (!applied_at) return std::unexpected(std::move(applied_at.error()));
   return hir::Expr{
       .type = *type_id,
@@ -137,7 +137,7 @@ auto LowerIncDecExpr(
   if (!target_or) return std::unexpected(std::move(target_or.error()));
   const hir::ExprId target_id = frame.Exprs().Add(*std::move(target_or));
 
-  auto type_id = unit_lowerer.InternType(*un.type, span);
+  auto type_id = unit_lowerer.InternExpressionType(un, span);
   if (!type_id) return std::unexpected(std::move(type_id.error()));
 
   return hir::Expr{

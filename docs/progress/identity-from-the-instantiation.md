@@ -41,7 +41,8 @@ does not write as one. That much is the language's.
 **A unit's lowering can reach past what identifies it.** It is lowered from one instance's body, and
 that body leads to the instance, to what the instance is connected to, and to the bodies of other
 instances. Whatever it reads there and the key does not hold makes two instances of one key lower
-differently, which is why every instance with a body of its own is lowered and held to its unit.
+differently, which is why a check reads every instance through a body of its own and holds each to
+its unit; an ordinary build lowers each unit from the one instance it is named for.
 
 ## The steps
 
@@ -52,7 +53,8 @@ differently, which is why every instance with a body of its own is lowered and h
       for instances it finds alike and leaves the rest unelaborated. Such an instance is one
       application with an earlier one when its values were seen before, by this compiler's bit-exact
       comparison, and nothing of it is read: not its body, and nothing below it. Every other
-      instance is read through its own body and held to its unit, as before.
+      instance with a body of its own names its unit, and is lowered and held to it only where a
+      compile is checked against itself.
 - [x] **A name that resolves alike from every instance tells no two of them apart.** The front end
       shares a body such a name leaves, one whose first part is a top-level module's name (LRM
       23.6), and an instance sharing it has the landings the shared body states. A name found by the

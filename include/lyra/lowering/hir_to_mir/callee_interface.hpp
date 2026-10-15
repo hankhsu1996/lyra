@@ -8,6 +8,7 @@
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/external_callee.hpp"
 #include "lyra/hir/param_direction.hpp"
+#include "lyra/hir/published_callable.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -151,5 +152,18 @@ auto SubroutineCallTypeOf(
 auto SubroutineCallTypeOf(
     UnitLowerer& unit_lowerer, const hir::ExternalCalleeInterface& interface,
     hir::TypeId result_type) -> mir::TypeId;
+
+// `decl` as a method of an object `self` points at that declares it and leaves
+// it to what extends it (LRM 8.21): its receiver, its parameters and what a
+// call of it yields, with no body.
+auto PrototypeOf(
+    UnitLowerer& unit_lowerer, const hir::SubroutineDecl& decl,
+    mir::TypeId self) -> mir::CallableCode;
+
+// The same, for a subroutine read off what its unit published rather than off
+// its declaration.
+auto PrototypeOf(
+    UnitLowerer& unit_lowerer, const hir::PublishedCallable& published,
+    mir::TypeId self) -> mir::CallableCode;
 
 }  // namespace lyra::lowering::hir_to_mir

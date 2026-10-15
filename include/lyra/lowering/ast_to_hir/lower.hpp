@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
@@ -43,8 +42,10 @@ class LowerCompilationFacts {
 
 // A top-level block is an auto-promoted, uninstantiated module, named three
 // times because the names answer different questions: the first two coincide
-// only when the identifier needs no escaping, the first and the last only when
-// no parameter decides which unit it is.
+// only when the identifier needs no escaping, the first and the unit only when
+// no parameter decides which unit it is. A top is the only instance of its
+// unit and every value it is given is in the unit's name, so the body it is
+// compiled to is the unit's one body and is named as the unit is.
 struct TopLevelUnit {
   // What the design's hierarchy shows for this top. Nothing instantiates a
   // top, so it stands under its own module identifier (LRM 23.3), and that is
@@ -53,8 +54,8 @@ struct TopLevelUnit {
   // That identifier as a hierarchical name writes it (LRM 23.6), which is what
   // the top reports as its own name.
   std::string name_in_a_path;
-  // The compiled unit it is an instance of. One module compiles to one unit
-  // per specialization, so this is the artifact's name.
+  // The compiled unit it is an instance of, which names its class and the
+  // body it is compiled to.
   std::string unit_name;
 };
 
@@ -80,15 +81,6 @@ struct TopLevelUnit {
 // synchronized its own first-read computation could be read by every unit at
 // once. What follows a unit's HIR reads no frontend, so it runs as wide as its
 // caller allows.
-// Whether declaring a design looks for definitions compiled into more units
-// than their instances need. It is a check on this compiler and costs a
-// lowering per unit of every definition compiled more than once, so a build
-// runs it only where its remarks are asked for.
-enum class MissedSharing : std::uint8_t {
-  kNotLookedFor,
-  kLookedFor,
-};
-
 class DeclaredDesign {
  public:
   // Declares every unit of `front_end`. A unit whose declarations fail is
@@ -103,30 +95,21 @@ class DeclaredDesign {
   // module declaring either is a design element and not a design, and is
   // reported.
   //
-  // Instances share one unit only where each is one body with it, which is
-  // checked here for every instance whose body is read, one beside its unit at
-  // a time; `bodies_read` says which those are. Instances handed different
-  // values of a parameter may build different blocks, since those values
-  // decide which alternative of a conditional generate stands and how many
-  // blocks a loop counts out (LRM 27.4, 27.5), and the unit then holds what
-  // each built. Where they differ in anything else, the definition is declared
-  // again with every parameter deciding its unit, and a remark says so; what
-  // comes back is always the design each instance describes. Where instances
-  // handed the same values differ, nothing a unit is told apart by separates
-  // them, so no unit could be named for each: that is this compiler's defect
-  // and is thrown as one.
-  //
-  // That finds a value taken for one an instance is built with where what is
-  // compiled holds it. `missed_sharing` says whether to look for the opposite,
-  // a value kept in a unit's identity that decides nothing, which costs a unit
-  // per value and changes no program. Looking lowers the units of each
-  // definition compiled more than once as one unit handed every value, and a
-  // remark names a definition whose units are then one body.
+  // Instances share one body where they agree on its name: what the language
+  // fixes in the unit, the generate blocks each built (LRM 27.4, 27.5), and the
+  // values its code uses. The lowering reads a value only through that name or
+  // as one the object is built with, so a body is lowered from the one
+  // instance it is named for, each part of a generate body from the one block
+  // it is lowered from, and nothing is compared. `bodies_read` says whether
+  // the compile checks itself: where every instance is read through a body of
+  // its own, each other instance of a body is lowered too, a generate body is
+  // lowered from its last block rather than its first, and each has to come
+  // out the same; one that does not is this compiler's defect, thrown as one.
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
       support::AssertionPolicy assertion_policy,
-      support::BodiesRead bodies_read, MissedSharing missed_sharing,
-      diag::DiagnosticSink& sink) -> std::optional<DeclaredDesign>;
+      support::BodiesRead bodies_read, diag::DiagnosticSink& sink)
+      -> std::optional<DeclaredDesign>;
 
   DeclaredDesign(DeclaredDesign&&) noexcept;
   auto operator=(DeclaredDesign&&) noexcept -> DeclaredDesign&;

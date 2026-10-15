@@ -47,8 +47,7 @@ auto DeclareUnits(
         "is none left to declare");
   }
   auto units = lowering::ast_to_hir::DeclaredDesign::Declare(
-      std::move(elaborated), policy.assertions, policy.bodies_read,
-      policy.missed_sharing, sink);
+      std::move(elaborated), policy.assertions, policy.bodies_read, sink);
   if (!units) {
     return std::nullopt;
   }

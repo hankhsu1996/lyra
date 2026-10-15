@@ -35,6 +35,7 @@
 #include "lyra/hir/structural_data_object.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type_import.hpp"
+#include "lyra/hir/unit_body_ref.hpp"
 #include "lyra/hir/unit_signature.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/hir/value_ref.hpp"
@@ -404,10 +405,8 @@ struct InUnitReach {
 
 // A hop of a descent this unit declares nothing about, as the front end says
 // the name reached it: an instance, with the coordinates the name wrote for
-// it; a block of a loop generate, by the label of the loop, the value its
-// index stood at, and its place among the blocks the loop counted out where
-// the name reached it (LRM 27.4); a block that stands alone or that a
-// conditional
+// it; a block of a loop generate, by the label of the loop and the value its
+// index stood at (LRM 27.4); a block that stands alone or that a conditional
 // chose, by where the source wrote its construct among those of its scope and
 // the block among that construct's alternatives, since a label does not tell
 // the alternatives of a conditional apart (LRM 27.5); or a named block or
@@ -421,7 +420,6 @@ struct InstanceHop {
 struct LoopBlockHop {
   std::string loop;
   std::int64_t index;
-  std::uint32_t position;
 };
 struct ChosenBlockHop {
   std::uint32_t construct;
@@ -502,6 +500,8 @@ struct ScopeDeclarations {
   base::Registry<hir::Generate, hir::GenerateId> generates;
   base::Registry<hir::InstanceMemberDecl, hir::InstanceMemberId>
       instance_members;
+  base::Registry<hir::ProceduralScopeDecl, hir::ProceduralScopeId>
+      procedural_scopes;
 };
 
 // The specializations of a generic class a namespace declares that a design
@@ -577,16 +577,18 @@ class UnitLowerer {
   // unit of its own, which is lowered from the scope declaring its generic and
   // holds nothing of that scope but itself.
   //
-  // A design element's unit is one text every application of it shares, and
-  // `home` is the body of one of them. `also_lowered_from` holds the bodies of
-  // the others the unit is lowered from as well: what each of them built is
-  // part of what the unit holds, since which alternative of a conditional
-  // generate stands and how many blocks a loop counts out are decided when an
-  // object is built (LRM 27.4, 27.5) and differ between applications.
+  // A design element's body is one text every application of it shares, and
+  // `home` is the body of one of them. `checked_against` holds the bodies of
+  // others, which the body is lowered from as well and has to come out the
+  // same from: what is compiled is a function of the body's name, so an
+  // application lowering to anything else is a defect of how the name was
+  // worked out. A build asks for none; the check of the compile against itself
+  // asks for every instance.
   UnitLowerer(
       const LoweringFacts& facts, const slang::ast::Symbol& home,
-      std::string name, hir::UnitRole role,
-      std::span<const slang::ast::InstanceBodySymbol* const> also_lowered_from);
+      hir::UnitBodyRef names, hir::UnitRole role,
+      std::span<const slang::ast::InstanceBodySymbol* const> checked_against =
+          {});
 
   // The declaration phase: everything this unit states about itself, including
   // the signature it publishes. Reads no other unit, so a body that later
@@ -598,40 +600,12 @@ class UnitLowerer {
   // ones it may read.
   [[nodiscard]] auto TakeSignature() -> hir::UnitSignature;
 
-  // Whether two block instances this unit took for one application of their
-  // definition published different classes, which its declaration phase finds.
-  // Something in the block held a value its index decided where the index was
-  // taken to be only read, so the unit's definition has to be declared again
-  // with every index deciding.
-  [[nodiscard]] auto BlocksPublishedApart() const -> bool {
-    return blocks_published_apart_;
-  }
-
-  // Whether two applications this unit is lowered from published a different
-  // class for the unit's own scope, which its declaration phase finds.
-  // Something they declare held a value one of them was handed where the value
-  // was taken to be only read, so the unit's definition has to be declared
-  // again with every parameter deciding.
-  [[nodiscard]] auto ApplicationsPublishedApart() const -> bool {
-    return applications_published_apart_;
-  }
-
   // The body phase: everything this unit executes, resolved against what the
   // design's units published. Which of those publications this unit ends up
   // depending on is the set it reads, so nothing decides that set in advance.
-  // The unit's own scope is the one body of what every application it is
-  // lowered from built.
+  // The unit's own scope is lowered from the instance its body is named for.
   auto LowerBodies(const hir::UnitSignatures& signatures)
       -> diag::Result<hir::CompilationUnit>;
-
-  // The unit's own scope as the application whose body is `application` built
-  // it, lowered into this unit and held by nothing. Whoever asks holds the
-  // scopes of several applications against each other, which only scopes
-  // lowered into one unit allow, since each names the unit's types.
-  auto LowerScopeBuiltBy(
-      const slang::ast::InstanceBodySymbol& application,
-      const hir::UnitSignatures& signatures)
-      -> diag::Result<hir::StructuralScope>;
 
   // Read access to the in-progress unit. Handlers reach the unit's type vocab
   // and builtins through this accessor; downstream consumers post-Run use the
@@ -658,6 +632,30 @@ class UnitLowerer {
   // past the translation work for a type already translated; two frontend
   // spellings of one type reach the same id whether or not either took it.
   auto InternType(const slang::ast::Type& type, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
+
+  // The type of `expr`, which is the one way an expression's type is interned.
+  // What a declaration types -- a name, a member, an element, a user
+  // subroutine's result, a pattern or a `new` typed by what it is assigned to
+  // -- and what its own text types, a literal, keep that type, since a select
+  // or a key is read against its range. What an operation yields -- an
+  // operator, a conversion, an assignment, a part-select, a concatenation and
+  // its kin, a system subroutine's result -- and an unbased unsized literal,
+  // which is as wide as its context (LRM 5.7.1), have no range of their own
+  // and are typed as what an operation yields, below.
+  auto InternExpressionType(
+      const slang::ast::Expression& expr, diag::SourceSpan span)
+      -> diag::Result<hir::TypeId>;
+
+  // The type of a value no select or key is ever read against -- what an
+  // operation yields -- numbered from zero in the direction its outermost
+  // dimension runs. No clause fixes that range (LRM 11.6.1 and 11.8.1 fix a
+  // width and a signedness, 11.4.11 and 7.4.5 an element count), and the front
+  // end hands up one it took from an operand or settled from a select's base,
+  // which differs between two instances whose identity is one. A query that
+  // reads the range reads the front end's own type, whose reads the front end
+  // records where the query is written.
+  auto InternResultType(const slang::ast::Type& type, diag::SourceSpan span)
       -> diag::Result<hir::TypeId>;
 
   // Adds a type the lowering itself composes rather than reads off the
@@ -1090,6 +1088,14 @@ class UnitLowerer {
   [[nodiscard]] auto EvaluatorOf(const slang::ast::Symbol& holder) const
       -> hir::StructuralSubroutineId;
 
+  // The type a port (LRM 23.2.2) or a name a view offers declares, which for
+  // the name is the self-determined type of the expression it was written
+  // with (LRM 25.5.4). A unit reading the name places its selects by that
+  // range, so what crosses for it -- the value an evaluator returns, or the
+  // place a view names -- has this type, whatever its expression yields.
+  auto InternDeclaredPortType(const slang::ast::Symbol& port)
+      -> diag::Result<hir::TypeId>;
+
   // Interns this unit's record of a DPI-C import (LRM 35.4), classifying its
   // ABI projection on first sight and answering with the same id every later
   // time. Both the declaration walk and a call site reach an import through
@@ -1191,6 +1197,16 @@ class UnitLowerer {
   // and this is what puts that scope at the start of the walk.
   [[nodiscard]] auto DeclaringScopeChain(const slang::ast::Scope& scope) const
       -> std::vector<ScopeFrameId>;
+
+  // `built`, scopes that each built one part of what is compiled alike, in
+  // the order the lowering reads them: the part is lowered from the first, and
+  // where they disagree on something only all of them together state, the
+  // first to state it decides. That is the order the source wrote them in,
+  // and the reverse where the compile checks itself, so that the lowering it
+  // is checked against reads a second scope of every part wherever one built
+  // it.
+  [[nodiscard]] auto InReadingOrder(std::vector<const slang::ast::Scope*> built)
+      const -> std::vector<const slang::ast::Scope*>;
 
   // Whether a design element other than this unit holds `cls`, so that an
   // object of it belongs to an instance of that element, which no count of
@@ -1319,8 +1335,10 @@ class UnitLowerer {
       -> diag::Result<void>;
   auto PopulateClassBody(PendingClassBody& pending) -> diag::Result<void>;
 
-  // Every class a unit holds is replicated by one of its structural scopes, and
-  // every such scope lowers what it replicates, so nothing is left over.
+  // Requires every class the unit holds to be defined once its scopes are
+  // lowered. Each class is replicated by a structural scope the unit lowers,
+  // which lowers the class's body; a block instance no body was lowered from
+  // replicates only classes the block it shares a body with defined.
   void RequireEveryClassBodyLowered() const;
 
   // Reads the signature of every class of another unit this one named, once
@@ -1672,8 +1690,10 @@ class UnitLowerer {
   void DeclareClassStatics(
       const slang::ast::ClassType& cls, const slang::ast::Scope& replicating);
 
-  // The class of the scope `published` records, in this unit's own types.
-  auto PublishScopeClass(const ScopePublicationRecord& published)
+  // The class `scopes` are objects of, in this unit's own types, the scopes in
+  // the order the lowering reads them: what it declares as the first records
+  // it, and every block any of them built.
+  auto PublishScopeClass(std::span<const slang::ast::Scope* const> scopes)
       -> diag::Result<hir::ScopeClassSignature>;
 
   // A published callable as this unit's own types state it.
@@ -1691,11 +1711,18 @@ class UnitLowerer {
       const slang::ast::ParameterSymbol& param) const -> bool;
 
   // Hands `visit` every declaration outside a body this unit holds, each before
-  // anything inside it: those its own scope declares, then each specialization
-  // placed in it from a generic another unit declares.
+  // anything inside it, in every application the body is lowered from: those
+  // its scope declares, then each specialization placed in it from a generic
+  // another unit declares. Each application holds its own copy of a
+  // declaration, so one declaration may be handed over once per application.
   template <typename Visit>
   auto WalkOwnDeclarations(Visit& visit)
       -> std::invoke_result_t<Visit&, const slang::ast::Symbol&>;
+
+  // The application of this unit that `scope` is or sits inside, or nothing
+  // where it is in none of them.
+  [[nodiscard]] auto ApplicationHolding(const slang::ast::Scope& scope) const
+      -> const slang::ast::Scope*;
 
   // The application of this unit that declares `param`, or the one the unit is
   // named for where none of them does.
@@ -1710,12 +1737,9 @@ class UnitLowerer {
   LoweringFacts facts_;
   const slang::ast::Symbol* home_;
   const slang::ast::Scope* scope_;
-  // The scope of every application the unit is lowered from, the one it is
-  // named for first.
+  // The scope of every application the body is lowered and declared from, the
+  // one it is named for first.
   std::vector<const slang::ast::Scope*> applications_;
-  // The bodies of those beyond the first, which is what a declaration is asked
-  // against to learn whether this unit holds it.
-  std::unordered_set<const slang::ast::Symbol*> also_lowered_from_;
   // The application being read, which is what a name leaving the instance is
   // resolved from.
   const slang::ast::Scope* lowering_;
@@ -1766,8 +1790,6 @@ class UnitLowerer {
   // the signature states in its own and the walk lowering the scope hands on.
   std::unordered_map<const slang::ast::Scope*, hir::ScopeClassSignature>
       scope_classes_;
-  bool blocks_published_apart_ = false;
-  bool applications_published_apart_ = false;
 
   std::unordered_map<const slang::ast::Type*, hir::TypeId> type_cache_;
   // The classification of every class this unit's lowering has resolved: the
@@ -1833,22 +1855,32 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
     return SpecializationName(cls, Specialization());
   };
   if constexpr (std::is_void_v<Result>) {
-    WalkDeclarationScopes(*scope_, owned, name_of);
-    for (const slang::ast::ClassType* spec : facts_.PlacedIn(*home_)) {
-      owned(*spec);
-      WalkDeclarationScopes(*spec, owned, name_of);
+    for (const slang::ast::Scope* application : applications_) {
+      WalkDeclarationScopes(*application, owned, name_of);
+      for (const slang::ast::ClassType* spec :
+           facts_.PlacedIn(application->asSymbol())) {
+        owned(*spec);
+        WalkDeclarationScopes(*spec, owned, name_of);
+      }
     }
   } else {
-    if (auto r = WalkDeclarationScopes(*scope_, owned, name_of); !r) return r;
-    for (const slang::ast::ClassType* spec : facts_.PlacedIn(*home_)) {
-      if (auto r = owned(*spec); !r) return r;
-      if (auto r = WalkDeclarationScopes(*spec, owned, name_of); !r) return r;
+    for (const slang::ast::Scope* application : applications_) {
+      if (auto r = WalkDeclarationScopes(*application, owned, name_of); !r) {
+        return r;
+      }
+      for (const slang::ast::ClassType* spec :
+           facts_.PlacedIn(application->asSymbol())) {
+        if (auto r = owned(*spec); !r) return r;
+        if (auto r = WalkDeclarationScopes(*spec, owned, name_of); !r) {
+          return r;
+        }
+      }
     }
     return {};
   }
 }
 
-// Mints the identity of every procedural scope the bodies of `slang_scope`
+// Mints the identity of every procedural scope the bodies of `walked`
 // declare, into the registry of the declaration scope that owns them -- a
 // structural scope or a class. A procedural scope is what slang records as
 // one: a process body, a subroutine body, and each block that introduces
@@ -1860,7 +1892,9 @@ auto UnitLowerer::WalkOwnDeclarations(Visit& visit)
 // Identity precedes bodies because a `disable` names a block or task by static
 // declaration identity (LRM 9.6.2) and so can name one whose body lowers later
 // or lives in another body entirely. Only what a name can reach from elsewhere
-// is minted here, so nothing is minted that no body goes on to fill: the walk
+// is minted here, so nothing is minted that no body goes on to fill -- a block
+// instance its body was not lowered from mints the identities the one it was
+// lowered from fills, since the source orders both alike. The walk
 // that lowers a body mints and fills every other scope it opens, and the
 // lexical nesting -- which slang's member list does not follow -- is recorded
 // there, where it is known.

@@ -87,39 +87,53 @@ struct StructuralGenvarDecl {
 };
 
 // A value the scope is given when it is constructed, holding it for the rest
-// of the run. The implicit localparam a loop generate's index name denotes
-// inside a block is one (LRM 27.4): an integer parameter usable anywhere a
-// normal one is, whose value in each block is the index that block elaborated
-// at. A unit's parameter its instantiation overrides with a value the unit only
-// reads is another (LRM 23.10.2). No expression of the scope settles either,
-// because whoever constructs the scope supplies it -- which is what lets one
-// block serve every index, and one unit every instance. A scope receives its
-// values in the order it declares them, which is the order a construction
-// states its arguments in.
+// of the run: the implicit localparam a loop generate's index name denotes
+// inside a block (LRM 27.4), an integer parameter usable anywhere a normal one
+// is, whose value in each block is the index that block elaborated at. No
+// expression of the scope settles it, because whoever constructs the scope
+// supplies it -- which is what lets one block serve every index. A scope
+// receives its values in the order it declares them, which is the order a
+// construction states its arguments in.
 struct StructuralConstructionValueDecl {
   auto operator==(const StructuralConstructionValueDecl&) const
       -> bool = default;
 };
 
-// A named constant of the scope (LRM 6.20.4), holding the expression the source
-// assigned it. The scope settles it once, when it is built, and nothing writes
-// it afterwards; a name from outside reaches it, including a hierarchical one
-// inside a loop generate's block (LRM 27.4).
+// A parameter of the unit (LRM 6.20.2) whose value the unit only reads, held
+// for the rest of the run. An instantiation may assign it a value (LRM
+// 23.10.2), or leave it to the default value its declaration states, which may
+// read the parameters declared before it (LRM 6.20.1); a parameter declared
+// with none has to be assigned one. Which of the two an instance takes is the
+// instantiation's to say, so whoever constructs the scope says it, and the
+// default is evaluated here, in the scope that wrote it -- which is what lets
+// one unit serve every instance whether or not its instantiation wrote the
+// value. Received in declaration order among the scope's construction values.
 struct StructuralParameterDecl {
-  ExprId initializer;
+  std::optional<ExprId> default_value;
 
   auto operator==(const StructuralParameterDecl&) const -> bool = default;
 };
 
+// A local parameter of the scope (LRM 6.20.4), one no instantiation assigns,
+// holding the expression the source assigned it. The scope settles it once,
+// when it is built, and nothing writes it afterwards; a name from outside
+// reaches it, including a hierarchical one inside a loop generate's block (LRM
+// 27.4).
+struct StructuralLocalparamDecl {
+  ExprId initializer;
+
+  auto operator==(const StructuralLocalparamDecl&) const -> bool = default;
+};
+
 // A module-scope data object (LRM 6.5: "two main groups of data objects:
 // variables and nets"), plus the name a port introduces for storage the
-// object does not own, the index a loop counts with, a value construction
-// supplies, and a constant the scope settles for itself. Peer kinds sharing
-// only identity and value type; each kind carries its own payload.
+// object does not own, the index a loop counts with, the index value a loop's
+// block is constructed with, a parameter, and a local parameter. Peer kinds
+// sharing only identity and value type; each kind carries its own payload.
 using StructuralDataObjectKind = std::variant<
     StructuralVariableDecl, StructuralNetDecl, StructuralReferenceDecl,
     StructuralGenvarDecl, StructuralConstructionValueDecl,
-    StructuralParameterDecl>;
+    StructuralParameterDecl, StructuralLocalparamDecl>;
 
 struct StructuralDataObjectDecl {
   std::string name;

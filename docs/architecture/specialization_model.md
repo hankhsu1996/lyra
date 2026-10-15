@@ -210,9 +210,11 @@ what the frontend happened to do.
    steer runtime state, enable/disable flags that do not change generated code, and values consumed
    only by the runtime constructor flow through as inputs. They do not produce additional
    compile-time artifacts.
-6. **One specialization compiles once.** Every instance that matches a specialization shares the
-   same compile-time artifact. Two instances with identical specialization keys are
-   indistinguishable at compile time.
+6. **One specialization compiles once per body.** A specialization is the class its instances'
+   declarations settle, and each way the values its instances are handed settle its code is a body
+   of it, compiled once and shared by every instance it serves. Two instances with identical
+   specialization keys and one body are indistinguishable at compile time; two with identical keys
+   and different bodies are objects of one class that a referrer cannot tell apart.
 7. **Specialization keys are stable and deterministic.** Given a compilation unit and its
    code-shape-affecting inputs, the specialization key is fully determined. Keys do not depend on
    traversal order, instance enumeration, or the order in which instances are encountered.
@@ -220,16 +222,18 @@ what the frontend happened to do.
    them.** Every argument is read off the occurrence -- what its parent wrote, what was written
    elsewhere that reaches it or an occurrence below it (LRM 23.10.1, 23.11, 33.4), and where each
    hierarchical name written in it or below it lands once it leaves the occurrence (LRM 23.8).
-   Together they settle which specialization every occurrence below is, since a unit's code names
-   the class of each one it builds. A body an artifact compiles is one elaborated under those same
-   arguments, so what it was named for and what it compiles against are one application; a body
+   Together they settle which specialization every occurrence below is, since a unit's declarations
+   name the class of each one it holds. A body an artifact compiles is one elaborated under those
+   same arguments, so what it was named for and what it compiles against are one application; a body
    elaborated for a different application states different types at the same positions. Occurrences
-   of one application handed different constructor inputs may build different blocks, since those
-   inputs decide which alternative of a conditional generate stands and how many blocks a loop
-   counts out, so the artifact compiles the body of each occurrence that built something another did
-   not and holds what any of them built. The frontend's record that two bodies duplicate each other
-   decides neither half: an occurrence it marks is still the specialization its own arguments say,
-   read off the body it duplicates only where those arguments make the two one application.
+   handed different constructor inputs may build different blocks, since those inputs decide which
+   alternative of a conditional generate stands, and an alternative not selected is not elaborated
+   (LRM 27.5); so which blocks an occurrence built is one of its arguments, the way the branch an
+   `if constexpr` keeps is part of a C++ instantiation, and an artifact is lowered from any one
+   occurrence of its application. How many blocks a loop counts out is not: the constructor runs the
+   loop. The frontend's record that two bodies duplicate each other decides neither half: an
+   occurrence it marks is still the specialization its own arguments say, read off the body it
+   duplicates only where those arguments make the two one application.
 9. **Producer and consumer derive the identity independently and agree.** A unit's own identity and
    the identity a parent means when it instantiates that unit are computed from the same inputs by
    the same function, with no table between them -- which is what lets units compile in any order
@@ -285,7 +289,8 @@ specialization and differ only in constructor inputs.
 
 `parameter int N` controlling a `generate for` that instantiates N children: the compiled
 constructor loops N times, producing N child objects. The compilation unit's compiled code does not
-depend on N. N is a constructor input; the unit compiles once for any N.
+depend on N. N is a constructor input; the unit compiles once for any N that builds blocks of the
+same kinds.
 
 `parameter type T = int` substituting a type parameter: T changes emitted types and operations. T is
 code-shape-affecting. Distinct types produce distinct specializations. "Distinct" follows the

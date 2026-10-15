@@ -18,6 +18,7 @@
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
+#include "lyra/runtime/loop_blocks.hpp"
 #include "lyra/runtime/named_event.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/object_change.hpp"
@@ -290,6 +291,8 @@ auto LayoutOf(support::DeclaredMemberStorage storage) -> ObjectLayout {
       return Of<EvaluationAttempts>();
     case MemberStorageKind::kTimer:
       return Of<Timer>();
+    case MemberStorageKind::kLoopBlocks:
+      return Of<LoopBlocks>();
   }
   throw InternalError("object layout: unknown member storage kind");
 }
@@ -320,6 +323,7 @@ auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
     case MemberStorageKind::kCancellationTarget:
     case MemberStorageKind::kEvaluationAttempts:
     case MemberStorageKind::kTimer:
+    case MemberStorageKind::kLoopBlocks:
       return std::nullopt;
   }
   throw InternalError("object layout: unknown member storage kind");

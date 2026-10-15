@@ -313,13 +313,13 @@ auto FunctionLowerer::LowerCallTarget(
                               t.declaration.unit_name, t.declaration.path,
                               t.answers)}};
                     },
-                    [&](const mir::ExternalUnitMintedEntryTarget& t)
+                    [&](const mir::ExternalBringUpTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       // It answers to no name, so its symbol is composed from
                       // the unit and which of them it is -- the same parts the
                       // unit that defines it composes.
                       return lir::CallTarget{lir::SymbolTarget{
-                          .symbol = MintedEntrySymbol(t.unit_name, t.entry)}};
+                          .symbol = BringUpEntrySymbol(t.unit_name, t.entry)}};
                     }},
                 d.target);
           },
@@ -1952,7 +1952,8 @@ auto FunctionLowerer::NamesStorage(
             [](const mir::IntegralConstantRef&) { return false; },
             [](const mir::DefinitionRef&) { return false; },
             [](const mir::ClassConstantRef&) { return false; },
-            [](const mir::FunctionRef&) { return false; }},
+            [](const mir::FunctionRef&) { return false; },
+            [](const mir::ExternalObjectEntryRef&) { return false; }},
         reference->target);
   }
   return std::holds_alternative<mir::FieldAccessExpr>(expr.data) ||
@@ -2123,6 +2124,12 @@ auto FunctionLowerer::ReferenceValue(
                 .function =
                     unit_->MethodFunction(ref.body.owner, ref.body.slot),
                 .type = unit_->TranslateType(type)}};
+          },
+          [&](const mir::ExternalObjectEntryRef&)
+              -> diag::Result<lir::Operand> {
+            throw InternalError(
+                "mir_to_lir: a body names another unit's entry as a value -- "
+                "please report this as a bug");
           }},
       target);
 }
@@ -2243,8 +2250,22 @@ auto FunctionLowerer::ReferencePlace(
                                 .mutability = lir::Mutability::kReadOnly}})},
                 .chain = {lir::Projection{lir::DerefProjection{}}}};
           },
-          // A member table, a constant and a function are values the unit
-          // holds, not storage anything writes through.
+          // A class's constant is data its unit emits under a symbol, so the
+          // place opens at its address, through which it is only read.
+          [&](const mir::ClassConstantRef& r) -> diag::Result<lir::Place> {
+            return lir::Place{
+                .base =
+                    lir::StaticRef{
+                        .symbol = unit_->ClassConstantSymbolOf(r),
+                        .type = unit_->Types().Intern(
+                            lir::Type{lir::PointerType{
+                                .pointee = unit_->TranslateType(type),
+                                .ownership = lir::PointerOwnership::kBorrowed,
+                                .mutability = lir::Mutability::kReadOnly}})},
+                .chain = {lir::Projection{lir::DerefProjection{}}}};
+          },
+          // A member table, a constant value and a function are values the
+          // unit holds, not storage anything writes through.
           [](const mir::EnumTableRef&) -> diag::Result<lir::Place> {
             return Unsupported(
                 "mir_to_lir: an enumeration's member table names no place");
@@ -2252,10 +2273,10 @@ auto FunctionLowerer::ReferencePlace(
           [](const mir::IntegralConstantRef&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: a constant names no place");
           },
-          [](const mir::ClassConstantRef&) -> diag::Result<lir::Place> {
-            return Unsupported("mir_to_lir: a class's constant names no place");
-          },
           [](const mir::FunctionRef&) -> diag::Result<lir::Place> {
+            return Unsupported("mir_to_lir: a function names no place");
+          },
+          [](const mir::ExternalObjectEntryRef&) -> diag::Result<lir::Place> {
             return Unsupported("mir_to_lir: a function names no place");
           }},
       target);

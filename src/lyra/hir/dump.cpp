@@ -142,6 +142,18 @@ auto FormatArguments(std::span<const ExprId> arguments) -> std::string {
   return std::format("arguments({})", out);
 }
 
+auto FormatAssignments(std::span<const ParameterValueAssignment> assignments)
+    -> std::string {
+  std::string out;
+  for (std::size_t i = 0; i < assignments.size(); ++i) {
+    if (i != 0) out += ", ";
+    out += assignments[i].value.has_value()
+               ? std::format("Expr[{}]", assignments[i].value->value)
+               : std::string{"default"};
+  }
+  return std::format("arguments({})", out);
+}
+
 // The identifier a declaration answers to, quoted, or nothing at all where the
 // source gave it none. Printing the absence as an empty string rather than a
 // stand-in is the point: what a reader learns from this dump is which
@@ -189,6 +201,13 @@ auto FormatStructuralDataObject(const StructuralDataObjectDecl& decl)
             return std::string{" given at construction"};
           },
           [](const StructuralParameterDecl& parameter) {
+            return parameter.default_value.has_value()
+                       ? std::format(
+                             " given at construction default=Expr[{}]",
+                             parameter.default_value->value)
+                       : std::string{" given at construction"};
+          },
+          [](const StructuralLocalparamDecl& parameter) {
             return std::format(
                 " settled=Expr[{}]", parameter.initializer.value);
           }},
@@ -692,9 +711,6 @@ class HirDumper {
             [](const WatchedWhole&) -> std::string { return "whole"; },
             [](const WatchedSelect& s) -> std::string {
               return std::format("Expr[{}]", s.prefix.value);
-            },
-            [](const WatchedBits& b) -> std::string {
-              return std::format("[{}:{}]", b.first, b.last);
             }},
         part);
   }
@@ -1649,7 +1665,10 @@ class HirDumper {
               }},
           decl));
     }
-    for (const GenerateId id : published.generates) {
+    for (const GenerateId id : published.loops) {
+      add(std::format("Generate[{}]", id.value));
+    }
+    for (const GenerateId id : published.choices) {
       add(std::format("Generate[{}]", id.value));
     }
     for (const ProceduralScopeId id : published.disable_targets) {
@@ -1668,7 +1687,8 @@ class HirDumper {
               return std::format("InstanceMember[{}]", id.value);
             },
             [](const GenerateLoopRef& loop) {
-              return std::format("Generate[{}]", loop.generate.value);
+              return std::format(
+                  "Generate[{}].index{}", loop.generate.value, loop.index);
             },
             [](const GenerateBlockRef& block) {
               return std::format(
@@ -1688,12 +1708,19 @@ class HirDumper {
                   "ExternalScopeClass[{}].member[{}]", member.scope_class.value,
                   member.member.value);
             },
-            [](const ExternalGenerateRef& generate) {
+            [](const ExternalGenerateLoopRef& loop) {
               return std::format(
-                  "ExternalScopeClass[{}].generate[{}] as "
+                  "ExternalScopeClass[{}].loop[{}].index{} as "
                   "ExternalScopeClass[{}]",
-                  generate.scope_class.value, generate.generate.value,
-                  generate.result_class.value);
+                  loop.scope_class.value, loop.loop.value, loop.index,
+                  loop.result_class.value);
+            },
+            [](const ExternalGenerateBlockRef& block) {
+              return std::format(
+                  "ExternalScopeClass[{}].choice[{}] as "
+                  "ExternalScopeClass[{}]",
+                  block.scope_class.value, block.choice.value,
+                  block.result_class.value);
             },
         },
         names);
@@ -1713,7 +1740,7 @@ class HirDumper {
             },
             [&](const GenerateLoopRef& loop) -> const StructuralScope& {
               const Generate& gen = owner.generates.Get(loop.generate);
-              return gen.blocks.Get(LoopBlockScopeOf(gen, step.selects)).scope;
+              return gen.blocks.Get(LoopBlockScopeOf(gen, loop.index)).scope;
             },
             [&](const GenerateBlockRef& block) -> const StructuralScope& {
               const Generate& gen = owner.generates.Get(block.generate);
@@ -1925,7 +1952,7 @@ class HirDumper {
         built_as += std::format(
             "{}ExternalScopeClass[{}] {}", built_as.empty() ? "" : " | ",
             alternative.scope_class.value,
-            FormatArguments(alternative.arguments));
+            FormatAssignments(alternative.assignments));
       }
       std::string taken;
       if (im.alternatives.size() > 1) {
@@ -2819,15 +2846,20 @@ class HirDumper {
         s.data);
   }
 
-  // The blocks a loop counted out that are built on their own, in that order:
-  // the value the index stood at, the body the block is, and what it is passed.
-  static auto FormatStandAloneBlocks(std::span<const StandAloneBlock> counted)
+  static auto FormatLoopBodies(std::span<const LoopBody> bodies)
       -> std::string {
     std::string out;
-    for (const StandAloneBlock& block : counted) {
+    for (const LoopBody& built : bodies) {
+      std::string indices;
+      for (const std::int64_t index : built.indices) {
+        indices += std::format("{}{}", indices.empty() ? "" : ",", index);
+      }
       out += std::format(
-          "{}{}:body{}{}", out.empty() ? "" : " ", block.index,
-          block.body.value, FormatArguments(block.arguments));
+          " body{}{}@[{}]", built.body.value,
+          built.body_arguments.has_value()
+              ? std::format("#{:016x}", *built.body_arguments)
+              : std::string{},
+          indices);
     }
     return out;
   }
@@ -2836,16 +2868,13 @@ class HirDumper {
     const std::string form = std::visit(
         Overloaded{
             [](const SingleBlock&) { return std::string{"single"}; },
-            [](const BlocksStandAlone& s) {
-              return std::format(
-                  "each [{}]", FormatStandAloneBlocks(s.counted));
-            },
             [](const BlocksRepeat& r) {
               return std::format(
                   "repeated var=StructuralDataObject[{}] initial=Expr[{}] "
-                  "condition=Expr[{}] step=Expr[{}] {}",
+                  "condition=Expr[{}] step=Expr[{}] {}{}",
                   r.variable.value, r.initial.value, r.condition.value,
-                  r.step.value, FormatArguments(r.arguments));
+                  r.step.value, FormatArguments(r.arguments),
+                  FormatLoopBodies(r.bodies));
             },
             [](const BlocksChoose& c) {
               std::string chosen =

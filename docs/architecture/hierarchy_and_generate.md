@@ -28,7 +28,9 @@ shared by all consumers: external references, child routing, and construction.
    from a parallel side table.
 2. A compilation unit that has a generate structure contributes that structure as constructor-time
    construction logic. The constructor expands generate via `if`, loop, and sequence to build
-   children.
+   children. Which generate blocks an instance built is part of its unit's name, so a unit holds the
+   blocks its own instances built and no other (`compiling_a_design.md`). How many blocks a loop
+   counts out is not part of it; the constructor runs the loop.
 3. A named generate scope is a first-class constructed object. An unnamed generate scope is not
    addressable and is not materialized as an object.
 4. External references, runtime child routing, and the runtime constructor all navigate the same
@@ -40,14 +42,15 @@ shared by all consumers: external references, child routing, and construction.
    the adjacency list for its name.
 5. The same compilation unit compiled once serves every instance of that unit. Hierarchy does not
    fork the unit's compile-time artifacts.
-6. A parameter value read only as a value is a constructor input: it changes which children are
-   constructed, how many, and with which sub-parameter bindings, and does not fork the unit's
-   compile-time artifacts or its identity. A value that decides what is compiled -- a type, a width
-   the lowering settles -- does fork them, because a compiled artifact cannot hold two answers to
-   one question; and so does anything written elsewhere that reaches an instance below the unit (a
-   `defparam`, a `bind`, a configuration rule), since the unit then builds different children. What
-   serves this is that artifacts scale with distinct specializations rather than instances
-   (`north_star.md` invariant 2), with each instance correct whatever is shared (its invariant 3).
+6. A parameter value read only as a value is a constructor input: it changes how many blocks a loop
+   constructs and with which sub-parameter bindings, and does not fork the unit's compile-time
+   artifacts or its identity. A value that decides what is compiled -- a type, a width the lowering
+   settles, which generate blocks are built (invariant 2) -- does fork them, because a compiled
+   artifact cannot hold two answers to one question; and so does anything written elsewhere that
+   reaches an instance below the unit (a `defparam`, a `bind`, a configuration rule), since the unit
+   then builds different children. What serves this is that artifacts scale with distinct
+   specializations rather than instances (`north_star.md` invariant 2), with each instance correct
+   whatever is shared (its invariant 3).
 7. The constructed object tree is faithful to the frontend's elaboration. Every elaborated instance
    and named scope has a corresponding constructed object, and generate-produced objects preserve
    the elaborated index and identity. Reference resolution relies on this faithfulness (see
@@ -73,23 +76,22 @@ shared by all consumers: external references, child routing, and construction.
     never re-states an identity the child already carries. `%m`, hierarchical paths, and debug
     output all read from this single source; resolving a hierarchical name reads none of them.
 11. A reference targeting a non-constructed runtime object is a sealing failure with a user
-    diagnostic, never a runtime fallback. A conditional-generate arm not selected at Build has a
-    class declaration but no runtime scope; a hierarchical reference whose route traverses such an
-    arm cannot seal. The same rule covers an out-of-range instance-array element and any other
-    object whose declaration exists at compile time but whose runtime object is absent in the
-    elaborated design. The reference is rejected at the sealing barrier; route execution does not
-    silently substitute a null, a default, or an alternate target.
+    diagnostic, never a runtime fallback. A conditional-generate arm not selected is no part of the
+    unit and has no runtime scope; a hierarchical reference whose route traverses such an arm cannot
+    seal. The same rule covers an out-of-range instance-array element and any other object whose
+    declaration exists at compile time but whose runtime object is absent in the elaborated design.
+    The reference is rejected at the sealing barrier; route execution does not silently substitute a
+    null, a default, or an alternate target.
 12. A set of objects the source writes under one name -- an instance array, the instances an
     interface port carrying a range is bound to, the blocks a loop generate counts out -- is
-    described object by object, each from its own elaboration, and what its objects share is found
-    by comparing those descriptions. Every element takes what its instantiation wrote (LRM 23.3.2),
-    but a `defparam`, a `bind` or a configuration rule may reach one of them (LRM 23.10.1, 23.11,
-    33.4), so nothing about the set can be read off one element. What this serves is that
-    correctness does not depend on sharing (`north_star.md` invariant 3): a description of the set
-    that starts from a representative has to predict that the rest agree, and the element it
-    predicted wrong is then lowered as another one. The set is still one declaration, stating which
-    kind stands at each position, so artifacts follow the distinct kinds and never the element count
-    (invariant 2 there).
+    described object by object: each element's identity is computed from its own elaboration, and
+    elements whose identities are one share an artifact. Every element takes what its instantiation
+    wrote (LRM 23.3.2), but a `defparam`, a `bind` or a configuration rule may reach one of them
+    (LRM 23.10.1, 23.11, 33.4), so nothing about the set can be read off one element. What this
+    serves is that correctness does not depend on sharing (`north_star.md` invariant 3): a
+    description of the set that starts from a representative has to predict that the rest agree. The
+    set is still one declaration, stating which kind stands at each position, so artifacts follow
+    the distinct kinds and never the element count (invariant 2 there).
 
 ## Boundary to Adjacent Layers
 
@@ -112,7 +114,8 @@ shared by all consumers: external references, child routing, and construction.
 
 - A coordinate or ordinal side system that numbers generate regions and is used as identity.
 - A topology representation owned by the driver or a central map instead of by the object tree
-  itself.
+  itself, which fails invariant 4: a consumer navigating such a map instead of the tree reaches
+  something the tree may not hold.
 - Separate hierarchy models for compile-time and runtime. Only one model exists.
 - Two independently maintained runtime child views that can drift -- e.g., one list for traversal
   plus a separate registry of children, each written by a distinct opcode and at a distinct
@@ -125,6 +128,8 @@ shared by all consumers: external references, child routing, and construction.
 - A child-routing or external-reference path that reconstructs hierarchy from flattened symbol
   names.
 - Per-instance generate trees that duplicate the unit's construction logic.
+- A body holding a generate block an instance of another name built. Its content then follows
+  instances it is not named for, so adding one elsewhere changes it.
 - Treating an instance array as a generate construct, or modeling generate replication as an array
   type. Multiplicity is a property of a member's type; generate is constructor-time scope
   construction. The two axes must not be conflated or made to subsume each other.

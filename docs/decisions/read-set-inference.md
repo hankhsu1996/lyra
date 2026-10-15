@@ -7,7 +7,20 @@
 ## Status
 
 Accepted. How a procedure's own implicit list takes in what the functions it calls read is revised
-by [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md).
+by [an-implicit-list-asks-each-function-once](an-implicit-list-asks-each-function-once.md). Revised
+2026-10-13 by
+[the-lowering-reads-an-instance-only-through-its-identity](the-lowering-reads-an-instance-only-through-its-identity.md):
+the read and write sets come from a walk of the text, not from the front end's flow analysis, that
+marks each name read or written by the same rules and states the part it reaches as the longest
+static prefix the source wrote. The flow analysis answered in bits it settled from one elaboration's
+values -- how many runs a symbol split into, which prefixes coincide, whether a constant index fell
+outside its value, where a read was then dropped -- so two elaborations of one body read differently
+where a value they are built with differs, and a body shared between them could not be lowered from
+either. F5's precision is unaffected: the front end's read set never took a write out of a read, and
+the write is still taken out when the prefixes are evaluated (LRM 9.2.2.2.1 b). What the walk counts
+that the flow analysis did not is a read only an unreachable path holds and a select past its
+value's end, both of which LRM 9.2.2.2.1 lists all the same. The mechanism the sections below
+prescribe is the one this replaced; their findings on what a read set must hold stand.
 
 ## Why this decision matters
 
@@ -264,9 +277,9 @@ instance arms would give the narrower set back to a body with no such effect; no
 today.
 
 **A read set arrives in the order the text makes its reads.** What a body waits on is a set (LRM
-9.4.2.1), but turning each read into this compiler's own form allocates as it goes, and two forms
-are compared position for position to decide whether two copies of one body are one artifact. The
-front end kept reads in a hash table keyed on each symbol's address, so two copies of one text
+9.4.2.1), but turning each read into this compiler's own form allocates as it goes, and two
+lowerings of one body are held to agree position for position wherever the compile checks itself.
+The front end kept reads in a hash table keyed on each symbol's address, so two copies of one text
 enumerated them differently and compared unequal: a loop whose blocks each read three of their own
 variables in an `always_comb` was 8 scope classes per iteration (68 at 8 blocks, 260 at 32, and 12
 at both once fixed), and a module handed different values of a parameter lost its sharing. The fork

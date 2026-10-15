@@ -66,7 +66,8 @@ auto ImportScopeClass(TypeImporter& importer, ScopeClassSignature published)
       .class_path = std::move(published.class_path),
       .members = {},
       .callables = {},
-      .generates = std::move(published.generates),
+      .loops = std::move(published.loops),
+      .choices = std::move(published.choices),
       .disable_targets = std::move(published.disable_targets),
       .modports = std::move(published.modports)};
   for (const PublishedMemberId id : published.members.Ids()) {

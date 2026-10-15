@@ -15,6 +15,7 @@
 
 #include <fmt/core.h>
 
+#include "lyra/driver/action_cache.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
@@ -265,10 +266,12 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
       ReadWhole(prelude) + "#include \"lyra/pch_currency_probe.hpp\"\n");
 
   const auto policy = lyra::driver::pch::Policy::kAttempt;
-  const std::optional<std::filesystem::path> store = project / "cache";
+  lyra::driver::ActionCache actions(
+      project / "cache", project / "scratch", true);
   const auto optimization = lyra::driver::Optimization::kIterate;
   auto built = lyra::driver::pch::EnsureCached(
-      *cxx, include_root, policy, store, optimization);
+      *cxx, include_root, lyra::driver::DigestOfTree(include_root), policy,
+      actions, optimization);
   ASSERT_TRUE(built.has_value()) << "no precompiled header was produced";
 
   const auto unit = project / "unit.cpp";
@@ -293,19 +296,20 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
     return lyra::driver::RunProcessCaptured(*cxx, args);
   };
 
-  auto baseline = compile_against(*built);
+  auto baseline = compile_against(built->path);
   ASSERT_TRUE(baseline) << baseline.error();
   ASSERT_EQ(baseline->exit_code, 0) << baseline->stderr_text;
 
   WriteWhole(probe, ReadWhole(probe));
   AgeByADay(probe);
   auto after_rewrite = lyra::driver::pch::EnsureCached(
-      *cxx, include_root, policy, store, optimization);
+      *cxx, include_root, lyra::driver::DigestOfTree(include_root), policy,
+      actions, optimization);
   ASSERT_TRUE(after_rewrite.has_value());
-  EXPECT_EQ(*after_rewrite, *built)
+  EXPECT_EQ(after_rewrite->path, built->path)
       << "the same bytes were given a different cache entry";
 
-  auto reused = compile_against(*after_rewrite);
+  auto reused = compile_against(after_rewrite->path);
   ASSERT_TRUE(reused) << reused.error();
   EXPECT_EQ(reused->exit_code, 0)
       << "a header rewritten byte for byte was read as a change:\n"
@@ -313,7 +317,7 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
 
   WriteWhole(probe, "#pragma once\n// omega\n");
   AgeByADay(probe);
-  auto stale = compile_against(*built);
+  auto stale = compile_against(built->path);
   ASSERT_TRUE(stale) << stale.error();
   EXPECT_NE(stale->exit_code, 0) << "a changed header was accepted by a "
                                     "precompiled header built before it";

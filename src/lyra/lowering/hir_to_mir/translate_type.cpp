@@ -85,7 +85,7 @@ auto TranslateMemberTypes(
 
 auto UnitLowerer::TranslateStructType(const hir::UnpackedStructType& src)
     -> mir::StructType {
-  if (src.declaration.unit_name == unit_.name) {
+  if (hir_->IsItself(src.declaration.unit_name)) {
     return mir::StructType{.declaration = unit_.structs.Declare()};
   }
   mir::TypeDeclarationRef declaration{
