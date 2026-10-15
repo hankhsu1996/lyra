@@ -888,7 +888,6 @@ void VerifyEntryDeclarations(
         typed_as_reference(false);
         break;
       case support::EntryAnswer::kNewValue:
-      case support::EntryAnswer::kTheReceiver:
       case support::EntryAnswer::kPartOfTheReceiver:
       case support::EntryAnswer::kExecution:
         break;

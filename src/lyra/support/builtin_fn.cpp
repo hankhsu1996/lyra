@@ -138,12 +138,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = StaticFactory{"Make"},
           .takes_a_type_argument = true,
           .operands = {kHeld}};
-    case BuiltinFn::kRequire:
-      return {
-          .name = "require",
-          .declaration = ValueFunction("Require"),
-          .answer = EntryAnswer::kTheReceiver,
-          .operands = {kHeld, kBits}};
+    case BuiltinFn::kAssert:
+      return {.name = "assert", .declaration = ValueFunction("Assert")};
     case BuiltinFn::kSize:
       return {.name = "size", .declaration = Method{"Size"}};
     case BuiltinFn::kLen:

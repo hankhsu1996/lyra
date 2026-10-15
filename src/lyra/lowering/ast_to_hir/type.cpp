@@ -255,6 +255,36 @@ auto LowerUnpackedStruct(
       .fields = *std::move(fields_or)};
 }
 
+// The part of a value of `type` that owns what it holds -- a string, a handle,
+// a dynamically sized array -- however deep in unpacked arrays, structures and
+// unions it lies, or nothing where no part does.
+auto OwningPartOf(const slang::ast::Type& type) -> const slang::ast::Type* {
+  const slang::ast::Type& canonical = type.getCanonicalType();
+  if (canonical.isString() || canonical.isHandleType() ||
+      canonical.isDynamicallySizedArray()) {
+    return &canonical;
+  }
+  if (canonical.isUnpackedArray()) {
+    return OwningPartOf(*canonical.getArrayElementType());
+  }
+  const auto owning_field = [](const auto& aggregate) {
+    for (const slang::ast::FieldSymbol* field : aggregate.fields) {
+      if (const slang::ast::Type* owning = OwningPartOf(field->getType())) {
+        return owning;
+      }
+    }
+    return static_cast<const slang::ast::Type*>(nullptr);
+  };
+  if (const auto* structure =
+          canonical.as_if<slang::ast::UnpackedStructType>()) {
+    return owning_field(*structure);
+  }
+  if (const auto* inner = canonical.as_if<slang::ast::UnpackedUnionType>()) {
+    return owning_field(*inner);
+  }
+  return nullptr;
+}
+
 auto LowerUnpackedUnion(
     const slang::ast::UnpackedUnionType& union_type, diag::SourceSpan decl_span,
     UnitLowerer& unit_lowerer) -> diag::Result<hir::UnpackedUnionType> {
@@ -262,6 +292,23 @@ auto LowerUnpackedUnion(
   // type-checked sum form (LRM 7.3.2) come through here; HIR-to-MIR routes
   // them to distinct MIR types (`UnionType` vs `TaggedUnionType`) by reading
   // the `tagged` flag.
+  //
+  // An untagged union's members lie over one another's bytes, so a member
+  // owning what it holds has no such bytes to share. The standard admits one
+  // only in a tagged union (LRM 7.3, 6.16), and the front end lets a string, a
+  // class handle and an event through.
+  if (!union_type.isTagged) {
+    for (const slang::ast::FieldSymbol* field : union_type.fields) {
+      if (const slang::ast::Type* owning = OwningPartOf(field->getType())) {
+        return diag::Fail(
+            decl_span, diag::DiagCode::kUnsupportedTypeKind,
+            std::format(
+                "an untagged union member holding a '{}' is not supported; "
+                "only a tagged union may hold one (LRM 7.3)",
+                owning->toString()));
+      }
+    }
+  }
   auto fields_or =
       LowerUnpackedAggregateFields(union_type.fields, decl_span, unit_lowerer);
   if (!fields_or) return std::unexpected(std::move(fields_or.error()));

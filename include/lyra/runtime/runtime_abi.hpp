@@ -1093,16 +1093,10 @@ auto lyra_rt_string_value_cell_alloc() noexcept -> void*;
 void lyra_rt_string_value_cell_store(void* cell, const void* value) noexcept;
 auto lyra_rt_string_value_cell_load(void* cell) noexcept -> void*;
 
-// A guard the language requires to run as part of evaluating an access rather
-// than ahead of it (LRM 11.3.5): it raises `message` unless `condition` is a
-// definite one, and otherwise yields what it was handed, so the access composes
-// onto it. What is guarded decides nothing here -- the guard reads it not at
-// all -- so this is one entry rather than one per value domain, and the same
-// one serves a cell the access reached through. `message` is a literal and
-// crosses as the constant itself, which is what every literal operand does.
-auto lyra_rt_require(
-    void* value, const void* condition, std::int64_t condition_width,
-    bool condition_is_four_state, const char* message) -> void*;
+// A check an access owes (LRM 11.9, 25.9): raises `message` as a simulation
+// error unless `holds`. `message` is a literal and crosses as the constant
+// itself, which is what every literal operand does.
+void lyra_rt_assert(bool holds, const char* message);
 
 // LRM 6.16: an integral value's bytes as text, its NUL bytes removed.
 auto lyra_rt_string_from_bits(

@@ -66,6 +66,7 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/event_edge.hpp"
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/assert.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
@@ -82,7 +83,6 @@
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/queue_type.hpp"
 #include "lyra/value/real.hpp"
-#include "lyra/value/require.hpp"
 #include "lyra/value/runtime_array_manipulation.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
@@ -4090,19 +4090,8 @@ auto lyra_rt_string_value_cell_load(void* cell) noexcept -> void* {
   return &static_cast<ValueCell<String>*>(cell)->Storage();
 }
 
-// The guarded value is handed back rather than copied: what crosses here is the
-// handle the caller already holds, and a guard that let the access through has
-// changed nothing about it.
-auto lyra_rt_require(
-    void* value, const void* condition, std::int64_t condition_width,
-    bool condition_is_four_state, const char* message) -> void* {
-  const lyra::value::LoadedWords asked =
-      BitsAt(condition, condition_width, condition_is_four_state);
-  lyra::value::RequireCondition(
-      lyra::value::Truth(asked.View()) ==
-          lyra::value::Truthiness::kKnownNonzero,
-      message);
-  return value;
+void lyra_rt_assert(bool holds, const char* message) {
+  lyra::value::Assert(holds, message);
 }
 
 auto lyra_rt_string_from_bits(
@@ -4948,9 +4937,9 @@ auto lyra_rt_tagged_union_with_component(
   return Emplace(out, std::move(result));
 }
 
-// Whether the active tag is `index`, as the machine boolean the pattern-match
-// guard tests (LRM 12.6). The runtime holds the comparison, so no tag constant
-// crosses the boundary.
+// Whether the active tag is `index`, as the machine boolean that a check before
+// a member access, and a pattern, tests (LRM 11.9, 12.6). The runtime holds the
+// comparison, so no tag constant crosses the boundary.
 auto lyra_rt_tagged_union_tag_matches(const void* value, std::int64_t index)
     -> bool {
   return Read<RuntimeTaggedUnion>(value).Tag() ==

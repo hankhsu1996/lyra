@@ -47,47 +47,32 @@ namespace lyra::lowering::hir_to_mir {
     hir::TypeId base_type, mir::ExprId idx_id, mir::TypeId result_type)
     -> mir::Expr;
 
-// The three below read bits of a packed value's vector by position, for a
+// Whether `subject`, a tagged union of type `subject_type`, holds the member at
+// `index`, as a machine boolean; a packed union of one member carries a tag of
+// no bits (LRM 7.3.2) and always holds it. What a pattern tests (LRM 12.6) and
+// what `%p` prints (LRM 21.2.1.6) both ask it.
+[[nodiscard]] auto BuildTagTest(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId subject,
+    hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId;
+
+// The two below read bits of a packed value's vector by position, for a
 // consumer that has no source-level select to lower: pattern matching (LRM
-// 12.6) destructures a value the source named only as a whole. Each names
-// `base` more than once where a tag is involved, so `base` is a read that
-// evaluates nothing -- a local the caller bound.
+// 12.6) destructures a value the source named only as a whole.
 
 // The bits starting at `bit_offset`, as many as `result_type` is wide, as a
-// value of that type. Unguarded: the caller states which bits it wants.
+// value of that type. Nothing is checked: the caller states which bits it
+// wants.
 [[nodiscard]] auto BuildPackedBitsRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
     std::uint64_t bit_offset, mir::TypeId result_type) -> mir::Expr;
 
 // Member `index` of the aggregate `projection` describes, at `result_type`.
-// Reaching a tagged union's member this way is checked against the tag (LRM
-// 11.9); the check is part of the produced expression.
+// Nothing is checked: a caller reaching a member of a tagged union this way
+// has already tested the tag names it (LRM 11.9, 12.6).
 [[nodiscard]] auto BuildPackedMemberRead(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
     const PackedProjection& projection, base::ComponentIndex index,
     mir::TypeId result_type) -> mir::Expr;
-
-// The one-bit test that the tag `base` currently carries names member `index`
-// (LRM 7.3.2 places the tag at the most significant bits). Bit-pattern
-// equality, not a logical compare: a tag carrying x or z names no member, and
-// answering that definitely rather than unknown is what lets a guarded access
-// or a pattern arm sit behind the test.
-[[nodiscard]] auto BuildPackedTagTest(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
-    const PackedProjection& projection, base::ComponentIndex index)
-    -> mir::ExprId;
-
-// The checks a write to `target` owes before it lands: a step into a member of
-// a tagged union is taken only where the tag names that member (LRM 11.9).
-// Each is appended to the frame's block as a statement of its own, because
-// nothing short-circuits the target of a write and so the check has no
-// occurrence to be evaluated inside of. The check reads what the write then
-// descends through, so the indices on the way to a checked step are evaluated
-// here, once, and `target` comes back naming those results (LRM 11.4.1). A
-// construct that only names the part -- a wait, a join of nets -- writes
-// nothing and owes none.
-void AppendTagChecks(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath& target);
 
 // A select's meaning is independent of the enclosing scope, so one template
 // over the pass class serves both the procedural and structural contexts;

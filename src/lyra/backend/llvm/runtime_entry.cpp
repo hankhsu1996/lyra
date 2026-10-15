@@ -1939,11 +1939,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // tell them apart.
     case support::BuiltinFn::kStringCStr:
     case support::BuiltinFn::kChandlePtr:
-    // A guard the language requires to run as part of evaluating an access
-    // (LRM 11.3.5). It reads the condition and yields what it was handed, so
-    // what it guards decides nothing about the code: one realization serves
-    // every value, and serves a cell reached through the same access too.
-    case support::BuiltinFn::kRequire:
+    // A check before an access reads a machine boolean and a message, so one
+    // function serves every check.
+    case support::BuiltinFn::kAssert:
     // A value built from a stream of bits (LRM 6.24.3), asked of the type it
     // is told it answers, so one function serves every type.
     case support::BuiltinFn::kFromBitstream:

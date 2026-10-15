@@ -742,7 +742,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_string_value_cell_alloc", &lyra_rt_string_value_cell_alloc);
   add("lyra_rt_string_value_cell_store", &lyra_rt_string_value_cell_store);
   add("lyra_rt_string_value_cell_load", &lyra_rt_string_value_cell_load);
-  add("lyra_rt_require", &lyra_rt_require);
+  add("lyra_rt_assert", &lyra_rt_assert);
   add("lyra_rt_string_from_bits", &lyra_rt_string_from_bits);
   add("lyra_rt_string_from_byte_array", &lyra_rt_string_from_byte_array);
   add("lyra_rt_string_count_bits", &lyra_rt_string_count_bits);

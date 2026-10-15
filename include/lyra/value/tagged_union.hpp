@@ -4,24 +4,21 @@
 #include <utility>
 #include <variant>
 
-#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/basic_union.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
-#include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
 // A tagged union (LRM 7.3.2 / 11.9) compiled with its members' C++ types: a
 // type-checked sum whose tag, the declaration-order index of the live member,
-// is part of the value. Every access -- read or write through the dot-notation
-// surface -- requires the tag to match the current one, and a mismatch is a
-// run-time error. Members are reached by index, never by type, because a
-// tagged union may declare two members of the same type (`union tagged { int
-// A; int B; }`). A `void` member -- allowed only in tagged unions (LRM 7.3.2)
-// -- is an ordinary component whose type carries no bits, so nothing here
-// treats it apart.
+// is part of the value. The code reaching a member checks the tag first, so a
+// member is reached here only where the tag names it. Members are reached by
+// index, never by type, because a tagged union may declare two members of the
+// same type (`union tagged { int A; int B; }`). A `void` member -- allowed
+// only in tagged unions (LRM 7.3.2) -- is an ordinary component whose type
+// carries no bits, so nothing here treats it apart.
 template <typename... Ts>
 class TaggedUnion
     : public BasicUnion<TaggedUnion<Ts...>, VariantMember<Ts...>> {
@@ -43,40 +40,32 @@ class TaggedUnion
     return u;
   }
 
-  // Asks whether component `I` is the live one, without the runtime error a
-  // mismatched read raises. This is the query a caller uses to decide whether
-  // a read is legal, so that the error path stays reserved for a program that
-  // reads without asking (LRM 11.9).
+  // Whether the tag names component `I`: what a check before an access and a
+  // pattern ask (LRM 11.9, 12.6).
   template <std::size_t I>
   [[nodiscard]] auto IsTagged() const -> bool {
     return this->Live().Index() == I;
   }
 
-  // Read component `I`. LRM 11.9: reading a member whose type is inconsistent
-  // with the current tag results in a run-time error.
+  // Read component `I`, which the tag names.
   template <std::size_t I>
   [[nodiscard]] auto Component() const
       -> const std::variant_alternative_t<I, std::variant<Ts...>>& {
     const auto* live = std::get_if<I>(&this->Live().Alternatives());
     if (live == nullptr) {
-      throw SimulationError(
-          "read of a tagged union member inconsistent with the current tag "
-          "(LRM 11.9)");
+      RefuseMemberTheTagDoesNotName();
     }
     return *live;
   }
 
-  // The writable location of component `I`. LRM 11.9: assigning a member whose
-  // type is inconsistent with the current tag is a run-time error, so
-  // re-tagging goes through a whole-value `tagged` construction.
+  // The writable location of component `I`, which the tag names. Re-tagging
+  // goes through a whole-value `tagged` construction (LRM 11.9).
   template <std::size_t I>
   [[nodiscard]] auto ComponentRef()
       -> std::variant_alternative_t<I, std::variant<Ts...>>& {
     auto* live = std::get_if<I>(&this->Live().Alternatives());
     if (live == nullptr) {
-      throw SimulationError(
-          "write to a tagged union member inconsistent with the current tag "
-          "(LRM 11.9)");
+      RefuseMemberTheTagDoesNotName();
     }
     return *live;
   }

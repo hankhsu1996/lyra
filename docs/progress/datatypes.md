@@ -17,19 +17,23 @@ union, tagged and untagged, are complete, with one gap on the C++ backend: a uni
 than 256 members, tagged or not, emits a project that does not compile, because what holds its one
 live member is stated over all of them at once and the host compiler bounds how long such a
 statement may be. A structure of that many members had the same gap and no longer does; the
-execution backend runs both. Default initialization (LRM Table 6-7) and value representation,
-including a wide value carrying X/Z across the 64-bit word boundary, are complete. Chandle is
-complete. Bit-stream casting is complete between fixed-size types; the dynamically sized form is the
-one gap, recorded below. Dynamic casting is complete for every operand family, in both of its
-spellings.
+execution backend runs both. An untagged union whose member holds a string, a class handle or an
+event, however deep in arrays, structures and unions, is refused as unsupported: the standard admits
+one only in a tagged union (LRM 7.3), and the front end, which refuses the other kinds, lets these
+three through. Default initialization (LRM Table 6-7) and value representation, including a wide
+value carrying X/Z across the 64-bit word boundary, are complete. Chandle is complete. Bit-stream
+casting is complete between fixed-size types; the dynamically sized form is the one gap, recorded
+below. Dynamic casting is complete for every operand family, in both of its spellings.
 
 ## Tagged union
 
-LRM 7.3.2: a tagged union carries a tag naming the active member, and every read of a member checks
-it. Construction (`tagged Member value`, or the bare `tagged Member` of a void member), member read
-and write including nested and compound writes, whole-value copy, equality, and Table 6-7 default
-initialization are complete for the unpacked form, as is pattern matching over one (LRM 12.6). The
-packed form, whose bit layout the LRM fixes, is tracked as `packed.md` P4.
+LRM 7.3.2: a tagged union carries a tag naming the active member, and every read and write of a
+member checks it -- a write where it lands, a nonblocking assignment when its update is applied and
+an output argument when it is copied back. Construction (`tagged Member value`, or the bare
+`tagged Member` of a void member), member read and write including nested and compound writes,
+whole-value copy, equality, and Table 6-7 default initialization are complete for the unpacked form,
+as is pattern matching over one (LRM 12.6). The packed form, whose bit layout the LRM fixes, is
+tracked as `packed.md` P4.
 
 ## Enum
 

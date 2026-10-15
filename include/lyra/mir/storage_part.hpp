@@ -22,8 +22,9 @@ auto SelectionOf(const CallExpr& call) -> std::optional<support::PartSelection>;
 auto SelectedFrom(const Block& block, ExprId target) -> std::optional<ExprId>;
 
 // Whether the value the node `id` of `block` stands for already lies in
-// storage -- a place, a read of one, or what an execution completed with in
-// the storage its awaiter handed it -- rather than being made here.
+// storage -- a place, a read of one, a part of storage a call answers as a view
+// of its whole, or what an execution completed with in the storage its awaiter
+// handed it -- rather than being made here.
 auto ValueLiesInStorage(const Block& block, ExprId id) -> bool;
 
 }  // namespace lyra::mir

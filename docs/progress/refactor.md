@@ -3054,7 +3054,14 @@ enough to warrant its own focused review.
       is still reached by a pair of calls differing only in whether the part is read or written, a
       write below one rebuilding the union around the part. Target: a union's member is a field step
       on the place holding the union (`decisions/an-expression-names-storage-or-makes-a-value.md`).
-      Blocked on the union being laid out from its type on both backends.
+      Blocked on the union being laid out from its type on both backends. Until then a read through
+      a member takes the member out whole, so a select into a queue a tagged union holds copies the
+      queue at every read, which main does not do.
+- [ ] R234 -- The C++ backend reads a member of a union it is told to read as a value only once the
+      expression around the read is evaluated, so a call in a sibling operand that retags the union
+      in between makes the read land on the other member without the tag check firing; the execution
+      backend reads it where the read stands. Found while checking the tag check on the union
+      branch; main does the same.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

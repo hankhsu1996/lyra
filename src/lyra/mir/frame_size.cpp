@@ -130,6 +130,21 @@ auto Overlay(const CompilationUnit& unit, std::span<const TypeId> members)
   return whole;
 }
 
+// A tagged union's members overlaid, then its tag at the tag's alignment: the
+// smallest unsigned integer that counts the members.
+auto TaggedOverlay(const CompilationUnit& unit, std::span<const TypeId> members)
+    -> Layout {
+  const Layout overlay = Overlay(unit, members);
+  std::uint64_t tag = 1;
+  while (tag < sizeof(std::uint64_t) &&
+         members.size() > (std::uint64_t{1} << (tag * 8))) {
+    tag *= 2;
+  }
+  return Layout{
+      .size = ((overlay.size + tag - 1) / tag * tag) + tag,
+      .align = std::max(overlay.align, tag)};
+}
+
 // A value laid out by what it holds is that; a value of the library's is the
 // class the library keeps it as; a machine value is what a register holding it
 // holds. Storage the library keeps -- a cell, a write in progress, an object of
@@ -161,7 +176,9 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> Layout {
             return Product(unit, captures);
           },
           [&](const UnionType& t) { return Overlay(unit, t.members); },
-          [&](const TaggedUnionType& t) { return Overlay(unit, t.members); },
+          [&](const TaggedUnionType& t) {
+            return TaggedOverlay(unit, t.members);
+          },
           [](const DynamicArrayType&) {
             return LayoutOfClass<value::RuntimeDynamicArray>();
           },

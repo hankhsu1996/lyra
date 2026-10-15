@@ -5,6 +5,7 @@
 #include <utility>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
@@ -191,6 +192,15 @@ class BasicUnion {
       "reading an unpacked-union member other than the one last written is "
       "not yet supported on this backend; please open an issue asking for "
       "support");
+}
+
+// A tagged union's member reached where its tag names another. The code that
+// reaches one checks the tag first (LRM 11.9), so arriving here is a compiler
+// bug rather than the design's error.
+[[noreturn]] inline void RefuseMemberTheTagDoesNotName() {
+  throw InternalError(
+      "a tagged union's member was reached without its tag being checked "
+      "first -- please report this as a bug");
 }
 
 // The live member of a union whose members are the C++ types `Ts`, held as the

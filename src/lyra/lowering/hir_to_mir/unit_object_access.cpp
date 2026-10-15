@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
@@ -11,7 +10,6 @@
 #include "lyra/hir/external_scope_ref.hpp"
 #include "lyra/hir/published_member.hpp"
 #include "lyra/hir/structural_scope.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
@@ -157,11 +155,10 @@ auto InterfaceValueOf(
       .type = type};
 }
 
-auto GuardHeldInterface(
+auto ReachHeldInterface(
     mir::CompilationUnit& unit, BlockBuilder& steps, mir::Expr handle,
     mir::TypeId object_pointer) -> mir::Expr {
   mir::Block& body = steps.Body();
-  const mir::TypeId type = handle.type;
   // The handle is tested and then reached through, and the source wrote it
   // once.
   const mir::ExprId held =
@@ -170,22 +167,13 @@ auto GuardHeldInterface(
       mir::Expr{
           .data = mir::CastExpr{.operand = held},
           .type = unit.builtins.machine_bool});
-  const mir::ExprId test = body.exprs.Add(MakeBuiltinCall(
-      unit, body, support::BuiltinFn::kFromBool, std::nullopt, {present},
-      unit.builtins.bit1));
   const mir::ExprId message = body.exprs.Add(
       mir::MakeStringLiteral(
           unit.builtins.string, "use of a null virtual interface (LRM 25.9)"));
-  const mir::ExprId guarded = body.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kRequire,
-                          .receiver = held},
-                  .arguments = {test, message}},
-          .type = type});
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.exprs.Add(
+              mir::MakeAssertExpr(present, message, unit.builtins.void_type))});
   // The handle is a value holding the instance's address, so reaching the
   // instance reads that address out and states which unit's object it is.
   const mir::ExprId address = body.exprs.Add(
@@ -195,7 +183,7 @@ auto GuardHeldInterface(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kChandlePtr,
-                          .receiver = guarded},
+                          .receiver = held},
                   .arguments = {}},
           .type = mir::ErasedPointer(unit.types)});
   return steps.Build(body.exprs.Add(

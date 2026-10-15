@@ -30,8 +30,38 @@ auto SelectedFrom(const Block& block, ExprId target) -> std::optional<ExprId> {
   return CalleeReceiver(part->callee);
 }
 
+namespace {
+
+// Whether a call answers a part of what it is taken on, as a view of that
+// storage rather than a value of its own: a union's member reached for a
+// write.
+auto AnswersAPartOfItsReceiver(const CallExpr& call) -> bool {
+  const std::optional<support::BuiltinFn> fn = DirectBuiltinFn(call);
+  if (!fn.has_value()) {
+    return false;
+  }
+  switch (support::RuntimeEntryOf(*fn).answer) {
+    case support::EntryAnswer::kPartOfTheReceiver:
+      return true;
+    case support::EntryAnswer::kNewValue:
+    case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+    case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+    case support::EntryAnswer::kReferenceToContents:
+    case support::EntryAnswer::kExecution:
+      return false;
+  }
+  throw InternalError("mir: unknown entry answer");
+}
+
+}  // namespace
+
 auto ValueLiesInStorage(const Block& block, ExprId id) -> bool {
   const ExprData& data = block.exprs.Get(id).data;
+  if (const auto* call = std::get_if<CallExpr>(&data);
+      call != nullptr && AnswersAPartOfItsReceiver(*call)) {
+    const std::optional<ExprId> whole = CalleeReceiver(call->callee);
+    return whole.has_value() && ValueLiesInStorage(block, *whole);
+  }
   return IsPlace(data) || std::holds_alternative<CopyExpr>(data) ||
          std::holds_alternative<AwaitExpr>(data);
 }

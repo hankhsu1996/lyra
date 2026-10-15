@@ -43,9 +43,8 @@ namespace lyra::lowering::hir_to_mir {
 namespace {
 
 // Member `index` of `subject`, whose type is `subject_type`. The single step by
-// which a pattern walk descends a level. Reaching a tagged union's member is
-// checked against the tag (LRM 11.9), which the tag test below guards, so the
-// walk never takes that failure.
+// which a pattern walk descends a level. It checks no tag: a pattern reaches a
+// tagged union's member only behind its own test of the tag (LRM 12.6).
 auto SubjectMember(
     UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
     hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
@@ -79,24 +78,6 @@ auto SubjectMember(
   return block.exprs.Add(BuildPackedMemberRead(
       owner, block, subject, projection, index,
       owner.TranslateType(projection.members[index.value].type)));
-}
-
-// The test that `subject`, whose type is `subject_type`, currently holds the
-// component at `index`. The two representations answer it differently -- an
-// unpacked union carries the tag as its own discriminant, a packed one as bits
-// of the vector -- so the test is the one place a pattern walk still sees which
-// representation it is standing on.
-auto BuildTagTest(
-    UnitLowerer& owner, mir::Block& block, mir::ExprId subject,
-    hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
-  const hir::Type& ty = owner.Hir().types.Get(subject_type);
-  if (ty.Is<hir::UnpackedUnionType>()) {
-    return block.exprs.Add(
-        mir::MakeTagMatchesExpr(
-            subject, index, owner.Unit().builtins.machine_bool));
-  }
-  return BuildPackedTagTest(
-      owner, block, subject, ProjectPackedAggregate(owner, ty), index);
 }
 
 // The value a level of a pattern is matched against: what the construct matches

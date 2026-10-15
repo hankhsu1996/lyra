@@ -17,25 +17,36 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// What a step into a member of a tagged packed union requires of the union
-// (LRM 7.3.2, 11.9): its tag, the `tag_bits` most significant bits of the
-// union's vector, holds the declaration-order position of `member`.
+// A tag carried in bits of a packed union's own vector, as a step into one of
+// its members requires it (LRM 7.3.2, 11.9): the `tag_bits` most significant
+// bits hold the declaration-order position of `member`.
 //
 //   typedef union tagged packed { logic [3:0] a; logic [3:0] b; } u_t;
 //   u.b    a step valid only while the one tag bit of `u` is 1
-struct RequiredTag {
+struct TagInBits {
   std::uint32_t tag_bits = 0;
   base::ComponentIndex member = {};
 };
 
+// What a step into a member of an unpacked tagged union requires of the union
+// (LRM 7.3.2, 11.9): the tag it holds as its own names `member`.
+struct HeldTag {
+  base::ComponentIndex member;
+};
+
+// The tag the value a step is taken into has to hold for the step to be valid,
+// as the union carries it: bits of a packed union's vector, or held by an
+// unpacked one.
+using TagRequirement = std::variant<TagInBits, HeldTag>;
+
 // Bits of an integral value (LRM 11.5.1): where they start in the value's own
 // numbering, as many as the part's type is wide. `required_tag` is what the
 // value has to hold for the step to be valid, where the bits are a member of a
-// tagged union; reading the part and writing it each check it their own way,
-// and naming the part checks nothing.
+// tagged union; a read or a write taking the step checks it first, and the step
+// itself checks nothing.
 struct StepToBits {
   mir::ExprId start;
-  std::optional<RequiredTag> required_tag = std::nullopt;
+  std::optional<TagInBits> required_tag = std::nullopt;
 };
 
 // Elements of a fixed-size or dynamic array in a row (LRM 7.4.6): where they
@@ -85,9 +96,12 @@ struct StepToComponent {
 
 // The member an unpacked union holds, by its declaration-order position (LRM
 // 7.3). The union holds one member at a time, so reading a member and writing
-// one are different operations on the union's value.
+// one are different operations on the union's value. In a tagged union the step
+// is valid only while the tag names the member (LRM 11.9), which a read or a
+// write taking it checks first.
 struct StepToUnionMember {
   base::ComponentIndex position;
+  bool tagged = false;
 };
 
 // One step of a descent into a value: which kind of part it reaches, and the
@@ -126,36 +140,39 @@ void ForEachOperand(DescentStep& step, Visit visit) {
       step.to);
 }
 
-// What the value `step` is taken into has to hold for the step to be valid:
-// the tag of a tagged packed union, which only bits of one are behind.
+// The tag `step` requires of the value it is taken into, where it reaches a
+// member of a tagged union, packed or not, and so is valid only while the
+// union's tag names that member (LRM 11.9).
 [[nodiscard]] inline auto TagRequiredBy(const DescentStep& step)
-    -> std::optional<RequiredTag> {
+    -> std::optional<TagRequirement> {
+  const auto none = [] { return std::optional<TagRequirement>{}; };
   return std::visit(
       Overloaded{
-          [](const StepToBits& bits) { return bits.required_tag; },
-          [](const StepToElementRun&) -> std::optional<RequiredTag> {
-            return std::nullopt;
+          [](const StepToBits& bits) -> std::optional<TagRequirement> {
+            return bits.required_tag;
           },
-          [](const StepToElement&) -> std::optional<RequiredTag> {
-            return std::nullopt;
-          },
-          [](const StepToAssocElement&) -> std::optional<RequiredTag> {
-            return std::nullopt;
-          },
-          [](const StepToCharacter&) -> std::optional<RequiredTag> {
-            return std::nullopt;
-          },
-          [](const StepToQueueRun&) -> std::optional<RequiredTag> {
-            return std::nullopt;
-          },
-          [](const StepToComponent&) -> std::optional<RequiredTag> {
-            return std::nullopt;
-          },
-          [](const StepToUnionMember&) -> std::optional<RequiredTag> {
-            return std::nullopt;
+          [&](const StepToElementRun&) { return none(); },
+          [&](const StepToElement&) { return none(); },
+          [&](const StepToAssocElement&) { return none(); },
+          [&](const StepToCharacter&) { return none(); },
+          [&](const StepToQueueRun&) { return none(); },
+          [&](const StepToComponent&) { return none(); },
+          [&](const StepToUnionMember& member)
+              -> std::optional<TagRequirement> {
+            if (!member.tagged) {
+              return std::nullopt;
+            }
+            return HeldTag{.member = member.position};
           }},
       step.to);
 }
+
+// Whether the tag of the union `into` names the member `tag` requires, as a
+// machine boolean. Only a definite match holds, so a tag carrying x or z names
+// no member.
+[[nodiscard]] auto BuildTagMatches(
+    mir::CompilationUnit& unit, mir::Block& block, const TagRequirement& tag,
+    mir::ExprId into) -> mir::ExprId;
 
 // A property of an object as what owns a value (LRM 8.4): the object, as the
 // expression the source reaches it through -- a class handle, or the running
@@ -180,6 +197,11 @@ using PathOwner = std::variant<mir::ExprId, ObjectProperty>;
 // over it, a wait watches it and a join of nets covers it, and each is handed
 // this one statement of which part it is. A path that names no part descends
 // nowhere and is its owner's own place.
+//
+// Taking a path for a read or a write checks each step into a member of a
+// tagged union first (LRM 11.9), by a statement appended to the block that
+// names the steps before it again, so what those compute is settled before the
+// path is taken.
 //
 // This is the lowering's own shape and reaches no layer below. What MIR carries
 // is what the descent lowers to -- for each step a field step, the dereference
@@ -273,6 +295,12 @@ struct AccessPath {
     mir::CompilationUnit& unit, mir::TypeId source_type, mir::TypeId part_type)
     -> mir::TypeId;
 
+// The checks a read along `path` owes before it is made, one for each step into
+// a member of a tagged union, appended to `block`: for a construct that takes
+// the steps itself after the checks, where it lies.
+void AppendReadChecks(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path);
+
 // The part the path names, as the place it lies in where it is one: what the
 // owner holds, then each step as a read takes it, so nothing on the way to the
 // part is read whole.
@@ -315,6 +343,15 @@ struct AccessPath {
 [[nodiscard]] auto Settled(
     const UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath path)
     -> AccessPath;
+
+// `target`, the target of a write, with what its steps compute up to its last
+// step into a member of a tagged union evaluated here, once (LRM 11.4.1): the
+// check of that member's tag and the write both name those steps, and the
+// check stands where the write lands (LRM 11.9). A target owing no check is
+// left as it is.
+void SettleForTagChecks(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    AccessPath& target);
 
 // A part a construct reads at several places: its owner and the descent to it,
 // neither evaluating anything, and the block their nodes are named in. Every

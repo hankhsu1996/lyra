@@ -1235,6 +1235,43 @@ TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
       << "stdout: " << run.stdout_text;
 }
 
+// A nonblocking update is the design's code run where the update is applied
+// (LRM 10.4.2), not where its statement stood, so a run-time error it raises
+// there -- a write to a tagged union's member the tag no longer names (LRM
+// 11.9) -- is reported from there and ends the simulation the way $fatal does,
+// final procedures included (LRM 9.2.3, 20.10).
+TEST(LyraRun, AnErrorInANonblockingUpdateIsReportedWhereItLands) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "module Test;\n"
+                     << "  typedef union tagged { int a; int b; } U;\n"
+                     << "  U u;\n"
+                     << "  initial begin\n"
+                     << "    u = tagged a 1;\n"
+                     << "    u.a <= 2;\n"
+                     << "    u = tagged b 3;\n"
+                     << "  end\n"
+                     << "  final $display(\"reached the end\");\n"
+                     << "endmodule\n";
+
+  const std::vector<std::string> args = {"run",   "--backend", "llvm",
+                                         "--top", "Test",      src.string()};
+  const auto run = RunChildProcess(lyra, args, 120s);
+  EXPECT_EQ(run.termination, TerminationKind::kExitedNonZero)
+      << run.stdout_text << run.stderr_text;
+  EXPECT_NE(
+      run.stderr_text.find(
+          "write to a tagged union member inconsistent with the current tag"),
+      std::string::npos)
+      << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("reached the end"), std::string::npos)
+      << "stdout: " << run.stdout_text;
+}
+
 // Procedures that keep waking each other with no delay between them are legal
 // text the standard only warns of (LRM 9.2.2, 12.7.6), and a tool that stops
 // such a run owes its reader the one thing they cannot find alone: which

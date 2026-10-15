@@ -72,12 +72,11 @@ enum class BuiltinFn : std::uint16_t {
   // product has no counterpart for either.
   kTagMatches,
   kMakeActiveMember,
-  // Yields the receiver when a condition holds and raises the given message as
-  // a simulation error when it does not. The shape for a check the language
-  // requires to run as part of evaluating an access rather than ahead of it
-  // (LRM 11.3.5): passing the receiver through lets the access compose onto the
-  // guard, so a guarded access stays the ordinary one above.
-  kRequire,
+  // Raises the given message as a simulation error unless a machine boolean
+  // holds: a check the language requires before an access (LRM 11.9, 25.9),
+  // stated ahead of it as rustc's `Assert` stands before the projection it
+  // guards.
+  kAssert,
   // LRM 7.4.3 / 7.5 / 7.9 / 7.10.2. AA's `num` is an alias of `size`;
   // String's LRM 6.16.1 `len` is its own mandated spelling.
   kSize,
@@ -1203,9 +1202,8 @@ enum class CallEnding : std::uint8_t {
 // What a call to an entry answers with -- the C++ distinction between returning
 // `T` and returning `T&`. Most entries build a value, which the caller then
 // owns and ends. The others answer with storage that already exists and that
-// the caller owns nothing of: the object the call acted on, handed back so an
-// access composes onto the call (a guard, LRM 11.3.5); a reference to a part
-// of that object that is storage of its own, read-only or mutable, whose
+// the caller owns nothing of: a reference to a part of the object the call
+// acted on that is storage of its own, read-only or mutable, whose
 // dereference is the part, as rustc's `Index::index` answers `&Self::Output`
 // and `IndexMut::index_mut` `&mut Self::Output`; a read-only reference to what
 // a capability wrapper holds, whose dereference is the storage the wrapper
@@ -1217,7 +1215,6 @@ enum class CallEnding : std::uint8_t {
 // there rather than the caller ending it.
 enum class EntryAnswer : std::uint8_t {
   kNewValue,
-  kTheReceiver,
   kReadOnlyReferenceIntoTheReceiver,
   kMutableReferenceIntoTheReceiver,
   kReferenceToContents,

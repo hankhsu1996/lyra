@@ -371,14 +371,14 @@ auto LowerIgnoredExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
 }
 
 // The part `expr` names as the target of a write, shared by both pass classes:
-// the path, with the checks the write owes before it lands appended where the
+// the path, with whatever the write names more than once evaluated where the
 // statement is reached.
 template <ExprLowerer L>
 auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
   auto target = LowerAccessPathImpl(lowerer, expr, frame);
   if (!target) return std::unexpected(std::move(target.error()));
-  AppendTagChecks(lowerer.Owner(), frame, *target);
+  SettleForTagChecks(lowerer.Owner(), frame, *target);
   // A write to bits of a character reads the character before putting it back,
   // so the target is settled once for both (LRM 11.5.1, 6.16.2).
   if (WritesBitsOfACharacter(*target)) {

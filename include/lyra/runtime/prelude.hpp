@@ -62,6 +62,7 @@
 #include "lyra/runtime/value_change_wait.hpp"    // IWYU pragma: keep
 #include "lyra/runtime/value_families.hpp"       // IWYU pragma: keep
 #include "lyra/runtime/var.hpp"                  // IWYU pragma: keep
+#include "lyra/value/assert.hpp"                 // IWYU pragma: keep
 #include "lyra/value/associative_array.hpp"      // IWYU pragma: keep
 #include "lyra/value/chandle.hpp"                // IWYU pragma: keep
 #include "lyra/value/dpi_canonical.hpp"          // IWYU pragma: keep
@@ -73,7 +74,6 @@
 #include "lyra/value/integral_format.hpp"        // IWYU pragma: keep
 #include "lyra/value/queue.hpp"                  // IWYU pragma: keep
 #include "lyra/value/real.hpp"                   // IWYU pragma: keep
-#include "lyra/value/require.hpp"                // IWYU pragma: keep
 #include "lyra/value/scan.hpp"                   // IWYU pragma: keep
 #include "lyra/value/string.hpp"                 // IWYU pragma: keep
 #include "lyra/value/tagged_union.hpp"           // IWYU pragma: keep

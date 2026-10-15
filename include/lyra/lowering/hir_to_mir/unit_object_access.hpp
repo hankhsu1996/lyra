@@ -48,9 +48,9 @@ auto ReachPublishedDisableTarget(
     const hir::ExternalDisableTargetLeaf& leaf) -> mir::ExprId;
 
 // The rest of reaching the instance a virtual interface holds, given the handle
-// already lowered into `steps`: the handle evaluated once, and yielded as
-// `object_pointer` only when it holds an instance.
-auto GuardHeldInterface(
+// already lowered into `steps`: the handle evaluated once, checked to hold an
+// instance, and yielded as `object_pointer`.
+auto ReachHeldInterface(
     mir::CompilationUnit& unit, BlockBuilder& steps, mir::Expr handle,
     mir::TypeId object_pointer) -> mir::Expr;
 
@@ -58,9 +58,9 @@ auto GuardHeldInterface(
 // its unit's object: the instance the handle holds, taken as the object of the
 // unit the access was resolved against -- which the handle's own value does not
 // carry -- then each step of the descent. Using a handle that holds null is a
-// fatal run-time error (LRM 25.9), so the instance is guarded by that test, and
-// the handle is evaluated once whatever the access does with the answer --
-// which is why it is lowered here, into the steps that bind it, rather than
+// fatal run-time error (LRM 25.9), so the handle is checked before the instance
+// is reached, and it is evaluated once whatever the access does with the answer
+// -- which is why it is lowered here, into the steps that bind it, rather than
 // handed in lowered.
 template <ExprLowerer Lowerer>
 auto HeldInterfaceObject(
@@ -72,13 +72,13 @@ auto HeldInterfaceObject(
       mir::Type{mir::PointerType{
           .pointee = lowerer.Owner().UnitObjectType(access.scope_class),
           .ownership = mir::PointerOwnership::kBorrowed}});
-  BlockBuilder guard(frame);
+  BlockBuilder steps(frame);
   auto handle_or =
-      lowerer.LowerExpr(lowerer.HirExprs().Get(access.handle), guard.Frame());
+      lowerer.LowerExpr(lowerer.HirExprs().Get(access.handle), steps.Frame());
   if (!handle_or) return std::unexpected(std::move(handle_or.error()));
   mir::Block& block = *frame.current_block;
   mir::ExprId reached = block.exprs.Add(
-      GuardHeldInterface(unit, guard, *std::move(handle_or), object_pointer));
+      ReachHeldInterface(unit, steps, *std::move(handle_or), object_pointer));
   for (const hir::ExternalStep& step : access.steps) {
     reached = StepThroughPublished(
         lowerer.Owner(), block, reached, step.names, step.selects);

@@ -1741,7 +1741,6 @@ auto PartReceiver(const mir::CallExpr& call) -> std::optional<mir::ExprId> {
     case support::EntryAnswer::kPartOfTheReceiver:
       return mir::CalleeReceiver(call.callee);
     case support::EntryAnswer::kNewValue:
-    case support::EntryAnswer::kTheReceiver:
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
     case support::EntryAnswer::kReferenceToContents:
@@ -1763,7 +1762,6 @@ auto AnswersReferenceIntoReceiver(const mir::CallExpr& call) -> bool {
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
       return true;
     case support::EntryAnswer::kNewValue:
-    case support::EntryAnswer::kTheReceiver:
     case support::EntryAnswer::kReferenceToContents:
     case support::EntryAnswer::kPartOfTheReceiver:
     case support::EntryAnswer::kExecution:
@@ -1783,7 +1781,6 @@ auto AnswersReferenceToContents(const mir::CallExpr& call) -> bool {
     case support::EntryAnswer::kReferenceToContents:
       return true;
     case support::EntryAnswer::kNewValue:
-    case support::EntryAnswer::kTheReceiver:
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
     case support::EntryAnswer::kPartOfTheReceiver:
@@ -1805,7 +1802,6 @@ auto EntryBuildsExecution(const mir::CallExpr& call) -> bool {
     case support::EntryAnswer::kExecution:
       return true;
     case support::EntryAnswer::kNewValue:
-    case support::EntryAnswer::kTheReceiver:
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
     case support::EntryAnswer::kReferenceToContents:

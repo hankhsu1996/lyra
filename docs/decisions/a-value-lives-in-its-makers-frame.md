@@ -50,9 +50,8 @@ out the way clang carries it out.**
   where it was built; one that was only lent is copied first, so what is handed on is always owned.
 - **A parameter the caller lends is copied into a slot of the callee's**, so the body may write it
   (LRM 13.5.1) without touching the caller's value.
-- **What an entry answers with is a property of the entry**: a new value, the object it acted on (a
-  guard that yields what it guards), or a part of that object. Only the first is owned and ended by
-  the caller.
+- **What an entry answers with is a property of the entry**: a new value, or a part of the object it
+  acted on. Only the first is owned and ended by the caller.
 - **A frame holds values of bounded size.** A frame is taken from a stack whose size whoever started
   the program chose, and a design's author states widths with no way to say where a value lives. So
   what one call takes from the stack is bounded by a constant whatever the design declares. A value

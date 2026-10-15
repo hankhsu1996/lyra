@@ -827,10 +827,24 @@ struct Expr {
   return Expr{.data = DerefExpr{.pointer = pointer}, .type = referent_type};
 }
 
+// A check an access owes, stated before the access: raises `message` as a
+// run-time error unless the machine boolean `condition` holds, as rustc's
+// `Assert` stands before the projection it guards.
+[[nodiscard]] inline auto MakeAssertExpr(
+    ExprId condition, ExprId message, TypeId void_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee = Direct{.target = support::BuiltinFn::kAssert},
+              .arguments = {condition, message}},
+      .type = void_type};
+}
+
 // `subject.index` -- the member an active-member value holds at a
-// declaration-order position. A read of a member that is not the one held
-// answers by the value's own semantics, which reach the call through the
-// domain its type names.
+// declaration-order position. In an untagged union a read of a member that is
+// not the one held answers by the value's own semantics, which reach the call
+// through the domain its type names; a tagged union's member is reached only
+// behind a check of its tag (LRM 11.9).
 [[nodiscard]] inline auto MakeComponentExpr(
     ExprId subject, base::ComponentIndex index, TypeId component) -> Expr {
   return Expr{

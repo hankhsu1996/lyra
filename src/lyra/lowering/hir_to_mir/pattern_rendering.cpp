@@ -349,11 +349,9 @@ auto Renderer::UnpackedMember(
   return Named(frame, field.name, Render(frame, member, field.type));
 }
 
-// Reads the bits the member occupies rather than the member the source named:
-// the rendering has already settled which member it is printing -- every one
-// of a structure's, the first of a union's, the one a tag names -- so the
-// check LRM 11.9 puts on a written access would be this operation asking again
-// what it just decided.
+// Reads the bits the member occupies, at the member's declared type: the
+// rendering has already settled which member it prints -- every one of a
+// structure's, the first of a union's, the one a tag names (LRM 21.2.1.6).
 auto Renderer::PackedMember(
     const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
     const PackedProjection& projection, const hir::PackedAggregateField& field,
@@ -394,15 +392,13 @@ auto Renderer::BuildUnpackedAggregate(
     mir::ExprId chain = Text(frame, "");
     for (std::size_t i = fields.size(); i-- > 0;) {
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      const mir::ExprId subject = Place(frame, value, mir_type);
-      const mir::ExprId live = block.exprs.Add(
-          mir::MakeTagMatchesExpr(
-              subject, index, Unit().builtins.machine_bool));
+      const mir::ExprId live = BuildTagTest(
+          Owner(), block, Place(frame, value, mir_type), type, index);
       chain = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::ConditionalExpr{
-                      .condition = ReduceToCondition(Unit(), block, live),
+                      .condition = live,
                       .then_value = UnpackedMember(
                           frame, value, mir_type, t, fields[i], index),
                       .else_value = chain},
@@ -443,14 +439,13 @@ auto Renderer::BuildPackedAggregate(
     mir::ExprId chain = Text(frame, "");
     for (std::size_t i = fields.size(); i-- > 0;) {
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      const mir::ExprId subject = Place(frame, value, mir_type);
-      const mir::ExprId live =
-          BuildPackedTagTest(Owner(), block, subject, projection, index);
+      const mir::ExprId live = BuildTagTest(
+          Owner(), block, Place(frame, value, mir_type), type, index);
       chain = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::ConditionalExpr{
-                      .condition = ReduceToCondition(Unit(), block, live),
+                      .condition = live,
                       .then_value = PackedMember(
                           frame, value, mir_type, projection, fields[i], index),
                       .else_value = chain},

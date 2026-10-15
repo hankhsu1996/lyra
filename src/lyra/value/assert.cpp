@@ -1,4 +1,4 @@
-#include "lyra/value/require.hpp"
+#include "lyra/value/assert.hpp"
 
 #include <string>
 #include <string_view>
@@ -7,7 +7,7 @@
 
 namespace lyra::value {
 
-void RequireCondition(bool holds, std::string_view message) {
+void Assert(bool holds, std::string_view message) {
   if (!holds) {
     throw SimulationError(std::string{message});
   }

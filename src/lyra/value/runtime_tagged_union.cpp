@@ -1,10 +1,8 @@
 #include "lyra/value/runtime_tagged_union.hpp"
 
 #include <cstddef>
-#include <format>
 #include <utility>
 
-#include "lyra/base/simulation_error.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/basic_union.hpp"
 #include "lyra/value/runtime_union.hpp"
@@ -23,24 +21,17 @@ auto RuntimeTaggedUnion::Tag() const -> std::size_t {
   return Live().Index();
 }
 
-void RuntimeTaggedUnion::RequireTagged(
-    std::size_t index, const char* access) const {
-  if (index != Tag()) {
-    throw SimulationError(
-        std::format(
-            "{} a tagged union member inconsistent with the current tag "
-            "(LRM 11.9)",
-            access));
-  }
-}
-
 auto RuntimeTaggedUnion::Component(std::size_t index) const -> const AnyValue& {
-  RequireTagged(index, "read of");
+  if (index != Tag()) {
+    RefuseMemberTheTagDoesNotName();
+  }
   return Live().Value();
 }
 
 void RuntimeTaggedUnion::SetComponent(std::size_t index, AnyValue value) {
-  RequireTagged(index, "write to");
+  if (index != Tag()) {
+    RefuseMemberTheTagDoesNotName();
+  }
   Live() = HeldMember(index, std::move(value));
 }
 

@@ -2,14 +2,20 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/binary_op.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -18,6 +24,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -592,7 +599,7 @@ auto ReachedForWrite(
   };
   // A property is written through a write opened on its object alone, which
   // the object hears when the write ends; the property is reached through the
-  // write, as a member is through a guard.
+  // write.
   mir::ExprId reached = std::visit(
       Overloaded{
           from_place,
@@ -624,11 +631,132 @@ auto WriteOperandOf(
   return ReachedForWrite(unit, block, whole, WriteEnd::kDesignated);
 }
 
+// The part `path` names, reached for a read where it lies: what the owner
+// holds, then each step as a read takes it.
+auto PlaceForRead(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
+    -> mir::ExprId {
+  mir::ExprId reached = std::visit(
+      Overloaded{
+          [&](mir::ExprId place) {
+            const mir::Type& owner_ty =
+                unit.types.Get(block.exprs.Get(place).type);
+            if (!owner_ty.IsCapabilityWrapper()) {
+              return place;
+            }
+            return block.exprs.Add(block.WrapperContents(
+                unit.types, place, owner_ty.WrappedValueType()));
+          },
+          [&](const ObjectProperty& owner) {
+            return block.exprs.Add(PropertyStorage(
+                unit, block, owner.object, owner.property, owner.type));
+          }},
+      path.owner);
+  for (const DescentStep& step : path.descent) {
+    reached = block.exprs.Add(StepForRead(unit, block, step, reached));
+  }
+  return reached;
+}
+
+// Whether the access a check stands before reads the member or writes it,
+// which the check's message names (LRM 11.9).
+enum class CheckedAccess : std::uint8_t { kRead, kWrite };
+
+auto AccessText(CheckedAccess access) -> std::string_view {
+  switch (access) {
+    case CheckedAccess::kRead:
+      return "read of";
+    case CheckedAccess::kWrite:
+      return "write to";
+  }
+  throw InternalError("access path: unknown access");
+}
+
+// The checks a read or a write along `path` owes before it is made: one for
+// each step into a member of a tagged union, over the value the steps before it
+// reach, read where it lies (LRM 11.9). They stand where the path is taken, so
+// a write that lands after the statement naming it -- a nonblocking update, an
+// output argument copied back -- is checked when it lands.
+void AppendTagChecks(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path,
+    CheckedAccess access) {
+  for (std::size_t taken = 0; taken < path.descent.size(); ++taken) {
+    const std::optional<TagRequirement> tag =
+        TagRequiredBy(path.descent[taken]);
+    if (!tag.has_value()) {
+      continue;
+    }
+    const AccessPath before{
+        .owner = path.owner,
+        .descent = {
+            path.descent.begin(),
+            path.descent.begin() + static_cast<std::ptrdiff_t>(taken)}};
+    const mir::ExprId holds =
+        BuildTagMatches(unit, block, *tag, PlaceForRead(unit, block, before));
+    const mir::ExprId text = block.exprs.Add(
+        mir::MakeStringLiteral(
+            unit.builtins.string, std::format(
+                                      "{} a tagged union member inconsistent "
+                                      "with the current tag (LRM 11.9)",
+                                      AccessText(access))));
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.exprs.Add(
+                mir::MakeAssertExpr(holds, text, unit.builtins.void_type))});
+  }
+}
+
 }  // namespace
+
+auto BuildTagMatches(
+    mir::CompilationUnit& unit, mir::Block& block, const TagRequirement& tag,
+    mir::ExprId into) -> mir::ExprId {
+  return std::visit(
+      Overloaded{
+          // The tag is the most significant bits of the union's own vector
+          // (LRM 7.3.2), so where it starts and the state domain it is read
+          // in are the union's, and it is compared bit for bit.
+          [&](const TagInBits& bits) {
+            const mir::IntegralType& vector =
+                unit.types.Get(block.exprs.Get(into).type).Integral();
+            const mir::TypeId tag_type = mir::PackedVectorOf(
+                unit.types, bits.tag_bits, vector.state_kind);
+            const DescentStep to_tag{
+                .to =
+                    StepToBits{
+                        .start = BuildConstantPosition(
+                            unit, block,
+                            static_cast<std::int64_t>(
+                                vector.bit_width - bits.tag_bits))},
+                .part_type = tag_type};
+            const mir::ExprId carried =
+                block.exprs.Add(StepRead(unit, block, to_tag, into));
+            const mir::ExprId named = BuildIntLiteral(
+                unit, block, static_cast<std::int64_t>(bits.member.value));
+            return ReduceToCondition(
+                unit, block,
+                block.exprs.Add(BuildMirBinaryExpr(
+                    unit, block, hir::BinaryOp::kCaseEquality, carried,
+                    ConvertToType(unit, block, named, tag_type),
+                    unit.builtins.bit1)));
+          },
+          [&](const HeldTag& held) {
+            return block.exprs.Add(
+                mir::MakeTagMatchesExpr(
+                    into, held.member, unit.builtins.machine_bool));
+          }},
+      tag);
+}
+
+void AppendReadChecks(
+    mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path) {
+  AppendTagChecks(unit, block, path, CheckedAccess::kRead);
+}
 
 auto PathPlace(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
+  AppendTagChecks(unit, block, path, CheckedAccess::kWrite);
   return ReachedForWrite(unit, block, path, WriteEnd::kLanded);
 }
 
@@ -666,26 +794,8 @@ auto PathReference(
 auto PathAsPlace(
     mir::CompilationUnit& unit, mir::Block& block, const AccessPath& path)
     -> mir::ExprId {
-  mir::ExprId reached = std::visit(
-      Overloaded{
-          [&](mir::ExprId place) {
-            const mir::Type& owner_ty =
-                unit.types.Get(block.exprs.Get(place).type);
-            if (!owner_ty.IsCapabilityWrapper()) {
-              return place;
-            }
-            return block.exprs.Add(block.WrapperContents(
-                unit.types, place, owner_ty.WrappedValueType()));
-          },
-          [&](const ObjectProperty& owner) {
-            return block.exprs.Add(PropertyStorage(
-                unit, block, owner.object, owner.property, owner.type));
-          }},
-      path.owner);
-  for (const DescentStep& step : path.descent) {
-    reached = block.exprs.Add(StepForRead(unit, block, step, reached));
-  }
-  return reached;
+  AppendTagChecks(unit, block, path, CheckedAccess::kRead);
+  return PlaceForRead(unit, block, path);
 }
 
 auto PathValue(
@@ -755,13 +865,14 @@ auto PathValueAsDeclared(
   if (path.descent.empty()) {
     return PathValue(unit, block, path);
   }
+  AppendTagChecks(unit, block, path, CheckedAccess::kRead);
   AccessPath into = path;
   DescentStep last = std::move(into.descent.back());
   into.descent.pop_back();
   const mir::TypeId declared = last.part_type;
   last.part_type = PartSelectNaturalType(
       unit, ValueSelectedWithin(unit, block, path), declared);
-  const mir::ExprId receiver = PathAsPlace(unit, block, into);
+  const mir::ExprId receiver = PlaceForRead(unit, block, into);
   const mir::ExprId read =
       block.exprs.Add(StepRead(unit, block, last, receiver));
   return ConvertToType(unit, block, read, declared);
@@ -871,6 +982,26 @@ auto Settled(
     });
   }
   return path;
+}
+
+void SettleForTagChecks(
+    const UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    AccessPath& target) {
+  std::size_t last_checked = 0;
+  for (std::size_t taken = 0; taken < target.descent.size(); ++taken) {
+    if (TagRequiredBy(target.descent[taken]).has_value()) {
+      last_checked = taken + 1;
+    }
+  }
+  if (last_checked == 0) {
+    return;
+  }
+  target.owner = SettledOwner(unit_lowerer, frame, target.owner);
+  for (std::size_t settled = 0; settled + 1 < last_checked; ++settled) {
+    ForEachOperand(target.descent[settled], [&](mir::ExprId& operand) {
+      operand = EvaluatedOnce(frame, operand);
+    });
+  }
 }
 
 auto SettledForRead(
@@ -1027,7 +1158,9 @@ auto PutCharacterExpr(
     std::size_t at, mir::ExprId value) -> mir::Expr {
   const AccessPath string{
       .owner = path.owner,
-      .descent = {path.descent.begin(), path.descent.begin() + at}};
+      .descent = {
+          path.descent.begin(),
+          path.descent.begin() + static_cast<std::ptrdiff_t>(at)}};
   const auto& character = std::get<StepToCharacter>(path.descent[at].to);
   mir::ExprId put = value;
   // A character is a `byte`, so what follows it in a write names its bits,
@@ -1039,14 +1172,16 @@ auto PutCharacterExpr(
           "access path: a character is a byte, so a write names its bits "
           "once or not at all, and this descent takes another step");
     }
-    const mir::ExprId held =
-        PathValue(unit, block, DescendInto(string, path.descent[at]));
+    const mir::ExprId held = block.AsValue(
+        unit.types,
+        PlaceForRead(unit, block, DescendInto(string, path.descent[at])));
     put = block.exprs.Add(MakeBuiltinCall(
         unit, block, support::BuiltinFn::kWithSlice, std::nullopt,
         {held, bits->start, value}, block.exprs.Get(held).type));
   }
   return MakeBuiltinCall(
-      unit, block, support::BuiltinFn::kPutc, PathPlace(unit, block, string),
+      unit, block, support::BuiltinFn::kPutc,
+      ReachedForWrite(unit, block, string, WriteEnd::kLanded),
       {character.position, put}, unit.builtins.void_type);
 }
 
@@ -1125,6 +1260,7 @@ auto BuildStoreExpr(
   // A store carries the right-hand side to the destination's declared
   // representation (LRM 10.6.1).
   rhs_id = ConvertToType(unit, block, rhs_id, PathValueType(unit, block, path));
+  AppendTagChecks(unit, block, path, CheckedAccess::kWrite);
   // Replacing the whole of what a capability wrapper holds acts on the wrapper
   // -- the value lands in its storage and it reports the change to whatever is
   // watching -- so it is a call taking the wrapper as its destination. A store
@@ -1157,7 +1293,8 @@ auto BuildStoreExpr(
     return StoreBitsExpr(unit, block, path, *at, rhs_id);
   }
   return mir::MakeAssignExpr(
-      unit.builtins, PathPlace(unit, block, path), rhs_id);
+      unit.builtins, ReachedForWrite(unit, block, path, WriteEnd::kLanded),
+      rhs_id);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

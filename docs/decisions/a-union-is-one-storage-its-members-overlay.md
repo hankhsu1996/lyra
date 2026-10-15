@@ -106,9 +106,14 @@ step whichever kind it is in, and the tag is the only thing a tagged union adds.
 
 ### D7. MIR checks the tag before every member read and write
 
-`require(tag_matches(u, k))` with LRM 11.9's message, then the field step, of no-address kind. The
-step checks nothing. A whole tagged value is built by storing the member and then the tag, and
-assigning one ends the old value first; copying and ending follow the tag.
+`assert(tag_matches(u, k))` with LRM 11.9's message, then the field step, of no-address kind. The
+check is rustc's `Assert`: a call that answers nothing, stated before the access, so the access
+reaches the union where it lies rather than through a value the check handed back. A read states it
+among the steps of the read, since it is part of evaluating the access (LRM 11.3.5), and a write as
+a statement before the write; a packed tagged union is checked the same way, over the tag bits. The
+step checks nothing, and the library only reports, as a compiler bug, a member reached under another
+tag. A whole tagged value is built by storing the member and then the tag, and assigning one ends
+the old value first; copying and ending follow the tag.
 
 ## Where Lyra differs, and why
 
