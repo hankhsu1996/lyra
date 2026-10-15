@@ -487,6 +487,8 @@ auto Type::IsAddressOnly() const -> bool {
       case RuntimeLibraryKind::kObjectDefinition:
       case RuntimeLibraryKind::kScopeInfo:
       case RuntimeLibraryKind::kScopeCallable:
+      case RuntimeLibraryKind::kConstructionTable:
+      case RuntimeLibraryKind::kInstantiation:
         return false;
     }
     throw InternalError("lir: unknown runtime library kind");

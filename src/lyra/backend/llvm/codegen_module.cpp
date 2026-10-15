@@ -1016,6 +1016,7 @@ auto CodeGenModule::HoldsItsBytesInline(
     case support::MemberStorageKind::kChannelCancellation:
     case support::MemberStorageKind::kEvaluationAttempts:
     case support::MemberStorageKind::kTimer:
+    case support::MemberStorageKind::kLoopBlocks:
       return false;
   }
   throw InternalError("llvm codegen: unknown member storage kind");
@@ -1827,8 +1828,8 @@ auto CodeGenModule::GetAddrOfFixedArrayType(lir::TypeId type)
   out.Place(layout.parts.offset, table(layout.parts_table_symbol));
   // The part answering for the elements names the constant it lies in.
   out.Place(layout.parts_owner.offset, DefinitionGlobal(name));
-  llvm::GlobalVariable* defined = DefineConstant(name, std::move(out).Build());
-  defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  llvm::GlobalVariable* defined =
+      DefineConstant(name, std::move(out).Build(), lir::Linkage::kInternal);
   defined->setAlignment(llvm::Align(layout.object.align));
   fixed_array_types_.emplace(type, defined);
   return defined;
@@ -1864,8 +1865,8 @@ auto CodeGenModule::GetAddrOfQueueType(lir::TypeId queue)
       layout.bound.offset,
       Int(static_cast<std::uint64_t>(bound), layout.bound.bytes));
   llvm::GlobalVariable* defined = DefineConstant(
-      std::format("lyra.queue.{}", queue.value), std::move(out).Build());
-  defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
+      std::format("lyra.queue.{}", queue.value), std::move(out).Build(),
+      lir::Linkage::kInternal);
   defined->setAlignment(llvm::Align(layout.object.align));
   queue_types_.emplace(queue, defined);
   return defined;
@@ -1905,8 +1906,8 @@ auto CodeGenModule::GetAddrOfElementType(lir::TypeId element)
   out.Place(layout.type.offset, *type);
   out.Place(layout.build_default.offset, UnitFunction(stated->function));
   out.Place(layout.scratch.offset, scratch);
-  llvm::GlobalVariable* defined = DefineConstant(name, std::move(out).Build());
-  defined->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  llvm::GlobalVariable* defined =
+      DefineConstant(name, std::move(out).Build(), lir::Linkage::kInternal);
   defined->setAlignment(llvm::Align(layout.object.align));
   element_types_.emplace(element, defined);
   return defined;

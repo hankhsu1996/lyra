@@ -10,9 +10,9 @@
 // the index handed to the child names the block's class, one per index, as
 // `Leaf<i>` would in C++; that class is what each step adds.
 // @each-adds: bytes, mir.classes 2, mir.constructors 2, mir.class constants 2,
-// @each-adds: mir.coroutines 1, mir.callables, mir.fields, mir.types,
-// @each-adds: lir.classes 2, lir.constants, lir.coroutines 1, lir.functions,
-// @each-adds: lir.members, lir.types
+// @each-adds: mir.callables, mir.fields, mir.types,
+// @each-adds: lir.classes 2, lir.constants, lir.functions, lir.members,
+// @each-adds: lir.types
 module Leaf #(parameter int K = 0) (input bit c, output int o);
   localparam bit ODD = K % 2 != 0;
   int stages [4];
