@@ -215,7 +215,7 @@ auto CodeGenFunction::LowerLoad(
           PlaceValueCellDomain(load.place, result_type)) {
     return ValueCellContents(*cell, *address);
   }
-  if (module_->Types().LiesInStorage(result_type)) {
+  if (module_->Types().HasAggregateEvaluationKind(result_type)) {
     return *address;
   }
   if (module_->Types().IsReadAsView(result_type)) {
@@ -310,10 +310,9 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   if (!wrapper) {
     return std::unexpected(std::move(wrapper.error()));
   }
-  const lir::TypeId stored = OperandType(store.value);
   // What a store is told is of the values its storage holds, which are of the
   // stored value's type.
-  const std::optional<lir::TypeId> acted_on = stored;
+  const lir::TypeId stored = OperandType(store.value);
   // The store `symbol` names, made on the storage `args` holds as `arranged`
   // says it crosses, with the stored value crossing after it as a store whose
   // realization is told `told` reads the operand that follows the storage it
@@ -323,7 +322,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
           std::vector<llvm::Value*> args,
           const support::OperandReadings& readings, const Told& told,
           llvm::Value* value) -> diag::Result<llvm::Value*> {
-    arranged.push_back(arranger_.ArgOf(readings, 1, stored, told, acted_on));
+    arranged.push_back(arranger_.ArgOf(readings, 1, stored, told, stored));
     auto crossed = module_->BuildCallArg(arranged.back().mode, value, args);
     if (!crossed) {
       return std::unexpected(std::move(crossed.error()));
@@ -359,7 +358,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
     }
     // A store writes into a value that is already there, so whatever names
     // that storage goes on naming it.
-    if (module_->Types().LiesInStorage(stored)) {
+    if (module_->Types().HasAggregateEvaluationKind(stored)) {
       auto written = AssignValue(stored, *value, *address);
       if (!written) {
         return std::unexpected(std::move(written.error()));
@@ -385,7 +384,7 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
   const lir::TypeId wrapper_type =
       ReachedType(store.place, std::ssize(store.place.chain) - 1);
   std::vector<ArgAbi> arranged{
-      arranger_.ArgOf(readings, 0, wrapper_type, told, acted_on)};
+      arranger_.ArgOf(readings, 0, wrapper_type, told, stored)};
   std::vector<llvm::Value*> wrapper_args;
   auto wrapper_crossed =
       module_->BuildCallArg(arranged.front().mode, *address, wrapper_args);
@@ -418,7 +417,7 @@ auto CodeGenFunction::LowerUse(
                   "it is kept, never moved into storage -- please report this "
                   "as a bug");
             }
-            if (!module_->Types().LiesInStorage(place.type)) {
+            if (!module_->Types().HasAggregateEvaluationKind(place.type)) {
               return value;
             }
             auto moved = RelocateValue(place.type, *value, place.address);
@@ -1439,16 +1438,15 @@ auto CodeGenFunction::LowerCall(
                 if (!given) {
                   return std::unexpected(std::move(given.error()));
                 }
-                auto size = module_->CompleteObjectSize(
+                auto deleted = module_->EmitDeleteCall(
+                    builder_,
                     *module_->Unit()
                          .types.Get(OperandType(call.args.at(0)))
-                         .Pointee());
-                if (!size) {
-                  return std::unexpected(std::move(size.error()));
+                         .Pointee(),
+                    *given);
+                if (!deleted) {
+                  return std::unexpected(std::move(deleted.error()));
                 }
-                builder_.CreateCall(
-                    module_->SizedOperatorDelete(),
-                    {*given, builder_.getInt64(*size)});
                 return nullptr;
               }
             }
@@ -1506,12 +1504,7 @@ auto CodeGenFunction::OuterBitsParts(std::span<const BitsPartRef> parts)
             count, module_->Types().RequiredIntegralShapeOf(part.type).width),
         builder_.CreateStructGEP(crossing, slot, 1));
   }
-  llvm::Value* span = llvm::UndefValue::get(module_->Types().Span());
-  span = builder_.CreateInsertValue(span, storage, {0});
-  return builder_.CreateInsertValue(
-      span,
-      llvm::ConstantInt::get(count, static_cast<std::uint64_t>(parts.size())),
-      {1});
+  return ViewOver(storage, parts.size());
 }
 
 // The entry takes the designation, the parts the bits lie in, where the bits
@@ -2228,7 +2221,7 @@ auto CodeGenFunction::LowerClosure(
     const lir::TypeId type = (*record)->types.at(i);
     llvm::Value* slot = builder_.CreateConstInBoundsGEP1_64(
         builder_.getInt8Ty(), closure, (*record)->offsets.at(i));
-    if (module_->Types().LiesInStorage(type)) {
+    if (module_->Types().HasAggregateEvaluationKind(type)) {
       auto copied = CopyValue(type, *value, slot);
       if (!copied) {
         return copied;

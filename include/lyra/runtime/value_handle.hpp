@@ -10,11 +10,11 @@
 
 // A value and the handle generated code holds it by. A handle is the address
 // of storage laid out as the value's type states: for a value of most domains
-// that is the runtime object itself, and for an integral value, a tuple and a
-// fixed-size unpacked array it is the value's own bytes, wherever they lie --
-// in what holds the value, or inside an object the runtime keeps a copy in.
-// These state that correspondence once, in both directions, so no entry spells
-// it.
+// that is the runtime object itself, and for an integral value, a tuple, a
+// union and a fixed-size unpacked array it is the value's own bytes, wherever
+// they lie -- in what holds the value, or inside an object the runtime keeps a
+// copy in. These state that correspondence once, in both directions, so no
+// entry spells it.
 namespace lyra::runtime {
 
 // The handle a value the runtime holds crosses as: its bytes, for a value laid

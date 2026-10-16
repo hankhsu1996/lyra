@@ -7,7 +7,6 @@
 #include <span>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/value/any_value.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/kept_copy.hpp"
 #include "lyra/value/reduction.hpp"

@@ -179,9 +179,8 @@ auto DistributeUnpacked(
   const mir::ExprId held =
       mir::IsReadablePlace(unit.types, block.exprs.Get(value))
           ? value
-          : block.exprs.Add(
-                mir::MakeLocalRefExpr(
-                    DeclareLocal(frame, value), block.exprs.Get(value).type));
+          : block.LocalPlace(
+                DeclareLocal(frame, value), block.exprs.Get(value).type);
   for (std::size_t i = 0; i < concat.elems.size(); ++i) {
     const std::optional<DescentStep> step =
         PatternMemberStep(unit, block, lvalue.type, i);
@@ -315,9 +314,8 @@ auto AppendStores(
   // and takes the value as it was named.
   const mir::ExprId held =
       std::holds_alternative<LvalueConcat>(lvalue.form)
-          ? block.exprs.Add(
-                mir::MakeLocalRefExpr(
-                    DeclareLocal(frame, value), block.exprs.Get(value).type))
+          ? block.LocalPlace(
+                DeclareLocal(frame, value), block.exprs.Get(value).type)
           : value;
   Lvalue located = lvalue;
   if (std::holds_alternative<LvalueConcat>(located.form)) {

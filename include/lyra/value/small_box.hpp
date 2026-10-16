@@ -29,6 +29,12 @@ class SmallBox {
           }
         }()) {
   }
+  // A box holding what `make` answers, made where the box keeps it.
+  template <typename Make>
+  [[nodiscard]] static auto BuiltBy(Make make) -> SmallBox {
+    return SmallBox(Made{}, make);
+  }
+
   SmallBox(const SmallBox&) = delete;
   auto operator=(const SmallBox&) -> SmallBox& = delete;
   SmallBox(SmallBox&&) noexcept = default;
@@ -58,6 +64,18 @@ class SmallBox {
 
  private:
   static constexpr bool kInline = sizeof(T) <= kMaxInlineBytes;
+
+  struct Made {};
+  template <typename Make>
+  SmallBox(Made, Make& make)
+      : held_([&] {
+          if constexpr (kInline) {
+            return make();
+          } else {
+            return std::unique_ptr<T>(new T(make()));
+          }
+        }()) {
+  }
 
   std::conditional_t<kInline, T, std::unique_ptr<T>> held_;
 };

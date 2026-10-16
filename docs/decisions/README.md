@@ -142,6 +142,12 @@ the detail lives in the entry itself.
   handed on and ended by its last holder, and a new-expression gives its storage back if
   initialization departs. Handing the initializer to the owner's construction, a box realized as a
   slot below MIR, and a lent argument the callee empties are rejected.
+- [a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)
+  -- every type is laid out flat at every size, and a local, a parameter taken by value, a made
+  value, a block's value and a capture of a type too large for a frame are held through a uniquely
+  owning pointer a MIR-to-MIR rewrite writes, sized by one query over MIR types; a large value is
+  made in its box and no body answers one. Each backend deciding from a shared constant, the render
+  choosing per position, and a body answering a box are rejected.
 - [an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   -- what a position of an array holds before it is written (LRM 7.4.5, Table 7-1) is a fact of the
   element type, for a fixed-size array, a dynamic array, a queue and an associative array alike. A
@@ -845,8 +851,8 @@ the detail lives in the entry itself.
   parts on a line is rejected, because the line would be a coordinate beside storage.
 - [a-part-is-named-by-how-it-is-selected](a-part-is-named-by-how-it-is-selected.md) -- an element, a
   component and a slice are each named for how they are selected, and every operation on one is that
-  name plus a fixed suffix in every layer (`component` / `component_ref` / `designate_component` /
-  `with_component`). `Get` / `GetRef` after `std::get` is rejected, because it names the realization
+  name plus a fixed suffix in every layer (`element` / `element_mut` / `designate_element` /
+  `refer_element`). `Get` / `GetRef` after `std::get` is rejected, because it names the realization
   and is also every wrapper's whole-value read.
 - [a-lent-part-carries-its-variable](a-lent-part-carries-its-variable.md) -- a reference is where a
   value lies together with the variable that storage belongs to, and a part is lent by a step taken

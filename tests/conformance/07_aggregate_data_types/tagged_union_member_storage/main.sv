@@ -4,9 +4,12 @@
 // at once; and the value is read back through the member name the current tag
 // holds. A member declared void carries no value, and what the variable holds
 // is then the tag alone. The scheme applies to a member of any type, a
-// structure and a nested tagged union included, and assigning one tagged union
-// variable to another carries the tag across with the value, leaving the two
-// independent afterwards (LRM 7.3.2).
+// structure, an array and a nested tagged union included, and a select or a
+// further member access applies to a member as to any other variable, checked
+// against the tag on the way (LRM 11.9), however large the member is beside
+// the part it names. Assigning one tagged union variable to another carries
+// the tag across with the value, leaving the two independent afterwards (LRM
+// 7.3.2).
 module Top;
   typedef struct {
     bit [4:0] first;
@@ -28,6 +31,17 @@ module Top;
     int    Plain;
   } nest_t;
 
+  typedef struct {
+    int count;
+    int pad[4096];
+  } padded_t;
+
+  typedef union tagged {
+    int big[4096];
+    padded_t record;
+    int single;
+  } large_t;
+
   int valid_read;
   int retagged_read;
   int matches_void_tag;
@@ -39,6 +53,8 @@ module Top;
   int copy_read;
   int copy_after_source_changed;
   int copy_carries_tag;
+  int element_read;
+  int field_read;
 
   initial begin
     vint_t v;
@@ -47,6 +63,8 @@ module Top;
     vint_t holder;
     instr_t i;
     nest_t n;
+    large_t in_array;
+    large_t in_record;
 
     v = tagged Valid (23 + 34);
     valid_read = v.Valid;
@@ -84,6 +102,12 @@ module Top;
     holder = source;
     copy_carries_tag = -1;
     if (holder matches tagged Valid .x) copy_carries_tag = x;
+
+    in_array = tagged big '{default: 7};
+    in_array.big[3] = 21;
+    in_record = tagged record '{count: 5, pad: '{default: 0}};
+    element_read = in_array.big[3];
+    field_read = in_record.record.count;
   end
 
   final begin
@@ -111,6 +135,10 @@ module Top;
              copy_after_source_changed);
     if (copy_carries_tag !== 7)
       $fatal(1, "copy_carries_tag was %0d, expected 7", copy_carries_tag);
+    if (element_read !== 21)
+      $fatal(1, "element_read was %0d, expected 21", element_read);
+    if (field_read !== 5)
+      $fatal(1, "field_read was %0d, expected 5", field_read);
     $display("All checks passed");
   end
 endmodule

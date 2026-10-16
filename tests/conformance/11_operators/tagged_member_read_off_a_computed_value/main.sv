@@ -1,8 +1,9 @@
 // A member of a tagged union is read with the usual dot notation wherever the
 // union comes from, a value a function returns included, and the read is
-// checked against that value's tag (LRM 11.9). The value is computed once for
-// the check and the read together (LRM 11.3.5), so the function runs once per
-// access -- for an unpacked union, a packed one, a union reached as a member of
+// checked against that value's tag (LRM 11.9). The check is part of the read
+// and no operand the source writes, so the value is computed once for both and
+// the function's side effects occur as the source's evaluation has them (LRM
+// 11.3.5): the function runs once per access -- for an unpacked union, a packed one, a union reached as a member of
 // a structure a function returns, an element of an array of unions a function
 // returns, a member too large to copy whole, and a union held by an object
 // whose only handle a function returns.

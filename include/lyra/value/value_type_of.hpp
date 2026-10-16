@@ -173,8 +173,9 @@ class ValueTypeOf final : public ValueType {
   [[nodiscard]] auto HasUnknown(const void* value) const -> bool override {
     return Of(value).HasUnknown();
   }
-  // A value the library holds as an object of its own lies in no union a
-  // design overlays with other members, and keeps nothing clear.
+  // None of these keeps a position clear: a real's and an empty value's bits
+  // are all their own, and no other is a type an untagged union may hold (LRM
+  // 7.3).
   void ClearAboveWidths(void*) const override {
   }
 

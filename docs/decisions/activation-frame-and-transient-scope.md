@@ -54,8 +54,8 @@ its own name.
   On the execution backend it is not: there the generated body has a frame of its own, and what the
   runtime holds is only the values. Naming the runtime type after the architecture's concept hid
   that second frame, so the type is `ActivationValueStore` -- a store, of values, belonging to one
-  execution -- and what lives in it is an `ValueCell<T>`, which had the right word all along. The
-  LIR operation that allocates, reads and writes such a value is `ValueCellTarget`. The store is a
+  execution -- and what lives in it is a `ValueCell<T>`, which had the right word all along. The LIR
+  operation that allocates, reads and writes such a value is `ValueCellTarget`. The store is a
   distinct type from the per-stretch arena even though both allocate the same way, so the two
   lifetimes cannot be passed for each other.
 

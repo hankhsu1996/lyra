@@ -151,9 +151,8 @@ the driving adapter coroutine owns for the activation's whole life, distinct fro
   the declaration and ends on every way out, the abandon path included
   ([reference-binds-a-cell](reference-binds-a-cell.md)).
 
-  The other half, the size and alignment per concrete type, was never owed either: every value
-  domain realizes one runtime type whatever source type it stands for, so a value has one size per
-  domain, and temporaries now live in the frame on exactly that basis
+  The other half, the size and alignment per concrete type, was never owed either: a value's size
+  follows its type, which the compiler lays out, and temporaries live in the frame on that basis
   ([a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md)). Whether a value
   crossing a suspension should live in the frame too is not reopened here; the cell stands because
   it is the storage a reference binds, not because the frame could not hold the value.

@@ -214,14 +214,12 @@ ownership, or native in-frame layout) for every value.
       concatenation is the left-to-right chain of two-operand appends it stands for, folded where it
       is built; a spread part crosses erased, its own container domain being no concern of the entry
       that appends its elements.
-- [x] **The union domains** (LRM 7.3 untagged, 7.3.2 tagged) -- realized on the execution backend.
-      An untagged union holds one member at a time, so its value is that member plus which one it
-      is, and a member write makes the written member the live one; a tagged union adds a checked
-      tag, so an access whose tag does not match the live one is a run-time error. Pattern matching
-      (LRM 12.6) rides on the tagged form. Reading an untagged union member other than the one last
-      written is reported, on both backends: LRM 7.3 defines it where the members are structures
-      sharing a common initial sequence, which then reads what was written, and a union that stores
-      only its live member has no such part to read.
+- [x] **The union domains** (LRM 7.3 untagged, 7.3.2 tagged) -- realized on the execution backend,
+      laid out by the union's type as on the C++ backend. An untagged union is one storage its
+      members overlay, so a member is written and read where it lies and a read through another
+      member answers the bits there, the common initial sequence included; a tagged union adds a tag
+      after its members, and an access whose tag does not name the member is a run-time error.
+      Pattern matching (LRM 12.6) rides on the tagged form.
 - [x] **The managed reference** (LRM 8.3, and the LRM 9.7 `process` a handle names) -- realized on
       the execution backend as a value domain: the object's address together with a share of its
       ownership, with the object's type erased, so one representation serves every object a handle

@@ -35,11 +35,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto LocalPlace(mir::Block& block, mir::LocalId local, mir::TypeId type)
-    -> mir::ExprId {
-  return block.exprs.Add(mir::MakeLocalRefExpr(local, type));
-}
-
 // LRM 11.4.11 compares the results of two arms neither of which was selected
 // and answers the value they share where they are equal. Where they differ, a
 // value made of parts that can agree apart from each other is combined part by
@@ -65,10 +60,8 @@ auto BuildCombinedArms(
   }
   const std::array compared{result_type, result_type};
   const mir::ExprId equal = block.exprs.Add(BuildMirBinaryExpr(
-      unit, block, hir::BinaryOp::kEquality,
-      block.exprs.Add(mir::MakeLocalRefExpr(one, result_type)),
-      block.exprs.Add(mir::MakeLocalRefExpr(other, result_type)),
-      OneBitAnswerType(unit, compared)));
+      unit, block, hir::BinaryOp::kEquality, block.LocalPlace(one, result_type),
+      block.LocalPlace(other, result_type), OneBitAnswerType(unit, compared)));
   return BuildSelectionChain(
       block,
       std::array{SelectedValue{
@@ -101,7 +94,7 @@ void AppendAssign(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeAssignExpr(
-                  unit.builtins, LocalPlace(block, local, type), value))});
+                  unit.builtins, block.LocalPlace(local, type), value))});
 }
 
 // The selection where no predicate can be unknown, which is the chain of its

@@ -5,10 +5,11 @@
 // type, the same value however often it is read, and equal to itself once
 // copied into a variable of that type. Here every member is narrower than the
 // one written, so the bits it is read from lie under bits the write set, an
-// element of a member included. A
-// tagged union held as a member is read the same way: whatever member its tag
-// names, if any, answers a value of that member's type, and a copy of it can
-// be made whatever its tag says.
+// element of a member included. A tagged union held as a member is read the
+// same way: whatever member its tag names, if any, answers a value of that
+// member's type, and a copy of it can be made whatever its tag says. Its tag
+// may name neither member, so a read through it is checked only where one
+// happens.
 module Top;
   typedef union {
     int word;
@@ -45,8 +46,10 @@ module Top;
   int element_ones;
   bit [4:0] element_copy;
   bit element_equal_to_its_copy;
-  int under_low_widened;
-  int under_wide_widened;
+  // -1 until a member of the held tagged union is read, which no value of a
+  // 4-bit member is.
+  int under_low_widened = -1;
+  int under_wide_widened = -1;
 
   initial begin
     five_widened = -1;
@@ -69,12 +72,10 @@ module Top;
 
     h.t = tagged b 4'h5;
     h.low = 8'hF5;
-    under_low_widened = 0;
     if (h.t matches tagged a .held) under_low_widened = held;
     if (h.t matches tagged b .held) under_low_widened = held;
     h.wide = '1;
     t_copy = h.t;
-    under_wide_widened = 0;
     if (t_copy matches tagged a .held) under_wide_widened = held;
     if (t_copy matches tagged b .held) under_wide_widened = held;
   end
@@ -100,10 +101,12 @@ module Top;
              element_ones);
     if (element_equal_to_its_copy !== 1'b1)
       $fatal(1, "a 5-bit element of a member compared unequal to its copy");
-    if (under_low_widened < 0 || under_low_widened > 15)
+    if (under_low_widened !== -1 &&
+        (under_low_widened < 0 || under_low_widened > 15))
       $fatal(1, "a tagged member's 4-bit member read as %0d, outside its type",
              under_low_widened);
-    if (under_wide_widened < 0 || under_wide_widened > 15)
+    if (under_wide_widened !== -1 &&
+        (under_wide_widened < 0 || under_wide_widened > 15))
       $fatal(1, "a copied tagged member's 4-bit member read as %0d, outside its type",
              under_wide_widened);
     $display("All checks passed");

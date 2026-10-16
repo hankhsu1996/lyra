@@ -3,7 +3,8 @@
 // that member (LRM 21.2.1.6), and a streaming concatenation streams it, both
 // packing the union and unpacking into it (LRM 11.4.14.1). The two members here
 // are structures sharing a common initial sequence, so what the first member
-// reads after a write through the second is defined (LRM 7.3).
+// reads after a write through the second is defined (LRM 7.3) -- its tag, and
+// not its count, which lies outside that sequence.
 module Top;
   typedef struct {
     int tag;
@@ -31,7 +32,6 @@ module Top;
   u_t unpacked;
 
   string printed;
-  string printed_first;
   bit [63:0] packed_bits;
   int unpacked_first_tag;
   int unpacked_first_count;
@@ -40,9 +40,8 @@ module Top;
   initial begin
     written_second.second.tag = 7;
     written_second.second.narrow = 3;
-    printed_first = "unset";
+    printed = "unset";
     printed = $sformatf("%p", written_second);
-    printed_first = $sformatf("%p", written_second.first);
     packed_bits = {>>{written_second}};
 
     {>>{unpacked}} = 64'h0000_0009_0000_0005;
@@ -52,15 +51,12 @@ module Top;
   end
 
   final begin
-    if (!Contains(printed, printed_first))
-      $fatal(1, "%%p printed %s, which does not hold the first member %s",
-             printed, printed_first);
+    if (!Contains(printed, "'{first:'{tag:7, count:"))
+      $fatal(1, "%%p printed %s, which is not the first member with tag 7",
+             printed);
     if (packed_bits[63:32] !== 32'd7)
       $fatal(1, "packing streamed %h, expected the first member's tag 7 first",
              packed_bits);
-    if (packed_bits[31:0] !== written_second.first.count)
-      $fatal(1, "packing streamed %h, expected the first member's count %h last",
-             packed_bits, written_second.first.count);
     if (unpacked_first_tag !== 9)
       $fatal(1, "unpacking set the first member's tag to %0d, expected 9",
              unpacked_first_tag);

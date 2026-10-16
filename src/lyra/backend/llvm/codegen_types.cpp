@@ -18,10 +18,9 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/object_layout.hpp"
-#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/union_layout.hpp"
+#include "lyra/value/layout.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -247,10 +246,9 @@ auto CodeGenTypes::IntegralShapeOf(lir::TypeId type) const
   return ShapeOf(*integral);
 }
 
-auto CodeGenTypes::LiesInStorage(lir::TypeId type) const -> bool {
-  const std::optional<lir::Holding> held = unit_->types.Get(type).HeldAs();
-  return held.has_value() &&
-         !std::holds_alternative<lir::OwnedStorageAddress>(*held);
+auto CodeGenTypes::HasAggregateEvaluationKind(lir::TypeId type) const -> bool {
+  const lir::Type& ty = unit_->types.Get(type);
+  return ty.IsOwnedValue() && !ty.IsMoveOnly();
 }
 
 auto CodeGenTypes::IsReadAsView(lir::TypeId type) const -> bool {
@@ -342,8 +340,8 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
   const lir::TypeId element_type = stated->element_type;
   const std::uint64_t count = stated->size;
   const support::ObjectLayout element = LayoutOf(element_type);
-  const value::FixedArrayLayout laid =
-      value::FixedArrayLayoutOf(element.size, element.align, count);
+  const value::SequenceLayout laid = value::SequenceLayoutOf(
+      {.size = element.size, .align = element.align}, count);
   return arrays_
       .emplace(
           array,
@@ -352,8 +350,8 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
               .count = count,
               .stride = laid.stride,
               .storage =
-                  {.size = static_cast<std::uint32_t>(laid.size),
-                   .align = static_cast<std::uint32_t>(laid.align),
+                  {.size = static_cast<std::uint32_t>(laid.whole.size),
+                   .align = static_cast<std::uint32_t>(laid.whole.align),
                    .ends_with_nothing_to_do = element.ends_with_nothing_to_do}})
       .first->second;
 }
@@ -369,29 +367,24 @@ auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
     throw InternalError(
         "llvm codegen: a union layout asked of a type that is no union");
   }
-  std::vector<support::ObjectLayout> held;
-  held.reserve(members->size());
+  bool ends_with_nothing_to_do = true;
   for (const lir::TypeId member : *members) {
-    held.push_back(LayoutOf(member));
+    ends_with_nothing_to_do =
+        ends_with_nothing_to_do && LayoutOf(member).ends_with_nothing_to_do;
   }
-  const bool ends_with_nothing_to_do = std::ranges::all_of(
-      held, &support::ObjectLayout::ends_with_nothing_to_do);
-  const value::OverlayLayout overlay = value::OverlayLayoutOf(held);
-  const value::OverlayLayout whole =
-      stated.Is<lir::TaggedUnionType>() ? [&] {
-        const value::TaggedUnionLayout tagged =
-            value::TaggedUnionLayoutOf(overlay, members->size());
-        return value::OverlayLayout{.size = tagged.size, .align = tagged.align};
-      }()
-                                        : overlay;
+  const value::Layout overlay = OverlayOf(*members);
+  const value::Layout whole =
+      stated.Is<lir::TaggedUnionType>()
+          ? value::TaggedUnionLayoutOf(overlay, members->size()).whole
+          : overlay;
   return unions_
       .emplace(
           union_type,
           UnionLayout{
               .members = *members,
               .storage =
-                  {.size = whole.size,
-                   .align = whole.align,
+                  {.size = static_cast<std::uint32_t>(whole.size),
+                   .align = static_cast<std::uint32_t>(whole.align),
                    .ends_with_nothing_to_do = ends_with_nothing_to_do}})
       .first->second;
 }
@@ -403,13 +396,14 @@ auto CodeGenTypes::TagOf(lir::TypeId tagged) -> value::TagPlacement {
         "union");
   }
   const std::span<const lir::TypeId> members = LayoutOfUnion(tagged).members;
-  return value::TaggedUnionLayoutOf(
-             value::OverlayLayoutOf(
-                 members | std::views::transform([&](lir::TypeId member) {
-                   return LayoutOf(member);
-                 })),
-             members.size())
-      .tag;
+  return value::TaggedUnionLayoutOf(OverlayOf(members), members.size()).tag;
+}
+
+auto CodeGenTypes::OverlayOf(std::span<const lir::TypeId> members)
+    -> value::Layout {
+  return value::OverlayLayoutOf(
+      members | std::views::transform(
+                    [&](lir::TypeId member) { return LayoutOf(member); }));
 }
 
 auto CodeGenTypes::KeepsAboveWidthsClear(lir::TypeId type) const -> bool {
@@ -435,30 +429,30 @@ auto CodeGenTypes::LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout& {
   if (const auto found = tuples_.find(tuple); found != tuples_.end()) {
     return found->second;
   }
-  const auto aligned_up = [](std::uint32_t size, std::uint32_t align) {
-    return (size + align - 1) / align * align;
-  };
   const std::optional<std::span<const lir::TypeId>> components =
       lir::ProductElements(*unit_, tuple);
   if (!components.has_value()) {
     throw InternalError(
         "llvm codegen: a tuple layout asked of a type that is no product");
   }
+  std::vector<support::ObjectLayout> held;
+  held.reserve(components->size());
+  for (const lir::TypeId component : *components) {
+    held.push_back(LayoutOf(component));
+  }
+  const value::ProductLayout laid = value::ProductLayoutOf(held);
   TupleLayout layout{
       .components = {components->begin(), components->end()},
       .offsets = {},
-      .storage = {.size = 0, .align = 1, .ends_with_nothing_to_do = true}};
-  layout.offsets.reserve(layout.components.size());
-  for (const lir::TypeId component : layout.components) {
-    const support::ObjectLayout held = LayoutOf(component);
-    const std::uint32_t offset = aligned_up(layout.storage.size, held.align);
-    layout.offsets.push_back(offset);
-    layout.storage.size = offset + held.size;
-    layout.storage.align = std::max(layout.storage.align, held.align);
-    layout.storage.ends_with_nothing_to_do =
-        layout.storage.ends_with_nothing_to_do && held.ends_with_nothing_to_do;
+      .storage = {
+          .size = static_cast<std::uint32_t>(laid.whole.size),
+          .align = static_cast<std::uint32_t>(laid.whole.align),
+          .ends_with_nothing_to_do = std::ranges::all_of(
+              held, &support::ObjectLayout::ends_with_nothing_to_do)}};
+  layout.offsets.reserve(laid.offsets.size());
+  for (const std::size_t offset : laid.offsets) {
+    layout.offsets.push_back(static_cast<std::uint32_t>(offset));
   }
-  layout.storage.size = aligned_up(layout.storage.size, layout.storage.align);
   return tuples_.emplace(tuple, std::move(layout)).first->second;
 }
 

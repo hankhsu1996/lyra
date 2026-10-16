@@ -241,25 +241,6 @@ class BodyBoxing {
     return BoxBuiltFrom(rebuild, BoxOf(*unit_, type), rebuild.Expr(argument));
   }
 
-  // `target`, what a write lands on, carried over: each part it is reached
-  // through names where that part lies rather than being read, so the chain
-  // is carried as it stands, and only what selects a part is read as a value.
-  auto Target(BlockRebuild& rebuild, mir::ExprId target) -> mir::ExprId {
-    const std::optional<mir::ExprId> whole =
-        mir::SelectedFrom(rebuild.From(), target);
-    if (!whole.has_value()) {
-      return rebuild.Expr(target);
-    }
-    const mir::Expr& expr = rebuild.From().exprs.Get(target);
-    mir::CallExpr carried = std::get<mir::CallExpr>(expr.data);
-    std::get<mir::Direct>(carried.callee).receiver = Target(rebuild, *whole);
-    for (mir::ExprId& selector : carried.arguments) {
-      selector = Value(rebuild, selector);
-    }
-    return rebuild.Add(
-        mir::Expr{.data = std::move(carried), .type = expr.type});
-  }
-
   // A node carried over with each operand it reads as a value carried by
   // `Value`, and every operand naming a place carried as it is. A node whose
   // operands are all places, or that reads none, is left to the rebuild. A
@@ -330,7 +311,7 @@ class BodyBoxing {
             },
             [&](const mir::AssignExpr& e) {
               mir::AssignExpr carried = e;
-              carried.target = Target(rebuild, e.target);
+              carried.target = rebuild.Expr(e.target);
               carried.value = value(e.value);
               return node(std::move(carried));
             },

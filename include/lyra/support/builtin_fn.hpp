@@ -37,10 +37,10 @@ enum class BuiltinFn : std::uint16_t {
   // They are three operations, each with operands of its own. Bits of an
   // integral value are named by where they start, and are as many as the type
   // they are read at is wide (LRM 11.5.1). Elements of a fixed-size or dynamic
-  // array are named by where they start
-  // and how many there are (LRM 7.4.6). A queue's slice is bounded by two
-  // positions the running program can move, and is a queue the slice builds
-  // rather than a part that may be written (LRM 7.10.1).
+  // array are named by where they start and how many there are (LRM 7.4.6). A
+  // queue's slice is bounded by two positions the running program can move,
+  // and is a queue the slice builds rather than a part that may be written (LRM
+  // 7.10.1).
   kSlice,
   kElementSlice,
   kQueueSlice,
@@ -1346,12 +1346,11 @@ struct RuntimeEntry {
   EntryDeclaration declaration;
   // Whether the entry is generic over a type its operands do not settle: a
   // conversion's destination, the bits of a part, as many copies as fill the
-  // answer. A call to such an entry states that
-  // type on its callee, as a call to a generic function states its type
-  // arguments, and each target tells the entry the way it tells a type -- one
-  // that resolves types where the call is written names it there, and one
-  // calling code compiled once for every type hands over what that code needs
-  // of it.
+  // answer. A call to such an entry states that type on its callee, as a call
+  // to a generic function states its type arguments, and each target tells the
+  // entry the way it tells a type -- one that resolves types where the call is
+  // written names it there, and one calling code compiled once for every type
+  // hands over what that code needs of it.
   bool takes_a_type_argument = false;
   // Whether the entry acts on an object, its first operand being whatever
   // reaches that object -- a class handle, the running method's own object, or

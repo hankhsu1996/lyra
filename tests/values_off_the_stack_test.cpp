@@ -28,7 +28,8 @@ using namespace std::chrono_literals;
 // A design whose every value is twice the stack it is run on: one of each kind
 // a frame would otherwise keep or an operation make whole -- a sum, a shift, a
 // concatenation, a part, an answer and a member of one, a sort, a stream and
-// its inverse, a structure's copy, comparison and stream, a write into a
+// its inverse, a structure's copy, comparison and stream, a union's copy and
+// comparison, a net of each kind resolving two drivers, a write into a
 // member of an element, a merge under an unknown condition, a task's variable
 // and what it completes with, a variable kept across a wait and captured by
 // what it forks, a value named on the command line, a memory loaded from a
@@ -70,7 +71,21 @@ module Test;
     join
   endtask
 
-  wide_t a, b;
+  typedef logic [7:0] mem_t [524288];
+  typedef union { wide_t w; mem_t x; } u_t;
+
+  wide_t a, b, nb;
+  mem_t ma;
+  u_t u, v;
+  wire wide_t wn;
+  wire mem_t mn;
+  wire u_t un;
+  assign wn = nb;
+  assign wn = nb;
+  assign mn = ma;
+  assign mn = ma;
+  assign un = u;
+  assign un = u;
   logic [8388607:0] cat;
   logic [8388639:0] rbits;
   arr_t x, y;
@@ -84,6 +99,18 @@ module Test;
   string text;
 
   always @(a) changes++;
+
+  initial begin
+    nb = 5;
+    ma[3] = 8'h7;
+    u.w = 5;
+    #1;
+    if (wn !== 5) $fatal(1, "the wide net");
+    if (mn[3] !== 8'h7) $fatal(1, "the array net");
+    if (un.w !== 5) $fatal(1, "the union net");
+    v = u;
+    if (v != u || v.w !== 5) $fatal(1, "the union's copy and comparison");
+  end
 
   initial begin
     a = '1;

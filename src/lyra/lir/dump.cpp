@@ -257,8 +257,11 @@ class LirDumper {
     }
     Line(
         std::format(
-            "fn \"{}\"({}) -> {}", fn.name, params,
-            FormatType(fn.result_type)));
+            "fn \"{}\"({}) -> {}{}", fn.name, params,
+            FormatType(fn.result_type),
+            fn.return_place.has_value()
+                ? std::format(" return %{}", fn.return_place->value)
+                : std::string{}));
     Indent();
     for (std::size_t v = 0; v < fn.variables.size(); ++v) {
       Line(std::format("var {}: {}", v, FormatType(fn.variables[v])));
@@ -378,7 +381,7 @@ class LirDumper {
               return std::format("load {}", FormatPlace(load.place));
             },
             [&](const UseInstr& use) -> std::string {
-              return std::format("move {}", FormatOperand(use.operand));
+              return std::format("use {}", FormatOperand(use.operand));
             },
             [&](const AddrOfInstr& addr) -> std::string {
               return std::format("addrof {}", FormatPlace(addr.place));

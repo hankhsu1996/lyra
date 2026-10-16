@@ -247,13 +247,14 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
 }
 
 // The dispatcher for an expression named as a part rather than read, shared by
-// both pass classes. Addressable kinds only, and no `Get` auto-wrap, so an
-// observable-cell leaf flows out as the bare cell. It peels rather than
-// composes: a kind that reaches a part of a value adds one step to the descent
-// and recurses, and every other kind is the place the descent bottoms out in.
-// What it answers with is only a statement of which part is named: the part is
-// neither read nor written here, and the one thing appended is the binding of
-// a value the path is reached through where the path takes it more than once.
+// both pass classes. Addressable kinds only, and no cell is asked for what it
+// holds, so an observable-cell leaf flows out as the bare cell. It peels rather
+// than composes: a kind that reaches a part of a value adds one step to the
+// descent and recurses, and every other kind is the place the descent bottoms
+// out in. What it answers with is only a statement of which part is named: the
+// part is neither read nor written here, and the one thing appended is the
+// binding of a value the path is reached through where the path takes it more
+// than once.
 template <ExprLowerer L>
 auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {

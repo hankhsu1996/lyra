@@ -11,7 +11,10 @@ each answering a reference to the element, and a string's character is read by `
 through the reference `slice_mut` (`SliceMut`) answers, taken on the place the value lies in or on
 its designation within a write, which replaces `slice_ref` and `designate_slice`; a window is
 written by its array's `assign_element_slice`, on the place or on the designation, which replaces
-`element_slice_ref` and `designate_element_slice`.
+`element_slice_ref` and `designate_element_slice`. Revised again for the component: a structure's
+component and a union's member are a field step on the place holding the aggregate, so `component`,
+`component_ref` and `with_component`, and the C++ `Component<I>` / `ComponentRef<I>` pair, are gone;
+`designate_component` and `refer_component` stand.
 
 ## Context
 

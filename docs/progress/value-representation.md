@@ -80,9 +80,9 @@ against the run before it; the figures are in the pull requests that measured th
 - [x] A local, a parameter taken by value, and an argument handed to one, of a type too large for a
       frame, is held through a box the compiler states in MIR before either backend reads it, so
       both keep the value off the stack by translating what they are given
-      (`../decisions/a-new-expression-allocates-then-initializes.md`). A variable's cell keeps such
-      a value in storage of its own on both backends, as every holder does, so a cell is never
-      boxed.
+      (`../decisions/a-value-too-large-for-a-frame-is-held-through-a-box.md`). A variable's cell
+      keeps such a value in storage of its own on both backends, as every holder does, so a cell is
+      never boxed.
 - [x] A list of elements an array is built from is made, elements and all, in its box where it is
       too large for a frame, on both backends.
 - [x] A value of such a type that an expression makes is made in a box and read through it, a member

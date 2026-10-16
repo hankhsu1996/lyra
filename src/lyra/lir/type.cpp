@@ -264,7 +264,7 @@ auto Type::KindName() const -> std::string_view {
             return RuntimeLibraryKindName(t.kind);
           },
           [](const CoroutineType&) { return "coroutine"; },
-          [](const VariableRefType&) { return "reference"; },
+          [](const VariableRefType&) { return "variable reference"; },
           [](const PointerType&) { return "pointer"; },
           [](const ManagedRefType&) { return "managed reference"; },
           [](const VectorType&) { return "vector"; },
@@ -373,8 +373,8 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // vector rather than a value held beside the others.
           [](const IntegralType&) -> Element { return std::nullopt; },
 
-          // Held all at once, or one at a time, but never as a sequence of one
-          // type.
+          // Parts side by side, or members overlaid, but never a sequence of
+          // one type.
           [](const TupleType&) -> Element { return std::nullopt; },
           [](const StructType&) -> Element { return std::nullopt; },
           [](const UnionType&) -> Element { return std::nullopt; },

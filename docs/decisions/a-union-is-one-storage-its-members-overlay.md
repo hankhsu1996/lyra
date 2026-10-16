@@ -38,7 +38,9 @@ read as a value of another member type, which is a potential type loophole").
 - A variable with no initializer holds the first member's default (Table 7-1).
 - A common initial sequence of unpacked structures reads what was written through any of them (7.3);
   any other read through a member not last written is legal, is no run-time error (11.9 prescribes
-  one for tagged unions only), and answers a value the standard does not give.
+  one for tagged unions only), and answers a value the standard does not give. 7.3.1 grants reading
+  back what another member wrote to packed untagged unions alone ("unlike unpacked and tagged
+  unions"), which withholds the value and not the read.
 - An unpacked union of unpacked structures is "C-compatible, members in ascending address order"
   (7.3.1).
 - Dynamic types -- a string among them (6.16) -- and `chandle` only in a tagged union (7.3, 7.3.2).
@@ -109,7 +111,7 @@ step whichever kind it is in, and the tag is the only thing a tagged union adds.
 `assert(tag_matches(u, k))` with LRM 11.9's message, then the field step, of no-address kind. The
 check is rustc's `Assert`: a call that answers nothing, stated before the access, so the access
 reaches the union where it lies rather than through a value the check handed back. A read states it
-among the steps of the read, since it is part of evaluating the access (LRM 11.3.5), and the whole
+among the steps of the read, since it is part of evaluating the access (LRM 11.9), and the whole
 read -- every select written below the member -- is taken and its value kept among those same steps,
 so nothing else the expression evaluates runs between the check and the read: a sibling operand
 retagging the union would otherwise have the read land on a member the union no longer holds. A

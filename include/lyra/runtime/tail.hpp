@@ -8,27 +8,23 @@
 #include <utility>
 
 #include "lyra/value/frame_bound.hpp"
+#include "lyra/value/layout.hpp"
 
 namespace lyra::runtime {
-
-// What a value a holder keeps takes: how many bytes, at which alignment.
-struct Layout {
-  std::size_t size;
-  std::size_t align;
-};
 
 // Whether a value lies inline, at the holder's tail, rather than spilled into
 // storage of its own: it fits the size a value may be and still lie in what
 // holds it, and the holder's own alignment serves it. The one rule a holder,
 // the storage made for it, and the code generator laying it out all read.
-[[nodiscard]] constexpr auto IsInline(Layout held) -> bool {
+[[nodiscard]] constexpr auto IsInline(value::Layout held) -> bool {
   return held.size <= value::kMaxInlineBytes && held.align <= alignof(void*);
 }
 
 // What a `Holder` whose tail keeps a value of layout `held` takes: the
 // holder, then the value where it lies inline.
 template <class Holder>
-[[nodiscard]] constexpr auto HolderLayoutFor(Layout held) -> Layout {
+[[nodiscard]] constexpr auto HolderLayoutFor(value::Layout held)
+    -> value::Layout {
   return {
       .size = sizeof(Holder) + (IsInline(held) ? held.size : 0),
       .align = alignof(Holder)};
@@ -37,8 +33,9 @@ template <class Holder>
 // A `Holder` built with a tail for a value of layout `held`, held by a count
 // of its owners.
 template <class Holder, class... Args>
-auto MakeWithTail(Layout held, Args&&... args) -> std::shared_ptr<Holder> {
-  const Layout holder = HolderLayoutFor<Holder>(held);
+auto MakeWithTail(value::Layout held, Args&&... args)
+    -> std::shared_ptr<Holder> {
+  const value::Layout holder = HolderLayoutFor<Holder>(held);
   const std::align_val_t align{holder.align};
   // The storage is given back if building the holder in it fails.
   const auto give_back = [align](void* storage) {

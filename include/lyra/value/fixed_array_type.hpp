@@ -9,32 +9,13 @@
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/layout.hpp"
 #include "lyra/value/reduction.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
 
 class String;
-
-// How a fixed-size unpacked array is laid out: how far apart two neighbouring
-// elements lie, and the size and alignment of the array.
-struct FixedArrayLayout {
-  std::size_t stride;
-  std::size_t size;
-  std::size_t align;
-};
-
-// The layout of `count` elements of `element_size` bytes aligned to
-// `element_align`, one after another. Generated code places an element by this
-// and the library walks one by it, so it is stated once for both.
-[[nodiscard]] constexpr auto FixedArrayLayoutOf(
-    std::size_t element_size, std::size_t element_align, std::size_t count)
-    -> FixedArrayLayout {
-  const std::size_t stride =
-      (element_size + element_align - 1) / element_align * element_align;
-  return FixedArrayLayout{
-      .stride = stride, .size = stride * count, .align = element_align};
-}
 
 // The type of a fixed-size unpacked array (LRM 7.4.2) as code compiled before
 // any design existed is handed it: how many elements, and their type. An array
@@ -205,7 +186,7 @@ class FixedArrayType final : public ValueType {
     bool finished_ = false;
   };
 
-  [[nodiscard]] auto Layout() const -> FixedArrayLayout;
+  [[nodiscard]] auto Layout() const -> SequenceLayout;
 
   using Fold =
       void (ValueType::*)(const void* lhs, const void* rhs, void* out) const;

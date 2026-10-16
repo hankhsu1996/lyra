@@ -7,7 +7,6 @@
 
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/value/any_value.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/kept_copy.hpp"
 #include "lyra/value/value_type.hpp"
@@ -99,9 +98,9 @@ class OpenWrite {
     landing_of_ = &kLandingOf<Part>;
   }
 
-  // The same, for a value laid out by its type where it lies, which
-  // is its bytes and nothing that says what they are: `type` states it. Its
-  // value from before the write is a value of its own.
+  // The same, for a value laid out by its type where it lies, which is its
+  // bytes and nothing that says what they are: `type` states it. Its value
+  // from before the write is a value of its own.
   void LandLaidOut(const value::ValueType& type, void* part) {
     if (!Undecided()) {
       return;
@@ -193,14 +192,9 @@ class OpenWrite {
   // write aside, as the C++ backend's write keeps a part of a type it knows.
   struct LaidOutLanding {
     LaidOutLanding(const value::ValueType& type, void* landed)
-        : type(&type), part(landed), kept(type, landed) {
+        : part(landed), kept(type, landed) {
     }
 
-    [[nodiscard]] auto Before() const -> const void* {
-      return kept.Bytes();
-    }
-
-    const value::ValueType* type;
     void* part;
     value::KeptCopy kept;
   };
@@ -240,7 +234,7 @@ class OpenWrite {
   static constexpr ResolveBitRange kLaidOutLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
         auto* landing = Landing<LaidOutLanding>(room);
-        if (!landing->type->BitIdentical(landing->Before(), landing->part)) {
+        if (!landing->kept.IsBitIdenticalTo(landing->part)) {
           bracket_of.landed(bracket, Change::Whole());
         }
         std::destroy_at(landing);

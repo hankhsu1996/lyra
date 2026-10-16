@@ -314,8 +314,8 @@ auto ObservationCall(
     const mir::CompilationUnit& unit, mir::Block& block,
     support::BuiltinFn entry, mir::LocalId observation, mir::TypeId type)
     -> mir::ExprId {
-  const mir::ExprId held = block.exprs.Add(
-      mir::MakeLocalRefExpr(observation, unit.builtins.observation));
+  const mir::ExprId held =
+      block.LocalPlace(observation, unit.builtins.observation);
   return block.exprs.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = entry, .receiver = held}, {}, type));
@@ -363,8 +363,7 @@ auto DeclareReport(const mir::CompilationUnit& unit, const WalkFrame& frame)
           mir::MakeCallExpr(
               mir::Direct{.target = support::BuiltinFn::kReadReportEmpty}, {},
               unit.builtins.read_report)));
-  const mir::ExprId held =
-      block.exprs.Add(mir::MakeLocalRefExpr(report, unit.builtins.read_report));
+  const mir::ExprId held = block.LocalPlace(report, unit.builtins.read_report);
   return DeclareLocal(
       frame, block.exprs.Add(
                  mir::MakeAddressOfExpr(held, unit.builtins.read_report_ptr)));
@@ -427,9 +426,7 @@ auto BuildProcessDecidedEventWaitStmt(
       [&](mir::LocalId observation) {
         return waiting.exprs.Add(
             mir::MakeAddressOfExpr(
-                waiting.exprs.Add(
-                    mir::MakeLocalRefExpr(
-                        observation, unit.builtins.observation)),
+                waiting.LocalPlace(observation, unit.builtins.observation),
                 observation_ptr));
       });
   const mir::ExprId wait_id = waiting.exprs.Add(

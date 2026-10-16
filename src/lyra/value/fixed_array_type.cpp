@@ -20,6 +20,7 @@
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/layout.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/reduction.hpp"
 #include "lyra/value/string.hpp"
@@ -30,8 +31,9 @@ namespace lyra::value {
 
 namespace {
 
-auto LayoutOf(const ValueType& element, std::size_t count) -> FixedArrayLayout {
-  return FixedArrayLayoutOf(element.Size(), element.Align(), count);
+auto LayoutOf(const ValueType& element, std::size_t count) -> SequenceLayout {
+  return SequenceLayoutOf(
+      {.size = element.Size(), .align = element.Align()}, count);
 }
 
 // The elements of one array as the sequence algorithms read them, and write
@@ -70,14 +72,16 @@ class Elements {
 FixedArrayType::FixedArrayType(
     const value::ElementType& element, std::uint32_t count)
     : ValueType(
-          static_cast<std::uint32_t>(LayoutOf(element.Type(), count).size),
-          static_cast<std::uint32_t>(LayoutOf(element.Type(), count).align)),
+          static_cast<std::uint32_t>(
+              LayoutOf(element.Type(), count).whole.size),
+          static_cast<std::uint32_t>(
+              LayoutOf(element.Type(), count).whole.align)),
       count_(count),
       element_(&element),
       parts_(*this) {
 }
 
-auto FixedArrayType::Layout() const -> FixedArrayLayout {
+auto FixedArrayType::Layout() const -> SequenceLayout {
   return LayoutOf(element_->Type(), count_);
 }
 

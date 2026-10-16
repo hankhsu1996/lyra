@@ -345,14 +345,13 @@ enough to warrant its own focused review.
       compile-time failure. Subsumes R17b.
 
 - [x] R28 -- The read-vs-write access surface is named the same across every container and across
-      both lowering and runtime: bare `Element` / `Slice` for a read; for a write, `ElementMut` for
-      an element, a reference to it as rustc's `IndexMut` answers one, and for a slice
-      `AssignSlice`, within a write in progress or outside one. Lowering carries the read-vs-write
-      choice as one access-side parameter at the slice-builder boundary; the runtime concepts pin
-      the read and write pair as part of `Indexable` (write-side present on every keyed container);
-      a slice is read as a type of its own that the caller names and written by `AssignSlice`, which
-      no concept probes. No separate `Writable` concept: the pair belongs with the read-side concept
-      it shadows.
+      both lowering and runtime: one name for a read, and for a write an element's answering a
+      reference to it, as rustc's IndexMut does, and a slice's assigning the slice, within a write
+      in progress or outside one. Lowering carries the read-vs-write choice as one access-side
+      parameter at the slice-builder boundary; the runtime's container concept pins the read and
+      write pair, the write side present on every keyed container; a slice is read as a type of its
+      own that the caller names and written by its assignment, which no concept probes. No separate
+      concept for writing: the pair belongs with the read-side concept it shadows.
 
 - [x] R29 -- Built-in method calls and runtime entries carry one flat closed-namespace identifier
       shared between HIR and MIR, replacing the per-family variant. The receiver's MIR type drives
@@ -1139,12 +1138,10 @@ enough to warrant its own focused review.
       it is an argument of the map, an argument of a call that looks something up rather than
       writing it, or admitted with the reason it is neither.
 
-- [x] R77 -- A union's whole-value operations are one algorithm over how its live member is held:
-      compare the live member indices, then apply the operation to the member. The C++ backend's
-      untagged and tagged unions hold the member as an alternative of the members' C++ types, the
-      library's as a value with its type, and each union kind adds only what it lets a program read
-      or write of a member. Before, the same algorithm was written four times, once per union kind
-      and realization.
+- [x] R77 -- A union's whole-value operations are one algorithm per union kind on both backends: an
+      untagged union's read its first member, and a tagged union's compare the tags and then apply
+      the operation to the member the tag names. Before, the same algorithm was written four times,
+      once per union kind and realization.
 
 - [x] R78 -- A pairwise operation over the elements of a fixed-size array is one algorithm on both
       backends, and the ones a net applies -- resolution and domination -- refuse contributions of
@@ -2440,14 +2437,15 @@ enough to warrant its own focused review.
       largest part of what remains. Not blocked.
 
 - [ ] R153 -- Where a value is copied, moved and ended is decided twice, once per backend. The
-      execution backend decides it lowering MIR to LIR, which states each copy and each end; the C++
-      backend is told nothing and takes C++'s own answer -- a copy for every by-value pass, an end
-      at every scope exit, and whatever elision C++ allows. Nothing keeps the two in step: a copy
-      one makes and the other does not costs time rather than correctness, but an end one omits is a
-      leak. The target states it once, above both, as Swift's SIL states `copy_value` /
-      `destroy_value` and Rust's MIR states moves, copies and drops (both recalled, to be read), and
-      each backend follows it. What a type's own copy and end do stays below MIR: in SystemVerilog a
-      program cannot define it, so it is member by member with no choice, as layout is.
+      execution backend decides it lowering MIR to LIR, which states each copy and each end but the
+      copies an aggregate's operands are taken into, which its code generator makes; the C++ backend
+      is told nothing and takes C++'s own answer -- a copy for every by-value pass, an end at every
+      scope exit, and whatever elision C++ allows. Nothing keeps the two in step: a copy one makes
+      and the other does not costs time rather than correctness, but an end one omits is a leak. The
+      target states it once, above both, as Swift's SIL states `copy_value` / `destroy_value` and
+      Rust's MIR states moves, copies and drops (both recalled, to be read), and each backend
+      follows it. What a type's own copy and end do stays below MIR: in SystemVerilog a program
+      cannot define it, so it is member by member with no choice, as layout is.
 
       What stands in the way is `mir.md`'s forbidden "lifecycle node family for value copy or move",
       whose stated reason -- MIR states only what a program spells -- does not hold: MIR already
@@ -3033,7 +3031,7 @@ enough to warrant its own focused review.
       a failure of the compiler's own. Target: a write a takeover turns away is kept beneath it
       wherever the write names a part of the variable, however the variable was reached. Not
       blocked.
-- [ ] R221 -- A value type's table of operations is one interface every type answers in full, so a
+- [ ] R239 -- A value type's table of operations is one interface every type answers in full, so a
       type the language gives no operation of some kind still overrides it with a body that refuses
       and ignores what it is handed. Each such parameter is unnamed, which clang-tidy's
       readability-named-parameter reports, and naming it instead is reported by the build's own
@@ -3042,13 +3040,13 @@ enough to warrant its own focused review.
       value types' refusing overrides. Target: a type answers only the operations it has, so no
       override exists to refuse -- the operations no type of a family answers move to the family
       that does. Not blocked.
-- [ ] R222 -- clang-tidy reports readability-static-accessed-through-instance on the generated
+- [ ] R240 -- clang-tidy reports readability-static-accessed-through-instance on the generated
       process body the runtime resumes, at the coroutine's own declaration, where nothing in the
       source names a static member. The cause is not established; a coroutine's promise type has
       static members the compiler's expansion of the body reaches, which is the first thing to
       check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
       silencing the check. Not blocked.
-- [x] R224 -- Whether an expression names storage is stated by MIR for a union's member too: it is a
+- [x] R241 -- Whether an expression names storage is stated by MIR for a union's member too: it is a
       field step on the place holding the union, at the union's start, on both backends, so a select
       into a member reads only what it selects and a write to one leaves the union in place.
 - [x] R234 -- A read through a member a tag guards is one access with its check: the whole of what

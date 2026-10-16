@@ -730,7 +730,15 @@ void WriteOne(TargetText& out, const CppNewOwner& owner) {
     out += "lyra::runtime::AdoptObject";
     return;
   }
-  Write(out, owner.of);
+  if (const auto* pointer = type.As<mir::PointerType>();
+      pointer != nullptr &&
+      pointer->ownership == mir::PointerOwnership::kUnique) {
+    Write(out, owner.of);
+    return;
+  }
+  throw InternalError(
+      "backend::cpp: storage a new-expression allocates is owned by a unique "
+      "pointer or a class handle -- please report this as a bug");
 }
 
 void WriteOne(TargetText& out, const CppTupleComponents& components) {

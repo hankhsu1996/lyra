@@ -50,6 +50,12 @@ auto AnswersReferenceIntoReceiver(const CallExpr& call) -> bool {
   throw InternalError("mir: unknown entry answer");
 }
 
+auto BindsReference(const TypePool& types, const CallExpr& call, TypeId type)
+    -> bool {
+  return std::holds_alternative<Construct>(call.callee) &&
+         types.Get(type).Is<VariableRefType>();
+}
+
 namespace {
 
 auto Wider(PlaceKind a, PlaceKind b) -> PlaceKind {

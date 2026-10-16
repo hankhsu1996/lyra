@@ -5,9 +5,10 @@ Date: 2026-09-24 (revised 2026-09-30) Status: accepted. Supersedes the lifetime 
 [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md). Its premise that
 every value domain realizes one runtime type, so one size serves every value, is superseded
 2026-10-04 by [a-value-is-its-machine-data](a-value-is-its-machine-data.md): a value's size follows
-its type. Where a value lives and when it ends are unchanged. A frame keeps a value's bytes only up
-to a fixed size, which [a-packed-value-is-its-words](a-packed-value-is-its-words.md) derives for
-packed values and which the last point of the decision below carries to a frame.
+its type. Where a value lives and when it ends are unchanged. A frame never holds a value too large
+for one: since 2026-10-15 MIR holds such a value through a box
+([a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)),
+which replaces the bytes the last two points below once kept apart from a frame.
 
 ## Context
 
@@ -55,21 +56,19 @@ out the way clang carries it out.**
 - **A frame holds values of bounded size.** A frame is taken from a stack whose size whoever started
   the program chose, and a design's author states widths with no way to say where a value lives. So
   what one call takes from the stack is bounded by a constant whatever the design declares. A value
-  whose bytes pass the size a value may be and still lie in what holds it
-  ([a-packed-value-is-its-words](a-packed-value-is-its-words.md) D1) has them kept apart from the
-  frame, and the frame keeps their address. The bytes are the same bytes wherever they are, so
-  nothing about a cell, an aggregate, a container, a call or an entry's signature differs for such a
-  value.
+  of a type too large for a frame is held through a box MIR states before either backend reads the
+  unit
+  ([a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)),
+  so a frame holds the box and never the value.
 - **When a frame's bytes for a value are in use is stated below MIR, apart from the value's end.**
   The two differ. A value handed to a slot or returned leaves behind the bytes it was made in while
   it goes on existing, and a slot's bytes hold one value after another. A slot's bytes come into use
   where its first value is stored and a made value's with the instruction that makes it, and either
   goes out of use where the lowering says, on every way out of the extent it was introduced in. That
-  is all the statement says. Whether a frame is where the bytes are kept is the backend's answer
-  from their size, so the statement costs nothing for a value small enough to lie in the frame. This
-  is the pair rustc's MIR states as `StorageLive` and `StorageDead` and LLVM IR as a lifetime's
-  start and end, each distinct from destroying the value (`rustc_middle/src/mir/syntax.rs`, read in
-  rustc's tree).
+  is all the statement says, and the bytes are always the frame's, since a value too large for one
+  is never a frame's value. This is the pair rustc's MIR states as `StorageLive` and `StorageDead`
+  and LLVM IR as a lifetime's start and end, each distinct from destroying the value
+  (`rustc_middle/src/mir/syntax.rs`, read in rustc's tree).
 
 ## Rejected
 
@@ -103,10 +102,8 @@ out the way clang carries it out.**
   so nothing is built for it and nothing is ended after.
 - A null of a handle type is built like any other value and holds nothing, so its storage going away
   is the whole of its end.
-- What a call takes from the stack does not follow a declared width. The bytes kept apart for a
-  value are obtained where the value is made and given back where they go out of use, on every way
-  out, and where a call that would have made the value departs instead of returning. What a body's
-  evaluation holds of a wide type is then the values alive at once.
+- What a call takes from the stack does not follow a declared width. A value too large for a frame
+  is a box the frame holds; its new-expression obtains the storage, and the box's end gives it back.
 
 ## Cross-references
 

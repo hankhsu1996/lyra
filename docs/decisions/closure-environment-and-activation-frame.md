@@ -195,6 +195,6 @@ is never rewritten when the layout is canonicalized.
   `ErasedCallableType<Sig>` is the erased boundary type.
 - [a-variable-a-body-declares-reports-its-writes](a-variable-a-body-declares-reports-its-writes.md)
   -- why a lifted local is a cell.
-- `reference-as-data-type.md` -- `RefType` as the observable-cell reference (an alias-capture
-  field).
+- `reference-as-data-type.md` -- `VariableRefType` as the observable-cell reference (an
+  alias-capture field).
 - `lifetime-extended-automatic-scope.md` -- retention through a shared handle.

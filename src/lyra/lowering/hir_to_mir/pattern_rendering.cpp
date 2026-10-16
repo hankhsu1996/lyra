@@ -51,17 +51,12 @@ constexpr std::string_view kNameMark = ":";
 // is what the spec a leaf is handed asks for.
 constexpr std::int32_t kNoField = 0;
 
-// The local `local` of type `type`, as the place it is.
-auto Place(const WalkFrame& frame, mir::LocalId local, mir::TypeId type)
-    -> mir::ExprId {
-  return frame.current_block->exprs.Add(mir::MakeLocalRefExpr(local, type));
-}
-
 auto Assign(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::LocalId target, mir::TypeId type, mir::ExprId value) -> mir::ExprId {
   return frame.current_block->exprs.Add(
-      mir::MakeAssignExpr(unit.builtins, Place(frame, target, type), value));
+      mir::MakeAssignExpr(
+          unit.builtins, frame.current_block->LocalPlace(target, type), value));
 }
 
 // Builds one type's text out of the texts of the types it reaches. Each is a
@@ -340,7 +335,7 @@ auto Renderer::UnpackedMember(
     return Text(frame, field.name);
   }
   mir::Block& block = *frame.current_block;
-  const mir::ExprId subject = Place(frame, value, mir_type);
+  const mir::ExprId subject = frame.current_block->LocalPlace(value, mir_type);
   const mir::ExprId member = block.exprs.Add(StepRead(
       Unit(), block,
       MemberStep(
@@ -364,7 +359,7 @@ auto Renderer::PackedMember(
   }
   mir::Block& block = *frame.current_block;
   const ProjectedMember& projected = projection.members.at(index.value);
-  const mir::ExprId subject = Place(frame, value, mir_type);
+  const mir::ExprId subject = frame.current_block->LocalPlace(value, mir_type);
   const mir::ExprId member = block.exprs.Add(BuildPackedBitsRead(
       Owner(), block, subject, projected.bit_offset,
       Owner().TranslateType(field.type)));
@@ -393,7 +388,8 @@ auto Renderer::BuildUnpackedAggregate(
     for (std::size_t i = fields.size(); i-- > 0;) {
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
       const mir::ExprId live = BuildTagTest(
-          Owner(), block, Place(frame, value, mir_type), type, index);
+          Owner(), block, frame.current_block->LocalPlace(value, mir_type),
+          type, index);
       chain = block.exprs.Add(
           mir::Expr{
               .data =
@@ -440,7 +436,8 @@ auto Renderer::BuildPackedAggregate(
     for (std::size_t i = fields.size(); i-- > 0;) {
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
       const mir::ExprId live = BuildTagTest(
-          Owner(), block, Place(frame, value, mir_type), type, index);
+          Owner(), block, frame.current_block->LocalPlace(value, mir_type),
+          type, index);
       chain = block.exprs.Add(
           mir::Expr{
               .data =
@@ -537,7 +534,8 @@ auto Renderer::BuildIndexedElements(
                     .callee =
                         mir::Direct{
                             .target = support::BuiltinFn::kSize,
-                            .receiver = Place(frame, value, mir_type)},
+                            .receiver = frame.current_block->LocalPlace(
+                                value, mir_type)},
                     .arguments = {}},
             .type = IntType()});
   }
@@ -560,7 +558,8 @@ auto Renderer::BuildIndexedElements(
   {
     const mir::ExprId separator = SeparatorAfterFirst(body_frame, ordinal);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body, Place(body_frame, value, mir_type), type,
+        Owner(), loop_body,
+        body_frame.current_block->LocalPlace(value, mir_type), type,
         body_frame.current_block->ReadLocal(index, IntType()), element_mir));
     const mir::ExprId grown = Join(
         body_frame, {body_frame.current_block->ReadLocal(text, StringType()),
@@ -604,11 +603,13 @@ auto Renderer::TraversalStep(
     -> mir::ExprId {
   BlockBuilder step(frame);
   const WalkFrame& inner = step.Frame();
-  const mir::ExprId array = Place(inner, value, mir_type);
+  const mir::ExprId array = inner.current_block->LocalPlace(value, mir_type);
   return frame.current_block->exprs.Add(BuildAssociativeTraversal(
       Owner(), step, entry, array,
-      AccessPath{.owner = Place(inner, key, key_type), .descent = {}}, key_type,
-      IntType()));
+      AccessPath{
+          .owner = inner.current_block->LocalPlace(key, key_type),
+          .descent = {}},
+      key_type, IntType()));
 }
 
 // The entries of an associative array (LRM 7.8), each printed under the index
@@ -646,7 +647,8 @@ auto Renderer::BuildAssociativeEntries(
         body_frame, body_frame.current_block->ReadLocal(key, key_type),
         array.key_type);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body, Place(body_frame, value, mir_type), type,
+        Owner(), loop_body,
+        body_frame.current_block->LocalPlace(value, mir_type), type,
         body_frame.current_block->ReadLocal(key, key_type), element_mir));
     const mir::ExprId grown = Join(
         body_frame, {body_frame.current_block->ReadLocal(text, StringType()),

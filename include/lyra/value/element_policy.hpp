@@ -4,10 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <new>
 #include <utility>
 
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/small_box.hpp"
@@ -156,14 +156,15 @@ class StaticElem {
   // answers in `out`.
   static void Resolve(
       NetResolution fold, const void* lhs, const void* rhs, void* out) {
-    Build(out, [&] { return lyra::value::Resolve(fold, Of(lhs), Of(rhs)); });
+    BuildFrom<T>(
+        out, [&] { return lyra::value::Resolve(fold, Of(lhs), Of(rhs)); });
   }
   static void Dominating(const void* stronger, const void* weaker, void* out) {
-    Build(out, [&] { return Of(stronger).Dominating(Of(weaker)); });
+    BuildFrom<T>(out, [&] { return Of(stronger).Dominating(Of(weaker)); });
   }
   template <IntegralValue Fill>
   static void FilledLike(const void* prototype, const Fill& fill, void* out) {
-    Build(out, [&] { return FilledAs(Of(prototype), fill); });
+    BuildFrom<T>(out, [&] { return FilledAs(Of(prototype), fill); });
   }
 
   // The element written into a stream below its `filled` most significant
@@ -203,8 +204,7 @@ class StaticElem {
       SmallBox<Bits> bits;
       const std::uint64_t after =
           lyra::value::ReadFromStream(stream, taken, *bits);
-      std::destroy_at(&out);
-      Build(&out, [&] { return T::FromBitstream(*bits); });
+      RebuildFrom(out, [&] { return T::FromBitstream(*bits); });
       return after;
     }
   }
@@ -212,12 +212,6 @@ class StaticElem {
  private:
   [[nodiscard]] static auto Of(const void* value) -> const T& {
     return *static_cast<const T*>(value);
-  }
-  // Builds in `out`, storage holding nothing yet, the value `make` answers,
-  // which is made there rather than made elsewhere and moved in.
-  template <typename Make>
-  static void Build(void* out, Make make) {
-    ::new (out) T(make());
   }
 };
 

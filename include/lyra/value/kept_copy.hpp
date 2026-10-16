@@ -39,7 +39,15 @@ class KeptCopy {
     return KeptHere() ? static_cast<void*>(here_.data()) : apart_.Bytes();
   }
 
+  // Whether the value of the kept one's type laid out at `bytes` is bit for
+  // bit the copy kept.
+  [[nodiscard]] auto IsBitIdenticalTo(const void* bytes) const -> bool {
+    return type_->BitIdentical(Bytes(), bytes);
+  }
+
  private:
+  // Small enough that a write's landing, which keeps one of these beside the
+  // part it landed on in a fixed room of its own, still fits that room.
   static constexpr std::size_t kRoom = 128;
 
   [[nodiscard]] auto KeptHere() const -> bool {

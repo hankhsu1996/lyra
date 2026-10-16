@@ -205,8 +205,7 @@ void BindPatternIdentifiers(
                     .expr = assigned.exprs.Add(
                         mir::MakeAssignExpr(
                             owner.Unit().builtins,
-                            assigned.exprs.Add(
-                                mir::MakeLocalRefExpr(local, type)),
+                            assigned.LocalPlace(local, type),
                             Read(owner, assigned, subject)))});
           },
           [&](const hir::TaggedPattern& tagged) {
@@ -254,7 +253,7 @@ auto PatternPredicate(
         BlockBuilder steps(at);
         mir::Block& body = steps.Body();
         const auto subject_place = [&](mir::Block& block) {
-          return block.exprs.Add(mir::MakeLocalRefExpr(subject, subject_type));
+          return block.LocalPlace(subject, subject_type);
         };
 
         std::vector<mir::ExprId> tests;

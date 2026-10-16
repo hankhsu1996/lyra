@@ -228,15 +228,6 @@ class WideVector {
   base::FixedArray<std::uint64_t, 2> words_;
 };
 
-// A held value that compares itself with, and takes, the bytes of a value laid
-// out as it is itself: an integral value as wide, an array of the same type.
-template <class T>
-concept TakesBytesInPlace =
-    requires(T& held, const T& read, const void* bytes) {
-      { read.IsBitIdenticalTo(bytes) } -> std::same_as<bool>;
-      held.AssignBytes(bytes);
-    };
-
 using WideBitVector = WideVector<StateDomain::kTwoState>;
 using WideLogicVector = WideVector<StateDomain::kFourState>;
 

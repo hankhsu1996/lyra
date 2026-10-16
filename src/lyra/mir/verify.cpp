@@ -509,8 +509,8 @@ void VerifyPlacesAreRead(
     // as a C++ reference parameter binds an lvalue, without reading it.
     const auto* call = std::get_if<CallExpr>(&data);
     const bool binds_storage =
-        call != nullptr && std::holds_alternative<Construct>(call->callee) &&
-        unit.types.Get(block.exprs.Get(id).type).Is<VariableRefType>();
+        call != nullptr &&
+        BindsReference(unit.types, *call, block.exprs.Get(id).type);
     ForEachOperand(data, [&](ExprId operand, OperandUse use) {
       switch (binds_storage ? OperandUse::kStorage : use) {
         case OperandUse::kValue:
@@ -950,17 +950,25 @@ void VerifyEntryDeclarations(
   }
 }
 
-// What a write lands on -- an assignment's target, the object an entry
-// changing its receiver acts on, or the value a reference to bits is taken on
-// -- is not reached through a read-only reference, which an element's read
-// form answers and whose referent may be the element default every read of its
-// type shares (LRM 7.4.6).
+// An assignment lands on a place. What a write lands on -- an assignment's
+// target, the object an entry changing its receiver acts on, or the value a
+// reference to bits is taken on -- is not reached through a read-only
+// reference, which an element's read form answers and whose referent may be
+// the element default every read of its type shares (LRM 7.4.6).
 void VerifyWritesLandInWritableStorage(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
     const Expr& expr = block.exprs.Get(id);
     std::optional<ExprId> reached;
     if (const auto* write = std::get_if<AssignExpr>(&expr.data)) {
+      if (!IsPlace(block.exprs.Get(write->target).data)) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} assigns to {} (expression {} of its block), "
+                "which names no place -- please report this as a bug",
+                describe(), Describe(block.exprs.Get(write->target).data),
+                write->target.value));
+      }
       reached = write->target;
     } else if (const auto* call = std::get_if<CallExpr>(&expr.data)) {
       const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
@@ -970,31 +978,29 @@ void VerifyWritesLandInWritableStorage(
         reached = CalleeReceiver(call->callee);
       }
     }
-    // A field is written through the object it is reached on, and a selected
-    // part through the whole it is selected from.
+    // A field is written through the object it is reached on, a selected part
+    // through the whole it is selected from, and what a reference is
+    // dereferenced to through that reference; a write lands through each.
     while (reached.has_value()) {
       const ExprData& data = block.exprs.Get(*reached).data;
       if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
         reached = field->receiver;
+      } else if (const auto* opened = std::get_if<DerefExpr>(&data)) {
+        if (ReachesReadOnly(
+                unit.types.Get(block.exprs.Get(opened->pointer).type))) {
+          throw InternalError(
+              std::format(
+                  "mir verify: {} writes through a read-only reference "
+                  "(expression {} of its block) -- please report this as a bug",
+                  describe(), id.value));
+        }
+        reached = opened->pointer;
       } else if (
           const std::optional<ExprId> whole = SelectedFrom(block, *reached)) {
         reached = whole;
       } else {
         break;
       }
-    }
-    if (!reached.has_value()) {
-      continue;
-    }
-    const auto* opened =
-        std::get_if<DerefExpr>(&block.exprs.Get(*reached).data);
-    if (opened != nullptr && ReachesReadOnly(unit.types.Get(
-                                 block.exprs.Get(opened->pointer).type))) {
-      throw InternalError(
-          std::format(
-              "mir verify: {} writes through a read-only reference (expression "
-              "{} of its block) -- please report this as a bug",
-              describe(), id.value));
     }
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -1186,21 +1192,9 @@ void VerifyLargeValuesLieInStorage(
     const CompilationUnit& unit, const Block& block, bool answers_caller,
     const auto& describe) {
   std::vector<bool> made_in_storage(block.exprs.size(), false);
-  // What a write lands on names where it lands, and makes nothing: the target
-  // and each part it is reached through, outermost last.
-  const auto mark_target = [&](ExprId target) {
-    std::optional<ExprId> reached = target;
-    while (reached.has_value()) {
-      made_in_storage.at(reached->value) = true;
-      reached = SelectedFrom(block, *reached);
-    }
-  };
   for (const Expr& expr : block.exprs) {
     if (const auto* allocation = std::get_if<NewExpr>(&expr.data)) {
       made_in_storage.at(allocation->initializer.value) = true;
-    }
-    if (const auto* write = std::get_if<AssignExpr>(&expr.data)) {
-      mark_target(write->target);
     }
   }
   if (answers_caller) {

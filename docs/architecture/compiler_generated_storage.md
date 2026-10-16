@@ -172,7 +172,7 @@ The three capture forms differ only by field type:
 
 ```text
 snapshot capture : field type = int                  // a value taken at construction
-live-place alias : field type = Ref<logic>           // an observable-cell alias
+live-place alias : field type = VariableRef<logic>   // an observable-cell alias
 retained cell    : field type = Shared<Var<int>>     // retain a lifted local; reach it through this
 ```
 

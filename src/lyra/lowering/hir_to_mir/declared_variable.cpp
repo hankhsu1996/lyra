@@ -45,17 +45,14 @@ auto InitializeVariable(
       .data = mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeCapabilityInstallCallExpr(
-                  block.exprs.Add(
-                      mir::MakeLocalRefExpr(variable.local, variable.type)),
-                  value, support::BuiltinFn::kInitialize,
-                  unit.builtins.void_type))}};
+                  block.LocalPlace(variable.local, variable.type), value,
+                  support::BuiltinFn::kInitialize, unit.builtins.void_type))}};
 }
 
 auto ReadVariable(
     mir::CompilationUnit& unit, mir::Block& block,
     const DeclaredVariable& variable) -> mir::ExprId {
-  const mir::ExprId local =
-      block.exprs.Add(mir::MakeLocalRefExpr(variable.local, variable.type));
+  const mir::ExprId local = block.LocalPlace(variable.local, variable.type);
   const auto* cell = unit.types.Get(variable.type).As<mir::ObservableType>();
   if (cell == nullptr) {
     return block.Read(local);

@@ -208,9 +208,9 @@ using PathOwner = std::variant<mir::ExprId, ObjectProperty>;
 // This is the lowering's own shape and reaches no layer below. What MIR carries
 // is what the descent lowers to -- for each step a field step, the dereference
 // of a call answering a reference to the part, or an ordinary call naming its
-// own entry, composed through the receiver -- because
-// a consumer that met the descent itself would have to decide which operation
-// each step is, which is the decision this layer is here to make.
+// own entry, composed through the receiver -- because a consumer that met the
+// descent itself would have to decide which operation each step is, which is
+// the decision this layer is here to make.
 struct AccessPath {
   PathOwner owner;
   std::vector<DescentStep> descent;

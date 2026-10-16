@@ -22,26 +22,37 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/strength_level.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/small_box.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
 
+// `into` made a value of an integral type of `count` positions with every one
+// holding `fill` (LRM 6.7.1), as the type `T` lays it out: `fill` in each of
+// its positions and every position above them clear, written where `into`
+// lies, so a wide value is never made in the caller's frame first.
+template <BitAddressed T>
+void FillOver(T& into, std::uint64_t count, value::FourStateBit fill) {
+  if constexpr (value::IntegralValue<T>) {
+    value::FillScalar(into.MutableView(), value::FourStateBit::kZero);
+    value::FillScalar(into.MutableView().Truncated(count), fill);
+  } else {
+    into = T::Filled(count, fill);
+  }
+}
+
 // A value of an integral type of `count` positions with every one holding
-// `fill` (LRM 6.7.1), as a value of the type `T` that lays it out: `fill` in
-// each of its positions, and every position above them clear.
+// `fill`, as `FillOver` writes it.
 template <BitAddressed T>
 [[nodiscard]] auto FilledOver(std::uint64_t count, value::FourStateBit fill)
     -> T {
-  if constexpr (value::IntegralValue<T>) {
-    T out = T::Zero();
-    value::FillScalar(out.MutableView().Truncated(count), fill);
-    return out;
-  } else {
-    return T::Filled(count, fill);
-  }
+  T out{};
+  FillOver(out, count, fill);
+  return out;
 }
 
 // The scalar a net type contributes at each position (LRM 6.7.1), which
@@ -893,7 +904,7 @@ class ResolvedNet<T> : public ConnectableNet {
           "ResolvedNet: the net's declared net type is already fixed");
     }
     installed_ = true;
-    nondriving_ = FilledOver<T>(count_, value::FourStateBit::kHighImpedance);
+    FillOver(nondriving_, count_, value::FourStateBit::kHighImpedance);
     held_.Assign(nondriving_);
     auto&& own = Own();
     WritePositions(
@@ -1353,36 +1364,42 @@ class ResolvedNet<T> : public Observable {
           "ResolvedNet: the net's declaration is installed twice");
     }
     installed_ = true;
-    nondriving_ = T::FilledLike(
-        prototype, value::Logic::Filled(value::FourStateBit::kHighImpedance));
-    own_ = DriveContribution<T>{
-        .value =
-            T::FilledLike(prototype, value::Logic::Filled(NetFillOf(fill))),
-        .strength = static_cast<support::StrengthLevel>(strength)};
+    value::RebuildFrom(nondriving_, [&] {
+      return T::FilledLike(
+          prototype, value::Logic::Filled(value::FourStateBit::kHighImpedance));
+    });
+    value::RebuildFrom(own_.value, [&] {
+      return T::FilledLike(prototype, value::Logic::Filled(NetFillOf(fill)));
+    });
+    own_.strength = static_cast<support::StrengthLevel>(strength);
     fold_ = resolution;
     own_kind_ = own_kind;
-    held_.Assign(Resolve());
+    held_.Assign(*Resolve());
   }
 
   // What the net resolves to: between levels the stronger contribution
   // determines every bit it drives (LRM 28.12.1), and within one the net
   // type's table folds them (LRM 6.6.1, 6.6.3), each level starting from the
   // all-`z` value every fold treats as its identity.
-  [[nodiscard]] auto Resolve() const -> T {
+  // Each value it works through is kept where a value of the net's type may
+  // be kept, so a net too large for a frame keeps none in one.
+  [[nodiscard]] auto Resolve() const -> value::SmallBox<T> {
     const OccupiedLevels occupied = occupied_ | LevelBit(own_.strength);
-    T resolved = nondriving_;
+    value::SmallBox<T> resolved(nondriving_);
     for (std::size_t level = support::kStrengthLevelCount; level-- > 0;) {
       const auto at = static_cast<support::StrengthLevel>(level);
       if ((occupied & LevelBit(at)) == 0U) {
         continue;
       }
-      T group = own_.strength == at ? own_.value : nondriving_;
+      value::SmallBox<T> group(own_.strength == at ? own_.value : nondriving_);
       for (const DriveContribution<T>& driver : contributions_) {
         if (driver.strength == at) {
-          group = value::Resolve(fold_, group, driver.value);
+          group = value::SmallBox<T>::BuiltBy(
+              [&] { return value::Resolve(fold_, *group, driver.value); });
         }
       }
-      resolved = resolved.Dominating(group);
+      resolved = value::SmallBox<T>::BuiltBy(
+          [&] { return resolved->Dominating(*group); });
     }
     return resolved;
   }
@@ -1392,12 +1409,12 @@ class ResolvedNet<T> : public Observable {
   // contribution (LRM 6.6.4), and a takeover displaces what the net shows and
   // not what it holds (LRM 10.6.2).
   void Reresolve(RuntimeEffects& runtime) {
-    const T resolved = Resolve();
+    const value::SmallBox<T> resolved = Resolve();
     if (own_kind_ == OwnContribution::kRetained) {
-      own_.value = resolved;
+      own_.value = *resolved;
     }
     const T* forced = takeovers_ == nullptr ? nullptr : takeovers_->Highest();
-    PublishIfChanged(runtime, forced == nullptr ? resolved : *forced);
+    PublishIfChanged(runtime, forced == nullptr ? *resolved : *forced);
   }
 
   // What decides this net, settled the first time it is asked. No connection
@@ -1663,9 +1680,12 @@ class Driver {
     RequireUnsettled(Net().decision_);
     Net().showing_.Record(&source->Member());
   }
-  void DriveFrom(VariableRef<T>* source) const {
+  void DriveFrom(ErasedReference* source) const {
     RequireUnsettled(Net().decision_);
-    Net().showing_.Record(&source->AsMember());
+    Net().showing_.Record(source);
+  }
+  void DriveFrom(VariableRef<T>* source) const {
+    DriveFrom(&source->AsMember());
   }
 
   // This driver's turn has come at time zero: answers whether its net shows
@@ -1773,8 +1793,7 @@ template <NetValue T>
 auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
   RequireUnsettled(decision_);
   const auto level = static_cast<support::StrengthLevel>(strength);
-  contributions_.push_back(
-      DriveContribution<T>{.value = nondriving_, .strength = level});
+  contributions_.emplace_back(nondriving_, level);
   name_.Occupy(level);
   drivers_.emplace_back(*this, contributions_.size() - 1);
   return drivers_.back();
@@ -1785,8 +1804,7 @@ template <NetValue T>
 auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
   RequireUnsettled(decision_);
   const auto level = static_cast<support::StrengthLevel>(strength);
-  contributions_.push_back(
-      DriveContribution<T>{.value = nondriving_, .strength = level});
+  contributions_.emplace_back(nondriving_, level);
   occupied_ |= LevelBit(level);
   drivers_.emplace_back(*this, contributions_.size() - 1);
   return drivers_.back();

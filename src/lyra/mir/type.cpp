@@ -242,10 +242,62 @@ auto Type::IsVariableRef() const -> bool {
 }
 
 auto Type::IsAddressOnly() const -> bool {
-  return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>() ||
-         Is<RuntimeClassType>() || Is<EventType>() ||
-         Is<SampledHistoryType>() || Is<EvaluationAttemptsType>() ||
-         Is<LoopBlocksType>();
+  // One arm per MIR type and no catch-all, so a type added later fails to
+  // compile here until it says which it is; answering that it has a value to
+  // read would refuse a read of it wrongly rather than refuse it by name.
+  return Visit(
+      Overloaded{
+          // Storage the runtime keeps, which is consumed where it lies.
+          [](const ObservableType&) { return true; },
+          [](const ResolvedType&) { return true; },
+          [](const ObjectType&) { return true; },
+          [](const RuntimeClassType&) { return true; },
+          [](const EventType&) { return true; },
+          [](const SampledHistoryType&) { return true; },
+          [](const EvaluationAttemptsType&) { return true; },
+          [](const LoopBlocksType&) { return true; },
+
+          // A value, or something whose value is what it holds.
+          [](const IntegralType&) { return false; },
+          [](const EnumType&) { return false; },
+          [](const UnpackedArrayType&) { return false; },
+          [](const DynamicArrayType&) { return false; },
+          [](const QueueType&) { return false; },
+          [](const AssociativeArrayType&) { return false; },
+          [](const WildcardIndexType&) { return false; },
+          [](const StringType&) { return false; },
+          [](const MachineCStringType&) { return false; },
+          [](const MachineBoolType&) { return false; },
+          [](const MachineIntType&) { return false; },
+          [](const MachineFloatType&) { return false; },
+          [](const MachineArrayType&) { return false; },
+          [](const MachineFunctionType&) { return false; },
+          [](const RealType&) { return false; },
+          [](const ShortRealType&) { return false; },
+          [](const ChandleType&) { return false; },
+          [](const VoidType&) { return false; },
+          [](const RuntimeEffectsType&) { return false; },
+          [](const FilesType&) { return false; },
+          [](const DiagnosticType&) { return false; },
+          [](const RuntimeLibraryType&) { return false; },
+          [](const CoroutineType&) { return false; },
+          [](const VariableRefType&) { return false; },
+          [](const ReferenceWrapperType&) { return false; },
+          [](const PointerType&) { return false; },
+          [](const ReferenceType&) { return false; },
+          [](const ManagedRefType&) { return false; },
+          [](const VectorType&) { return false; },
+          [](const TupleType&) { return false; },
+          [](const UnionType&) { return false; },
+          [](const TaggedUnionType&) { return false; },
+          [](const EmptyType&) { return false; },
+          [](const DriverType&) { return false; },
+          [](const OpenWriteType&) { return false; },
+          [](const DesignationType&) { return false; },
+          [](const BitsReferenceType&) { return false; },
+          [](const ObjectWriteType&) { return false; },
+          [](const StructType&) { return false; },
+          [](const ClosureType&) { return false; }});
 }
 
 auto Type::OwnsPointee() const -> bool {
@@ -295,10 +347,9 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const IntegralType&) { return false; },
           [](const EnumType&) { return false; },
 
-          // The simulation values the runtime builds and keeps: a sequence of
-          // values however it is sized and indexed, the ones held all at once
-          // or one at a time, and the single quantities whose representation
-          // the library decides.
+          // A value built of other values -- a sequence however it is sized
+          // and indexed, a product, the members a union overlays -- and the
+          // single quantities whose representation the library decides.
           [](const UnpackedArrayType&) { return true; },
           [](const DynamicArrayType&) { return true; },
           [](const QueueType&) { return true; },
@@ -373,71 +424,6 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const VoidType&) { return false; }});
 }
 
-auto Type::PartsAreStorage() const -> bool {
-  return Visit(
-      Overloaded{
-          // Each element of an unpacked array, and each member of an unpacked
-          // structure, is a place of its own that a reference can bind (LRM
-          // 7.4, 7.8, 7.10, 13.5.2); a product the lowering composes is laid
-          // out the same way.
-          [](const UnpackedArrayType&) { return true; },
-          [](const DynamicArrayType&) { return true; },
-          [](const QueueType&) { return true; },
-          [](const AssociativeArrayType&) { return true; },
-          [](const TupleType&) { return true; },
-          [](const StructType&) { return true; },
-
-          // A packed value is one vector however its bits are named (LRM
-          // 7.4.1) and a string one sequence of characters (LRM 6.16), so a
-          // part of either is reached by the value's own operations; a union's
-          // member lies in the union's own storage with no identity of its own
-          // (LRM 7.3, 13.5.2), so nothing designates or lends one.
-          [](const IntegralType&) { return false; },
-          [](const EnumType&) { return false; },
-          [](const StringType&) { return false; },
-          [](const UnionType&) { return false; },
-          [](const TaggedUnionType&) { return false; },
-
-          // Everything else has no parts a write reaches.
-          [](const RealType&) { return false; },
-          [](const ShortRealType&) { return false; },
-          [](const ManagedRefType&) { return false; },
-          [](const ChandleType&) { return false; },
-          [](const MachineCStringType&) { return false; },
-          [](const MachineBoolType&) { return false; },
-          [](const MachineIntType&) { return false; },
-          [](const MachineFloatType&) { return false; },
-          [](const MachineArrayType&) { return false; },
-          [](const MachineFunctionType&) { return false; },
-          [](const VariableRefType&) { return false; },
-          [](const ReferenceWrapperType&) { return false; },
-          [](const PointerType&) { return false; },
-          [](const ReferenceType&) { return false; },
-          [](const VectorType&) { return false; },
-          [](const DriverType&) { return false; },
-          [](const CoroutineType&) { return false; },
-          [](const ObjectType&) { return false; },
-          [](const RuntimeClassType&) { return false; },
-          [](const ClosureType&) { return false; },
-          [](const ObservableType&) { return false; },
-          [](const ResolvedType&) { return false; },
-          [](const OpenWriteType&) { return false; },
-          [](const DesignationType&) { return false; },
-          [](const BitsReferenceType&) { return false; },
-          [](const ObjectWriteType&) { return false; },
-          [](const SampledHistoryType&) { return false; },
-          [](const EvaluationAttemptsType&) { return false; },
-          [](const LoopBlocksType&) { return false; },
-          [](const EventType&) { return false; },
-          [](const RuntimeEffectsType&) { return false; },
-          [](const FilesType&) { return false; },
-          [](const DiagnosticType&) { return false; },
-          [](const RuntimeLibraryType&) { return false; },
-          [](const WildcardIndexType&) { return false; },
-          [](const EmptyType&) { return false; },
-          [](const VoidType&) { return false; }});
-}
-
 auto Type::BitsAreWrittenInPlace() const -> bool {
   return Is<IntegralType>();
 }
@@ -467,8 +453,8 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const IntegralType&) -> Element { return std::nullopt; },
           [](const EnumType&) -> Element { return std::nullopt; },
 
-          // Held all at once, or one at a time, but never as a sequence of one
-          // type.
+          // Parts side by side, or members overlaid, but never a sequence of
+          // one type.
           [](const TupleType&) -> Element { return std::nullopt; },
           [](const StructType&) -> Element { return std::nullopt; },
           [](const UnionType&) -> Element { return std::nullopt; },

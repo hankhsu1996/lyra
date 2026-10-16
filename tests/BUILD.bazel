@@ -126,6 +126,17 @@ cc_test(
 )
 
 cc_test(
+    name = "lir_verify_test",
+    srcs = ["lir/verify_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:lir",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "mir_integral_constant_test",
     srcs = ["mir/integral_constant_test.cpp"],
     copts = LYRA_COPTS,

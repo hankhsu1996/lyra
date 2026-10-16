@@ -17,6 +17,7 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/integral_constant.hpp"
+#include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -119,14 +120,14 @@ auto DefaultAnswering(TypeId type, TypeId answers) -> TypeDefault {
   return TypeDefault{.type = type, .code = std::move(code)};
 }
 
-// A unit whose one body, `f`, is the statements `fill` writes into it.
+// A unit whose one body, `f`, is the code `fill` writes into it.
 template <typename Fill>
-auto UnitWithBody(const Fill& fill) -> CompilationUnit {
+auto UnitWithCode(const Fill& fill) -> CompilationUnit {
   CompilationUnit unit;
   unit.name = "U";
   CallableCode code = CallableCode::Defined();
   code.result_type = unit.builtins.void_type;
-  fill(unit, code.Body());
+  fill(unit, code);
   // Every unit states the default of each type an array it holds has as its
   // element, so one built here does too, whatever its body reaches.
   for (const TypeId element : ArrayElementTypes(unit.types)) {
@@ -139,6 +140,14 @@ auto UnitWithBody(const Fill& fill) -> CompilationUnit {
           .virtual_dispatch = std::nullopt});
   unit.named_callables.push_back(NamedCallable{.name = "f", .body = id});
   return unit;
+}
+
+// A unit whose one body, `f`, is the statements `fill` writes into it.
+template <typename Fill>
+auto UnitWithBody(const Fill& fill) -> CompilationUnit {
+  return UnitWithCode([&](CompilationUnit& unit, CallableCode& code) {
+    fill(unit, code.Body());
+  });
 }
 
 // The verifier refuses `unit`, and its refusal says `why`.
@@ -597,9 +606,13 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
                       .callee = Direct{.target = entry, .receiver = array},
                       .arguments = {at}},
               .type = as_reference ? reference : element});
-      const ExprId target =
-          as_reference ? body.exprs.Add(MakeDerefExpr(reached, element))
-                       : reached;
+      // A call typed as the element names no place, so it stands alone where
+      // only its typing is what is refused.
+      if (!as_reference) {
+        body.AppendStmt(ExprStmt{.expr = reached});
+        return;
+      }
+      const ExprId target = body.exprs.Add(MakeDerefExpr(reached, element));
       const ExprId value =
           body.exprs.Add(Expr{.data = NullLiteral{}, .type = element});
       body.AppendStmt(
@@ -621,6 +634,64 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
   ExpectRefused(
       element_write(support::BuiltinFn::kElement, Mutability::kMutable, true),
       "answers a reference and is typed as something else");
+
+  // An element of an element is written through both elements' write forms,
+  // the inner one included.
+  const auto nested_write = [](support::BuiltinFn inner,
+                               Mutability inner_mutability) {
+    return UnitWithBody([inner, inner_mutability](
+                            CompilationUnit& u, Block& body) {
+      const TypeId element = u.builtins.int_type;
+      const TypeId row =
+          u.types.Intern(Type{DynamicArrayType{.element_type = element}});
+      const TypeId rows =
+          u.types.Intern(Type{DynamicArrayType{.element_type = row}});
+      const ExprId array =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = rows});
+      const auto position = [&] {
+        return body.exprs.Add(
+            Expr{.data = NullLiteral{}, .type = PositionType(u.types)});
+      };
+      const ExprId row_reference = body.exprs.Add(
+          Expr{
+              .data =
+                  CallExpr{
+                      .callee = Direct{.target = inner, .receiver = array},
+                      .arguments = {position()}},
+              .type = u.types.Intern(
+                  Type{ReferenceType{
+                      .referent = row, .mutability = inner_mutability}})});
+      const ExprId row_place =
+          body.exprs.Add(MakeDerefExpr(row_reference, row));
+      const ExprId element_reference = body.exprs.Add(
+          Expr{
+              .data =
+                  CallExpr{
+                      .callee =
+                          Direct{
+                              .target = support::BuiltinFn::kElementMut,
+                              .receiver = row_place},
+                      .arguments = {position()}},
+              .type = u.types.Intern(
+                  Type{ReferenceType{
+                      .referent = element,
+                      .mutability = Mutability::kMutable}})});
+      const ExprId target =
+          body.exprs.Add(MakeDerefExpr(element_reference, element));
+      const ExprId value =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = element});
+      body.AppendStmt(
+          ExprStmt{
+              .expr =
+                  body.exprs.Add(MakeAssignExpr(u.builtins, target, value))});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(
+      nested_write(support::BuiltinFn::kElementMut, Mutability::kMutable)));
+  ExpectRefused(
+      nested_write(support::BuiltinFn::kElement, Mutability::kReadOnly),
+      "writes through a read-only reference");
 }
 
 // Bits are written through the reference `slice_mut` takes on the value they
@@ -871,6 +942,75 @@ TEST(MirVerifyTest, OwnedStorageIsAllocatedOnlyByANewExpression) {
   ExpectRefused(
       allocating(true, false),
       "initializes its storage from a value of another type");
+}
+
+// A fixed-size array of integers too large for a frame to hold.
+auto TooLargeForAFrame(CompilationUnit& unit) -> TypeId {
+  return unit.types.Intern(
+      Type{UnpackedArrayType{
+          .element_type = unit.builtins.int_type,
+          .dim = UnpackedRange{.left = 0, .right = 4095}}});
+}
+
+// A value too large for a frame is made only in storage a new-expression
+// allocates, so neither a local nor a value made in the frame holds one.
+TEST(MirVerifyTest, AValueTooLargeForAFrameLiesInAllocatedStorage) {
+  const auto made = [](bool by_new) {
+    return UnitWithBody([by_new](CompilationUnit& u, Block& body) {
+      const TypeId large = TooLargeForAFrame(u);
+      const ExprId value =
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = large});
+      const ExprId kept =
+          by_new
+              ? body.exprs.Add(MakeNewExpr(
+                    value, u.types.Intern(
+                               Type{PointerType{
+                                   .pointee = large,
+                                   .ownership = PointerOwnership::kUnique}})))
+              : value;
+      body.AppendStmt(ExprStmt{.expr = kept});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(made(true)));
+  ExpectRefused(made(false), "too large for a frame outside the storage");
+  ExpectRefused(
+      UnitWithCode([](CompilationUnit& u, CallableCode& code) {
+        code.locals.Add(LocalDecl{.type = TooLargeForAFrame(u)});
+      }),
+      "declares a local too large for a frame");
+}
+
+// An assignment writes the storage its target names, so a target that
+// computes a value rather than naming storage is refused.
+TEST(MirVerifyTest, AnAssignmentLandsOnAPlace) {
+  const auto assigning = [](bool to_a_place) {
+    return UnitWithCode([to_a_place](CompilationUnit& u, CallableCode& code) {
+      const LocalId local =
+          code.locals.Add(LocalDecl{.type = u.builtins.int_type});
+      Block& body = code.Body();
+      const ExprId named =
+          body.exprs.Add(MakeLocalRefExpr(local, u.builtins.int_type));
+      const ExprId target =
+          to_a_place
+              ? named
+              : AddSum(
+                    u, body,
+                    body.exprs.Add(MakeCopyExpr(named, u.builtins.int_type)),
+                    body.exprs.Add(MakeCopyExpr(named, u.builtins.int_type)));
+      const ExprId value = body.exprs.Add(
+          Expr{.data = NullLiteral{}, .type = u.builtins.int_type});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.exprs.Add(
+                  Expr{
+                      .data = AssignExpr{.target = target, .value = value},
+                      .type = u.builtins.int_type})});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(assigning(true)));
+  ExpectRefused(assigning(false), "which names no place");
 }
 
 // What a position of an array holds before anything is written to it is asked

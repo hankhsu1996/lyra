@@ -58,11 +58,6 @@ auto Op(
   return block.exprs.Add(MakeBinary(unit, block, op, lhs, rhs, type));
 }
 
-auto Place(mir::Block& block, mir::LocalId local, mir::TypeId type)
-    -> mir::ExprId {
-  return block.exprs.Add(mir::MakeLocalRefExpr(local, type));
-}
-
 void Assign(
     const mir::CompilationUnit& unit, mir::Block& block, mir::LocalId local,
     mir::TypeId type, mir::ExprId value) {
@@ -70,7 +65,7 @@ void Assign(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeAssignExpr(
-                  unit.builtins, Place(block, local, type), value))});
+                  unit.builtins, block.LocalPlace(local, type), value))});
 }
 
 // One position set as body locals, one per word of the automaton's width. A

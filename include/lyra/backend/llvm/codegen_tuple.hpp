@@ -62,10 +62,9 @@ struct VirtualSignature {
 // lifecycle compiled here, and every operation the language defines on the
 // whole value, which are the methods the type's declaration states. A tuple's
 // bytes state nothing of it, so whatever hands one to the runtime hands the
-// type beside it. It is an
-// object of a class the runtime declares, emitted as clang emits one of a
-// class deriving from it: the object holds the address of a table of bodies,
-// one per virtual function.
+// type beside it. It is an object of a class the runtime declares, emitted as
+// clang emits one of a class deriving from it: the object holds the address of
+// a table of bodies, one per virtual function.
 //
 // The type of a struct is its declaring unit's, one in the program, which
 // every other module refers to. A tuple has no operations, so a type of one

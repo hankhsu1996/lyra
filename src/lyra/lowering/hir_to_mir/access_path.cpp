@@ -293,7 +293,7 @@ auto DesignatedWithinAWrite(const DescentStep& step) -> bool {
 // How many of `path`'s steps a write opened on its owner takes within itself:
 // where the owner is a capability wrapper, the write designates each part that
 // is storage of its own, so it knows what forming each one did, for as long as
-// the value stepped into has such parts. Any step left is taken on what the
+// each step reaches such a part. Any step left is taken on what the
 // write lands on, or on the last designation by an operation of the value's
 // own. A write onto anything else takes none within itself.
 auto StepsTakenWithinTheWrite(
@@ -307,17 +307,9 @@ auto StepsTakenWithinTheWrite(
   if (!owner_ty.IsCapabilityWrapper()) {
     return 0;
   }
-  mir::TypeId value = owner_ty.WrappedValueType();
-  std::size_t taken = 0;
-  for (const DescentStep& step : path.descent) {
-    if (!unit.types.Get(value).PartsAreStorage() ||
-        !DesignatedWithinAWrite(step)) {
-      break;
-    }
-    ++taken;
-    value = step.part_type;
-  }
-  return taken;
+  return static_cast<std::size_t>(
+      std::ranges::find_if_not(path.descent, DesignatedWithinAWrite) -
+      path.descent.begin());
 }
 
 // The call `call` takes on `receiver`, answering `type`.
@@ -359,23 +351,30 @@ auto ReferencedPart(
 }
 
 // One step taken on `receiver` for `use`, answering `type`.
+auto StepExpr(
+    mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
+    StepUse use, mir::ExprId receiver, mir::TypeId type) -> mir::Expr {
+  return std::visit(
+      Overloaded{
+          [&](const mir::ComponentFieldTarget& field) {
+            return mir::MakeFieldAccessExpr(receiver, field, type);
+          },
+          [&](ReferenceStep reference) {
+            return ReferencedPart(
+                unit, block, std::move(reference), receiver, type);
+          },
+          [&](StepCall call) {
+            return MakeBuiltinCall(
+                unit, block, call.entry, receiver, call.part,
+                call.type_argument, std::move(call.arguments), type);
+          }},
+      StepTakenFor(unit, block, step, use));
+}
+
 auto TakeStep(
     mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
     StepUse use, mir::ExprId receiver, mir::TypeId type) -> mir::ExprId {
-  return block.exprs.Add(
-      std::visit(
-          Overloaded{
-              [&](const mir::FieldRef& field) {
-                return mir::MakeFieldAccessExpr(receiver, field, type);
-              },
-              [&](ReferenceStep reference) {
-                return ReferencedPart(
-                    unit, block, std::move(reference), receiver, type);
-              },
-              [&](StepCall call) {
-                return StepCallExpr(std::move(call), receiver, type);
-              }},
-          StepTakenFor(unit, block, step, use)));
+  return block.exprs.Add(StepExpr(unit, block, step, use, receiver, type));
 }
 
 // A net's resolved cell is readable and observable, but no value gets into it
@@ -774,19 +773,13 @@ auto PathReference(
                 unit, block, owner.object, owner.property, owner.type);
           }},
       path.owner);
-  mir::TypeId value = OwnerValueType(unit, block, path.owner);
   for (const DescentStep& step : path.descent) {
-    if (!unit.types.Get(value).PartsAreStorage()) {
-      throw InternalError(
-          "access path: a part lent by reference is storage of its own (LRM "
-          "13.5.2), and this descent reaches into a value whose parts are not");
-    }
-    value = step.part_type;
     reference = TakeStep(
         unit, block, step, StepUse::kLend, reference,
         unit.types.Intern(
             mir::Type{mir::VariableRefType{
-                .pointee = value, .mutability = mir::Mutability::kMutable}}));
+                .pointee = step.part_type,
+                .mutability = mir::Mutability::kMutable}}));
   }
   return reference;
 }
@@ -807,21 +800,7 @@ auto PathValue(
 auto StepForRead(
     mir::CompilationUnit& unit, mir::Block& block, const DescentStep& step,
     mir::ExprId receiver) -> mir::Expr {
-  return std::visit(
-      Overloaded{
-          [&](const mir::ComponentFieldTarget& field) {
-            return mir::MakeFieldAccessExpr(receiver, field, step.part_type);
-          },
-          [&](ReferenceStep reference) {
-            return ReferencedPart(
-                unit, block, std::move(reference), receiver, step.part_type);
-          },
-          [&](StepCall call) {
-            return MakeBuiltinCall(
-                unit, block, call.entry, receiver, call.part,
-                call.type_argument, std::move(call.arguments), step.part_type);
-          }},
-      StepTakenFor(unit, block, step, StepUse::kRead));
+  return StepExpr(unit, block, step, StepUse::kRead, receiver, step.part_type);
 }
 
 auto ElementReference(

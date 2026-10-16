@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/reduction.hpp"
 
@@ -141,9 +142,8 @@ class ValueType {
   // type alone fixes: a singular type's default (LRM 6.4, Table 6-7), an empty
   // container, and an aggregate's parts each at what its own type builds. What
   // a declaration states of its members (LRM 7.2.2) is written by its
-  // initialization after this. An untagged union's type states none of its
-  // members, so it builds one holding none, short of the first member's
-  // default LRM 7.3 gives it.
+  // initialization after this. A union holds its first member at what that
+  // member's type builds, every other byte zero (LRM 7.3).
   virtual void BuildDefault(void* out) const = 0;
 
   virtual void BitstreamWidth(const void* value, void* out) const = 0;
@@ -210,14 +210,12 @@ class ValueType {
 };
 
 // A value the library holds of a type it was compiled without and is handed as
-// bytes laid out by that type, which state nothing of it -- a tuple, a
+// bytes laid out by that type, which state nothing of it -- a tuple, a union, a
 // fixed-size unpacked array: kept with its type, and compared with and taking
 // the bytes of a value of that type.
 template <class T>
-concept LaidOutByType = requires(T& held, const T& read, const void* bytes) {
+concept LaidOutByType = TakesBytesInPlace<T> && requires(const T& read) {
   { read.Type() } -> std::convertible_to<const ValueType&>;
-  { read.IsBitIdenticalTo(bytes) } -> std::same_as<bool>;
-  held.AssignBytes(bytes);
 };
 
 }  // namespace lyra::value

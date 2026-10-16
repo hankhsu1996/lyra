@@ -432,10 +432,8 @@ auto EvaluateSelectedBase(
       .path =
           SettledPath{
               .named_in = &block,
-              .owner = block.exprs.Add(
-                  mir::MakeLocalRefExpr(
-                      DeclareLocal(at, block.exprs.Add(*std::move(value))),
-                      type)),
+              .owner = block.LocalPlace(
+                  DeclareLocal(at, block.exprs.Add(*std::move(value))), type),
               .descent = {}},
       .outlives_the_steps = false};
 }
@@ -686,19 +684,17 @@ auto LowerHirMemberAccessExpr(
     auto base = lowerer.LowerExpr(base_expr, steps.Frame());
     if (!base) return std::unexpected(std::move(base.error()));
     const mir::TypeId union_type = base->type;
-    const mir::ExprId held_union = body.exprs.Add(
-        mir::MakeLocalRefExpr(
-            DeclareLocal(steps.Frame(), body.exprs.Add(*std::move(base))),
-            union_type));
+    const mir::ExprId held_union = body.LocalPlace(
+        DeclareLocal(steps.Frame(), body.exprs.Add(*std::move(base))),
+        union_type);
+    const DescentStep member = MemberStep(
+        unit_lowerer, body, aggregate, sel.field_index,
+        PartSelectNaturalType(unit, union_type, result_type));
     AppendReadChecks(
-        unit, body,
-        AccessPath{
-            .owner = held_union,
-            .descent = {MemberStep(
-                unit_lowerer, body, aggregate, sel.field_index,
-                PartSelectNaturalType(unit, union_type, result_type))}});
+        unit, body, AccessPath{.owner = held_union, .descent = {member}});
     return steps.Build(body.AsValue(
-        unit.types, body.exprs.Add(read_member(body, held_union))));
+        unit.types, body.exprs.Add(ReadMember(
+                        unit_lowerer, body, member, held_union, result_type))));
   }
   auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));

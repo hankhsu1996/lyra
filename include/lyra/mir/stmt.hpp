@@ -202,9 +202,14 @@ struct Block {
     return MakeCopyExpr(exprs.Add(std::move(expr)), type);
   }
 
+  // The place the local `local`, of type `type`, is.
+  auto LocalPlace(LocalId local, TypeId type) -> ExprId {
+    return exprs.Add(MakeLocalRefExpr(local, type));
+  }
+
   // The value the local `local`, of type `type`, holds.
   auto ReadLocal(LocalId local, TypeId type) -> ExprId {
-    return Read(exprs.Add(MakeLocalRefExpr(local, type)));
+    return Read(LocalPlace(local, type));
   }
 
   // What `*pointer` opens `pointer` as: a value, read where it names storage,

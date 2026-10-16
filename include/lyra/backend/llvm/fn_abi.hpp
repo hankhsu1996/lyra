@@ -24,6 +24,7 @@ class Type;
 namespace lyra::backend::llvm_backend {
 
 class CodeGenModule;
+class CodeGenTypes;
 
 // How one argument of a call crosses to its callee, the role rustc gives
 // `PassMode`: the value as it is; the value and what its type states to a
@@ -210,6 +211,12 @@ class CallArranger {
   // An argument that is the machine value of `type` it is: an address this
   // target computed, or a count it states.
   [[nodiscard]] static auto Direct(llvm::Type* type) -> ArgAbi;
+  // How a callee making a value of `type` hands it back, the one return
+  // arrangement its declaration, its body and every call of it read, as
+  // clang's `CGFunctionInfo` is: built in storage the caller gives where the
+  // value lies in storage, and as the machine value it is otherwise.
+  [[nodiscard]] static auto ReturnOfValue(CodeGenTypes& types, lir::TypeId type)
+      -> ReturnInfo;
 
   // The entry a call on a builtin enters.
   [[nodiscard]] auto EntryOf(

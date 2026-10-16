@@ -15,6 +15,7 @@
 #include "lyra/value/clear_above_widths.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/small_box.hpp"
@@ -28,6 +29,13 @@ namespace detail {
 template <std::size_t I, typename V>
 struct Building {
   V&& value;
+};
+
+// What a union is built from where its first member is what `make` answers,
+// built where the member lies rather than first in a frame.
+template <typename Make>
+struct BuiltBy {
+  Make make;
 };
 
 // The storage every member of a union lies at the start of, as large as the
@@ -53,6 +61,13 @@ class UnionStorage {
   void Build(V&& value) {
     std::construct_at(
         std::bit_cast<Member<I>*>(bytes_.data()), std::forward<V>(value));
+  }
+
+  // Member `I` built from what `make` answers over storage holding no member,
+  // the answer made where the member lies.
+  template <std::size_t I, typename Make>
+  void BuildFrom(Make& make) {
+    value::BuildFrom<Member<I>>(bytes_.data(), make);
   }
 
   // Every byte zero, which a union whose members own nothing holds before a
@@ -149,12 +164,14 @@ class Union {
     return Resolved(NetResolution::kWiredOr, other);
   }
   [[nodiscard]] auto Dominating(const Union& weaker) const -> Union {
-    return Make<0>(First()->Dominating(*weaker.First()));
+    return Union(
+        detail::BuiltBy{[&] { return First()->Dominating(*weaker.First()); }});
   }
   template <IntegralValue Fill>
   [[nodiscard]] static auto FilledLike(const Union& prototype, const Fill& fill)
       -> Union {
-    return Make<0>(FilledAs(*prototype.First(), fill));
+    return Union(
+        detail::BuiltBy{[&] { return FilledAs(*prototype.First(), fill); }});
   }
 
   [[nodiscard]] auto BitstreamWidth() const -> Int {
@@ -199,6 +216,10 @@ class Union {
   explicit Union(detail::Building<I, V> building) {
     storage_.template Build<I>(std::forward<V>(building.value));
   }
+  template <typename Make>
+  explicit Union(detail::BuiltBy<Make> built) {
+    storage_.template BuildFrom<0>(built.make);
+  }
 
   // Member 0 read as its type holds a value, kept where a value of its type
   // may be kept, so a union whose first member is too large for a frame keeps
@@ -211,7 +232,9 @@ class Union {
 
   [[nodiscard]] auto Resolved(NetResolution fold, const Union& other) const
       -> Union {
-    return Make<0>(lyra::value::Resolve(fold, *First(), *other.First()));
+    return Union(detail::BuiltBy{[&] {
+      return lyra::value::Resolve(fold, *First(), *other.First());
+    }});
   }
 
   Storage storage_;

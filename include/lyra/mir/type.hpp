@@ -487,12 +487,12 @@ enum class Mutability : std::uint8_t {
 
 // A reference value aliasing a storage cell of `pointee` type (LRM 13.5.2
 // pass-by-reference; a fork branch / `$sscanf` / with-clause body sharing
-// enclosing storage). The runtime wrapper `lyra::runtime::VariableRef<T>`
-// routes reads through `Get` and writes through the cell's `Set` (its
-// update-event path), so a value of this type is read and written like an
-// observable cell. A read-only `mutability` marks a `const ref` formal
-// (LRM 13.5.2). A library wrapper, like ObservableType; constructing one from a
-// cell is an explicit MIR operation, not a backend-synthesized wrap.
+// enclosing storage). It is read and written like an observable cell: a read
+// asks it for the cell's contents and a write publishes through the cell, so it
+// wakes what waits on the cell (LRM 4.3). A read-only `mutability` marks a
+// `const ref` formal (LRM 13.5.2). A library wrapper, like ObservableType;
+// constructing one from a cell is an explicit MIR operation, not a
+// backend-synthesized wrap.
 struct VariableRefType {
   TypeId pointee;
   Mutability mutability;
@@ -824,22 +824,16 @@ class Type {
   // builtin `*p` reads a pointer.
   [[nodiscard]] auto OwnsPointee() const -> bool;
 
-  // True for a type whose value lives in storage the runtime owns, so whatever
-  // holds such a value holds a handle onto that storage rather than the value
-  // itself. What follows is that the handle is not the whole of the value:
-  // whoever ends the storage ends the value, and a holder that outlives it is
-  // left naming nothing. A type answering false is one the holder has entire --
-  // an integral value, a machine quantity, or an address whose value is the
-  // address.
+  // True for a value built of other values or represented by the library --
+  // an array of any kind, a structure, a union, a string, a real, a class
+  // handle -- as opposed to an integral value, a machine quantity or an address
+  // whose value is the address, which whoever holds it holds as one quantity
+  // entire.
   //
   // Narrower than being a domain the runtime realizes values of, which a
   // chandle also is: its value is the pointer it carries, and the pointer is in
   // the holder's own hands.
   [[nodiscard]] auto IsRuntimeStoredValue() const -> bool;
-
-  // True for a value whose parts each have an identity of their own, so a
-  // write in progress designates one and a reference can bind one.
-  [[nodiscard]] auto PartsAreStorage() const -> bool;
 
   // True for a value whose bits lie contiguously (LRM 7.4.1), so a write into
   // some of them lands on those bits where they lie, at the cost of those bits,

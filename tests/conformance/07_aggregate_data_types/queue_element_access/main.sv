@@ -15,6 +15,8 @@ module Top;
   typedef record_t records_t [$];
 
   records_t records;
+  // Set once every check of an element's member has run.
+  bit members_checked = 1'b0;
 
   function automatic record_t record(int tag);
     record_t r;
@@ -95,9 +97,11 @@ module Top;
              two_records()[1].counts[1]);
     if (records[9].tag !== 0 || records.size() !== 2)
       $fatal(1, "a member past the end read as %0d", records[9].tag);
+    members_checked = 1'b1;
   end
 
   final begin
+    if (members_checked !== 1'b1) $fatal(1, "the member checks never ran");
     if (first_element !== 1)
       $fatal(1, "first_element was %0d, expected 1", first_element);
     if (size_after_appends !== 5)

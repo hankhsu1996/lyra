@@ -19,6 +19,9 @@ module Top;
     int y = 2;
   } xy_t;
 
+  // Set once every check in `check` has run.
+  bit checked = 1'b0;
+
   function automatic void check(int nowhere);
     holder_t fixed[4];
     holder_t dynamic[];
@@ -68,10 +71,13 @@ module Top;
     rows[1].push_back(3);
     if (rows[1].size() !== 2 || rows[1][1] !== 3 || rows[0].size() !== 1)
       $fatal(1, "rows[1].push_back(3) left %p", rows);
+    checked = 1'b1;
   endfunction
 
-  initial begin
-    check(9);
+  initial check(9);
+
+  final begin
+    if (checked !== 1'b1) $fatal(1, "the checks never ran");
     $display("All checks passed");
   end
 endmodule

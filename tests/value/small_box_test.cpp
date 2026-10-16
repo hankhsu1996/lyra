@@ -11,7 +11,8 @@ namespace lyra::value {
 namespace {
 
 // Counts how many values of its kind are alive, so a box is seen to end the
-// value it holds when it ends.
+// value it holds when it ends, and how many were copied or moved, so a value is
+// seen to be built where it is kept.
 template <std::size_t kBytes>
 struct Counted {
   explicit Counted(int value) : value(value) {
@@ -19,10 +20,12 @@ struct Counted {
   }
   Counted(const Counted& other) : value(other.value) {
     ++alive;
+    ++relocated;
   }
   auto operator=(const Counted&) -> Counted& = default;
   Counted(Counted&& other) noexcept : value(other.value) {
     ++alive;
+    ++relocated;
   }
   auto operator=(Counted&&) -> Counted& = default;
   ~Counted() {
@@ -32,6 +35,7 @@ struct Counted {
   int value;
   std::array<std::byte, kBytes> padding{};
   static inline int alive = 0;
+  static inline int relocated = 0;
 };
 
 using Small = Counted<8>;
@@ -63,6 +67,19 @@ TEST(SmallBox, HoldsItsValueForAsLongAsItLasts) {
   }
   EXPECT_EQ(Small::alive, 0);
   EXPECT_EQ(Large::alive, 0);
+}
+
+// A box built from what a maker answers holds that value where it keeps it,
+// never a copy or a move of one made elsewhere first.
+TEST(SmallBox, BuildsWhatAMakerAnswersWhereItKeepsIt) {
+  Small::relocated = 0;
+  Large::relocated = 0;
+  const auto small = SmallBox<Small>::BuiltBy([] { return Small(5); });
+  const auto large = SmallBox<Large>::BuiltBy([] { return Large(6); });
+  EXPECT_EQ(small->value, 5);
+  EXPECT_EQ(large->value, 6);
+  EXPECT_EQ(Small::relocated, 0);
+  EXPECT_EQ(Large::relocated, 0);
 }
 
 }  // namespace

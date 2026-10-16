@@ -251,8 +251,8 @@ auto Disagreement(
     return false;
   };
   // An operand laid out by its type takes its type where it is the
-  // realization's own,
-  // and may take it wherever else the rule says such a value may stand.
+  // realization's own, and may take it wherever else the rule says such a
+  // value may stand.
   const auto take_a_laid_out_values_type = [&](std::size_t operand) {
     if (declared.own_laid_out == operand) {
       return take_the_type_of_the_one_before();
@@ -341,8 +341,7 @@ auto Disagreement(
   }
   // An operand past the ones a reading is stated for is read as the thing it
   // is, so a value laid out by its type among them is followed by its type
-  // like any
-  // other. What is left is what the entry is told of its answer.
+  // like any other. What is left is what the entry is told of its answer.
   std::vector<Parameter> told;
   std::vector<std::size_t> told_at;
   for (std::size_t operand = stated; at < parameters.size();) {
@@ -501,8 +500,8 @@ auto DeclaredRealizations() -> Realizations {
     all.functions.push_back(symbol);
   };
   // The operand naming a realization where that operand is laid out by its
-  // type, which is where the realization is told the
-  // types of such values it is handed.
+  // type, which is where the realization is told the types of such values it
+  // is handed.
   const auto laid_out_at =
       [](const Told& told, std::size_t operand) -> std::optional<std::size_t> {
     if (!std::holds_alternative<ToldLaidOutTypes>(told)) {

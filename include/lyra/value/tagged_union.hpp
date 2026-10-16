@@ -13,8 +13,8 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/empty.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/layout.hpp"
 #include "lyra/value/union.hpp"
-#include "lyra/value/union_layout.hpp"
 
 namespace lyra::value {
 

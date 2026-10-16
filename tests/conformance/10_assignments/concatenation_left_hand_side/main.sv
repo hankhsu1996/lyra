@@ -11,9 +11,9 @@
 // member is any integral type (LRM 6.11.1) -- an enumeration, a packed
 // structure and a packed union each take their share of the bits exactly as a
 // vector of their width does, since the concatenation is a packed vector of
-// bits and writing through it is writing bits. A member may itself be a concatenation (Table 10-1,
-// "nested concatenation"), which takes the bits at its position and splits them
-// among its own members the same way.
+// bits and writing through it is writing bits. A member may itself be a
+// concatenation (Table 10-1, "nested concatenation"), which takes the bits at
+// its position and splits them among its own members the same way.
 module Top;
   typedef enum bit [7:0] {LOW = 8'h11, HIGH = 8'h22} opcode_t;
   typedef struct packed {

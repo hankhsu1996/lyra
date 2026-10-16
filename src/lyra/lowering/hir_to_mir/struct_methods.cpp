@@ -294,10 +294,7 @@ class Synthesizer {
   auto Referent(mir::Block& block, mir::LocalId local, mir::TypeId type)
       -> mir::ExprId {
     return block.Deref(
-        Unit().types,
-        block.exprs.Add(
-            mir::MakeLocalRefExpr(local, ReferenceTo(Unit(), type))),
-        type);
+        Unit().types, block.LocalPlace(local, ReferenceTo(Unit(), type)), type);
   }
 
   // The struct the parameter `local` refers to.

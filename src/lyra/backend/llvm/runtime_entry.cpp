@@ -361,13 +361,12 @@ constexpr std::array kRealConversions{
 // counted hold keeps -- is as large as the value it is to hold, so one of
 // words is made at their width, and one of a value laid out by its type with
 // that type.
-// A cell whose value lies where the library states is read and written there,
-// so only making one is an entry for every value a variable holds, and only
-// an object of the library's own is read and written through one.
 constexpr std::array kForCellsMade{
     RealizedFor{.domains = kOneWordIntegral | kObjectsThatStateThemselves},
     RealizedFor{.domains = kWideIntegral, .told = ToldWidthMetadataAhead{}},
     RealizedFor{.domains = kLaidOutByType, .told = ToldTypeMetadataAhead{}}};
+// A cell whose value lies where the library states is read and written there,
+// so only an object of the library's own is read and written through an entry.
 constexpr std::array kForCellsReached{
     RealizedFor{.domains = kObjectsThatStateThemselves}};
 

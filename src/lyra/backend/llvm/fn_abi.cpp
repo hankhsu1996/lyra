@@ -1,7 +1,6 @@
 #include "lyra/backend/llvm/fn_abi.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <optional>
 #include <string>
@@ -452,6 +451,14 @@ auto CallArranger::Direct(llvm::Type* type) -> ArgAbi {
   return ArgAbi{.type = type, .mode = PassDirect{}};
 }
 
+auto CallArranger::ReturnOfValue(CodeGenTypes& types, lir::TypeId type)
+    -> ReturnInfo {
+  if (types.HasAggregateEvaluationKind(type)) {
+    return ReturnIndirect{.returned = types.Ptr()};
+  }
+  return ReturnDirect{.type = types.Map(type)};
+}
+
 auto CallArranger::Arrange(std::vector<ArgAbi> args, ReturnInfo ret) -> FnAbi {
   return FnAbi{
       .implicit_arg = NoImplicitArg{},
@@ -470,9 +477,8 @@ auto CallArranger::ReturnOf(
   if (lir::CallBuildsExecution(call.target)) {
     return built;
   }
-  if (lir::CallMakesValue(call.target) &&
-      module_->Types().LiesInStorage(result_type)) {
-    return built;
+  if (lir::CallMakesValue(call.target)) {
+    return ReturnOfValue(module_->Types(), result_type);
   }
   return ReturnDirect{.type = module_->Types().Map(result_type)};
 }
@@ -923,11 +929,10 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
       return std::unexpected(std::move(domain.error()));
     }
     const Told told = ToldOf(*domain, op);
-    const std::optional<lir::TypeId> held = value;
     return FnAbi{
-        .implicit_arg = ImplicitArgOf(told, held),
+        .implicit_arg = ImplicitArgOf(told, value),
         .named_part = std::nullopt,
-        .args = ArgsAsRead(call, OperandReadingsOf(op), told, held),
+        .args = ArgsAsRead(call, OperandReadingsOf(op), told, value),
         .type_args = TypeArgsOf(
             types, told, support::AnswerTold::kNothing, std::nullopt,
             result_type, ret),
@@ -1006,19 +1011,18 @@ auto CallArranger::FnAbiOf(const lir::CallInstr& call, lir::TypeId result_type)
             const support::OperandReadings readings =
                 OperandReadingsOf(RuntimeOp::kInsertDesignatedBits);
             const Told told = ToldOf(*domain, RuntimeOp::kInsertDesignatedBits);
-            const std::optional<lir::TypeId> held = t.value;
             return FnAbi{
                 .implicit_arg = NoImplicitArg{},
                 .named_part = std::nullopt,
                 .args =
                     {ArgOf(
                          readings, 0, OperandType(call.args.front()), told,
-                         held),
+                         t.value),
                      Direct(module_->Types().Span()),
                      ArgOf(
                          readings, 2, OperandType(t.parts.back().start), told,
-                         held),
-                     ArgOf(readings, 3, t.parts.back().type, told, held)},
+                         t.value),
+                     ArgOf(readings, 3, t.parts.back().type, told, t.value)},
                 .type_args = {},
                 .ret = ret};
           },

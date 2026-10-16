@@ -40,10 +40,10 @@ Two facts make the revision clean:
 
 2. **MIR already reserves the ownership mode.** A one-level indirection is
    `PointerType{pointee, ownership}` with `ownership ::= kUnique | kShared | kBorrowed`; plus a
-   non-owning `RefType` value alias. `kUnique` (owned child instances), `kBorrowed` (`self`), and
-   `RefType` (`ref` formals, by-reference captures) have producers; `kShared` already renders to
-   `std::shared_ptr<T>` but has no producer yet. Shared ownership is an anticipated mode awaiting
-   its first consumer, not a new primitive.
+   non-owning `VariableRefType` value alias. `kUnique` (owned child instances), `kBorrowed`
+   (`self`), and `VariableRefType` (`ref` formals, by-reference captures) have producers; `kShared`
+   already renders to `std::shared_ptr<T>` but has no producer yet. Shared ownership is an
+   anticipated mode awaiting its first consumer, not a new primitive.
 
 ## Decision
 

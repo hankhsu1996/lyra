@@ -130,6 +130,11 @@ what the construct means.
   to them its `slice_mut` answers, as a C++ library's `bitset::operator[]` answers a reference to a
   bit. The set is closed under what a generic programming-language AST needs to express; it does not
   grow to model a particular backend's storage realization or runtime library shape.
+- Which values are held through a uniquely owning pointer because a value of their type is too large
+  for a frame: a local, a parameter taken by value, a made value, a block's value and a capture,
+  each written as a box by a rewrite of the stage before any consumer reads the unit, so every
+  backend keeps such a value off the stack by translating what it is given
+  (`../decisions/a-value-too-large-for-a-frame-is-held-through-a-box.md`).
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
@@ -138,7 +143,10 @@ what the construct means.
 ## Does Not Own
 
 - Control-flow graphs, basic blocks, branches, or phi nodes.
-- Storage placement, offsets, or memory layout.
+- Storage placement, offsets, or memory layout on a node. A rewrite of the stage asks how large a
+  value of a type is, to decide which values are held through a box, as rustc's passes ask a type's
+  layout; no node carries the answer, and how the box and its target are laid out stays each
+  backend's.
 - A source language's coordinate system: a declared range, its direction, which part-select form the
   source wrote. HIR-to-MIR reads it, and a select states where it lands in the selected value's own
   numbering -- a bit from a packed value's least significant end, an element from an unpacked

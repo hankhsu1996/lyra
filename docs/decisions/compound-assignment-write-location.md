@@ -11,7 +11,9 @@ component is read with `Component<I>` and reached with `ComponentRef<I>`. The st
 write-back proxy is gone (2026-10-14,
 [an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md)): a
 character is read by `getc` and written by `putc`, and an element is written through the reference
-`ElementMut` answers.
+`ElementMut` answers. Point 3's union member is superseded by
+[a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md): a
+member is a field step on the union's place, and writing it makes nothing active.
 
 ## Context
 

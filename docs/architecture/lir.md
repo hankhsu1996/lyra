@@ -136,12 +136,12 @@ identity is the suspect, not the analysis.
 2. Each LIR local either names storage or is a transient value, and which one is explicit. Which one
    a local is follows a canonical lowering rule, not the source language's notion of a variable: a
    local is a place -- named storage -- exactly when the canonical lowering names it as storage (a
-   declared local, a value a part is reached in, or a result that control-flow paths join at). A
-   value computed once and consumed is a transient value with a pure dataflow origin. The rule fixes
-   the storage topology; it does not minimize it -- recovering a register where the address is never
-   truly needed is a separate derivation below LIR. _Machine-execution consequence: the codegen
-   knows for every value whether it lives in memory or in a register-class temporary; no value's
-   storage class must be inferred._
+   declared local, a value a part is reached in, a result that control-flow paths join at, or the
+   callable's return place). A value computed once and consumed is a transient value with a pure
+   dataflow origin. The rule fixes the storage topology; it does not minimize it -- recovering a
+   register where the address is never truly needed is a separate derivation below LIR.
+   _Machine-execution consequence: the codegen knows for every value whether it lives in memory or
+   in a register-class temporary; no value's storage class must be inferred._
 3. LIR fixes logical storage topology, not physical layout. A place names storage by logical
    identity -- a base local and a projection chain of steps naming a member, a referent, an element,
    or a component -- never as a byte offset, an address, or pointer arithmetic. The physical
@@ -236,10 +236,11 @@ shape is "what identity property does this break".
   or runtime calls at HIR-to-MIR; one reappearing at LIR is an upstream leak, never a LIR node to
   add.
 - A source language's ownership discipline reconstructed at LIR -- move semantics, borrow checking.
-  LIR's value model is value-copy plus explicit borrowed references, and an affine discipline is a
-  rule about what a program may write, decided where the program is still that language. (Deriving
-  where storage is released is not this: it is a lowering computing a fact about the code in front
-  of it, which is what an execution-model IR is for, and both peers named in Purpose do it.)
+  LIR's value model is value-copy, a uniquely owning pointer moved wherever it is handed on, and
+  explicit borrowed references; an affine discipline is a rule about what a program may write,
+  decided where the program is still that language. (Deriving where storage is released is not this:
+  it is a lowering computing a fact about the code in front of it, which is what an execution-model
+  IR is for, and both peers named in Purpose do it.)
 - Implicit control flow. Every control transfer is an explicit edge. (Machine-execution IRs do not
   carry implicit transitions; the codegen relies on edges being explicit.)
 - Reintroducing semantic structure that MIR has already lowered away.

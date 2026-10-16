@@ -48,6 +48,7 @@
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/layout.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -164,18 +165,16 @@ auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes {
 auto CodeGenModule::FunctionTypeOf(
     std::span<const lir::TypeId> params, lir::TypeId result)
     -> llvm::FunctionType* {
-  std::vector<llvm::Type*> mapped;
-  mapped.reserve(params.size() + 1);
+  std::vector<ArgAbi> arranged;
+  arranged.reserve(params.size());
   for (const lir::TypeId param : params) {
-    mapped.push_back(types_.Map(param));
+    arranged.push_back(CallArranger::Direct(types_.Map(param)));
   }
-  // A body answering a value that lies in storage builds it in storage the
-  // caller gives, handed over last, and answers with it -- the shape every
-  // runtime entry answering one has.
-  if (types_.LiesInStorage(result)) {
-    mapped.push_back(types_.Ptr());
-  }
-  return llvm::FunctionType::get(types_.Map(result), mapped, false);
+  // A body answers as every call of it is arranged to, the shape every
+  // runtime entry making a value has.
+  return types_.GetFunctionType(
+      CallArranger::Arrange(
+          std::move(arranged), CallArranger::ReturnOfValue(types_, result)));
 }
 
 auto CodeGenModule::ExternalFunction(
@@ -419,6 +418,12 @@ auto CodeGenModule::EndOwnedStorage(
       return ended;
     }
   }
+  return EmitDeleteCall(builder, pointee, storage);
+}
+
+auto CodeGenModule::EmitDeleteCall(
+    llvm::IRBuilderBase& builder, lir::TypeId pointee, llvm::Value* storage)
+    -> diag::Result<void> {
   auto size = CompleteObjectSize(pointee);
   if (!size) {
     return std::unexpected(std::move(size.error()));
@@ -817,10 +822,6 @@ auto CodeGenModule::IsInterfaceClass(lir::TypeId type) const -> bool {
 
 namespace {
 
-auto AlignUp(std::uint64_t offset, std::uint64_t align) -> std::uint64_t {
-  return (offset + align - 1) / align * align;
-}
-
 // A table's address is a pointer of the host the program runs on, which is the
 // host this compiler targets.
 constexpr std::uint64_t kTableAddressSize = sizeof(void*);
@@ -911,14 +912,14 @@ auto CodeGenModule::PlaceMembers(
               what, unit_->types.Get(type).KindName()));
     }
     const support::ObjectLayout layout = MemberLayout(type, *storage);
-    const std::uint64_t offset = AlignUp(placed.end, layout.align);
+    const std::uint64_t offset = value::AlignTo(placed.end, layout.align);
     placed.types.push_back(type);
     placed.storage.push_back(*storage);
     placed.offsets.push_back(offset);
     placed.end = offset + layout.size;
     placed.align = std::max<std::uint64_t>(placed.align, layout.align);
   }
-  placed.size = AlignUp(placed.end, placed.align);
+  placed.size = value::AlignTo(placed.end, placed.align);
   return placed;
 }
 
@@ -961,11 +962,11 @@ auto CodeGenModule::WholeLayOut(const Declared& declared)
   const std::size_t part_count = InterfacePartsOf(declared).size();
   whole.interface_parts.reserve(part_count);
   for (std::size_t k = 0; k < part_count; ++k) {
-    end = AlignUp(end, kTableAddressAlign);
+    end = value::AlignTo(end, kTableAddressAlign);
     whole.interface_parts.push_back(end);
     end += kTableAddressSize;
   }
-  whole.size = AlignUp(end, whole.align);
+  whole.size = value::AlignTo(end, whole.align);
   return whole;
 }
 
@@ -1078,7 +1079,7 @@ auto CodeGenModule::MemberLayout(
 // A member holding no value of the program's holds none.
 auto CodeGenModule::ValuesHeldByMember(lir::TypeId type) const
     -> std::optional<lir::TypeId> {
-  if (types_.LiesInStorage(type)) {
+  if (types_.HasAggregateEvaluationKind(type)) {
     return type;
   }
   return ValuesHeldBy(unit_->types.Get(type));

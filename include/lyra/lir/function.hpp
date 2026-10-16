@@ -26,8 +26,9 @@
 
 namespace lyra::lir {
 
-// An SSA-style value: a function parameter or the result of one instruction.
-// Values are numbered per function in the function's value arena.
+// A value of a body: a parameter, a transient an assignment defines, or a
+// place local naming storage. Values are numbered per function in the
+// function's value arena.
 struct ValueId {
   std::uint32_t value = base::kUnassignedId;
 
@@ -227,8 +228,9 @@ struct IndirectTarget {
 
 // The one way the value's type comes into existence, which is the whole
 // identity -- and that type is what the call answers with, so the target names
-// nothing further. A wrapper that owns what it points at begins the storage it
-// owns along with itself, which is that same one way seen from the owner.
+// nothing further. A shared pointer begins the storage it owns along with
+// itself; the owner of storage a new-expression allocated takes over that
+// storage, which already holds its value.
 struct ConstructTarget {};
 
 // The constructor of a class of the runtime library, entered by the constructor
@@ -579,10 +581,10 @@ struct StoreInstr {
   Operand value;
 };
 
-// `operand` moved to where the assignment puts it, as rustc's MIR writes
-// `Rvalue::Use(Operand::Move)`: put in storage holding no value yet -- a frame
-// slot, or storage of dynamic duration just allocated -- it initializes that
-// storage, and is ended where that storage's value is.
+// `operand` put where the assignment puts it, as rustc's MIR writes
+// `Rvalue::Use`: an owned value moved, any other copied. Put in storage holding
+// no value yet -- a frame slot, or storage of dynamic duration just allocated
+// -- it initializes that storage, and is ended where that storage's value is.
 struct UseInstr {
   Operand operand;
 };
@@ -593,8 +595,7 @@ struct UseInstr {
 // bits, outermost first: the first is a part of the value, each one after it a
 // part of the one before, and the last is the part written, whose type is the
 // type of `bits`. A part reaches nothing outside the part it is taken in, and
-// one that names no position is not written. The store yields no value; its
-// instruction result is an unused void.
+// one that names no position is not written.
 //
 // The bits ride on the statement rather than on the place, because a place is
 // storage a load, a store and an address-of can each name, and some bits of a
@@ -616,8 +617,7 @@ struct BitsStoreInstr {
 // value handed on takes its bytes out of use with it, which is what a return
 // does with the value it returns. How long a frame's bytes are needed is all
 // this states; none of them is a value too large for a frame, which MIR keeps
-// in a box. The statement yields no value; its instruction result is an unused
-// void.
+// in a box.
 //
 // A LIR-only statement with no MIR twin: a target whose own language places
 // its values states none of this. It is the pair rustc's MIR states as

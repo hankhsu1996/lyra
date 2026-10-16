@@ -315,4 +315,14 @@ concept OrdinalElements = requires(const T& t, std::size_t ordinal) {
 // `Find/FindIndex/.../Min/Max/Unique` (Searchable, LRM 7.12.1) breaks the
 // caller, not the concept.
 
+// A held value that compares itself with, and takes, the bytes of a value laid
+// out as it is itself: an integral value as wide, or a tuple, a union or an
+// array of the same type.
+template <class T>
+concept TakesBytesInPlace =
+    requires(T& held, const T& read, const void* bytes) {
+      { read.IsBitIdenticalTo(bytes) } -> std::same_as<bool>;
+      held.AssignBytes(bytes);
+    };
+
 }  // namespace lyra::value

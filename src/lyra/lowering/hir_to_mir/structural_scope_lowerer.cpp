@@ -259,9 +259,7 @@ void AppendToSequence(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeAssignExpr(
-                  unit.builtins,
-                  block.exprs.Add(
-                      mir::MakeLocalRefExpr(sequence, sequence_type)),
+                  unit.builtins, block.LocalPlace(sequence, sequence_type),
                   grown))});
 }
 
@@ -711,8 +709,7 @@ auto BuildInstanceMemberValue(
       BuildIntLiteral(unit, body, static_cast<std::int64_t>(count)), position,
       element_scope));
 
-  return block.exprs.Add(steps.Build(
-      body.exprs.Add(mir::MakeLocalRefExpr(sequence, sequence_type))));
+  return block.exprs.Add(steps.Build(body.LocalPlace(sequence, sequence_type)));
 }
 
 // Emits the constructor-body construction for every object the scope's instance
@@ -2109,8 +2106,7 @@ auto LowerLabelledChoiceInto(
 
     mir::Block step;
     auto test = MatchesAnyLabel(
-        lowerer, frame.WithBlock(&step),
-        step.exprs.Add(mir::MakeLocalRefExpr(held, selector_type)),
+        lowerer, frame.WithBlock(&step), step.LocalPlace(held, selector_type),
         item.labels);
     if (!test) return std::unexpected(std::move(test.error()));
     step.AppendStmt(
@@ -2734,8 +2730,7 @@ void FinalizeConstructor(
   base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
   for (const mir::LocalId id : prefix_local_ids) {
     const mir::TypeId ty = ctor_code.locals.Get(id).type;
-    const mir::ExprId local_ref =
-        ctor_code.Body().exprs.Add(mir::MakeLocalRefExpr(id, ty));
+    const mir::ExprId local_ref = ctor_code.Body().LocalPlace(id, ty);
     if (unit.types.Get(ty).IsAliasHandle()) {
       base_args.push_back(ctor_code.Body().Read(local_ref));
     } else {

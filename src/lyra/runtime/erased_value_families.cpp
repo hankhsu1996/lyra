@@ -74,14 +74,10 @@ template class CellRareState<LaidOutStorage<value::RuntimeFixedArray>>;
 template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
 template class CellRareState<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
-template class VariableRef<value::WideBitVector>;
-template class VariableRef<value::WideLogicVector>;
 template class VariableRef<value::RuntimeDynamicArray>;
 template class VariableRef<value::RuntimeQueue>;
 template class VariableRef<value::RuntimeAssociativeArray>;
 
-template class ScopedMutation<VariableRef<value::WideBitVector>>;
-template class ScopedMutation<VariableRef<value::WideLogicVector>>;
 template class ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
 template class ScopedMutation<VariableRef<value::RuntimeQueue>>;
 template class ScopedMutation<VariableRef<value::RuntimeAssociativeArray>>;

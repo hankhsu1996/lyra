@@ -61,10 +61,10 @@ class LaidOutStorage : public TailValue<LaidOutStorage<OwnedValue>> {
 
   // What a value of `type` takes.
   [[nodiscard]] static auto ValueLayoutFor(const value::ValueType& type)
-      -> Layout {
+      -> value::Layout {
     return {.size = type.Size(), .align = type.Align()};
   }
-  [[nodiscard]] auto ValueLayout() const -> Layout {
+  [[nodiscard]] auto ValueLayout() const -> value::Layout {
     return ValueLayoutFor(*type_);
   }
 

@@ -311,8 +311,7 @@ auto LowerCaseStmt(
     }
     // The selector and the label are compared where they lie, which a
     // structure's own method borrows them at.
-    const mir::ExprId selector =
-        block.exprs.Add(mir::MakeLocalRefExpr(subject.local, subject.type));
+    const mir::ExprId selector = block.LocalPlace(subject.local, subject.type);
     auto written =
         process.LowerAsPlace(process.HirBody().exprs.Get(label_expr), at);
     if (!written) return std::unexpected(std::move(written.error()));

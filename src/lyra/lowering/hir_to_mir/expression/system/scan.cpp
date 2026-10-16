@@ -314,8 +314,7 @@ auto LowerScanSystemSubroutineCall(
   scan_body.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = parse_call_id});
 
-  const mir::ExprId count_target =
-      scan_body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
+  const mir::ExprId count_target = scan_body.LocalPlace(count_var, integer_t);
   scan_body.AppendStmt(
       mir::ExprStmt{
           .expr = scan_body.exprs.Add(
@@ -389,8 +388,7 @@ auto LowerScanSystemSubroutineCall(
   body.AppendIfThen(
       ReduceToCondition(unit, body, known_id), std::move(scan_body));
 
-  const mir::ExprId count_id =
-      body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
+  const mir::ExprId count_id = body.LocalPlace(count_var, integer_t);
   return steps.Build(count_id);
 }
 

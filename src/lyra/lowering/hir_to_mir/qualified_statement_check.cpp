@@ -131,7 +131,7 @@ auto BuildUniquenessReportBody(
 
   const mir::LocalId count = closure.Bindings().DeclareAnonymous(int_type);
   const auto count_place = [&](mir::Block& block) {
-    return block.exprs.Add(mir::MakeLocalRefExpr(count, int_type));
+    return block.LocalPlace(count, int_type);
   };
   body.AppendStmt(
       mir::LocalDeclStmt{

@@ -90,7 +90,7 @@ class CodeGenFunction {
   // handed no slot -- a transient that reads or moves in a value already made
   // is that value and takes none. Nothing for a value computed as itself.
   auto EnsureDestination(const DestinationRef& destination) -> llvm::Value*;
-  // What an rvalue computes, built in what `EnsureDestination` answers where
+  // What an rvalue computes, built in the storage its destination gives where
   // it is built in storage, as rustc's `codegen_rvalue` and
   // `codegen_rvalue_operand` do for a place and for an operand.
   auto LowerRvalue(const lir::Rvalue& value, const DestinationRef& destination)
@@ -105,12 +105,14 @@ class CodeGenFunction {
   // Frame storage for one runtime object, sized and aligned as the library
   // states that object.
   auto ObjectStorage(support::RuntimeObject object) -> llvm::Value*;
-  // Where a value of `type` an instruction makes is built: storage for an
-  // owned value, and nothing for any other value, which the instruction
-  // answers as itself. Every owned value is built in storage its maker gives,
-  // as clang builds a class-type result through `sret`, and is ended by the end
-  // LIR states for it.
+  // Where a value of `type` an instruction makes is built: storage for a value
+  // lying in storage and for a sequence of machine values, as clang builds a
+  // class-type result through `sret`, and nothing for any other value, which
+  // the instruction answers as itself. LIR states where each is ended.
   auto StorageFor(lir::TypeId type) -> llvm::Value*;
+  // Whether a value of `type` is built in storage -- one lying in storage of
+  // its own, or a sequence of machine values -- rather than computed as itself.
+  [[nodiscard]] auto IsBuiltInStorage(lir::TypeId type) const -> bool;
   // Leaves what was computed where `destination` says, as rustc's
   // `store_return`: a pending transient becomes that value, and a value not
   // built in storage is stored into its place.
@@ -186,8 +188,8 @@ class CodeGenFunction {
   };
   // `bits` written over the bits `parts` name, outermost first, in the value
   // of type `whole` lying at `at`, as instructions on planes. Emits nothing
-  // and answers false where the value, a part or the bits does not lie in
-  // place.
+  // and answers false where the value, a part or the bits is not stated on
+  // planes.
   auto StoreBitsOnPlanes(
       llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
       OperandRef bits) -> bool;

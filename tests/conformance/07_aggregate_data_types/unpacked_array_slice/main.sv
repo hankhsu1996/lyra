@@ -24,6 +24,9 @@ module Top;
   integer unknown_base;
   int row;
 
+  // Set once every check in `write_slices_in_a_body` has run.
+  bit body_checked = 1'b0;
+
   function automatic void write_slices_in_a_body(integer at, integer unknown);
     int local_target [6] = '{1, 2, 3, 4, 5, 6};
     int local_grid [2][5] = '{'{10, 20, 30, 40, 50}, '{60, 70, 80, 90, 100}};
@@ -41,6 +44,7 @@ module Top;
     if (local_dynamic[3] !== 6 || local_dynamic[4] !== 9 ||
         local_dynamic[2] !== 3)
       $fatal(1, "a dynamic array's slice was written as %p", local_dynamic);
+    body_checked = 1'b1;
   endfunction
 
   int constant_range [3];
@@ -74,6 +78,7 @@ module Top;
   end
 
   final begin
+    if (body_checked !== 1'b1) $fatal(1, "the body's checks never ran");
     if (constant_range[0] !== 20)
       $fatal(1, "constant_range[0] was %0d, expected 20", constant_range[0]);
     if (constant_range[2] !== 40)

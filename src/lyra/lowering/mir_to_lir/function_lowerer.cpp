@@ -1,6 +1,5 @@
 #include "lyra/lowering/mir_to_lir/function_lowerer.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -105,16 +104,6 @@ auto ComponentPartOf(const mir::Direct& direct)
 // it.
 auto LocalPlace(lir::ValueId local) -> lir::Place {
   return lir::Place{.base = lir::Use{.value = local}, .chain = {}};
-}
-
-// Whether this call builds a reference over its one argument. A construction
-// whose result is a reference names storage rather than assembling a value, so
-// it is lowered by naming that storage and never by the entries that build one.
-auto BindsReference(
-    const mir::TypePool& types, const mir::CallExpr& call,
-    mir::TypeId result_type) -> bool {
-  return std::holds_alternative<mir::Construct>(call.callee) &&
-         types.Get(result_type).Is<mir::VariableRefType>();
 }
 
 // Whether this call opens a write into an object. The write is a library
@@ -400,8 +389,8 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // The body's variables, in declaration order. A declaration is what gives a
   // variable storage, so nothing about what the body does with one is read
   // here -- not whether anything writes it, not whether anything binds a
-  // second name to it. A variable of a type whose values the runtime builds
-  // and keeps gets storage of its own there, which a reference can bind and
+  // second name to it. A variable whose value is more than one quantity held
+  // entire gets storage of its own there, which a reference can bind and
   // which survives a suspension, and so does a cell MIR declared, which is a
   // variable the source declared; any other stays a value of the body.
   for (const mir::LocalId local : code_->locals.Ids()) {
@@ -911,7 +900,8 @@ void FunctionLowerer::EmitScopeDrop(const StorageRelease& release) {
 
 auto FunctionLowerer::ConsumeByCopyOrMove(lir::Operand value) -> lir::Rvalue {
   const lir::Type& type = unit_->Types().Get(lir::OperandType(fn_, value));
-  if (type.IsOwnedValue() && !type.IsMoveOnly() && !OwesItsEnd(value)) {
+  if (type.IsOwnedValue() && !type.IsMoveOnly() &&
+      !OwedEndAt(value).has_value()) {
     return lir::CallInstr{.target = lir::CopyValueTarget{}, .args = {value}};
   }
   return lir::UseInstr{.operand = HandOn(std::move(value))};
@@ -927,14 +917,11 @@ void FunctionLowerer::AssignFrom(
           },
           // Moved into storage, it leaves the bytes it was made in behind.
           [&](lir::Place& place) {
-            const auto* made = std::get_if<lir::Use>(&value);
+            const std::optional<std::size_t> owed = OwedEndAt(value);
             const std::optional<lir::ValueId> left_behind =
-                made != nullptr &&
-                        unit_->Types()
-                            .Get(lir::OperandType(fn_, value))
-                            .IsOwnedValue() &&
-                        OwesItsEnd(value)
-                    ? std::optional{made->value}
+                owed.has_value()
+                    ? std::optional{std::get<ValueEnd>(scopes_[*owed].kind)
+                                        .value}
                     : std::nullopt;
             Assign(std::move(place), ConsumeByCopyOrMove(std::move(value)));
             if (left_behind.has_value()) {
@@ -949,15 +936,19 @@ void FunctionLowerer::OpenScope(ScopeKind kind) {
       UnwindScope{.kind = std::move(kind), .unwind_entry = std::nullopt});
 }
 
-auto FunctionLowerer::OwesItsEnd(const lir::Operand& value) const -> bool {
+auto FunctionLowerer::OwedEndAt(const lir::Operand& value) const
+    -> std::optional<std::size_t> {
   const auto* use = std::get_if<lir::Use>(&value);
   if (use == nullptr) {
-    return false;
+    return std::nullopt;
   }
-  return std::ranges::any_of(scopes_, [&](const UnwindScope& scope) {
-    const auto* end = std::get_if<ValueEnd>(&scope.kind);
-    return end != nullptr && end->value == use->value;
-  });
+  for (std::size_t i = 0; i < scopes_.size(); ++i) {
+    const auto* end = std::get_if<ValueEnd>(&scopes_[i].kind);
+    if (end != nullptr && end->value == use->value) {
+      return i;
+    }
+  }
+  return std::nullopt;
 }
 
 auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
@@ -965,24 +956,13 @@ auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
   if (!unit_->Types().Get(type).IsOwnedValue()) {
     return value;
   }
-  if (const auto* use = std::get_if<lir::Use>(&value)) {
-    for (std::size_t i = 0; i < scopes_.size(); ++i) {
-      const auto* end = std::get_if<ValueEnd>(&scopes_[i].kind);
-      if (end == nullptr || end->value != use->value) {
-        continue;
-      }
-      PassEndAt(i);
-      return value;
-    }
+  if (const std::optional<std::size_t> owed = OwedEndAt(value)) {
+    PassEndAt(*owed);
+    return value;
   }
-  if (unit_->Types().Get(type).IsMoveOnly()) {
-    throw InternalError(
-        "mir_to_lir: a value with no copy is handed on by a body that does not "
-        "own it -- please report this as a bug");
-  }
-  return HandOn(Emit(
-      type, lir::CallInstr{
-                .target = lir::CopyValueTarget{}, .args = {std::move(value)}}));
+  throw InternalError(
+      "mir_to_lir: a value is handed on by a body that does not own it -- "
+      "please report this as a bug");
 }
 
 void FunctionLowerer::PassEndAt(std::size_t index) {
@@ -1121,10 +1101,9 @@ auto FunctionLowerer::LoadActivationValue(
           .args = {std::move(handle)}});
 }
 
-auto FunctionLowerer::StoreActivationValue(
-    lir::Operand handle, lir::Operand value, lir::TypeId value_type)
-    -> lir::Operand {
-  return Emit(
+void FunctionLowerer::StoreActivationValue(
+    lir::Operand handle, lir::Operand value, lir::TypeId value_type) {
+  Emit(
       unit_->TranslateType(unit_->Mir().builtins.void_type),
       lir::CallInstr{
           .target =
@@ -1172,9 +1151,8 @@ void FunctionLowerer::CloseVariables() {
   EmitStatement(lir::CloseVariablesInstr{.variables = *variables_});
 }
 
-auto FunctionLowerer::InitializeCell(lir::Operand cell, lir::Operand value)
-    -> lir::Operand {
-  return Emit(
+void FunctionLowerer::InitializeCell(lir::Operand cell, lir::Operand value) {
+  Emit(
       unit_->Types().Intern(lir::Type{lir::VoidType{}}),
       lir::CallInstr{
           .target = lir::BuiltinTarget{.fn = support::BuiltinFn::kInitialize},
@@ -1838,35 +1816,25 @@ auto FunctionLowerer::WritesInto(Reach reach) -> bool {
   throw InternalError("mir_to_lir: unknown reach");
 }
 
-auto FunctionLowerer::StepPlace(
-    const mir::Block& block, mir::ExprId whole, mir::ExprId part, Reach reach)
+auto FunctionLowerer::ElementPlace(
+    const mir::Block& block, const mir::CallExpr& element, Reach reach)
     -> diag::Result<lir::Place> {
-  auto place = PlaceHolding(block, whole, HolderReach(reach));
+  const std::optional<mir::ExprId> whole = mir::CalleeReceiver(element.callee);
+  if (!whole.has_value()) {
+    throw InternalError(
+        "mir_to_lir: a reference into a receiver is taken on one, and this "
+        "call names none -- please report this as a bug");
+  }
+  auto place = PlaceHolding(block, *whole, HolderReach(reach));
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
-  auto step = StepInto(block, part);
+  auto step = PartStep(block, element);
   if (!step) {
     return std::unexpected(std::move(step.error()));
   }
   place->chain.push_back(*std::move(step));
   return place;
-}
-
-auto FunctionLowerer::StepInto(const mir::Block& block, mir::ExprId part)
-    -> diag::Result<lir::Projection> {
-  if (const auto* field =
-          std::get_if<mir::FieldAccessExpr>(&block.exprs.Get(part).data)) {
-    return FieldStep(field->field);
-  }
-  const mir::CallExpr* element = ReferencedPartCall(block, part);
-  if (element == nullptr) {
-    throw InternalError(
-        "mir_to_lir: a part that is storage of its own is reached by a field "
-        "step or by the dereference of a reference into its whole -- please "
-        "report this as a bug");
-  }
-  return PartStep(block, *element);
 }
 
 auto FunctionLowerer::PartStep(
@@ -2238,21 +2206,20 @@ auto FunctionLowerer::LowerPlace(
             return ReferencePlace(reference.target, expr.type, reach);
           },
           [&](const mir::FieldAccessExpr& field) -> diag::Result<lir::Place> {
-            return StepPlace(block, field.receiver, id, reach);
+            auto place =
+                PlaceHolding(block, field.receiver, HolderReach(reach));
+            if (!place) {
+              return std::unexpected(std::move(place.error()));
+            }
+            place->chain.push_back(FieldStep(field.field));
+            return place;
           },
           // An element a reference into its whole reaches is a step of the
           // place the whole lies in, so the chain names every step a load
           // reaches through, a member of an untagged union among them.
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             if (const mir::CallExpr* element = ReferencedPartCall(block, id)) {
-              const std::optional<mir::ExprId> whole =
-                  mir::CalleeReceiver(element->callee);
-              if (!whole.has_value()) {
-                throw InternalError(
-                    "mir_to_lir: a reference into a receiver is taken on one, "
-                    "and this call names none -- please report this as a bug");
-              }
-              return StepPlace(block, *whole, id, reach);
+              return ElementPlace(block, *element, reach);
             }
             return WrapperContentsPlace(block, deref.pointer);
           },
@@ -2328,25 +2295,19 @@ auto FunctionLowerer::LowerPlace(
       expr.data);
 }
 
-auto FunctionLowerer::ReadPlace(
-    const mir::Block& block, mir::ExprId id, lir::TypeId type)
+auto FunctionLowerer::LowerRead(const mir::Block& block, mir::ExprId place)
     -> diag::Result<lir::Operand> {
+  const lir::TypeId type = unit_->TranslateType(block.exprs.Get(place).type);
   if (unit_->Types().Get(type).IsAddressOnly()) {
     return Unsupported(
         "mir_to_lir: a storage cell has no value to read; it is reached "
         "through its address");
   }
-  auto place = LowerPlace(block, id, Reach::kRead);
-  if (!place) {
-    return std::unexpected(std::move(place.error()));
+  auto named = LowerPlace(block, place, Reach::kRead);
+  if (!named) {
+    return std::unexpected(std::move(named.error()));
   }
-  return Load(*std::move(place), type);
-}
-
-auto FunctionLowerer::LowerRead(const mir::Block& block, mir::ExprId place)
-    -> diag::Result<lir::Operand> {
-  return ReadPlace(
-      block, place, unit_->TranslateType(block.exprs.Get(place).type));
+  return Load(*std::move(named), type);
 }
 
 auto FunctionLowerer::LowerArgument(const mir::Block& block, mir::ExprId id)
@@ -2567,23 +2528,13 @@ auto FunctionLowerer::LowerReferenceBind(
 auto FunctionLowerer::LowerReferenceIntoReceiver(
     const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
     -> diag::Result<lir::Operand> {
-  const std::optional<mir::ExprId> receiver = mir::CalleeReceiver(call.callee);
-  if (!receiver.has_value()) {
-    throw InternalError(
-        "mir_to_lir: a reference into a receiver is taken on one, and this "
-        "call names none -- please report this as a bug");
-  }
-  const Reach reach = BorrowReach(
-      unit_->Mir().types.Get(type).Get<mir::ReferenceType>().mutability);
-  auto place = PlaceHolding(block, *receiver, HolderReach(reach));
+  auto place = ElementPlace(
+      block, call,
+      BorrowReach(
+          unit_->Mir().types.Get(type).Get<mir::ReferenceType>().mutability));
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
-  auto step = PartStep(block, call);
-  if (!step) {
-    return std::unexpected(std::move(step.error()));
-  }
-  place->chain.push_back(*std::move(step));
   return Emit(
       unit_->TranslateType(type), lir::AddrOfInstr{.place = *std::move(place)});
 }
@@ -2752,7 +2703,7 @@ auto FunctionLowerer::LowerCallInto(
   // ordinary address-of over the referent's place. No runtime value stands
   // between the holder and that cell; reading and writing through the reference
   // are the cell's own access, reached the way every other call is.
-  if (BindsReference(unit_->Mir().types, call, type)) {
+  if (mir::BindsReference(unit_->Mir().types, call, type)) {
     return settled(LowerReferenceBind(block, call, type));
   }
   if (OpensObjectWrite(unit_->Mir().types, call, type)) {
@@ -2835,9 +2786,7 @@ auto FunctionLowerer::LowerDriveToCompletion(
   if (completion_slot.has_value()) {
     return LoadActivationValue(*completion_slot, unit_->TranslateType(type));
   }
-  // A body that completes with nothing leaves nothing to read, so what stands
-  // here is never used.
-  return driven;
+  return VoidValue();
 }
 
 auto FunctionLowerer::EnterCoroutine(
@@ -2991,9 +2940,7 @@ auto FunctionLowerer::LowerCoroutineAwait(
   if (!checked) {
     return std::unexpected(std::move(checked.error()));
   }
-  // A completion that carries nothing yields nothing, so what stands here is
-  // never read.
-  return completion.value_or(park);
+  return completion.value_or(VoidValue());
 }
 
 auto FunctionLowerer::LowerAssign(
@@ -3057,27 +3004,24 @@ auto FunctionLowerer::LowerBitsStore(
   }
   // Anywhere else the bits are written where they lie, by one statement naming
   // the place and the parts.
-  const auto store_at = [&](lir::Place place) -> diag::Result<lir::Operand> {
-    auto parts = LowerBitsParts(block, steps);
-    if (!parts) {
-      return std::unexpected(std::move(parts.error()));
-    }
-    auto bits = LowerExpr(block, value);
-    if (!bits) {
-      return std::unexpected(std::move(bits.error()));
-    }
-    EmitStatement(
-        lir::BitsStoreInstr{
-            .place = std::move(place),
-            .parts = *std::move(parts),
-            .bits = *std::move(bits)});
-    return VoidValue();
-  };
   auto place = LowerPlace(block, taken_on, Reach::kInto);
   if (!place) {
     return std::unexpected(std::move(place.error()));
   }
-  return store_at(*std::move(place));
+  auto parts = LowerBitsParts(block, steps);
+  if (!parts) {
+    return std::unexpected(std::move(parts.error()));
+  }
+  auto bits = LowerExpr(block, value);
+  if (!bits) {
+    return std::unexpected(std::move(bits.error()));
+  }
+  EmitStatement(
+      lir::BitsStoreInstr{
+          .place = *std::move(place),
+          .parts = *std::move(parts),
+          .bits = *std::move(bits)});
+  return VoidValue();
 }
 
 auto FunctionLowerer::LowerBitsParts(

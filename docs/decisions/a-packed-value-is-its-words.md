@@ -425,10 +425,10 @@ And beside them:
 - **A table of functions per integral type**, as Swift's value witness table would be. Fails nothing
   in correctness, and is unnecessary: a packed value is its words and nothing else, so nothing about
   it crosses as a function.
-- **Every value held in place at any width**, as clang holds a `_BitInt` and Verilator a wide
-  temporary. Fails the requirement that a program the compiler accepts runs at every width it
-  accepts. A frame is then the sum of what a body's expressions hold, each as large as its type, on
-  a stack the design did not size.
+- **Every value kept in the frame that uses it, at any width**, as clang holds a `_BitInt` and
+  Verilator a wide temporary. Fails the requirement that a program the compiler accepts runs at
+  every width it accepts. A frame is then the sum of what a body's expressions hold, each as large
+  as its type, on a stack the design did not size.
 - **Giving the program a larger stack, or predicting what a design needs of one**, as Verilator's
   generated model does. The need is a sum over the whole design, a recursive subroutine makes it
   unbounded, and memory then follows the temporaries a body writes instead of the values alive at

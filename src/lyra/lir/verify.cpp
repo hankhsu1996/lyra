@@ -4,7 +4,6 @@
 #include <format>
 #include <optional>
 #include <span>
-#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -41,8 +40,7 @@ auto LentValues(const CompilationUnit& unit, TypeId storage) -> TypeId {
 // copy no write reaches.
 void RequireHandleSequence(
     const CompilationUnit& unit, const Function& fn, const Operand& vector) {
-  const std::optional<TypeId> type = OperandType(fn, vector);
-  if (!type || !unit.types.Get(*type).Is<VectorType>()) {
+  if (!unit.types.Get(OperandType(fn, vector)).Is<VectorType>()) {
     throw InternalError(
         "lir verify: an element is taken by value out of something other than "
         "a sequence of handles");
@@ -66,8 +64,7 @@ void RequireBitsStoreWellFormed(
     throw InternalError("lir verify: a write of bits names no part to write");
   }
   for (const BitsPart& part : parts) {
-    const std::optional<TypeId> start = OperandType(fn, part.start);
-    if (!is_integral(part.type) || !start.has_value() || !is_integral(*start)) {
+    if (!is_integral(part.type) || !is_integral(OperandType(fn, part.start))) {
       throw InternalError(
           "lir verify: a part of an integral value is stated at a type, or "
           "starts at a value, that is not integral");
@@ -154,6 +151,31 @@ auto DestinationType(
       destination);
 }
 
+// A value is put into storage only where it is made, and only into storage
+// holding nothing yet that can hold one, which it initializes; whether what
+// puts it there makes one is `makes_value`.
+void RequireInitializes(
+    const CompilationUnit& unit, const Function& fn,
+    const std::vector<bool>& allocated, const Destination& destination,
+    bool makes_value) {
+  std::visit(
+      Overloaded{
+          [](const Transient&) {},
+          [&](const Place& place) {
+            if (!makes_value || !HoldsNothingYet(fn, allocated, place)) {
+              throw InternalError(
+                  "lir verify: a value is put into storage where nothing is "
+                  "made, or where the storage already holds one");
+            }
+            if (unit.types.Get(PlaceType(unit, fn, place)).IsAddressOnly()) {
+              throw InternalError(
+                  "lir verify: a value is put into storage that is only "
+                  "addressable");
+            }
+          }},
+      destination);
+}
+
 void VerifyRvalue(
     const CompilationUnit& unit, const Function& fn, const Rvalue& value,
     TypeId result_type);
@@ -161,55 +183,33 @@ void VerifyRvalue(
 void VerifyInstr(
     const CompilationUnit& unit, const Function& fn,
     const std::vector<bool>& allocated, const Instr& instr) {
-  // A store puts a value of the place's type into storage that can hold one.
-  const auto write_into = [&](const Place& place, const Operand& value,
-                              std::string_view what) {
-    const TypeId place_type = PlaceType(unit, fn, place);
-    if (unit.types.Get(place_type).IsAddressOnly()) {
-      throw InternalError(
-          std::format(
-              "lir verify: {} into a place whose storage is only addressable",
-              what));
-    }
-    const TypeId value_type = OperandType(fn, value);
-    if (value_type != place_type) {
-      throw InternalError(
-          std::format(
-              "lir verify: {} value type does not match its place type "
-              "(value Type[{}], place Type[{}])",
-              what, value_type.value, place_type.value));
-    }
-  };
   std::visit(
       Overloaded{
-          // A value is put into storage only where it is made, and only into
-          // storage holding nothing yet, which it initializes.
           [&](const AssignInstr& assign) {
-            std::visit(
-                Overloaded{
-                    [](const Transient&) {},
-                    [&](const Place& place) {
-                      if (!MakesValue(assign.value) ||
-                          !HoldsNothingYet(fn, allocated, place)) {
-                        throw InternalError(
-                            "lir verify: a value is put into storage where "
-                            "nothing is made, or where the storage already "
-                            "holds one");
-                      }
-                      if (unit.types.Get(PlaceType(unit, fn, place))
-                              .IsAddressOnly()) {
-                        throw InternalError(
-                            "lir verify: a value is put into storage that is "
-                            "only addressable");
-                      }
-                    }},
-                assign.destination);
+            RequireInitializes(
+                unit, fn, allocated, assign.destination,
+                MakesValue(assign.value));
             VerifyRvalue(
                 unit, fn, assign.value,
                 DestinationType(unit, fn, assign.destination));
           },
+          // A store puts a value of the place's type into storage that can
+          // hold one.
           [&](const StoreInstr& store) {
-            write_into(store.place, store.value, "store");
+            const TypeId place_type = PlaceType(unit, fn, store.place);
+            if (unit.types.Get(place_type).IsAddressOnly()) {
+              throw InternalError(
+                  "lir verify: store into a place whose storage is only "
+                  "addressable");
+            }
+            const TypeId value_type = OperandType(fn, store.value);
+            if (value_type != place_type) {
+              throw InternalError(
+                  std::format(
+                      "lir verify: store value type does not match its place "
+                      "type (value Type[{}], place Type[{}])",
+                      value_type.value, place_type.value));
+            }
           },
           [&](const BitsStoreInstr& store) {
             RequireBitsStoreWellFormed(
@@ -278,12 +278,8 @@ void VerifyRvalue(
           // not, the reshape meant to precede this is missing and the value
           // silently changes width.
           [&](const CastInstr& cast) {
-            const std::optional<TypeId> operand_type =
-                OperandType(fn, cast.operand);
-            if (!operand_type) {
-              throw InternalError("lir verify: cast operand has no type");
-            }
-            const auto* from = unit.types.Get(*operand_type).As<IntegralType>();
+            const auto* from = unit.types.Get(OperandType(fn, cast.operand))
+                                   .As<IntegralType>();
             const auto* to = unit.types.Get(result_type).As<IntegralType>();
             if (from != nullptr && to != nullptr && *from != *to) {
               throw InternalError(
@@ -403,13 +399,8 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
     }
     if (const auto* call =
             std::get_if<DepartingCallInstr>(&block.terminator.data)) {
-      if (const auto* place = std::get_if<Place>(&call->destination);
-          place != nullptr && (!CallMakesValue(call->target) ||
-                               !HoldsNothingYet(fn, allocated, *place))) {
-        throw InternalError(
-            "lir verify: a call puts a value into storage where it makes none, "
-            "or where the storage already holds one");
-      }
+      RequireInitializes(
+          unit, fn, allocated, call->destination, CallMakesValue(call->target));
       RequireCallWellFormed(unit, fn, call->target, call->args);
     }
     // Only a body whose call protocol is the coroutine one can hand control

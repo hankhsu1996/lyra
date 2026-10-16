@@ -27,8 +27,8 @@ it is that for every referent.
 
 **A reference is the address of a value cell, and every storage a reference binds is one.**
 
-1. **A reference's LIR type names the cell, not the value.** `mir::RefType{pointee = T}` becomes a
-   reference to a cell of `T`, so the place a reference names is two steps: opening the reference
+1. **A reference's LIR type names the cell, not the value.** A MIR reference variable of `T` becomes
+   a reference to a cell of `T`, so the place a reference names is two steps: opening the reference
    reaches the cell, and reaching through the cell names the value. A signal member's place is
    already the cell, so lending it is taking its address and nothing more.
 

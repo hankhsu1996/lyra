@@ -22,7 +22,6 @@
 #include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/runtime/object_layout.hpp"
@@ -86,15 +85,24 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
     if (!local.NamesStorage()) {
       continue;
     }
-    if (id == fn_->return_place &&
-        module_->Types().LiesInStorage(fn_->result_type)) {
-      values_.emplace(id, value_->getArg(value_->arg_size() - 1));
+    const auto own_storage = [&] -> llvm::Value* {
+      llvm::Value* owned = StorageFor(local.type);
+      return owned != nullptr ? owned
+                              : FrameStorage(module_->Types().Map(local.type));
+    };
+    if (id != fn_->return_place) {
+      values_.emplace(id, own_storage());
       continue;
     }
-    llvm::Value* owned = StorageFor(local.type);
     values_.emplace(
-        id, owned != nullptr ? owned
-                             : FrameStorage(module_->Types().Map(local.type)));
+        id,
+        std::visit(
+            Overloaded{
+                [&](const ReturnDirect&) { return own_storage(); },
+                [&](const ReturnIndirect&) -> llvm::Value* {
+                  return value_->getArg(value_->arg_size() - 1);
+                }},
+            CallArranger::ReturnOfValue(module_->Types(), fn_->result_type)));
   }
   if (IsCoroutine()) {
     // The ramp places the arguments in the frame and stops before the body's
@@ -144,11 +152,15 @@ auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
 }
 
 auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
-  if (!module_->Types().LiesInStorage(type) &&
-      !module_->Types().IsReadAsView(type)) {
+  if (!IsBuiltInStorage(type)) {
     return nullptr;
   }
   return LaidOutStorage(module_->Types().LayoutOf(type));
+}
+
+auto CodeGenFunction::IsBuiltInStorage(lir::TypeId type) const -> bool {
+  return module_->Types().HasAggregateEvaluationKind(type) ||
+         module_->Types().IsReadAsView(type);
 }
 
 auto CodeGenFunction::ResolveDestination(const lir::Destination& destination)
@@ -189,7 +201,7 @@ auto CodeGenFunction::EnsureDestination(const DestinationRef& destination)
             return StorageFor(fn_->values.Get(pending.value).type);
           },
           [&](const PlaceRef& place) -> llvm::Value* {
-            if (!module_->Types().LiesInStorage(place.type)) {
+            if (!IsBuiltInStorage(place.type)) {
               return nullptr;
             }
             return place.address;
@@ -208,8 +220,7 @@ void CodeGenFunction::StoreInto(
           // What lies in storage of its own, and a sequence of machine values,
           // was built where the place is.
           [&](const PlaceRef& place) {
-            if (!module_->Types().LiesInStorage(place.type) &&
-                !module_->Types().IsReadAsView(place.type)) {
+            if (!IsBuiltInStorage(place.type)) {
               at.CreateStore(value, place.address);
             }
           }},
@@ -261,11 +272,6 @@ auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
 auto CodeGenFunction::CopyValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  if (module_->Unit().types.Get(type).IsMoveOnly()) {
-    throw InternalError(
-        "llvm codegen: a value with no copy is copied -- please report this "
-        "as a bug");
-  }
   const std::array<llvm::Value*, 2> args{value, out};
   auto copied =
       module_->EmitLifecycle(builder_, type, LifecycleStep::kCopy, args);
@@ -463,12 +469,15 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             // An answer lying in storage is already in the storage the caller
             // gave, which the body answers with as an entry does.
             llvm::Value* answer = values_.at(*fn_->return_place);
-            if (module_->Types().LiesInStorage(fn_->result_type)) {
-              builder_.CreateRet(answer);
-              return {};
-            }
-            builder_.CreateRet(builder_.CreateLoad(
-                module_->Types().Map(fn_->result_type), answer));
+            builder_.CreateRet(
+                std::visit(
+                    Overloaded{
+                        [&](const ReturnDirect& direct) -> llvm::Value* {
+                          return builder_.CreateLoad(direct.type, answer);
+                        },
+                        [&](const ReturnIndirect&) { return answer; }},
+                    CallArranger::ReturnOfValue(
+                        module_->Types(), fn_->result_type)));
             return {};
           },
           [&](const lir::BranchTerm& br) -> diag::Result<void> {

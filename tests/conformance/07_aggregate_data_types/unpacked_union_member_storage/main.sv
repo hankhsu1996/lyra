@@ -6,8 +6,11 @@
 // decides whether a fresh variable reads as zero, as x, or as 0.0. A member
 // name is a variable of the member's type: it is a target, an operand of a
 // read-modify-write, and the name a bit-select or a further member select
-// applies to. Assigning one union variable to another copies the storage, and
-// the two are independent afterwards (LRM 7.3, 6.8, Table 6-7).
+// applies to, so a write to part of it -- an element of an array member, a
+// field of a structure member -- changes that part of the union and nothing
+// else, however large the member is. Assigning one union variable to another
+// copies the storage, and the two are independent afterwards (LRM 7.3, 6.8,
+// Table 6-7).
 module Top;
   typedef struct {
     int low;
@@ -34,6 +37,16 @@ module Top;
     logic [15:0] bits;
   } aggregate_first_t;
 
+  typedef struct {
+    int count;
+    int pad[4096];
+  } padded_t;
+
+  typedef union {
+    int big[4096];
+    padded_t record;
+  } large_t;
+
   four_state_first_t unknown_default;
   two_state_first_t zero_default;
   real_first_t real_default;
@@ -44,6 +57,8 @@ module Top;
   aggregate_first_t nested;
   two_state_first_t original;
   two_state_first_t duplicate;
+  large_t in_array;
+  large_t in_record;
 
   logic [15:0] read_unknown_default = 16'h5A5A;
   int read_zero_default = 77;
@@ -58,6 +73,8 @@ module Top;
   int read_nested_high;
   int read_duplicate;
   int read_duplicate_after_change;
+  int read_element;
+  int read_field;
 
   initial begin
     read_unknown_default = unknown_default.unknown_first;
@@ -85,6 +102,14 @@ module Top;
     read_duplicate = duplicate.number;
     original.number = 7;
     read_duplicate_after_change = duplicate.number;
+
+    in_array.big[4] = 9;
+    in_array.big[3] = 21;
+    read_element = in_array.big[3];
+    in_record.record = '{count: 0, pad: '{default: 0}};
+    in_record.record.pad[0] = 6;
+    in_record.record.count = 5;
+    read_field = in_record.record.count;
   end
 
   final begin
@@ -121,6 +146,17 @@ module Top;
     if (read_duplicate_after_change !== 42)
       $fatal(1, "read_duplicate_after_change was %0d, expected 42",
              read_duplicate_after_change);
+
+    if (read_element !== 21)
+      $fatal(1, "read_element was %0d, expected 21", read_element);
+    if (in_array.big[4] !== 9)
+      $fatal(1, "the element beside the one written read %0d, expected 9",
+             in_array.big[4]);
+    if (read_field !== 5)
+      $fatal(1, "read_field was %0d, expected 5", read_field);
+    if (in_record.record.pad[0] !== 6)
+      $fatal(1, "the field beside the one written read %0d, expected 6",
+             in_record.record.pad[0]);
     $display("All checks passed");
   end
 endmodule

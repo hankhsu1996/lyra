@@ -383,8 +383,8 @@ auto LowerBuiltinMethodCall(
         ReadThenWritten changed =
             ReadThenWrite(lowerer.Owner(), frame, *std::move(recv_or));
         const mir::TypeId type = block.exprs.Get(changed.incoming).type;
-        receiver = block.exprs.Add(
-            mir::MakeLocalRefExpr(DeclareLocal(frame, changed.incoming), type));
+        receiver =
+            block.LocalPlace(DeclareLocal(frame, changed.incoming), type);
         written_back = std::move(changed.place);
       } else {
         receiver = PathPlace(lowerer.Owner().Unit(), block, *recv_or);

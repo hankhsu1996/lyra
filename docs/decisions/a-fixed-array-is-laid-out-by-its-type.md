@@ -91,11 +91,10 @@ once, in MIR.
 
 **D3. An element is reached by address arithmetic in generated code.** The position is an ordinal
 and whether it names an element, so a read or a write that names one is a bounds test, a multiply
-and an add, with a load first where the array is a run. A position naming no element is the one path
-that enters the library: a read is answered with the element type's default and a write is handed
-storage no read reaches (LRM 7.4.5), each asked of the element type. LIR states the element step and
-the type as element and count; the stride, the bound and where the elements lie are decided below it
-(`../architecture/lir.md`).
+and an add. A position naming no element is the one path that enters the library: a read is answered
+with the element type's default and a write is handed storage no read reaches (LRM 7.4.5), each
+asked of the element type. LIR states the element step and the type as element and count; the
+stride, the bound and where the elements lie are decided below it (`../architecture/lir.md`).
 
 **D4. The prebuilt library is handed the array's type as constant data.** The code generator writes
 one constant per array type per unit: the count and the element's type, which is itself a constant

@@ -11,51 +11,50 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/runtime_object.hpp"
 #include "lyra/value/chandle.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/empty.hpp"
-#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/frame_bound.hpp"
 #include "lyra/value/index_order.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/layout.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
-#include "lyra/value/union_layout.hpp"
 
 namespace lyra::mir {
 
 namespace {
 
-// How many bytes a value of a type takes and to what it is aligned.
-struct Layout {
-  std::uint64_t size;
-  std::uint64_t align;
-};
-
 template <typename T>
-constexpr auto LayoutOfClass() -> Layout {
-  return Layout{.size = sizeof(T), .align = alignof(T)};
+constexpr auto LayoutOfClass() -> value::Layout {
+  return value::Layout{.size = sizeof(T), .align = alignof(T)};
 }
 
-constexpr Layout kAddress = LayoutOfClass<void*>();
+constexpr value::Layout kAddress = LayoutOfClass<void*>();
 
-auto LayoutOfIntegral(const IntegralType& integral) -> Layout {
-  return Layout{
+auto LayoutOfIntegral(const IntegralType& integral) -> value::Layout {
+  return value::Layout{
       .size = value::IntegralBytesFor(
           integral.bit_width, StateDomainOf(integral.state_kind)),
       .align = value::IntegralAlignFor(integral.bit_width)};
 }
 
+auto LayoutStated(const support::ObjectLayout& stated) -> value::Layout {
+  return value::Layout{.size = stated.size, .align = stated.align};
+}
+
 // An object of the library's: the class it is, where that class is the value
-// library's. A class of the runtime's is one MIR is compiled without, and is
-// counted as the word a frame names one by.
-auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> Layout {
+// library's, and the storage stated for it where the runtime defines it and a
+// frame holds one by value. Every other class of the runtime's is reached by
+// address, and is counted as the word a frame names one by.
+auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> value::Layout {
   switch (kind) {
     case RuntimeLibraryKind::kPrintItem:
       return LayoutOfClass<value::PrintItem>();
@@ -78,17 +77,23 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> Layout {
     // A table the unit states once and every use names.
     case RuntimeLibraryKind::kEnumeration:
       return kAddress;
+    case RuntimeLibraryKind::kTrigger:
+      return LayoutStated(support::kTriggerStorage);
+    case RuntimeLibraryKind::kObservation:
+      return LayoutStated(support::kObservationStorage);
+    case RuntimeLibraryKind::kReadReport:
+      return LayoutStated(support::kReadReportStorage);
+    case RuntimeLibraryKind::kWait:
+      return LayoutStated(support::kWaitStorage);
+    case RuntimeLibraryKind::kHierarchySegment:
+      return LayoutStated(support::kHierarchySegmentStorage);
+    case RuntimeLibraryKind::kChannelCancellation:
+      return LayoutStated(support::kChannelCancellationStorage);
     case RuntimeLibraryKind::kDpiBitChunk:
     case RuntimeLibraryKind::kDpiLogicChunk:
     case RuntimeLibraryKind::kDpiOpenArrayHandle:
     case RuntimeLibraryKind::kCancellationTarget:
     case RuntimeLibraryKind::kControlEffect:
-    case RuntimeLibraryKind::kChannelCancellation:
-    case RuntimeLibraryKind::kHierarchySegment:
-    case RuntimeLibraryKind::kTrigger:
-    case RuntimeLibraryKind::kObservation:
-    case RuntimeLibraryKind::kReadReport:
-    case RuntimeLibraryKind::kWait:
     case RuntimeLibraryKind::kObjectDefinition:
     case RuntimeLibraryKind::kScopeInfo:
     case RuntimeLibraryKind::kScopeCallable:
@@ -97,34 +102,26 @@ auto LayoutOfLibraryObject(RuntimeLibraryKind kind) -> Layout {
   throw InternalError("mir: unknown runtime library kind");
 }
 
-auto LayoutOf(const CompilationUnit& unit, TypeId type) -> Layout;
+auto LayoutOf(const CompilationUnit& unit, TypeId type) -> value::Layout;
 
 // Values one after another, each at its alignment.
 auto Sequence(const CompilationUnit& unit, TypeId element, std::uint64_t count)
-    -> Layout {
-  const Layout one = LayoutOf(unit, element);
-  const value::FixedArrayLayout laid =
-      value::FixedArrayLayoutOf(one.size, one.align, count);
-  return Layout{.size = laid.size, .align = laid.align};
+    -> value::Layout {
+  return value::SequenceLayoutOf(LayoutOf(unit, element), count).whole;
 }
 
 // Values side by side, as a C++ struct lays its members out.
 auto Product(const CompilationUnit& unit, std::span<const TypeId> parts)
-    -> Layout {
-  Layout whole{.size = 0, .align = 1};
-  for (const TypeId component : parts) {
-    const Layout part = LayoutOf(unit, component);
-    whole.size =
-        (whole.size + part.align - 1) / part.align * part.align + part.size;
-    whole.align = std::max(whole.align, part.align);
-  }
-  whole.size = (whole.size + whole.align - 1) / whole.align * whole.align;
-  return whole;
+    -> value::Layout {
+  return value::ProductLayoutOf(parts | std::views::transform([&](TypeId part) {
+                                  return LayoutOf(unit, part);
+                                }))
+      .whole;
 }
 
 // Values sharing one storage, each at its start.
 auto Overlay(const CompilationUnit& unit, std::span<const TypeId> members)
-    -> value::OverlayLayout {
+    -> value::Layout {
   return value::OverlayLayoutOf(
       members | std::views::transform(
                     [&](TypeId member) { return LayoutOf(unit, member); }));
@@ -136,7 +133,7 @@ auto Overlay(const CompilationUnit& unit, std::span<const TypeId> members)
 // the hierarchy -- is never a part of a value, and keeps a value too large for
 // a frame in storage of its own, as every holder does, so it is never too large
 // for one either; it is counted as the handle a frame names it by.
-auto LayoutOf(const CompilationUnit& unit, TypeId type) -> Layout {
+auto LayoutOf(const CompilationUnit& unit, TypeId type) -> value::Layout {
   const auto handle = [](const auto&) { return kAddress; };
   return unit.types.Get(type).Visit(
       Overloaded{
@@ -160,14 +157,11 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> Layout {
             }
             return Product(unit, captures);
           },
-          [&](const UnionType& t) {
-            const value::OverlayLayout overlay = Overlay(unit, t.members);
-            return Layout{.size = overlay.size, .align = overlay.align};
-          },
+          [&](const UnionType& t) { return Overlay(unit, t.members); },
           [&](const TaggedUnionType& t) {
-            const value::TaggedUnionLayout tagged = value::TaggedUnionLayoutOf(
-                Overlay(unit, t.members), t.members.size());
-            return Layout{.size = tagged.size, .align = tagged.align};
+            return value::TaggedUnionLayoutOf(
+                       Overlay(unit, t.members), t.members.size())
+                .whole;
           },
           [](const DynamicArrayType&) {
             return LayoutOfClass<value::RuntimeDynamicArray>();
@@ -189,15 +183,15 @@ auto LayoutOf(const CompilationUnit& unit, TypeId type) -> Layout {
             return LayoutOfClass<value::ObjectRef>();
           },
           [](const EmptyType&) { return LayoutOfClass<value::Empty>(); },
-          [](const VoidType&) { return Layout{.size = 0, .align = 1}; },
+          [](const VoidType&) { return value::Layout{.size = 0, .align = 1}; },
           [](const MachineBoolType&) { return LayoutOfClass<bool>(); },
           [](const MachineIntType& t) {
             const std::uint64_t bytes = BitsOf(t.width) / 8;
-            return Layout{.size = bytes, .align = bytes};
+            return value::Layout{.size = bytes, .align = bytes};
           },
           [](const MachineFloatType& t) {
             const std::uint64_t bytes = BitsOf(t.width) / 8;
-            return Layout{.size = bytes, .align = bytes};
+            return value::Layout{.size = bytes, .align = bytes};
           },
           [&](const MachineCStringType& t) { return handle(t); },
           [&](const MachineFunctionType& t) { return handle(t); },

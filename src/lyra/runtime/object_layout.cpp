@@ -76,6 +76,16 @@ constexpr auto Of() -> ObjectLayout {
       .ends_with_nothing_to_do = std::is_trivially_destructible_v<T>};
 }
 
+// Each object takes the storage stated for it, which a layer compiled without
+// the runtime sizes a frame holding one by.
+static_assert(Of<Trigger>() == support::kTriggerStorage);
+static_assert(Of<Observation>() == support::kObservationStorage);
+static_assert(Of<ReadReport>() == support::kReadReportStorage);
+static_assert(Of<Wait>() == support::kWaitStorage);
+static_assert(Of<HierarchySegment>() == support::kHierarchySegmentStorage);
+static_assert(
+    Of<ChannelCancellation>() == support::kChannelCancellationStorage);
+
 template <typename Answer>
 [[noreturn]] auto NotRealized() -> Answer {
   throw InternalError(
@@ -188,8 +198,8 @@ auto HolderLayout(const std::optional<ObjectLayout>& held) -> ObjectLayout {
           "object layout: a holder keeping a value at its tail is laid out "
           "with no value to hold");
     }
-    const Layout holder = HolderLayoutFor<Holder>(
-        Layout{.size = held->size, .align = held->align});
+    const value::Layout holder = HolderLayoutFor<Holder>(
+        value::Layout{.size = held->size, .align = held->align});
     return ObjectLayout{
         .size = static_cast<std::uint32_t>(holder.size),
         .align = static_cast<std::uint32_t>(holder.align),
@@ -226,15 +236,15 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
     case support::LibraryObject::kFormatArg:
       return Of<value::FormatArg>();
     case support::LibraryObject::kHierarchySegment:
-      return Of<HierarchySegment>();
+      return support::kHierarchySegmentStorage;
     case support::LibraryObject::kTrigger:
-      return Of<Trigger>();
+      return support::kTriggerStorage;
     case support::LibraryObject::kObservation:
-      return Of<Observation>();
+      return support::kObservationStorage;
     case support::LibraryObject::kReadReport:
-      return Of<ReadReport>();
+      return support::kReadReportStorage;
     case support::LibraryObject::kWait:
-      return Of<Wait>();
+      return support::kWaitStorage;
     case support::LibraryObject::kDpiBitBuffer:
       return Of<value::DpiBitBuffer>();
     case support::LibraryObject::kDpiLogicBuffer:
@@ -242,7 +252,7 @@ auto LayoutOf(support::LibraryObject object) -> ObjectLayout {
     case support::LibraryObject::kDpiOpenArray:
       return Of<value::DpiOpenArray>();
     case support::LibraryObject::kChannelCancellation:
-      return Of<ChannelCancellation>();
+      return support::kChannelCancellationStorage;
     case support::LibraryObject::kExecution:
       return Of<Coroutine<void>>();
     case support::LibraryObject::kSharedPointer:
@@ -306,7 +316,7 @@ auto LayoutOf(
     case MemberStorageKind::kSharedPointer:
       return Of<SharedPointer>();
     case MemberStorageKind::kChannelCancellation:
-      return Of<ChannelCancellation>();
+      return support::kChannelCancellationStorage;
     case MemberStorageKind::kNamedEvent:
       return Of<NamedEvent>();
     case MemberStorageKind::kCancellationTarget:
@@ -326,7 +336,7 @@ namespace {
 // How far into a `Holder` the address `through` answers with lies, read off one
 // built as the library builds it, with a tail for a value of layout `held`.
 template <class Holder, class Through, class... Args>
-auto ThroughOffset(Layout held, Through through, Args... args)
+auto ThroughOffset(value::Layout held, Through through, Args... args)
     -> std::uint64_t {
   const std::shared_ptr<Holder> built = MakeWithTail<Holder>(held, args...);
   return std::uint64_t{
@@ -379,7 +389,7 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
             } else {
               return through(
                   ThroughOffset<ResolvedNet<T>>(
-                      Layout{.size = 0, .align = 1}, shown));
+                      value::Layout{.size = 0, .align = 1}, shown));
             }
           case MemberStorageKind::kObservableCell:
             if constexpr (HeldInOneWord<T>) {

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,8 +24,9 @@ namespace lyra::lowering::mir_to_lir {
 // Lowers one MIR callable body -- a method, a class constructor, or a closure's
 // invoke -- into a LIR function. Structured control flow becomes a CFG, and
 // expression trees become instruction streams: each MIR expression node becomes
-// one LIR instruction defining a temporary, and the parent reads the child
-// temporaries as operands. A source-level place -- a member, an automatic local
+// one LIR assignment putting its value where its destination says -- a
+// transient the parent reads as an operand, or storage it is made in. A
+// source-level place -- a member, an automatic local
 // -- becomes a LIR place, and the use decides whether it is read, written, or
 // addressed.
 class FunctionLowerer {
@@ -181,9 +181,8 @@ class FunctionLowerer {
   // forgets them. A block that control left by a statement of its own has had
   // them ended on that way out, and a way out never returns here.
   auto CloseExtent(std::size_t depth) -> diag::Result<void>;
-  // The value a store into a slot, or a return, hands on. One this body made
-  // passes its end along with it; one it was only lent is copied, so what is
-  // handed on is always one this body owned.
+  // `value` handed on, the end this body owed for it going with it. Only a
+  // value this body owns is handed on.
   auto HandOn(lir::Operand value) -> lir::Operand;
   // What the scope at `index` owed is owed no longer, from here on: its value
   // went to whoever holds it now, or the storage it was to give back holds
@@ -196,8 +195,10 @@ class FunctionLowerer {
   // `value` put where `destination` says, consumed; one moved out leaves the
   // bytes it was made in behind.
   void AssignFrom(lir::Destination destination, lir::Operand value);
-  // Whether this body made `value` and still owes its end.
-  [[nodiscard]] auto OwesItsEnd(const lir::Operand& value) const -> bool;
+  // The scope owing the end of `value`, where this body made it and still owes
+  // that end, and nothing otherwise.
+  [[nodiscard]] auto OwedEndAt(const lir::Operand& value) const
+      -> std::optional<std::size_t>;
   // States the end of an owned value, and of the one a frame slot holds.
   void EndValue(lir::Operand value);
   void EndSlotValue(lir::ValueId slot);
@@ -387,17 +388,13 @@ class FunctionLowerer {
       -> diag::Result<lir::Place>;
   // The address of storage holding a value of `value`.
   auto AddressType(lir::TypeId value) -> lir::TypeId;
-  // The place a part that is storage of its own names: the place holding
-  // `whole`, the value it is part of, one step further. Reaching the part for
-  // any write is writing into that place.
-  auto StepPlace(
-      const mir::Block& block, mir::ExprId whole, mir::ExprId part, Reach reach)
+  // The place the element `element` reaches lies in: the place holding its
+  // receiver, then the step to the element, the receiver evaluated before the
+  // coordinates. Reaching the element for any write is writing into that
+  // place.
+  auto ElementPlace(
+      const mir::Block& block, const mir::CallExpr& element, Reach reach)
       -> diag::Result<lir::Place>;
-  // The step from a value into one of its parts that is storage of its own,
-  // whether a field step names it or the dereference of what an element's read
-  // or write form answers.
-  auto StepInto(const mir::Block& block, mir::ExprId part)
-      -> diag::Result<lir::Projection>;
   // The step a call reaching a part takes into the value it is taken on.
   auto PartStep(const mir::Block& block, const mir::CallExpr& part)
       -> diag::Result<lir::Projection>;
@@ -411,15 +408,11 @@ class FunctionLowerer {
   // The step `field` takes off the place of its receiver: a member an object
   // or a closure declares, or a component where its product's type lays it.
   auto FieldStep(const mir::FieldRef& field) -> lir::Projection;
-  // Reads the value held where an expression names storage, whichever way it
-  // names it. A cell is address-only and holds no value a reader can take out
-  // of it, so an expression whose own type is one is rejected: what such a
-  // reader wants is what the cell holds, which is a dereference and names a
-  // different place.
-  auto ReadPlace(const mir::Block& block, mir::ExprId id, lir::TypeId type)
-      -> diag::Result<lir::Operand>;
   // The value `place` holds, read where it lies: the one way a place stands
-  // as a value, under a copy and a move alike.
+  // as a value, under a copy and a move alike. A cell is address-only and holds
+  // no value a reader can take out of it, so a place whose own type is one is
+  // rejected: what such a reader wants is what the cell holds, which is a
+  // dereference and names a different place.
   auto LowerRead(const mir::Block& block, mir::ExprId place)
       -> diag::Result<lir::Operand>;
   // Reduces an expression to the machine boolean a conditional branch tests.
@@ -585,9 +578,8 @@ class FunctionLowerer {
   // handle names storage rather than a value, so neither of those carries it.
   auto LoadActivationValue(lir::Operand handle, lir::TypeId value_type)
       -> lir::Operand;
-  auto StoreActivationValue(
-      lir::Operand handle, lir::Operand value, lir::TypeId value_type)
-      -> lir::Operand;
+  void StoreActivationValue(
+      lir::Operand handle, lir::Operand value, lir::TypeId value_type);
   // A cell this body supplies for something it calls to complete into, built at
   // frame entry so a call in a loop writes into one place rather than leaving a
   // fresh one behind per iteration. The caller supplies it because the caller
@@ -608,7 +600,7 @@ class FunctionLowerer {
   void CloseVariables();
   // Installs a cell's representation and initial contents, the one write it
   // takes before it will accept a store.
-  auto InitializeCell(lir::Operand cell, lir::Operand value) -> lir::Operand;
+  void InitializeCell(lir::Operand cell, lir::Operand value);
   // The place an address opens to, and the place reached by opening that in
   // turn. What the first names is storage, reached through whatever protocol
   // that storage has rather than by loading it; the second is for an address

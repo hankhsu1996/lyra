@@ -147,11 +147,11 @@ struct BlockExpr {
 // 11.4.1) is the operator applied to what the target held and then this write,
 // which the lowering states as those two steps.
 //
-// `target` is a place, whose write is a store, or a part of a value reached by
-// a sequence of calls, whose write leaves the owner holding an updated whole.
-// What settles that a write is meant is this position, not what the target is.
-// A target is never several places: a source language's write to a join of
-// them reaches this layer as a held value and one write per place.
+// `target` is a place -- a variable, a dereference, or a field step on a place
+// -- and the write stores into it. What settles that a write is meant is this
+// position, not what the target is. A target is never several places: a source
+// language's write to a join of them reaches this layer as a held value and one
+// write per place.
 struct AssignExpr {
   ExprId target;
   ExprId value;
@@ -459,8 +459,9 @@ struct DerefExpr {
 
 // Takes the address of a place expression, yielding a borrowed pointer to
 // that storage. The dual of `DerefExpr`. `operand` must be an addressable
-// place (a primary value reference, a member access, a dereference, or a
-// place-producing access primitive); a value expression is not addressable.
+// place -- a reference to storage, a dereference, or a field step on ordinary
+// storage; a value names no storage, and neither does a union's member (LRM
+// 13.5.2).
 // `Expr::type` is `PointerType{ ownership = kBorrowed, pointee = operand.type
 // }`. `AddressOf(Deref(p))` collapses to `p` at backend lowering when `p` is a
 // borrowed pointer (the round-trip is a no-op); over a managed handle it does
@@ -515,9 +516,9 @@ struct CopyExpr {
 // name from what the receiver's type turns out to be.
 //
 // One node serves reading the field and writing it. Which of the two an
-// occurrence is follows from where it stands -- a value position reads, an
-// assignment target writes -- exactly as it does in the languages MIR is a peer
-// of, where `u.f` is one syntax and its value category settles the rest.
+// occurrence is follows from what takes it -- a read reads it, an assignment
+// writes it -- exactly as it does in the languages MIR is a peer of, where
+// `u.f` is one syntax and its value category settles the rest.
 struct FieldAccessExpr {
   ExprId receiver;
   FieldRef field;
@@ -578,10 +579,9 @@ struct WaitExpr {
 // Projects one element out of a sequence value by position. The position is an
 // operand rather than part of the node because a sequence is homogeneous:
 // which element is named cannot change the element's type, so nothing about
-// the projection has to be known at compile time. Like every value-aggregate
-// sub-access this extracts the element from the sequence value; a sequence of
-// storage is reached through the indirection its elements already carry, not by
-// addressing into the sequence itself.
+// the projection has to be known at compile time. It extracts the element from
+// the sequence value; a sequence of storage is reached through the indirection
+// its elements already carry, not by addressing into the sequence itself.
 struct VectorGetExpr {
   ExprId vector;
   ExprId index;

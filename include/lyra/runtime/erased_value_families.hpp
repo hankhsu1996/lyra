@@ -59,14 +59,10 @@ extern template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
 extern template class CellRareState<
     ValueStorageCore<value::RuntimeAssociativeArray>>;
 
-extern template class VariableRef<value::WideBitVector>;
-extern template class VariableRef<value::WideLogicVector>;
 extern template class VariableRef<value::RuntimeDynamicArray>;
 extern template class VariableRef<value::RuntimeQueue>;
 extern template class VariableRef<value::RuntimeAssociativeArray>;
 
-extern template class ScopedMutation<VariableRef<value::WideBitVector>>;
-extern template class ScopedMutation<VariableRef<value::WideLogicVector>>;
 extern template class ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
 extern template class ScopedMutation<VariableRef<value::RuntimeQueue>>;
 extern template class ScopedMutation<

@@ -819,10 +819,10 @@ auto WholeVariable(const ErasedReference& reference) -> C& {
 }
 
 // A reference to the whole of a variable, which names its value where every
-// reference to a value of its type names one: the bytes a tuple, an integral
-// value wider than a word and a fixed-size unpacked array lay out, since no
-// object of the runtime's stands for such a value where it lies in another,
-// and the object for every other.
+// reference to a value of its type names one: the bytes a tuple, a union, an
+// integral value wider than a word and a fixed-size unpacked array lay out,
+// since no object of the runtime's stands for such a value where it lies in
+// another, and the object for every other.
 template <value::LyraValue T>
 auto WholeReference(Var<T>& variable) -> ErasedReference {
   return {

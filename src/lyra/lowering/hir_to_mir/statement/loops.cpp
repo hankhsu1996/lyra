@@ -250,9 +250,7 @@ auto BuildCountingLoopStmt(
     std::optional<mir::LoopLabelId> break_label) -> mir::Stmt {
   const mir::TypeId int_type = unit.builtins.int_type;
   const mir::ExprId bound = SampledCount(unit, frame, block, count);
-  const auto place = [&] {
-    return block.exprs.Add(mir::MakeLocalRefExpr(position, int_type));
-  };
+  const auto place = [&] { return block.LocalPlace(position, int_type); };
   const auto read = [&] { return block.ReadLocal(position, int_type); };
   const auto write = [&](mir::ExprId value) {
     return block.exprs.Add(mir::MakeAssignExpr(unit.builtins, place(), value));

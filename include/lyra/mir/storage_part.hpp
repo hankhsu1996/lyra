@@ -21,6 +21,12 @@ auto SelectionOf(const CallExpr& call) -> std::optional<support::PartSelection>;
 // storage it is taken on, whose dereference is part of that storage.
 auto AnswersReferenceIntoReceiver(const CallExpr& call) -> bool;
 
+// Whether `call`, answering `type`, binds a reference variable to the storage
+// its one argument names rather than building a value of it, as a C++
+// reference parameter binds an lvalue.
+auto BindsReference(const TypePool& types, const CallExpr& call, TypeId type)
+    -> bool;
+
 // What a write landing on `target` reaches the part it lands on through, where
 // `target` selects a part of a whole, and nothing where `target` names where
 // it lands itself. A selection is reached through its whole, so a chain of

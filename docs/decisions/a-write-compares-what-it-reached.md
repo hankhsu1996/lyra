@@ -33,12 +33,12 @@ part tells the write what forming it did.**
   is taken within the same write, so the write reaches the part through its own steps:
   `*x.open_for_write().designate_whole().designate_element(i).designate_component<k>() = v`. Each
   such step is an entry of its own, named where the source is read and paired with the step into
-  storage it stands beside (`element_ref`, `component_ref`, `slice_ref`), because it answers with a
-  designation of the part rather than with the part and it is heard by the write. Where the write
-  lands is where the designation is dereferenced, which is what lets a backend rendering one node at
-  a time keep the part rather than the whole. A step into a string's character or a union's member
-  is taken after that, on the value landed on, because the library owns what such a view is made of
-  and writes it by writing its whole.
+  storage it stands beside (an element's write form, a component's field step), because it answers
+  with a designation of the part rather than with the part and it is heard by the write. Where the
+  write lands is where the designation is dereferenced, which is what lets a backend rendering one
+  node at a time keep the part rather than the whole. A string's character is written after that by
+  the string's `putc` on the place landed on, and a union's member is a field step of that place,
+  since neither has an identity a write could designate (LRM 6.16, 7.3, 13.5.2).
 - **An element step and a slice step taken within a write report to it.** Forming an element can
   change the variable whatever is then written -- an associative array entry allocated by being
   written (LRM 7.8.7), a queue element appended at `$+1` (LRM 7.10.1) -- or reach no part of it at

@@ -134,9 +134,7 @@ auto BuildReportCall(
     argument = block.AsValue(unit.types, argument);
   }
   const mir::ExprId object = BuildObjectDeref(
-      unit, block,
-      block.exprs.Add(
-          mir::MakeLocalRefExpr(report, unit.builtins.read_report_ptr)));
+      unit, block, block.LocalPlace(report, unit.builtins.read_report_ptr));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -423,8 +421,7 @@ auto ReportChainFrom(
         return ReportObjectThenHops(
             lowerer, inner, report,
             [&] {
-              return inner.current_block->exprs.Add(
-                  mir::MakeLocalRefExpr(handle, handle_type));
+              return inner.current_block->LocalPlace(handle, handle_type);
             },
             hops);
       });
@@ -688,12 +685,10 @@ auto HoldImplicitList(
                   .target = support::BuiltinFn::kReadReportForImplicitList},
               {}, unit.builtins.read_report)));
   const mir::LocalId pointer = DeclareLocal(
-      frame,
-      block.exprs.Add(
-          mir::MakeAddressOfExpr(
-              block.exprs.Add(
-                  mir::MakeLocalRefExpr(report, unit.builtins.read_report)),
-              unit.builtins.read_report_ptr)));
+      frame, block.exprs.Add(
+                 mir::MakeAddressOfExpr(
+                     block.LocalPlace(report, unit.builtins.read_report),
+                     unit.builtins.read_report_ptr)));
   auto reported = ReportReads(lowerer, frame, reads, pointer);
   if (!reported) return std::unexpected(std::move(reported.error()));
   ActOnReport(

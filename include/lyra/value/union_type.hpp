@@ -6,7 +6,6 @@
 
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/reduction.hpp"
-#include "lyra/value/union_layout.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {

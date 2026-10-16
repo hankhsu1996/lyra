@@ -386,8 +386,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
     if (!value) return std::unexpected(std::move(value.error()));
     const mir::ExprId index_id = body.exprs.Add(*std::move(index));
     const mir::ExprId value_id = body.exprs.Add(*std::move(value));
-    const mir::ExprId owner =
-        body.exprs.Add(mir::MakeLocalRefExpr(built, result_type));
+    const mir::ExprId owner = body.LocalPlace(built, result_type);
     const AccessPath target = DescendInto(
         AccessPath{.owner = owner, .descent = {}},
         ElementStep(
@@ -398,7 +397,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
                 body.exprs.Add(BuildStoreExpr(unit, body, target, value_id))});
   }
 
-  return steps.Build(body.exprs.Add(mir::MakeLocalRefExpr(built, result_type)));
+  return steps.Build(body.LocalPlace(built, result_type));
 }
 
 template <ExprLowerer Lowerer>

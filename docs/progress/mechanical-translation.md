@@ -54,12 +54,11 @@ cross-check predicts. This file owns only which instances are known and what is 
 - [x] T4 -- The unary and binary operator sets hold only the operators a node carries. An operator a
       library performs, and one that names no operation at all, is settled before a node is built.
 - [x] T18 -- Reaching a part named by its declaration-order position is one operation, whether the
-      value is a product or holds one member at a time, so no consumer decides what a reach means by
-      testing what it reaches into. Whether every part coexists, whether a member that is not the
-      live one answers with a default or a run-time failure, and whether reaching one for writing
-      settles which is live are the value's own semantics and travel with its type -- the same way
-      one coordinate step already spans an unpacked array, a queue and an associative array. The
-      layer below carries one selector for the same reason.
+      value is a product or a union, so no consumer decides what a reach means by testing what it
+      reaches into. Whether every part coexists or the members overlay, and whether a tag guards the
+      reach, are the value's own semantics and travel with its type -- the same way one coordinate
+      step already spans an unpacked array, a queue and an associative array. The layer below
+      carries one step for the same reason.
 
       This reverses the entry as first written, which made the two reaches distinct operations with
       a selector kind each. That split was what put two hard-coded spellings in the C++ render, and
@@ -70,10 +69,9 @@ cross-check predicts. This file owns only which instances are known and what is 
       identical fields and emission entries that differed only in the field name they looped over,
       where the generic-language vocabulary has one construct whose meaning is the type it builds.
       Each of those types has exactly one way to be built, so the type answers completely and no
-      consumer chooses; the layer that owns storage is where the two separate again. The
-      active-member build was a second such pair, one node over, and is now one node too: whether
-      the live member is observable and a mismatched reach fails travels with the type and changes
-      nothing about the build.
+      consumer chooses; the layer that owns storage is where the two separate again. A union's build
+      was a second such pair, one node over, and is now one node too, naming the member it holds:
+      whether a tag records it travels with the type and changes nothing about the build.
 - [x] T5 -- Every property of a runtime entry is read off one declaration of it: what the library
       calls it, whether a call site reaches it as a free function, as a method on the object it acts
       on, or as a factory on the type it builds, whether it updates that object or hands it back,
@@ -188,16 +186,17 @@ cross-check predicts. This file owns only which instances are known and what is 
       names that operation instead of open-coding it. Since then no such index crosses: where none
       is allocated the entry builds the default of the type it is told it answers.
 
-- [x] T20 -- Making a member the live one is stated, not chosen by where the reach stands, and T14
-      -- one visit over the expression set decides how an expression is rendered -- close with it,
-      because both were the same missing fact. A write target was a chain of access nodes rooted at
-      an opened place, so every consumer found the owner by walking that chain and asking each
-      receiver's type what kind of step it was: two backends deriving one semantic fact, which is
-      the shape `../architecture/mir.md` forbids and the one `../architecture/backend_contract.md`'s
-      cross-check predicts. Every level of a descent is now a call whose entry the lowering names,
-      composed through the receiver, so a consumer meets an ordinary call and decides nothing; and a
-      write target is built rooted where the write lands, so nothing below recovers an owner. The
-      record is `../decisions/value-descent-as-named-calls.md`.
+- [x] T20 -- What a write does on reaching a part is stated, not chosen by where the reach stands,
+      and T14 -- one visit over the expression set decides how an expression is rendered -- close
+      with it, because both were the same missing fact. A write target was a chain of access nodes
+      rooted at an opened place, so every consumer found the owner by walking that chain and asking
+      each receiver's type what kind of step it was: two backends deriving one semantic fact, which
+      is the shape `../architecture/mir.md` forbids and the one
+      `../architecture/backend_contract.md`'s cross-check predicts. Every level of a descent is now
+      a step the lowering names -- a call for an element, a field step for a component or a member
+      -- so a consumer meets an ordinary call and decides nothing; and a write target is built
+      rooted where the write lands, so nothing below recovers an owner. The record is
+      `../decisions/value-descent-as-named-calls.md`.
 
       What fell out rather than being fixed: the four node kinds that named a part, the second walk
       over the expression set -- it had come to differ from the first only by a check of which forms

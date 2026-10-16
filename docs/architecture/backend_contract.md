@@ -286,10 +286,8 @@ Writing part of what it holds descends through it: the wrapper is opened for the
 then one call per level, each naming the entry the lowering settled and taking the level above it as
 its receiver, and the write lands where what those calls designate is dereferenced, with an ordinary
 assignment there. Only that dereference reaches the place-access dispatch. How a target realizes
-such a call is its own answer -- reaching into the storage in place, or reading the whole value,
-rebuilding it and storing that back -- and it is a property of that target's value representation
-rather than a decision taken per site, so neither form is visible above render and neither is chosen
-by an emitter.
+such a call is its own answer, a property of that target's value representation rather than a
+decision taken per site, so it is not visible above render and no emitter chooses it.
 
 Naming that storage as an lvalue is not a call: it names storage rather than operating on it, and it
 is the one question the place-access dispatch answers. Two things ask it and both compose onto the

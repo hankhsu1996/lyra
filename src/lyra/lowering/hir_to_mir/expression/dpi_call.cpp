@@ -421,8 +421,7 @@ auto BuildBoundaryArgument(
     mir::CompilationUnit& unit, mir::Block& block,
     const support::DpiCarrier& carrier, mir::LocalId temp,
     mir::TypeId carrier_type) -> mir::ExprId {
-  const mir::ExprId object =
-      block.exprs.Add(mir::MakeLocalRefExpr(temp, carrier_type));
+  const mir::ExprId object = block.LocalPlace(temp, carrier_type);
   return std::visit(
       Overloaded{
           [&](const support::ScalarCarrier&) {
@@ -713,8 +712,7 @@ auto PopulateForeignImportBoundary(
   }
 
   for (const Writeback& wb : writebacks) {
-    const mir::ExprId temp_ref =
-        body.exprs.Add(mir::MakeLocalRefExpr(wb.temp, wb.carrier_type));
+    const mir::ExprId temp_ref = body.LocalPlace(wb.temp, wb.carrier_type);
 
     const mir::ExprId rhs_id = BuildBoundaryReadback(
         unit_lowerer, cframe, wb.carrier, temp_ref, wb.carrier_type,
@@ -837,8 +835,7 @@ auto LowerForeignImportSequenced(
   mir::Block& body = *bframe.current_block;
   const mir::TypeId call_type =
       CarrierTypeId(unit, support::ScalarCarrier{import.ret_abi});
-  const mir::ExprId ret_ref =
-      body.exprs.Add(mir::MakeLocalRefExpr(**ret_temp, call_type));
+  const mir::ExprId ret_ref = body.LocalPlace(**ret_temp, call_type);
   const mir::ExprId result_id = body.exprs.Add(MarshalCarrierToSv(
       unit_lowerer, bframe, ret_ref, support::ScalarCarrier{import.ret_abi},
       result_type));
@@ -856,13 +853,11 @@ auto LowerForeignImportSequenced(
       mir::ExprStmt{
           .expr = body.exprs.Add(
               mir::MakeAssignExpr(
-                  unit.builtins,
-                  body.exprs.Add(mir::MakeLocalRefExpr(result, result_type)),
+                  unit.builtins, body.LocalPlace(result, result_type),
                   result_id))});
   CloseDpiScopeExtent(
       unit_lowerer, cframe, std::move(extent_body), declaring_scope);
-  return steps.Build(
-      steps.Body().exprs.Add(mir::MakeLocalRefExpr(result, result_type)));
+  return steps.Build(steps.Body().LocalPlace(result, result_type));
 }
 
 // The task import call (LRM 35.5.2): a task has no SV return, so the call
@@ -1234,9 +1229,8 @@ auto SynthesizeForeignExportEntry(
                         body.ReadLocal(*scope_param, unit.builtins.scope_ptr)},
             .type = self_type});
     body.AppendStmt(mir::LocalDeclStmt{.target = self_local, .init = narrowed});
-    receiver = BuildObjectDeref(
-        unit, body,
-        body.exprs.Add(mir::MakeLocalRefExpr(self_local, self_type)));
+    receiver =
+        BuildObjectDeref(unit, body, body.LocalPlace(self_local, self_type));
   }
 
   const auto param_ref = [&](std::size_t i) -> mir::ExprId {

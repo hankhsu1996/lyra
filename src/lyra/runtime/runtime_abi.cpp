@@ -305,8 +305,7 @@ auto RefGet(void* reference) -> const void* {
 template <value::LyraValue T>
 auto OpenCellWrite(void* cell, void* out) -> void* {
   return std::construct_at(
-      static_cast<OpenWrite*>(out),
-      VariableRef<T>{*static_cast<Var<T>*>(cell)});
+      static_cast<OpenWrite*>(out), VariableRef<T>{VariableAt<T>(cell)});
 }
 
 template <value::LyraValue T>
@@ -851,7 +850,7 @@ void DriveFromNet(void* driver, void* net) {
 
 template <NetValue T>
 void DriveFromReference(void* driver, void* reference) {
-  DriverOf<T>(driver).DriveFrom(static_cast<VariableRef<T>*>(reference));
+  DriverOf<T>(driver).DriveFrom(static_cast<ErasedReference*>(reference));
 }
 
 template <NetValue T>
@@ -3604,65 +3603,65 @@ auto lyra_rt_assocarray_ref_sampled_get(void* reference) -> const void* {
 }
 
 auto lyra_rt_string_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<String>*>(cell)->Get();
+  return &VariableAt<String>(cell).Get();
 }
 
 void lyra_rt_string_cell_initialize(
     void* cell, const void* prototype) noexcept {
-  static_cast<Var<String>*>(cell)->Initialize(Read<String>(prototype));
+  VariableAt<String>(cell).Initialize(Read<String>(prototype));
 }
 
 void lyra_rt_string_cell_set(void* cell, const void* value) {
-  static_cast<Var<String>*>(cell)->Set(Read<String>(value));
+  VariableAt<String>(cell).Set(Read<String>(value));
 }
 
 void lyra_rt_string_cell_arm_sampling(void* cell) {
-  static_cast<Var<String>*>(cell)->ArmSampling();
+  VariableAt<String>(cell).ArmSampling();
 }
 
 auto lyra_rt_string_cell_sampled_get(void* cell) -> const void* {
-  return &static_cast<Var<String>*>(cell)->SampledGet();
+  return &VariableAt<String>(cell).SampledGet();
 }
 
 auto lyra_rt_real_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<Real>*>(cell)->Get();
+  return &VariableAt<Real>(cell).Get();
 }
 
 void lyra_rt_real_cell_initialize(void* cell, const void* prototype) noexcept {
-  static_cast<Var<Real>*>(cell)->Initialize(Read<Real>(prototype));
+  VariableAt<Real>(cell).Initialize(Read<Real>(prototype));
 }
 
 void lyra_rt_real_cell_set(void* cell, const void* value) {
-  static_cast<Var<Real>*>(cell)->Set(Read<Real>(value));
+  VariableAt<Real>(cell).Set(Read<Real>(value));
 }
 
 void lyra_rt_real_cell_arm_sampling(void* cell) {
-  static_cast<Var<Real>*>(cell)->ArmSampling();
+  VariableAt<Real>(cell).ArmSampling();
 }
 
 auto lyra_rt_real_cell_sampled_get(void* cell) -> const void* {
-  return &static_cast<Var<Real>*>(cell)->SampledGet();
+  return &VariableAt<Real>(cell).SampledGet();
 }
 
 auto lyra_rt_shortreal_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<ShortReal>*>(cell)->Get();
+  return &VariableAt<ShortReal>(cell).Get();
 }
 
 void lyra_rt_shortreal_cell_initialize(
     void* cell, const void* prototype) noexcept {
-  static_cast<Var<ShortReal>*>(cell)->Initialize(Read<ShortReal>(prototype));
+  VariableAt<ShortReal>(cell).Initialize(Read<ShortReal>(prototype));
 }
 
 void lyra_rt_shortreal_cell_set(void* cell, const void* value) {
-  static_cast<Var<ShortReal>*>(cell)->Set(Read<ShortReal>(value));
+  VariableAt<ShortReal>(cell).Set(Read<ShortReal>(value));
 }
 
 void lyra_rt_shortreal_cell_arm_sampling(void* cell) {
-  static_cast<Var<ShortReal>*>(cell)->ArmSampling();
+  VariableAt<ShortReal>(cell).ArmSampling();
 }
 
 auto lyra_rt_shortreal_cell_sampled_get(void* cell) -> const void* {
-  return &static_cast<Var<ShortReal>*>(cell)->SampledGet();
+  return &VariableAt<ShortReal>(cell).SampledGet();
 }
 
 auto lyra_rt_string_cell_begin_takeover(void* cell, std::int64_t level)
@@ -4003,17 +4002,15 @@ void lyra_rt_evaluation_attempts_settle(void* attempts, void* effects) {
 // cell holds it. A procedural local is not observable, so no runtime handle
 // threads through and no subscriber wakes.
 auto lyra_rt_string_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<String>>();
+  return AllocateValueCell<String>();
 }
 
 void lyra_rt_string_value_cell_store(void* cell, const void* value) noexcept {
-  static_cast<ValueCell<String>*>(cell)->Assign(Read<String>(value));
+  LocalAt<String>(cell).Assign(Read<String>(value));
 }
 
 auto lyra_rt_string_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<String>*>(cell)->Storage();
+  return &LocalAt<String>(cell).Storage();
 }
 
 void lyra_rt_assert(bool holds, const char* message) {
@@ -4419,17 +4416,15 @@ auto lyra_rt_real_convert_from_real(const void* value, void* out) -> void* {
 }
 
 auto lyra_rt_real_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<Real>>();
+  return AllocateValueCell<Real>();
 }
 
 void lyra_rt_real_value_cell_store(void* cell, const void* value) noexcept {
-  static_cast<ValueCell<Real>*>(cell)->Assign(Read<Real>(value));
+  LocalAt<Real>(cell).Assign(Read<Real>(value));
 }
 
 auto lyra_rt_real_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<Real>*>(cell)->Storage();
+  return &LocalAt<Real>(cell).Storage();
 }
 
 auto lyra_rt_real_make_print_value_item(
@@ -4535,18 +4530,16 @@ auto lyra_rt_shortreal_convert_from_real(const void* value, void* out)
 }
 
 auto lyra_rt_shortreal_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<ShortReal>>();
+  return AllocateValueCell<ShortReal>();
 }
 
 void lyra_rt_shortreal_value_cell_store(
     void* cell, const void* value) noexcept {
-  static_cast<ValueCell<ShortReal>*>(cell)->Assign(Read<ShortReal>(value));
+  LocalAt<ShortReal>(cell).Assign(Read<ShortReal>(value));
 }
 
 auto lyra_rt_shortreal_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<ShortReal>*>(cell)->Storage();
+  return &LocalAt<ShortReal>(cell).Storage();
 }
 
 auto lyra_rt_shortreal_make_print_value_item(
@@ -4594,40 +4587,38 @@ auto lyra_rt_chandle_to_bool(const void* operand) -> bool {
 }
 
 auto lyra_rt_chandle_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<Chandle>>();
+  return AllocateValueCell<Chandle>();
 }
 
 void lyra_rt_chandle_value_cell_store(void* cell, const void* value) noexcept {
-  static_cast<ValueCell<Chandle>*>(cell)->Assign(Read<Chandle>(value));
+  LocalAt<Chandle>(cell).Assign(Read<Chandle>(value));
 }
 
 auto lyra_rt_chandle_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<Chandle>*>(cell)->Storage();
+  return &LocalAt<Chandle>(cell).Storage();
 }
 
 // A chandle variable, which a process may wait on: LRM 9.4.2 makes a write to
 // one an event whenever the pointer it holds is not the pointer it held.
 auto lyra_rt_chandle_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<Chandle>*>(cell)->Get();
+  return &VariableAt<Chandle>(cell).Get();
 }
 
 void lyra_rt_chandle_cell_initialize(
     void* cell, const void* prototype) noexcept {
-  static_cast<Var<Chandle>*>(cell)->Initialize(Read<Chandle>(prototype));
+  VariableAt<Chandle>(cell).Initialize(Read<Chandle>(prototype));
 }
 
 void lyra_rt_chandle_cell_set(void* cell, const void* value) {
-  static_cast<Var<Chandle>*>(cell)->Set(Read<Chandle>(value));
+  VariableAt<Chandle>(cell).Set(Read<Chandle>(value));
 }
 
 void lyra_rt_chandle_cell_arm_sampling(void* cell) {
-  static_cast<Var<Chandle>*>(cell)->ArmSampling();
+  VariableAt<Chandle>(cell).ArmSampling();
 }
 
 auto lyra_rt_chandle_cell_sampled_get(void* cell) -> const void* {
-  return &static_cast<Var<Chandle>*>(cell)->SampledGet();
+  return &VariableAt<Chandle>(cell).SampledGet();
 }
 
 // A handle referring to nothing (LRM 8.4), a value of the domain like any
@@ -4658,9 +4649,7 @@ auto lyra_rt_managedref_to_bool(const void* operand) -> bool {
 }
 
 auto lyra_rt_managedref_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<ObjectRef>>();
+  return AllocateValueCell<ObjectRef>();
 }
 
 // Storing copies the handle's share of ownership with it, which is what keeps
@@ -4668,11 +4657,11 @@ auto lyra_rt_managedref_value_cell_alloc() noexcept -> void* {
 // keeps what it loaded copies it, and so owns a share of its own.
 void lyra_rt_managedref_value_cell_store(
     void* cell, const void* value) noexcept {
-  static_cast<ValueCell<ObjectRef>*>(cell)->Assign(Read<ObjectRef>(value));
+  LocalAt<ObjectRef>(cell).Assign(Read<ObjectRef>(value));
 }
 
 auto lyra_rt_managedref_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<ObjectRef>*>(cell)->Storage();
+  return &LocalAt<ObjectRef>(cell).Storage();
 }
 
 // A variable of class type, which a process may wait on: LRM 9.4.2 makes a
@@ -4680,16 +4669,16 @@ auto lyra_rt_managedref_value_cell_load(void* cell) noexcept -> void* {
 // named. A store keeps the handle's share of ownership and a load hands one
 // back, so the object outlives every body that touches the variable.
 auto lyra_rt_managedref_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<ObjectRef>*>(cell)->Get();
+  return &VariableAt<ObjectRef>(cell).Get();
 }
 
 void lyra_rt_managedref_cell_initialize(
     void* cell, const void* prototype) noexcept {
-  static_cast<Var<ObjectRef>*>(cell)->Initialize(Read<ObjectRef>(prototype));
+  VariableAt<ObjectRef>(cell).Initialize(Read<ObjectRef>(prototype));
 }
 
 void lyra_rt_managedref_cell_set(void* cell, const void* value) {
-  static_cast<Var<ObjectRef>*>(cell)->Set(Read<ObjectRef>(value));
+  VariableAt<ObjectRef>(cell).Set(Read<ObjectRef>(value));
 }
 
 // Arming keeps a share of whatever the variable names at the moment it is
@@ -4697,11 +4686,11 @@ void lyra_rt_managedref_cell_set(void* cell, const void* value) {
 // object a sampled read answers with is alive for as long as that read can
 // happen (LRM 8.4, 16.5.1).
 void lyra_rt_managedref_cell_arm_sampling(void* cell) {
-  static_cast<Var<ObjectRef>*>(cell)->ArmSampling();
+  VariableAt<ObjectRef>(cell).ArmSampling();
 }
 
 auto lyra_rt_managedref_cell_sampled_get(void* cell) -> const void* {
-  return &static_cast<Var<ObjectRef>*>(cell)->SampledGet();
+  return &VariableAt<ObjectRef>(cell).SampledGet();
 }
 
 auto lyra_rt_managedref_cell_begin_takeover(void* cell, std::int64_t level)
@@ -5059,41 +5048,37 @@ auto lyra_rt_dynarray_merge_conditional(
 }
 
 auto lyra_rt_dynarray_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeDynamicArray>*>(cell)->Get();
+  return &VariableAt<RuntimeDynamicArray>(cell).Get();
 }
 
 void lyra_rt_dynarray_cell_initialize(
     void* cell, const void* prototype) noexcept {
-  static_cast<Var<RuntimeDynamicArray>*>(cell)->Initialize(
+  VariableAt<RuntimeDynamicArray>(cell).Initialize(
       Read<RuntimeDynamicArray>(prototype));
 }
 
 void lyra_rt_dynarray_cell_set(void* cell, const void* value) {
-  static_cast<Var<RuntimeDynamicArray>*>(cell)->Set(
-      Read<RuntimeDynamicArray>(value));
+  VariableAt<RuntimeDynamicArray>(cell).Set(Read<RuntimeDynamicArray>(value));
 }
 
 void lyra_rt_dynarray_cell_arm_sampling(void* cell) {
-  static_cast<Var<RuntimeDynamicArray>*>(cell)->ArmSampling();
+  VariableAt<RuntimeDynamicArray>(cell).ArmSampling();
 }
 
 auto lyra_rt_dynarray_cell_sampled_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeDynamicArray>*>(cell)->SampledGet();
+  return &VariableAt<RuntimeDynamicArray>(cell).SampledGet();
 }
 
 auto lyra_rt_dynarray_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<RuntimeDynamicArray>>();
+  return AllocateValueCell<RuntimeDynamicArray>();
 }
 
 void lyra_rt_dynarray_value_cell_store(void* cell, const void* value) noexcept {
-  static_cast<ValueCell<RuntimeDynamicArray>*>(cell)->Assign(
-      Read<RuntimeDynamicArray>(value));
+  LocalAt<RuntimeDynamicArray>(cell).Assign(Read<RuntimeDynamicArray>(value));
 }
 
 auto lyra_rt_dynarray_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<RuntimeDynamicArray>*>(cell)->Storage();
+  return &LocalAt<RuntimeDynamicArray>(cell).Storage();
 }
 
 // LRM 10.9.1: an enumerated element list is the unit laid down once, and a
@@ -5875,39 +5860,35 @@ auto lyra_rt_queue_count_bits(
 }
 
 auto lyra_rt_queue_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeQueue>*>(cell)->Get();
+  return &VariableAt<RuntimeQueue>(cell).Get();
 }
 
 void lyra_rt_queue_cell_initialize(void* cell, const void* prototype) noexcept {
-  static_cast<Var<RuntimeQueue>*>(cell)->Initialize(
-      Read<RuntimeQueue>(prototype));
+  VariableAt<RuntimeQueue>(cell).Initialize(Read<RuntimeQueue>(prototype));
 }
 
 void lyra_rt_queue_cell_set(void* cell, const void* value) {
-  static_cast<Var<RuntimeQueue>*>(cell)->Set(Read<RuntimeQueue>(value));
+  VariableAt<RuntimeQueue>(cell).Set(Read<RuntimeQueue>(value));
 }
 
 void lyra_rt_queue_cell_arm_sampling(void* cell) {
-  static_cast<Var<RuntimeQueue>*>(cell)->ArmSampling();
+  VariableAt<RuntimeQueue>(cell).ArmSampling();
 }
 
 auto lyra_rt_queue_cell_sampled_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeQueue>*>(cell)->SampledGet();
+  return &VariableAt<RuntimeQueue>(cell).SampledGet();
 }
 
 auto lyra_rt_queue_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<RuntimeQueue>>();
+  return AllocateValueCell<RuntimeQueue>();
 }
 
 void lyra_rt_queue_value_cell_store(void* cell, const void* value) noexcept {
-  static_cast<ValueCell<RuntimeQueue>*>(cell)->Assign(
-      Read<RuntimeQueue>(value));
+  LocalAt<RuntimeQueue>(cell).Assign(Read<RuntimeQueue>(value));
 }
 
 auto lyra_rt_queue_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<RuntimeQueue>*>(cell)->Storage();
+  return &LocalAt<RuntimeQueue>(cell).Storage();
 }
 
 // LRM 7.9.11 `'{index: value, ...}`: each entry crosses as the product of the
@@ -6057,42 +6038,40 @@ auto lyra_rt_assocarray_count_bits(
 }
 
 auto lyra_rt_assocarray_cell_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeAssociativeArray>*>(cell)->Get();
+  return &VariableAt<RuntimeAssociativeArray>(cell).Get();
 }
 
 void lyra_rt_assocarray_cell_initialize(
     void* cell, const void* prototype) noexcept {
-  static_cast<Var<RuntimeAssociativeArray>*>(cell)->Initialize(
+  VariableAt<RuntimeAssociativeArray>(cell).Initialize(
       Read<RuntimeAssociativeArray>(prototype));
 }
 
 void lyra_rt_assocarray_cell_set(void* cell, const void* value) {
-  static_cast<Var<RuntimeAssociativeArray>*>(cell)->Set(
+  VariableAt<RuntimeAssociativeArray>(cell).Set(
       Read<RuntimeAssociativeArray>(value));
 }
 
 void lyra_rt_assocarray_cell_arm_sampling(void* cell) {
-  static_cast<Var<RuntimeAssociativeArray>*>(cell)->ArmSampling();
+  VariableAt<RuntimeAssociativeArray>(cell).ArmSampling();
 }
 
 auto lyra_rt_assocarray_cell_sampled_get(void* cell) -> const void* {
-  return &static_cast<Var<RuntimeAssociativeArray>*>(cell)->SampledGet();
+  return &VariableAt<RuntimeAssociativeArray>(cell).SampledGet();
 }
 
 auto lyra_rt_assocarray_value_cell_alloc() noexcept -> void* {
-  return GeneratedCallScope::Current()
-      .ActivationValues()
-      .New<ValueCell<RuntimeAssociativeArray>>();
+  return AllocateValueCell<RuntimeAssociativeArray>();
 }
 
 void lyra_rt_assocarray_value_cell_store(
     void* cell, const void* value) noexcept {
-  static_cast<ValueCell<RuntimeAssociativeArray>*>(cell)->Assign(
+  LocalAt<RuntimeAssociativeArray>(cell).Assign(
       Read<RuntimeAssociativeArray>(value));
 }
 
 auto lyra_rt_assocarray_value_cell_load(void* cell) noexcept -> void* {
-  return &static_cast<ValueCell<RuntimeAssociativeArray>*>(cell)->Storage();
+  return &LocalAt<RuntimeAssociativeArray>(cell).Storage();
 }
 
 auto lyra_rt_unpackedarray_sum(
@@ -7791,16 +7770,16 @@ void lyra_rt_shared_pointer_construct(void* storage) {
 }
 
 void lyra_rt_string_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<String>*>(storage));
+  std::destroy_at(&VariableAt<String>(storage));
 }
 void lyra_rt_real_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<Real>*>(storage));
+  std::destroy_at(&VariableAt<Real>(storage));
 }
 void lyra_rt_shortreal_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<ShortReal>*>(storage));
+  std::destroy_at(&VariableAt<ShortReal>(storage));
 }
 void lyra_rt_chandle_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<Chandle>*>(storage));
+  std::destroy_at(&VariableAt<Chandle>(storage));
 }
 void lyra_rt_tuple_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<RuntimeRecord>(storage));
@@ -7810,22 +7789,22 @@ void lyra_rt_union_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<RuntimeRecord>(storage));
 }
 void lyra_rt_dynarray_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<RuntimeDynamicArray>*>(storage));
+  std::destroy_at(&VariableAt<RuntimeDynamicArray>(storage));
 }
 void lyra_rt_unpackedarray_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<RuntimeFixedArray>(storage));
 }
 void lyra_rt_queue_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<RuntimeQueue>*>(storage));
+  std::destroy_at(&VariableAt<RuntimeQueue>(storage));
 }
 void lyra_rt_assocarray_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<RuntimeAssociativeArray>*>(storage));
+  std::destroy_at(&VariableAt<RuntimeAssociativeArray>(storage));
 }
 void lyra_rt_managedref_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<Var<ObjectRef>*>(storage));
+  std::destroy_at(&VariableAt<ObjectRef>(storage));
 }
 void lyra_rt_string_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<ValueCell<String>*>(storage));
+  std::destroy_at(&LocalAt<String>(storage));
 }
 void lyra_rt_tuple_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<LocalOf<RuntimeRecord>::Type*>(storage));
@@ -7835,19 +7814,19 @@ void lyra_rt_union_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<LocalOf<RuntimeRecord>::Type*>(storage));
 }
 void lyra_rt_dynarray_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<ValueCell<RuntimeDynamicArray>*>(storage));
+  std::destroy_at(&LocalAt<RuntimeDynamicArray>(storage));
 }
 void lyra_rt_unpackedarray_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<LocalOf<RuntimeFixedArray>::Type*>(storage));
 }
 void lyra_rt_queue_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<ValueCell<RuntimeQueue>*>(storage));
+  std::destroy_at(&LocalAt<RuntimeQueue>(storage));
 }
 void lyra_rt_assocarray_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<ValueCell<RuntimeAssociativeArray>*>(storage));
+  std::destroy_at(&LocalAt<RuntimeAssociativeArray>(storage));
 }
 void lyra_rt_managedref_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<ValueCell<ObjectRef>*>(storage));
+  std::destroy_at(&LocalAt<ObjectRef>(storage));
 }
 void lyra_rt_tuple_net_destroy(void* storage) {
   std::destroy_at(static_cast<ResolvedNet<RuntimeRecord>*>(storage));
@@ -9048,7 +9027,7 @@ void lyra_rt_bit_wide_value_cell_construct(std::int64_t width, void* storage) {
   BuildAt<LocalOf<BitWide>::Type>(storage, static_cast<std::uint64_t>(width));
 }
 void lyra_rt_bit_wide_value_cell_destroy(void* storage) {
-  std::destroy_at(&lyra::runtime::LocalAt<BitWide>(storage));
+  std::destroy_at(&LocalAt<BitWide>(storage));
 }
 void lyra_rt_bit_wide_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<BitWide>>(storage);
@@ -9167,7 +9146,7 @@ void lyra_rt_logic_wide_value_cell_construct(
   BuildAt<LocalOf<LogicWide>::Type>(storage, static_cast<std::uint64_t>(width));
 }
 void lyra_rt_logic_wide_value_cell_destroy(void* storage) {
-  std::destroy_at(&lyra::runtime::LocalAt<LogicWide>(storage));
+  std::destroy_at(&LocalAt<LogicWide>(storage));
 }
 void lyra_rt_logic_wide_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<LogicWide>>(storage);

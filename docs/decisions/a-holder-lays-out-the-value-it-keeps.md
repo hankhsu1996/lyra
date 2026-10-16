@@ -5,7 +5,6 @@ Date: 2026-10-12 Status: accepted. Supersedes D6 of
 [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) that put a tuple's type in its
 bytes and hold a tuple in storage of its own; carries out for every holder what D6 of
 [a-packed-value-is-its-words](a-packed-value-is-its-words.md) states of a value wider than a word.
-An unpacked union is not yet held this way.
 
 ## Context
 
@@ -67,9 +66,9 @@ on such a value is told. Every entry acting on a holder after it is built is tol
 values it is handed, since the holder keeps the type.
 
 **D3. A value past the size a value may lie in what holds it is one address of storage the holder
-owns,** allocated where the holder is built and taken into afterwards, as a frame keeps one. The
-bound is the one [a-packed-value-is-its-words](a-packed-value-is-its-words.md) and
-[a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) state.
+owns,** allocated where the holder is built and taken into afterwards. The bound is the one
+[a-value-too-large-for-a-frame-is-held-through-a-box](a-value-too-large-for-a-frame-is-held-through-a-box.md)
+states for a frame.
 
 **D4. The holder keeps the address of the value whichever way it lies,** so generated code reads and
 writes the value through one pointer at a fixed offset, which the library states, as it reads a

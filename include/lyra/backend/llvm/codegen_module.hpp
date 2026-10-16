@@ -243,6 +243,12 @@ class CodeGenModule {
   // what `operator new` is asked for and sized `operator delete` told.
   auto CompleteObjectSize(lir::TypeId type) -> diag::Result<std::uint64_t>;
 
+  // `storage`, holding a complete object of `pointee` no longer, given back to
+  // the host's sized deallocation function, as clang's `EmitDeleteCall` does.
+  auto EmitDeleteCall(
+      llvm::IRBuilderBase& builder, lir::TypeId pointee, llvm::Value* storage)
+      -> diag::Result<void>;
+
   // Members of the types `members`, each in the slot `role` asks for, laid out
   // after `after`, naming each as `what` where it has no storage on this
   // backend.

@@ -27,7 +27,7 @@ namespace lyra::lowering::hir_to_mir {
 
 // How a body uses a captured binding (its carrier/view, the snapshot-vs-alias
 // axis of the captured field's type). A snapshot owns a copy taken at
-// construction; an alias is a `VariableRef<T>` over a live cell; an owning
+// construction; an alias is a reference variable over a live cell; an owning
 // carrier is a copy of a shared handle that keeps its referent alive (LRM 6.21
 // activation).
 enum class CaptureView : std::uint8_t {

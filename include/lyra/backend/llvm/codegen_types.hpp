@@ -12,7 +12,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/union_layout.hpp"
+#include "lyra/value/layout.hpp"
 
 namespace lyra::lir {
 struct CompilationUnit;
@@ -83,9 +83,10 @@ class CodeGenTypes {
   // value is one runtime object, whose storage the library states.
   auto LayoutOf(lir::TypeId type) -> support::ObjectLayout;
   // Whether a value of `type` lies in storage of its own, which an operand of
-  // it then names by address. Every owned value does but a pointer owning what
-  // it points at, which is that address itself, as a Rust `Box` is.
-  [[nodiscard]] auto LiesInStorage(lir::TypeId type) const -> bool;
+  // it then names by address, as clang evaluates an aggregate into a slot
+  // rather than into a register. Every owned value does but a pointer owning
+  // what it points at, which is that address itself, as a Rust `Box` is.
+  [[nodiscard]] auto HasAggregateEvaluationKind(lir::TypeId type) const -> bool;
   // Whether a value of `type` is a sequence of machine values, which is built
   // where it is kept and read as the {pointer, length} view over that, as C++
   // forms a `std::span` over a `std::array` where one is taken.
@@ -131,6 +132,8 @@ class CodeGenTypes {
   // The storage a machine value of `type` takes where it lies: what a register
   // holding it holds.
   auto MachineValueLayout(lir::TypeId type) -> support::ObjectLayout;
+  // The storage `members` overlay, each laid out by its own type.
+  auto OverlayOf(std::span<const lir::TypeId> members) -> value::Layout;
 
   llvm::LLVMContext* ctx_;
   const lir::CompilationUnit* unit_;
