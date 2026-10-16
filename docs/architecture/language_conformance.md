@@ -306,6 +306,11 @@ last cell encountered shall be written to the library ... a warning shall be iss
 descriptions in one compilation, and one open simulator runs the first, which is neither. Remove
 one.
 
+A design that cannot be edited is built with `-Wno-error=duplicate-definition` only where every
+description of the name says the same, since every reading then runs one design. Where they differ,
+the front end under that option runs the last and the open simulator the first, so the text still
+has no meaning to run.
+
 #### A `force` on a member of an element of a variable
 
 ```systemverilog

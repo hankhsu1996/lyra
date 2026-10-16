@@ -14,12 +14,12 @@
 // says something else, or stops no longer fails until the record says so, which
 // makes the record the account of how far each design gets.
 //
-// A text the standard does not settle is refused, and so is one it forbids
-// where the defect is the standard's; a reader may ask for either by name. A
-// design written in such a text is built the way its author would build it,
-// with the front end's options listed for it, so what stands behind that text
-// is still reached. The list is held the way the record is, so an option the
-// design no longer needs fails until it goes.
+// A text the standard does not settle is refused, and so is one it forbids; a
+// reader may ask for either by name. A design written in such a text is built
+// with the front end's options listed for it, the way someone who cannot edit
+// it would build it, so what stands behind that text is still reached. The list
+// is held the way the record is, so an option the design no longer needs fails
+// until it goes.
 
 #include <algorithm>
 #include <cctype>
