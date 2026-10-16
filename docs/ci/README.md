@@ -215,25 +215,31 @@ were prepared for reads them: the macros that simulator predefines, every file a
 unit, and, where the sources state one time scale and leave other elements without, that time scale
 for all of them.
 
-What is applied on top of that commit is a correction the suite itself has been sent. Its
-testbenches were run on a simulator that keeps no unknown value, so one can ask for what the
-standard does not grant, and a design stopped there is measured on nothing. Such a correction is
-right for any simulator that follows the standard, is argued from the clause with a case of the
-corpus holding it, and sits under `third_party/rtlmeter/` until the named commit contains it. One
+Anything applied on top of that commit, as a patch `MODULE.bazel` names, is a correction the suite
+itself has been sent. Its testbenches were run on a simulator that keeps no unknown value, so one
+can ask for what the standard does not grant, and a design stopped there is measured on nothing.
+Such a correction is right for any simulator that follows the standard, is argued from the clause
+with a case of the corpus holding it, and is applied only until the named commit contains it. One
 the suite declines is taken out again, and the case is then recorded as stopping where it does.
 
 A text the standard does not settle is not corrected, since its author is not wrong either, and
 neither is a forbidden text whose defect is the standard's
 ([`language_conformance.md`](../architecture/language_conformance.md) says when that is so). The
 front end refuses either unless asked, so the design is built with the front end's option that reads
-it the way its author does, and what stands behind that text is still measured. The options each
+it the way its author does, and what stands behind that text is still measured. A forbidden text
+that is its author's is not corrected either where the front end has an option that reads it. That
+option is how someone who cannot edit the design builds it, so it is what the case measures. The
+options each
 design is built with are listed in `tests/external_design_options.yaml`, and one a design no longer
 needs fails the run until it is taken out.
 
 A step that takes more than half an hour, or asks for more memory than the smallest machine these
 run on holds, stops the case there. The first is set well past the slowest build measured, so that a
 design does not fall on one side of it on one machine and the other on the next; what it catches is
-a step that will not end. How long each case took is printed beside where it stopped.
+a step that will not end. Each build compiles a fixed number of units at once, so how wide a build
+ran does not differ from one machine to the next either. How long each case took is printed beside
+where it stopped, and a case that stops keeps the directory it was built in and names it, while one
+that gets all the way leaves nothing behind.
 
 Where each case stops is recorded in `tests/paths/llvm.external_designs.yaml`, and a case is held to
 exactly what is listed for it, so the file is the account of what stands between Lyra and each

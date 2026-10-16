@@ -75,12 +75,7 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 """,
-    commit = "6d4c52f1a756a74af52e1531313150c2282350c8",
-    patch_strip = 1,
-    patches = [
-        "//third_party/rtlmeter:caliptra_leading_underscore.patch",
-        "//third_party/rtlmeter:caliptra_read_line_automatic.patch",
-    ],
+    commit = "f63e557d638d7305b44bc1d6c58170bd2cdec3c8",
     remote = "https://github.com/verilator/rtlmeter.git",
 )
 

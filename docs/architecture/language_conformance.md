@@ -95,7 +95,8 @@ with the reduction may be noted beside it, as a reason the text went unnoticed o
 of the clause, and its source can be read for the clause it relies on. It is never the reason for a
 ruling: a tool that accepts says only that it accepts.
 
-A design that is wrong is reported to whoever maintains it. A front end that is wrong is reported
+A design that is wrong is its author's to correct, and whoever builds it without being able to edit
+it asks for the reading it relies on by name (consequence 4). A front end that is wrong is reported
 upstream. Neither is answered by changing what Lyra accepts.
 
 A forbidden text is not always its author's mistake. Where all three of these hold, the defect is
@@ -213,7 +214,8 @@ and its example marks `C = I` illegal.
 
 This is the forbidden text with the best case for an exception, since a tool that takes it has one
 obvious meaning to give it. It is an error all the same, because an allowed text says the same with
-nothing rewritten: `mubi_t'(j)`.
+nothing rewritten: `mubi_t'(j)`. A design that cannot be edited is built with
+`--relax-enum-conversions`, which reads every such assignment as that cast.
 
 ### Forbidden, but the defect is the standard's
 

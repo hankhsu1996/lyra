@@ -40,6 +40,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 #include <yaml-cpp/yaml.h>
@@ -68,6 +69,11 @@ constexpr std::string_view kQuickCheckTag = "sanity";
 // which is the finding. It is set under what the smallest machine these run on
 // holds, so a case ends the same way wherever it is run.
 constexpr std::uint64_t kStepAddressLimitKib = 12ULL << 20;
+
+// How many of a design's units a build lowers and compiles at once. A build is
+// told this by whoever runs it, so like the limit above it is the same on every
+// machine. Its peak memory is that many units' at once, all within the limit.
+constexpr int kBuildWidth = 4;
 
 // How much of what a step said is shown when it is not what was recorded. The
 // first lines name the cause; a design that stops can say thousands more.
@@ -458,12 +464,15 @@ auto BuildCommand(
     -> std::string {
   return LyraCommand(
       lyra,
-      "build --backend llvm --progress=none -Wnone --cache-dir cache -o sim",
+      std::format(
+          "build --backend llvm --progress=none -Wnone -j {} --cache-dir cache "
+          "-o sim",
+          kBuildWidth),
       options);
 }
 
-// Builds the case in `work` with the front end's `options` and runs it there as
-// the suite would, ending at the first step that fails. The run's output is
+// Builds the case in `work` with the front end's `options`, and runs it there
+// as the suite would, ending at the first step that fails. The run's output is
 // kept where the suite's check reads it.
 auto Carry(
     const std::filesystem::path& lyra, const DesignCase& design,
@@ -716,24 +725,37 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
   const auto took = std::chrono::duration_cast<std::chrono::seconds>(
       std::chrono::steady_clock::now() - began);
   // Written as each case ends, so a run that is cut short has still said how
-  // far the cases before it got, and with where it was built, since a case
-  // that stops as recorded is looked into from there as much as one that does
-  // not.
+  // far the cases before it got. A case that stops is said with where it was
+  // built, since one that stops as recorded is looked into from there as much
+  // as one that does not.
   std::cout << std::format(
-                   "{}: {} after {} s, built in {}", subject.design.name,
+                   "{}: {} after {} s{}", subject.design.name,
                    stop ? std::format("stops at its {}", NameOf(stop->at))
                         : std::string("builds, runs and passes its check"),
-                   took.count(), work->string())
+                   took.count(),
+                   stop ? std::format(", built in\n{}", work->string())
+                        : std::string())
             << std::endl;
 
   if (const auto differs = Differs(stop, subject.recorded)) {
     ADD_FAILURE() << subject.design.name << " " << *differs
-                  << "\nIt is built from the directory above by\n"
-                  << BuildCommand(lyra, subject.options);
+                  << (stop
+                          ? std::format(
+                                "\nIt is built from the directory above by\n{}",
+                                BuildCommand(lyra, subject.options))
+                          : std::string());
   }
   for (const std::string& option : NotNeeded(lyra, subject.options, *work)) {
     ADD_FAILURE() << subject.design.design_name << " is built with " << option
                   << " and no longer needs it, so it goes.";
+  }
+  // A design's objects and program are gigabytes, and nobody looks into one
+  // that got all the way.
+  if (!stop) {
+    std::error_code left;
+    std::filesystem::remove_all(*work, left);
+    EXPECT_FALSE(left) << work->string()
+                       << " was not removed: " << left.message();
   }
 }
 

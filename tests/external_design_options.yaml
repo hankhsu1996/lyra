@@ -1,14 +1,16 @@
 # The front end's options each design of the benchmark suite is built with, on
 # every path, keyed by the design. Each asks for a text Lyra refuses unless
 # asked: one the standard does not settle, read the way its author reads it, or
-# one it forbids where the defect is the standard's and not the author's. The
-# design is built the way its author builds it, so what stands behind that text
-# is still reached.
+# one it forbids, read as the tools the design was verified on read it. The
+# design is built the way someone who cannot edit it would build it, so what
+# stands behind that text is still reached.
 #
 # A design that builds without one of its options fails the run until the option
 # goes, so this file only shrinks, as the record of how far each design gets
 # does.
 Caliptra:
   - -Wno-error=bad-procedural-force
+OpenTitan:
+  - --relax-enum-conversions
 Vortex:
   - --allow-hierarchical-const

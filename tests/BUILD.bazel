@@ -451,11 +451,11 @@ cc_test(
 # repository: today those of Verilator's benchmark suite, each built and run
 # through the case the suite itself marks as its quick check. A design is tens
 # of thousands to hundreds of thousands of lines, so one case is minutes and
-# gigabytes, and the suite is half a gigabyte to fetch. `manual` is what keeps both out of
-# every run that does not name this target: a tag the test filter leaves out
-# is still analyzed, and analysis is what fetches. The program is linked with
-# the host C++ compiler, and the cases run one at a time because a machine
-# holds one such build comfortably and not several. It runs outside the
+# gigabytes, and the suite is half a gigabyte to fetch. `manual` is what keeps
+# both out of every run that does not name this target: a tag the test filter
+# leaves out is still analyzed, and analysis is what fetches. The program is
+# linked with the host C++ compiler, and the cases run one at a time because a
+# machine holds one such build comfortably and not several. It runs outside the
 # sandbox because a case that stops is looked into from the directory it was
 # built in, which a sandbox's own temporary directory does not outlive.
 cc_test(

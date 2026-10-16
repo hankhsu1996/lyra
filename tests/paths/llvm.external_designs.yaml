@@ -24,5 +24,5 @@ OpenPiton:1x1:hello:
   stops: run
   says: did not end within
 OpenTitan:default:hello:
-  stops: build
-  says: no implicit conversion from 'logic' to 'mubi4_t'
+  stops: run
+  says: out of memory
