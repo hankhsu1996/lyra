@@ -1,6 +1,6 @@
 # A benchmark case fixes what work is done and lets the harness choose how much
 
-Date: 2026-08-31. Status: accepted.
+Date: 2026-08-31; D13 added 2026-10-17. Status: accepted.
 
 ## Why this decision matters
 
@@ -124,6 +124,22 @@ D12. Where the language or a tool bounds how much of its work a case can hold --
      packed type -- the case states that bound in a directive and no probe is spent past it. A case
      that reaches its bound before the target reports the rate it reached, as one too slow to reach
      the target at one unit does.
+
+D13. A case can also be counted rather than timed: the instructions one unit of its work costs
+     Lyra, under callgrind, read off counts at an amount and at twice it and differenced, as D4
+     differences two timings. A simulation's amount is chosen as D3 chooses one, against a far
+     shorter target, since a count is exact at any amount; two compilers being compared are counted
+     at the same amounts, taken from the first one's result file. A build is counted at one design
+     size and twice it, the same for every case and backend: how a build's cost grows with its
+     design is what the growth tests hold, and a search for a duration follows a cost that barely
+     grows out to a design that takes minutes to build under callgrind -- on one backend sooner than
+     the other, so the two would not count the same design. The size is large enough that the units
+     between the two add far more than a build's fixed part varies by between runs, and small
+     enough that they add little to what counting the build costs. A count is Lyra's alone --
+     a reference simulator is compared by rate (D6) -- and it is what tells two revisions of Lyra
+     apart, because it does not move with the load on the machine that took it. It does move from
+     one machine to another, so a count is compared only with one taken beside it, and what is read
+     across days is the rate.
 ```
 
 ## Rejected alternatives
@@ -149,9 +165,9 @@ D12. Where the language or a tool bounds how much of its work a case can hold --
   that changes by three orders of magnitude leaves no single amount usable at both ends.
 
 - **Detecting regressions inside the runner.** Every surveyed suite keeps this separate -- Go has
-  `benchstat`, LLVM has a results service, Criterion keeps a stored baseline. Comparison needs
-  history and a statistical model; a runner needs neither, and a runner that owns both cannot be
-  used to answer a one-off question.
+  `benchstat`, LLVM has a results service, Criterion keeps a stored baseline. Comparison needs a
+  baseline and, for a timing, a statistical model; a runner needs neither, and a runner that owns
+  both cannot be used to answer a one-off question.
 
 - **Reporting a construct Lyra does not yet carry out without failing the run.** It was this entry's
   first answer, on the ground that a refusal is a fact about the tool and not about the case. It is
@@ -196,8 +212,9 @@ it better, which is why it is the decision the others hang from.
   part to be above the noise between two readings, and where it is not -- an array that has to be
   filled by the very path that is slow -- the whole duration is charged to the work. Such a rate is
   a lower bound, and the case becomes truthful again when the path underneath it does.
-- Comparing two revisions is a separate program that reads two result files. Nothing in the runner
-  knows what "before" was.
+- Comparing two revisions is a separate program that reads two count runs' result files (D13).
+  Nothing in the runner knows what "before" was; the one thing it takes from an earlier run is the
+  amount each case was counted at, which is what makes the two counts of the same work.
 
 ## Cross-references
 

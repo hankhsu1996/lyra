@@ -1,0 +1,161 @@
+name: Instruction Count
+
+# How much more or less work a change makes Lyra do: instructions per unit of
+# each benchmark case's work, counted under callgrind, on both backends, for a
+# compiler built at the change and one built just before it. A count does not
+# move with the machine's load, so the two are told apart however small the
+# difference; both are counted in this one job, because what the C library and
+# the runner image pick does move from one machine to another, and a count kept
+# from another day would carry that into the comparison.
+#
+# It is never on the path a change takes to merge. Every merge to main is
+# counted against its parent, and where a case moved the table goes on the
+# pull request the merge came from. A branch can be counted before it merges,
+# or any revision against another, by dispatching this workflow. It goes red
+# where a case that built and ran at base no longer does, or where one got
+# worse by the threshold or more; since it is not a required check, that marks
+# the change that did it and holds up nothing.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      head:
+        description: The revision measured, such as a branch
+        required: true
+      base:
+        description: The revision compared against; the head's parent if empty
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  count:
+    name: Count
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Choose the revisions
+        id: revisions
+        env:
+          BASE: ${{ inputs.base }}
+          HEAD: ${{ inputs.head || github.sha }}
+        run: |
+          head=$(git rev-parse --verify "origin/$HEAD^{commit}" 2>/dev/null \
+            || git rev-parse --verify "$HEAD^{commit}")
+          base=$(git rev-parse --verify "${BASE:-$head^}^{commit}")
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.18.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ hashFiles('MODULE.bazel') }}
+          repository-cache: true
+
+      - name: Setup Clang
+        uses: ./.github/actions/setup-clang
+
+      - name: Install valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y valgrind
+
+      # The compilers are run here, so their outputs have to come back; the
+      # flags go in the untracked rc layer so that both checkouts below read
+      # them.
+      - name: Configure remote execution
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            echo "build --config=rbe --remote_download_toplevel" >> .bazelrc.user
+            echo "build --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY" >> .bazelrc.user
+          fi
+
+      # Each compiler is kept with its runfiles, where it finds the runtime it
+      # links a program against, and with every link resolved, since the next
+      # build moves what they point at. The manifest is not kept: it names each
+      # file by its absolute place in that build's output tree, and without it
+      # the files are looked up inside the kept directory instead. The tree is
+      # left at head, whose runner and corpus count both: the same cases, done
+      # the same way.
+      - name: Build both compilers
+        env:
+          BASE: ${{ steps.revisions.outputs.base }}
+          HEAD: ${{ steps.revisions.outputs.head }}
+        run: |
+          for side in base head; do
+            if [[ "$side" == base ]]; then rev=$BASE; else rev=$HEAD; fi
+            git checkout --quiet --detach "$rev"
+            bazel build -c opt //:lyra
+            kept="$RUNNER_TEMP/compilers/$side"
+            mkdir -p "$kept"
+            cp -L bazel-bin/lyra "$kept/lyra"
+            cp -rL bazel-bin/lyra.runfiles "$kept/lyra.runfiles"
+            rm -f "$kept/lyra.runfiles/MANIFEST"
+          done
+
+      # Base chooses the amount each simulation is counted at, and head is
+      # counted at the same amounts. A case base cannot count is a gap in the
+      # table, not a failure of this change.
+      - name: Count base
+        continue-on-error: true
+        env:
+          BASE: ${{ steps.revisions.outputs.base }}
+        run: |
+          python3 tools/bench/run_benchmarks.py --count \
+            --lyra "$RUNNER_TEMP/compilers/base/lyra" \
+            --revision "${BASE:0:8}" --json base.json
+
+      - name: Count head
+        continue-on-error: true
+        env:
+          HEAD: ${{ steps.revisions.outputs.head }}
+        run: |
+          python3 tools/bench/run_benchmarks.py --count \
+            --lyra "$RUNNER_TEMP/compilers/head/lyra" \
+            --revision "${HEAD:0:8}" --amounts base.json --json head.json
+
+      - name: Compare
+        id: compare
+        run: |
+          python3 tools/bench/compare_counts.py base.json head.json \
+            --github-output "$GITHUB_OUTPUT" > report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on the merged pull request
+        if: github.event_name == 'push' && steps.compare.outputs.moved == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD: ${{ steps.revisions.outputs.head }}
+        run: |
+          pr=$(gh api "repos/$REPO/commits/$HEAD/pulls" --jq '.[0].number // empty')
+          if [[ -n "$pr" ]]; then
+            gh pr comment "$pr" --repo "$REPO" --body-file report.md
+          fi
+
+      - name: Upload counts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: instruction-counts
+          path: |
+            base.json
+            head.json
+          if-no-files-found: ignore
+
+      - name: Fail where head lost a case or made one worse
+        if: steps.compare.outputs.lost == 'true' || steps.compare.outputs.worse == 'true'
+        run: |
+          echo "A case stopped building or running, or got worse; the summary names it."
+          exit 1

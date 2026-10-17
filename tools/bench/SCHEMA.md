@@ -1,4 +1,4 @@
-# Benchmark Result Schema (v6)
+# Benchmark Result Schema (v7)
 
 Schema for the `bench.json` output produced by `run_benchmarks.py`. The corpus it reads and the
 reasoning behind the shape are in `docs/decisions/benchmark-case-shape.md`; this file describes only
@@ -6,41 +6,49 @@ what a run writes out.
 
 ## What the runner can say
 
-Every number here is observed from outside the compiler: a wall time around a subprocess, a file
-size, an exit status. Nothing is read out of the compiler's internals, which is what keeps a
-measurement independent of whether any diagnostic happens to be available.
+Every number here is observed from outside the compiler: a wall time around a subprocess, the
+instructions callgrind counted in one, a file size, an exit status. Nothing is read out of the
+compiler's internals, which is what keeps a measurement independent of whether any diagnostic
+happens to be available.
+
+A run either times or counts, and `metric` says which. A timing run measures Lyra on each backend
+and the reference simulator, and its number is `rate`. A count run, `--count`, measures Lyra alone,
+and its number is `instructions_per_unit`.
 
 ## Top-level object
 
-| Field            | Type   | Description                                       |
-| ---------------- | ------ | ------------------------------------------------- |
-| `schema_version` | int    | Always `6`.                                       |
-| `git`            | string | Short git SHA of the tested commit.               |
-| `target_seconds` | float  | The duration each simulation was scaled to reach. |
-| `timestamp`      | string | ISO 8601 UTC timestamp of the run.                |
-| `results`        | array  | One object per case and tool.                     |
+| Field            | Type   | Description                                                 |
+| ---------------- | ------ | ----------------------------------------------------------- |
+| `schema_version` | int    | Always `7`.                                                 |
+| `git`            | string | The revision the measured compiler was built from.          |
+| `metric`         | string | `time` or `instructions` -- what the run measured.          |
+| `target_seconds` | float  | The duration each simulation was scaled to reach, if timed. |
+| `timestamp`      | string | ISO 8601 UTC timestamp of the run.                          |
+| `results`        | array  | One object per case, tool and backend.                      |
 
 ## Result object
 
 All fields are always present. A field that does not apply carries its zero value.
 
-| Field       | Type   | Description                                                    |
-| ----------- | ------ | -------------------------------------------------------------- |
-| `case`      | string | The case's name, unique across the corpus.                     |
-| `family`    | string | The cost family it isolates, which is its directory.           |
-| `measure`   | string | `run` or `build` -- which of the two the timing covers.        |
-| `work_unit` | string | What one unit of this case's work is called.                   |
-| `tool`      | string | `lyra` or `verilator`.                                         |
-| `status`    | string | `ok` or `error`.                                               |
-| `work`      | int    | How many units the final measurement covered.                  |
-| `seconds`   | float  | What that measurement took.                                    |
-| `rate`      | float  | Units per second, with the fixed part removed. **The number.** |
-| `build_s`   | float  | What building the case cost.                                   |
-| `binary_kb` | int    | Size of the produced binary in KB.                             |
-| `readings`  | array  | Every measurement taken, in order, each `[work, seconds]`.     |
-| `growth`    | float  | The power of `work` the cost grew as; zero where unseen.       |
-| `detail`    | string | Which step failed and how it ended; empty when `ok`.           |
-| `output`    | string | The last lines that step printed; empty when `ok`.             |
+| Field                   | Type   | Description                                                           |
+| ----------------------- | ------ | --------------------------------------------------------------------- |
+| `case`                  | string | The case's name, unique across the corpus.                            |
+| `family`                | string | The cost family it isolates, which is its directory.                  |
+| `measure`               | string | `run` or `build` -- which of the two the measurement covers.          |
+| `work_unit`             | string | What one unit of this case's work is called.                          |
+| `tool`                  | string | `lyra` or `verilator`.                                                |
+| `backend`               | string | `llvm` or `cpp` for Lyra; empty for the reference simulator.          |
+| `status`                | string | `ok` or `error`.                                                      |
+| `work`                  | int    | How many units the final timing covered, or the lower count's.        |
+| `seconds`               | float  | What the final timing took.                                           |
+| `rate`                  | float  | Units per second, with the fixed part removed. **A timing's number.** |
+| `instructions_per_unit` | float  | Instructions per unit, the fixed part removed. **A count's number.**  |
+| `build_s`               | float  | What building the case cost.                                          |
+| `binary_kb`             | int    | Size of the produced binary in KB.                                    |
+| `readings`              | array  | Each measurement, in order: `[work, seconds]` or `[work, count]`.     |
+| `growth`                | float  | The power of `work` a timing's cost grew as; zero where unseen.       |
+| `detail`                | string | Which step failed and how it ended; empty when `ok`.                  |
+| `output`                | string | The last lines that step printed; empty when `ok`.                    |
 
 ## Reading `rate`
 
@@ -57,6 +65,13 @@ why at least two are always taken. With only one -- a case so slow that a single
 overshoots the target -- there is nothing to separate and the whole duration is charged to the work,
 so such a case's rate is a lower bound on its speed.
 
+## Reading `instructions_per_unit`
+
+**A count is taken at `work` units and at twice that, and the difference is divided by `work`.**
+What a run executes once -- starting, constructing the design, a compiler reading its prelude -- is
+in both and cancels exactly. For a `run` case the count is of the program; for a `build` case it is
+of Lyra building the design, and the host compiler Lyra starts is not counted.
+
 ## Reading `growth`
 
 **A rate divides the amount out only where the cost was proportional to it, and `growth` says
@@ -71,11 +86,11 @@ work did not show in both.
 ## Statuses
 
 `error` is a case one tool could not measure: a build or a run that exited non-zero, was killed by a
-signal, outlived the time limit, could not be started, or produced no binary. `detail` names the
-step and how it ended -- `build exited with status 1`,
+signal, outlived the time limit, could not be started, or produced no binary, or a count callgrind
+wrote no total for. `detail` names the step and how it ended -- `build exited with status 1`,
 `run at +work=4 was killed by SIGSEGV (status 139)` -- and `output` holds the end of what that step
-printed. The fields a measurement fills stay at zero, so `status` and never a zero `rate` is what
-says a case has no number.
+printed. The fields a measurement fills stay at zero, so `status` and never a zero number is what
+says a case has none.
 
 **An `error` costs only its own case.** The run goes on to every other one, and the file is
 rewritten as each result arrives, so a run that is itself stopped leaves the results it had. A case
@@ -85,18 +100,21 @@ it never reached has no object at all, and neither has any case under a tool tha
 
 The run exits 0 when every case was measured by every tool it had, and 1 when any result is an
 `error` -- after the report is printed and the file written, so a failed run still publishes every
-number it obtained. A duration never fails a run: that would be reporting on the machine that
-produced it. Verilator being absent does not either.
+number it obtained. A duration or a count never fails a run: what a number means is a reader's call,
+and a duration is also a report on the machine that produced it. Verilator being absent does not
+fail it either.
 
-The report has a row for every case whatever happened to it. Where a tool has no number the rate
-cell says `failed` or `not run` rather than a dash, a line under the heading counts both, and a "Not
-measured" section names each one with its `detail` and `output`.
+The report has a row for every case on every backend whatever happened to it. Where a tool has no
+number the cell says `failed` or `not run` rather than a dash, a line under the heading counts both,
+and a "Not measured" section names each one with its `detail` and `output`.
 
 ## Compatibility rules
 
 - Consumers must check `schema_version` before parsing.
 - Fields may be added; consumers should ignore unknown ones.
 - Removing a field or changing its type requires a version bump.
+- v7 added `metric`, `backend` and `instructions_per_unit`, and a timing run now has one Lyra result
+  per backend, which a v6 consumer keying results by case and tool would read as one.
 - `output` was added within v6, and `detail` changed what it says without changing its type.
 - The v5 field `probes` does not appear; it was the length of `readings`.
 - The v4 fields `intent`, `primary`, `secondary`, `focus`, `optimized`, `params`, `rss_max_mb`,
