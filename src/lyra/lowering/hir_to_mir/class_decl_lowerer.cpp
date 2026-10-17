@@ -263,6 +263,7 @@ auto ClassDeclLowerer::DeclareShape(
       .self_pointer_type = self_pointer_type,
       .declaring_instance = std::nullopt,
       .time_resolution = {},
+      .execution = {},
       .ctor_prefix_params = {},
       .fields = {},
       .named_fields = {},

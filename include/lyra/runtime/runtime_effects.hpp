@@ -60,7 +60,8 @@ class RuntimeEffects {
   void Schedule(SimTime when, Region region, Timer& timer);
 
   // The wait that parked `activation` is satisfied, so it becomes runnable in
-  // the Active region of the current slot (LRM 4.5). Ending the wait belongs to
+  // the current slot, in the Active region of its thread's region set --
+  // Reactive for a program's (LRM 4.5, 24.3.1). Ending the wait belongs to
   // the same step: nothing it was parked on -- the sibling observables of an
   // `@(a or b)`, the event it waited for -- may fire it a second time, and a
   // suspend in the woken-but-not-yet-resumed window then saves a runnable
@@ -110,11 +111,12 @@ class RuntimeEffects {
   void Submit(SimTime when, Region region, OwnedCall effect);
 
   // The regions a deferred effect is written into, one entry each: the
-  // construct that writes it fixes the region, and the slot is the current one
-  // unless the entry takes a delay.
+  // construct that writes it fixes the region within the writing thread's
+  // region set, and the slot is the current one unless the entry takes a delay.
   void SubmitNba(OwnedCall closure);
   // LRM 9.4.5: a nonblocking effect carrying a delay control schedules its
-  // update into the NBA region of the slot that delay names (LRM 4.4.2.4).
+  // update into the NBA region of its thread's region set -- Re-NBA for a
+  // program's -- in the slot that delay names (LRM 4.4.2.4, 4.4.2.8).
   // `duration` is an amount in the scope's time unit, read exactly as a delay
   // control reads one; an integral amount of any type is read through its
   // planes.

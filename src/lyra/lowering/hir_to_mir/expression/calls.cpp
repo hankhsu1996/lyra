@@ -203,6 +203,15 @@ auto LowerSystemSubroutineCall(
               return RejectStructuralEffect(span);
             }
           },
+          [&](const support::ProgramControlSystemSubroutineInfo&)
+              -> diag::Result<mir::Expr> {
+            if constexpr (kProcedural) {
+              return LowerProgramControlSystemSubroutineCall(
+                  lowerer, *frame.current_block, span);
+            } else {
+              return RejectStructuralEffect(span);
+            }
+          },
           [&](const support::DiagnosticSystemSubroutineInfo& diag_info)
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {

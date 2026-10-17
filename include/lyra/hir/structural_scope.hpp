@@ -429,8 +429,11 @@ struct InterfacePortConnection {
   auto operator==(const InterfacePortConnection&) const -> bool = default;
 };
 
+// One connection of the instance `instance` names, as this scope reaches it --
+// the element of an instance array included (LRM 23.3.3, 23.3.3.5).
 struct PortConnection {
   diag::SourceSpan span;
+  OwnedChildStep instance;
   std::variant<DataPortConnection, InterfacePortConnection> kind;
 
   auto operator==(const PortConnection&) const -> bool = default;

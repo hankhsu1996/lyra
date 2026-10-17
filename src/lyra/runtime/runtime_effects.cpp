@@ -15,10 +15,10 @@
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
+#include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_value.hpp"
-#include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/format.hpp"
@@ -40,6 +40,13 @@ namespace {
 auto CurrentRuntimeSlot() -> RuntimeEffects*& {
   thread_local RuntimeEffects* slot = nullptr;
   return slot;
+}
+
+// Where a nonblocking assignment the running thread makes updates: NBA in the
+// design, Re-NBA in a program's thread, wherever the code was declared (LRM
+// 24.3.1, 24.5).
+auto RunningNbaRegion(RuntimeEffects& effects) -> Region {
+  return AsRuntime(effects).RunningContext().regions.nba;
 }
 
 // What a violation report records where it is created: the executing process's
@@ -69,7 +76,7 @@ auto AssertionReportValidity(RuntimeProcess& process)
 auto StartWhenDue(RuntimeEffects& effects, Coroutine<void> action)
     -> OwnedCall {
   Runtime& runtime = AsRuntime(effects);
-  const ExecutionContext context = runtime.RunningContext();
+  const ExecutionContext context = runtime.RunningContext().WithoutLineage();
   return [&runtime, context, rng = context.SplitInitializationRng(),
           action = std::move(action)]() mutable {
     runtime.RunAction(context, std::move(action), rng);
@@ -144,7 +151,7 @@ void RuntimeEffects::Schedule(SimTime when, Region region, Timer& timer) {
 
 void RuntimeEffects::Wake(Activation* activation) {
   ConsumeWait(activation);
-  Schedule(Now(), Region::kActive, activation);
+  Schedule(Now(), activation->Process().Context().regions.active, activation);
 }
 
 void RuntimeEffects::Submit(SimTime when, Region region, OwnedCall effect) {
@@ -152,7 +159,7 @@ void RuntimeEffects::Submit(SimTime when, Region region, OwnedCall effect) {
 }
 
 void RuntimeEffects::SubmitNba(OwnedCall closure) {
-  Submit(Now(), Region::kNba, std::move(closure));
+  Submit(Now(), RunningNbaRegion(*this), std::move(closure));
 }
 
 void RuntimeEffects::SubmitNbaAfter(
@@ -162,7 +169,7 @@ void RuntimeEffects::SubmitNbaAfter(
   const auto precision = static_cast<std::int8_t>(precision_power);
   Submit(
       DelayDeadline(*this, DelayTicks(duration, unit, precision), precision),
-      Region::kNba, std::move(closure));
+      RunningNbaRegion(*this), std::move(closure));
 }
 
 void RuntimeEffects::SubmitNbaAfterReal(
@@ -173,7 +180,7 @@ void RuntimeEffects::SubmitNbaAfterReal(
   Submit(
       DelayDeadline(
           *this, DelayTicksReal(duration, unit, precision), precision),
-      Region::kNba, std::move(closure));
+      RunningNbaRegion(*this), std::move(closure));
 }
 
 void RuntimeEffects::SubmitPostponed(OwnedCall closure) {
@@ -265,7 +272,8 @@ void RuntimeEffects::WakeParkedOn(
                 Wake(woken);
               }
             },
-            [](SampledValue* sampled) { sampled->Reached(); }},
+            [](SampledValue* sampled) { sampled->Reached(); },
+            [this](ProgramThreads* program) { program->RootEnded(*this); }},
         membership.observer);
   });
 }
@@ -341,7 +349,7 @@ auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
   // `disable` landing before its first resumption still reaches it.
   child->InheritEnclosingTargets(parent);
   parent.Children().Adopt(child);
-  Schedule(Now(), Region::kActive, activation);
+  Schedule(Now(), child->Context().regions.active, activation);
   return child;
 }
 
@@ -358,13 +366,14 @@ void RuntimeEffects::RunDetached(Coroutine<void> coroutine) {
   // no random values, and taking a generator out of the process that reached
   // the statement would move that process's own stream (LRM 18.14.1).
   auto carrier = std::make_shared<RuntimeProcess>(
-      reached_by->Context(), std::move(coroutine), DrawRng{RandomSeed{0}});
+      reached_by->Context().WithoutLineage(), std::move(coroutine),
+      DrawRng{RandomSeed{0}});
   Activation* const activation = carrier->TopActivation();
   // No lineage and no disable membership: the standard makes no process of the
   // update this carries out, so nothing that names processes may find it. What
   // keeps it alive until it ends is therefore the runtime itself.
+  Schedule(Now(), carrier->Context().regions.active, activation);
   rt.AdoptProcess(std::move(carrier));
-  Schedule(Now(), Region::kActive, activation);
 }
 
 auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {

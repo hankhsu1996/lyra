@@ -1,7 +1,9 @@
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
 
 #include <expected>
+#include <initializer_list>
 #include <utility>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -24,6 +26,27 @@ namespace {
 
 // The finish number a call that gives none takes (LRM 20.2).
 constexpr int kDefaultFinishNumber = 1;
+
+// A call to `entry` on the runtime handle, carrying where the call was written
+// and then `more`: every control task reports where it was called.
+auto ControlCallAt(
+    const ProcessLowerer& process, mir::Block& block, support::BuiltinFn entry,
+    diag::SourceSpan span, std::initializer_list<mir::ExprId> more)
+    -> mir::Expr {
+  const auto& unit = process.Owner().Unit();
+  std::vector<mir::ExprId> arguments = {
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner())),
+      BuildStringValueExpr(
+          unit, block,
+          diag::RuntimeOriginOf(span, process.Owner().SourceManager()))};
+  arguments.insert(arguments.end(), more);
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee = mir::Direct{.target = entry},
+              .arguments = std::move(arguments)},
+      .type = unit.builtins.void_type};
+}
 
 }  // namespace
 
@@ -56,18 +79,7 @@ auto BuildFinishNumber(
 auto BuildEndRunCall(
     const ProcessLowerer& process, mir::Block& block, support::BuiltinFn entry,
     mir::ExprId finish_number, diag::SourceSpan span) -> mir::Expr {
-  const auto& unit = process.Owner().Unit();
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId origin_id = BuildStringValueExpr(
-      unit, block,
-      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = entry},
-              .arguments = {runtime_id, origin_id, finish_number}},
-      .type = unit.builtins.void_type};
+  return ControlCallAt(process, block, entry, span, {finish_number});
 }
 
 auto LowerTerminationSystemSubroutineCall(
@@ -78,6 +90,12 @@ auto LowerTerminationSystemSubroutineCall(
   if (!finish_number) return std::unexpected(std::move(finish_number.error()));
   return BuildEndRunCall(
       process, *frame.current_block, info.builtin_fn, *finish_number, span);
+}
+
+auto LowerProgramControlSystemSubroutineCall(
+    const ProcessLowerer& process, mir::Block& block, diag::SourceSpan span)
+    -> mir::Expr {
+  return ControlCallAt(process, block, support::BuiltinFn::kExit, span, {});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

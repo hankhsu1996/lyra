@@ -4,6 +4,8 @@
 #include <span>
 #include <string_view>
 
+#include "lyra/support/scope_execution.hpp"
+
 namespace lyra::runtime {
 
 // The entries a unit holds as a constant array: where the array is and how
@@ -30,10 +32,17 @@ inline constexpr std::int8_t kUnspecifiedTimePower = 127;
 // A scope's immutable constant properties, known when its class is declared
 // and never computed by running generated code: its effective time unit and
 // precision as powers of ten (LRM Table 20-2), each the scope's own timescale
-// or the one it inherits (LRM 3.14.2.3).
+// or the one it inherits (LRM 3.14.2.3), and how what an instance starts is
+// run (LRM 24.3.1), held as the number a constant record writes.
 struct ScopeMetadata {
   std::int8_t time_unit_power = kUnspecifiedTimePower;
   std::int8_t time_precision_power = kUnspecifiedTimePower;
+  std::uint8_t execution =
+      static_cast<std::uint8_t>(support::ScopeExecution::kDesign);
+
+  [[nodiscard]] auto Execution() const -> support::ScopeExecution {
+    return static_cast<support::ScopeExecution>(execution);
+  }
 };
 
 // A body as a table of the runtime holds it: a code address with its prototype

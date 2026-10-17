@@ -87,8 +87,9 @@ void AppendRecord(
 void AppendRecord(
     std::vector<FieldLayout>& out, std::uint64_t at,
     const runtime::ScopeMetadata& record) {
-  const auto& [time_unit_power, time_precision_power] = record;
-  AppendFieldsOf(out, at, record, time_unit_power, time_precision_power);
+  const auto& [time_unit_power, time_precision_power, execution] = record;
+  AppendFieldsOf(
+      out, at, record, time_unit_power, time_precision_power, execution);
 }
 
 void AppendRecord(

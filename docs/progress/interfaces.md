@@ -336,9 +336,6 @@ does, so a call on either is resolved where the caller compiles and nothing sepa
   clocking block, and virtual interface modports selecting one (LRM 25.9.1, 25.9.2). No clocking
   block is supported in any scope; the construct is its own workstream, and every interface-side use
   of it waits for that rather than blocking this one.
-- `program` blocks (LRM 24) and their interface ports. A program is a compilation-unit kind with its
-  own scheduling region and its own termination semantics; interface support neither depends on it
-  nor delivers it.
 - Interfaces used as terminals in specify blocks (LRM 25.6). Specify blocks belong to the timing
   domain, which has no support in any scope.
 - The restrictions LRM 25.3 and 25.9 place on a `defparam` reaching a parameter of an interface

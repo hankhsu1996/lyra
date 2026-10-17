@@ -32,15 +32,16 @@ struct WithoutStopping {};
 // for it: a value change, a trigger, a join, a termination.
 struct OnAnOccurrence {};
 
-// Later in the time step it stopped in, in `region`: a `#0` delay resumes in
-// the Inactive region (LRM 4.4.2.3), a nonblocking assignment's carrier in the
-// NBA region (LRM 4.4.2.4).
+// Later in the time step it stopped in, in `region` of the region set the
+// execution runs in: a `#0` delay resumes in the Inactive or Re-Inactive region
+// (LRM 4.4.2.3, 4.4.2.7), a nonblocking assignment's carrier in the NBA or
+// Re-NBA region (LRM 4.4.2.4, 4.4.2.8).
 struct LaterInThisTimeStep {
-  Region region;
+  RegionInSet region;
 };
 
-// At the time step `when`, in the Active region (LRM 4.4.2.2); a time already
-// reached is now.
+// At the time step `when`, in the region the execution runs in, Active or
+// Reactive (LRM 4.4.2.2, 24.3.1); a time already reached is now.
 struct AtTime {
   SimTime when;
 };
@@ -48,12 +49,15 @@ struct AtTime {
 using Resumption =
     std::variant<WithoutStopping, OnAnOccurrence, LaterInThisTimeStep, AtTime>;
 
+class ProgramThreads;
 class SampledValue;
 
 // What is enrolled on a place to be told of what happens there: the awaiter of
-// a wait, told so that the execution parked on it may be woken, or a sampled
-// value, which wakes nothing.
-using Observer = std::variant<Awaiter*, SampledValue*>;
+// a wait, told so that the execution parked on it may be woken; a sampled
+// value, which wakes nothing; or a program, told as each of its initial
+// procedures ends, which ends the rest of its threads at once once they all
+// have (LRM 24.3).
+using Observer = std::variant<Awaiter*, SampledValue*, ProgramThreads*>;
 
 // One place an observer watches: an observable, a named event, a join, a `wait
 // fork` condition, a process's termination. It stands for as long as the

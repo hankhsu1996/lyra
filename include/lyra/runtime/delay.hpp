@@ -52,9 +52,10 @@ auto DelayDeadline(
 
 // Where a delay of `ticks` steps of `precision_power` from now is due. A delay
 // of no steps is an explicit `#0`, due later in this time step in the Inactive
-// region (LRM 4.4.2.3); any other is due at its deadline, in the Active region
-// (LRM 4.4.2.2). A process stopped at a delay and a propagation a continuous
-// assignment's delay schedules (LRM 10.3.3) are due there alike.
+// region of the region set it is placed in (LRM 4.4.2.3, 4.4.2.7); any other is
+// due at its deadline, in that set's Active region (LRM 4.4.2.2, 24.3.1). A
+// process stopped at a delay and a propagation a continuous assignment's delay
+// schedules (LRM 10.3.3) are due there alike.
 using DelayDue = std::variant<LaterInThisTimeStep, AtTime>;
 auto DueAfter(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)

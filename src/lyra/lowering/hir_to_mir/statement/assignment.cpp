@@ -75,6 +75,10 @@ auto LowerSystemSubroutineCallStmtForm(
               -> std::optional<diag::Result<mir::Stmt>> {
             return std::nullopt;
           },
+          [](const support::ProgramControlSystemSubroutineInfo&)
+              -> std::optional<diag::Result<mir::Stmt>> {
+            return std::nullopt;
+          },
           [](const support::DiagnosticSystemSubroutineInfo&)
               -> std::optional<diag::Result<mir::Stmt>> {
             return std::nullopt;

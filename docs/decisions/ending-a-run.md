@@ -46,12 +46,22 @@ a departure  this execution leaves, and no region may claim it. Ends one activat
 ```text
 $info / $warning / $error   report
 $fatal                      report + stop + departure
-$finish / $exit / $stop     stop + departure
+$finish / $stop             stop + departure
+$exit                       a departure of every thread of the calling thread's program, from a
+                            thread of a program; from any other thread a warning, and nothing else
+                            (LRM 24.7)
+the last program ending     stop (LRM 24.3)
 a design run-time error     report [+ stop + departure]  by its chosen severity
 an internal inconsistency   the tool stops the run; none of the three, and no ending of the design's
 a refused request for       the program ends where it asked; none of the three, and nothing of
 memory                      the run after it
 ```
+
+`$exit` is not a stop. LRM 20.2 has it wait for every program to complete and then make an implicit
+call to `$finish`, and points to LRM 24.7 for what a call does: it ends the program the calling
+thread originates in, and from any other thread it is ignored. So it ends threads rather than the
+run, and the run ends when the last program does, which is the implicit `$finish` LRM 24.3 makes.
+That stop has no call, so it prints nothing.
 
 The composition is not new. `$fatal` already lowers to a severity emit followed by a finish request,
 which is LRM 20.10's "results in an implicit call to `$finish`" written out. What this entry does is

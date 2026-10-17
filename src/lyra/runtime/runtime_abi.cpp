@@ -2835,6 +2835,10 @@ void lyra_rt_stop(
       finish_number);
 }
 
+void lyra_rt_exit(void* runtime, const void* origin) {
+  Exit(*static_cast<RuntimeEffects*>(runtime), Read<String>(origin));
+}
+
 auto lyra_rt_run_host_command(void* runtime, const void* command, void* out)
     -> void* {
   return Emplace(

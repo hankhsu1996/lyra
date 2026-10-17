@@ -2,11 +2,11 @@
 
 Tracks SystemVerilog procedural-block constructs and the supporting timing-control machinery.
 
-The numeric IDs (P1..P16, T1..T7) are stable references and do **not** imply execution order.
+The numeric IDs (P1..P20, T1..T7) are stable references and do **not** imply execution order.
 
 ## Actionable
 
-Every numbered item is closed but P12 and P19. What stays open otherwise is the forms recorded as
+Every numbered item is closed but P12 and P20. What stays open otherwise is the forms recorded as
 rejected under each item, and the conformance gaps at the end.
 
 ## Blocked
@@ -46,17 +46,18 @@ rejected under each item, and the conformance gaps at the end.
       one of these rather than something that escapes past the host boundary. Which severity each
       LRM run-time error takes stays open per condition; what is fixed is that a condition the
       standard leaves unstated is fatal, and that a report which does not end the run can be made.
-- [x] P17 -- An ending task written inside a function. `$finish`, `$stop`, `$exit` and `$fatal` run
-      there as they do anywhere: the run ends and the calling execution departs, so nothing after
-      the call runs -- not the rest of the function, not the functions and methods it was called
-      through, and not the procedure around them. LRM 13.4's restriction does not reach them: it is
-      a closed list of time-controlling statements -- `#`, `##`, `@`, the `fork-join` family,
-      `wait`, `wait fork`, `wait_order`, `expect` -- and rule (c) of the same clause positively
-      admits a function that kills the current process, which is no less final. It is the natural
-      shape of a checking helper: a severity task under an `if`, called from several places. An
-      exported function may end the run too: the foreign frames beneath it are in the disabled state
-      of LRM 35.9, as under a kill, and return on their own, and a further call into an export is
-      reported and runs nothing.
+- [x] P17 -- An ending task written inside a function. `$finish`, `$stop` and `$fatal` run there as
+      they do anywhere: the run ends and the calling execution departs, so nothing after the call
+      runs -- not the rest of the function, not the functions and methods it was called through, and
+      not the procedure around them. `$exit` does there what it does anywhere: from a thread of a
+      program it ends that program, the calling execution with it, and from any other thread it is
+      ignored. LRM 13.4's restriction does not reach them: it is a closed list of time-controlling
+      statements -- `#`, `##`, `@`, the `fork-join` family, `wait`, `wait fork`, `wait_order`,
+      `expect` -- and rule (c) of the same clause positively admits a function that kills the
+      current process, which is no less final. It is the natural shape of a checking helper: a
+      severity task under an `if`, called from several places. An exported function may end the run
+      too: the foreign frames beneath it are in the disabled state of LRM 35.9, as under a kill, and
+      return on their own, and a further call into an export is reported and runs nothing.
 - [x] P3 -- `always` / `always_ff` (LRM 9.2.2). `always_ff` collapses to the same shape as `always`
       because the LRM 9.2.2.4 restrictions are lint-only and the frontend already enforces them.
       Procedures that keep waking each other with no delay between them (LRM 9.2.2, 12.7.6) end the
@@ -303,13 +304,17 @@ rejected under each item, and the conformance gaps at the end.
         It is reported as a compiler bug. Whether the standard gives such a fork a parent, or makes
         the program illegal, has not been read; either way the answer is not an internal error.
 
-- [ ] P19 -- A program block (LRM 24) runs as a module does, so what the clause gives a program
-      alone is not carried out. The run does not end when every initial procedure of every program
-      has ended, where LRM 24.3 makes it end by an implicit `$finish`: a module's later statements
-      still run. `$exit` ends the whole run where it is reached, where LRM 24.7 ends only the
-      initial procedures of the program that called it, ignores a call from anywhere else, and
-      leaves the run to end once every program has (LRM 20.2), so a `$exit` in a module ends a run
-      that should go on.
+- [x] P19 -- A program block (LRM 24) runs as a program. Its initial procedures, its continuous
+      assignments and the connections of its ports run in the reactive region set, and so does every
+      thread they start and every subroutine those threads call, wherever it is declared: a
+      resumption lands in Reactive, a `#0` in Re-Inactive and a nonblocking assignment in Re-NBA
+      (LRM 24.3.1, 24.5). Once a program's initial procedures have all ended it ends whatever they
+      started, and once every program has ended the run ends by an implicit `$finish`, with `final`
+      procedures run (LRM 24.3). `$exit` ends the program the calling thread originates in, and from
+      any other thread is ignored with a warning (LRM 24.7).
+- [ ] P20 -- An anonymous program (LRM 24.6) is refused as a declaration form not yet supported, and
+      a name reaching one of its items is refused with it. A program nested in a module reading the
+      module's variables is refused as a nested module doing so is, which `hierarchy.md` tracks.
 
 ### Generate
 
@@ -318,8 +323,5 @@ rejected under each item, and the conformance gaps at the end.
 
 ## Out of Scope
 
-- Scheduler-region behaviour (Active / Inactive / NBA / Observed / Reactive / Postponed). Each
-  region's invariants belong to a scheduling workstream; create `scheduling.md` when that workstream
-  becomes actionable.
 - `disable` and `disable fork` (LRM 9.6). Tracked separately under process control.
 - `expect` statement and `wait_order`. Verification-only constructs.

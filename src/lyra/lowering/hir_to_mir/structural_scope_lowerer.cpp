@@ -1672,9 +1672,26 @@ auto InstallPortConnections(
         lowerer, frame, resolve_frame, init_frame, assign);
     if (!method_or) return std::unexpected(std::move(method_or.error()));
     const mir::CallableId body = mir_class.callables.Add(std::move(*method_or));
-    AppendProcessRegistration(
-        unit_lowerer, activate_frame, body,
-        support::BuiltinFn::kRegisterContinuousDriver, pc.span);
+    // The drive belongs to the instance whose code it evaluates: this one for
+    // an input, which reads what this scope wrote, and the child for an output,
+    // which reads the child's port and so runs as the child's code does (LRM
+    // 24.3.2).
+    const mir::ExprId belongs_to =
+        is_input ? BuildEnclosingScopeReceiver(
+                       activate_frame, unit_lowerer.Unit(),
+                       activate_frame.HopsToUnitRoot())
+                 : ObjectAs(
+                       *activate_frame.current_block,
+                       BuildRouteWalk(
+                           lowerer, activate_frame, hir::InUnitBase{.hops = {}},
+                           std::array{hir::AsPathStep(pc.instance)})
+                           .expr,
+                       unit_lowerer.Unit().builtins.scope_ptr);
+    activate_frame.current_block->AppendStmt(
+        mir::ExprStmt{
+            .expr = BuildExecutionStartIn(
+                unit_lowerer, activate_frame, belongs_to, body,
+                support::BuiltinFn::kRegisterContinuousDriver, pc.span)});
   }
   return {};
 }
@@ -2182,6 +2199,17 @@ auto LowerGenerateAsStmt(
 auto BuildExecutionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
     support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
+  return BuildExecutionStartIn(
+      unit_lowerer, frame,
+      BuildEnclosingScopeReceiver(
+          frame, unit_lowerer.Unit(), frame.HopsToUnitRoot()),
+      body, start, written_at);
+}
+
+auto BuildExecutionStartIn(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    mir::ExprId unit_instance, mir::CallableId body, support::BuiltinFn start,
+    diag::SourceSpan written_at) -> mir::ExprId {
   mir::Block& block = *frame.current_block;
   const mir::ExprId body_self = BuildObjectDeref(
       unit_lowerer.Unit(), block, block.exprs.Add(MakeSelfRefExpr(frame)));
@@ -2199,8 +2227,6 @@ auto BuildExecutionStart(
                   .arguments = {}},
           .type = unit_lowerer.Unit().builtins.coroutine_void});
   const mir::ExprId scope = block.Read(block.exprs.Add(MakeSelfRefExpr(frame)));
-  const mir::ExprId unit_instance = BuildEnclosingScopeReceiver(
-      frame, unit_lowerer.Unit(), frame.HopsToUnitRoot());
   const mir::ExprId place = block.exprs.Add(
       mir::Expr{
           .data =
@@ -2351,6 +2377,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
   shape.is_final = true;
   shape.self_pointer_type = self_pointer_type;
   shape.time_resolution = hir_scope.time_resolution;
+  shape.execution = unit_lowerer.ScopeExecution();
 
   AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), shape);
   // What construction supplies is what distinguishes one built scope from
@@ -2591,6 +2618,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
                     mir::ObjectType{.of = mir::IntraUnitClassRef{node_class}}}),
             .ownership = mir::PointerOwnership::kBorrowed}});
     node_shape.time_resolution = hir_scope.time_resolution;
+    node_shape.execution = unit_lowerer.ScopeExecution();
     AttachRuntimeScopeCtorPrefix(unit_lowerer.Unit(), node_shape);
     unit_lowerer.DefineClassShape(node_class, std::move(node_shape));
     shape.contained.push_back(node_class);

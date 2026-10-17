@@ -44,6 +44,19 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
+// The role of a unit compiled from the design element `body` was elaborated
+// from.
+auto RoleOf(const slang::ast::InstanceBodySymbol& body) -> hir::UnitRole {
+  switch (body.getDefinition().definitionKind) {
+    case slang::ast::DefinitionKind::Module:
+    case slang::ast::DefinitionKind::Interface:
+      return hir::UnitRole::kModuleOrInterface;
+    case slang::ast::DefinitionKind::Program:
+      return hir::UnitRole::kProgram;
+  }
+  throw InternalError("RoleOf: a design element of no kind");
+}
+
 // An instance read through a body of its own: what the front end elaborated
 // for it, the unit it is an object of, and the name of the body it is compiled
 // to. What was elaborated belongs to an instance the names were computed from,
@@ -437,7 +450,7 @@ struct DeclaredDesign::Units {
     return std::make_unique<UnitLowerer>(
         facts, *collected.elaborated,
         hir::UnitBodyRef{.unit = collected.unit, .body = collected.body},
-        hir::UnitRole::kObjectRoot,
+        RoleOf(*collected.elaborated),
         others == checked_against.end()
             ? std::span<const slang::ast::InstanceBodySymbol* const>{}
             : std::span<const slang::ast::InstanceBodySymbol* const>{

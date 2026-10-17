@@ -1170,6 +1170,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("Stop"),
           .takes_the_runtime_handle = true,
           .ending = CallEnding::kDeparts};
+    case BuiltinFn::kExit:
+      return {
+          .name = "exit",
+          .declaration = RuntimeFunction("Exit"),
+          .takes_the_runtime_handle = true};
     case BuiltinFn::kEnclosingScope:
       return {
           .name = "enclosing_scope", .declaration = Method{"EnclosingScope"}};

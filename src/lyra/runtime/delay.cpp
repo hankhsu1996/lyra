@@ -184,7 +184,7 @@ auto DueAfter(
     RuntimeEffects& runtime, SimDuration ticks, std::int8_t precision_power)
     -> DelayDue {
   if (ticks == 0) {
-    return LaterInThisTimeStep{.region = Region::kInactive};
+    return LaterInThisTimeStep{.region = RegionInSet::kInactive};
   }
   return AtTime{.when = DelayDeadline(runtime, ticks, precision_power)};
 }

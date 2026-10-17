@@ -16,7 +16,8 @@ the feature file its domain belongs to.
       The finish-number argument (0 / 1 / 2) and its end-of-simulation reporting are the axis
       `$finish` shares, tracked as `processes.md` P14; this item is the two entry points and their
       termination behaviour.
-  - [ ] `$exit` is tracked with the program block it belongs to, as `processes.md` P19.
+  - [x] `$exit` ends the program the calling thread originates in, and is ignored with a warning
+        from any other thread (LRM 24.7).
 - [ ] `$readmemh` / `$readmemb` on an associative memory with a wildcard index, or on a memory of
       several dimensions with one of variable size, stops the build as not yet supported.
 - [ ] `$dist_*` with a seed written as a concatenation of variables stops the build as not yet

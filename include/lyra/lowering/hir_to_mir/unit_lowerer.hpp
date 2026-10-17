@@ -34,6 +34,7 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/scope_execution.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -157,6 +158,10 @@ class UnitLowerer {
   [[nodiscard]] auto Hir() const -> const hir::CompilationUnit& {
     return *hir_;
   }
+
+  // How the runtime runs what an instance of one of this unit's scopes
+  // starts: as a program's, where the unit is one (LRM 24.3.1).
+  [[nodiscard]] auto ScopeExecution() const -> support::ScopeExecution;
 
   // The order this unit's construction table lists its instantiations in.
   [[nodiscard]] auto ConstructionLayout() const

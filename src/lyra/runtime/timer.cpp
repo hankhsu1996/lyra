@@ -9,6 +9,8 @@
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/region.hpp"
+#include "lyra/runtime/running_state.hpp"
+#include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 
 namespace lyra::runtime {
@@ -26,13 +28,15 @@ void Timer::Bind(OwnedCall fire, std::int64_t precision_power) {
 
 void Timer::Arm(RuntimeEffects& effects, SimDuration ticks) {
   place_.Unlink();
+  // Armed by the drive it propagates, so it fires in that drive's region set.
+  const RegionSet regions = AsRuntime(effects).RunningContext().regions;
   std::visit(
       Overloaded{
           [&](LaterInThisTimeStep due) {
-            effects.Schedule(effects.Now(), due.region, *this);
+            effects.Schedule(effects.Now(), regions[due.region], *this);
           },
           [&](AtTime due) {
-            effects.Schedule(due.when, Region::kActive, *this);
+            effects.Schedule(due.when, regions.active, *this);
           }},
       DueAfter(effects, ticks, precision_power_));
 }

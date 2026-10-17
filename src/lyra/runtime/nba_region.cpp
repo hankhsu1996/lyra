@@ -10,7 +10,7 @@ namespace {
 class NbaRegionAwaiter final : public Awaiter {
  public:
   auto Begin() -> Resumption override {
-    return LaterInThisTimeStep{.region = Region::kNba};
+    return LaterInThisTimeStep{.region = RegionInSet::kNba};
   }
 
   // A region boundary inside one update, not a construct LRM 12.4.2.1 names as

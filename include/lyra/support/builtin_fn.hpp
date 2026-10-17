@@ -754,6 +754,9 @@ enum class BuiltinFn : std::uint16_t {
   // names the entry that prints for it.
   kFinish,
   kStop,
+  // LRM 24.7 `$exit`: ends the program the running thread originates in, the
+  // running thread with it, or, called from any other thread, is ignored.
+  kExit,
   // Where a hierarchical name leaving an instance starts (LRM 23.6 / 23.8):
   // the nearest scope above the receiver that is of the class handed in, an
   // instance or a generate block, or past the topmost a top-level instance of

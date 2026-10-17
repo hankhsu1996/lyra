@@ -28,9 +28,8 @@ auto LowerUnitToSemantic(
   const profiling::TimeTraceScope span(
       "lower to MIR", [&] { return unit.body_name; });
   lowering::hir_to_mir::UnitLowerer lowerer(unit, source_manager);
-  auto semantic = unit.role == hir::UnitRole::kNamespace
-                      ? lowerer.RunNamespace()
-                      : lowerer.RunObjectRoot();
+  auto semantic = hir::RootsAnObject(unit.role) ? lowerer.RunObjectRoot()
+                                                : lowerer.RunNamespace();
   if (!semantic) {
     return semantic;
   }

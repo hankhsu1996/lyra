@@ -649,6 +649,11 @@ auto lyra_rt_realtime(void* runtime, std::int64_t unit_power, void* out)
 [[noreturn]] void lyra_rt_stop(
     void* runtime, const void* origin, std::int64_t finish_number);
 
+// LRM 24.7 `$exit`: departs from the calling execution where it ends the
+// program that execution originates in, and returns where it is ignored,
+// reporting the call at `origin`, an opaque string value.
+void lyra_rt_exit(void* runtime, const void* origin);
+
 // Runs a command line through the host's command processor and yields what it
 // answered; the null form runs nothing and yields whether a command processor
 // exists at all (LRM 20.17.1). The command crosses as an opaque string value

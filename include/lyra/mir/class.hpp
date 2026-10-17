@@ -23,6 +23,7 @@
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/scope_execution.hpp"
 
 namespace lyra::mir {
 
@@ -127,6 +128,9 @@ struct Class {
   // the engine can take the design-global minimum (LRM 3.14.3) and delays
   // scale to it.
   TimeResolution time_resolution;
+  // How the runtime runs what an instance of a class standing in the design
+  // hierarchy starts (LRM 24.3.1), told where its timescale is.
+  support::ScopeExecution execution = support::ScopeExecution::kDesign;
   base::Arena<FieldDecl, FieldId> fields;
   // The identifiers the source wrote for storage this class holds, each paired
   // with the field it reaches. A declared variable, an instance and a signal a
