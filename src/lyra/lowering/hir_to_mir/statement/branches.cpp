@@ -10,8 +10,10 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -30,7 +32,6 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -213,34 +214,6 @@ auto SnapshotCaseSubject(
       .type = type};
 }
 
-// The test of one case label. Every condition compares its labels exactly: an
-// x or a z stands for itself and matches itself, where logical equality would
-// answer x and send the whole statement to its default arm (LRM 12.5). Which
-// bits are do-not-care is the condition's own business, so each form has its
-// own question rather than an operator a target applies. The membership
-// condition (LRM 12.5.4) tests its labels a different way and never asks.
-auto BuildLabelTest(
-    const mir::CompilationUnit& unit, mir::Block& block,
-    hir::CaseCondition condition, mir::ExprId selector, mir::ExprId label)
-    -> mir::ExprId {
-  const auto entry = [&](support::BuiltinFn fn) {
-    return BuildValueOperation(
-        unit, block, fn, selector, {label}, unit.builtins.bit1);
-  };
-  switch (condition) {
-    case hir::CaseCondition::kNormal:
-      return BuildCaseEquality(unit, block, selector, label);
-    case hir::CaseCondition::kWildcardJustZ:
-      return entry(support::BuiltinFn::kCasezEquals);
-    case hir::CaseCondition::kWildcardXOrZ:
-      return entry(support::BuiltinFn::kCasexEquals);
-    case hir::CaseCondition::kInside:
-      break;
-  }
-  throw InternalError(
-      "BuildLabelTest: condition tests its labels by membership");
-}
-
 }  // namespace
 
 // LRM 12.4: the arms are tested in order and the first that holds is taken, an
@@ -286,10 +259,9 @@ auto LowerIfStmt(
 
 // LRM 12.5: the subject is evaluated once, the items are searched in order,
 // and an item is selected when any of its labels matches, that search too
-// stopping at the first that does. LRM 12.5 and 12.5.1 test a label with an
-// equality primitive -- exact, or one of the two do-not-care forms -- and LRM
-// 12.5.4 with set membership instead, which is the whole difference between the
-// four case conditions.
+// stopping at the first that does. LRM 12.5 and 12.5.1 test a label by
+// comparing it as the case keyword compares two values, and LRM 12.5.4 by set
+// membership instead, which is the whole difference between the forms.
 auto LowerCaseStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::CaseStmt& c, diag::SourceSpan span) -> diag::Result<mir::Stmt> {
@@ -300,25 +272,32 @@ auto LowerCaseStmt(
   if (!subject_or) return std::unexpected(std::move(subject_or.error()));
   const CaseSubject subject = *subject_or;
 
-  const auto label_test =
+  const auto test_label =
       [&](const WalkFrame& at,
           hir::ExprId label_expr) -> diag::Result<mir::ExprId> {
     mir::Block& block = *at.current_block;
-    if (c.condition_kind == hir::CaseCondition::kInside) {
-      return BuildSetMemberTest(
-          process, at, block.ReadLocal(subject.local, subject.type), label_expr,
-          unit.builtins.bit1);
-    }
-    // The selector and the label are compared where they lie, which a
-    // structure's own method borrows them at.
-    const mir::ExprId selector = block.LocalPlace(subject.local, subject.type);
-    auto written =
-        process.LowerAsPlace(process.HirBody().exprs.Get(label_expr), at);
-    if (!written) return std::unexpected(std::move(written.error()));
-    return BuildLabelTest(
-        unit, block, c.condition_kind, selector,
-        OperandAtHandleType(
-            unit, block, block.exprs.Add(*std::move(written)), subject.type));
+    return std::visit(
+        Overloaded{
+            // The selector and the label are compared where they lie, which a
+            // structure's own method borrows them at.
+            [&](hir::CaseKeyword keyword) -> diag::Result<mir::ExprId> {
+              const mir::ExprId selector =
+                  block.LocalPlace(subject.local, subject.type);
+              auto written = process.LowerAsPlace(
+                  process.HirBody().exprs.Get(label_expr), at);
+              if (!written) return std::unexpected(std::move(written.error()));
+              return BuildCaseComparison(
+                  unit, block, keyword, selector,
+                  OperandAtHandleType(
+                      unit, block, block.exprs.Add(*std::move(written)),
+                      subject.type));
+            },
+            [&](hir::CaseInside) -> diag::Result<mir::ExprId> {
+              return BuildSetMemberTest(
+                  process, at, block.ReadLocal(subject.local, subject.type),
+                  label_expr, unit.builtins.bit1);
+            }},
+        c.label_test);
   };
   const ArmTest item_test = [&](const WalkFrame& at,
                                 std::size_t item) -> diag::Result<mir::ExprId> {
@@ -332,7 +311,7 @@ auto LowerCaseStmt(
     tests.reserve(labels.size());
     for (const hir::ExprId label_expr : labels) {
       const Evaluation test = [&](const WalkFrame& point) {
-        return label_test(point, label_expr);
+        return test_label(point, label_expr);
       };
       auto test_or =
           tests.empty() ? test(at) : ConditionallyEvaluated(at, test);
@@ -372,7 +351,7 @@ auto LowerPatternCaseStmt(
     std::vector<Predicate> terms;
     terms.push_back(PatternPredicate(
         process, wrapper_frame, subject.local, subject.type,
-        c.items[item].pattern));
+        c.items[item].pattern, c.keyword));
     if (c.items[item].filter.has_value()) {
       terms.push_back(ExpressionPredicate(process, *c.items[item].filter));
     }

@@ -10,6 +10,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -217,7 +218,8 @@ auto BuildMergingSelection(
 }
 
 // One clause as a predicate: its expression, or, where it matches a pattern,
-// the match of that expression's value, taken once.
+// the match of that expression's value, taken once and compared exactly, as
+// no case form governs it (LRM 12.6.2, 12.6.3).
 template <ExprLowerer Lowerer>
 auto ClausePredicate(
     Lowerer& lowerer, const WalkFrame& declared_in,
@@ -237,10 +239,10 @@ auto ClausePredicate(
         const mir::LocalId subject = SnapshotExprToLocal(
             lowerer.Owner(), steps.Frame(), steps.Body(), subject_value.type,
             *subject_or);
-        auto matched =
-            PatternPredicate(
-                lowerer, declared_in, subject, subject_value.type, pattern)
-                .evaluate(steps.Frame());
+        auto matched = PatternPredicate(
+                           lowerer, declared_in, subject, subject_value.type,
+                           pattern, hir::CaseKeyword::kCase)
+                           .evaluate(steps.Frame());
         if (!matched) return std::unexpected(std::move(matched.error()));
         return at.current_block->exprs.Add(steps.Build(*matched));
       }};

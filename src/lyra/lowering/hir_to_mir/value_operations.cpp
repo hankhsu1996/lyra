@@ -15,6 +15,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
@@ -1767,6 +1768,25 @@ auto BuildCaseEquality(
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kCaseEqual, lhs, {rhs},
       unit.builtins.bit1);
+}
+
+auto BuildCaseComparison(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    hir::CaseKeyword keyword, mir::ExprId value, mir::ExprId label)
+    -> mir::ExprId {
+  const auto entry = [&] {
+    switch (keyword) {
+      case hir::CaseKeyword::kCase:
+        return support::BuiltinFn::kCaseEqual;
+      case hir::CaseKeyword::kCasez:
+        return support::BuiltinFn::kCasezEquals;
+      case hir::CaseKeyword::kCasex:
+        return support::BuiltinFn::kCasexEquals;
+    }
+    throw InternalError("BuildCaseComparison: unknown case keyword");
+  };
+  return BuildValueOperation(
+      unit, block, entry(), value, {label}, unit.builtins.bit1);
 }
 
 auto BuildUnknownTest(

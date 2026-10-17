@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 
-#include <array>
 #include <cstdint>
 #include <expected>
 #include <optional>
@@ -12,7 +11,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/pattern.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/hir/type.hpp"
@@ -21,10 +20,10 @@
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -121,8 +120,8 @@ auto Read(UnitLowerer& owner, mir::Block& block, const Subject& subject)
 template <ExprLowerer Lowerer>
 auto CollectPatternTests(
     Lowerer& lowerer, WalkFrame frame, const Subject& subject,
-    hir::PatternId pattern_id, std::vector<mir::ExprId>& tests)
-    -> diag::Result<void> {
+    hir::PatternId pattern_id, hir::CaseKeyword keyword,
+    std::vector<mir::ExprId>& tests) -> diag::Result<void> {
   auto& owner = lowerer.Owner();
   auto& unit = owner.Unit();
   const hir::Pattern& pattern = lowerer.HirPatterns().Get(pattern_id);
@@ -131,6 +130,10 @@ auto CollectPatternTests(
       Overloaded{
           [&](const hir::WildcardPattern&) -> diag::Result<void> { return {}; },
           [&](const hir::VariablePattern&) -> diag::Result<void> { return {}; },
+          // The front end gives a constant the four-state form of its
+          // position's type, so that it can hold the x and z bits a wildcard
+          // form skips; the value is brought to that type, which loses none
+          // of its bits.
           [&](const hir::ConstantPattern& c) -> diag::Result<void> {
             auto constant_or =
                 lowerer.LowerExpr(lowerer.HirExprs().Get(c.value), frame);
@@ -139,24 +142,23 @@ auto CollectPatternTests(
             }
             const mir::ExprId constant =
                 block.exprs.Add(*std::move(constant_or));
-            const mir::ExprId value = Read(owner, block, subject);
-            tests.push_back(block.exprs.Add(BuildMirBinaryExpr(
-                unit, block, hir::BinaryOp::kEquality, value, constant,
-                OneBitAnswerType(
-                    unit, std::array{
-                              block.exprs.Get(value).type,
-                              block.exprs.Get(constant).type}))));
+            tests.push_back(BuildCaseComparison(
+                unit, block, keyword,
+                AtType(
+                    unit, block, Read(owner, block, subject),
+                    block.exprs.Get(constant).type),
+                constant));
             return {};
           },
           [&](const hir::TaggedPattern& tagged) -> diag::Result<void> {
             tests.push_back(BuildHoldsMember(
                 owner, block, Read(owner, block, subject), pattern.subject_type,
-                tagged.member_index));
+                tagged.member_index, keyword));
             if (!tagged.value_pattern.has_value()) return {};
             return CollectPatternTests(
                 lowerer, frame,
                 MemberOf(subject, pattern.subject_type, tagged.member_index),
-                *tagged.value_pattern, tests);
+                *tagged.value_pattern, keyword, tests);
           },
           [&](const hir::StructurePattern& structure) -> diag::Result<void> {
             for (const auto& [field, field_pattern] :
@@ -166,7 +168,7 @@ auto CollectPatternTests(
                   MemberOf(
                       subject, pattern.subject_type,
                       base::ComponentIndex{static_cast<std::uint32_t>(field)}),
-                  field_pattern, tests);
+                  field_pattern, keyword, tests);
               if (!collected) return collected;
             }
             return {};
@@ -243,11 +245,13 @@ void BindPatternIdentifiers(
 template <ExprLowerer Lowerer>
 auto PatternPredicate(
     Lowerer& lowerer, const WalkFrame& declared_in, mir::LocalId subject,
-    mir::TypeId subject_type, hir::PatternId pattern) -> Predicate {
+    mir::TypeId subject_type, hir::PatternId pattern, hir::CaseKeyword keyword)
+    -> Predicate {
   const mir::TypeId bit = lowerer.Owner().Unit().builtins.bit1;
   return Predicate{
       .type = bit,
       .evaluate = [&lowerer, declared_in, subject, subject_type, pattern,
+                   keyword,
                    bit](const WalkFrame& at) -> diag::Result<mir::ExprId> {
         const mir::CompilationUnit& unit = lowerer.Owner().Unit();
         BlockBuilder steps(at);
@@ -259,7 +263,8 @@ auto PatternPredicate(
         std::vector<mir::ExprId> tests;
         auto collected = CollectPatternTests(
             lowerer, steps.Frame(),
-            Subject{.whole = subject_place(body), .steps = {}}, pattern, tests);
+            Subject{.whole = subject_place(body), .steps = {}}, pattern,
+            keyword, tests);
         if (!collected) return std::unexpected(std::move(collected.error()));
         const mir::LocalId matched = steps.DeclareLocal(
             bit, ConditionAsBit(unit, body, AllHold(unit, body, tests)));
@@ -280,9 +285,9 @@ auto PatternPredicate(
 
 template auto PatternPredicate(
     ProcessLowerer&, const WalkFrame&, mir::LocalId, mir::TypeId,
-    hir::PatternId) -> Predicate;
+    hir::PatternId, hir::CaseKeyword) -> Predicate;
 template auto PatternPredicate(
     const StructuralScopeLowerer&, const WalkFrame&, mir::LocalId, mir::TypeId,
-    hir::PatternId) -> Predicate;
+    hir::PatternId, hir::CaseKeyword) -> Predicate;
 
 }  // namespace lyra::lowering::hir_to_mir

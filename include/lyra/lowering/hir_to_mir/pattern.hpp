@@ -4,6 +4,7 @@
 // matches a value against a pattern -- a clause of a conditional statement or
 // expression, and an item of a pattern-matching case statement.
 
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/pattern_id.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
@@ -14,7 +15,10 @@
 namespace lyra::lowering::hir_to_mir {
 
 // Whether the value the local `subject` holds matches `pattern`, which is never
-// unknown (LRM 12.6). Evaluating it assigns the identifiers the pattern
+// unknown (LRM 12.6). Every pair of bits it compares -- a packed tagged
+// union's tag against the member a tagged pattern names, and each constant
+// against what stands in its position -- is compared as `keyword` compares two
+// values (LRM 12.6.1). Evaluating it assigns the identifiers the pattern
 // introduces, where it matched. They are declared in `declared_in`, which has
 // to enclose whatever reads them: assignment belongs where the pattern has
 // already matched, while the declaration has to reach the clauses after this
@@ -22,6 +26,7 @@ namespace lyra::lowering::hir_to_mir {
 template <ExprLowerer Lowerer>
 auto PatternPredicate(
     Lowerer& lowerer, const WalkFrame& declared_in, mir::LocalId subject,
-    mir::TypeId subject_type, hir::PatternId pattern) -> Predicate;
+    mir::TypeId subject_type, hir::PatternId pattern, hir::CaseKeyword keyword)
+    -> Predicate;
 
 }  // namespace lyra::lowering::hir_to_mir

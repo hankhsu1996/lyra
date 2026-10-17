@@ -16,6 +16,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/binary_op.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
@@ -373,6 +374,18 @@ class HirDumper {
         return "[priority]";
     }
     throw InternalError("HirDumper::FormatUniquePriorityCheck: unknown check");
+  }
+
+  static auto FormatCaseKeyword(CaseKeyword keyword) -> std::string_view {
+    switch (keyword) {
+      case CaseKeyword::kCase:
+        return "case";
+      case CaseKeyword::kCasez:
+        return "casez";
+      case CaseKeyword::kCasex:
+        return "casex";
+    }
+    throw InternalError("HirDumper::FormatCaseKeyword: unknown case keyword");
   }
 
   static auto FormatPackedArray(const PackedArrayType& p) -> std::string {
@@ -2545,25 +2558,15 @@ class HirDumper {
   }
 
   void DumpCaseStmtNode(const ProceduralBody& p, StmtId id, const CaseStmt& c) {
-    std::string_view kind_tag;
-    switch (c.condition_kind) {
-      case CaseCondition::kNormal:
-        kind_tag = "";
-        break;
-      case CaseCondition::kWildcardJustZ:
-        kind_tag = "z";
-        break;
-      case CaseCondition::kWildcardXOrZ:
-        kind_tag = "x";
-        break;
-      case CaseCondition::kInside:
-        kind_tag = " inside";
-        break;
-    }
+    const std::string_view label_test = std::visit(
+        Overloaded{
+            [](CaseKeyword keyword) { return FormatCaseKeyword(keyword); },
+            [](CaseInside) -> std::string_view { return "case inside"; }},
+        c.label_test);
     Line(
         std::format(
-            "Stmt[{}] CaseStmt{}{} cond=Expr[{}] (items={})", id.value,
-            kind_tag, FormatUniquePriorityCheck(c.check), c.condition.value,
+            "Stmt[{}] CaseStmt {}{} cond=Expr[{}] (items={})", id.value,
+            label_test, FormatUniquePriorityCheck(c.check), c.condition.value,
             c.items.size()));
     Indent();
     Line(
@@ -2748,8 +2751,11 @@ class HirDumper {
             [&](const ForkStmt& f) { DumpForkStmtNode(p, id, f); },
             [&](const IfStmt& i) { DumpIfStmtNode(p, id, i); },
             [&](const CaseStmt& c) { DumpCaseStmtNode(p, id, c); },
-            [&](const PatternCaseStmt&) {
-              Line(std::format("Stmt[{}] PatternCaseStmt", id.value));
+            [&](const PatternCaseStmt& pc) {
+              Line(
+                  std::format(
+                      "Stmt[{}] PatternCaseStmt {}", id.value,
+                      FormatCaseKeyword(pc.keyword)));
             },
             [&](const AssertStmt& a) { DumpAssertStmtNode(p, id, a); },
             [&](const CoverStmt& c) { DumpCoverStmtNode(p, id, c); },

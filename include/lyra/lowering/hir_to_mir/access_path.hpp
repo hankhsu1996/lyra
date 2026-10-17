@@ -7,6 +7,7 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -177,11 +178,11 @@ void ForEachOperand(DescentStep& step, Visit visit) {
 }
 
 // Whether the tag of the union `into` names the member `tag` requires, as a
-// machine boolean. Only a definite match holds, so a tag carrying x or z names
-// no member.
+// machine boolean, its bits compared as a case statement of `keyword` compares
+// two values, so that under `case` a tag carrying x or z names no member.
 [[nodiscard]] auto BuildTagMatches(
     mir::CompilationUnit& unit, mir::Block& block, const TagRequirement& tag,
-    mir::ExprId into) -> mir::ExprId;
+    mir::ExprId into, hir::CaseKeyword keyword) -> mir::ExprId;
 
 // A property of an object as what owns a value (LRM 8.4): the object, as the
 // expression the source reaches it through -- a class handle, or the running
