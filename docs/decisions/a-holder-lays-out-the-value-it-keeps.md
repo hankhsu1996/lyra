@@ -89,6 +89,16 @@ keeps beneath, a driver's contribution, a history's entries.
 **D7. A tuple's bytes state nothing of its type.** It crosses to the library as its bytes, its type
 told once per call after the operands, as a fixed-size unpacked array's is.
 
+**D8. Every value laid out by its type is one domain of the library's** -- a structure, a union, a
+tuple and a fixed-size unpacked array alike. What the library does with such a value, holding it,
+comparing its bytes, resolving a net of it or keeping its history, it does by the type it is told,
+so the work is the same whatever kind of value the type is and one realization serves them all. An
+operation only an array has is realized for the same domain and told the array's type, as every
+other entry is. Go's runtime moves and clears a value of any kind by one function told its type
+(`typedmemmove` and `typedmemclr`, in the Go runtime's `mbarrier.go`), and Swift's copies an array
+of any element type by one entry told the type's metadata (`swift_arrayInitWithCopy`,
+`stdlib/public/runtime/Array.cpp`); the library is prebuilt as theirs are.
+
 ## Rejected
 
 - **A library object standing for the value in the holder,** what this replaces: a second address
@@ -106,6 +116,9 @@ told once per call after the operands, as a fixed-size unpacked array's is.
   storage holding nothing, which the language defines as a read of an undefined value, so the
   storage must hold one. It also left every whole write asking at run time whether the value existed
   yet, so only the library could carry it out.
+- **A domain per kind of value laid out by its type,** a record's and an array's, what D8 replaces:
+  the two ran the same code under two names, and every holder family was instantiated twice,
+  differing only in the class the library named its own copy by.
 
 ## Consequences
 

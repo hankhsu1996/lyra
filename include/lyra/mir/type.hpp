@@ -502,12 +502,12 @@ struct VariableRefType {
 };
 
 // A reference held as a member and bound after the object holding it is built
-// (C++ `std::reference_wrapper`), where a `VariableRefType` is bound once, as it is
-// created. Reading, writing and waiting through one reach what it names as
-// through a `VariableRefType`; only a binding makes one name other storage, never an
-// assignment. A port is such a
-// member: its connection binds it while the design's references are resolved
-// (LRM 23.3.3), and a connection may name a port of an instance resolved later.
+// (C++ `std::reference_wrapper`), where a `VariableRefType` is bound once, as
+// it is created. Reading, writing and waiting through one reach what it names
+// as through a `VariableRefType`; only a binding makes one name other storage,
+// never an assignment. A port is such a member: its connection binds it while
+// the design's references are resolved (LRM 23.3.3), and a connection may name
+// a port of an instance resolved later.
 struct ReferenceWrapperType {
   TypeId pointee;
   Mutability mutability;
@@ -747,10 +747,11 @@ class Type {
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
       VoidType, ObjectType, RuntimeClassType, RuntimeEffectsType, FilesType,
       DiagnosticType, RuntimeLibraryType, CoroutineType, VariableRefType,
-      PointerType, ReferenceType, ManagedRefType, VectorType, TupleType,
-      EmptyType, ObservableType, ResolvedType, DriverType, OpenWriteType,
-      DesignationType, BitsReferenceType, ObjectWriteType, SampledHistoryType,
-      EvaluationAttemptsType, LoopBlocksType, RecordType, ClosureType>;
+      ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType,
+      VectorType, TupleType, EmptyType, ObservableType, ResolvedType,
+      DriverType, OpenWriteType, DesignationType, BitsReferenceType,
+      ObjectWriteType, SampledHistoryType, EvaluationAttemptsType,
+      LoopBlocksType, RecordType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {

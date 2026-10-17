@@ -87,17 +87,17 @@ void AttachRuntimeScopeCtorPrefix(
       mir::ParamDecl{.type = builtins.hierarchy_segment});
 }
 
-// A parameter an instantiation may leave to its default is handed as a value
-// or none (LRM 23.10.2.2), the sum of nothing and the value: the type a
-// constructor takes it as, and what the construction passes.
-constexpr base::ComponentIndex kNoValueAssigned{0};
-constexpr base::ComponentIndex kValueAssigned{1};
+// A parameter an instantiation may leave to its default is handed as whether a
+// value was assigned (LRM 23.10.2.2) beside the value, which is its type's
+// default where none was: what C++'s `std::optional` holds, a flag and a slot
+// for the value. A union of MIR's is a declaration the source states, which
+// this is not, so the two cross as a product, the same type in every unit.
+constexpr base::ComponentIndex kHasValue{0};
+constexpr base::ComponentIndex kValue{1};
 
-auto AssignedOrNoneOf(mir::CompilationUnit& unit, mir::TypeId value)
-    -> mir::TypeId {
+auto OptionalOf(mir::CompilationUnit& unit, mir::TypeId value) -> mir::TypeId {
   return unit.types.Intern(
-      mir::Type{mir::TaggedUnionType{
-          .members = {unit.types.Intern(mir::Type{mir::EmptyType{}}), value}}});
+      mir::Type{mir::TupleType{.elements = {unit.builtins.bit1, value}}});
 }
 
 // The values whoever constructs the scope supplies, in the order they are
@@ -124,7 +124,7 @@ auto ConstructionValuesOf(
               supplied.push_back(
                   ConstructionValue{
                       .declared = id,
-                      .type = AssignedOrNoneOf(
+                      .type = OptionalOf(
                           unit_lowerer.Unit(),
                           unit_lowerer.TranslateType(decl.type))});
             },
@@ -308,9 +308,11 @@ auto ReadConstructionTable(
     const mir::CompilationUnit& unit, const WalkFrame& frame) -> mir::Expr {
   const BodyBindingRef table =
       frame.bindings->EnsureCarrier(BindingOriginId::ConstructionTable());
-  mir::Expr read = frame.bindings->MakeReadExpr(table, *frame.current_block);
-  read.type = mir::ConstructionTablePointer(unit.types);
-  return read;
+  mir::Block& block = *frame.current_block;
+  const mir::TypeId type = mir::ConstructionTablePointer(unit.types);
+  mir::Expr place = frame.bindings->MakeBindingPlace(table, block);
+  place.type = type;
+  return mir::MakeCopyExpr(block.exprs.Add(std::move(place)), type);
 }
 
 // What the instantiation at `at` of the table the object under construction
@@ -349,7 +351,7 @@ auto ObjectEntryType(
       unit.builtins.scope_ptr, unit.builtins.hierarchy_segment,
       mir::ConstructionTablePointer(unit.types)};
   for (const hir::TypeId value : handed) {
-    params.push_back(AssignedOrNoneOf(unit, unit_lowerer.TranslateType(value)));
+    params.push_back(OptionalOf(unit, unit_lowerer.TranslateType(value)));
   }
   return unit.types.Intern(
       mir::Type{mir::MachineFunctionType{
@@ -428,7 +430,7 @@ auto BuildOwnedInstance(
   }
   const mir::TypeId table_type = mir::ConstructionTablePointer(unit.types);
   std::vector<mir::ExprId> entry_arguments{
-      parent_self, segment_id,
+      block.AsValue(unit.types, parent_self), segment_id,
       ReadInstantiation(
           unit, frame, support::BuiltinFn::kInstantiationTable, instantiation,
           table_type)};
@@ -498,24 +500,28 @@ auto LowerConstructorArguments(
   std::vector<mir::Expr> lowered;
   lowered.reserve(assignments.size());
   for (const hir::ParameterValueAssignment& assigned : assignments) {
-    const mir::TypeId passed = AssignedOrNoneOf(
-        unit_lowerer.Unit(), unit_lowerer.TranslateType(assigned.type));
+    const mir::TypeId value_type = unit_lowerer.TranslateType(assigned.type);
+    const mir::TypeId passed = OptionalOf(unit_lowerer.Unit(), value_type);
+    const auto handed = [&](bool was_assigned, mir::ExprId value) {
+      return mir::Expr{
+          .data =
+              mir::CompositeExpr{
+                  .parts =
+                      {BuildBit1Literal(
+                           unit_lowerer.Unit(), block, was_assigned),
+                       value}},
+          .type = passed};
+    };
     if (!assigned.value.has_value()) {
-      const mir::TypeId none =
-          TaggedComponentType(unit_lowerer.Unit(), passed, kNoValueAssigned);
-      lowered.push_back(
-          mir::MakeActiveMemberExpr(
-              block.exprs.Add(
-                  BuildDefaultValueExpr(unit_lowerer.Unit(), block, none)),
-              kNoValueAssigned, passed));
+      lowered.push_back(handed(
+          false, block.exprs.Add(BuildDefaultValueExpr(
+                     unit_lowerer.Unit(), block, value_type))));
       continue;
     }
     auto value =
         lowerer.LowerExpr(lowerer.HirScope().exprs.Get(*assigned.value), frame);
     if (!value) return std::unexpected(std::move(value.error()));
-    lowered.push_back(
-        mir::MakeActiveMemberExpr(
-            block.exprs.Add(*std::move(value)), kValueAssigned, passed));
+    lowered.push_back(handed(true, block.exprs.Add(*std::move(value))));
   }
   return lowered;
 }
@@ -1676,7 +1682,8 @@ auto InstallPortConnections(
                 .expr = resolve_block.exprs.Add(
                     mir::MakeCallExpr(
                         mir::Direct{.target = support::BuiltinFn::kBindAlias},
-                        {target,
+                        {resolve_block.AsValue(
+                             unit_lowerer.Unit().types, target),
                          PathReference(
                              unit_lowerer.Unit(), resolve_block, *peer_or)},
                         unit_lowerer.Unit().builtins.void_type))});
@@ -1863,8 +1870,7 @@ void AppendLoopBlockConstruction(
   const mir::ExprId member = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(
-              unit, block,
-              block.exprs.Add(MakeSelfRefExpr(frame))),
+              unit, block, block.exprs.Add(MakeSelfRefExpr(frame))),
           blocks, FieldTypeOf(unit_lowerer, blocks)));
   block.AppendStmt(
       mir::ExprStmt{
@@ -2928,9 +2934,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   // construction supplied is in its cell, because such a constant may be
   // written from it, and in declaration order, because one may be written from
   // an earlier one (LRM 6.20). So is a parameter the construction hands a
-  // value or none for: the value assigned where there is one, and otherwise
+  // flag and a value for: the value assigned where there is one, and otherwise
   // the default its declaration states, evaluated only then (LRM 6.20.1,
-  // 23.10.2.2) -- `D = D_handed ? *D_handed : W * 2`.
+  // 23.10.2.2) -- `D = has_value ? value : W * 2`.
   for (const hir::StructuralDataObjectId id :
        hir_scope.structural_data_objects.Ids()) {
     const auto& settled_decl = hir_scope.structural_data_objects.Get(id);
@@ -2948,13 +2954,20 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (parameter == nullptr) continue;
     install_in_constructor(id);
     const SuppliedLocal& handed = handed_for.at(id);
-    const auto read_handed = [&] {
-      return ctor_block.ReadLocal(handed.local, handed.value.type);
+    // The component `which` of what the parameter was handed, read where the
+    // constructor holds it.
+    const auto read_handed = [&](base::ComponentIndex which, mir::TypeId type) {
+      return mir::MakeCopyExpr(
+          ctor_block.exprs.Add(
+              mir::MakeFieldAccessExpr(
+                  ctor_block.exprs.Add(
+                      mir::MakeLocalRefExpr(handed.local, handed.value.type)),
+                  mir::ComponentFieldTarget{.position = which}, type)),
+          type);
     };
     const mir::TypeId value_type =
         unit_lowerer.TranslateType(settled_decl.type);
-    mir::Expr assigned =
-        mir::MakeComponentExpr(read_handed(), kValueAssigned, value_type);
+    mir::Expr assigned = read_handed(kValue, value_type);
     if (!parameter->default_value.has_value()) {
       store_into(ctor_block, ctor_frame, id, std::move(assigned));
       continue;
@@ -2972,10 +2985,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
-                    .condition = ctor_block.exprs.Add(
-                        mir::MakeTagMatchesExpr(
-                            read_handed(), kValueAssigned,
-                            unit_lowerer.Unit().builtins.machine_bool)),
+                    .condition = ReduceToCondition(
+                        unit_lowerer.Unit(), ctor_block,
+                        ctor_block.exprs.Add(read_handed(
+                            kHasValue, unit_lowerer.Unit().builtins.bit1))),
                     .then_value = ctor_block.exprs.Add(std::move(assigned)),
                     .else_value = *defaulted},
             .type = value_type});

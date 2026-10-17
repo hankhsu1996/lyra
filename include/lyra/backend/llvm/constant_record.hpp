@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "lyra/lir/type.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace llvm {
@@ -31,8 +32,7 @@ struct FieldLayout {
 // of; this compiler reads no C++, so it is taken from the structure itself
 // where this compiler is built against the library.
 struct LibraryRecordLayout {
-  std::uint64_t size = 0;
-  std::uint64_t alignment = 1;
+  support::Layout layout;
   std::vector<FieldLayout> fields;
 };
 

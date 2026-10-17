@@ -141,8 +141,8 @@ auto CodeGenFunction::LaidOutStorage(support::ObjectLayout layout)
     -> llvm::Value* {
   llvm::IRBuilder<> at(frame_storage_point_);
   llvm::AllocaInst* storage =
-      at.CreateAlloca(llvm::ArrayType::get(at.getInt8Ty(), layout.size));
-  storage->setAlignment(llvm::Align(layout.align));
+      at.CreateAlloca(llvm::ArrayType::get(at.getInt8Ty(), layout.layout.size));
+  storage->setAlignment(llvm::Align(layout.layout.align));
   return storage;
 }
 
@@ -303,39 +303,45 @@ auto CodeGenFunction::RelocateValue(
 auto CodeGenFunction::ComponentAddress(
     lir::TypeId aggregate, llvm::Value* value, std::size_t index)
     -> llvm::Value* {
-  // Every member of a union lies at its start (LRM 7.3), as C reaches one by
-  // retyping the union's own address.
-  if (lir::OverlaidMembers(module_->Unit(), aggregate).has_value()) {
-    return value;
-  }
-  return builder_.CreateConstInBoundsGEP1_64(
-      builder_.getInt8Ty(), value,
-      module_->Types().LayoutOfTuple(aggregate).offsets.at(index));
+  return std::visit(
+      Overloaded{
+          [&](const ProductLayout* product) -> llvm::Value* {
+            return builder_.CreateConstInBoundsGEP1_64(
+                builder_.getInt8Ty(), value, product->offsets.at(index));
+          },
+          // Every member of a union lies at its start (LRM 7.3), as C reaches
+          // one by retyping the union's own address.
+          [&](const UnionLayout*) -> llvm::Value* { return value; },
+          [&](const ArrayLayout* array) -> llvm::Value* {
+            return builder_.CreateConstInBoundsGEP1_64(
+                builder_.getInt8Ty(), value, array->stride * index);
+          }},
+      module_->Types().FieldsOf(aggregate));
 }
 
-auto CodeGenFunction::Variables() -> diag::Result<const RecordLayout*> {
+auto CodeGenFunction::Variables() -> diag::Result<const PlacedMembers*> {
   if (variables_.has_value()) {
     return &*variables_;
   }
-  auto record = module_->PlaceMembers(
-      fn_->variables, MemberSlotRole::kVariable, RecordLayout{}, "a variable");
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = module_->PlaceMembers(
+      fn_->variables, MemberSlotRole::kVariable, PlacedMembers{}, "a variable");
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
-  return &variables_.emplace(*std::move(record));
+  return &variables_.emplace(*std::move(placed));
 }
 
 auto CodeGenFunction::LowerOpenVariables() -> diag::Result<llvm::Value*> {
-  auto record = Variables();
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = Variables();
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
   llvm::IRBuilder<> at(frame_storage_point_);
   llvm::AllocaInst* storage = at.CreateAlloca(
-      llvm::ArrayType::get(at.getInt8Ty(), (*record)->size), nullptr,
+      llvm::ArrayType::get(at.getInt8Ty(), (*placed)->layout.size), nullptr,
       "variables");
-  storage->setAlignment(llvm::Align((*record)->align));
-  if (auto begun = module_->BeginMembers(builder_, storage, **record); !begun) {
+  storage->setAlignment(llvm::Align((*placed)->layout.align));
+  if (auto begun = module_->BeginMembers(builder_, storage, **placed); !begun) {
     return std::unexpected(std::move(begun.error()));
   }
   return storage;
@@ -343,9 +349,9 @@ auto CodeGenFunction::LowerOpenVariables() -> diag::Result<llvm::Value*> {
 
 auto CodeGenFunction::LowerVariableAddress(
     const lir::VariableAddressInstr& reached) -> diag::Result<llvm::Value*> {
-  auto record = Variables();
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = Variables();
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
   auto storage = LowerOperand(reached.variables);
   if (!storage) {
@@ -353,20 +359,20 @@ auto CodeGenFunction::LowerVariableAddress(
   }
   return builder_.CreateConstInBoundsGEP1_64(
       builder_.getInt8Ty(), *storage,
-      (*record)->offsets.at(reached.position.value));
+      (*placed)->offsets.at(reached.position.value));
 }
 
 auto CodeGenFunction::LowerCloseVariables(
     const lir::CloseVariablesInstr& closed) -> diag::Result<llvm::Value*> {
-  auto record = Variables();
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = Variables();
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
   auto storage = LowerOperand(closed.variables);
   if (!storage) {
     return std::unexpected(std::move(storage.error()));
   }
-  auto ended = module_->EndMembers(builder_, *storage, **record);
+  auto ended = module_->EndMembers(builder_, *storage, **placed);
   if (!ended) {
     return std::unexpected(std::move(ended.error()));
   }

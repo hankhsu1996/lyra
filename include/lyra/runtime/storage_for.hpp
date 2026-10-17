@@ -23,7 +23,7 @@ struct StorageFor<T> {
 };
 template <value::LaidOutByType T>
 struct StorageFor<T> {
-  using Type = LaidOutStorage<T>;
+  using Type = LaidOutStorage;
 };
 
 // A value whose size is known only from what the holder is told of it -- its

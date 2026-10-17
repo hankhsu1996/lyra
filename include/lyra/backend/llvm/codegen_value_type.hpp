@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -14,11 +15,13 @@
 
 #include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_operation.hpp"
+#include "lyra/value/layout.hpp"
 
 namespace llvm {
 class Constant;
@@ -56,13 +59,14 @@ struct WitnessSignature {
 };
 
 // The lifecycle of each type a module lays out whose operations the design
-// compiles, and the constant stating the type to the runtime: a tuple, a
-// value made of several components at once -- an unpacked structure (LRM
-// 7.2), or a call's answer, its result together with its `output` and `inout`
-// arguments (LRM 13.5) -- a union or a tagged union, one storage its members
-// overlay (LRM 7.3), and a fixed-size unpacked array (LRM 7.4.2). Each step of
-// a tuple's life applies the same step to every component, the way clang
-// emits a class's implicit special members, and an array's to every element;
+// compiles, and the constant stating the type to the runtime: a product, a
+// value made of several components at once -- an unpacked structure (LRM 7.2),
+// or a tuple a lowering composes, such as a call's answer, its result together
+// with its `output` and `inout` arguments (LRM 13.5) -- a union or a tagged
+// union, one storage its members overlay (LRM 7.3), and a fixed-size unpacked
+// array (LRM 7.4.2). Each step of a product's life applies the same step to
+// every component, the way clang emits a class's implicit special members,
+// and an array's to every element;
 // a tagged union's applies it to the member its tag names, and an untagged
 // union's members own nothing, so its steps are its bytes'. The type is how
 // the runtime, compiled before any of these types existed, reaches what a
@@ -104,6 +108,21 @@ class CodeGenValueTypes {
   // program, as one array type is.
   auto GetAddrOfIntegralType(lir::TypeId type) -> llvm::Constant*;
 
+  // The type the library asks of a value of `type`: one this module lays out,
+  // for a type laid out by the design or an integral type, or the library's
+  // own for a value of one of its kinds.
+  auto GetAddrOfValueType(lir::TypeId type) -> diag::Result<llvm::Constant*>;
+  // The constant that states `element` to the library as the type of an
+  // array's elements: the type, and the function of this unit that builds the
+  // value one starts as (LRM Table 7-1). The module defines one per element
+  // type it hands over, whatever kind of array holds the elements.
+  auto GetAddrOfElementType(lir::TypeId element)
+      -> diag::Result<llvm::Constant*>;
+  // The constant that states the queue type `queue` to the library: the
+  // constant stating its elements' type, and the bound it declares (LRM
+  // 7.10.5). The module defines one per queue type it hands over.
+  auto GetAddrOfQueueType(lir::TypeId queue) -> diag::Result<llvm::Constant*>;
+
   // The type of every struct and union this unit declares, which another unit
   // may refer to whether or not this one builds a value of it.
   auto EmitDeclared() -> void;
@@ -134,11 +153,13 @@ class CodeGenValueTypes {
   // the bodies the unit states for an array, and none for a tuple.
   [[nodiscard]] auto OwnOperations(lir::TypeId type) const
       -> std::vector<OwnOperation>;
-  // At `b`, a branch per member of the tagged union `tagged` lying at
-  // `value`, each emitting what `held` emits for the member the tag names,
-  // and nothing where it names none; `b` is left after the branches meet.
+  // At `b`, a branch per one of `members` of a tagged union lying at `value`
+  // with its tag `placed`, each emitting what `held` emits for the member the
+  // tag names, and nothing where it names none; `b` is left after the branches
+  // meet.
   void ForHeldMember(
-      llvm::IRBuilderBase& b, lir::TypeId tagged, llvm::Value* value,
+      llvm::IRBuilderBase& b, std::span<const lir::TypeId> members,
+      const value::TagPlacement& placed, llvm::Value* value,
       const std::function<void(llvm::IRBuilderBase&, lir::TypeId)>& held);
   [[nodiscard]] auto MachineTypeOf(MachineKind kind) const -> llvm::Type*;
   // A body for the witness `witness` of signature `stands_in_for`, declared
@@ -230,6 +251,8 @@ class CodeGenValueTypes {
   std::map<std::string, llvm::Function*> clear_functions_;
   std::map<std::string, llvm::GlobalVariable*> types_of_;
   std::map<std::string, llvm::GlobalVariable*> integral_types_;
+  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> element_types_;
+  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> queue_types_;
 };
 
 }  // namespace lyra::backend::llvm_backend

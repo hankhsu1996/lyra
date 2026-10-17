@@ -7,11 +7,11 @@
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/fixed_array_type.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/queue_type.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -90,9 +90,9 @@ auto ContainerOf<RuntimeDynamicArray, ElementType>(
 
 auto RuntimeArrayMap(
     const FixedArrayView& receiver, const ArrayMethodBody& body,
-    const FixedArrayType& answer_type) -> RuntimeFixedArray {
+    const FixedArrayType& answer_type) -> LaidOutValue {
   const detail::ArrayEntries entries = detail::EntriesOf(receiver);
-  return RuntimeFixedArray::FromElements(
+  return ArrayFromElements(
       answer_type,
       detail::PlacesOf(
           detail::KeysOf(

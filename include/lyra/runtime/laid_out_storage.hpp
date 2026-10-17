@@ -5,23 +5,23 @@
 
 #include "lyra/runtime/tail.hpp"
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
-// The storage of a tuple, a union or a fixed-size unpacked array, whose type
-// the library is told where the holder is built: the type, then the value laid
-// out by it, inline at the holder's tail or spilled into storage allocated
-// where the holder is built. So the value has one address for as long as the
-// holder lives.
+// The storage of a value laid out by its type -- a structure, a union, a tuple,
+// a fixed-size unpacked array -- whose type the library is told where the
+// holder is built: the type, then the value laid out by it, inline at the
+// holder's tail or spilled into storage allocated where the holder is built. So
+// the value has one address for as long as the holder lives.
 //
 // The value is built where the holder is, at what its type builds before
 // anything writes it, as words storage fills its words; every value assigned
 // afterwards assigns into it.
-template <class OwnedValue>
-class LaidOutStorage : public TailValue<LaidOutStorage<OwnedValue>> {
+class LaidOutStorage : public TailValue<LaidOutStorage> {
  public:
-  using Owned = OwnedValue;
+  using Owned = value::LaidOutValue;
 
   explicit LaidOutStorage(const value::ValueType& type)
       : TailValue<LaidOutStorage>(
@@ -61,10 +61,10 @@ class LaidOutStorage : public TailValue<LaidOutStorage<OwnedValue>> {
 
   // What a value of `type` takes.
   [[nodiscard]] static auto ValueLayoutFor(const value::ValueType& type)
-      -> value::Layout {
-    return {.size = type.Size(), .align = type.Align()};
+      -> support::Layout {
+    return type.Layout();
   }
-  [[nodiscard]] auto ValueLayout() const -> value::Layout {
+  [[nodiscard]] auto ValueLayout() const -> support::Layout {
     return ValueLayoutFor(*type_);
   }
 

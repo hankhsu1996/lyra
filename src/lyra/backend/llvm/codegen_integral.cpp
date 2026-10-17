@@ -307,8 +307,10 @@ auto CodeGenFunction::IntegralEmitter::StoreBitsOfPlace(
     OperandRef bits) -> bool {
   const value::IntegralShape lying =
       module_->Types().RequiredIntegralShapeOf(whole);
+  // A part is reached and written back by operations on one word only, so the
+  // whole write is the library's past one machine word.
   const auto on_planes = [&](lir::TypeId type) {
-    return IsStatedOnPlanes(module_->Types().RequiredIntegralShapeOf(type));
+    return IsSingleWord(module_->Types().RequiredIntegralShapeOf(type));
   };
   if (!on_planes(whole) || !on_planes(bits.type) ||
       !std::ranges::all_of(parts, [&](const BitsPartRef& part) {

@@ -145,7 +145,8 @@ template <typename Record>
 auto LayoutOf() -> LibraryRecordLayout {
   const Record record{};
   LibraryRecordLayout layout{
-      .size = sizeof(Record), .alignment = alignof(Record), .fields = {}};
+      .layout = {.size = sizeof(Record), .align = alignof(Record)},
+      .fields = {}};
   AppendRecord(layout.fields, 0, record);
   return layout;
 }

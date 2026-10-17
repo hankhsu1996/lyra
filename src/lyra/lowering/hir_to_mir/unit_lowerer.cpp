@@ -638,11 +638,7 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
     if (id == nullptr) {
       continue;
     }
-    if (const auto* structure = type.As<hir::UnpackedStructType>()) {
-      DefineStructMethods(*structure, *id, translated);
-    } else {
-      DefineUnionMethods(type.Get<hir::UnpackedUnionType>(), *id, translated);
-    }
+    DefineRecordMethods(type, *id, translated);
   }
 
   // Every record this unit read of what another unit published about its

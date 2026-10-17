@@ -29,16 +29,22 @@ class UnitLowerer;
     const mir::TypeDeclarationRef& declaration, mir::TypeId structure,
     std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
 
-// A method for every operation on a whole value the union or the tagged union
-// `declaration` names has (LRM 7.3), over values of `overlay`, a union of
-// `kind` whose members are of `members`: an untagged union's is its first
-// member's, read as that member's type holds a value (LRM 7.3.2), and a tagged
-// union's is the member its tag names. Asked while the declaration is being
-// made, so what the union itself answers is read off its members.
+// A method for every operation on a whole value the union `declaration` names
+// has (LRM 7.3), over values of `overlay`, whose members are of `members`:
+// each is its first member's, read as that member's type holds a value (LRM
+// 7.3.2). Asked while the declaration is being made, so what the union itself
+// answers is read off its members.
 [[nodiscard]] auto UnionMethodsOf(
     UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
-    mir::TypeId overlay, mir::RecordKind kind,
-    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod>;
+    mir::TypeId overlay, std::span<const mir::TypeId> members)
+    -> std::vector<mir::RecordMethod>;
+
+// The same for a tagged union, each method that of the member its tag names
+// (LRM 7.3.2); a tagged union has no stream and no net's folds.
+[[nodiscard]] auto TaggedUnionMethodsOf(
+    UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
+    mir::TypeId overlay, std::span<const mir::TypeId> members)
+    -> std::vector<mir::RecordMethod>;
 
 // A body for every operation on a whole value the fixed-size unpacked array
 // `type` has (LRM 7.4.2), each element's in turn, which the unit naming the

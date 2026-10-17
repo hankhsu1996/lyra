@@ -257,7 +257,9 @@ class CodeGenFunction {
   auto LowerDiscriminant(
       const lir::DiscriminantInstr& read, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
+  // What `place` holds, as a value of `result_type` is handed on: the value
+  // itself, or the address of one laid out by its type.
+  auto LoadPlace(const lir::Place& place, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   // A load through a member of an untagged union, whose bits may be another
   // member's (LRM 7.3.2): the value copied into `out` and every position its
@@ -334,7 +336,7 @@ class CodeGenFunction {
   // compiler lays out locals: each variable's storage at its own offset, sized
   // and aligned as the library states that storage. Opening builds each in
   // place, a variable is its offset, and closing ends each, last first.
-  auto Variables() -> diag::Result<const RecordLayout*>;
+  auto Variables() -> diag::Result<const PlacedMembers*>;
   auto LowerOpenVariables() -> diag::Result<llvm::Value*>;
   auto LowerVariableAddress(const lir::VariableAddressInstr& reached)
       -> diag::Result<llvm::Value*>;
@@ -478,7 +480,7 @@ class CodeGenFunction {
   // ahead of its first statement.
   llvm::Instruction* frame_storage_point_ = nullptr;
   // Where the body's variables sit, laid out once for the whole body.
-  std::optional<RecordLayout> variables_;
+  std::optional<PlacedMembers> variables_;
   // A coroutine body's ramp state: the coroutine identity (which names the
   // frame to release) and its handle, plus the blocks every suspension and
   // return funnels through. The frame's layout and the resume state machine are

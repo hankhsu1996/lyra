@@ -42,8 +42,11 @@ auto HeldObjectOf(const lir::Type& type)
     -> std::optional<support::RuntimeObject>;
 
 // Whether a value of `type` is its bytes laid out by the type, which state
-// nothing of it: a tuple, a union, and a fixed-size unpacked array.
+// nothing of it: a tuple, a structure, a union, and a fixed-size unpacked
+// array.
 auto IsLaidOutByType(const lir::Type& type) -> bool;
+// The same of a value of `domain`.
+auto IsLaidOutByType(support::ValueDomain domain) -> bool;
 
 // The domain a LIR type is realized in, absent for a type whose values are not
 // values of the design. It is the type's held object where that object is a

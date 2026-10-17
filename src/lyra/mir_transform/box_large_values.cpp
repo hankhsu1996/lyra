@@ -139,21 +139,18 @@ class BodyBoxing {
     }
   }
 
-  // The body rewritten, read where it lies, with `base_args` carried along:
-  // nodes of the body no statement reaches, which a constructor enters its
-  // base's with, a body this program compiles.
-  auto Rewritten(std::vector<mir::ExprId> base_args) -> mir::ConstructorDecl {
+  // The code rewritten, read where it lies, with `base_args` rewritten along
+  // with it: nodes of the body no statement reaches, which a constructor
+  // enters its base's with, a body this program compiles.
+  auto Rewritten(std::vector<mir::ExprId>& base_args) -> mir::CallableCode {
     std::optional<mir::Block> body = RewrittenBody(base_args);
-    return mir::ConstructorDecl{
-        .code =
-            mir::CallableCode{
-                .params = code_->params,
-                .receiver = code_->receiver,
-                .result_type = code_->result_type,
-                .locals = BoxedLocals(),
-                .named_locals = code_->named_locals,
-                .body = std::move(body)},
-        .base_args = std::move(base_args)};
+    return mir::CallableCode{
+        .params = code_->params,
+        .receiver = code_->receiver,
+        .result_type = code_->result_type,
+        .locals = BoxedLocals(),
+        .named_locals = code_->named_locals,
+        .body = std::move(body)};
   }
 
   // Whether the rewrite changes the body at all.
@@ -454,18 +451,22 @@ auto BoxedConstructor(
   if (!boxing.ChangesAnything()) {
     return constructor;
   }
-  return boxing.Rewritten(std::move(constructor.base_args));
+  mir::CallableCode code = boxing.Rewritten(constructor.base_args);
+  return mir::ConstructorDecl{
+      .code = std::move(code), .base_args = std::move(constructor.base_args)};
 }
 
-// `code` with its large values held through boxes, as a constructor's that
-// enters no base.
+// `code` with its large values held through boxes; code with nothing to box
+// is handed back as it is.
 auto BoxedCode(
     const mir::CompilationUnit& unit, const CaptureBoxes& captures,
     mir::CallableCode code) -> mir::CallableCode {
-  return BoxedConstructor(
-             unit, captures,
-             mir::ConstructorDecl{.code = std::move(code), .base_args = {}})
-      .code;
+  BodyBoxing boxing(unit, captures, code);
+  if (!boxing.ChangesAnything()) {
+    return code;
+  }
+  std::vector<mir::ExprId> no_base_args;
+  return boxing.Rewritten(no_base_args);
 }
 
 }  // namespace

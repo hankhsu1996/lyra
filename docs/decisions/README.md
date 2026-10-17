@@ -106,20 +106,20 @@ the detail lives in the entry itself.
   block 30.9% fewer instructions, 3,237 -> 4,711 table passes a second. Resolving in machine
   integers in the runtime, a known-flag position, and restating a literal in a deferred write are
   rejected.
-- [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend a union or a
-  container is a runtime-owned object behind a handle, not structurally monomorphized, holding its
-  elements as their type's bytes; the choice is below LIR, and LIR's aggregate operations stay
-  realization-agnostic. Superseded for tuples by the entry below, for a fixed-size unpacked array by
-  the one after it, and for unions by
+- [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend a container
+  is a runtime-owned object behind a handle, not structurally monomorphized, holding its elements as
+  their type's bytes; the choice is below LIR, and LIR's operations on values stay logical.
+  Superseded for tuples by the entry below, for a fixed-size unpacked array by the one after it, and
+  for unions by
   [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md).
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- on the execution backend
-  a tuple has one form wherever it lies: its type's layout, opening with its type's operation table,
-  as a C++ object with virtual functions opens with its vtable pointer. The code generator compiles
-  each tuple type's lifecycle, and the prebuilt runtime reaches that and the type's operations
-  through the table. Call-chain 1,032.0 M -> 851.3 M instructions, a struct loop 278.7 M -> 236.3 M.
-  A description the runtime walks and a tuple converted where it crosses are rejected. The table in
-  the bytes, and holding a tuple in storage of the runtime's own, are superseded by the holder entry
-  below, and the table's form as a vtable by the record-both-sides-read entry.
+  a tuple has one form wherever it lies: its type's layout, carrying its type's operation table
+  beside it. The code generator compiles each tuple type's lifecycle, and the prebuilt runtime
+  reaches that and the type's operations through the table. Call-chain 1,032.0 M -> 851.3 M
+  instructions, a struct loop 278.7 M -> 236.3 M. A description the runtime walks and a tuple
+  converted where it crosses are rejected. The table in the bytes, and holding a tuple in storage of
+  the runtime's own, are superseded by the holder entry below, and the table's form as a vtable by
+  the record-both-sides-read entry.
 - [a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
   -- on the execution backend a type reaches the prebuilt library as a C-layout record declared once
   and read by both the code generator and the library, opening with the address of a table of
@@ -139,9 +139,10 @@ the detail lives in the entry itself.
   a tuple, a union or a fixed-size unpacked array are told its width or type where they are built
   and lay the value out after themselves, or keep one address of storage they own past the in-place
   bound, so the value has one address for the holder's life and generated code reads it through one
-  pointer. A tuple's bytes state nothing of its type. What the library keeps for itself stays a
-  value of its own. A library object standing for the value in the holder, and a family instantiated
-  per type, are rejected.
+  pointer. A tuple's bytes state nothing of its type, and every value laid out by its type is one
+  domain of the library's, realized once. What the library keeps for itself stays a value of its
+  own. A library object standing for the value in the holder, a family instantiated per type, and a
+  domain per kind of laid-out value are rejected.
 - [a-new-expression-allocates-then-initializes](a-new-expression-allocates-then-initializes.md) -- a
   class `new`, an instance and a box are one MIR node that allocates storage and evaluates its
   initializer into it, as clang's `CXXNewExpr`; a construction never yields what owns storage. In

@@ -17,6 +17,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/element_type.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
@@ -24,7 +25,6 @@
 #include "lyra/value/library_value_types.hpp"
 #include "lyra/value/queue_type.hpp"
 #include "lyra/value/reduction.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
@@ -250,8 +250,8 @@ auto NumberAt(const FixedArrayType& type, const void* array, std::size_t i)
 }
 
 auto CountingArray(const FixedArrayType& type, std::int64_t first)
-    -> RuntimeFixedArray {
-  return RuntimeFixedArray::Built(type, [&](std::size_t i, void* element) {
+    -> LaidOutValue {
+  return BuiltArray(type, [&](std::size_t i, void* element) {
     std::construct_at(
         static_cast<Element*>(element),
         Element::FromInt(first + static_cast<std::int64_t>(i)));
@@ -360,8 +360,8 @@ TEST(FixedArrayType, ABuildThatFailsEndsWhatItBuilt) {
     counts = Lifecycle{.failing_copy = 3};
     EXPECT_THROW(
         {
-          const RuntimeFixedArray kept =
-              RuntimeFixedArray::CopyOf(type, source.Bytes());
+          const LaidOutValue kept =
+              LaidOutValue::CopyOf(type.Type(), source.Bytes());
         },
         InternalError);
     EXPECT_EQ(counts.destroyed, 2U);
@@ -511,23 +511,23 @@ TEST(FixedArrayType, HoldsElementsThatOwnStorage) {
   type.Type().Destroy(copy.Bytes());
 }
 
-TEST(RuntimeFixedArray, HoldsACopyInStorageOfItsOwn) {
+TEST(LaidOutValue, HoldsACopyInStorageOfItsOwn) {
   for (const std::uint32_t count : {4U, 4000U}) {
     const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), count);
     const Storage laid_out(type.Type());
     BuildCounting(type, laid_out.Bytes(), 30);
 
-    const RuntimeFixedArray copy =
-        RuntimeFixedArray::CopyOf(type, laid_out.Bytes());
-    EXPECT_EQ(&copy.ArrayType(), &type);
+    const LaidOutValue copy =
+        LaidOutValue::CopyOf(type.Type(), laid_out.Bytes());
+    EXPECT_EQ(copy.Type().AsFixedArray(), &type);
     EXPECT_NE(copy.Bytes(), laid_out.Bytes());
     EXPECT_NE(
         type.ElementAt(copy.Bytes(), 0), type.ElementAt(laid_out.Bytes(), 0));
     EXPECT_EQ(NumberAt(type, copy.Bytes(), 3), 33);
     EXPECT_TRUE(copy.IsBitIdenticalTo(laid_out.Bytes()));
 
-    const RuntimeFixedArray built = CountingArray(type, 30);
-    EXPECT_EQ(&built.ArrayType(), &type);
+    const LaidOutValue built = CountingArray(type, 30);
+    EXPECT_EQ(built.Type().AsFixedArray(), &type);
     EXPECT_TRUE(built.IsBitIdentical(copy));
     EXPECT_EQ(built == copy, FourStateBit::kOne);
 
@@ -535,7 +535,7 @@ TEST(RuntimeFixedArray, HoldsACopyInStorageOfItsOwn) {
   }
 }
 
-TEST(RuntimeFixedArray, IsBuiltFromElementsTextAndBits) {
+TEST(LaidOutValue, IsBuiltFromElementsTextAndBits) {
   const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), 4);
   const std::array<Element, 4> values{
       Element::FromInt(7), Element::FromInt(8), Element::FromInt(9),
@@ -543,24 +543,19 @@ TEST(RuntimeFixedArray, IsBuiltFromElementsTextAndBits) {
   const std::array<const void*, 4> items{
       values.data(), &values[1], &values[2], &values[3]};
 
-  const RuntimeFixedArray from_elements =
-      RuntimeFixedArray::FromElements(type, items);
+  const LaidOutValue from_elements = ArrayFromElements(type, items);
   EXPECT_EQ(NumberAt(type, from_elements.Bytes(), 0), 7);
   EXPECT_EQ(NumberAt(type, from_elements.Bytes(), 3), 10);
   // LRM 7.6: a source of another size is a run-time error.
   const std::array<const void*, 3> too_few{
       values.data(), &values[1], &values[2]};
   EXPECT_THROW(
-      {
-        const RuntimeFixedArray built =
-            RuntimeFixedArray::FromElements(type, too_few);
-      },
+      { const LaidOutValue built = ArrayFromElements(type, too_few); },
       SimulationError);
 
   // LRM 5.9: the text is left-justified and the elements past its end keep
   // the element default.
-  const RuntimeFixedArray from_string =
-      RuntimeFixedArray::FromString(type, String("AB"));
+  const LaidOutValue from_string = ArrayFromString(type, String("AB"));
   EXPECT_EQ(NumberAt(type, from_string.Bytes(), 0), 'A');
   EXPECT_EQ(NumberAt(type, from_string.Bytes(), 1), 'B');
   EXPECT_TRUE(
@@ -571,29 +566,28 @@ TEST(RuntimeFixedArray, IsBuiltFromElementsTextAndBits) {
           ->HasUnknown());
 
   const LogicVector<16> literal = LogicVector<16>::FromInt(0x4142);
-  const RuntimeFixedArray from_integral =
-      RuntimeFixedArray::FromIntegral(type, literal.AsWords().View());
+  const LaidOutValue from_integral =
+      ArrayFromIntegral(type, literal.AsWords().View());
   EXPECT_TRUE(from_integral.IsBitIdentical(from_string));
 
   // Text longer than the array loses what does not fit.
-  const RuntimeFixedArray truncated =
-      RuntimeFixedArray::FromString(type, String("ABCDEF"));
+  const LaidOutValue truncated = ArrayFromString(type, String("ABCDEF"));
   EXPECT_EQ(NumberAt(type, truncated.Bytes(), 3), 'D');
 }
 
-TEST(RuntimeFixedArray, AnAssignmentKeepsEveryElementWhereItLies) {
+TEST(LaidOutValue, AnAssignmentKeepsEveryElementWhereItLies) {
   for (const std::uint32_t count : {4U, 4000U}) {
     const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), count);
-    RuntimeFixedArray held = CountingArray(type, 0);
+    LaidOutValue held = CountingArray(type, 0);
     const void* bytes = held.Bytes();
     const void* third = type.ElementAt(held.Bytes(), 2);
 
-    const RuntimeFixedArray source = CountingArray(type, 50);
+    const LaidOutValue source = CountingArray(type, 50);
     held = source;
     EXPECT_EQ(held.Bytes(), bytes);
     EXPECT_EQ(type.ElementAt(held.Bytes(), 2), third);
     EXPECT_EQ(NumberAt(type, held.Bytes(), 2), 52);
-    EXPECT_EQ(&held.ArrayType(), &type);
+    EXPECT_EQ(held.Type().AsFixedArray(), &type);
 
     const Storage laid_out(type.Type());
     BuildCounting(type, laid_out.Bytes(), 80);
@@ -612,10 +606,10 @@ TEST(RuntimeFixedArray, AnAssignmentKeepsEveryElementWhereItLies) {
   }
 }
 
-TEST(RuntimeFixedArray, LaysItsArrayOutWhereItIsAsked) {
+TEST(LaidOutValue, LaysItsArrayOutWhereItIsAsked) {
   for (const std::uint32_t count : {4U, 4000U}) {
     const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), count);
-    RuntimeFixedArray held = CountingArray(type, 60);
+    LaidOutValue held = CountingArray(type, 60);
 
     const Storage copied(type.Type());
     EXPECT_EQ(held.CopyInto(copied.Bytes()), copied.Bytes());

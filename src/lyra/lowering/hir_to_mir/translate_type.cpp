@@ -128,29 +128,26 @@ auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionType& src)
   return members;
 }
 
-void UnitLowerer::DefineStructMethods(
-    const hir::UnpackedStructType& src, mir::RecordId id,
-    mir::TypeId structure) {
-  // Copied, since building a body can declare a record and move the registry.
-  const std::vector<mir::TypeId> elements = unit_.GetRecord(id).elements;
-  unit_.record_methods.Define(
-      id, StructMethodsOf(
-              *this, src,
-              mir::TypeDeclarationRef{
-                  .unit_name = unit_.name, .path = src.declaration.path},
-              structure, elements));
-}
-
-void UnitLowerer::DefineUnionMethods(
-    const hir::UnpackedUnionType& src, mir::RecordId id, mir::TypeId overlay) {
+void UnitLowerer::DefineRecordMethods(
+    const hir::Type& source, mir::RecordId id, mir::TypeId type) {
   // Copied, since building a body can declare a record and move the registry.
   const mir::RecordDecl declared = unit_.GetRecord(id);
-  unit_.record_methods.Define(
-      id, UnionMethodsOf(
-              *this,
-              mir::TypeDeclarationRef{
-                  .unit_name = unit_.name, .path = src.declaration.path},
-              overlay, declared.kind, declared.elements));
+  const mir::TypeDeclarationRef declaration{
+      .unit_name = unit_.name, .path = declared.path};
+  unit_.record_methods.Define(id, [&] {
+    switch (declared.kind) {
+      case mir::RecordKind::kStruct:
+        return StructMethodsOf(
+            *this, source.Get<hir::UnpackedStructType>(), declaration, type,
+            declared.elements);
+      case mir::RecordKind::kUnion:
+        return UnionMethodsOf(*this, declaration, type, declared.elements);
+      case mir::RecordKind::kTaggedUnion:
+        return TaggedUnionMethodsOf(
+            *this, declaration, type, declared.elements);
+    }
+    throw InternalError("hir_to_mir: unknown record kind");
+  }());
 }
 
 auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {

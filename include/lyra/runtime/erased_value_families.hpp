@@ -9,12 +9,12 @@
 #include "lyra/runtime/value_families.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_record.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -33,16 +33,14 @@ extern template class ValueStorageCore<value::RuntimeAssociativeArray>;
 
 extern template class Cell<WordsStorage<value::StateDomain::kTwoState>>;
 extern template class Cell<WordsStorage<value::StateDomain::kFourState>>;
-extern template class Cell<LaidOutStorage<value::RuntimeRecord>>;
+extern template class Cell<LaidOutStorage>;
 extern template class Cell<ValueStorageCore<value::RuntimeDynamicArray>>;
-extern template class Cell<LaidOutStorage<value::RuntimeFixedArray>>;
 extern template class Cell<ValueStorageCore<value::RuntimeQueue>>;
 extern template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 extern template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
 extern template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
-extern template class TailCell<LaidOutStorage<value::RuntimeRecord>>;
-extern template class TailCell<LaidOutStorage<value::RuntimeFixedArray>>;
+extern template class TailCell<LaidOutStorage>;
 extern template class Var<value::RuntimeDynamicArray>;
 extern template class Var<value::RuntimeQueue>;
 extern template class Var<value::RuntimeAssociativeArray>;
@@ -51,10 +49,9 @@ extern template class CellRareState<
     WordsStorage<value::StateDomain::kTwoState>>;
 extern template class CellRareState<
     WordsStorage<value::StateDomain::kFourState>>;
-extern template class CellRareState<LaidOutStorage<value::RuntimeRecord>>;
+extern template class CellRareState<LaidOutStorage>;
 extern template class CellRareState<
     ValueStorageCore<value::RuntimeDynamicArray>>;
-extern template class CellRareState<LaidOutStorage<value::RuntimeFixedArray>>;
 extern template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
 extern template class CellRareState<
     ValueStorageCore<value::RuntimeAssociativeArray>>;
@@ -70,9 +67,8 @@ extern template class ScopedMutation<
 
 extern template class Takeovers<value::WideBitVector>;
 extern template class Takeovers<value::WideLogicVector>;
-extern template class Takeovers<value::RuntimeRecord>;
+extern template class Takeovers<value::LaidOutValue>;
 extern template class Takeovers<value::RuntimeDynamicArray>;
-extern template class Takeovers<value::RuntimeFixedArray>;
 extern template class Takeovers<value::RuntimeQueue>;
 extern template class Takeovers<value::RuntimeAssociativeArray>;
 
@@ -82,29 +78,24 @@ extern template class ValueCell<value::RuntimeAssociativeArray>;
 
 extern template class SampledHistory<value::WideBitVector>;
 extern template class SampledHistory<value::WideLogicVector>;
-extern template class SampledHistory<value::RuntimeRecord>;
+extern template class SampledHistory<value::LaidOutValue>;
 extern template class SampledHistory<value::RuntimeDynamicArray>;
-extern template class SampledHistory<value::RuntimeFixedArray>;
 extern template class SampledHistory<value::RuntimeQueue>;
 extern template class SampledHistory<value::RuntimeAssociativeArray>;
 
 extern template class ResolvedNet<value::WideLogicVector>;
-extern template class ResolvedNet<value::RuntimeRecord>;
-extern template class ResolvedNet<value::RuntimeFixedArray>;
+extern template class ResolvedNet<value::LaidOutValue>;
 
 extern template class Driver<value::WideLogicVector>;
-extern template class Driver<value::RuntimeRecord>;
-extern template class Driver<value::RuntimeFixedArray>;
+extern template class Driver<value::LaidOutValue>;
 
-extern template class CompletionSlot<value::RuntimeRecord>;
+extern template class CompletionSlot<value::LaidOutValue>;
 extern template class CompletionSlot<value::RuntimeDynamicArray>;
-extern template class CompletionSlot<value::RuntimeFixedArray>;
 extern template class CompletionSlot<value::RuntimeQueue>;
 extern template class CompletionSlot<value::RuntimeAssociativeArray>;
 
-extern template class Coroutine<value::RuntimeRecord>;
+extern template class Coroutine<value::LaidOutValue>;
 extern template class Coroutine<value::RuntimeDynamicArray>;
-extern template class Coroutine<value::RuntimeFixedArray>;
 extern template class Coroutine<value::RuntimeQueue>;
 extern template class Coroutine<value::RuntimeAssociativeArray>;
 

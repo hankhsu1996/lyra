@@ -586,10 +586,6 @@ auto ApplicationsOf(const IntegralOperation& operation)
   return applications;
 }
 
-// The operations whose work grows with the square of the width, which are
-// instructions up to one machine word and calls past it.
-constexpr std::array<std::string_view, 3> kOnOneWordOnly{"mul", "div", "mod"};
-
 auto PastOneWord(const IntegralShapes& shapes) -> bool {
   const auto past = [](const std::optional<IntegralShape>& shape) {
     return shape.has_value() && !IsSingleWord(*shape);
@@ -634,9 +630,7 @@ TEST(IntegralPlanesTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
     }
     std::size_t compared_here = 0;
     bool has_arm = true;
-    const bool one_word_only =
-        std::ranges::find(kOnOneWordOnly, operation.name) !=
-        kOnOneWordOnly.end();
+    const bool one_word_only = IsOnOneWordOnly(operation.op);
     for (IntegralShapes& shapes : ApplicationsOf(operation)) {
       const bool past_one_word = PastOneWord(shapes);
       const std::optional<std::size_t> count =

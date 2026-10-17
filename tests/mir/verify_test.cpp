@@ -521,8 +521,14 @@ TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
                               .pointee = u.builtins.int_type,
                               .mutability = Mutability::kMutable}})
                     : reference_type;
-      const ExprId target =
-          body.exprs.Add(Expr{.data = NullLiteral{}, .type = target_type});
+      // The reference's own storage, which a store or a binding writes.
+      const TypeId to_target = u.types.Intern(
+          Type{PointerType{
+              .pointee = target_type,
+              .ownership = PointerOwnership::kBorrowed}});
+      const ExprId target = body.exprs.Add(MakeDerefExpr(
+          body.exprs.Add(Expr{.data = NullLiteral{}, .type = to_target}),
+          target_type));
       const ExprId bound =
           body.exprs.Add(Expr{.data = NullLiteral{}, .type = reference_type});
       const ExprId operation =
@@ -530,7 +536,7 @@ TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
               ? body.exprs.Add(MakeAssignExpr(u.builtins, target, bound))
               : body.exprs.Add(MakeCallExpr(
                     Direct{.target = support::BuiltinFn::kBindAlias},
-                    {target, bound}, u.builtins.void_type));
+                    {body.Read(target), bound}, u.builtins.void_type));
       body.AppendStmt(ExprStmt{.expr = operation});
     });
   };

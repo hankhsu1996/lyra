@@ -687,7 +687,7 @@ auto CallArranger::ConstructionOf(
           // so its element list is all it is built over.
           [&](const lir::UnpackedArrayType&) -> Built {
             return entry_over(
-                support::ValueDomain::kUnpackedArray, result,
+                support::ValueDomain::kLaidOut, result,
                 RuntimeOp::kFromElements);
           },
           // LRM 7.8: the index type imposes the order the entries are held in.
@@ -866,8 +866,9 @@ auto CallArranger::ConstructionOf(
           // body.
           [&](const lir::MachineArrayType&) -> Built { return no_construct(); },
           [&](const lir::TupleType&) -> Built { return no_construct(); },
-          // A union's value is made by the instruction that states which
-          // member it holds, never by a construction.
+          // A record's value is made by the instruction that composes it --
+          // a structure's from its members, a union's from the member it
+          // holds -- never by a construction.
           [&](const lir::RecordType&) -> Built { return no_construct(); },
           [&](const lir::MachineFunctionType&) -> Built {
             return no_construct();

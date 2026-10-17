@@ -5,15 +5,9 @@
 #include <cstdint>
 #include <vector>
 
-namespace lyra::value {
+#include "lyra/support/layout.hpp"
 
-// How many bytes a value takes, and the alignment it is kept at. Code laying a
-// value out, code stating how large one is, and the holders keeping one all
-// state it this way.
-struct Layout {
-  std::size_t size;
-  std::size_t align;
-};
+namespace lyra::value {
 
 // `size` rounded up to the next multiple of `align`, as LLVM's `alignTo` names
 // it.
@@ -27,12 +21,12 @@ struct Layout {
 // one by it, so it is stated once for both.
 struct SequenceLayout {
   std::size_t stride;
-  Layout whole;
+  support::Layout whole;
 };
 
 // `count` elements laid out as `element` states, one after another.
-[[nodiscard]] constexpr auto SequenceLayoutOf(Layout element, std::size_t count)
-    -> SequenceLayout {
+[[nodiscard]] constexpr auto SequenceLayoutOf(
+    support::Layout element, std::size_t count) -> SequenceLayout {
   const std::size_t stride = AlignTo(element.size, element.align);
   return SequenceLayout{
       .stride = stride,
@@ -44,7 +38,7 @@ struct SequenceLayout {
 // the strictest alignment among them.
 struct ProductLayout {
   std::vector<std::size_t> offsets;
-  Layout whole;
+  support::Layout whole;
 };
 
 // The product of `parts`, each stating its `size` and its `align`.
@@ -66,14 +60,16 @@ template <typename Parts>
 // `members` each stating its `size` and its `align`: as large as the largest,
 // rounded up to the strictest alignment.
 template <typename Members>
-[[nodiscard]] constexpr auto OverlayLayoutOf(const Members& members) -> Layout {
+[[nodiscard]] constexpr auto OverlayLayoutOf(const Members& members)
+    -> support::Layout {
   std::size_t largest = 0;
   std::size_t strictest = 1;
   for (const auto& member : members) {
     largest = std::max<std::size_t>(largest, member.size);
     strictest = std::max<std::size_t>(strictest, member.align);
   }
-  return Layout{.size = AlignTo(largest, strictest), .align = strictest};
+  return support::Layout{
+      .size = AlignTo(largest, strictest), .align = strictest};
 }
 
 // How many bytes a tagged union's tag takes: the smallest unsigned integer that
@@ -97,11 +93,11 @@ struct TagPlacement {
 // tag at its own alignment.
 struct TaggedUnionLayout {
   TagPlacement tag;
-  Layout whole;
+  support::Layout whole;
 };
 
 [[nodiscard]] constexpr auto TaggedUnionLayoutOf(
-    Layout overlay, std::size_t members) -> TaggedUnionLayout {
+    support::Layout overlay, std::size_t members) -> TaggedUnionLayout {
   const std::uint32_t tag = TagBytesFor(members);
   const std::size_t align = std::max<std::size_t>(overlay.align, tag);
   const auto tag_offset =

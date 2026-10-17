@@ -100,8 +100,8 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   class_identities_ = {mir_->classes.size(), std::move(classes)};
 
-  // So is every struct this unit declares, since what another unit published
-  // may hold one -- a specialization of its generic on this unit's struct.
+  // So is every record this unit declares, since what another unit published
+  // may hold one -- a specialization of its generic on this unit's record.
   std::vector<lir::RecordId> records;
   records.reserve(mir_->records.size());
   for (std::size_t i = 0; i < mir_->records.size(); ++i) {

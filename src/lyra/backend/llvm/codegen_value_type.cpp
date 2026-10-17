@@ -1,5 +1,6 @@
 #include "lyra/backend/llvm/codegen_value_type.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -37,10 +38,12 @@
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/support/value_operation.hpp"
+#include "lyra/value/element_type.hpp"
 #include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/queue_type.hpp"
 #include "lyra/value/tuple_type.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -264,8 +267,8 @@ void PlaceValueType(
     const support::ObjectLayout& storage, value::ValueTypeKind kind) {
   using value::ValueType;
   out.Place(ValueType::WitnessesStatedAt(), witnesses);
-  out.PlaceInteger(ValueType::SizeStatedAt(), storage.size);
-  out.PlaceInteger(ValueType::AlignStatedAt(), storage.align);
+  out.PlaceInteger(ValueType::SizeStatedAt(), storage.layout.size);
+  out.PlaceInteger(ValueType::AlignStatedAt(), storage.layout.align);
   out.PlaceInteger(ValueType::KindStatedAt(), std::to_underlying(kind));
 }
 
@@ -320,7 +323,7 @@ auto CodeGenValueTypes::KeyOf(lir::TypeId type) -> const std::string& {
         .first->second;
   }
   const std::span<const lir::TypeId> parts =
-      types_->LayoutOfTuple(type).components;
+      types_->LayoutOfProduct(type).components;
   std::string key = "{";
   for (std::size_t i = 0; i < parts.size(); ++i) {
     if (i != 0) {
@@ -341,39 +344,55 @@ auto CodeGenValueTypes::KeyOf(lir::TypeId type) -> const std::string& {
 // one type per domain.
 auto CodeGenValueTypes::ComponentKey(lir::TypeId component) -> std::string {
   const lir::Type& stated = unit_->types.Get(component);
-  if (IsLaidOutByType(stated)) {
-    return KeyOf(component);
+  constexpr const char* kNoDomain =
+      "llvm codegen: a component is no value of a runtime domain";
+  const std::optional<lir::Holding> held = stated.HeldAs();
+  if (!held.has_value()) {
+    throw InternalError(kNoDomain);
   }
-  if (const std::optional<value::IntegralShape> shape =
-          types_->IntegralShapeOf(component)) {
-    return std::format(
-        "{}{}{}", shape->width,
-        shape->signedness == value::Signedness::kSigned ? "s" : "u",
-        shape->IsFourState() ? "4" : "2");
-  }
-  const std::optional<ValueDomain> domain = ValueDomainOf(*unit_, component);
-  if (!domain) {
-    throw InternalError(
-        "llvm codegen: a component is no value of a runtime domain");
-  }
-  const std::string_view named = support::ValueDomainName(*domain);
-  if (const auto* dynamic = stated.As<lir::DynamicArrayType>()) {
-    return std::format("{}<{}>", named, ComponentKey(dynamic->element_type));
-  }
-  if (const auto* queue = stated.As<lir::QueueType>()) {
-    return std::format(
-        "{}<{}:{}>", named, ComponentKey(queue->element_type),
-        queue->max_bound
-            .transform(
-                [](std::uint64_t bound) { return std::to_string(bound); })
-            .value_or("unbounded"));
-  }
-  if (const auto* associative = stated.As<lir::AssociativeArrayType>()) {
-    return std::format(
-        "{}<{},{}>", named, ComponentKey(associative->element_type),
-        ComponentKey(associative->key_type));
-  }
-  return std::string(named);
+  return std::visit(
+      Overloaded{
+          [&](const lir::IntegralBits&) -> std::string {
+            const value::IntegralShape shape =
+                types_->RequiredIntegralShapeOf(component);
+            return std::format(
+                "{}{}{}", shape.width,
+                shape.signedness == value::Signedness::kSigned ? "s" : "u",
+                shape.IsFourState() ? "4" : "2");
+          },
+          [&](ValueDomain domain) -> std::string {
+            if (IsLaidOutByType(domain)) {
+              return KeyOf(component);
+            }
+            const std::string_view named = support::ValueDomainName(domain);
+            if (const auto* dynamic = stated.As<lir::DynamicArrayType>()) {
+              return std::format(
+                  "{}<{}>", named, ComponentKey(dynamic->element_type));
+            }
+            if (const auto* queue = stated.As<lir::QueueType>()) {
+              return std::format(
+                  "{}<{}:{}>", named, ComponentKey(queue->element_type),
+                  queue->max_bound
+                      .transform([](std::uint64_t bound) {
+                        return std::to_string(bound);
+                      })
+                      .value_or("unbounded"));
+            }
+            if (const auto* associative =
+                    stated.As<lir::AssociativeArrayType>()) {
+              return std::format(
+                  "{}<{},{}>", named, ComponentKey(associative->element_type),
+                  ComponentKey(associative->key_type));
+            }
+            return std::string(named);
+          },
+          [&](support::LibraryObject) -> std::string {
+            throw InternalError(kNoDomain);
+          },
+          [&](const lir::OwnedStorageAddress&) -> std::string {
+            throw InternalError(kNoDomain);
+          }},
+      *held);
 }
 
 auto CodeGenValueTypes::Function(lir::TypeId type, LifecycleStep step)
@@ -517,8 +536,8 @@ auto CodeGenValueTypes::OpenThunkBody(
   // which a design does not make wide.
   const support::ObjectLayout layout = types_->LayoutOf(stated);
   llvm::AllocaInst* const storage =
-      b.CreateAlloca(llvm::ArrayType::get(b.getInt8Ty(), layout.size));
-  storage->setAlignment(llvm::Align(layout.align));
+      b.CreateAlloca(llvm::ArrayType::get(b.getInt8Ty(), layout.layout.size));
+  storage->setAlignment(llvm::Align(layout.layout.align));
   std::vector<llvm::Value*> args;
   args.reserve(stands_in_for.takes.size());
   for (std::size_t i = 1; i < body->arg_size(); ++i) {
@@ -662,7 +681,7 @@ auto CodeGenValueTypes::ControlReadBody(
 
 void CodeGenValueTypes::CallBuildDefault(
     llvm::IRBuilderBase& b, lir::TypeId component, llvm::Value* value) {
-  auto component_type = owner_->GetAddrOfValueType(component);
+  auto component_type = GetAddrOfValueType(component);
   if (!component_type) {
     throw InternalError(
         "llvm codegen: a tuple component is no value the runtime realizes");
@@ -688,7 +707,7 @@ auto CodeGenValueTypes::ComponentWiseDefaultBody(
   llvm::Function* const body = DeclareBody(tuple, witness, stands_in_for);
   llvm::IRBuilder<> b(
       llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
-  const TupleLayout& layout = types_->LayoutOfTuple(tuple);
+  const ProductLayout& layout = types_->LayoutOfProduct(tuple);
   for (std::size_t i = 0; i < layout.components.size(); ++i) {
     CallBuildDefault(
         b, layout.components[i],
@@ -731,27 +750,33 @@ auto CodeGenValueTypes::ClearFunction(lir::TypeId type) -> llvm::Function* {
   clear_functions_.emplace(key, fn);
   llvm::IRBuilder<> b(llvm::BasicBlock::Create(module.getContext(), "", fn));
   llvm::Value* const value = fn->getArg(0);
-  const lir::Type& stated = unit_->types.Get(type);
-  if (lir::IsTaggedUnion(*unit_, type)) {
-    ForHeldMember(
-        b, type, value, [&](llvm::IRBuilderBase& at, lir::TypeId member) {
-          EmitClearAboveWidths(at, member, value);
-        });
-  } else if (stated.Is<lir::UnpackedArrayType>()) {
-    const lir::TypeId element = types_->LayoutOfArray(type).element;
-    ForEachElement(
-        b, type, value, [&](llvm::IRBuilderBase& at, llvm::Value* each) {
-          EmitClearAboveWidths(at, element, each);
-        });
-  } else {
-    const TupleLayout& layout = types_->LayoutOfTuple(type);
-    for (std::size_t i = 0; i < layout.components.size(); ++i) {
-      EmitClearAboveWidths(
-          b, layout.components[i],
-          b.CreateConstInBoundsGEP1_64(
-              b.getInt8Ty(), value, layout.offsets[i]));
-    }
-  }
+  std::visit(
+      Overloaded{
+          [&](const ProductLayout* product) {
+            for (std::size_t i = 0; i < product->components.size(); ++i) {
+              EmitClearAboveWidths(
+                  b, product->components[i],
+                  b.CreateConstInBoundsGEP1_64(
+                      b.getInt8Ty(), value, product->offsets[i]));
+            }
+          },
+          [&](const ArrayLayout* array) {
+            ForEachElement(
+                b, type, value,
+                [&](llvm::IRBuilderBase& at, llvm::Value* each) {
+                  EmitClearAboveWidths(at, array->element, each);
+                });
+          },
+          [&](const UnionLayout* overlay) {
+            if (overlay->tag.has_value()) {
+              ForHeldMember(
+                  b, overlay->members, *overlay->tag, value,
+                  [&](llvm::IRBuilderBase& at, lir::TypeId member) {
+                    EmitClearAboveWidths(at, member, value);
+                  });
+            }
+          }},
+      types_->FieldsOf(type));
   b.CreateRetVoid();
   return fn;
 }
@@ -782,11 +807,9 @@ void CodeGenValueTypes::ForEachElement(
 }
 
 void CodeGenValueTypes::ForHeldMember(
-    llvm::IRBuilderBase& b, lir::TypeId tagged, llvm::Value* value,
+    llvm::IRBuilderBase& b, std::span<const lir::TypeId> members,
+    const value::TagPlacement& placed, llvm::Value* value,
     const std::function<void(llvm::IRBuilderBase&, lir::TypeId)>& held) {
-  const std::span<const lir::TypeId> members =
-      *lir::OverlaidMembers(*unit_, tagged);
-  const value::TagPlacement placed = types_->TagOf(tagged);
   llvm::IntegerType* const tag_ty = b.getIntNTy(8 * placed.bytes);
   llvm::Value* const tag = b.CreateLoad(
       tag_ty,
@@ -839,7 +862,6 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   llvm::LLVMContext& ctx = module.getContext();
   auto* ptr = types_->Ptr();
   const lir::Type& stated = unit_->types.Get(type);
-  const bool overlaid = lir::OverlaidMembers(*unit_, type).has_value();
   const auto* array = stated.As<lir::UnpackedArrayType>();
   const auto global = [&](std::string name, llvm::Type* of) {
     auto* made =
@@ -970,75 +992,84 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   table->setInitializer(table_data);
   table->setAlignment(llvm::Align(alignof(value::ValueWitnessTable)));
 
-  if (overlaid) {
-    ConstantRecord out(ctx, sizeof(value::ValueType));
-    PlaceValueType(
-        out, table, types_->LayoutOf(type), value::ValueTypeKind::kOther);
-    return Defined(
-        key, constant, std::move(out).Build(), alignof(value::ValueType));
-  }
-  if (array != nullptr) {
-    using value::FixedArrayType;
-    const ArrayLayout& laid = types_->LayoutOfArray(type);
-    auto element = owner_->GetAddrOfElementType(laid.element);
-    if (!element) {
-      throw InternalError(
-          "llvm codegen: an array's element is no value the runtime realizes");
-    }
-    ConstantRecord out(ctx, sizeof(FixedArrayType));
-    PlaceValueType(out, table, laid.storage, value::ValueTypeKind::kFixedArray);
-    out.PlaceInteger(FixedArrayType::CountStatedAt(), laid.count);
-    out.Place(FixedArrayType::ElementStatedAt(), *element);
-    return Defined(
-        key, constant, std::move(out).Build(), alignof(FixedArrayType));
-  }
+  using value::FixedArrayType;
   using value::TupleComponent;
   using value::TupleType;
-  const TupleLayout& layout = types_->LayoutOfTuple(type);
-  // One component as its definition lays it out: where it lies, and its type.
-  const auto component = [&](std::uint64_t offset, llvm::Constant* of) {
-    ConstantRecord record(ctx, sizeof(TupleComponent));
-    record.PlaceInteger(
-        {.offset = offsetof(TupleComponent, offset),
-         .bytes = sizeof(TupleComponent::offset)},
-        offset);
-    record.Place(offsetof(TupleComponent, type), of);
-    return std::move(record).Build();
-  };
-  llvm::Type* const component_ty =
-      component(0, llvm::ConstantPointerNull::get(ptr))->getType();
-  std::vector<llvm::Constant*> components;
-  components.reserve(layout.components.size());
-  for (std::size_t i = 0; i < layout.components.size(); ++i) {
-    auto component_type = owner_->GetAddrOfValueType(layout.components[i]);
-    if (!component_type) {
-      throw InternalError(
-          "llvm codegen: a tuple component is no value the runtime realizes");
-    }
-    components.push_back(component(layout.offsets[i], *component_type));
-  }
-  llvm::Constant* const listed_data = llvm::ConstantArray::get(
-      llvm::ArrayType::get(component_ty, components.size()), components);
-  llvm::GlobalVariable* listed = global(
-      std::format("lyra.type{}.components", key), listed_data->getType());
-  listed->setInitializer(listed_data);
-  listed->setAlignment(llvm::Align(alignof(TupleComponent)));
-  ConstantRecord out(ctx, sizeof(TupleType));
-  PlaceValueType(out, table, layout.storage, value::ValueTypeKind::kOther);
-  out.PlaceInteger(TupleType::CountStatedAt(), layout.components.size());
-  out.Place(TupleType::ComponentsStatedAt(), listed);
-  return Defined(key, constant, std::move(out).Build(), alignof(TupleType));
+  return std::visit(
+      Overloaded{
+          [&](const UnionLayout* overlay) -> llvm::GlobalVariable* {
+            ConstantRecord out(ctx, sizeof(value::ValueType));
+            PlaceValueType(
+                out, table, overlay->storage, value::ValueTypeKind::kOther);
+            return Defined(
+                key, constant, std::move(out).Build(),
+                alignof(value::ValueType));
+          },
+          [&](const ArrayLayout* laid) -> llvm::GlobalVariable* {
+            auto element = GetAddrOfElementType(laid->element);
+            if (!element) {
+              throw InternalError(
+                  "llvm codegen: an array's element is no value the runtime "
+                  "realizes");
+            }
+            ConstantRecord out(ctx, sizeof(FixedArrayType));
+            PlaceValueType(
+                out, table, laid->storage, value::ValueTypeKind::kFixedArray);
+            out.PlaceInteger(FixedArrayType::CountStatedAt(), laid->count);
+            out.Place(FixedArrayType::ElementStatedAt(), *element);
+            return Defined(
+                key, constant, std::move(out).Build(), alignof(FixedArrayType));
+          },
+          [&](const ProductLayout* product) -> llvm::GlobalVariable* {
+            // One component as its definition lays it out: where it lies, and
+            // its type.
+            const auto component = [&](std::uint64_t offset,
+                                       llvm::Constant* of) {
+              ConstantRecord record(ctx, sizeof(TupleComponent));
+              record.PlaceInteger(
+                  {.offset = offsetof(TupleComponent, offset),
+                   .bytes = sizeof(TupleComponent::offset)},
+                  offset);
+              record.Place(offsetof(TupleComponent, type), of);
+              return std::move(record).Build();
+            };
+            llvm::Type* const component_ty =
+                component(0, llvm::ConstantPointerNull::get(ptr))->getType();
+            std::vector<llvm::Constant*> components;
+            components.reserve(product->components.size());
+            for (std::size_t i = 0; i < product->components.size(); ++i) {
+              auto component_type = GetAddrOfValueType(product->components[i]);
+              if (!component_type) {
+                throw InternalError(
+                    "llvm codegen: a tuple component is no value the runtime "
+                    "realizes");
+              }
+              components.push_back(
+                  component(product->offsets[i], *component_type));
+            }
+            llvm::Constant* const listed_data = llvm::ConstantArray::get(
+                llvm::ArrayType::get(component_ty, components.size()),
+                components);
+            llvm::GlobalVariable* listed = global(
+                std::format("lyra.type{}.components", key),
+                listed_data->getType());
+            listed->setInitializer(listed_data);
+            listed->setAlignment(llvm::Align(alignof(TupleComponent)));
+            ConstantRecord out(ctx, sizeof(TupleType));
+            PlaceValueType(
+                out, table, product->storage, value::ValueTypeKind::kOther);
+            out.PlaceInteger(
+                TupleType::CountStatedAt(), product->components.size());
+            out.Place(TupleType::ComponentsStatedAt(), listed);
+            return Defined(
+                key, constant, std::move(out).Build(), alignof(TupleType));
+          }},
+      types_->FieldsOf(type));
 }
 
 auto CodeGenValueTypes::GetAddrOfIntegralType(lir::TypeId type)
     -> llvm::Constant* {
-  const std::optional<value::IntegralShape> shape =
-      types_->IntegralShapeOf(type);
-  if (!shape.has_value()) {
-    throw InternalError(
-        "llvm codegen: an integral type's description is asked of a type that "
-        "is not integral -- please report this as a bug");
-  }
+  const value::IntegralShape shape = types_->RequiredIntegralShapeOf(type);
   const std::string key = ComponentKey(type);
   if (const auto found = integral_types_.find(key);
       found != integral_types_.end()) {
@@ -1054,23 +1085,22 @@ auto CodeGenValueTypes::GetAddrOfIntegralType(lir::TypeId type)
   out.PlaceInteger(
       {.offset = shape_at + offsetof(IntegralShape, width),
        .bytes = sizeof(IntegralShape::width)},
-      shape->width);
+      shape.width);
   out.PlaceInteger(
       {.offset = shape_at + offsetof(IntegralShape, signedness),
        .bytes = sizeof(IntegralShape::signedness)},
-      std::to_underlying(shape->signedness));
+      std::to_underlying(shape.signedness));
   out.PlaceInteger(
       {.offset = shape_at + offsetof(IntegralShape, domain),
        .bytes = sizeof(IntegralShape::domain)},
-      std::to_underlying(shape->domain));
+      std::to_underlying(shape.domain));
   // An integral type is its shape wherever it is named, so every module naming
   // it states the same constant under the same name and the linker keeps one,
   // as it keeps one array type.
   llvm::GlobalVariable* const defined = owner_->DefineConstant(
       std::format("lyra.integral.{}", key), std::move(out).Build(),
-      llvm::GlobalValue::LinkOnceODRLinkage);
-  defined->setComdat(owner_->Module().getOrInsertComdat(defined->getName()));
-  defined->setAlignment(llvm::Align(alignof(IntegralValueType)));
+      llvm::GlobalValue::LinkOnceODRLinkage,
+      llvm::Align(alignof(IntegralValueType)));
   integral_types_.emplace(key, defined);
   return defined;
 }
@@ -1079,15 +1109,8 @@ auto CodeGenValueTypes::Defined(
     const std::string& key, llvm::GlobalVariable* named,
     llvm::Constant* content, std::size_t align) -> llvm::GlobalVariable* {
   const llvm::GlobalValue::LinkageTypes linkage = named->getLinkage();
-  llvm::GlobalVariable* const defined =
-      owner_->DefineConstant(named->getName().str(), content, linkage);
-  defined->setAlignment(llvm::Align(align));
-  // A definition every module states alike lies in a section of its own name,
-  // as clang places one, so the linker keeps one section and drops the others
-  // whole rather than keeping each module's copy unreferenced.
-  if (linkage == llvm::GlobalValue::LinkOnceODRLinkage) {
-    defined->setComdat(owner_->Module().getOrInsertComdat(defined->getName()));
-  }
+  llvm::GlobalVariable* const defined = owner_->DefineConstant(
+      named->getName().str(), content, linkage, llvm::Align(align));
   types_of_.insert_or_assign(key, defined);
   return defined;
 }
@@ -1124,118 +1147,242 @@ auto CodeGenValueTypes::Emit(
           "realizes");
     }
   };
-  const lir::Type& stated = unit_->types.Get(type);
-
-  // An untagged union's members own nothing, so its steps are its bytes';
-  // a tagged one's carry every byte over and then take the step of the member
-  // the tag names, as that member's type takes it, which owns what it holds.
-  if (lir::OverlaidMembers(*unit_, type).has_value()) {
-    const support::ObjectLayout storage = types_->LayoutOf(type);
-    const llvm::Align align(storage.align);
-    const bool tagged = lir::IsTaggedUnion(*unit_, type);
-    switch (step) {
-      case LifecycleStep::kCopy:
-      case LifecycleStep::kMove: {
-        llvm::Value* const from = fn->getArg(0);
-        llvm::Value* const out = fn->getArg(1);
-        b.CreateMemCpy(out, align, from, align, storage.size);
-        if (tagged) {
-          ForHeldMember(
-              b, type, from, [&](llvm::IRBuilderBase& at, lir::TypeId member) {
-                step_of(at, member, step, {from, out});
-              });
-        }
-        break;
-      }
-      case LifecycleStep::kDestroy:
-        if (tagged) {
-          llvm::Value* const value = fn->getArg(0);
-          ForHeldMember(
-              b, type, value, [&](llvm::IRBuilderBase& at, lir::TypeId member) {
-                step_of(at, member, step, {value});
-              });
-        }
-        break;
-      // Assigning ends what the storage held and builds a copy of the value
-      // in its place, unless the two are one.
-      case LifecycleStep::kAssign: {
-        llvm::Value* const storage_at = fn->getArg(0);
-        llvm::Value* const value = fn->getArg(1);
-        if (!tagged) {
-          b.CreateMemMove(storage_at, align, value, align, storage.size);
-          break;
-        }
-        llvm::BasicBlock* const replace =
-            llvm::BasicBlock::Create(ctx, "replace", fn);
-        llvm::BasicBlock* const done =
-            llvm::BasicBlock::Create(ctx, "assigned", fn);
-        b.CreateCondBr(b.CreateICmpEQ(storage_at, value), done, replace);
-        b.SetInsertPoint(replace);
-        b.CreateCall(Function(type, LifecycleStep::kDestroy), {storage_at});
-        b.CreateCall(Function(type, LifecycleStep::kCopy), {value, storage_at});
-        b.CreateBr(done);
-        b.SetInsertPoint(done);
-        break;
-      }
-    }
-    b.CreateRetVoid();
-    return;
-  }
-
-  // An array's steps are each element's, in position order.
-  if (stated.Is<lir::UnpackedArrayType>()) {
-    const ArrayLayout& laid = types_->LayoutOfArray(type);
-    switch (step) {
-      case LifecycleStep::kCopy:
-      case LifecycleStep::kMove:
-      case LifecycleStep::kAssign: {
-        llvm::Value* const from = fn->getArg(0);
-        llvm::Value* const to = fn->getArg(1);
-        ForEachElement(
-            b, type, from, [&](llvm::IRBuilderBase& at, llvm::Value* element) {
-              llvm::Value* const offset =
-                  at.CreatePtrDiff(at.getInt8Ty(), element, from);
-              step_of(
-                  at, laid.element, step,
-                  {element, at.CreateInBoundsGEP(at.getInt8Ty(), to, offset)});
-            });
-        break;
-      }
-      case LifecycleStep::kDestroy:
-        ForEachElement(
-            b, type, fn->getArg(0),
-            [&](llvm::IRBuilderBase& at, llvm::Value* element) {
-              step_of(at, laid.element, step, {element});
-            });
-        break;
-    }
-    b.CreateRetVoid();
-    return;
-  }
-
-  const TupleLayout& layout = types_->LayoutOfTuple(type);
-  // Where component `i` lies in the tuple at `base`.
-  const auto at = [&](llvm::Value* base, std::size_t i) -> llvm::Value* {
-    return b.CreateConstInBoundsGEP1_64(b.getInt8Ty(), base, layout.offsets[i]);
-  };
-  const std::size_t count = layout.components.size();
-  switch (step) {
-    case LifecycleStep::kCopy:
-    case LifecycleStep::kMove:
-    case LifecycleStep::kAssign:
-      for (std::size_t i = 0; i < count; ++i) {
-        step_of(
-            b, layout.components[i], step,
-            {at(fn->getArg(0), i), at(fn->getArg(1), i)});
-      }
-      break;
-    case LifecycleStep::kDestroy:
-      for (std::size_t i = 0; i < count; ++i) {
-        step_of(b, layout.components[i], step, {at(fn->getArg(0), i)});
-      }
-      break;
-  }
+  std::visit(
+      Overloaded{
+          // An untagged union's members own nothing, so its steps are its
+          // bytes'; a tagged one's carry every byte over and then take the
+          // step of the member the tag names, as that member's type takes it,
+          // which owns what it holds.
+          [&](const UnionLayout* overlay) {
+            const llvm::Align align(overlay->storage.layout.align);
+            const std::size_t size = overlay->storage.layout.size;
+            const std::optional<value::TagPlacement>& tag = overlay->tag;
+            switch (step) {
+              case LifecycleStep::kCopy:
+              case LifecycleStep::kMove: {
+                llvm::Value* const from = fn->getArg(0);
+                llvm::Value* const out = fn->getArg(1);
+                b.CreateMemCpy(out, align, from, align, size);
+                if (tag.has_value()) {
+                  ForHeldMember(
+                      b, overlay->members, *tag, from,
+                      [&](llvm::IRBuilderBase& at, lir::TypeId member) {
+                        step_of(at, member, step, {from, out});
+                      });
+                }
+                break;
+              }
+              case LifecycleStep::kDestroy:
+                if (tag.has_value()) {
+                  llvm::Value* const value = fn->getArg(0);
+                  ForHeldMember(
+                      b, overlay->members, *tag, value,
+                      [&](llvm::IRBuilderBase& at, lir::TypeId member) {
+                        step_of(at, member, step, {value});
+                      });
+                }
+                break;
+              // Assigning ends what the storage held and builds a copy of the
+              // value in its place, unless the two are one.
+              case LifecycleStep::kAssign: {
+                llvm::Value* const storage_at = fn->getArg(0);
+                llvm::Value* const value = fn->getArg(1);
+                if (!tag.has_value()) {
+                  b.CreateMemMove(storage_at, align, value, align, size);
+                  break;
+                }
+                llvm::BasicBlock* const replace =
+                    llvm::BasicBlock::Create(ctx, "replace", fn);
+                llvm::BasicBlock* const done =
+                    llvm::BasicBlock::Create(ctx, "assigned", fn);
+                b.CreateCondBr(
+                    b.CreateICmpEQ(storage_at, value), done, replace);
+                b.SetInsertPoint(replace);
+                b.CreateCall(
+                    Function(type, LifecycleStep::kDestroy), {storage_at});
+                b.CreateCall(
+                    Function(type, LifecycleStep::kCopy), {value, storage_at});
+                b.CreateBr(done);
+                b.SetInsertPoint(done);
+                break;
+              }
+            }
+          },
+          // An array's steps are each element's, in position order.
+          [&](const ArrayLayout* laid) {
+            switch (step) {
+              case LifecycleStep::kCopy:
+              case LifecycleStep::kMove:
+              case LifecycleStep::kAssign: {
+                llvm::Value* const from = fn->getArg(0);
+                llvm::Value* const to = fn->getArg(1);
+                ForEachElement(
+                    b, type, from,
+                    [&](llvm::IRBuilderBase& at, llvm::Value* element) {
+                      llvm::Value* const offset =
+                          at.CreatePtrDiff(at.getInt8Ty(), element, from);
+                      step_of(
+                          at, laid->element, step,
+                          {element,
+                           at.CreateInBoundsGEP(at.getInt8Ty(), to, offset)});
+                    });
+                break;
+              }
+              case LifecycleStep::kDestroy:
+                ForEachElement(
+                    b, type, fn->getArg(0),
+                    [&](llvm::IRBuilderBase& at, llvm::Value* element) {
+                      step_of(at, laid->element, step, {element});
+                    });
+                break;
+            }
+          },
+          // A product's steps are each component's, in position order.
+          [&](const ProductLayout* product) {
+            // Where component `i` lies in the product at `base`.
+            const auto at = [&](llvm::Value* base,
+                                std::size_t i) -> llvm::Value* {
+              return b.CreateConstInBoundsGEP1_64(
+                  b.getInt8Ty(), base, product->offsets[i]);
+            };
+            const std::size_t count = product->components.size();
+            switch (step) {
+              case LifecycleStep::kCopy:
+              case LifecycleStep::kMove:
+              case LifecycleStep::kAssign:
+                for (std::size_t i = 0; i < count; ++i) {
+                  step_of(
+                      b, product->components[i], step,
+                      {at(fn->getArg(0), i), at(fn->getArg(1), i)});
+                }
+                break;
+              case LifecycleStep::kDestroy:
+                for (std::size_t i = 0; i < count; ++i) {
+                  step_of(
+                      b, product->components[i], step, {at(fn->getArg(0), i)});
+                }
+                break;
+            }
+          }},
+      types_->FieldsOf(type));
   b.CreateRetVoid();
+}
+
+auto CodeGenValueTypes::GetAddrOfValueType(lir::TypeId type)
+    -> diag::Result<llvm::Constant*> {
+  using Answer = diag::Result<llvm::Constant*>;
+  // A value no domain realizes is no value the library is told a type of.
+  const auto unrealized = [&]() -> Answer {
+    return diag::Fail(
+        diag::DiagCode::kUnsupportedTypeKind,
+        std::format(
+            "llvm codegen: a value of type {} has no runtime library "
+            "realization",
+            unit_->types.Get(type).KindName()));
+  };
+  const std::optional<lir::Holding> held = unit_->types.Get(type).HeldAs();
+  if (!held.has_value()) {
+    return unrealized();
+  }
+  return std::visit(
+      Overloaded{
+          [&](const lir::IntegralBits&) -> Answer {
+            return GetAddrOfIntegralType(type);
+          },
+          [&](ValueDomain domain) -> Answer {
+            // A type laid out by the design, whose table the code generator
+            // fills; any other domain's type is the library's own.
+            if (IsLaidOutByType(domain)) {
+              return GetAddrOfLaidOutType(type);
+            }
+            return owner_->LibraryData(ValueTypeSymbol(domain));
+          },
+          [&](support::LibraryObject) -> Answer { return unrealized(); },
+          [&](const lir::OwnedStorageAddress&) -> Answer {
+            return unrealized();
+          }},
+      *held);
+}
+
+auto CodeGenValueTypes::GetAddrOfQueueType(lir::TypeId queue)
+    -> diag::Result<llvm::Constant*> {
+  if (const auto found = queue_types_.find(queue);
+      found != queue_types_.end()) {
+    return found->second;
+  }
+  const auto* declared = unit_->types.Get(queue).As<lir::QueueType>();
+  if (declared == nullptr) {
+    throw InternalError(
+        "llvm codegen: a queue type's constant is asked of a type that is no "
+        "queue -- please report this as a bug");
+  }
+  // LRM 7.10.5: a queue declaring no bound holds any number of elements, which
+  // the constant states as a bound below zero.
+  const std::int64_t bound =
+      declared->max_bound.has_value()
+          ? static_cast<std::int64_t>(*declared->max_bound)
+          : -1;
+  auto element = GetAddrOfElementType(declared->element_type);
+  if (!element) {
+    return std::unexpected(std::move(element.error()));
+  }
+  using value::QueueType;
+  ConstantRecord out(owner_->Context(), sizeof(QueueType));
+  out.Place(QueueType::ElementStatedAt(), *element);
+  out.PlaceInteger(
+      QueueType::BoundStatedAt(), static_cast<std::uint64_t>(bound));
+  llvm::GlobalVariable* defined = owner_->DefineConstant(
+      std::format("lyra.queue.{}", queue.value), std::move(out).Build(),
+      llvm::GlobalValue::PrivateLinkage, llvm::Align(alignof(QueueType)));
+  queue_types_.emplace(queue, defined);
+  return defined;
+}
+
+auto CodeGenValueTypes::GetAddrOfElementType(lir::TypeId element)
+    -> diag::Result<llvm::Constant*> {
+  if (const auto found = element_types_.find(element);
+      found != element_types_.end()) {
+    return found->second;
+  }
+  auto type = GetAddrOfValueType(element);
+  if (!type) {
+    return std::unexpected(std::move(type.error()));
+  }
+  const auto stated = std::ranges::find_if(
+      unit_->type_operations, [&](const lir::TypeOperation& operation) {
+        return operation.type == element &&
+               operation.answers == support::ValueOperation{
+                                        support::BuiltinFn::kDeclaredDefault};
+      });
+  if (stated == unit_->type_operations.end()) {
+    throw InternalError(
+        "llvm codegen: the unit holds an array of a type whose default it "
+        "does not state -- please report this as a bug");
+  }
+  using value::ElementScratch;
+  using value::ElementType;
+  const std::string name = std::format("lyra.element.{}", element.value);
+  // What the type keeps between calls, which a constant cannot hold: where its
+  // default and the storage a discarded write lands in are, once built. It
+  // lasts as long as the program, so neither is ever given back.
+  auto* scratch_ty = llvm::ArrayType::get(
+      llvm::Type::getInt8Ty(owner_->Context()), sizeof(ElementScratch));
+  auto* scratch = llvm::cast<llvm::GlobalVariable>(
+      owner_->Module().getOrInsertGlobal(name + ".scratch", scratch_ty));
+  scratch->setLinkage(llvm::GlobalValue::PrivateLinkage);
+  scratch->setInitializer(llvm::ConstantAggregateZero::get(scratch_ty));
+  scratch->setAlignment(llvm::Align(alignof(ElementScratch)));
+  ConstantRecord out(owner_->Context(), sizeof(ElementType));
+  out.Place(ElementType::TypeStatedAt(), *type);
+  out.Place(
+      ElementType::BuildDefaultStatedAt(),
+      owner_->UnitFunction(stated->function));
+  out.Place(ElementType::ScratchStatedAt(), scratch);
+  llvm::GlobalVariable* defined = owner_->DefineConstant(
+      name, std::move(out).Build(), llvm::GlobalValue::PrivateLinkage,
+      llvm::Align(alignof(ElementType)));
+  element_types_.emplace(element, defined);
+  return defined;
 }
 
 }  // namespace lyra::backend::llvm_backend

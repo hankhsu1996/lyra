@@ -8,6 +8,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/linkage.hpp"
+#include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 
@@ -39,6 +41,25 @@ struct PairBody {
         Local{.name = "slot", .type = pair, .kind = LocalKind::kPlace});
     other = fn.values.Add(
         Local{.name = "other", .type = pair, .kind = LocalKind::kPlace});
+  }
+
+  // A record of the aggregate `kind` declares, holding two machine integers.
+  auto RecordOfTwo(RecordKind kind) -> TypeId {
+    const RecordId id = unit.records.Add(
+        RecordDecl{
+            .path = {},
+            .linkage = Linkage::kExternal,
+            .kind = kind,
+            .elements = {integer, integer},
+            .methods = {}});
+    return unit.types.Intern(Type{RecordType{.declaration = id}});
+  }
+
+  // A value of `type` the body defines once.
+  auto Transient(TypeId type) -> Destination {
+    return lir::Transient{
+        .value = fn.values.Add(
+            Local{.name = "t", .type = type, .kind = LocalKind::kTemp})};
   }
 
   void VerifyRunning(Instr instr) {
@@ -105,6 +126,58 @@ TEST(LirVerifyTest, AValueIsNeverPutIntoAPartOfAHeldValue) {
                   .destination = std::move(part),
                   .value = UseInstr{.operand = Use{.value = body.x}}}},
       "already holds one");
+}
+
+// A union is built holding one of its own members, so a position past the last
+// names storage the type does not have.
+TEST(LirVerifyTest, AUnionIsBuiltOnlyHoldingAMemberItHas) {
+  PairBody body;
+  const TypeId union_type = body.RecordOfTwo(RecordKind::kUnion);
+  ExpectRefused(
+      body,
+      Instr{
+          .data =
+              AssignInstr{
+                  .destination = body.Transient(union_type),
+                  .value =
+                      UnionInstr{
+                          .member = base::ComponentIndex{.value = 2},
+                          .value = Use{.value = body.x}}}},
+      "a member its type does not have");
+}
+
+// Only a tagged union keeps a tag (LRM 7.3.2), so a read of one in anything
+// else reads bytes that hold some other value.
+TEST(LirVerifyTest, ATagIsReadOnlyOfATaggedUnion) {
+  PairBody body;
+  const TypeId untagged = body.RecordOfTwo(RecordKind::kUnion);
+  const ValueId held = body.fn.values.Add(
+      Local{.name = "u", .type = untagged, .kind = LocalKind::kPlace});
+  ExpectRefused(
+      body,
+      Instr{
+          .data =
+              AssignInstr{
+                  .destination = body.Transient(body.integer),
+                  .value = DiscriminantInstr{.place = PlaceOf(held)}}},
+      "no tagged union");
+}
+
+// An element taken by value is a copy no write reaches, which is right only of
+// a sequence of handles; any other element is storage of its own.
+TEST(LirVerifyTest, AnElementIsTakenByValueOnlyOfASequenceOfHandles) {
+  PairBody body;
+  ExpectRefused(
+      body,
+      Instr{
+          .data =
+              AssignInstr{
+                  .destination = body.Transient(body.integer),
+                  .value =
+                      VectorGetInstr{
+                          .vector = Use{.value = body.x},
+                          .index = Use{.value = body.x}}}},
+      "a sequence of handles");
 }
 
 }  // namespace

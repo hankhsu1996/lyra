@@ -46,13 +46,9 @@
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
-#include "lyra/value/element_type.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/layout.hpp"
-#include "lyra/value/queue_type.hpp"
-#include "lyra/value/value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -207,7 +203,7 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
   llvm::Function* declared = llvm::Function::Create(
       FunctionTypeOf(params, fn.result_type), LinkageOf(fn.linkage), fn.name,
       module_.get());
-  // A body the runtime calls back through a tuple's table answers a
+  // A body the runtime calls back through a type's table answers a
   // predicate as a C++ `bool`, which is read as a whole byte.
   if (unit_->types.Get(fn.result_type).Is<lir::MachineBoolType>()) {
     declared->addRetAttr(llvm::Attribute::ZExt);
@@ -291,7 +287,7 @@ auto CodeGenModule::BuildCallArgs(
             return {};
           },
           [&](const TypeMetadataArg& held) -> diag::Result<void> {
-            auto type_object = GetAddrOfValueType(held.of);
+            auto type_object = value_types_.GetAddrOfValueType(held.of);
             if (!type_object) {
               return std::unexpected(std::move(type_object.error()));
             }
@@ -318,7 +314,7 @@ auto CodeGenModule::BuildCallArgs(
     auto crossed = std::visit(
         Overloaded{
             [&](const TypeConstantArg& of) -> diag::Result<void> {
-              auto type_object = GetAddrOfValueType(of.type);
+              auto type_object = value_types_.GetAddrOfValueType(of.type);
               if (!type_object) {
                 return std::unexpected(std::move(type_object.error()));
               }
@@ -333,7 +329,7 @@ auto CodeGenModule::BuildCallArgs(
               return {};
             },
             [&](const ElementTypeArg& of) -> diag::Result<void> {
-              auto element_type = GetAddrOfElementType(of.type);
+              auto element_type = value_types_.GetAddrOfElementType(of.type);
               if (!element_type) {
                 return std::unexpected(std::move(element_type.error()));
               }
@@ -341,7 +337,7 @@ auto CodeGenModule::BuildCallArgs(
               return {};
             },
             [&](const QueueTypeArg& of) -> diag::Result<void> {
-              auto queue_type = GetAddrOfQueueType(of.type);
+              auto queue_type = value_types_.GetAddrOfQueueType(of.type);
               if (!queue_type) {
                 return std::unexpected(std::move(queue_type.error()));
               }
@@ -385,7 +381,7 @@ auto CodeGenModule::BuildCallArg(
             return {};
           },
           [&](const PassWithType& with) -> diag::Result<void> {
-            auto type_object = GetAddrOfValueType(with.type);
+            auto type_object = value_types_.GetAddrOfValueType(with.type);
             if (!type_object) {
               return std::unexpected(std::move(type_object.error()));
             }
@@ -475,14 +471,16 @@ auto CodeGenModule::EmitLifecycle(
   // to do, is its bytes where it is held, so every step that has anything to do
   // is a copy of them, as clang copies a trivially copyable aggregate.
   if (types_.IntegralShapeOf(type).has_value() || IsLaidOutByType(ty)) {
-    const llvm::Align align(storage.align);
+    const llvm::Align align(storage.layout.align);
     switch (step) {
       case LifecycleStep::kCopy:
       case LifecycleStep::kMove:
-        builder.CreateMemCpy(args[1], align, args[0], align, storage.size);
+        builder.CreateMemCpy(
+            args[1], align, args[0], align, storage.layout.size);
         return {};
       case LifecycleStep::kAssign:
-        builder.CreateMemCpy(args[0], align, args[1], align, storage.size);
+        builder.CreateMemCpy(
+            args[0], align, args[1], align, storage.layout.size);
         return {};
       case LifecycleStep::kDestroy:
         return {};
@@ -632,7 +630,7 @@ auto CodeGenModule::RecordData(const lir::ConstantRecord& record)
             [&](const lir::ConstantArray&) { return mismatch("a pointer"); }},
         part.value);
   };
-  ConstantRecord out(*context_, layout.size);
+  ConstantRecord out(*context_, layout.layout.size);
   for (std::size_t i = 0; i < layout.fields.size(); ++i) {
     const FieldLayout& field = layout.fields[i];
     const lir::Constant& part = record.parts[i];
@@ -671,12 +669,9 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
   std::visit(
       Overloaded{
           [&](const lir::ConstantRecord& record) {
-            llvm::GlobalVariable* defined =
-                DefineConstant(
-                    symbol, RecordData(record), LinkageOf(constant.linkage));
-            defined->setAlignment(
-                llvm::Align(LayoutOfLibraryRecord(record.kind).alignment));
-            return defined;
+            return DefineConstant(
+                symbol, RecordData(record), LinkageOf(constant.linkage),
+                llvm::Align(LayoutOfLibraryRecord(record.kind).layout.align));
           },
           // Every element of an array is of one type, so the first says what
           // the array is of; an array of none holds nothing of any type.
@@ -689,7 +684,7 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
                   Overloaded{
                       [&](const lir::ConstantRecord& record) {
                         elements.push_back(RecordData(record));
-                        align = LayoutOfLibraryRecord(record.kind).alignment;
+                        align = LayoutOfLibraryRecord(record.kind).layout.align;
                       },
                       [&](const lir::ConstantFunction& function) {
                         elements.push_back(UnitFunction(function.function));
@@ -714,14 +709,12 @@ void CodeGenModule::DefineData(const lir::GlobalConstant& constant) {
             llvm::Type* element_ty = elements.empty()
                                          ? llvm::Type::getInt8Ty(*context_)
                                          : elements.front()->getType();
-            llvm::GlobalVariable* defined = DefineConstant(
+            return DefineConstant(
                 symbol,
                 llvm::ConstantArray::get(
                     llvm::ArrayType::get(element_ty, elements.size()),
                     elements),
-                LinkageOf(constant.linkage));
-            defined->setAlignment(llvm::Align(align));
-            return defined;
+                LinkageOf(constant.linkage), llvm::Align(align));
           },
           [&](const lir::ConstantInt&) { return not_whole("an integer"); },
           [&](const lir::ConstantNull&) { return not_whole("a null"); },
@@ -777,9 +770,9 @@ auto CodeGenModule::DeclaredLinkage(lir::TypeId type) const -> lir::Linkage {
   if (const auto* object = declared.As<lir::ObjectType>()) {
     return unit_->classes.Get(object->class_id).linkage;
   }
-  if (const auto* structure = declared.As<lir::StructType>()) {
-    if (const auto* own = std::get_if<lir::StructId>(&structure->declaration)) {
-      return unit_->structs.Get(*own).linkage;
+  if (const lir::RecordRef* record = lir::RecordOf(declared)) {
+    if (const auto* own = std::get_if<lir::RecordId>(record)) {
+      return unit_->records.Get(*own).linkage;
     }
   }
   return lir::Linkage::kExternal;
@@ -886,30 +879,28 @@ constexpr std::uint64_t kDeletingDestructorEntry = 1;
 // The part the library builds where a class extends one of its classes. Its
 // table's address is at its start, where every class extending it keeps its
 // own.
-auto LibraryRecord(support::RuntimeClass which) -> RecordLayout {
+auto LibraryClassPart(support::RuntimeClass which) -> PlacedMembers {
   const support::ObjectLayout layout = runtime::LayoutOf(which);
-  return RecordLayout{
+  return PlacedMembers{
       .types = {},
       .storage = {},
       .offsets = {},
-      .end = layout.size,
-      .size = layout.size,
-      .align = layout.align};
+      .end = layout.layout.size,
+      .layout = layout.layout};
 }
 
 }  // namespace
 
 auto CodeGenModule::PlaceMembers(
     std::span<const lir::TypeId> members, MemberSlotRole role,
-    const RecordLayout& after, std::string_view what)
-    -> diag::Result<RecordLayout> {
-  RecordLayout placed{
+    const PlacedMembers& after, std::string_view what)
+    -> diag::Result<PlacedMembers> {
+  PlacedMembers placed{
       .types = {},
       .storage = {},
       .offsets = {},
       .end = after.end,
-      .size = 0,
-      .align = after.align};
+      .layout = {.size = 0, .align = after.layout.align}};
   placed.types.reserve(members.size());
   placed.storage.reserve(members.size());
   placed.offsets.reserve(members.size());
@@ -925,29 +916,30 @@ auto CodeGenModule::PlaceMembers(
               what, unit_->types.Get(type).KindName()));
     }
     const support::ObjectLayout layout = MemberLayout(type, *storage);
-    const std::uint64_t offset = value::AlignTo(placed.end, layout.align);
+    const std::uint64_t offset =
+        value::AlignTo(placed.end, layout.layout.align);
     placed.types.push_back(type);
     placed.storage.push_back(*storage);
     placed.offsets.push_back(offset);
-    placed.end = offset + layout.size;
-    placed.align = std::max<std::uint64_t>(placed.align, layout.align);
+    placed.end = offset + layout.layout.size;
+    placed.layout.align = std::max(placed.layout.align, layout.layout.align);
   }
-  placed.size = value::AlignTo(placed.end, placed.align);
+  placed.layout.size = value::AlignTo(placed.end, placed.layout.align);
   return placed;
 }
 
 auto CodeGenModule::LayOut(const Declared& declared)
-    -> diag::Result<RecordLayout> {
+    -> diag::Result<PlacedMembers> {
   if (!declared.base.has_value()) {
     throw InternalError(
         "llvm codegen: an interface class is laid out, which holds no storage "
         "-- please report this as a bug");
   }
-  auto extended = RecordOf(*declared.base);
+  auto extended = PlacedMembersOf(*declared.base);
   if (!extended) {
     return std::unexpected(std::move(extended.error()));
   }
-  const RecordLayout& base = **extended;
+  const PlacedMembers& base = **extended;
   std::vector<lir::TypeId> types;
   types.reserve(declared.members.size());
   for (const lir::Member& member : declared.members) {
@@ -956,22 +948,22 @@ auto CodeGenModule::LayOut(const Declared& declared)
   return PlaceMembers(types, MemberSlotRole::kVariable, base, "a member");
 }
 
-auto CodeGenModule::WholeLayOut(const Declared& declared)
-    -> diag::Result<WholeRecord> {
-  auto record = LayOut(declared);
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+auto CodeGenModule::CompleteObjectLayoutOf(const Declared& declared)
+    -> diag::Result<CompleteObjectLayout> {
+  auto own = LayOut(declared);
+  if (!own) {
+    return std::unexpected(std::move(own.error()));
   }
   // Each interface class the value is also a value of is one part of it
-  // however many ways it is arrived at, so only a whole value places them,
+  // however many ways it is arrived at, so only a complete object places them,
   // after everything its lineage places -- where C++ places a virtual base
   // (C++ ABI 2.4). A part holds where that interface class's table is and
   // nothing else.
-  WholeRecord whole{
-      .size = 0,
-      .align = std::max(record->align, kTableAddressAlign),
+  CompleteObjectLayout whole{
+      .layout =
+          {.size = 0, .align = std::max(own->layout.align, kTableAddressAlign)},
       .interface_parts = {}};
-  std::uint64_t end = record->end;
+  std::uint64_t end = own->end;
   const std::size_t part_count = InterfacePartsOf(declared).size();
   whole.interface_parts.reserve(part_count);
   for (std::size_t k = 0; k < part_count; ++k) {
@@ -979,12 +971,12 @@ auto CodeGenModule::WholeLayOut(const Declared& declared)
     whole.interface_parts.push_back(end);
     end += kTableAddressSize;
   }
-  whole.size = value::AlignTo(end, whole.align);
+  whole.layout.size = value::AlignTo(end, whole.layout.align);
   return whole;
 }
 
 auto CodeGenModule::LayOutCaptures(lir::ClosureId id)
-    -> diag::Result<RecordLayout> {
+    -> diag::Result<PlacedMembers> {
   const lir::Closure& closure = unit_->closures.Get(id);
   std::vector<lir::TypeId> types;
   types.reserve(closure.captures.size());
@@ -993,19 +985,19 @@ auto CodeGenModule::LayOutCaptures(lir::ClosureId id)
   }
   return PlaceMembers(
       types, MemberSlotRole::kSnapshot,
-      RecordLayout{
+      PlacedMembers{
           .types = {},
           .storage = {},
           .offsets = {},
           .end = runtime::ClosureCapturesAt(),
-          .size = 0,
-          .align = 1},
+          .layout = {.size = 0, .align = 1}},
       "a capture");
 }
 
-auto CodeGenModule::RecordOf(lir::TypeId type)
-    -> diag::Result<const RecordLayout*> {
-  if (const auto found = records_.find(type); found != records_.end()) {
+auto CodeGenModule::PlacedMembersOf(lir::TypeId type)
+    -> diag::Result<const PlacedMembers*> {
+  if (const auto found = placed_members_.find(type);
+      found != placed_members_.end()) {
     return &found->second;
   }
   const lir::Type& named = unit_->types.Get(type);
@@ -1013,43 +1005,43 @@ auto CodeGenModule::RecordOf(lir::TypeId type)
   const auto* library = named.As<lir::RuntimeClassType>();
   if (library == nullptr && !declaration.has_value()) {
     throw InternalError(
-        "llvm codegen: a record is asked of a type that declares no storage "
+        "llvm codegen: members are placed for a type that declares no storage "
         "-- please report this as a bug");
   }
   auto laid =
       library != nullptr
-          ? diag::Result<RecordLayout>{LibraryRecord(library->which)}
+          ? diag::Result<PlacedMembers>{LibraryClassPart(library->which)}
           : std::visit(
                 Overloaded{
-                    [&](const lir::ObjectType&) -> diag::Result<RecordLayout> {
+                    [&](const lir::ObjectType&) -> diag::Result<PlacedMembers> {
                       return LayOut(DeclarationOf(type));
                     },
                     [&](const lir::CrossUnitClassType&)
-                        -> diag::Result<RecordLayout> {
+                        -> diag::Result<PlacedMembers> {
                       return LayOut(DeclarationOf(type));
                     },
                     [&](const lir::ClosureType& closure)
-                        -> diag::Result<RecordLayout> {
+                        -> diag::Result<PlacedMembers> {
                       return LayOutCaptures(closure.closure_id);
                     }},
                 *declaration);
   if (!laid) {
     return std::unexpected(std::move(laid.error()));
   }
-  return &records_.emplace(type, *std::move(laid)).first->second;
+  return &placed_members_.emplace(type, *std::move(laid)).first->second;
 }
 
 auto CodeGenModule::CompleteObjectSize(lir::TypeId type)
     -> diag::Result<std::uint64_t> {
   // A value no declaration lays out takes what its type lays it out in.
   if (!unit_->types.Get(type).Declaration().has_value()) {
-    return types_.LayoutOf(type).size;
+    return types_.LayoutOf(type).layout.size;
   }
-  auto whole = WholeLayOut(DeclarationOf(type));
+  auto whole = CompleteObjectLayoutOf(DeclarationOf(type));
   if (!whole) {
     return std::unexpected(std::move(whole.error()));
   }
-  return whole->size;
+  return whole->layout.size;
 }
 
 auto CodeGenModule::HoldsItsBytesInline(
@@ -1098,11 +1090,11 @@ auto CodeGenModule::ValuesHeldByMember(lir::TypeId type) const
 }
 
 // A value held as its bytes has none until one is copied in, which is how the
-// one record holding such members -- a closure's captures -- is filled, so
+// one value holding such members -- a closure's captures -- is filled, so
 // nothing builds it here.
 auto CodeGenModule::BeginMembers(
     llvm::IRBuilderBase& builder, llvm::Value* value,
-    const RecordLayout& placed) -> diag::Result<void> {
+    const PlacedMembers& placed) -> diag::Result<void> {
   for (std::size_t i = 0; i < placed.storage.size(); ++i) {
     if (HoldsItsBytesInline(placed.types[i], placed.storage[i])) {
       throw InternalError(
@@ -1147,7 +1139,7 @@ auto CodeGenModule::BuildMemberStorage(
 
 auto CodeGenModule::EndMembers(
     llvm::IRBuilderBase& builder, llvm::Value* value,
-    const RecordLayout& placed) -> diag::Result<void> {
+    const PlacedMembers& placed) -> diag::Result<void> {
   for (std::size_t i = placed.storage.size(); i-- > 0;) {
     if (MemberLayout(placed.types[i], placed.storage[i])
             .ends_with_nothing_to_do) {
@@ -1180,11 +1172,11 @@ auto CodeGenModule::ValueFunction(const std::string& symbol)
 
 auto CodeGenModule::EmitConstructorPrologue(
     const Declared& declared, lir::Linkage linkage) -> diag::Result<void> {
-  auto record = LayOut(declared);
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto own = LayOut(declared);
+  if (!own) {
+    return std::unexpected(std::move(own.error()));
   }
-  auto whole = WholeLayOut(declared);
+  auto whole = CompleteObjectLayoutOf(declared);
   if (!whole) {
     return std::unexpected(std::move(whole.error()));
   }
@@ -1200,7 +1192,7 @@ auto CodeGenModule::EmitConstructorPrologue(
         builder.CreateConstInBoundsGEP1_64(builder.getInt8Ty(), value, offset));
   };
   table_at(0, points.lineage);
-  if (auto begun = BeginMembers(builder, value, *record); !begun) {
+  if (auto begun = BeginMembers(builder, value, *own); !begun) {
     return begun;
   }
   // Each interface class part is placed where a complete object of this
@@ -1219,11 +1211,11 @@ auto CodeGenModule::EmitConstructorPrologue(
 
 auto CodeGenModule::EmitDestructors(
     const Declared& declared, lir::Linkage linkage) -> diag::Result<void> {
-  auto record = LayOut(declared);
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto own = LayOut(declared);
+  if (!own) {
+    return std::unexpected(std::move(own.error()));
   }
-  auto whole = WholeLayOut(declared);
+  auto whole = CompleteObjectLayoutOf(declared);
   if (!whole) {
     return std::unexpected(std::move(whole.error()));
   }
@@ -1244,7 +1236,7 @@ auto CodeGenModule::EmitDestructors(
       lir::Destructor::kBaseObject,
       [&](llvm::IRBuilderBase& builder,
           llvm::Value* value) -> diag::Result<void> {
-        if (auto ended = EndMembers(builder, value, *record); !ended) {
+        if (auto ended = EndMembers(builder, value, *own); !ended) {
           return ended;
         }
         const std::optional<lir::TypeId> extended = ExtendedClassOf(declared);
@@ -1289,7 +1281,7 @@ auto CodeGenModule::EmitDestructors(
                     declared.definition, lir::Destructor::kCompleteObject)),
             {value});
         const std::array<llvm::Value*, 2> args{
-            value, builder.getInt64(whole->size)};
+            value, builder.getInt64(whole->layout.size)};
         builder.CreateCall(SizedOperatorDelete(), args);
         return {};
       });
@@ -1414,7 +1406,8 @@ auto CodeGenModule::LibraryTableAddressPoint(std::string_view table)
 
 auto CodeGenModule::DefineConstant(
     const std::string& symbol, llvm::Constant* value,
-    llvm::GlobalValue::LinkageTypes linkage) -> llvm::GlobalVariable* {
+    llvm::GlobalValue::LinkageTypes linkage, llvm::Align align)
+    -> llvm::GlobalVariable* {
   llvm::GlobalVariable* declared = module_->getNamedGlobal(symbol);
   if (declared != nullptr && declared->hasInitializer()) {
     throw InternalError(
@@ -1436,6 +1429,13 @@ auto CodeGenModule::DefineConstant(
   defined->setConstant(true);
   defined->setInitializer(value);
   defined->setLinkage(linkage);
+  defined->setAlignment(align);
+  // A definition every module states alike lies in a section of its own name,
+  // as clang places one, so the linker keeps one section and drops the others
+  // whole rather than keeping each module's copy unreferenced.
+  if (linkage == llvm::GlobalValue::LinkOnceODRLinkage) {
+    defined->setComdat(module_->getOrInsertComdat(symbol));
+  }
   if (declared != nullptr) {
     declared->replaceAllUsesWith(defined);
     declared->eraseFromParent();
@@ -1483,13 +1483,14 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
           symbol,
           llvm::ConstantStruct::getAnon(
               {LibraryTableAddressPoint(kClassTypeInfoTable), name}),
-          LinkageOf(linkage));
+          LinkageOf(linkage), llvm::Align(alignof(void*)));
     }
     return DefineConstant(
         symbol,
         llvm::ConstantStruct::getAnon(
-            {LibraryTableAddressPoint(kSingleBaseTypeInfoTable), name, *extended}),
-        LinkageOf(linkage));
+            {LibraryTableAddressPoint(kSingleBaseTypeInfoTable), name,
+             *extended}),
+        LinkageOf(linkage), llvm::Align(alignof(void*)));
   }
   std::vector<llvm::Constant*> bases;
   const auto base_entry = [&](llvm::Constant* base, std::int64_t offset_flags) {
@@ -1516,13 +1517,13 @@ auto CodeGenModule::TypeInfoOf(lir::TypeId type) -> llvm::Constant* {
            llvm::ConstantInt::get(i32, bases.size()),
            llvm::ConstantArray::get(
                llvm::ArrayType::get(base_ty, bases.size()), bases)}),
-      LinkageOf(linkage));
+      LinkageOf(linkage), llvm::Align(alignof(void*)));
 }
 
 auto CodeGenModule::EmitTable(
     lir::TypeId type, const Declared& declared,
     std::span<const lir::ConformingBehavior> conforming) -> diag::Result<void> {
-  auto whole = WholeLayOut(declared);
+  auto whole = CompleteObjectLayoutOf(declared);
   if (!whole) {
     return std::unexpected(std::move(whole.error()));
   }
@@ -1621,7 +1622,7 @@ auto CodeGenModule::EmitTable(
       lir::DispatchTableSymbol(declared.definition),
       llvm::ConstantArray::get(
           llvm::ArrayType::get(ptr_ty, entries.size()), entries),
-      LinkageOf(DeclaredLinkage(type)));
+      LinkageOf(DeclaredLinkage(type)), llvm::Align(alignof(void*)));
   table_points_.emplace(declared.definition, std::move(points));
   return {};
 }
@@ -1660,7 +1661,7 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
     entry = invoke.params.size() > 1
                 ? offsetof(ClosureDefinition, run_per_element)
                 : offsetof(ClosureDefinition, run_value);
-    auto answered = GetAddrOfValueType(invoke.result_type);
+    auto answered = value_types_.GetAddrOfValueType(invoke.result_type);
     if (!answered) {
       return std::unexpected(std::move(answered.error()));
     }
@@ -1680,30 +1681,15 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
   out.Place(offsetof(ClosureDefinition, result_type), type);
   out.Place(
       offsetof(ClosureDefinition, size),
-      Int(captures->size, sizeof(ClosureDefinition::size)));
+      Int(captures->layout.size, sizeof(ClosureDefinition::size)));
   out.Place(offsetof(ClosureDefinition, end_captures), end);
   // The definition and what ends the captures are named wherever the invoke
   // is, and nowhere else.
   end->setLinkage(LinkageOf(invoke.linkage));
-  DefineConstant(symbol, std::move(out).Build(), LinkageOf(invoke.linkage))
-      ->setAlignment(llvm::Align(alignof(ClosureDefinition)));
+  DefineConstant(
+      symbol, std::move(out).Build(), LinkageOf(invoke.linkage),
+      llvm::Align(alignof(ClosureDefinition)));
   return {};
-}
-
-auto CodeGenModule::GetAddrOfValueType(lir::TypeId type)
-    -> diag::Result<llvm::Constant*> {
-  // A type laid out by the design, whose table the code generator fills.
-  if (IsLaidOutByType(unit_->types.Get(type))) {
-    return value_types_.GetAddrOfLaidOutType(type);
-  }
-  if (types_.IntegralShapeOf(type).has_value()) {
-    return value_types_.GetAddrOfIntegralType(type);
-  }
-  auto domain = DomainOf(type);
-  if (!domain) {
-    return std::unexpected(std::move(domain.error()));
-  }
-  return LibraryData(ValueTypeSymbol(*domain));
 }
 
 auto CodeGenModule::DomainOf(lir::TypeId type) const
@@ -1746,12 +1732,12 @@ auto CodeGenModule::DefineSharedStorage(const lir::StaticStorage& storage)
   // itself, sized as the library states it; every other unit reaches the same
   // symbol as a declaration.
   const support::ObjectLayout layout = MemberLayout(storage.type, *described);
-  auto* type =
-      llvm::ArrayType::get(llvm::Type::getInt8Ty(*context_), layout.size);
+  auto* type = llvm::ArrayType::get(
+      llvm::Type::getInt8Ty(*context_), layout.layout.size);
   auto* defined = llvm::cast<llvm::GlobalVariable>(
       module_->getOrInsertGlobal(storage.symbol, type));
   defined->setInitializer(llvm::ConstantAggregateZero::get(type));
-  defined->setAlignment(llvm::Align(layout.align));
+  defined->setAlignment(llvm::Align(layout.layout.align));
   return {};
 }
 
@@ -1834,87 +1820,6 @@ auto CodeGenModule::GetAddrOfIntegralConstant(lir::IntegralConstantId constant)
   }
   llvm::GlobalVariable* defined = DefineIntegralConstant(constant);
   integral_constants_.emplace(constant, defined);
-  return defined;
-}
-
-auto CodeGenModule::GetAddrOfQueueType(lir::TypeId queue)
-    -> diag::Result<llvm::Constant*> {
-  if (const auto found = queue_types_.find(queue);
-      found != queue_types_.end()) {
-    return found->second;
-  }
-  const auto* declared = unit_->types.Get(queue).As<lir::QueueType>();
-  if (declared == nullptr) {
-    throw InternalError(
-        "llvm codegen: a queue type's constant is asked of a type that is no "
-        "queue -- please report this as a bug");
-  }
-  // LRM 7.10.5: a queue declaring no bound holds any number of elements, which
-  // the constant states as a bound below zero.
-  const std::int64_t bound =
-      declared->max_bound.has_value()
-          ? static_cast<std::int64_t>(*declared->max_bound)
-          : -1;
-  auto element = GetAddrOfElementType(declared->element_type);
-  if (!element) {
-    return std::unexpected(std::move(element.error()));
-  }
-  using value::QueueType;
-  ConstantRecord out(*context_, sizeof(QueueType));
-  out.Place(QueueType::ElementStatedAt(), *element);
-  out.PlaceInteger(
-      QueueType::BoundStatedAt(), static_cast<std::uint64_t>(bound));
-  llvm::GlobalVariable* defined = DefineConstant(
-      std::format("lyra.queue.{}", queue.value), std::move(out).Build(),
-      llvm::GlobalValue::PrivateLinkage);
-  defined->setAlignment(llvm::Align(alignof(QueueType)));
-  queue_types_.emplace(queue, defined);
-  return defined;
-}
-
-auto CodeGenModule::GetAddrOfElementType(lir::TypeId element)
-    -> diag::Result<llvm::Constant*> {
-  if (const auto found = element_types_.find(element);
-      found != element_types_.end()) {
-    return found->second;
-  }
-  auto type = GetAddrOfValueType(element);
-  if (!type) {
-    return std::unexpected(std::move(type.error()));
-  }
-  const auto stated = std::ranges::find_if(
-      unit_->type_operations, [&](const lir::TypeOperation& operation) {
-        return operation.type == element &&
-               operation.answers == support::ValueOperation{
-                                        support::BuiltinFn::kDeclaredDefault};
-      });
-  if (stated == unit_->type_operations.end()) {
-    throw InternalError(
-        "llvm codegen: the unit holds an array of a type whose default it "
-        "does not state -- please report this as a bug");
-  }
-  using value::ElementScratch;
-  using value::ElementType;
-  const std::string name = std::format("lyra.element.{}", element.value);
-  // What the type keeps between calls, which a constant cannot hold: where its
-  // default and the storage a discarded write lands in are, once built. It
-  // lasts as long as the program, so neither is ever given back.
-  auto* scratch_ty = llvm::ArrayType::get(
-      llvm::Type::getInt8Ty(*context_), sizeof(ElementScratch));
-  auto* scratch = llvm::cast<llvm::GlobalVariable>(
-      module_->getOrInsertGlobal(name + ".scratch", scratch_ty));
-  scratch->setLinkage(llvm::GlobalValue::PrivateLinkage);
-  scratch->setInitializer(llvm::ConstantAggregateZero::get(scratch_ty));
-  scratch->setAlignment(llvm::Align(alignof(ElementScratch)));
-  ConstantRecord out(*context_, sizeof(ElementType));
-  out.Place(ElementType::TypeStatedAt(), *type);
-  out.Place(
-      ElementType::BuildDefaultStatedAt(), UnitFunction(stated->function));
-  out.Place(ElementType::ScratchStatedAt(), scratch);
-  llvm::GlobalVariable* defined = DefineConstant(
-      name, std::move(out).Build(), llvm::GlobalValue::PrivateLinkage);
-  defined->setAlignment(llvm::Align(alignof(ElementType)));
-  element_types_.emplace(element, defined);
   return defined;
 }
 

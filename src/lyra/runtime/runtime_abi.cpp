@@ -74,11 +74,13 @@
 #include "lyra/value/empty.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/fixed_array_type.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/library_value_types.hpp"
 #include "lyra/value/managed_ref.hpp"
 #include "lyra/value/queue_type.hpp"
@@ -86,10 +88,8 @@
 #include "lyra/value/runtime_array_manipulation.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_memory.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_record.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple_type.hpp"
@@ -441,13 +441,6 @@ auto ArrayAt(const void* bytes, const void* type) -> value::FixedArrayView {
   return {.type = &ArrayTypeAt(type), .bytes = bytes};
 }
 
-// A copy of the same array held as the runtime holds one, for what goes on
-// holding it once the call is over.
-auto OwnedArrayCopy(const void* bytes, const void* type)
-    -> value::RuntimeFixedArray {
-  return value::RuntimeFixedArray::CopyOf(ArrayTypeAt(type), bytes);
-}
-
 // What an entry is told of an integral operand it reads as a number: how wide
 // it is, whether it is signed, and whether an unknown plane follows the value
 // plane.
@@ -551,28 +544,30 @@ auto WideLentAt(const ErasedReference& lent, std::int64_t width)
   return {.bytes = lent.storage, .width = static_cast<std::uint64_t>(width)};
 }
 
+// What a write a variable's takeover turns away lands in: the variable's own
+// value, kept beneath the takeover, where `lent` names the whole of it, and
+// nothing otherwise (LRM 10.6). `Owned` is the form the variable keeps that
+// value in.
+template <class Owned>
+void AssignBeneath(const ErasedReference& lent, const void* value) {
+  if (!lent.whole) {
+    return;
+  }
+  if (Owned* beneath = WholeVariable<typename VariableOf<Owned>::Type>(lent)
+                           .DisplacedStorage()) {
+    beneath->AssignBytes(value);
+  }
+}
+
 template <value::HeldAsWords T>
 void WideRefSet(void* reference, std::int64_t width, const void* value) {
   const ErasedReference& lent = ErasedAt(reference);
-  if (!lent.Admits()) {
-    if (lent.whole) {
-      if (T* beneath = WholeVariable<typename VariableOf<T>::Type>(lent)
-                           .DisplacedStorage()) {
-        beneath->AssignBytes(value);
-      }
-    }
-    return;
-  }
   const value::WideAt<T::kDomain> held = WideLentAt<T>(lent, width);
   const auto assign = [&] { std::memmove(held.bytes, value, held.ByteSize()); };
-  if (!lent.Watched()) {
-    assign();
-    return;
-  }
-  if (std::memcmp(held.bytes, value, held.ByteSize()) == 0) {
-    return;
-  }
-  lent.Report(PartPath{}, ReplaceWhole(held, assign));
+  SetThrough(
+      lent, [&] { AssignBeneath<T>(lent, value); }, assign,
+      [&] { return std::memcmp(held.bytes, value, held.ByteSize()) == 0; },
+      [&] { return ReplaceWhole(held, assign); });
 }
 
 // A value lying after what holds it, lent by reference or by its holder as a
@@ -622,8 +617,7 @@ class LentLaidOut {
   LentLaidOut(const value::ValueType& type, void* bytes)
       : type_(&type), bytes_(bytes) {
   }
-  template <value::LaidOutByType Owned>
-  LentLaidOut(const LaidOutStorage<Owned>& held, void* bytes)
+  LentLaidOut(const LaidOutStorage& held, void* bytes)
       : LentLaidOut(held.Type(), bytes) {
   }
   LentLaidOut(const LentLaidOut& other)
@@ -778,36 +772,23 @@ auto OpenTailCellWrite(void* cell, void* out) -> void* {
           VariableAt<T>(cell)});
 }
 
-// The same over a value laid out by its type -- a tuple, a union, a fixed-size
-// unpacked array -- which a reference names as its bytes where it lies: no
-// object of the runtime's stands for one there, since a component, a member or
-// an element of one is bytes of what holds it.
+// The same over a value laid out by its type -- a structure, a union, a tuple,
+// a fixed-size unpacked array -- which a reference names as its bytes where it
+// lies: no object of the runtime's stands for one there, since a component, a
+// member or an element of one is bytes of what holds it.
 // Nothing in those bytes says what they are, so an access that has to know is
-// told the type. `Owned` is the form the runtime holds such a value of its own
-// in, which is what a variable holding the whole of it keeps beneath a
-// procedural continuous assignment.
-template <value::LaidOutByType Owned>
+// told the type.
 void LaidOutRefSet(
     void* reference, const value::ValueType& type, const void* value) {
   const ErasedReference& lent = ErasedAt(reference);
-  if (!lent.Admits()) {
-    if (lent.whole) {
-      if (Owned* beneath = WholeVariable<typename VariableOf<Owned>::Type>(lent)
-                               .DisplacedStorage()) {
-        beneath->AssignBytes(value);
-      }
-    }
-    return;
-  }
-  if (!lent.Watched()) {
-    type.Assign(lent.storage, value);
-    return;
-  }
-  if (type.BitIdentical(lent.storage, value)) {
-    return;
-  }
-  type.Assign(lent.storage, value);
-  lent.Report(PartPath{}, Change::Whole());
+  const auto assign = [&] { type.Assign(lent.storage, value); };
+  SetThrough(
+      lent, [&] { AssignBeneath<value::LaidOutValue>(lent, value); }, assign,
+      [&] { return type.BitIdentical(lent.storage, value); },
+      [&] {
+        assign();
+        return Change::Whole();
+      });
 }
 
 // A net and one of its drivers, behind the addresses the ABI carries them as.
@@ -887,11 +868,12 @@ auto OwnedCopy(const void* value, const void* type) -> value::AnyValue {
   return value::AnyValue::CopyOf(TypeAt(type), value);
 }
 
-// The same of a structure or a union that crossed as its bytes with its type,
-// held as the runtime holds one.
-auto OwnedRecordCopy(const void* bytes, const void* type)
-    -> value::RuntimeRecord {
-  return value::RuntimeRecord::CopyOf(TypeAt(type), bytes);
+// The same of a value laid out by its type -- a record or a fixed-size
+// unpacked array -- that crossed as its bytes with its type, held as the
+// runtime holds one, for what goes on holding it once the call is over.
+auto OwnedLaidOutCopy(const void* bytes, const void* type)
+    -> value::LaidOutValue {
+  return value::LaidOutValue::CopyOf(TypeAt(type), bytes);
 }
 
 // An index that crossed with its type, read where it lies.
@@ -1332,10 +1314,10 @@ auto Held(T value) -> value::AnyValue {
   });
 }
 
-// A fixed-size unpacked array the runtime holds, which already holds it with
-// the type it was handed over with, so it is given up as it stands.
-auto Held(value::RuntimeFixedArray array) -> value::AnyValue {
-  return std::move(array).IntoAnyValue();
+// A value laid out by its type that the runtime holds, which already holds it
+// with the type it was handed over with, so it is given up as it stands.
+auto Held(value::LaidOutValue laid_out) -> value::AnyValue {
+  return std::move(laid_out).IntoAnyValue();
 }
 
 // The components of a completion holding the one value `value`.
@@ -1520,10 +1502,10 @@ auto RenderedWord(value::ConstMemoryWord word, unsigned base) -> std::string {
 }
 
 auto ReadUnpackedMemory(
-    RuntimeEffects& runtime, value::RuntimeFixedArray loaded,
+    RuntimeEffects& runtime, value::LaidOutValue loaded,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
     std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish)
-    -> value::RuntimeFixedArray {
+    -> value::LaidOutValue {
   const auto radix = static_cast<unsigned>(base);
   ReadMemGridCore(
       runtime, filename, radix, dims[0].Low(), dims[0].High(),
@@ -2048,8 +2030,8 @@ using lyra::runtime::OpenTailCellWrite;
 using lyra::runtime::OpenTailDriverWrite;
 using lyra::runtime::OpenTailRefWrite;
 using lyra::runtime::OpenWrite;
-using lyra::runtime::OwnedArrayCopy;
 using lyra::runtime::OwnedClosure;
+using lyra::runtime::OwnedLaidOutCopy;
 using lyra::runtime::ParkAt;
 using lyra::runtime::PositionNamedAt;
 using lyra::runtime::ProcessAwait;
@@ -2127,6 +2109,7 @@ using lyra::value::Enumeration;
 using lyra::value::Format;
 using lyra::value::FormatArg;
 using lyra::value::FormatSpec;
+using lyra::value::LaidOutValue;
 using lyra::value::MakeFormatArg;
 using lyra::value::NetResolution;
 using lyra::value::ObjectRef;
@@ -2136,9 +2119,7 @@ using lyra::value::PrintValueItem;
 using lyra::value::Real;
 using lyra::value::RuntimeAssociativeArray;
 using lyra::value::RuntimeDynamicArray;
-using lyra::value::RuntimeFixedArray;
 using lyra::value::RuntimeQueue;
-using lyra::value::RuntimeRecord;
 using lyra::value::ShortReal;
 using lyra::value::String;
 using lyra::value::TimeFormat;
@@ -2219,7 +2200,7 @@ auto lyra_rt_file_read_memory(
     void* files, const void* dest, const void* dest_type, std::int64_t fd,
     LyraSpan bounds, std::int64_t start, std::int64_t count,
     const void* answer_type, void* out) -> void* {
-  RuntimeFixedArray memory = OwnedArrayCopy(dest, dest_type);
+  LaidOutValue memory = OwnedLaidOutCopy(dest, dest_type);
   const std::vector<UnpackedRange> dims =
       lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(bounds));
   const UnpackedRange range = dims.front();
@@ -2504,19 +2485,13 @@ auto lyra_rt_managedref_shared_cell_make(void* out) -> void* {
   return MakeSharedCell<ObjectRef>(out);
 }
 
-auto lyra_rt_record_shared_cell_make(const void* held_type, void* out)
+auto lyra_rt_laidout_shared_cell_make(const void* held_type, void* out)
     -> void* {
-  return MakeSharedCell<RuntimeRecord>(out, lyra::runtime::TypeAt(held_type));
+  return MakeSharedCell<LaidOutValue>(out, lyra::runtime::TypeAt(held_type));
 }
 
 auto lyra_rt_dynarray_shared_cell_make(void* out) -> void* {
   return MakeSharedCell<RuntimeDynamicArray>(out);
-}
-
-auto lyra_rt_unpackedarray_shared_cell_make(const void* held_type, void* out)
-    -> void* {
-  return MakeSharedCell<RuntimeFixedArray>(
-      out, lyra::runtime::TypeAt(held_type));
 }
 
 auto lyra_rt_queue_shared_cell_make(void* out) -> void* {
@@ -3335,15 +3310,12 @@ auto lyra_rt_chandle_cell_refer(void* cell, void* out) -> void* {
 auto lyra_rt_managedref_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<ObjectRef>(cell, out);
 }
-auto lyra_rt_record_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<RuntimeRecord>(cell, out);
+auto lyra_rt_laidout_cell_refer(void* cell, void* out) -> void* {
+  return ReferToCell<LaidOutValue>(cell, out);
 }
 
 auto lyra_rt_dynarray_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<RuntimeDynamicArray>(cell, out);
-}
-auto lyra_rt_unpackedarray_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<RuntimeFixedArray>(cell, out);
 }
 auto lyra_rt_queue_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<RuntimeQueue>(cell, out);
@@ -3357,7 +3329,7 @@ auto lyra_rt_dynarray_refer_element(
   return ReferElement<RuntimeDynamicArray>(
       reference, PositionNamedAt(position), out);
 }
-auto lyra_rt_unpackedarray_refer_element(
+auto lyra_rt_laidout_refer_element(
     const void* reference, const void* position, const void* array_type,
     void* out) -> void* {
   return ReferArrayElement(
@@ -3373,7 +3345,7 @@ auto lyra_rt_assocarray_refer_element(
   return ReferElement<RuntimeAssociativeArray>(
       reference, lyra::runtime::IndexAt(index, index_type), out);
 }
-auto lyra_rt_record_refer_component(
+auto lyra_rt_laidout_refer_component(
     const void* reference, std::int64_t index, const void* tuple_type,
     void* out) -> void* {
   const ErasedReference& from = ErasedAt(reference);
@@ -3466,22 +3438,21 @@ auto lyra_rt_managedref_ref_sampled_get(void* reference) -> const void* {
   return RefSampledGet<ObjectRef>(reference);
 }
 
-auto lyra_rt_record_ref_get(void* reference) -> const void* {
+auto lyra_rt_laidout_ref_get(void* reference) -> const void* {
   return ErasedAt(reference).storage;
 }
 
-void lyra_rt_record_ref_set(
+void lyra_rt_laidout_ref_set(
     void* reference, const void* value, const void* value_type) {
-  LaidOutRefSet<RuntimeRecord>(
-      reference, lyra::runtime::TypeAt(value_type), value);
+  LaidOutRefSet(reference, lyra::runtime::TypeAt(value_type), value);
 }
 
-void lyra_rt_record_ref_arm_sampling(void* reference) {
-  ArmWholeVariable<VariableOf<RuntimeRecord>::Type>(reference);
+void lyra_rt_laidout_ref_arm_sampling(void* reference) {
+  ArmWholeVariable<VariableOf<LaidOutValue>::Type>(reference);
 }
 
-auto lyra_rt_record_ref_sampled_get(void* reference) -> const void* {
-  return TailRefSampledGet<RuntimeRecord>(reference);
+auto lyra_rt_laidout_ref_sampled_get(void* reference) -> const void* {
+  return TailRefSampledGet<LaidOutValue>(reference);
 }
 
 auto lyra_rt_dynarray_ref_get(void* reference) -> const void* {
@@ -3498,24 +3469,6 @@ void lyra_rt_dynarray_ref_arm_sampling(void* reference) {
 
 auto lyra_rt_dynarray_ref_sampled_get(void* reference) -> const void* {
   return RefSampledGet<RuntimeDynamicArray>(reference);
-}
-
-auto lyra_rt_unpackedarray_ref_get(void* reference) -> const void* {
-  return ErasedAt(reference).storage;
-}
-
-void lyra_rt_unpackedarray_ref_set(
-    void* reference, const void* value, const void* value_type) {
-  LaidOutRefSet<RuntimeFixedArray>(
-      reference, lyra::runtime::TypeAt(value_type), value);
-}
-
-void lyra_rt_unpackedarray_ref_arm_sampling(void* reference) {
-  ArmWholeVariable<VariableOf<RuntimeFixedArray>::Type>(reference);
-}
-
-auto lyra_rt_unpackedarray_ref_sampled_get(void* reference) -> const void* {
-  return TailRefSampledGet<RuntimeFixedArray>(reference);
 }
 
 auto lyra_rt_queue_ref_get(void* reference) -> const void* {
@@ -3752,21 +3705,22 @@ auto lyra_rt_shortreal_sampled_history_at(
       static_cast<const SampledHistory<ShortReal>*>(history)->At(ticks_back));
 }
 
-void lyra_rt_record_sampled_history_install(
+void lyra_rt_laidout_sampled_history_install(
     void* history, const void* default_value, std::int64_t depth,
     const void* default_value_type) {
-  static_cast<SampledHistory<RuntimeRecord>*>(history)->Install(
-      lyra::runtime::OwnedRecordCopy(default_value, default_value_type), depth);
+  static_cast<SampledHistory<LaidOutValue>*>(history)->Install(
+      lyra::runtime::OwnedLaidOutCopy(default_value, default_value_type),
+      depth);
 }
 
-void lyra_rt_record_sampled_history_push(void* history, const void* value) {
-  static_cast<SampledHistory<RuntimeRecord>*>(history)->PushBytes(value);
+void lyra_rt_laidout_sampled_history_push(void* history, const void* value) {
+  static_cast<SampledHistory<LaidOutValue>*>(history)->PushBytes(value);
 }
 
-auto lyra_rt_record_sampled_history_at(
+auto lyra_rt_laidout_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
-      out, static_cast<const SampledHistory<RuntimeRecord>*>(history)->At(
+      out, static_cast<const SampledHistory<LaidOutValue>*>(history)->At(
                ticks_back));
 }
 
@@ -3785,25 +3739,6 @@ auto lyra_rt_dynarray_sampled_history_at(
     const void* history, std::int64_t ticks_back, void* out) -> void* {
   return Emplace(
       out, static_cast<const SampledHistory<RuntimeDynamicArray>*>(history)->At(
-               ticks_back));
-}
-
-void lyra_rt_unpackedarray_sampled_history_install(
-    void* history, const void* default_value, std::int64_t depth,
-    const void* default_value_type) {
-  static_cast<SampledHistory<RuntimeFixedArray>*>(history)->Install(
-      OwnedArrayCopy(default_value, default_value_type), depth);
-}
-
-void lyra_rt_unpackedarray_sampled_history_push(
-    void* history, const void* value) {
-  static_cast<SampledHistory<RuntimeFixedArray>*>(history)->PushBytes(value);
-}
-
-auto lyra_rt_unpackedarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back, void* out) -> void* {
-  return Emplace(
-      out, static_cast<const SampledHistory<RuntimeFixedArray>*>(history)->At(
                ticks_back));
 }
 
@@ -4653,25 +4588,25 @@ void lyra_rt_managedref_ref_end_takeover(void* reference, std::int64_t level) {
   RefEndTakeover<ObjectRef>(reference, level);
 }
 
-void lyra_rt_record_cell_initialize(
+void lyra_rt_laidout_cell_initialize(
     void* cell, const void* prototype) noexcept {
-  VariableAt<RuntimeRecord>(cell).Initialize(prototype);
+  VariableAt<LaidOutValue>(cell).Initialize(prototype);
 }
 
-void lyra_rt_record_cell_set(void* cell, const void* value) {
-  VariableAt<RuntimeRecord>(cell).SetBytes(value);
+void lyra_rt_laidout_cell_set(void* cell, const void* value) {
+  VariableAt<LaidOutValue>(cell).SetBytes(value);
 }
 
-void lyra_rt_record_cell_arm_sampling(void* cell) {
-  VariableAt<RuntimeRecord>(cell).ArmSampling();
+void lyra_rt_laidout_cell_arm_sampling(void* cell) {
+  VariableAt<LaidOutValue>(cell).ArmSampling();
 }
 
-auto lyra_rt_record_cell_sampled_get(void* cell) -> const void* {
-  return VariableAt<RuntimeRecord>(cell).SampledBytes();
+auto lyra_rt_laidout_cell_sampled_get(void* cell) -> const void* {
+  return VariableAt<LaidOutValue>(cell).SampledBytes();
 }
 
-auto lyra_rt_record_value_cell_alloc(const void* held_type) noexcept -> void* {
-  return AllocateValueCell<RuntimeRecord>(lyra::runtime::TypeAt(held_type));
+auto lyra_rt_laidout_value_cell_alloc(const void* held_type) noexcept -> void* {
+  return AllocateValueCell<LaidOutValue>(lyra::runtime::TypeAt(held_type));
 }
 
 // A tagged union's `void` member (LRM 7.3.2) carries a value with no bits.
@@ -4706,7 +4641,7 @@ auto lyra_rt_dynarray_from_literal(
                lyra::runtime::ReplicateHandles(unit, count)));
 }
 
-auto lyra_rt_unpackedarray_dynamic_array_from_array(
+auto lyra_rt_laidout_dynamic_array_from_array(
     const void* source, const void* source_type,
     const void* answer_element_type, void* out) -> void* {
   return Emplace(
@@ -4760,7 +4695,7 @@ auto lyra_rt_dynarray_element_slice(
     const void* answer_type, void* out) -> void* {
   const auto& source = Read<RuntimeDynamicArray>(array);
   return Emplace(
-      out, RuntimeFixedArray::FromElements(
+      out, ArrayFromElements(
                ArrayTypeAt(answer_type),
                source.SliceElements(PositionNamedAt(start), count)));
 }
@@ -4839,7 +4774,7 @@ auto lyra_rt_dynarray_value_cell_load(void* cell) noexcept -> void* {
 // replicated or uniform one the unit laid down until the array is full. The
 // array's type fixes how many elements that is, so a unit that does not fill
 // it a whole number of times is a call no lowering states.
-auto lyra_rt_unpackedarray_from_elements(
+auto lyra_rt_laidout_from_elements(
     LyraSpan unit, const void* answer_type, void* out) -> void* {
   const lyra::value::FixedArrayType& type = ArrayTypeAt(answer_type);
   const std::span<const void* const> handles(
@@ -4861,7 +4796,7 @@ auto lyra_rt_unpackedarray_from_elements(
 // dynamic array, into a fixed-size target. A count the front end could not
 // verify -- because a spread part is sized at run time -- is checked here, a
 // mismatch being the design's own failure.
-auto lyra_rt_unpackedarray_conform_size(
+auto lyra_rt_laidout_conform_size(
     const void* parts, const void* answer_type, void* out) -> void* {
   const auto& source = Read<RuntimeDynamicArray>(parts);
   const lyra::value::FixedArrayType& target = ArrayTypeAt(answer_type);
@@ -4873,15 +4808,14 @@ auto lyra_rt_unpackedarray_conform_size(
             source.Count(), target.Count()));
   }
   return Emplace(
-      out, RuntimeFixedArray::FromElements(
-               target, lyra::runtime::ElementHandles(source)));
+      out, ArrayFromElements(target, lyra::runtime::ElementHandles(source)));
 }
 
 auto lyra_rt_dynarray_unpacked_array_from_array(
     const void* source, const void* answer_type, void* out) -> void* {
   return Emplace(
       out,
-      RuntimeFixedArray::FromElements(
+      ArrayFromElements(
           ArrayTypeAt(answer_type),
           lyra::runtime::ElementHandles(Read<RuntimeDynamicArray>(source))));
 }
@@ -4889,12 +4823,12 @@ auto lyra_rt_dynarray_unpacked_array_from_array(
 auto lyra_rt_queue_unpacked_array_from_array(
     const void* source, const void* answer_type, void* out) -> void* {
   return Emplace(
-      out, RuntimeFixedArray::FromElements(
+      out, ArrayFromElements(
                ArrayTypeAt(answer_type),
                lyra::runtime::ElementHandles(Read<RuntimeQueue>(source))));
 }
 
-auto lyra_rt_unpackedarray_merge_conditional(
+auto lyra_rt_laidout_merge_conditional(
     const void* lhs, const void* rhs, const void* lhs_type, void* out)
     -> void* {
   const lyra::value::FixedArrayView left = ArrayAt(lhs, lhs_type);
@@ -4911,8 +4845,7 @@ auto lyra_rt_unpackedarray_merge_conditional(
 auto lyra_rt_byte_array_from_string(
     const void* text, const void* answer_type, void* out) -> void* {
   return Emplace(
-      out, RuntimeFixedArray::FromString(
-               ArrayTypeAt(answer_type), Read<String>(text)));
+      out, ArrayFromString(ArrayTypeAt(answer_type), Read<String>(text)));
 }
 
 auto lyra_rt_byte_array_from_bits(
@@ -4921,8 +4854,7 @@ auto lyra_rt_byte_array_from_bits(
   const lyra::value::LoadedWords words =
       BitsAt(bits, bits_width, bits_are_four_state);
   return Emplace(
-      out,
-      RuntimeFixedArray::FromIntegral(ArrayTypeAt(answer_type), words.View()));
+      out, ArrayFromIntegral(ArrayTypeAt(answer_type), words.View()));
 }
 
 auto lyra_rt_dynarray_count_bits(
@@ -5129,25 +5061,24 @@ auto lyra_rt_managedref_to_bitstream(
       value, out_width, out_is_four_state, out);
 }
 
-auto lyra_rt_unpackedarray_size(
-    const void* array, const void* array_type, void* out) -> void* {
+auto lyra_rt_laidout_size(const void* array, const void* array_type, void* out)
+    -> void* {
   return Emplace(
       out, lyra::value::Int::FromInt(
                static_cast<std::int64_t>(ArrayAt(array, array_type).Count())));
 }
 
-auto lyra_rt_unpackedarray_element_slice(
+auto lyra_rt_laidout_element_slice(
     const void* array, const void* start, std::int64_t count,
     const void* array_type, const void* answer_type, void* out) -> void* {
   const std::vector<const void*> items =
       ArrayTypeAt(array_type)
           .SliceElements(
               array, PositionNamedAt(start), lyra::value::SliceCount(count));
-  return Emplace(
-      out, RuntimeFixedArray::FromElements(ArrayTypeAt(answer_type), items));
+  return Emplace(out, ArrayFromElements(ArrayTypeAt(answer_type), items));
 }
 
-void lyra_rt_unpackedarray_assign_element_slice(
+void lyra_rt_laidout_assign_element_slice(
     void* array, const void* start, std::int64_t count, const void* replacement,
     const void* replacement_type, const void* array_type) {
   ArrayTypeAt(array_type)
@@ -5156,154 +5087,67 @@ void lyra_rt_unpackedarray_assign_element_slice(
           lyra::runtime::ElementHandles(replacement, replacement_type));
 }
 
-void lyra_rt_unpackedarray_cell_initialize(
-    void* cell, const void* prototype) noexcept {
-  VariableAt<RuntimeFixedArray>(cell).Initialize(prototype);
-}
-
-void lyra_rt_unpackedarray_cell_set(void* cell, const void* value) {
-  VariableAt<RuntimeFixedArray>(cell).SetBytes(value);
-}
-
-void lyra_rt_unpackedarray_cell_arm_sampling(void* cell) {
-  VariableAt<RuntimeFixedArray>(cell).ArmSampling();
-}
-
-auto lyra_rt_unpackedarray_cell_sampled_get(void* cell) -> const void* {
-  return VariableAt<RuntimeFixedArray>(cell).SampledBytes();
-}
-
-void lyra_rt_record_aggregate_net_initialize_tri_state(
+void lyra_rt_laidout_aggregate_net_initialize_tri_state(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
+  ResolvedNet<LaidOutValue>& resolved = NetOf<LaidOutValue>(net);
   resolved.InitializeTriState(resolved.ToOwned(prototype), fill, strength);
 }
 
-void lyra_rt_record_aggregate_net_initialize_wired_and(
+void lyra_rt_laidout_aggregate_net_initialize_wired_and(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
+  ResolvedNet<LaidOutValue>& resolved = NetOf<LaidOutValue>(net);
   resolved.InitializeWiredAnd(resolved.ToOwned(prototype), fill, strength);
 }
 
-void lyra_rt_record_aggregate_net_initialize_wired_or(
+void lyra_rt_laidout_aggregate_net_initialize_wired_or(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
+  ResolvedNet<LaidOutValue>& resolved = NetOf<LaidOutValue>(net);
   resolved.InitializeWiredOr(resolved.ToOwned(prototype), fill, strength);
 }
 
-void lyra_rt_record_aggregate_net_initialize_retaining(
+void lyra_rt_laidout_aggregate_net_initialize_retaining(
     void* net, const void* prototype, std::int64_t fill,
     std::int64_t strength) {
-  ResolvedNet<RuntimeRecord>& resolved = NetOf<RuntimeRecord>(net);
+  ResolvedNet<LaidOutValue>& resolved = NetOf<LaidOutValue>(net);
   resolved.InitializeRetaining(resolved.ToOwned(prototype), fill, strength);
 }
 
-auto lyra_rt_record_net_begin_takeover(void* net, std::int64_t level)
+auto lyra_rt_laidout_net_begin_takeover(void* net, std::int64_t level)
     -> std::int64_t {
-  return NetOf<RuntimeRecord>(net).BeginTakeover(level);
+  return NetOf<LaidOutValue>(net).BeginTakeover(level);
 }
 
-auto lyra_rt_record_net_drive_takeover(
+auto lyra_rt_laidout_net_drive_takeover(
     void* net, std::int64_t level, std::int64_t generation, const void* value)
     -> bool {
-  return NetOf<RuntimeRecord>(net).DriveTakeoverBytes(level, generation, value);
+  return NetOf<LaidOutValue>(net).DriveTakeoverBytes(level, generation, value);
 }
 
-void lyra_rt_record_net_end_takeover(void* net, std::int64_t level) {
-  NetOf<RuntimeRecord>(net).EndTakeover(level);
+void lyra_rt_laidout_net_end_takeover(void* net, std::int64_t level) {
+  NetOf<LaidOutValue>(net).EndTakeover(level);
 }
 
-void lyra_rt_record_net_arm_sampling(void* net) {
-  NetOf<RuntimeRecord>(net).ArmSampling();
+void lyra_rt_laidout_net_arm_sampling(void* net) {
+  NetOf<LaidOutValue>(net).ArmSampling();
 }
 
-auto lyra_rt_record_net_sampled_get(void* net) -> const void* {
-  return HandleTo(NetOf<RuntimeRecord>(net).SampledGet());
+auto lyra_rt_laidout_net_sampled_get(void* net) -> const void* {
+  return HandleTo(NetOf<LaidOutValue>(net).SampledGet());
 }
 
-auto lyra_rt_record_attach_driver(void* net, std::int64_t strength) -> void* {
-  return &NetOf<RuntimeRecord>(net).AttachDriver(strength);
+auto lyra_rt_laidout_attach_driver(void* net, std::int64_t strength) -> void* {
+  return &NetOf<LaidOutValue>(net).AttachDriver(strength);
 }
 
-auto lyra_rt_record_driver_get(void* driver) -> const void* {
-  return DriverOf<RuntimeRecord>(driver).Bytes();
+auto lyra_rt_laidout_driver_get(void* driver) -> const void* {
+  return DriverOf<LaidOutValue>(driver).Bytes();
 }
 
-void lyra_rt_record_driver_set(void* driver, const void* value) {
-  DriverOf<RuntimeRecord>(driver).SetBytes(value);
-}
-
-void lyra_rt_unpackedarray_aggregate_net_initialize_tri_state(
-    void* net, const void* prototype, std::int64_t fill,
-    std::int64_t strength) {
-  ResolvedNet<RuntimeFixedArray>& resolved = NetOf<RuntimeFixedArray>(net);
-  resolved.InitializeTriState(resolved.ToOwned(prototype), fill, strength);
-}
-
-void lyra_rt_unpackedarray_aggregate_net_initialize_wired_and(
-    void* net, const void* prototype, std::int64_t fill,
-    std::int64_t strength) {
-  ResolvedNet<RuntimeFixedArray>& resolved = NetOf<RuntimeFixedArray>(net);
-  resolved.InitializeWiredAnd(resolved.ToOwned(prototype), fill, strength);
-}
-
-void lyra_rt_unpackedarray_aggregate_net_initialize_wired_or(
-    void* net, const void* prototype, std::int64_t fill,
-    std::int64_t strength) {
-  ResolvedNet<RuntimeFixedArray>& resolved = NetOf<RuntimeFixedArray>(net);
-  resolved.InitializeWiredOr(resolved.ToOwned(prototype), fill, strength);
-}
-
-void lyra_rt_unpackedarray_aggregate_net_initialize_retaining(
-    void* net, const void* prototype, std::int64_t fill,
-    std::int64_t strength) {
-  ResolvedNet<RuntimeFixedArray>& resolved = NetOf<RuntimeFixedArray>(net);
-  resolved.InitializeRetaining(resolved.ToOwned(prototype), fill, strength);
-}
-
-auto lyra_rt_unpackedarray_net_begin_takeover(void* net, std::int64_t level)
-    -> std::int64_t {
-  return NetOf<RuntimeFixedArray>(net).BeginTakeover(level);
-}
-
-auto lyra_rt_unpackedarray_net_drive_takeover(
-    void* net, std::int64_t level, std::int64_t generation, const void* value)
-    -> bool {
-  return NetOf<RuntimeFixedArray>(net).DriveTakeoverBytes(
-      level, generation, value);
-}
-
-void lyra_rt_unpackedarray_net_end_takeover(void* net, std::int64_t level) {
-  NetOf<RuntimeFixedArray>(net).EndTakeover(level);
-}
-
-void lyra_rt_unpackedarray_net_arm_sampling(void* net) {
-  NetOf<RuntimeFixedArray>(net).ArmSampling();
-}
-
-auto lyra_rt_unpackedarray_net_sampled_get(void* net) -> const void* {
-  return HandleTo(NetOf<RuntimeFixedArray>(net).SampledGet());
-}
-
-auto lyra_rt_unpackedarray_attach_driver(void* net, std::int64_t strength)
-    -> void* {
-  return &NetOf<RuntimeFixedArray>(net).AttachDriver(strength);
-}
-
-auto lyra_rt_unpackedarray_driver_get(void* driver) -> const void* {
-  return DriverOf<RuntimeFixedArray>(driver).Bytes();
-}
-
-void lyra_rt_unpackedarray_driver_set(void* driver, const void* value) {
-  DriverOf<RuntimeFixedArray>(driver).SetBytes(value);
-}
-
-auto lyra_rt_unpackedarray_value_cell_alloc(const void* held_type) noexcept
-    -> void* {
-  return AllocateValueCell<RuntimeFixedArray>(lyra::runtime::TypeAt(held_type));
+void lyra_rt_laidout_driver_set(void* driver, const void* value) {
+  DriverOf<LaidOutValue>(driver).SetBytes(value);
 }
 
 auto lyra_rt_queue_from_literal(
@@ -5321,7 +5165,7 @@ auto lyra_rt_queue_conform_bound(
       out, Read<RuntimeQueue>(queue).ConformBound(QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_queue_from_array(
+auto lyra_rt_laidout_queue_from_array(
     const void* source, const void* source_type, const void* answer_type,
     void* out) -> void* {
   return Emplace(
@@ -5654,7 +5498,7 @@ auto lyra_rt_assocarray_value_cell_load(void* cell) noexcept -> void* {
   return &LocalAt<RuntimeAssociativeArray>(cell).Storage();
 }
 
-auto lyra_rt_unpackedarray_sum(
+auto lyra_rt_laidout_sum(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return lyra::runtime::AnswerInto(
@@ -5663,7 +5507,7 @@ auto lyra_rt_unpackedarray_sum(
                lyra::runtime::TypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_product(
+auto lyra_rt_laidout_product(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return lyra::runtime::AnswerInto(
@@ -5672,7 +5516,7 @@ auto lyra_rt_unpackedarray_product(
                lyra::runtime::TypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_and(
+auto lyra_rt_laidout_and(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return lyra::runtime::AnswerInto(
@@ -5681,7 +5525,7 @@ auto lyra_rt_unpackedarray_and(
                lyra::runtime::TypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_or(
+auto lyra_rt_laidout_or(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return lyra::runtime::AnswerInto(
@@ -5690,7 +5534,7 @@ auto lyra_rt_unpackedarray_or(
                lyra::runtime::TypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_xor(
+auto lyra_rt_laidout_xor(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return lyra::runtime::AnswerInto(
@@ -5699,7 +5543,7 @@ auto lyra_rt_unpackedarray_xor(
                lyra::runtime::TypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_find(
+auto lyra_rt_laidout_find(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5708,7 +5552,7 @@ auto lyra_rt_unpackedarray_find(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_find_index(
+auto lyra_rt_laidout_find_index(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5717,7 +5561,7 @@ auto lyra_rt_unpackedarray_find_index(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_find_first(
+auto lyra_rt_laidout_find_first(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5726,7 +5570,7 @@ auto lyra_rt_unpackedarray_find_first(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_find_first_index(
+auto lyra_rt_laidout_find_first_index(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5735,7 +5579,7 @@ auto lyra_rt_unpackedarray_find_first_index(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_find_last(
+auto lyra_rt_laidout_find_last(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5744,7 +5588,7 @@ auto lyra_rt_unpackedarray_find_last(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_find_last_index(
+auto lyra_rt_laidout_find_last_index(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5753,7 +5597,7 @@ auto lyra_rt_unpackedarray_find_last_index(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_min(
+auto lyra_rt_laidout_min(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5762,7 +5606,7 @@ auto lyra_rt_unpackedarray_min(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_max(
+auto lyra_rt_laidout_max(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5771,7 +5615,7 @@ auto lyra_rt_unpackedarray_max(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_unique(
+auto lyra_rt_laidout_unique(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5780,7 +5624,7 @@ auto lyra_rt_unpackedarray_unique(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_unique_index(
+auto lyra_rt_laidout_unique_index(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -5789,7 +5633,7 @@ auto lyra_rt_unpackedarray_unique_index(
                QueueTypeAt(answer_type)));
 }
 
-auto lyra_rt_unpackedarray_map(
+auto lyra_rt_laidout_map(
     const void* receiver, void* body, const void* receiver_type,
     const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -6243,13 +6087,13 @@ auto lyra_rt_assocarray_map(
 }
 
 // LRM 7.12.2 ordering methods, which reorder the array where it lies.
-void lyra_rt_unpackedarray_sort(
+void lyra_rt_laidout_sort(
     void* receiver, void* body, const void* receiver_type) {
   lyra::value::RuntimeArraySort(
       ArrayTypeAt(receiver_type), receiver, lyra::runtime::ArrayBody(body));
 }
 
-void lyra_rt_unpackedarray_rsort(
+void lyra_rt_laidout_rsort(
     void* receiver, void* body, const void* receiver_type) {
   lyra::value::RuntimeArrayRsort(
       ArrayTypeAt(receiver_type), receiver, lyra::runtime::ArrayBody(body));
@@ -6275,7 +6119,7 @@ void lyra_rt_queue_rsort(void* receiver, void* body) {
   lyra::value::RuntimeArrayRsort(target, lyra::runtime::ArrayBody(body));
 }
 
-void lyra_rt_unpackedarray_reverse(void* receiver, const void* receiver_type) {
+void lyra_rt_laidout_reverse(void* receiver, const void* receiver_type) {
   lyra::value::RuntimeArrayReverse(ArrayTypeAt(receiver_type), receiver);
 }
 
@@ -6289,7 +6133,7 @@ void lyra_rt_queue_reverse(void* receiver) {
   lyra::value::RuntimeArrayReverse(target);
 }
 
-auto lyra_rt_unpackedarray_read_mem(
+auto lyra_rt_laidout_read_mem(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
     std::int64_t base, std::int64_t start, const void* memory_type,
     const void* answer_type, void* out) -> void* {
@@ -6298,12 +6142,12 @@ auto lyra_rt_unpackedarray_read_mem(
       lyra::runtime::Single(
           lyra::runtime::ReadUnpackedMemory(
               *static_cast<RuntimeEffects*>(runtime),
-              OwnedArrayCopy(memory, memory_type), Read<String>(name),
+              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
               lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
               base, start, std::nullopt)));
 }
 
-auto lyra_rt_unpackedarray_read_mem_within(
+auto lyra_rt_laidout_read_mem_within(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
     std::int64_t base, std::int64_t start, std::int64_t finish,
     const void* memory_type, const void* answer_type, void* out) -> void* {
@@ -6312,12 +6156,12 @@ auto lyra_rt_unpackedarray_read_mem_within(
       lyra::runtime::Single(
           lyra::runtime::ReadUnpackedMemory(
               *static_cast<RuntimeEffects*>(runtime),
-              OwnedArrayCopy(memory, memory_type), Read<String>(name),
+              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
               lyra::value::UnpackedRangesOf(lyra::runtime::MachineIntsOf(dims)),
               base, start, finish)));
 }
 
-void lyra_rt_unpackedarray_write_mem(
+void lyra_rt_laidout_write_mem(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
     std::int64_t base, std::int64_t start, const void* memory_type) {
   lyra::runtime::WriteUnpackedMemory(
@@ -6327,7 +6171,7 @@ void lyra_rt_unpackedarray_write_mem(
       start, std::nullopt);
 }
 
-void lyra_rt_unpackedarray_write_mem_within(
+void lyra_rt_laidout_write_mem_within(
     void* runtime, const void* memory, const void* name, LyraSpan dims,
     std::int64_t base, std::int64_t start, std::int64_t finish,
     const void* memory_type) {
@@ -6616,15 +6460,12 @@ auto lyra_rt_chandle_cell_open_for_write(void* cell, void* out) -> void* {
 auto lyra_rt_managedref_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<ObjectRef>(cell, out);
 }
-auto lyra_rt_record_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenTailCellWrite<RuntimeRecord>(cell, out);
+auto lyra_rt_laidout_cell_open_for_write(void* cell, void* out) -> void* {
+  return OpenTailCellWrite<LaidOutValue>(cell, out);
 }
 
 auto lyra_rt_dynarray_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<RuntimeDynamicArray>(cell, out);
-}
-auto lyra_rt_unpackedarray_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenTailCellWrite<RuntimeFixedArray>(cell, out);
 }
 auto lyra_rt_queue_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<RuntimeQueue>(cell, out);
@@ -6648,19 +6489,14 @@ auto lyra_rt_managedref_ref_open_for_write(void* reference, void* out)
     -> void* {
   return OpenRefWrite<ObjectRef>(reference, out);
 }
-auto lyra_rt_record_ref_open_for_write(
-    void* reference, const void* tuple_type, void* out) -> void* {
-  return OpenTailRefWrite<RuntimeRecord>(
-      reference, lyra::runtime::TypeAt(tuple_type), out);
+auto lyra_rt_laidout_ref_open_for_write(
+    void* reference, const void* value_type, void* out) -> void* {
+  return OpenTailRefWrite<LaidOutValue>(
+      reference, lyra::runtime::TypeAt(value_type), out);
 }
 
 auto lyra_rt_dynarray_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<RuntimeDynamicArray>(reference, out);
-}
-auto lyra_rt_unpackedarray_ref_open_for_write(
-    void* reference, const void* array_type, void* out) -> void* {
-  return OpenTailRefWrite<RuntimeFixedArray>(
-      reference, lyra::runtime::TypeAt(array_type), out);
 }
 auto lyra_rt_queue_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<RuntimeQueue>(reference, out);
@@ -6669,13 +6505,8 @@ auto lyra_rt_assocarray_ref_open_for_write(void* reference, void* out)
     -> void* {
   return OpenRefWrite<RuntimeAssociativeArray>(reference, out);
 }
-auto lyra_rt_record_driver_open_for_write(void* driver, void* out) -> void* {
-  return OpenTailDriverWrite<RuntimeRecord>(driver, out);
-}
-
-auto lyra_rt_unpackedarray_driver_open_for_write(void* driver, void* out)
-    -> void* {
-  return OpenTailDriverWrite<RuntimeFixedArray>(driver, out);
+auto lyra_rt_laidout_driver_open_for_write(void* driver, void* out) -> void* {
+  return OpenTailDriverWrite<LaidOutValue>(driver, out);
 }
 
 void lyra_rt_logic8_driver_drive_from_variable(void* driver, void* cell) {
@@ -6693,14 +6524,10 @@ void lyra_rt_logic64_driver_drive_from_variable(void* driver, void* cell) {
 void lyra_rt_logic_wide_driver_drive_from_variable(void* driver, void* cell) {
   DriveFromVariable<LogicWide>(driver, cell);
 }
-void lyra_rt_record_driver_drive_from_variable(void* driver, void* cell) {
-  DriveFromVariable<RuntimeRecord>(driver, cell);
+void lyra_rt_laidout_driver_drive_from_variable(void* driver, void* cell) {
+  DriveFromVariable<LaidOutValue>(driver, cell);
 }
 
-void lyra_rt_unpackedarray_driver_drive_from_variable(
-    void* driver, void* cell) {
-  DriveFromVariable<RuntimeFixedArray>(driver, cell);
-}
 void lyra_rt_logic8_driver_drive_from_net(void* driver, void* net) {
   DriveFromNet<Logic8>(driver, net);
 }
@@ -6716,13 +6543,10 @@ void lyra_rt_logic64_driver_drive_from_net(void* driver, void* net) {
 void lyra_rt_logic_wide_driver_drive_from_net(void* driver, void* net) {
   DriveFromNet<LogicWide>(driver, net);
 }
-void lyra_rt_record_driver_drive_from_net(void* driver, void* net) {
-  DriveFromNet<RuntimeRecord>(driver, net);
+void lyra_rt_laidout_driver_drive_from_net(void* driver, void* net) {
+  DriveFromNet<LaidOutValue>(driver, net);
 }
 
-void lyra_rt_unpackedarray_driver_drive_from_net(void* driver, void* net) {
-  DriveFromNet<RuntimeFixedArray>(driver, net);
-}
 void lyra_rt_logic8_driver_drive_from_reference(void* driver, void* reference) {
   DriveFromReference<Logic8>(driver, reference);
 }
@@ -6742,14 +6566,11 @@ void lyra_rt_logic_wide_driver_drive_from_reference(
     void* driver, void* reference) {
   DriveFromReference<LogicWide>(driver, reference);
 }
-void lyra_rt_record_driver_drive_from_reference(void* driver, void* reference) {
-  DriveFromReference<RuntimeRecord>(driver, reference);
+void lyra_rt_laidout_driver_drive_from_reference(
+    void* driver, void* reference) {
+  DriveFromReference<LaidOutValue>(driver, reference);
 }
 
-void lyra_rt_unpackedarray_driver_drive_from_reference(
-    void* driver, void* reference) {
-  DriveFromReference<RuntimeFixedArray>(driver, reference);
-}
 auto lyra_rt_logic8_net_reports_to(void* net) -> void* {
   return NetReportsTo<Logic8>(net);
 }
@@ -6765,13 +6586,10 @@ auto lyra_rt_logic64_net_reports_to(void* net) -> void* {
 auto lyra_rt_logic_wide_net_reports_to(void* net) -> void* {
   return NetReportsTo<LogicWide>(net);
 }
-auto lyra_rt_record_net_reports_to(void* net) -> void* {
-  return NetReportsTo<RuntimeRecord>(net);
+auto lyra_rt_laidout_net_reports_to(void* net) -> void* {
+  return NetReportsTo<LaidOutValue>(net);
 }
 
-auto lyra_rt_unpackedarray_net_reports_to(void* net) -> void* {
-  return NetReportsTo<RuntimeFixedArray>(net);
-}
 auto lyra_rt_logic8_driver_show_source(void* driver) -> bool {
   return ShowSource<Logic8>(driver);
 }
@@ -6787,12 +6605,8 @@ auto lyra_rt_logic64_driver_show_source(void* driver) -> bool {
 auto lyra_rt_logic_wide_driver_show_source(void* driver) -> bool {
   return ShowSource<LogicWide>(driver);
 }
-auto lyra_rt_record_driver_show_source(void* driver) -> bool {
-  return ShowSource<RuntimeRecord>(driver);
-}
-
-auto lyra_rt_unpackedarray_driver_show_source(void* driver) -> bool {
-  return ShowSource<RuntimeFixedArray>(driver);
+auto lyra_rt_laidout_driver_show_source(void* driver) -> bool {
+  return ShowSource<LaidOutValue>(driver);
 }
 
 auto lyra_rt_designate_whole(void* write, void* out) -> void* {
@@ -6807,7 +6621,7 @@ auto lyra_rt_dynarray_designate_element(
       designation, PositionNamedAt(position), out);
 }
 
-auto lyra_rt_unpackedarray_designate_element(
+auto lyra_rt_laidout_designate_element(
     const void* designation, const void* position, const void* array_type,
     void* out) -> void* {
   return DesignateArrayElement(
@@ -6827,7 +6641,7 @@ auto lyra_rt_assocarray_designate_element(
       designation, lyra::runtime::IndexAt(index, index_type), out);
 }
 
-auto lyra_rt_record_designate_component(
+auto lyra_rt_laidout_designate_component(
     const void* designation, std::int64_t index, const void* tuple_type,
     void* out) -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
@@ -6844,7 +6658,7 @@ auto lyra_rt_record_designate_component(
                   .ComponentAt(within.part, static_cast<std::size_t>(index))});
 }
 
-auto lyra_rt_record_designate_member(const void* designation, void* out)
+auto lyra_rt_laidout_designate_member(const void* designation, void* out)
     -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
   if (within.write->Undecided()) {
@@ -6861,7 +6675,7 @@ void lyra_rt_dynarray_assign_slice(
       lyra::runtime::ElementHandles(replacement, replacement_type));
 }
 
-void lyra_rt_unpackedarray_assign_slice(
+void lyra_rt_laidout_assign_slice(
     const void* designation, const void* start, std::int64_t count,
     const void* replacement, const void* replacement_type,
     const void* array_type) {
@@ -6885,17 +6699,13 @@ auto lyra_rt_chandle_land(const void* designation) noexcept -> void* {
 auto lyra_rt_empty_land(const void* designation) noexcept -> void* {
   return LandDesignation<Empty>(designation);
 }
-auto lyra_rt_record_land(
-    const void* designation, const void* tuple_type) noexcept -> void* {
-  return LandLaidOutDesignation(designation, lyra::runtime::TypeAt(tuple_type));
+auto lyra_rt_laidout_land(
+    const void* designation, const void* value_type) noexcept -> void* {
+  return LandLaidOutDesignation(designation, lyra::runtime::TypeAt(value_type));
 }
 
 auto lyra_rt_dynarray_land(const void* designation) noexcept -> void* {
   return LandDesignation<RuntimeDynamicArray>(designation);
-}
-auto lyra_rt_unpackedarray_land(
-    const void* designation, const void* array_type) noexcept -> void* {
-  return LandLaidOutDesignation(designation, lyra::runtime::TypeAt(array_type));
 }
 auto lyra_rt_queue_land(const void* designation) noexcept -> void* {
   return LandDesignation<RuntimeQueue>(designation);
@@ -7177,18 +6987,13 @@ void lyra_rt_shortreal_cell_construct(void* storage) {
 void lyra_rt_chandle_cell_construct(void* storage) {
   BuildAt<Var<Chandle>>(storage);
 }
-void lyra_rt_record_cell_construct(const void* held_type, void* storage) {
-  BuildAt<VariableOf<RuntimeRecord>::Type>(
+void lyra_rt_laidout_cell_construct(const void* held_type, void* storage) {
+  BuildAt<VariableOf<LaidOutValue>::Type>(
       storage, lyra::runtime::TypeAt(held_type));
 }
 
 void lyra_rt_dynarray_cell_construct(void* storage) {
   BuildAt<Var<RuntimeDynamicArray>>(storage);
-}
-void lyra_rt_unpackedarray_cell_construct(
-    const void* held_type, void* storage) {
-  BuildAt<VariableOf<RuntimeFixedArray>::Type>(
-      storage, lyra::runtime::TypeAt(held_type));
 }
 void lyra_rt_queue_cell_construct(void* storage) {
   BuildAt<Var<RuntimeQueue>>(storage);
@@ -7211,18 +7016,14 @@ void lyra_rt_shortreal_value_cell_construct(void* storage) {
 void lyra_rt_chandle_value_cell_construct(void* storage) {
   BuildAt<ValueCell<Chandle>>(storage);
 }
-void lyra_rt_record_value_cell_construct(const void* held_type, void* storage) {
-  BuildAt<LocalOf<RuntimeRecord>::Type>(
+void lyra_rt_laidout_value_cell_construct(
+    const void* held_type, void* storage) {
+  BuildAt<LocalOf<LaidOutValue>::Type>(
       storage, lyra::runtime::TypeAt(held_type));
 }
 
 void lyra_rt_dynarray_value_cell_construct(void* storage) {
   BuildAt<ValueCell<RuntimeDynamicArray>>(storage);
-}
-void lyra_rt_unpackedarray_value_cell_construct(
-    const void* held_type, void* storage) {
-  BuildAt<LocalOf<RuntimeFixedArray>::Type>(
-      storage, lyra::runtime::TypeAt(held_type));
 }
 void lyra_rt_queue_value_cell_construct(void* storage) {
   BuildAt<ValueCell<RuntimeQueue>>(storage);
@@ -7233,15 +7034,10 @@ void lyra_rt_assocarray_value_cell_construct(void* storage) {
 void lyra_rt_managedref_value_cell_construct(void* storage) {
   BuildAt<ValueCell<ObjectRef>>(storage);
 }
-void lyra_rt_record_net_construct(const void* held_type, void* storage) {
-  BuildAt<ResolvedNet<RuntimeRecord>>(
-      storage, lyra::runtime::TypeAt(held_type));
+void lyra_rt_laidout_net_construct(const void* held_type, void* storage) {
+  BuildAt<ResolvedNet<LaidOutValue>>(storage, lyra::runtime::TypeAt(held_type));
 }
 
-void lyra_rt_unpackedarray_net_construct(const void* held_type, void* storage) {
-  BuildAt<ResolvedNet<RuntimeFixedArray>>(
-      storage, lyra::runtime::TypeAt(held_type));
-}
 void lyra_rt_string_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<String>>(storage);
 }
@@ -7251,15 +7047,12 @@ void lyra_rt_real_sampled_history_construct(void* storage) {
 void lyra_rt_shortreal_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<ShortReal>>(storage);
 }
-void lyra_rt_record_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<RuntimeRecord>>(storage);
+void lyra_rt_laidout_sampled_history_construct(void* storage) {
+  BuildAt<SampledHistory<LaidOutValue>>(storage);
 }
 
 void lyra_rt_dynarray_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<RuntimeDynamicArray>>(storage);
-}
-void lyra_rt_unpackedarray_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<RuntimeFixedArray>>(storage);
 }
 void lyra_rt_queue_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<RuntimeQueue>>(storage);
@@ -7304,15 +7097,12 @@ void lyra_rt_shortreal_cell_destroy(void* storage) {
 void lyra_rt_chandle_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<Chandle>(storage));
 }
-void lyra_rt_record_cell_destroy(void* storage) {
-  std::destroy_at(&VariableAt<RuntimeRecord>(storage));
+void lyra_rt_laidout_cell_destroy(void* storage) {
+  std::destroy_at(&VariableAt<LaidOutValue>(storage));
 }
 
 void lyra_rt_dynarray_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<RuntimeDynamicArray>(storage));
-}
-void lyra_rt_unpackedarray_cell_destroy(void* storage) {
-  std::destroy_at(&VariableAt<RuntimeFixedArray>(storage));
 }
 void lyra_rt_queue_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<RuntimeQueue>(storage));
@@ -7326,15 +7116,12 @@ void lyra_rt_managedref_cell_destroy(void* storage) {
 void lyra_rt_string_value_cell_destroy(void* storage) {
   std::destroy_at(&LocalAt<String>(storage));
 }
-void lyra_rt_record_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<LocalOf<RuntimeRecord>::Type*>(storage));
+void lyra_rt_laidout_value_cell_destroy(void* storage) {
+  std::destroy_at(static_cast<LocalOf<LaidOutValue>::Type*>(storage));
 }
 
 void lyra_rt_dynarray_value_cell_destroy(void* storage) {
   std::destroy_at(&LocalAt<RuntimeDynamicArray>(storage));
-}
-void lyra_rt_unpackedarray_value_cell_destroy(void* storage) {
-  std::destroy_at(static_cast<LocalOf<RuntimeFixedArray>::Type*>(storage));
 }
 void lyra_rt_queue_value_cell_destroy(void* storage) {
   std::destroy_at(&LocalAt<RuntimeQueue>(storage));
@@ -7345,13 +7132,10 @@ void lyra_rt_assocarray_value_cell_destroy(void* storage) {
 void lyra_rt_managedref_value_cell_destroy(void* storage) {
   std::destroy_at(&LocalAt<ObjectRef>(storage));
 }
-void lyra_rt_record_net_destroy(void* storage) {
-  std::destroy_at(static_cast<ResolvedNet<RuntimeRecord>*>(storage));
+void lyra_rt_laidout_net_destroy(void* storage) {
+  std::destroy_at(static_cast<ResolvedNet<LaidOutValue>*>(storage));
 }
 
-void lyra_rt_unpackedarray_net_destroy(void* storage) {
-  std::destroy_at(static_cast<ResolvedNet<RuntimeFixedArray>*>(storage));
-}
 void lyra_rt_string_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<String>*>(storage));
 }
@@ -7361,15 +7145,12 @@ void lyra_rt_real_sampled_history_destroy(void* storage) {
 void lyra_rt_shortreal_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<ShortReal>*>(storage));
 }
-void lyra_rt_record_sampled_history_destroy(void* storage) {
-  std::destroy_at(static_cast<SampledHistory<RuntimeRecord>*>(storage));
+void lyra_rt_laidout_sampled_history_destroy(void* storage) {
+  std::destroy_at(static_cast<SampledHistory<LaidOutValue>*>(storage));
 }
 
 void lyra_rt_dynarray_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<RuntimeDynamicArray>*>(storage));
-}
-void lyra_rt_unpackedarray_sampled_history_destroy(void* storage) {
-  std::destroy_at(static_cast<SampledHistory<RuntimeFixedArray>*>(storage));
 }
 void lyra_rt_queue_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<RuntimeQueue>*>(storage));

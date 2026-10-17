@@ -527,7 +527,7 @@ class MirDumper {
                   "ReferenceWrapper({}pointee=Type[{}])",
                   r.mutability == Mutability::kReadOnly ? "readonly, " : "",
                   r.pointee.value);
-              },
+            },
             [](const ReferenceType& r) -> std::string {
               return std::format(
                   "Reference({}referent=Type[{}])",

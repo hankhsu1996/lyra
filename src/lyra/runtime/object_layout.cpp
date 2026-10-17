@@ -45,16 +45,16 @@
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/empty.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
+#include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
-#include "lyra/value/runtime_record.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
@@ -70,8 +70,7 @@ using support::ValueDomain;
 template <typename T>
 constexpr auto Of() -> ObjectLayout {
   return ObjectLayout{
-      .size = static_cast<std::uint32_t>(sizeof(T)),
-      .align = static_cast<std::uint32_t>(alignof(T)),
+      .layout = {.size = sizeof(T), .align = alignof(T)},
       .ends_with_nothing_to_do = std::is_trivially_destructible_v<T>};
 }
 
@@ -132,12 +131,10 @@ auto WithValueClass(ValueDomain domain, F f)
       return f.template operator()<value::Chandle>();
     case ValueDomain::kEmpty:
       return f.template operator()<value::Empty>();
-    case ValueDomain::kRecord:
-      return f.template operator()<value::RuntimeRecord>();
+    case ValueDomain::kLaidOut:
+      return f.template operator()<value::LaidOutValue>();
     case ValueDomain::kDynArray:
       return f.template operator()<value::RuntimeDynamicArray>();
-    case ValueDomain::kUnpackedArray:
-      return f.template operator()<value::RuntimeFixedArray>();
     case ValueDomain::kQueue:
       return f.template operator()<value::RuntimeQueue>();
     case ValueDomain::kAssocArray:
@@ -196,11 +193,8 @@ auto HolderLayout(const std::optional<ObjectLayout>& held) -> ObjectLayout {
           "object layout: a holder keeping a value at its tail is laid out "
           "with no value to hold");
     }
-    const value::Layout holder = HolderLayoutFor<Holder>(
-        value::Layout{.size = held->size, .align = held->align});
     return ObjectLayout{
-        .size = static_cast<std::uint32_t>(holder.size),
-        .align = static_cast<std::uint32_t>(holder.align),
+        .layout = HolderLayoutFor<Holder>(held->layout),
         .ends_with_nothing_to_do = false};
   } else {
     return Of<Holder>();
@@ -334,7 +328,7 @@ namespace {
 // How far into a `Holder` the address `through` answers with lies, read off one
 // built as the library builds it, with a tail for a value of layout `held`.
 template <class Holder, class Through, class... Args>
-auto ThroughOffset(value::Layout held, Through through, Args... args)
+auto ThroughOffset(support::Layout held, Through through, Args... args)
     -> std::uint64_t {
   const std::shared_ptr<Holder> built = MakeWithTail<Holder>(held, args...);
   return std::uint64_t{
@@ -388,7 +382,7 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
             } else {
               return through(
                   ThroughOffset<ResolvedNet<T>>(
-                      value::Layout{.size = 0, .align = 1}, shown));
+                      support::Layout{.size = 0, .align = 1}, shown));
             }
           case MemberStorageKind::kObservableCell:
             if constexpr (HeldInOneWord<T>) {
@@ -420,6 +414,8 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
           case MemberStorageKind::kNamedEvent:
           case MemberStorageKind::kCancellationTarget:
           case MemberStorageKind::kEvaluationAttempts:
+          case MemberStorageKind::kTimer:
+          case MemberStorageKind::kLoopBlocks:
             return std::nullopt;
         }
         throw InternalError("object layout: unknown member storage kind");

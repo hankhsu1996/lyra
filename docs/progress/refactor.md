@@ -3031,25 +3031,6 @@ enough to warrant its own focused review.
       a failure of the compiler's own. Target: a write a takeover turns away is kept beneath it
       wherever the write names a part of the variable, however the variable was reached. Not
       blocked.
-- [ ] R239 -- A value type's table of operations is one interface every type answers in full, so a
-      type the language gives no operation of some kind still overrides it with a body that refuses
-      and ignores what it is handed. Each such parameter is unnamed, which clang-tidy's
-      readability-named-parameter reports, and naming it instead is reported by the build's own
-      `-Wunused-parameter`; the one spelling both accept, a name written as a comment, is a
-      suppression the project's style forbids. Seen on the library value types' refusing overrides;
-      the code generator fills the same slots of every table it generates with a body nothing
-      enters. Target: a type answers only the operations it has, so no override exists to refuse --
-      the operations no type of a family answers move to the family that does. Not blocked.
-- [ ] R240 -- clang-tidy reports readability-static-accessed-through-instance on the generated
-      process body the runtime resumes, at the coroutine's own declaration, where nothing in the
-      source names a static member. The cause is not established; a coroutine's promise type has
-      static members the compiler's expansion of the body reaches, which is the first thing to
-      check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
-      silencing the check. Not blocked.
-- [x] R241 -- Whether an expression names storage is stated by MIR for a union's member too: it is a
-      field step on the place holding the union, at the union's start, and is designated within a
-      write in progress, on both backends, so a select into a member reads only what it selects and
-      a write to one leaves the union in place.
 - [x] R234 -- A read through a member a tag guards is one access with its check: the whole of what
       it selects below the member is read and kept among the steps that check the tag, so a sibling
       operand retagging the union can no longer have the read land on a member the union no longer
@@ -3071,6 +3052,28 @@ enough to warrant its own focused review.
 - [x] R238 -- The type a library entry's realization is realized for is bound to the realization
       where the entry is chosen, so what it is told of a type is read from there and no entry
       carries that type beside it as something it may lack.
+
+- [ ] R239 -- A value type's table of operations is one interface every type answers in full, so a
+      type the language gives no operation of some kind still overrides it with a body that refuses
+      and ignores what it is handed. Each such parameter is unnamed, which clang-tidy's
+      readability-named-parameter reports, and naming it instead is reported by the build's own
+      `-Wunused-parameter`; the one spelling both accept, a name written as a comment, is a
+      suppression the project's style forbids. Seen on the library value types' refusing overrides;
+      the code generator fills the same slots of every table it generates with a body nothing
+      enters. Target: a type answers only the operations it has, so no override exists to refuse --
+      the operations no type of a family answers move to the family that does. Not blocked.
+
+- [ ] R240 -- clang-tidy reports readability-static-accessed-through-instance on the generated
+      process body the runtime resumes, at the coroutine's own declaration, where nothing in the
+      source names a static member. The cause is not established; a coroutine's promise type has
+      static members the compiler's expansion of the body reaches, which is the first thing to
+      check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
+      silencing the check. Not blocked.
+
+- [x] R241 -- Whether an expression names storage is stated by MIR for a union's member too: it is a
+      field step on the place holding the union, at the union's start, and is designated within a
+      write in progress, on both backends, so a select into a member reads only what it selects and
+      a write to one leaves the union in place.
 
 - [x] R242 -- Every operation on a whole value of a union, a tagged union or a fixed-size array is
       code compiled for the type on both backends: a union's stated by its declaration, as a

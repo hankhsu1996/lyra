@@ -27,8 +27,7 @@ namespace lyra::value {
 namespace {
 
 auto LayoutOf(const ValueType& element, std::size_t count) -> SequenceLayout {
-  return SequenceLayoutOf(
-      {.size = element.Size(), .align = element.Align()}, count);
+  return SequenceLayoutOf(element.Layout(), count);
 }
 
 // The elements of one array as the sequence algorithms read them, and write
@@ -76,8 +75,8 @@ FixedArrayType::FixedArrayType(
       element_(&element) {
 }
 
-auto FixedArrayType::Layout() const -> SequenceLayout {
-  return LayoutOf(element_->Type(), count_);
+auto FixedArrayType::Stride() const -> std::size_t {
+  return LayoutOf(element_->Type(), count_).stride;
 }
 
 auto FixedArrayType::ElementAt(const void* array, std::size_t position) const
@@ -86,7 +85,7 @@ auto FixedArrayType::ElementAt(const void* array, std::size_t position) const
     throw InternalError(
         "FixedArrayType::ElementAt: the position is past the last");
   }
-  return Offset(array, position * Layout().stride);
+  return Offset(array, position * Stride());
 }
 
 auto FixedArrayType::ElementAt(void* array, std::size_t position) const
@@ -95,7 +94,7 @@ auto FixedArrayType::ElementAt(void* array, std::size_t position) const
     throw InternalError(
         "FixedArrayType::ElementAt: the position is past the last");
   }
-  return Offset(array, position * Layout().stride);
+  return Offset(array, position * Stride());
 }
 
 auto FixedArrayType::ElementMut(
@@ -135,13 +134,12 @@ FixedArrayType::Building::~Building() {
     return;
   }
   for (std::size_t i = 0; i < built_; ++i) {
-    type_->ElementType().Type().Destroy(
-        Offset(out_, i * type_->Layout().stride));
+    type_->ElementType().Type().Destroy(Offset(out_, i * type_->Stride()));
   }
 }
 
 auto FixedArrayType::Building::Next() -> void* {
-  return Offset(out_, built_ * type_->Layout().stride);
+  return Offset(out_, built_ * type_->Stride());
 }
 
 void FixedArrayType::Building::Advance() {

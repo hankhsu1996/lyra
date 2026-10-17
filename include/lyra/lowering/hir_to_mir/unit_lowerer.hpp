@@ -492,13 +492,10 @@ class UnitLowerer {
   [[nodiscard]] auto UnionMemberTypes(const hir::UnpackedUnionType& src)
       -> std::vector<mir::TypeId>;
 
-  // States the methods of the struct or the union `id` this unit declares,
-  // over values of the interned type naming it.
-  void DefineUnionMethods(
-      const hir::UnpackedUnionType& src, mir::RecordId id, mir::TypeId overlay);
-  void DefineStructMethods(
-      const hir::UnpackedStructType& src, mir::RecordId id,
-      mir::TypeId structure);
+  // States the methods of the struct or the union `id` this unit declares from
+  // `source`, over values of `type`, the interned type naming it.
+  void DefineRecordMethods(
+      const hir::Type& source, mir::RecordId id, mir::TypeId type);
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;

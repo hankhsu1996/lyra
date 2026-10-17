@@ -1,4 +1,4 @@
-#include "lyra/value/runtime_fixed_array.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 
 #include <cstddef>
 #include <format>
@@ -23,14 +23,14 @@ namespace {
 // An array of byte elements, the first of them the bytes `bytes` holds and the
 // rest the element default (LRM 5.9).
 auto FromBytes(std::string_view bytes, const FixedArrayType& type)
-    -> RuntimeFixedArray {
+    -> LaidOutValue {
   const IntegralValueType* element = type.ElementType().Type().AsIntegral();
   if (element == nullptr) {
     throw InternalError(
-        "RuntimeFixedArray: an array built from bytes holds integral "
+        "fixed array: an array built from bytes holds integral "
         "elements -- please report this as a bug");
   }
-  return RuntimeFixedArray::Built(type, [&](std::size_t i, void* out) {
+  return BuiltArray(type, [&](std::size_t i, void* out) {
     WrittenWords written(element->Shape());
     if (i < bytes.size()) {
       FromInt(written.MutableView(), static_cast<unsigned char>(bytes[i]));
@@ -43,18 +43,9 @@ auto FromBytes(std::string_view bytes, const FixedArrayType& type)
 
 }  // namespace
 
-RuntimeFixedArray::RuntimeFixedArray(AnyValue value)
-    : LaidOutValue<RuntimeFixedArray>(std::move(value)) {
-}
-
-auto RuntimeFixedArray::CopyOf(const FixedArrayType& type, const void* laid_out)
-    -> RuntimeFixedArray {
-  return RuntimeFixedArray(AnyValue::CopyOf(type.Type(), laid_out));
-}
-
-auto RuntimeFixedArray::FromElements(
+auto ArrayFromElements(
     const FixedArrayType& type, std::span<const void* const> items)
-    -> RuntimeFixedArray {
+    -> LaidOutValue {
   if (items.size() != type.Count()) {
     throw SimulationError(
         std::format(
@@ -62,30 +53,19 @@ auto RuntimeFixedArray::FromElements(
             "array of {} (LRM 7.6)",
             type.Count(), items.size()));
   }
-  return Built(type, [&](std::size_t i, void* out) {
+  return BuiltArray(type, [&](std::size_t i, void* out) {
     type.ElementType().Type().Copy(items[i], out);
   });
 }
 
-auto RuntimeFixedArray::FromString(
-    const FixedArrayType& type, const String& text) -> RuntimeFixedArray {
+auto ArrayFromString(const FixedArrayType& type, const String& text)
+    -> LaidOutValue {
   return FromBytes(text.View(), type);
 }
 
-auto RuntimeFixedArray::FromIntegral(
-    const FixedArrayType& type, const ConstIntegralView& bits)
-    -> RuntimeFixedArray {
+auto ArrayFromIntegral(
+    const FixedArrayType& type, const ConstIntegralView& bits) -> LaidOutValue {
   return FromBytes(BytesOf(bits), type);
-}
-
-auto RuntimeFixedArray::ArrayType() const -> const FixedArrayType& {
-  const FixedArrayType* type = Type().AsFixedArray();
-  if (type == nullptr) {
-    throw InternalError(
-        "RuntimeFixedArray: an array holds a value of another kind -- please "
-        "report this as a bug");
-  }
-  return *type;
 }
 
 }  // namespace lyra::value

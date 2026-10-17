@@ -28,8 +28,9 @@ auto EndpointAt(const mir::CompilationUnit& unit, MemberPlace place)
       place);
   return BoundEndpoint{
       .place = place,
-      .kind = unit.types.Get(member_type).IsVariableRef() ? MemberKind::kReference
-                                                        : MemberKind::kCell};
+      .kind = unit.types.Get(member_type).IsVariableRef()
+                  ? MemberKind::kReference
+                  : MemberKind::kCell};
 }
 
 // The endpoint a route of parent edges gives: the member it ends at, reached

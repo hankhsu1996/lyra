@@ -622,7 +622,8 @@ void VerifyReferenceBindings(
   for (const ExprId id : block.exprs.Ids()) {
     const ExprData& data = block.exprs.Get(id).data;
     if (const auto* assign = std::get_if<AssignExpr>(&data)) {
-      if (unit.types.Get(block.exprs.Get(assign->target).type).IsVariableRef()) {
+      if (unit.types.Get(block.exprs.Get(assign->target).type)
+              .IsVariableRef()) {
         refuse(id, "stores into a reference, which only a binding names");
       }
     }

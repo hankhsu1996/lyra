@@ -214,18 +214,20 @@ the one shape for both kinds of scope, so the count a scope receives and the cou
 are each stated once, on their own side.
 
 Whether an instantiation assigned a parameter does not tell instances apart, so a parameter left to
-its default is supplied like one assigned. The parameter is passed as a value or none, the source's
-own `.P( [ param_expression ] )` (LRM 23.10.2.2), as a sum of nothing and the value -- the shape of
-Rust's `Option` and C++'s `std::optional` -- so one argument states the protocol on both sides.
-Where none was assigned, the unit fills the parameter from the default its declaration states (LRM
-6.20.1), evaluated in its own scope against the values its earlier parameters hold. That is where
-clang keeps a default argument too, on the callee's parameter rather than at the call
-(`ParmVarDecl`'s default argument, instantiated only where a call uses it). The front end binds a
-default only where the parameter was not overridden, since an unused default need not hold against
-the values the other parameters were given; it is given the default of an overridden parameter,
-bound in the parameter's own scope with nothing it reports kept, by a change carried in this
-project's fork. A default that is not valid in a unit is one no instance of it can be left to, since
-what makes it invalid is part of which unit it is.
+its default is supplied like one assigned. The parameter is passed as whether the instantiation
+assigned it, the source's own `.P( [ param_expression ] )` (LRM 23.10.2.2), beside the value, which
+is the type's default where none was -- what C++'s `std::optional` holds, a flag and a slot for the
+value. It crosses as a tuple and not as a sum, since a union of MIR's is a declaration the source
+states and this is not, so one argument states the protocol on both sides. Where none was assigned,
+the unit fills the parameter from the default its declaration states (LRM 6.20.1), evaluated in its
+own scope against the values its earlier parameters hold. That is where clang keeps a default
+argument too, on the callee's parameter rather than at the call (`ParmVarDecl`'s default argument,
+instantiated only where a call uses it). The front end binds a default only where the parameter was
+not overridden, since an unused default need not hold against the values the other parameters were
+given; it is given the default of an overridden parameter, bound in the parameter's own scope with
+nothing it reports kept, by a change carried in this project's fork. A default that is not valid in
+a unit is one no instance of it can be left to, since what makes it invalid is part of which unit it
+is.
 
 [one-body-built-at-every-index](one-body-built-at-every-index.md) D4 made a scope's entry take its
 values erased and counted, because the constructing site held only the definition and not the

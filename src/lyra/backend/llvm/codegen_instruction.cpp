@@ -148,7 +148,7 @@ auto CodeGenFunction::LowerRvalue(
             return LowerDiscriminant(read, result_type);
           },
           [&](const lir::LoadInstr& load) -> Lowered {
-            return LowerLoad(load, result_type);
+            return LoadPlace(load.place, result_type);
           },
           [&](const lir::OverlaidLoadInstr& load) -> Lowered {
             return LowerOverlaidLoad(
@@ -190,11 +190,11 @@ auto CodeGenFunction::LowerRvalue(
 // storage that is: a cell's contents are asked of the cell, and anything else
 // is its own address. A value of a type held as itself is read out of that
 // address.
-auto CodeGenFunction::LowerLoad(
-    const lir::LoadInstr& load, lir::TypeId result_type)
+auto CodeGenFunction::LoadPlace(
+    const lir::Place& place, lir::TypeId result_type)
     -> diag::Result<llvm::Value*> {
   llvm::Type* const result = module_->Types().Map(result_type);
-  auto wrapper = WrapperPlaceOf(load.place);
+  auto wrapper = WrapperPlaceOf(place);
   if (!wrapper) {
     return std::unexpected(std::move(wrapper.error()));
   }
@@ -206,12 +206,12 @@ auto CodeGenFunction::LowerLoad(
     }
     return ContentsOf(through.domain, through.kind, *address);
   }
-  auto address = ResolvePlaceAddress(load.place, Access::kRead);
+  auto address = ResolvePlaceAddress(place, Access::kRead);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
   if (const std::optional<support::ValueDomain> cell =
-          PlaceValueCellDomain(load.place, result_type)) {
+          PlaceValueCellDomain(place, result_type)) {
     return ValueCellContents(*cell, *address);
   }
   if (module_->Types().HasAggregateEvaluationKind(result_type)) {
@@ -563,9 +563,10 @@ auto CodeGenFunction::ResolvePlaceAddress(
       return std::unexpected(std::move(reached_storage.error()));
     }
     address = *reached_storage;
-    // A value cell is not where the value it holds lies for every domain -- a
-    // tuple's cell holds a handle on bytes kept elsewhere -- so a step into the
-    // value continues from what the cell's own access hands out.
+    // A value cell is not where the value it holds lies for every value -- a
+    // cell of a value too large for a frame holds the address of bytes kept
+    // apart -- so a step into the value continues from what the cell's own
+    // access hands out.
     const std::ptrdiff_t reached_by =
         std::distance(place.chain.begin(), step) + 1;
     if (reached_by == std::ssize(place.chain)) {
@@ -660,12 +661,12 @@ auto CodeGenFunction::EntryFor(Access access, const ElementEntries& entries)
 auto CodeGenFunction::MemberStorage(
     llvm::Value* owner, const lir::StatedMemberRef& member)
     -> diag::Result<llvm::Value*> {
-  auto record = module_->RecordOf(member.declared_by);
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = module_->PlacedMembersOf(member.declared_by);
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
   return builder_.CreateConstInBoundsGEP1_64(
-      builder_.getInt8Ty(), owner, (*record)->offsets.at(member.slot.value));
+      builder_.getInt8Ty(), owner, (*placed)->offsets.at(member.slot.value));
 }
 
 // The type of the storage the chain has arrived at where step `index` applies,
@@ -1811,7 +1812,7 @@ auto CodeGenFunction::LowerArray(
 auto CodeGenFunction::LowerProduct(
     const lir::ProductInstr& product, lir::TypeId result_type, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
-  const TupleLayout& layout = module_->Types().LayoutOfTuple(result_type);
+  const ProductLayout& layout = module_->Types().LayoutOfProduct(result_type);
   if (layout.components.size() != product.components.size()) {
     throw InternalError(
         "llvm codegen: a product's result type does not describe the "
@@ -1901,20 +1902,17 @@ auto CodeGenFunction::LowerUnion(
     return std::unexpected(std::move(value.error()));
   }
   builder_.CreateMemSet(
-      out, builder_.getInt8(0), layout.storage.size,
-      llvm::Align(layout.storage.align));
-  auto copied = CopyValue(
-      (*lir::OverlaidMembers(module_->Unit(), result_type))[built.member.value],
-      *value, out);
+      out, builder_.getInt8(0), layout.storage.layout.size,
+      llvm::Align(layout.storage.layout.align));
+  auto copied = CopyValue(layout.members[built.member.value], *value, out);
   if (!copied) {
     return copied;
   }
-  if (lir::IsTaggedUnion(module_->Unit(), result_type)) {
-    const value::TagPlacement tag = module_->Types().TagOf(result_type);
+  if (layout.tag.has_value()) {
     builder_.CreateStore(
-        builder_.getIntN(8 * tag.bytes, built.member.value),
+        builder_.getIntN(8 * layout.tag->bytes, built.member.value),
         builder_.CreateConstInBoundsGEP1_64(
-            builder_.getInt8Ty(), out, tag.offset));
+            builder_.getInt8Ty(), out, layout.tag->offset));
   }
   return out;
 }
@@ -1925,7 +1923,7 @@ auto CodeGenFunction::LowerDiscriminant(
   const lir::TypeId tagged = lir::PlaceType(module_->Unit(), *fn_, read.place);
   // The union is read where it lies, which a load of a value laid out by its
   // type answers with.
-  auto address = LowerLoad(lir::LoadInstr{.place = read.place}, tagged);
+  auto address = LoadPlace(read.place, tagged);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
@@ -1940,7 +1938,7 @@ auto CodeGenFunction::LowerDiscriminant(
 auto CodeGenFunction::LowerOverlaidLoad(
     const lir::OverlaidLoadInstr& load, lir::TypeId result_type,
     llvm::Value* out) -> diag::Result<llvm::Value*> {
-  auto address = LowerLoad(lir::LoadInstr{.place = load.place}, result_type);
+  auto address = LoadPlace(load.place, result_type);
   if (!address) {
     return std::unexpected(std::move(address.error()));
   }
@@ -2112,9 +2110,9 @@ auto CodeGenFunction::LowerClosure(
   if (!definition) {
     return std::unexpected(std::move(definition.error()));
   }
-  auto record = module_->RecordOf(result_type);
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = module_->PlacedMembersOf(result_type);
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
   // The entry builds what owns the closure in `out` and answers the closure
   // itself, which is where its captures are laid out.
@@ -2131,9 +2129,9 @@ auto CodeGenFunction::LowerClosure(
     if (!value) {
       return std::unexpected(std::move(value.error()));
     }
-    const lir::TypeId type = (*record)->types.at(i);
+    const lir::TypeId type = (*placed)->types.at(i);
     llvm::Value* slot = builder_.CreateConstInBoundsGEP1_64(
-        builder_.getInt8Ty(), closure, (*record)->offsets.at(i));
+        builder_.getInt8Ty(), closure, (*placed)->offsets.at(i));
     if (module_->Types().HasAggregateEvaluationKind(type)) {
       auto copied = CopyValue(type, *value, slot);
       if (!copied) {

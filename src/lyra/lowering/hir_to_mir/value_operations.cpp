@@ -80,9 +80,10 @@ auto IsValidForNet(const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
 // What a record of `kind` over `members` answers, which a record answers of
 // its members alone, so a declaration still being made answers it too. A
 // stream takes an untagged union as its first member and a tagged one not at
-// all (LRM 11.4.14.1); a net admits a structure or an untagged union of what a
-// net admits, and no tagged union (LRM 6.7.1); and comparing two untagged
-// unions compares their first members (LRM 7.3.2).
+// all (LRM 11.4.14.1); a net admits a structure or a union of what a net
+// admits (LRM 6.7.1), where a net of a tagged union is refused before any
+// method is stated, so no tagged union states a net's folds; and comparing two
+// untagged unions compares their first members (LRM 7.3.2).
 auto HasBitStreamOver(
     const mir::CompilationUnit& unit, mir::RecordKind kind,
     std::span<const mir::TypeId> members) -> bool {
@@ -1582,6 +1583,17 @@ auto IsFixedStream(const std::optional<StreamShape>& shape) -> bool {
   return shape.has_value() && shape->width != 0;
 }
 
+// What an untagged union has of the operations a type may lack, read off its
+// members.
+auto OperationsHadByUnion(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> members)
+    -> OperationsHad {
+  return OperationsHad{
+      .stream = HasBitStreamOver(unit, mir::RecordKind::kUnion, members),
+      .fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, members.front())),
+      .net_folds = IsValidForNetOver(unit, mir::RecordKind::kUnion, members)};
+}
+
 }  // namespace
 
 auto StructMethodsOf(
@@ -1607,49 +1619,39 @@ auto StructMethodsOf(
   return methods;
 }
 
-// What an array has of the operations a type may lack, read off the type
-// itself, which is interned whole before any body is built.
-auto OperationsHadBy(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> OperationsHad {
-  return OperationsHad{
-      .stream = HasBitStream(unit, type),
-      .fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, type)),
-      .net_folds = IsValidForNet(unit, type)};
-}
-
 auto UnionMethodsOf(
     UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
-    mir::TypeId overlay, mir::RecordKind kind,
-    std::span<const mir::TypeId> members) -> std::vector<mir::RecordMethod> {
-  const mir::CompilationUnit& unit = lowerer.Unit();
+    mir::TypeId overlay, std::span<const mir::TypeId> members)
+    -> std::vector<mir::RecordMethod> {
   std::vector<mir::RecordMethod> methods;
   const auto add = [&](support::ValueOperation answers,
                        mir::CallableCode code) {
     methods.push_back(
         mir::RecordMethod{.answers = answers, .code = std::move(code)});
   };
-  const OperationsHad had{
-      .stream = HasBitStreamOver(unit, kind, members),
-      .fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, members.front())),
-      .net_folds = IsValidForNetOver(unit, kind, members)};
-  switch (kind) {
-    case mir::RecordKind::kUnion: {
-      UnionBodies bodies(
-          lowerer, declaration, overlay, {members.begin(), members.end()});
-      StateWholeValue(bodies, add);
-      StateStreamAndFolds(bodies, had, add);
-      return methods;
-    }
-    case mir::RecordKind::kTaggedUnion: {
-      TaggedUnionBodies bodies(
-          lowerer, declaration, overlay, {members.begin(), members.end()});
-      StateWholeValue(bodies, add);
-      return methods;
-    }
-    case mir::RecordKind::kStruct:
-      break;
-  }
-  throw InternalError("UnionMethodsOf: a structure states no union's methods");
+  const OperationsHad had =
+      OperationsHadByUnion(lowerer.Unit(), members);
+  UnionBodies bodies(
+      lowerer, declaration, overlay, {members.begin(), members.end()});
+  StateWholeValue(bodies, add);
+  StateStreamAndFolds(bodies, had, add);
+  return methods;
+}
+
+auto TaggedUnionMethodsOf(
+    UnitLowerer& lowerer, const mir::TypeDeclarationRef& declaration,
+    mir::TypeId overlay, std::span<const mir::TypeId> members)
+    -> std::vector<mir::RecordMethod> {
+  std::vector<mir::RecordMethod> methods;
+  const auto add = [&](support::ValueOperation answers,
+                       mir::CallableCode code) {
+    methods.push_back(
+        mir::RecordMethod{.answers = answers, .code = std::move(code)});
+  };
+  TaggedUnionBodies bodies(
+      lowerer, declaration, overlay, {members.begin(), members.end()});
+  StateWholeValue(bodies, add);
+  return methods;
 }
 
 auto ArrayOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
@@ -1662,7 +1664,12 @@ auto ArrayOperationsOf(UnitLowerer& lowerer, mir::TypeId type)
         mir::TypeOperation{
             .type = type, .answers = answers, .code = std::move(code)});
   };
-  const OperationsHad had = OperationsHadBy(unit, type);
+  // Read off the type itself, which is interned whole before any body is
+  // built.
+  const OperationsHad had{
+      .stream = HasBitStream(unit, type),
+      .fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, type)),
+      .net_folds = IsValidForNet(unit, type)};
   const mir::UnpackedArrayType array =
       unit.types.Get(type).Get<mir::UnpackedArrayType>();
   ArrayBodies bodies(

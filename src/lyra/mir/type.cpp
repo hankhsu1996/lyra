@@ -239,6 +239,48 @@ auto Type::IsVariableRef() const -> bool {
   return Is<VariableRefType>() || Is<ReferenceWrapperType>();
 }
 
+namespace {
+
+// Whether an object of the library's of `kind` is storage reached by its
+// address, as LIR states it: what a disable names, and what a delayed
+// continuous assignment propagates through.
+auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
+  switch (kind) {
+    case RuntimeLibraryKind::kCancellationTarget:
+    case RuntimeLibraryKind::kTimer:
+      return true;
+    case RuntimeLibraryKind::kPrintItem:
+    case RuntimeLibraryKind::kPrintLiteralItem:
+    case RuntimeLibraryKind::kPrintValueItem:
+    case RuntimeLibraryKind::kFormatSpec:
+    case RuntimeLibraryKind::kFormatArg:
+    case RuntimeLibraryKind::kTimeFormat:
+    case RuntimeLibraryKind::kDpiBitBuffer:
+    case RuntimeLibraryKind::kDpiLogicBuffer:
+    case RuntimeLibraryKind::kDpiOpenArray:
+    case RuntimeLibraryKind::kEnumeration:
+    case RuntimeLibraryKind::kTrigger:
+    case RuntimeLibraryKind::kObservation:
+    case RuntimeLibraryKind::kReadReport:
+    case RuntimeLibraryKind::kWait:
+    case RuntimeLibraryKind::kHierarchySegment:
+    case RuntimeLibraryKind::kChannelCancellation:
+    case RuntimeLibraryKind::kDpiBitChunk:
+    case RuntimeLibraryKind::kDpiLogicChunk:
+    case RuntimeLibraryKind::kDpiOpenArrayHandle:
+    case RuntimeLibraryKind::kControlEffect:
+    case RuntimeLibraryKind::kObjectDefinition:
+    case RuntimeLibraryKind::kScopeInfo:
+    case RuntimeLibraryKind::kScopeCallable:
+    case RuntimeLibraryKind::kConstructionTable:
+    case RuntimeLibraryKind::kInstantiation:
+      return false;
+  }
+  throw InternalError("mir: unknown runtime library kind");
+}
+
+}  // namespace
+
 auto Type::IsAddressOnly() const -> bool {
   // One arm per MIR type and no catch-all, so a type added later fails to
   // compile here until it says which it is; answering that it has a value to
@@ -277,7 +319,9 @@ auto Type::IsAddressOnly() const -> bool {
           [](const RuntimeEffectsType&) { return false; },
           [](const FilesType&) { return false; },
           [](const DiagnosticType&) { return false; },
-          [](const RuntimeLibraryType&) { return false; },
+          [](const RuntimeLibraryType& t) {
+            return IsReachedByAddress(t.kind);
+          },
           [](const CoroutineType&) { return false; },
           [](const VariableRefType&) { return false; },
           [](const ReferenceWrapperType&) { return false; },

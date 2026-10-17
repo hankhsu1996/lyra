@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/value_type.hpp"
@@ -17,13 +18,25 @@ namespace lyra::value {
 // value exactly as the program lays it out, in storage of its own, held with
 // its type as any value the library was compiled without is. The bytes carry
 // no type, so whoever hands a value in by its bytes states the type beside
-// them, and every operation on the whole value is the type's.
-//
-// `Self` is the kind of value held, so each answers with a value of its own
-// kind.
-template <typename Self>
+// them, and every operation on the whole value is the type's, whichever kind
+// of value -- a structure, a union, a tuple, a fixed-size unpacked array --
+// the type is.
 class LaidOutValue {
  public:
+  // Holds no value: storage before whatever declares it installs one.
+  LaidOutValue() = default;
+
+  // The value `value` holds, which is a value of a type laid out by the
+  // design.
+  explicit LaidOutValue(AnyValue value) : value_(std::move(value)) {
+  }
+
+  // A copy of the value of `type` laid out at `laid_out`.
+  [[nodiscard]] static auto CopyOf(const ValueType& type, const void* laid_out)
+      -> LaidOutValue {
+    return LaidOutValue(AnyValue::CopyOf(type, laid_out));
+  }
+
   // The value's bytes, which is what crosses as its handle, and its type.
   [[nodiscard]] auto Bytes() const -> const void* {
     return value_.Bytes();
@@ -62,32 +75,38 @@ class LaidOutValue {
     return std::exchange(value_, AnyValue());
   }
 
-  [[nodiscard]] auto operator==(const Self& other) const -> FourStateBit {
+  [[nodiscard]] auto operator==(const LaidOutValue& other) const
+      -> FourStateBit {
     return value_ == Held(other);
   }
-  [[nodiscard]] auto operator!=(const Self& other) const -> FourStateBit {
+  [[nodiscard]] auto operator!=(const LaidOutValue& other) const
+      -> FourStateBit {
     return value_ != Held(other);
   }
-  [[nodiscard]] auto CaseEqual(const Self& other) const -> Bit {
+  [[nodiscard]] auto CaseEqual(const LaidOutValue& other) const -> Bit {
     return value_.CaseEqual(Held(other));
   }
-  [[nodiscard]] auto ResolveTriState(const Self& other) const -> Self {
-    return Self(value_.ResolveTriState(Held(other)));
+  [[nodiscard]] auto ResolveTriState(const LaidOutValue& other) const
+      -> LaidOutValue {
+    return LaidOutValue(value_.ResolveTriState(Held(other)));
   }
-  [[nodiscard]] auto ResolveWiredAnd(const Self& other) const -> Self {
-    return Self(value_.ResolveWiredAnd(Held(other)));
+  [[nodiscard]] auto ResolveWiredAnd(const LaidOutValue& other) const
+      -> LaidOutValue {
+    return LaidOutValue(value_.ResolveWiredAnd(Held(other)));
   }
-  [[nodiscard]] auto ResolveWiredOr(const Self& other) const -> Self {
-    return Self(value_.ResolveWiredOr(Held(other)));
+  [[nodiscard]] auto ResolveWiredOr(const LaidOutValue& other) const
+      -> LaidOutValue {
+    return LaidOutValue(value_.ResolveWiredOr(Held(other)));
   }
-  [[nodiscard]] auto Dominating(const Self& weaker) const -> Self {
-    return Self(value_.Dominating(Held(weaker)));
+  [[nodiscard]] auto Dominating(const LaidOutValue& weaker) const
+      -> LaidOutValue {
+    return LaidOutValue(value_.Dominating(Held(weaker)));
   }
-  [[nodiscard]] static auto FilledLike(const Self& prototype, const Logic& fill)
-      -> Self {
-    return Self(AnyValue::FilledLike(Held(prototype), fill));
+  [[nodiscard]] static auto FilledLike(
+      const LaidOutValue& prototype, const Logic& fill) -> LaidOutValue {
+    return LaidOutValue(AnyValue::FilledLike(Held(prototype), fill));
   }
-  [[nodiscard]] auto IsBitIdentical(const Self& other) const -> bool {
+  [[nodiscard]] auto IsBitIdentical(const LaidOutValue& other) const -> bool {
     return value_.IsBitIdentical(Held(other));
   }
   [[nodiscard]] auto HasUnknown() const -> bool {
@@ -108,21 +127,18 @@ class LaidOutValue {
     return value_.WriteToStream(stream, filled);
   }
 
- protected:
-  // Holds no value: storage before whatever declares it installs one.
-  LaidOutValue() = default;
-
-  // The value `value` holds, which is a value of a type laid out by the
-  // design.
-  explicit LaidOutValue(AnyValue value) : value_(std::move(value)) {
-  }
-
  private:
-  [[nodiscard]] static auto Held(const Self& other) -> const AnyValue& {
-    return static_cast<const LaidOutValue&>(other).value_;
+  [[nodiscard]] static auto Held(const LaidOutValue& other) -> const AnyValue& {
+    return other.value_;
   }
 
   AnyValue value_;
 };
+
+static_assert(LyraValue<LaidOutValue>);
+static_assert(NetResolvable<LaidOutValue>);
+static_assert(CaseEqualComparable<LaidOutValue>);
+static_assert(BitstreamSizable<LaidOutValue, ConstIntegralView>);
+static_assert(TakesBytesInPlace<LaidOutValue>);
 
 }  // namespace lyra::value

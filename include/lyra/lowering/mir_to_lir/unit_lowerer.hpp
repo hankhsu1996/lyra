@@ -189,8 +189,8 @@ class UnitLowerer {
   [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
       -> lir::FunctionId;
 
-  // The declaration a struct of this unit is, which its components and its
-  // methods are listed on.
+  // The declaration a struct or a union of this unit is, which its members and
+  // its methods are listed on.
   [[nodiscard]] auto RecordDeclaration(mir::RecordId record) const
       -> lir::RecordId;
 

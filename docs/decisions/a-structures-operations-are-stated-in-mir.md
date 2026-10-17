@@ -87,7 +87,10 @@ call, and so is every whole-value question a structure's own body asks of a memb
   its operations through the type as it does any other value's, with nothing in the value.
 - **The table beside the value, as Swift passes a witness table and Rust a trait object's vtable**
   (recalled, not read). A container's entries take elements of any domain, so no signature can grow
-  a table operand for one domain; the layout decision rejected it on the same ground.
+  a table operand for one domain; the layout decision rejected it on the same ground. Revised
+  2026-10-16: the table now crosses beside the bytes, told once per call after the operands
+  ([a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md) D7,
+  [a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)).
 - **One resolving function taking the truth table as an operand.** The table is part of what is
   asked, and the builtins already name each one.
 - **Functions of the unit's namespace, one per operation, which a backend makes the structure's

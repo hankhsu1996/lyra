@@ -159,18 +159,16 @@ constexpr DomainSet kOneWordFourState{
     Domain::kLogic8, Domain::kLogic16, Domain::kLogic32, Domain::kLogic64};
 constexpr DomainSet kFourStateIntegral =
     kOneWordFourState | DomainSet{Domain::kLogicWide};
-// A fixed-size unpacked array is its elements laid out by its type, which the
-// design is compiled with; the other sequences and containers are objects the
-// library holds as its own.
-constexpr DomainSet kArrays{Domain::kUnpackedArray};
 // What is laid out by a type the design is compiled with and states nothing of
-// it in its bytes: a record and a fixed-size unpacked array.
-constexpr DomainSet kLaidOutByType = kArrays | DomainSet{Domain::kRecord};
+// it in its bytes: a record and a fixed-size unpacked array, the one sequence
+// of fixed extent; the other sequences and containers are objects the library
+// holds as its own.
+constexpr DomainSet kLaidOutByType{Domain::kLaidOut};
 constexpr DomainSet kLibrarySequences{Domain::kDynArray, Domain::kQueue};
 constexpr DomainSet kLibraryContainers =
     kLibrarySequences | DomainSet{Domain::kAssocArray};
-constexpr DomainSet kSequences = kLibrarySequences | kArrays;
-constexpr DomainSet kContainers = kLibraryContainers | kArrays;
+constexpr DomainSet kSequences = kLibrarySequences | kLaidOutByType;
+constexpr DomainSet kContainers = kLibraryContainers | kLaidOutByType;
 constexpr DomainSet kReals{Domain::kReal, Domain::kShortReal};
 // What a stream of bits is read out of (LRM 6.24.3) besides an integral value.
 constexpr DomainSet kBitstreams =
@@ -183,7 +181,7 @@ constexpr DomainSet kLibraryObjects =
         Domain::kWildcardIndex, Domain::kString, Domain::kChandle,
         Domain::kEmpty, Domain::kManagedRef};
 // What an aggregate net resolves in (LRM 6.7.1), and what any net does.
-constexpr DomainSet kAggregateNets = kArrays | DomainSet{Domain::kRecord};
+constexpr DomainSet kAggregateNets = kLaidOutByType;
 constexpr DomainSet kNetValues = kFourStateIntegral | kAggregateNets;
 
 // What a variable holds besides an integral value: the objects that say what
@@ -213,7 +211,7 @@ constexpr std::array kForDynamicArraysAndQueues{
 constexpr std::array kForWhatDeletesWhole{
     RealizedFor{.domains = kLibraryContainers}};
 constexpr std::array kForArraysOfFixedExtent{
-    RealizedFor{.domains = {Domain::kDynArray, Domain::kUnpackedArray}}};
+    RealizedFor{.domains = {Domain::kDynArray, Domain::kLaidOut}}};
 constexpr std::array kForSequences{RealizedFor{.domains = kSequences}};
 constexpr std::array kForContainers{RealizedFor{.domains = kContainers}};
 constexpr std::array kForQueues{RealizedFor{.domains = {Domain::kQueue}}};
@@ -227,18 +225,18 @@ constexpr std::array kForWhatAnEntryComparesWhole{RealizedFor{
         kLibraryContainers | kReals |
         DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
 constexpr std::array kForBitstreams{RealizedFor{.domains = kBitstreams}};
-constexpr std::array kForUnpackedArrays{RealizedFor{.domains = kArrays}};
+constexpr std::array kForUnpackedArrays{RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForUnpackedArraysAndQueues{
-    RealizedFor{.domains = kArrays | DomainSet{Domain::kQueue}}};
+    RealizedFor{.domains = kLaidOutByType | DomainSet{Domain::kQueue}}};
 // A step into a component of a designated record, and a reference to one, is
 // told the record's type, as any realization for one is. Every member of a
 // union lies at the union's own start, so a step into one is told nothing.
 constexpr std::array kForComponentsSteppedInto{
-    RealizedFor{.domains = {Domain::kRecord}}};
+    RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForMembersSteppedInto{
-    RealizedFor{.domains = {Domain::kRecord}, .told = ToldNothing{}}};
+    RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
 constexpr std::array kForComponentsReferredTo{
-    RealizedFor{.domains = {Domain::kRecord}}};
+    RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForJoinedNets{RealizedFor{.domains = kFourStateIntegral}};
 // A net attaching a driver, and a variable's cell a reference is built over,
 // keep what they hold where it lies, so neither is told its type.
@@ -263,9 +261,8 @@ constexpr std::array kForLoadedMemories{
 // A history is filled with a default, which fixes how wide its values are.
 constexpr std::array kForHistoriesInstalled{
     RealizedFor{
-        .domains =
-            kOneWordIntegral | kContainers | kReals |
-            DomainSet{Domain::kString, Domain::kRecord, Domain::kManagedRef}},
+        .domains = kOneWordIntegral | kContainers | kReals |
+                   DomainSet{Domain::kString, Domain::kManagedRef}},
     RealizedFor{
         .domains = kWideIntegral, .told = ToldWidthMetadata{.after = 1}}};
 // A history keeps the type of the default it was filled with, so what is
@@ -380,7 +377,7 @@ constexpr std::array kForLandings{
 constexpr std::array kForSequencesSteppedInto{
     RealizedFor{.domains = kSequences}};
 constexpr std::array kForSlicesAssigned{
-    RealizedFor{.domains = DomainSet{Domain::kDynArray} | kArrays}};
+    RealizedFor{.domains = DomainSet{Domain::kDynArray} | kLaidOutByType}};
 // A designation of any integral value is told how wide it is where a write of
 // some of its bits is reported (LRM 11.5.1), which holds the bits written to
 // the value's width.
@@ -635,9 +632,8 @@ auto ReachedByKey(support::ValueDomain domain) -> bool {
     case support::ValueDomain::kShortReal:
     case support::ValueDomain::kChandle:
     case support::ValueDomain::kEmpty:
-    case support::ValueDomain::kRecord:
+    case support::ValueDomain::kLaidOut:
     case support::ValueDomain::kDynArray:
-    case support::ValueDomain::kUnpackedArray:
     case support::ValueDomain::kQueue:
     case support::ValueDomain::kManagedRef:
       return false;
@@ -696,7 +692,11 @@ auto IsLaidOutByType(const lir::Type& type) -> bool {
     return false;
   }
   const auto* domain = std::get_if<support::ValueDomain>(&*held);
-  return domain != nullptr && kLaidOutByType.Holds(*domain);
+  return domain != nullptr && IsLaidOutByType(*domain);
+}
+
+auto IsLaidOutByType(support::ValueDomain domain) -> bool {
+  return kLaidOutByType.Holds(domain);
 }
 
 auto ValueDomainOf(const lir::CompilationUnit& unit, lir::TypeId type)

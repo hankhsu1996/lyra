@@ -940,7 +940,7 @@ auto LowerSystemCall(
   // The call is of the type the front end gave it, which is the standard's
   // type for the function and, for one whose result follows its operand (LRM
   // 16.9.3 `$sampled`), that operand's.
-  auto result_type = unit_lowerer.InternType(*call.type, span);
+  auto result_type = unit_lowerer.InternExpressionType(call, span);
   if (!result_type) return std::unexpected(std::move(result_type.error()));
   return hir::Expr{
       .type = *result_type,

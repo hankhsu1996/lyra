@@ -238,12 +238,13 @@ class FunctionLowerer {
   // Lowers a cleanup's own code, on whichever way out reached it, under a
   // scope that refuses any landing inside it.
   auto LowerCleanupInto(CleanupScope cleanup) -> diag::Result<void>;
-  // Hands control back to the scheduler, leaving the body at `resume`. Being
-  // ended rather than run again is a way out of every scope open here, so the
-  // second way out runs all of their cleanups and then ends the body; the
-  // source spells none of it, which is why it is built from what is owed
-  // rather than from a statement.
-  auto SuspendResumingAt(lir::BlockId resume) -> diag::Result<void>;
+  // Hands control back to the scheduler where `park` holds, the body going on
+  // in one block either way: where it suspended and is resumed, and where it
+  // did not have to. Being ended rather than run again is a way out of every
+  // scope open here, so the second way out runs all of their cleanups and then
+  // ends the body; the source spells none of it, which is why it is built from
+  // what is owed rather than from a statement.
+  auto SuspendIf(lir::Operand park) -> diag::Result<void>;
   // Carries `effect`, the departure a landing received, on outward: a region
   // that declined it is not where it was going, and what a further landing
   // tests is the target it names. Reached only from a landing, which is the
@@ -580,9 +581,6 @@ class FunctionLowerer {
   // outlives what it calls; a cell of the callee's own would be gone by the
   // time the caller read it.
   auto AllocateCompletionFor(lir::TypeId payload) -> lir::Operand;
-  // What a handle to such a cell is: the address of storage holding a
-  // `payload`, which is not itself a `payload`.
-  auto CompletionCellType(lir::TypeId payload) -> lir::TypeId;
 
   // Brings the storage this body's variables live in into existence and binds
   // each of them to the address of its own piece of it. Runs once, before

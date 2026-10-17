@@ -30,7 +30,8 @@ auto IsPlace(const ExprData& data) -> bool {
                     [](const EnumTableRef&) { return false; },
                     [](const IntegralConstantRef&) { return false; },
                     [](const ClassConstantRef&) { return false; },
-                    [](const FunctionRef&) { return false; }},
+                    [](const FunctionRef&) { return false; },
+                    [](const ExternalObjectEntryRef&) { return false; }},
                 e.target);
           },
           [](const DerefExpr&) { return true; },

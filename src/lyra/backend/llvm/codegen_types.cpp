@@ -228,9 +228,8 @@ auto CodeGenTypes::RequiredIntegralShapeOf(lir::TypeId type) const
   const std::optional<value::IntegralShape> shape = IntegralShapeOf(type);
   if (!shape.has_value()) {
     throw InternalError(
-        "llvm codegen: an entry is told the width, the signedness or the "
-        "states of a type that is not integral -- please report this as a "
-        "bug");
+        "llvm codegen: the width, the signedness or the states of a type "
+        "that is not integral are asked for -- please report this as a bug");
   }
   return *shape;
 }
@@ -258,8 +257,7 @@ auto CodeGenTypes::MachineValueLayout(lir::TypeId type)
   llvm::Type* const mapped = Map(type);
   if (mapped->isPointerTy()) {
     return support::ObjectLayout{
-        .size = sizeof(void*),
-        .align = alignof(void*),
+        .layout = {.size = sizeof(void*), .align = alignof(void*)},
         .ends_with_nothing_to_do = true};
   }
   if (!mapped->isIntegerTy() && !mapped->isFloatingPointTy()) {
@@ -268,59 +266,102 @@ auto CodeGenTypes::MachineValueLayout(lir::TypeId type)
         "address, an integer or a floating-point number -- please report this "
         "as a bug");
   }
-  const auto bytes = static_cast<std::uint32_t>(
-      (mapped->getPrimitiveSizeInBits().getFixedValue() + 7U) / 8U);
+  const std::size_t bytes =
+      (mapped->getPrimitiveSizeInBits().getFixedValue() + 7U) / 8U;
   return support::ObjectLayout{
-      .size = bytes, .align = bytes, .ends_with_nothing_to_do = true};
+      .layout = {.size = bytes, .align = bytes},
+      .ends_with_nothing_to_do = true};
 }
 
 auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
+  const std::optional<lir::Holding> held = unit_->types.Get(type).HeldAs();
+  if (!held.has_value()) {
+    return MachineDataLayout(type);
+  }
+  return std::visit(
+      Overloaded{
+          [&](const lir::IntegralBits&) -> support::ObjectLayout {
+            const value::IntegralShape shape = RequiredIntegralShapeOf(type);
+            return {
+                .layout =
+                    {.size = shape.Bytes(),
+                     .align = value::IntegralAlignFor(shape.width)},
+                .ends_with_nothing_to_do = true};
+          },
+          // A pointer owning what it points at is that address, and ending
+          // it ends what it points at.
+          [](const lir::OwnedStorageAddress&) -> support::ObjectLayout {
+            return {
+                .layout = {.size = sizeof(void*), .align = alignof(void*)},
+                .ends_with_nothing_to_do = false};
+          },
+          [&](support::ValueDomain domain) -> support::ObjectLayout {
+            if (!IsLaidOutByType(domain)) {
+              return runtime::LayoutOf(domain);
+            }
+            return std::visit(
+                Overloaded{
+                    [](const ProductLayout* product) {
+                      return product->storage;
+                    },
+                    [](const ArrayLayout* array) { return array->storage; },
+                    [](const UnionLayout* overlay) {
+                      return overlay->storage;
+                    }},
+                FieldsOf(type));
+          },
+          [](support::LibraryObject object) {
+            return runtime::LayoutOf(object);
+          }},
+      *held);
+}
+
+auto CodeGenTypes::FieldsOf(lir::TypeId laid_out) -> FieldsShape {
+  const lir::Type& stated = unit_->types.Get(laid_out);
+  if (stated.Is<lir::UnpackedArrayType>()) {
+    return &LayoutOfArray(laid_out);
+  }
+  if (stated.Is<lir::TupleType>()) {
+    return &LayoutOfProduct(laid_out);
+  }
+  const lir::RecordRef* record = lir::RecordOf(stated);
+  if (record == nullptr) {
+    throw InternalError(
+        "llvm codegen: how parts are placed asked of a type not laid out by "
+        "its type -- please report this as a bug");
+  }
+  switch (lir::RecordKindOf(*unit_, *record)) {
+    case lir::RecordKind::kStruct:
+      return &LayoutOfProduct(laid_out);
+    case lir::RecordKind::kUnion:
+    case lir::RecordKind::kTaggedUnion:
+      return &LayoutOfUnion(laid_out);
+  }
+  throw InternalError("llvm codegen: unknown record kind");
+}
+
+auto CodeGenTypes::MachineDataLayout(lir::TypeId type)
+    -> support::ObjectLayout {
   const lir::Type& ty = unit_->types.Get(type);
-  if (lir::ProductElements(*unit_, type).has_value()) {
-    return LayoutOfTuple(type).storage;
-  }
-  if (const std::optional<value::IntegralShape> shape = IntegralShapeOf(type)) {
-    return support::ObjectLayout{
-        .size = static_cast<std::uint32_t>(shape->Bytes()),
-        .align =
-            static_cast<std::uint32_t>(value::IntegralAlignFor(shape->width)),
-        .ends_with_nothing_to_do = true};
-  }
-  if (ty.Is<lir::UnpackedArrayType>()) {
-    return LayoutOfArray(type).storage;
-  }
-  if (lir::OverlaidMembers(*unit_, type).has_value()) {
-    return LayoutOfUnion(type).storage;
-  }
   if (const auto* machine = ty.As<lir::MachineIntType>()) {
-    const std::uint32_t bytes = lir::BitsOf(machine->width) / 8U;
+    const std::size_t bytes = lir::BitsOf(machine->width) / 8U;
     return support::ObjectLayout{
-        .size = bytes, .align = bytes, .ends_with_nothing_to_do = true};
+        .layout = {.size = bytes, .align = bytes},
+        .ends_with_nothing_to_do = true};
   }
   // A sequence of machine values is the values one after another, and ends
   // none of them.
   if (const auto* sequence = ty.As<lir::MachineArrayType>()) {
     const support::ObjectLayout element = MachineValueLayout(sequence->element);
     return support::ObjectLayout{
-        .size = static_cast<std::uint32_t>(element.size * sequence->size),
-        .align = element.align,
+        .layout =
+            {.size = element.layout.size * sequence->size,
+             .align = element.layout.align},
         .ends_with_nothing_to_do = true};
   }
-  // A pointer owning what it points at is that address, and ending it ends
-  // what it points at.
-  if (ty.IsMoveOnly()) {
-    return support::ObjectLayout{
-        .size = sizeof(void*),
-        .align = alignof(void*),
-        .ends_with_nothing_to_do = false};
-  }
-  const std::optional<support::RuntimeObject> object = HeldObjectOf(ty);
-  if (!object.has_value()) {
-    throw InternalError(
-        "llvm codegen: storage asked of a type whose values are not owned -- "
-        "please report this as a bug");
-  }
-  return runtime::LayoutOf(*object);
+  throw InternalError(
+      "llvm codegen: storage asked of a type whose values are not owned -- "
+      "please report this as a bug");
 }
 
 // The library walks every whole array by the layout it states, so that
@@ -338,8 +379,8 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
   const lir::TypeId element_type = stated->element_type;
   const std::uint64_t count = stated->size;
   const support::ObjectLayout element = LayoutOf(element_type);
-  const value::SequenceLayout laid = value::SequenceLayoutOf(
-      {.size = element.size, .align = element.align}, count);
+  const value::SequenceLayout laid =
+      value::SequenceLayoutOf(element.layout, count);
   return arrays_
       .emplace(
           array,
@@ -348,8 +389,7 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
               .count = count,
               .stride = laid.stride,
               .storage =
-                  {.size = static_cast<std::uint32_t>(laid.whole.size),
-                   .align = static_cast<std::uint32_t>(laid.whole.align),
+                  {.layout = laid.whole,
                    .ends_with_nothing_to_do = element.ends_with_nothing_to_do}})
       .first->second;
 }
@@ -369,9 +409,9 @@ auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
     ends_with_nothing_to_do =
         ends_with_nothing_to_do && LayoutOf(member).ends_with_nothing_to_do;
   }
-  const value::Layout overlay = OverlayOf(*members);
+  const support::Layout overlay = OverlayOf(*members);
   std::optional<value::TagPlacement> tag;
-  value::Layout whole = overlay;
+  support::Layout whole = overlay;
   if (lir::IsTaggedUnion(*unit_, union_type)) {
     const value::TaggedUnionLayout tagged =
         value::TaggedUnionLayoutOf(overlay, members->size());
@@ -382,10 +422,10 @@ auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
       .emplace(
           union_type,
           UnionLayout{
+              .members = {members->begin(), members->end()},
               .tag = tag,
               .storage =
-                  {.size = static_cast<std::uint32_t>(whole.size),
-                   .align = static_cast<std::uint32_t>(whole.align),
+                  {.layout = whole,
                    .ends_with_nothing_to_do = ends_with_nothing_to_do}})
       .first->second;
 }
@@ -401,10 +441,11 @@ auto CodeGenTypes::TagOf(lir::TypeId tagged) -> value::TagPlacement {
 }
 
 auto CodeGenTypes::OverlayOf(std::span<const lir::TypeId> members)
-    -> value::Layout {
+    -> support::Layout {
   return value::OverlayLayoutOf(
-      members | std::views::transform(
-                    [&](lir::TypeId member) { return LayoutOf(member); }));
+      members | std::views::transform([&](lir::TypeId member) {
+        return LayoutOf(member).layout;
+      }));
 }
 
 auto CodeGenTypes::KeepsAboveWidthsClear(lir::TypeId type) const -> bool {
@@ -433,35 +474,32 @@ auto CodeGenTypes::KeepsAboveWidthsClear(lir::TypeId type) const -> bool {
          });
 }
 
-auto CodeGenTypes::LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout& {
-  if (const auto found = tuples_.find(tuple); found != tuples_.end()) {
+auto CodeGenTypes::LayoutOfProduct(lir::TypeId product)
+    -> const ProductLayout& {
+  if (const auto found = products_.find(product); found != products_.end()) {
     return found->second;
   }
   const std::optional<std::span<const lir::TypeId>> components =
-      lir::ProductElements(*unit_, tuple);
+      lir::ProductElements(*unit_, product);
   if (!components.has_value()) {
     throw InternalError(
-        "llvm codegen: a tuple layout asked of a type that is no product");
+        "llvm codegen: a product layout asked of a type that is no product");
   }
   std::vector<support::ObjectLayout> held;
   held.reserve(components->size());
   for (const lir::TypeId component : *components) {
     held.push_back(LayoutOf(component));
   }
-  const value::ProductLayout laid = value::ProductLayoutOf(held);
-  TupleLayout layout{
+  value::ProductLayout laid = value::ProductLayoutOf(
+      held | std::views::transform(&support::ObjectLayout::layout));
+  ProductLayout layout{
       .components = {components->begin(), components->end()},
-      .offsets = {},
+      .offsets = std::move(laid.offsets),
       .storage = {
-          .size = static_cast<std::uint32_t>(laid.whole.size),
-          .align = static_cast<std::uint32_t>(laid.whole.align),
+          .layout = laid.whole,
           .ends_with_nothing_to_do = std::ranges::all_of(
               held, &support::ObjectLayout::ends_with_nothing_to_do)}};
-  layout.offsets.reserve(laid.offsets.size());
-  for (const std::size_t offset : laid.offsets) {
-    layout.offsets.push_back(static_cast<std::uint32_t>(offset));
-  }
-  return tuples_.emplace(tuple, std::move(layout)).first->second;
+  return products_.emplace(product, std::move(layout)).first->second;
 }
 
 }  // namespace lyra::backend::llvm_backend

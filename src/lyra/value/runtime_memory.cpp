@@ -6,9 +6,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/fixed_array_type.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/library_value_types.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -84,8 +84,8 @@ auto MemoryWordOf(const ValueType& type, const void* element)
 }
 
 auto MemoryLeaf(
-    RuntimeFixedArray& memory, std::span<const UnpackedRange> dims,
-    std::int64_t top, std::size_t ordinal) -> MemoryWord {
+    LaidOutValue& memory, std::span<const UnpackedRange> dims, std::int64_t top,
+    std::size_t ordinal) -> MemoryWord {
   return LeafAt(memory.Bytes(), memory.Type(), dims, top, ordinal);
 }
 

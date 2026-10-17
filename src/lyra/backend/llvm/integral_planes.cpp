@@ -812,7 +812,8 @@ auto LowerOnPlanes(
     };
     return std::ranges::all_of(shapes.operands, held) && held(shapes.answer);
   };
-  if (!every_value(IsStatedOnPlanes)) {
+  if (!every_value(IsStatedOnPlanes) ||
+      (IsOnOneWordOnly(op) && !every_value(IsSingleWord))) {
     return std::nullopt;
   }
   const PlaneArithmetic words(builder);
@@ -872,20 +873,12 @@ auto LowerOnPlanes(
       return arithmetic(llvm::Instruction::Add);
     case IntegralOp::kSubtract:
       return arithmetic(llvm::Instruction::Sub);
-    // A product, a quotient and a remainder take work that grows with the
-    // square of the width, so past one machine word each is the library's.
     case IntegralOp::kMultiply:
-      return every_value(IsSingleWord) ? std::optional<PlaneAnswer>(
-                                             arithmetic(llvm::Instruction::Mul))
-                                       : std::nullopt;
+      return arithmetic(llvm::Instruction::Mul);
     case IntegralOp::kDivide:
-      return every_value(IsSingleWord)
-                 ? std::optional<PlaneAnswer>(divided(false))
-                 : std::nullopt;
+      return divided(false);
     case IntegralOp::kModulo:
-      return every_value(IsSingleWord)
-                 ? std::optional<PlaneAnswer>(divided(true))
-                 : std::nullopt;
+      return divided(true);
     case IntegralOp::kNegate:
       return words.Negated(load(0), answers_unknown());
     case IntegralOp::kBitwiseAnd:

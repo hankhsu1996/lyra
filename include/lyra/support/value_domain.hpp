@@ -48,12 +48,12 @@ enum class ValueDomain : std::uint8_t {
   kShortReal,
   kChandle,
   kEmpty,
-  // A value laid out by a type the design is compiled with, which a table
-  // generated for the type describes: a structure, a union, or a tuple a
-  // lowering composes.
-  kRecord,
+  // A value laid out by a type the design is compiled with, which the type it
+  // is told describes: a structure, a union, a tuple a lowering composes, or a
+  // fixed-size unpacked array. The library does what it does with one by the
+  // type alone, so one realization serves every such value.
+  kLaidOut,
   kDynArray,
-  kUnpackedArray,
   kQueue,
   kAssocArray,
   kManagedRef,

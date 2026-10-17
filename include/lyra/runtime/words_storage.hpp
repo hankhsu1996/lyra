@@ -56,13 +56,13 @@ class WordsStorage : public TailValue<WordsStorage<kDomain>> {
   [[nodiscard]] auto ByteSize() const -> std::size_t {
     return BytesFor(width_);
   }
-  [[nodiscard]] auto ValueLayout() const -> value::Layout {
+  [[nodiscard]] auto ValueLayout() const -> support::Layout {
     return ValueLayoutFor(width_);
   }
 
   // What a value `width` bits wide takes.
   [[nodiscard]] static auto ValueLayoutFor(std::uint64_t width)
-      -> value::Layout {
+      -> support::Layout {
     return {.size = BytesFor(width), .align = alignof(std::uint64_t)};
   }
 

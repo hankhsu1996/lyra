@@ -805,6 +805,29 @@ struct ErasedReference {
       -> ErasedReference;
 };
 
+// A write of a whole value through `lent` (LRM 4.3, 10.6): one the variable
+// turns away lands only beneath its takeover, as `beneath` writes it, one
+// nobody waits on is written as `assign` writes it, and one that leaves the
+// bits as `identical` finds them is no change. Otherwise `replace` writes it
+// and answers the change, which whoever waits through `lent` is told.
+template <class Beneath, class Assign, class Identical, class Replace>
+void SetThrough(
+    const ErasedReference& lent, Beneath beneath, Assign assign,
+    Identical identical, Replace replace) {
+  if (!lent.Admits()) {
+    beneath();
+    return;
+  }
+  if (!lent.Watched()) {
+    assign();
+    return;
+  }
+  if (identical()) {
+    return;
+  }
+  lent.Report(PartPath{}, replace());
+}
+
 // The variable a reference to the whole of it names, as the cell of class `C`
 // it is, which the reference's own type decides.
 template <class C>
@@ -882,22 +905,16 @@ class VariableRef {
   // not the handle's own pointers -- as `*p = v` is allowed through a `T* const
   // p`.
   void Set(const T& new_val) const {
-    if (!erased_.Admits()) {
-      if (T* beneath = DisplacedStorage()) {
-        *beneath = new_val;
-      }
-      return;
-    }
-    if (!erased_.Watched()) {
-      StoreInto(Storage(), new_val);
-      return;
-    }
-    if (Storage().IsBitIdentical(new_val)) {
-      return;
-    }
-    PublishTransition(PartPath{}, ReplaceWhole(Storage(), [&] {
-                        StoreInto(Storage(), new_val);
-                      }));
+    const auto assign = [&] { StoreInto(Storage(), new_val); };
+    SetThrough(
+        erased_,
+        [&] {
+          if (T* beneath = DisplacedStorage()) {
+            *beneath = new_val;
+          }
+        },
+        assign, [&] { return Storage().IsBitIdentical(new_val); },
+        [&] { return ReplaceWhole(Storage(), assign); });
   }
 
   // Opens a write into the referenced storage, as an observable cell itself

@@ -4,6 +4,7 @@
 #include <string_view>
 #include <variant>
 
+#include "lyra/support/layout.hpp"
 #include "lyra/support/value_domain.hpp"
 
 namespace lyra::support {
@@ -39,9 +40,10 @@ enum class LibraryObject : std::uint8_t {
 // An object generated code holds by value: it gives the object storage in its
 // own frame, the library builds the object there, and the object ends where
 // the program that made it says. A value of every domain is one, and so is
-// each library object -- except a tuple, a union and a fixed-size unpacked
-// array, which generated code lays out itself as the type states; the object
-// of each of those domains is how the library holds one.
+// each library object -- except a value laid out by its type (a structure, a
+// union, a tuple a lowering composes, or a fixed-size unpacked array), which
+// generated code lays out itself as the type states; the object of that domain
+// is how the library holds one.
 // What the library keeps for the whole run, and storage an owner holds, is
 // reached by address instead and is not one of these.
 //
@@ -55,8 +57,7 @@ using RuntimeObject = std::variant<ValueDomain, LibraryObject>;
 // type; a holder keeping a value at its tail answers it with that value's
 // layout, so its size follows the type it holds.
 struct ObjectLayout {
-  std::uint32_t size;
-  std::uint32_t align;
+  Layout layout;
   bool ends_with_nothing_to_do;
 
   friend auto operator==(const ObjectLayout&, const ObjectLayout&)
@@ -69,17 +70,17 @@ struct ObjectLayout {
 // the runtime answers its own layout queries with them too, after checking each
 // against the class it defines.
 inline constexpr ObjectLayout kTriggerStorage{
-    .size = 80, .align = 8, .ends_with_nothing_to_do = false};
+    .layout = {.size = 80, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kObservationStorage{
-    .size = 16, .align = 8, .ends_with_nothing_to_do = false};
+    .layout = {.size = 16, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kReadReportStorage{
-    .size = 96, .align = 8, .ends_with_nothing_to_do = false};
+    .layout = {.size = 96, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kWaitStorage{
-    .size = 8, .align = 8, .ends_with_nothing_to_do = false};
+    .layout = {.size = 8, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kHierarchySegmentStorage{
-    .size = 56, .align = 8, .ends_with_nothing_to_do = false};
+    .layout = {.size = 56, .align = 8}, .ends_with_nothing_to_do = false};
 inline constexpr ObjectLayout kChannelCancellationStorage{
-    .size = 24, .align = 8, .ends_with_nothing_to_do = false};
+    .layout = {.size = 24, .align = 8}, .ends_with_nothing_to_do = false};
 
 // The spelling the entries over an object carry, stated once for both sides.
 // A value domain's object is spelled as the domain is, so every entry over a

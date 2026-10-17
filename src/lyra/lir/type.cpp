@@ -511,24 +511,24 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // A chandle (LRM 6.14) is a value holding one host pointer.
           [](const ChandleType&) -> Held { return ValueDomain::kChandle; },
           // A value laid out by its type -- a tuple, a structure, a union of
-          // either kind -- is held as the bytes that type lays out, whatever
-          // the type says lies where.
-          [](const TupleType&) -> Held { return ValueDomain::kRecord; },
-          [](const RecordType&) -> Held { return ValueDomain::kRecord; },
+          // either kind, a fixed-size unpacked array (LRM 7.4.2) -- is held as
+          // the bytes that type lays out, whatever the type says lies where.
+          [](const TupleType&) -> Held { return ValueDomain::kLaidOut; },
+          [](const RecordType&) -> Held { return ValueDomain::kLaidOut; },
+          [](const UnpackedArrayType&) -> Held {
+            return ValueDomain::kLaidOut;
+          },
           // A tagged union's `void` member (LRM 7.3.2) is a value carrying no
           // bits, a value of its own so a build's payload is uniform whatever
           // the member type.
           [](const EmptyType&) -> Held { return ValueDomain::kEmpty; },
-          // A container's value is how its elements are held and nothing its
-          // declaration says: an unpacked array's range (LRM 7.4.2), a queue's
-          // bound (LRM 7.10), and an associative array's index type (LRM 7.8)
-          // each reach an operation as an operand of their own, so one runtime
-          // value per kind serves every declared shape.
+          // A container whose size changes as the program runs holds its
+          // elements in storage of its own, and nothing its declaration says:
+          // a queue's bound (LRM 7.10) and an associative array's index type
+          // (LRM 7.8) each reach an operation as an operand of their own, so
+          // one runtime value per kind serves every declared shape.
           [](const DynamicArrayType&) -> Held {
             return ValueDomain::kDynArray;
-          },
-          [](const UnpackedArrayType&) -> Held {
-            return ValueDomain::kUnpackedArray;
           },
           [](const QueueType&) -> Held { return ValueDomain::kQueue; },
           [](const AssociativeArrayType&) -> Held {

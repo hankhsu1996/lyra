@@ -378,8 +378,8 @@ struct CompilationUnit {
   std::vector<ExternalRecord> external_records;
   // Every closure of this unit, one per closure site -- an anonymous concrete
   // callable value (capture fields plus one invoke). Its `ClosureId` is the
-  // closure's type identity, in a separate registry from `structs`: a closure
-  // is its own callable-value category, not a struct.
+  // closure's type identity, in a separate registry from `records`: a
+  // closure is its own callable-value category, not a record.
   base::Registry<ClosureDecl, ClosureId> closures;
   // Every other compilation unit whose signature this one consumed, once each.
   // That set is the whole of what this unit depends on another for, so whoever

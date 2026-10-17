@@ -127,7 +127,8 @@ class FixedArrayType {
       const ValueWitnessTable& witnesses, const value::ElementType& element,
       std::uint32_t count, SequenceLayout layout);
 
-  [[nodiscard]] auto Layout() const -> SequenceLayout;
+  // How far apart two elements of an array of this type lie.
+  [[nodiscard]] auto Stride() const -> std::size_t;
 
   ValueType type_;
   std::uint32_t count_;

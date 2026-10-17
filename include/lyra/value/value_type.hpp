@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/reduction.hpp"
@@ -224,6 +225,9 @@ class ValueType {
   }
   [[nodiscard]] auto Align() const -> std::size_t {
     return align_;
+  }
+  [[nodiscard]] auto Layout() const -> support::Layout {
+    return {.size = size_, .align = align_};
   }
 
   void Copy(const void* value, void* out) const {

@@ -8,11 +8,11 @@
 #include "lyra/value/array_manipulation.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/fixed_array_type.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/queue_type.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -280,7 +280,7 @@ template <typename Container, typename Answer>
 // `answer_type`: as many elements, of the type the `with` expression chose.
 [[nodiscard]] auto RuntimeArrayMap(
     const FixedArrayView& receiver, const ArrayMethodBody& body,
-    const FixedArrayType& answer_type) -> RuntimeFixedArray;
+    const FixedArrayType& answer_type) -> LaidOutValue;
 
 // Mapping produces no `default:` clause of its own, so an absent key of the
 // projection reads the projected element type's default. The indices are the

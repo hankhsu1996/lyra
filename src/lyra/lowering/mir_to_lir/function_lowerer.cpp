@@ -82,8 +82,8 @@ auto AssembledFrom(
 }
 
 // The position a call names, where the part it names is a component of a
-// product. Only a reference to a
-// property names a property, and that is lowered as a step on its object
+// product. Only a reference to a property names a property, and that is
+// lowered as a step on its object
 // before any entry is called, so one reaching here is a producer that named
 // the wrong kind of part.
 auto ComponentPartOf(const mir::Direct& direct)
@@ -467,7 +467,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     const lir::ValueId slot = fn_.values.Add(
         lir::Local{
             .name = "completion",
-            .type = CompletionCellType(payload),
+            .type = AddressType(payload),
             .kind = lir::LocalKind::kParam});
     fn_.params.push_back(slot);
     completion_cell_ =
@@ -985,20 +985,12 @@ void FunctionLowerer::PassEndAt(std::size_t index) {
   }
 }
 
-auto FunctionLowerer::CompletionCellType(lir::TypeId payload) -> lir::TypeId {
-  return unit_->Types().Intern(
-      lir::Type{lir::PointerType{
-          .pointee = payload,
-          .ownership = lir::PointerOwnership::kBorrowed,
-          .mutability = lir::Mutability::kMutable}});
-}
-
 auto FunctionLowerer::AllocateCompletionFor(lir::TypeId payload)
     -> lir::Operand {
   const lir::ValueId result = fn_.values.Add(
       lir::Local{
           .name = {},
-          .type = CompletionCellType(payload),
+          .type = AddressType(payload),
           .kind = lir::LocalKind::kTemp});
   // Into the entry block rather than where the call stands, so a call inside a
   // loop writes into one place instead of leaving a fresh one behind on every
@@ -1128,11 +1120,8 @@ void FunctionLowerer::OpenVariables() {
   }
   // The storage is the body's own and the body never reads through it; it only
   // names it when reaching a variable in it and when closing it.
-  const lir::TypeId opened = unit_->Types().Intern(
-      lir::Type{lir::PointerType{
-          .pointee = unit_->Types().Intern(lir::Type{lir::VoidType{}}),
-          .ownership = lir::PointerOwnership::kBorrowed,
-          .mutability = lir::Mutability::kMutable}});
+  const lir::TypeId opened =
+      AddressType(unit_->Types().Intern(lir::Type{lir::VoidType{}}));
   variables_ = Emit(opened, lir::OpenVariablesInstr{});
   for (const mir::LocalId local : code_->locals.Ids()) {
     if (!variable_slot_[local.value].has_value()) {
@@ -1140,11 +1129,7 @@ void FunctionLowerer::OpenVariables() {
     }
     const lir::TypeId value = unit_->TranslateType(
         StoredValueType(unit_->Mir(), code_->locals.Get(local).type));
-    const lir::TypeId address = unit_->Types().Intern(
-        lir::Type{lir::PointerType{
-            .pointee = lir::CellOf(unit_->Types(), value),
-            .ownership = lir::PointerOwnership::kBorrowed,
-            .mutability = lir::Mutability::kMutable}});
+    const lir::TypeId address = AddressType(lir::CellOf(unit_->Types(), value));
     locals_[local.value] = CellBinding{
         .cell = Emit(
             address, lir::VariableAddressInstr{
@@ -1551,8 +1536,13 @@ auto FunctionLowerer::LowerCleanupInto(CleanupScope cleanup)
   return lowered;
 }
 
-auto FunctionLowerer::SuspendResumingAt(lir::BlockId resume)
-    -> diag::Result<void> {
+auto FunctionLowerer::SuspendIf(lir::Operand park) -> diag::Result<void> {
+  const lir::BlockId parked = NewBlock();
+  const lir::BlockId resume = NewBlock();
+  Terminate(
+      lir::CondBranchTerm{
+          .condition = std::move(park), .if_true = parked, .if_false = resume});
+  SetCurrent(parked);
   const lir::BlockId abandoned = NewBlock();
   Terminate(lir::SuspendTerm{.resume = resume, .abandoned = abandoned});
   SetCurrent(abandoned);
@@ -2047,11 +2037,7 @@ auto FunctionLowerer::SymbolPlace(std::string symbol, mir::TypeId type)
       .base =
           lir::StaticRef{
               .symbol = std::move(symbol),
-              .type = unit_->Types().Intern(
-                  lir::Type{lir::PointerType{
-                      .pointee = unit_->TranslateType(type),
-                      .ownership = lir::PointerOwnership::kBorrowed,
-                      .mutability = lir::Mutability::kMutable}})},
+              .type = AddressType(unit_->TranslateType(type))},
       .chain = {lir::Projection{lir::DerefProjection{}}}};
 }
 
@@ -2493,11 +2479,7 @@ auto FunctionLowerer::EnterConstructor(
   arguments.insert(
       arguments.begin(),
       Emit(
-          unit_->Types().Intern(
-              lir::Type{lir::PointerType{
-                  .pointee = constructor.object_type,
-                  .ownership = lir::PointerOwnership::kBorrowed,
-                  .mutability = lir::Mutability::kMutable}}),
+          AddressType(constructor.object_type),
           lir::AddrOfInstr{
               .place = lir::Place{
                   .base = object,
@@ -2878,14 +2860,7 @@ auto FunctionLowerer::LowerCoroutineAwait(
   if (!awaited) {
     return awaited;
   }
-  const lir::Operand park = *std::move(awaited);
-  const lir::BlockId parked = NewBlock();
-  const lir::BlockId resume = NewBlock();
-  Terminate(
-      lir::CondBranchTerm{
-          .condition = park, .if_true = parked, .if_false = resume});
-  SetCurrent(parked);
-  auto suspended = SuspendResumingAt(resume);
+  auto suspended = SuspendIf(*std::move(awaited));
   if (!suspended) {
     return std::unexpected(std::move(suspended.error()));
   }
@@ -3219,8 +3194,8 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
           [&](const mir::MoveExpr& m) -> Lowered {
             // A move is a last-use transfer marker placed at HIR-to-MIR; it
             // changes neither the value nor its type, so it reads its operand
-            // here. Whether the transfer is realized as a move or a copy is
-            // decided below LIR, not at this layer.
+            // as a copy does, and what takes the value decides whether it is
+            // moved.
             return LowerRead(block, m.operand);
           },
           [&](const mir::CopyExpr& c) -> Lowered {
@@ -3241,13 +3216,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             if (!park) {
               return std::unexpected(std::move(park.error()));
             }
-            const lir::BlockId parked = NewBlock();
-            const lir::BlockId resume = NewBlock();
-            Terminate(
-                lir::CondBranchTerm{
-                    .condition = *park, .if_true = parked, .if_false = resume});
-            SetCurrent(parked);
-            auto suspended = SuspendResumingAt(resume);
+            auto suspended = SuspendIf(*std::move(park));
             if (!suspended) {
               return std::unexpected(std::move(suspended.error()));
             }

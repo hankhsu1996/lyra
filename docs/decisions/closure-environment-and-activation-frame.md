@@ -9,11 +9,11 @@ struct the source declares; then a struct the lowering declares, gathering a sco
 
 MIR carries several "ordered parts plus a construction" entities. A closure holds captured state, an
 automatic local that a detached branch can outlive is lifted into shared storage, the value
-aggregates are `TupleType`, `StructType` and `UnionType`, and the object model is `mir::Class`. The
-same idea -- "a body reads compiler-generated stored state" -- risks being expressed several ways at
-once, or being over-fused into one. This entry settles what a closure's stored state is, what a
-lifted local's storage is, and how they relate to the variable a body declares and to the nominal
-object.
+aggregates are `TupleType` and `RecordType` (a structure or a union), and the object model is
+`mir::Class`. The same idea -- "a body reads compiler-generated stored state" -- risks being
+expressed several ways at once, or being over-fused into one. This entry settles what a closure's
+stored state is, what a lifted local's storage is, and how they relate to the variable a body
+declares and to the nominal object.
 
 The decision arrived in five steps:
 
@@ -118,7 +118,7 @@ D7. field_order and construction evaluation order are independent. field_order i
 
 D8. Neither category is a mir::Class. A ClosureType has one entrypoint and no inheritance / dispatch
     / managed handle; a cell has the operations of a variable. mir::Class stays the one object IR.
-    The categories are four -- TupleType (structural product), StructType (named product),
+    The categories are four -- TupleType (structural product), RecordType (a declared structure or union),
     ClosureType (concrete callable value), mir::Class (rich object).
 
 D9. HIR-to-MIR owns the SystemVerilog capture / lifetime policy; MIR expresses only the resulting
@@ -130,7 +130,7 @@ The categories, kept distinct:
 ```text
                     storage-by     behavior                     identity
 TupleType           value          none                         structural / positional
-StructType          value          whole-value methods          its declaration
+RecordType          value          whole-value methods          its declaration
 ClosureType         value          one invoke body              anonymous concrete callable value
 mir::Class          managed ref    methods / dispatch           nominal object identity
 ```
@@ -184,7 +184,7 @@ is never rewritten when the layout is canonicalized.
 ## Cross-references
 
 - `../architecture/compiler_generated_storage.md` -- the contract form of this decision.
-- `../architecture/mir.md` -- `TupleType`, `StructType`, `ClosureType`, and `mir::Class` as distinct
+- `../architecture/mir.md` -- `TupleType`, `RecordType`, `ClosureType`, and `mir::Class` as distinct
   categories.
 - `../architecture/callable.md` -- the callable concept and the receiver rule; a closure body's
   receiver is the `ClosureType` value itself.

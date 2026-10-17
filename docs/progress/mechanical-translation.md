@@ -147,14 +147,15 @@ cross-check predicts. This file owns only which instances are known and what is 
       MIR states it as, while a write descended through the step the layer below states, so one
       operation had two shapes and which one it took was settled by the path that built it. The read
       a write performs on its way down took the second, so the same read appeared both ways in one
-      body. That layer's own vocabulary is one extract and one update over a step naming which
-      subvalue is reached -- which a product's component already used and these two did not -- so a
-      read now lowers to the same extract its write descends by. Which step an entry names is the
-      entry's own property rather than a list each side keeps; there had been one list per side,
-      held in step by nothing but their both being short. What this leaves: neither form of either
-      step reaches the dispatch that says how the library publishes an entry any more -- the reading
-      pair is spelled from the step itself, and the designating pair, which that dispatch used to
-      refuse, no longer arrives there at all -- so what it answers for those four is unread.
+      body. That layer's vocabulary is a step naming which part is reached -- a product's component,
+      a union's member, an element by the call that answers a reference -- which a product's
+      component already used and these two did not, so a read now lowers to the same step its write
+      descends by. Which step an entry names is the entry's own property rather than a list each
+      side keeps; there had been one list per side, held in step by nothing but their both being
+      short. What this leaves: neither form of either step reaches the dispatch that says how the
+      library publishes an entry any more -- the reading pair is spelled from the step itself, and
+      the designating pair, which that dispatch used to refuse, no longer arrives there at all -- so
+      what it answers for those four is unread.
 - [x] T22 -- Which operand carries the shape a call's result takes is stated on the entry's own
       declaration, beside the index and the erased spread part it belongs with. The execution
       backend had been answering it three ways: a hand-kept list of the container constructions, a
