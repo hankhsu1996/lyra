@@ -19,8 +19,7 @@ name: Address Sanitizer (Nightly)
 # It runs that set twice, once under each compiler that builds Lyra. C++ leaves
 # the order a call's arguments and an operator's operands are evaluated in to
 # the compiler, and GCC and clang choose opposite ones, so a reference read in
-# one operand and invalidated by another is wrong under one of them only. The
-# remote image has GCC alone; a checkout built here is built by clang.
+# one operand and invalidated by another is wrong under one of them only.
 #
 # Like the host C++ nightly and unlike the clang-tidy sweep, this gates its own
 # run: a sanitizer report is a defect with a stack trace, not a backlog item.
@@ -44,11 +43,11 @@ jobs:
           disk-cache: ${{ github.workflow }}-gcc-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
-      # Under remote execution, whose image has GCC and no other compiler. It
-      # compiles and runs under that one image, so the sanitizer runtime a test
-      # loads is the one its compiler linked against, and instrumenting every
-      # dependency costs the runner nothing. A checkout with no key has no GCC
-      # build to make, and the job beside this one is the whole of its run.
+      # The remote image's GCC, so only where the key is set. It compiles and
+      # runs under that one image, so the sanitizer runtime a test loads is the
+      # one its compiler linked against, and instrumenting every dependency
+      # costs the runner nothing. A checkout with no key has no GCC build to
+      # make, and the job beside this one is the whole of its run.
       - name: Test
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
@@ -57,8 +56,8 @@ jobs:
             echo "::notice::No remote execution key, so nothing here is built by GCC."
             exit 0
           fi
-          bazel test //... --config=asan --verbose_failures \
-            --config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY
+          bazel test //... --config=asan --config=gcc --verbose_failures \
+            --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY
 
   asan-clang:
     name: Run the gate under the address sanitizer, built by clang
@@ -74,12 +73,14 @@ jobs:
           disk-cache: ${{ github.workflow }}-clang-${{ hashFiles('MODULE.bazel') }}
           repository-cache: true
 
-      - name: Setup Clang
-        uses: ./.github/actions/setup-clang
-
-      # On the runner, under the clang installed above. No remote configuration
-      # is named, because every one that executes remotely resolves the image's
-      # GCC.
+      # The pinned clang, which links its own sanitizer runtime into each test,
+      # under remote execution where the key is set and on the runner otherwise.
       - name: Test
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: |
-          bazel test //... --config=asan --verbose_failures
+          RBE_FLAGS=""
+          if [[ -n "$BUILDBUDDY_API_KEY" ]]; then
+            RBE_FLAGS="--config=rbe --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          fi
+          bazel test //... --config=asan --verbose_failures $RBE_FLAGS

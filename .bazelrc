@@ -3,11 +3,15 @@
 # `git clone` then `bazel build //...` works for anyone. Machine tuning and
 # credentials go in `.bazelrc.user`, git-ignored and imported at the bottom.
 
-# Names the local compiler by environment, which is not toolchain resolution:
-# a config that sets `--platforms` resolves a registered toolchain and ignores
-# these, so the compiler differs between configs.
-build --action_env=CC=clang
-build --action_env=CXX=clang++
+# Which compiler builds Lyra and where its actions run are separate choices.
+# The compiler is the clang `MODULE.bazel` pins, unless `gcc` asks for the
+# remote image's GCC, the one GCC Lyra is held to. That GCC exists only in the
+# image, so `gcc` runs the actions there and needs a key as `rbe` does. Where
+# the actions run is otherwise this machine, unless `rbe` sends them to
+# BuildBuddy.
+build:gcc --config=rbe
+build:gcc --extra_toolchains=@buildbuddy_toolchain//:ubuntu_cc_toolchain
+
 build --cxxopt='-std=c++23'
 
 # LLVM is optimized even in an unoptimized build, and nothing else is. The
@@ -103,27 +107,23 @@ build:asan --features=-symbol_check
 # otherwise the gate's own.
 test:asan --test_tag_filters=-nightly,-cost
 
-# Shared cache and result streaming with actions still running locally, so the
-# compiler is the one named above. Needs a BuildBuddy key via `--remote_header`.
+# Shared cache and result streaming with actions still running locally. Needs a
+# BuildBuddy key via `--remote_header`.
 build:ci --bes_results_url=https://app.buildbuddy.io/invocation/
 build:ci --bes_backend=grpcs://remote.buildbuddy.io
 build:ci --remote_cache=grpcs://remote.buildbuddy.io
 build:ci --remote_timeout=10m
 build:ci --remote_upload_local_results=true
 
-# Actions run in BuildBuddy's Ubuntu container under the toolchain registered
-# for its platform, which is that image's system GCC. Cache entries are keyed
-# by toolchain, so this config shares nothing with a local build. Outputs stay
-# remote because a compile gate and a remotely executed test never read what
-# they produce, and transfer is metered. Needs a BuildBuddy key via
-# `--remote_header`.
+# Actions run in BuildBuddy's Ubuntu container. Outputs stay remote because a
+# compile gate and a remotely executed test never read what they produce, and
+# transfer is metered. Needs a BuildBuddy key via `--remote_header`.
 build:rbe --remote_executor=grpcs://remote.buildbuddy.io
 build:rbe --remote_cache=grpcs://remote.buildbuddy.io
 build:rbe --remote_timeout=10m
 build:rbe --remote_download_minimal
 build:rbe --extra_execution_platforms=@buildbuddy_toolchain//:platform
 build:rbe --host_platform=@buildbuddy_toolchain//:platform
-build:rbe --platforms=@buildbuddy_toolchain//:platform
 build:rbe --jobs=50
 build:rbe --bes_results_url=https://app.buildbuddy.io/invocation/
 build:rbe --bes_backend=grpcs://remote.buildbuddy.io
