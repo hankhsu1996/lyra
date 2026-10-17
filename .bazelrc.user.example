@@ -18,6 +18,5 @@
 # put it here when this checkout should use its own.
 # build --remote_header=x-buildbuddy-api-key=YOUR_KEY_HERE
 
-# Applies a config to every build without naming it on the command line. Under
-# `rbe` the compiler is the remote image's, not the one `.bazelrc` names.
+# Applies a config to every build without naming it on the command line.
 # build --config=rbe

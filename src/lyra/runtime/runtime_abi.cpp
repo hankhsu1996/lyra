@@ -2079,7 +2079,6 @@ using lyra::value::FormatArg;
 using lyra::value::FormatSpec;
 using lyra::value::LaidOutValue;
 using lyra::value::MakeFormatArg;
-using lyra::value::NetResolution;
 using lyra::value::ObjectRef;
 using lyra::value::PrintItem;
 using lyra::value::PrintLiteralItem;

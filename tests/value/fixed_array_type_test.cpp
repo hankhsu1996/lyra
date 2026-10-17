@@ -4,7 +4,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <exception>
 #include <gtest/gtest.h>
 #include <memory>
 #include <new>
@@ -54,22 +53,10 @@ auto ElementTypeOf() -> const ElementType& {
   throw InternalError("an operation no test here asks for");
 }
 
-// A table asked nothing: each function fails the test, and a move or an
-// ending, which may not throw, ends the program. The witnesses below answer
-// what their tests ask and take the rest from here.
+// A table asked nothing past a value's lifecycle, each of whose functions
+// fails the test. The witnesses below state how their values are copied, moved,
+// assigned and ended, answer what their tests ask, and take the rest from here.
 struct NothingAsked {
-  static constexpr auto Copy = [](const ValueType&, const void*, void*) {
-    Unused();
-  };
-  static constexpr auto Move = [](const ValueType&, void*, void*) noexcept {
-    std::terminate();
-  };
-  static constexpr auto Destroy = [](const ValueType&, void*) noexcept {
-    std::terminate();
-  };
-  static constexpr auto Assign = [](const ValueType&, void*, const void*) {
-    Unused();
-  };
   static constexpr auto Equal = [](const ValueType&, const void*,
                                    const void*) -> FourStateBit { Unused(); };
   static constexpr auto CaseEqual = [](const ValueType&, const void*,

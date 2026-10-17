@@ -83,15 +83,16 @@ Each moment answers a different question, and the answers are not interchangeabl
 | pre-commit | will this land green            | `bazel test //...`                           |
 | merge gate | is `main` still correct         | `bazel test //...`                           |
 | merge gate | does it still build optimized   | `bazel build -c opt //...`                   |
+| merge gate | does it still build under GCC   | `bazel build //... --config=gcc`             |
 | nightly    | is the C++ path still correct   | `bazel test //... --config=nightly`          |
 | nightly    | is any of it reading freed bits | `bazel test //... --config=asan`             |
 | nightly    | how far does a real design get  | `bazel test //tests:external_design_tests`   |
 
 Pre-commit and the merge gate run the same tests, and that is the whole point: a green run before
 committing means "this lands green" only while the two sets are identical. Any change that makes the
-local command wider or narrower than the gate turns its answer back into a guess. The optimized
-build is the one place the gate is wider, and the section on the gating workflows says why it is
-there all the same.
+local command wider or narrower than the gate turns its answer back into a guess. The two builds are
+where the gate is wider, and the section on the gating workflows says why each is there all the
+same.
 
 Every run someone waits on stops at the first case that fails, and every scheduled run does not. The
 two want different things from a red result. A defect the whole corpus shares and a defect one case
@@ -276,16 +277,16 @@ because no case names a path.
 
 Each runs on push to `main` and on pull requests.
 
-| Workflow               | What it enforces                                                                            |
-| ---------------------- | ------------------------------------------------------------------------------------------- |
-| `bazel-build.yml`      | `bazel build //...` with warnings fatal, then the default set, and the same build optimized |
-| `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy                              |
-| `bazel-lint.yml`       | `buildifier` formatting and lint warnings                                                   |
-| `md-format.yml`        | Prettier over every markdown file                                                           |
-| `ascii-policy.yml`     | ASCII-only, on the diff against `origin/main`                                               |
-| `exception-policy.yml` | The thrown-type policy, on the same diff                                                    |
-| `architecture.yml`     | Layer boundaries between the IRs and the backends                                           |
-| `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)                                 |
+| Workflow               | What it enforces                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ |
+| `bazel-build.yml`      | `bazel build //...` with warnings fatal, then the default set, the same build optimized, and under GCC |
+| `cpp-style.yml`        | `clang-format` over `src include tests`, plus C++ style policy                                         |
+| `bazel-lint.yml`       | `buildifier` formatting and lint warnings                                                              |
+| `md-format.yml`        | Prettier over every markdown file                                                                      |
+| `ascii-policy.yml`     | ASCII-only, on the diff against `origin/main`                                                          |
+| `exception-policy.yml` | The thrown-type policy, on the same diff                                                               |
+| `architecture.yml`     | Layer boundaries between the IRs and the backends                                                      |
+| `docs-policy.yml`      | The doc claims a machine can settle (paths, links, indexes)                                            |
 
 `bazel-build.yml` runs its two commands as steps of one job rather than as two jobs. The separate
 durations are worth having, but a second runner would not inherit the first's analysis: Bazel holds
@@ -301,10 +302,16 @@ compiler reports of an optimized build what it does not of an unoptimized one, b
 concludes about a value after inlining exists only there. With warnings fatal, such a report stops
 both scheduled jobs from measuring anything, and a nightly would be the first to find it, a day
 after the change that caused it had merged. A different compilation mode shares neither analysis nor
-one output with the build beside it, which is why it is not a step of that job. It is the one thing
-the gate asks that `bazel test //...` on a developer's machine does not, so a change can pass there
-and fail here; the command above reproduces it, and under remote execution it compiles only what the
-change touched.
+one output with the build beside it, which is why it is not a step of that job. A change can pass
+`bazel test //...` on a developer's machine and fail here; the command above reproduces it, and
+under remote execution it compiles only what the change touched.
+
+Its fourth command, `bazel build //... --config=gcc`, is a job of its own too. Lyra is built by the
+pinned clang and by GCC, each warns of things the other does not, and every warning is fatal, so a
+change is clean only when both build it. The job builds under the remote image's GCC and runs
+nothing, since the tests already ran under clang. It executes remotely beside the other jobs, so it
+adds work to the remote queue and no time to the gate, and the same command reproduces it wherever a
+key is set. That GCC exists only in the image, so with no key the job builds nothing and says so.
 
 ## Nightly workflows
 
@@ -330,10 +337,9 @@ has since grown reads correctly until the storage happens to move, so a green or
 consistent with the code being wrong. Under the sanitizer a pool moves its storage on every append,
 so such a reference is reported on every execution that reads it; what the job still cannot see is
 an execution the corpus does not reach. It runs the set twice, once under each compiler that builds
-Lyra: under remote execution where the key is set, like the gate, which is the image's GCC, and on
-the runner under clang. The two evaluate a call's arguments and an operator's operands in opposite
-orders, which C++ leaves to the compiler, so a reference read in one operand and invalidated by
-another is reported under one of them only.
+Lyra, both under remote execution where the key is set. The two evaluate a call's arguments and an
+operator's operands in opposite orders, which C++ leaves to the compiler, so a reference read in one
+operand and invalidated by another is reported under one of them only.
 
 Two things about it follow from what is instrumented. The compiler is; the runtime library a built
 program links is not, because that library is built as it ships whatever builds the compiler, and a
@@ -404,9 +410,9 @@ instead -- the untracked layer the build configuration already reserves for one 
 Two command lines can drift apart; one rc file cannot, and flags that differ between the two
 invocations would throw away the analysis that keeping them in one job exists to share.
 
-Remote execution resolves the toolchain registered for the remote platform, which is that image's
-system GCC rather than the clang a local build picks up. A change can therefore compile in one place
-and fail in the other, usually through the standard library; `CLAUDE.md` states the boundary.
+The pinned clang builds Lyra remotely and locally alike. The standard library is the executing
+machine's, so a remote build and a local one can still differ there, and `CLAUDE.md` states why it
+is the machine's.
 
 ## LLVM toolchain
 
@@ -437,7 +443,6 @@ tools at unsuffixed paths -- a `clang-tidy` several majors behind is there wheth
 asked for it -- and failing a job over a tool it never invokes would be a false alarm rather than
 the hazard. A job that wants a tool covered asks for it in `tools`.
 
-`bazel-build.yml` deliberately installs nothing. It compiles under the runner image's own clang, and
-under the remote image's GCC when the RBE key is set, so the merge gate sees two standard libraries
-rather than one pinned toolchain. That divergence is coverage, not an oversight, and unifying it
-away would delete the only place a standard-library incompatibility surfaces before release.
+None of this is the compiler that builds Lyra, which is a toolchain the build fetches itself, pinned
+in `MODULE.bazel`; the action installs what a job runs outside Bazel -- a formatter, clang-tidy, the
+host compiler a test or a benchmark hands an emitted program to.
