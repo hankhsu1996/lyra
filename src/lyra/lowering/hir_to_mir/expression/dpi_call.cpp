@@ -1434,8 +1434,6 @@ void PublishForeignScopeName(
     return;
   }
 
-  // Held by value: defining the symbol interns into the same pool this is read
-  // from.
   const mir::MachineFunctionType prototype =
       unit.types.Get(signature).Get<mir::MachineFunctionType>();
 

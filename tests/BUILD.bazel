@@ -41,7 +41,7 @@ package(features = ["parse_headers"])
 #
 # `cost` says what a test answers: what the compiler, or a program it built,
 # costs as it is shipped -- time, stack, memory. A build that changes that cost
-# on purpose, as the sanitizer one does to every append and to the address
+# on purpose, as the sanitizer one does to every frame and to the address
 # space, would be measuring itself, so it leaves the target out.
 
 cc_library(
@@ -64,6 +64,16 @@ cc_library(
 cc_test(
     name = "base_fixed_array_test",
     srcs = ["base/fixed_array_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "base_segmented_vector_test",
+    srcs = ["base/segmented_vector_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
         "//:base",

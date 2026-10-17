@@ -47,7 +47,6 @@ auto DistributePacked(
     -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
-  // By value: the pool's view does not survive the interning below.
   const mir::IntegralType whole = unit.types.Get(lvalue.type).Integral();
   const mir::ExprId held = EvaluatedOnce(
       frame, ConvertToType(
@@ -106,7 +105,6 @@ auto DistributeStreamed(
 
   auto source_or = BuildToBitstream(unit, block, value, lvalue.span);
   if (!source_or) return std::unexpected(std::move(source_or.error()));
-  // By value: the pool's view does not survive the interning below.
   const mir::IntegralType source =
       unit.types.Get(block.exprs.Get(*source_or).type).Integral();
   if (source.bit_width < members_width) {

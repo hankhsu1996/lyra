@@ -1043,8 +1043,6 @@ auto UnitLowerer::DescendPublishedFrom(
     if (objects == nullptr) return false;
     descended.open =
         SettledDimensions(objects->ranges, instance.indices.size());
-    // Copied out, since naming the kind's class below may add to the pool the
-    // set was read from.
     const std::optional<hir::UnitObjectType> lands_on =
         instance.indices.size() == objects->ranges.size()
             ? std::optional{objects->KindAt(instance.indices)}

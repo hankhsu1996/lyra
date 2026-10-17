@@ -130,7 +130,6 @@ auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionType& src)
 
 void UnitLowerer::DefineRecordMethods(
     const hir::Type& source, mir::RecordId id, mir::TypeId type) {
-  // Copied, since building a body can declare a record and move the registry.
   const mir::RecordDecl declared = unit_.GetRecord(id);
   const mir::TypeDeclarationRef declaration{
       .unit_name = unit_.name, .path = declared.path};

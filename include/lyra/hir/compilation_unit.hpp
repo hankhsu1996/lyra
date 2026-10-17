@@ -74,7 +74,7 @@ struct CompilationUnit {
   // one in its lineage, recorded where what that class published was read.
   // Found by the pair that names the class, which is the same pair every
   // reference to one carries, so a reference and its record cannot come apart.
-  std::vector<ExternalClass> external_classes;
+  base::Arena<ExternalClass, ExternalClassId> external_classes;
   // Every DPI-C import this unit takes part in (LRM 35.4), whether declared
   // inside it or declared elsewhere and called from it. The unit owns them
   // rather than any scope because an import's foreign symbol is program-global,

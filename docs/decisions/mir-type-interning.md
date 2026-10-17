@@ -121,8 +121,8 @@ structural-key index that maps each semantic type to one canonical `TypeId`.
   body-level parallel lowering it is a shared-state boundary; its concurrency model is decided
   together with the body-level ownership model, not assumed lock-free.
 - The arena remains the storage primitive beneath the interner; the interner adds the key index. The
-  arena's reference-lifetime contract is unchanged: a lookup returns a transient view, the canonical
-  `TypeId` is the durable handle.
+  arena's reference-lifetime contract is unchanged: a lookup returns a reference that stays good
+  while the pool grows, and the canonical `TypeId` is the durable handle.
 
 ## Cross-references
 

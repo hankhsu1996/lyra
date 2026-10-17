@@ -3,9 +3,9 @@
 #include <format>
 #include <optional>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/segmented_vector.hpp"
 
 namespace lyra::base {
 
@@ -21,7 +21,9 @@ namespace lyra::base {
 // order and can therefore be counted from the start. This one cannot be: the
 // order it writes in is the order its walk reaches things, so neither the order
 // nor the final count is known while it is being written. An id nobody wrote
-// for is a defect, and surfaces at the read that wanted it.
+// for is a defect, and surfaces at the read that wanted it. A value written
+// here never moves, so what `Get` returns stays good while later entities are
+// written.
 template <typename Id, typename T>
 class SymbolTable {
  public:
@@ -29,9 +31,7 @@ class SymbolTable {
   // another pool, so declaring one identity twice is two writers claiming one
   // entity.
   void Define(Id id, T value) {
-    if (id.value >= values_.size()) {
-      values_.resize(id.value + 1);
-    }
+    values_.GrowTo(id.value + 1);
     auto& slot = values_[id.value];
     if (slot.has_value()) {
       throw InternalError(
@@ -60,7 +60,7 @@ class SymbolTable {
   }
 
  private:
-  std::vector<std::optional<T>> values_;
+  SegmentedVector<std::optional<T>> values_;
 };
 
 }  // namespace lyra::base

@@ -11,7 +11,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/real_bits.hpp"
@@ -149,12 +148,8 @@ auto BuildDefaultValueExpr(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type)
     -> mir::Expr {
   const auto& ty = unit.types.Get(type);
-  // The type an arm receives is a view into the pool, and building a component
-  // default can intern a type and relocate what the pool holds. An arm that
-  // recurses therefore reads what it needs out of its type first.
   const auto component_wise =
-      [&](std::span<const mir::TypeId> view) -> mir::Expr {
-    const std::vector<mir::TypeId> components(view.begin(), view.end());
+      [&](std::span<const mir::TypeId> components) -> mir::Expr {
     std::vector<mir::ExprId> parts;
     parts.reserve(components.size());
     for (const mir::TypeId component : components) {
@@ -213,11 +208,10 @@ auto BuildDefaultValueExpr(
           // the element type's default. One element default fills the array,
           // so stating it stays O(1) in the array's element count.
           [&](const mir::UnpackedArrayType& ua) -> mir::Expr {
-            const mir::TypeId element_type = ua.element_type;
             return BuildFixedArrayConstructionCall(
                 unit, block, type,
                 {block.exprs.Add(
-                    BuildDefaultValueExpr(unit, block, element_type))});
+                    BuildDefaultValueExpr(unit, block, ua.element_type))});
           },
           // LRM Table 7-1: a product no declaration names defaults
           // component-wise -- each takes its own type's default, recursively.

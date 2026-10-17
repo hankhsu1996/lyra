@@ -40,9 +40,7 @@ auto AskMembers(
       .type = answer_type};
 }
 
-// The member list an enumeration declares. It lives in the type pool, which
-// interning a type grows, so a caller takes what it needs out of it before
-// building anything.
+// The member list an enumeration declares.
 auto MembersOf(UnitLowerer& unit_lowerer, hir::TypeId enum_type)
     -> const std::vector<mir::EnumMember>& {
   const mir::TypeId type = unit_lowerer.TranslateType(enum_type);
@@ -127,18 +125,14 @@ auto LowerEnumMethod(
           unit, block,
           static_cast<std::int64_t>(
               MembersOf(lowerer.Owner(), enum_type).size())));
-    case hir::EnumMethod::kFirst: {
-      const mir::IntegralConstant first =
-          MembersOf(lowerer.Owner(), enum_type).front().value;
-      return block.exprs.Get(
-          BuildIntegralLiteral(unit, block, result_type, first));
-    }
-    case hir::EnumMethod::kLast: {
-      const mir::IntegralConstant last =
-          MembersOf(lowerer.Owner(), enum_type).back().value;
-      return block.exprs.Get(
-          BuildIntegralLiteral(unit, block, result_type, last));
-    }
+    case hir::EnumMethod::kFirst:
+      return block.exprs.Get(BuildIntegralLiteral(
+          unit, block, result_type,
+          MembersOf(lowerer.Owner(), enum_type).front().value));
+    case hir::EnumMethod::kLast:
+      return block.exprs.Get(BuildIntegralLiteral(
+          unit, block, result_type,
+          MembersOf(lowerer.Owner(), enum_type).back().value));
     case hir::EnumMethod::kName: {
       auto value_or = lowerer.LowerExpr(lowerer.HirExprs().Get(bearer), frame);
       if (!value_or) return std::unexpected(std::move(value_or.error()));

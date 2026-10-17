@@ -880,7 +880,6 @@ auto SettledPlace(
   if (mir::EvaluatesNothing(block, place)) {
     return place;
   }
-  // By value: forming the settled place appends to the pool this views.
   const mir::Expr node = block.exprs.Get(place);
   // A pointer or a reference a computation yields is a value, and holding it in
   // a local names the same object. Any other value a computation yields names

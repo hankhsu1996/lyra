@@ -1,25 +1,19 @@
 name: Address Sanitizer (Nightly)
 
-# Every pool in the compiler hands out a view into relocatable storage, and an
-# id is the only durable handle. A reference kept across an append to the same
-# pool therefore reads correctly right up until the storage happens to move --
-# so the ordinary gate is green whether or not the code is right, and says
-# nothing either way. Review is what stands between that shape and the tree, and
-# review has already missed one.
-#
-# Under the sanitizer a pool moves its storage on every append, so a reference
-# held across one is reported on every execution that reads it. What this still
-# cannot see is an execution the corpus does not reach.
+# A read of memory that is gone usually reads what was there, so the ordinary
+# gate is green whether or not the code is right. Under the sanitizer such a
+# read is reported on every execution that makes it. What this cannot see is an
+# execution the corpus does not reach.
 #
 # It runs the merge gate's own set rather than the `nightly` complement, because
-# that is the set which exercises the compiler itself -- the pools live in
-# lowering, not in the emitted program that the host-compiling group builds.
-# `.bazelrc` states the one target of that set it leaves out, and why.
+# that is the set which exercises the compiler itself, not the emitted program
+# that the host-compiling group builds. `.bazelrc` states the targets of that
+# set it leaves out, and why.
 #
 # It runs that set twice, once under each compiler that builds Lyra. C++ leaves
 # the order a call's arguments and an operator's operands are evaluated in to
-# the compiler, and GCC and clang choose opposite ones, so a reference read in
-# one operand and invalidated by another is wrong under one of them only.
+# the compiler, and GCC and clang choose opposite ones, so a read in one operand
+# of storage another one frees is wrong under one of them only.
 #
 # Like the host C++ nightly and unlike the clang-tidy sweep, this gates its own
 # run: a sanitizer report is a defect with a stack trace, not a backlog item.

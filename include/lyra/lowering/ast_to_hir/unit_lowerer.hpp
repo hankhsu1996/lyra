@@ -143,10 +143,7 @@ using ProceduralStaticBindings =
 // position in whichever registry the reader happens to hold.
 //
 // The owner is named by the frontend's own scope, which lives as long as the
-// elaborated design. Naming it by the address of the registry instead makes the
-// pair unsound: registries sit inside a scope arena that reallocates as sibling
-// scopes are added, so one scope's recorded address can come to name a later
-// scope's registry, and two unrelated scopes then compare equal.
+// elaborated design and is what a reader means by the scope.
 struct MintedProceduralScope {
   const slang::ast::Scope* owner;
   hir::ProceduralScopeId scope;
@@ -716,9 +713,7 @@ class UnitLowerer {
   // This unit's record of what `unit_name` published about its class
   // `class_path`, taken from that unit's signature the first time this unit
   // asks and answered from the record every later time. Every class a unit
-  // declares is published, so the record always exists. Reading another
-  // signature may move the records, so a caller takes what it needs from one
-  // before asking for the next.
+  // declares is published, so the record always exists.
   auto ExternalClassOf(
       const std::string& unit_name, const support::DefPath& class_path)
       -> const hir::ExternalClass&;
@@ -749,8 +744,7 @@ class UnitLowerer {
 
   // The objects that port stands for, as its own type states them: the
   // declared range of each dimension, and which kind of instance is bound at
-  // each position. A copy, because the pool it is read from grows as a name
-  // through the port is resolved.
+  // each position.
   [[nodiscard]] auto InterfacePortObjects(const slang::ast::Symbol& port) const
       -> hir::UnitObjectsType {
     const auto* objects =

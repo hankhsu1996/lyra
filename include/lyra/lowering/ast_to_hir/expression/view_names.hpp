@@ -29,9 +29,7 @@ namespace lyra::lowering::ast_to_hir {
 // meanings need different things from it: a place is reached member by member,
 // while a computed value is a call made on the instance itself. The instance
 // is either one a route reaches, sealed where the design elaborates, or the one
-// a virtual interface holds when the name is evaluated (LRM 25.9). The meaning
-// is copied rather than pointed at, since reaching the object may grow the
-// arena it lives in.
+// a virtual interface holds when the name is evaluated (LRM 25.9).
 struct ViewNameOnInstance {
   std::variant<ScopeRoute, hir::InterfaceInstanceAccessExpr> instance;
   hir::ExternalScopeClassId scope_class;

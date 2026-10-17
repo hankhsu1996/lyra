@@ -1,163 +1,124 @@
-# Arena reference lifetime: `Get` is a transient view
+# Arena reference lifetime: a pool never moves what it holds
 
-Date: 2026-06-26 Status: accepted
+Date: 2026-06-26 Status: accepted. Revised 2026-10-17: the pool's storage no longer moves, which
+reverses the first decision; the id-first model it protected is unchanged.
 
 ## Context
 
-`Arena<T, Id>` (the universal append-only pool from
-[generic-lowering-machinery](generic-lowering-machinery.md)) backs its elements in a relocatable
-`std::vector<T>` and exposes `Get(id) -> const T&`. A `Get` reference therefore points into storage
-that a later `Add` can relocate, so holding a `Get` reference across an `Add` to the same arena is a
-dangling reference. Whether it actually faults depends on allocator timing, so the hazard is latent
-until an unrelated change perturbs the growth pattern.
+A lowering builds an IR pool and reads it in the same steps: it adds a node, reads the type of one
+it built a moment ago, and adds another. The pools (`Arena`, and `Registry`, `Interner` and
+`SymbolTable` over the same storage, from
+[generic-lowering-machinery](generic-lowering-machinery.md)) hand out a node as
+`Get(id) -> const T&`. Two questions follow, and they are separate.
 
-The design question this raises is whether the arena should guarantee reference stability -- backing
-elements in storage that never relocates on append (a deque, a segmented or paged arena) -- so that
-a `Get` reference stays valid across an `Add`.
+**What names a node.** North star invariants 4 and 5 make incremental and per-unit compilation
+first-class, so whatever names a node has to survive leaving the process: it is hashed into keys,
+cached, and read by another unit. An address does not survive that and an index does. So a node is
+named by its id, and a node naming another holds that id.
 
-The decision rests on what lowering actually needs. Every site that held a `Get` reference across a
-same-arena `Add` was inspected. In every case the value still needed past the `Add` was a small,
-projectable fact -- a `TypeId`, which alternative a type is, an already-copied payload -- never the
-whole node held as a live reference:
+**Whether the storage moves when it grows.** Nothing about naming decides this. It decides only
+whether the reference `Get` returns is still good after an `Add`.
 
-- An owned-child construction needed the slot pointer's pointee `TypeId` after interning the child's
-  index-array type.
-- An lvalue rewrite needed the operand's result `TypeId` after a recursive rewrite appended nodes.
-- A structural signal needed to know which alternative the value type was, after interning the
-  field's wrapper type.
+The first decision tied the two together. It kept the pool a `std::vector`, ruled that an `Add`
+invalidates every reference a prior `Get` returned, and asked each lowering to copy what it needed
+before adding. It was derived from the sites inspected on 2026-06-26, where every fact needed past
+an `Add` was a small one that could be copied out, and it rejected storage that does not move
+because "no site requires" a reference that survives an `Add`, and because such storage "would
+invite treating a live `Get` reference as a passable, savable identity".
 
-No site needed a stable borrow of a whole node across a mutation. The recurring shape is "project a
-fact from an existing node, then intern the sibling or derived nodes the lowering is building" --
-the inspection and the interning are interleaved by narrative order, not by a data dependency on the
-live reference.
+## What the first decision cost
 
-## What established compilers do about it
+C++ cannot refuse a reference read after the storage under it moved, so the rule was carried by
+review and, from 2026-09-11, by a nightly run under the address sanitizer, which moved the storage
+on every `Add` so that any such read in a run it reached was reported.
 
-Added 2026-09-11, after the question was reopened. It confirms the decision below from outside, and
-it answers the objection that a relocating pool is an odd choice.
+- Between 2026-09-11 and 2026-10-17 eight such reads stood on `main` until a nightly or a
+  measurement found them, and a sweep on 2026-10-17 found four more the sanitizer had never
+  reported. It reports only on paths the corpus takes and only for an `Add` that actually grows the
+  pool there: a type already interned adds nothing, and a value that is not a place leaves a local
+  declaration appending nothing.
+- Several were not a reference anyone meant to hold. `f(Append(), pool.Get(id).type)` copies a
+  `TypeId` in one argument while another appends. GCC 14 was measured taking the address of the
+  field, evaluating the sibling argument, and copying from the old address only then, so the read is
+  freed storage under GCC and sound under clang, which evaluates first to last. Lyra is built by
+  both. The rule was being broken by ordinary expression composition, not by code that wanted to
+  keep a node.
+- No C++ tool closes the gap. clang's `-Wlifetime-safety-invalidation` analyzes one function at a
+  time, knows only standard containers' methods by name, and is experimental; an append made inside
+  a callee, which is where every one of the twelve was, is invisible to it. Crubit's lifetime
+  analysis checks no exclusivity, which is the half that finds this. A borrow checker for C++ (Safe
+  C++, P3390) is not being pursued in the standard.
 
-**rustc keeps both mechanisms and uses them for different jobs.** Its index-addressed pool is
+## What established compilers do
 
-```rust
-pub struct IndexVec<I: Idx, T> { pub raw: Vec<T>, _marker: PhantomData<fn(&I)> }
-```
+| System          | Storage                                                                                                                  | What names a node                            | Why a read during construction is sound                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| rustc bodies    | `IndexVec { raw: Vec<T> }`, moves (`rustc_index/src/vec.rs`)                                                             | index                                        | the borrow checker refuses the read; a builder reads a node's type off the value before pushing it (`rustc_mir_build/src/thir/cx/expr.rs`) |
+| rustc types     | `rustc_arena`, chunks that "each new chunk is twice as big as its predecessor" and never move (`rustc_arena/src/lib.rs`) | `Ty<'tcx>`, an address valid for one session | storage never moves                                                                                                                        |
+| clang           | `llvm::BumpPtrAllocator` in `ASTContext`                                                                                 | address                                      | storage never moves                                                                                                                        |
+| slang           | `BumpAllocator`, blocks never move                                                                                       | address                                      | storage never moves                                                                                                                        |
+| WebKit, Mozilla | `WTF::SegmentedVector`, `mfbt::SegmentedVector`: a vector that adds segments and never moves an element                  | index or address                             | storage never moves                                                                                                                        |
 
--- a `Vec<T>` behind a typed index, handing out `&T` through `Deref`. That is this arena exactly,
-down to the relocation. It backs HIR and MIR bodies, locals, and basic blocks. Its arenas are a
-separate thing: `rustc_arena` allocates in chunks where "each new chunk is twice as big as its
-predecessor", so an allocation's address is stable for the arena's life, and that is what lets an
-interned type be a durable reference rather than an index.
-
-**slang, which this compiler's front end is, takes the other branch throughout**: a `BumpAllocator`
-that allocates "in blocks as needed" and never moves what it has handed out, so its whole AST is
-referenced by raw pointer.
-
-**Where our conditions sit.** The choice tracks one question -- whether a handle must survive
-leaving the process. An index does and a pointer does not, which is what makes the index the right
-handle wherever compilation is incremental, cached, or sharded across units, and what makes a
-pointer fine where the graph lives and dies in one run. The north star's incremental and
-per-unit-compilation invariants put every pool here on the first side.
-
-**The one thing rustc has that this does not is the check, not the container.** Holding `&vec[i]`
-across `vec.push(..)` is a borrow-checker error there -- the forbidden shape below is refused by the
-language rather than by review. That difference is the whole of the gap, and it falls on detection
-rather than on storage: it is an argument for finding violations, never for changing what the pool
-is.
+Naming and storage are independent in the field too. The C++ compilers keep storage still and name
+nodes by address, because their graph lives in one process. rustc names by index where a handle must
+outlive the session, and lets a body pool move only because its language refuses the read that would
+make that unsound. Lyra needs rustc's naming, for the north star's reasons, and has C++'s language,
+so it takes rustc's naming and C++'s storage.
 
 ## Decision
 
-`Get` is a transient view; the `Id` is the only durable handle.
-
-1. **The arena stays a relocatable `vector`.** Contiguous storage, good iteration / cache locality,
-   and the simplest storage model are kept. (A `deque` or paged arena would still index in O(1); the
-   cost of switching is contiguity and locality, not lookup speed.) The arena does not promise that
-   a `Get` reference survives an `Add`.
-
-2. **Same-arena mutation invalidates prior `Get` results.** Any `Add` may relocate the backing
-   storage, invalidating every reference, pointer, and iterator a prior `Get` returned to that
-   arena. This contract lives on the `Arena` type. A `Get` reference is usable by any caller, not
-   only the arena's owner, but only within a lexical region in which that arena is guaranteed not to
-   grow -- it is a scoped borrow, never an identity that is stored or passed on. `reserve()` does
-   not change this: capacity that happens to be sufficient in one run is not a contract, and a
-   caller may never rely on a reference surviving an `Add` because the vector looked large enough.
-
-3. **Lowering projects facts before mutating.** To carry information from a node past an `Add`, a
-   caller projects the value it needs -- an `Id`, a kind, a copied field -- before the `Add`, and
-   uses that value afterward. The currency that flows across lowering steps is ids and value facts,
-   not node references. This is the same id-first model the identity rules already establish; the
-   reference is an implementation-local view, not a unit of data flow.
-
-4. **Value immutability is distinct from address stability.** An appended node's _value_ is final
-   (load-bearing for id references and ownership-keyed caching). Its _address_ is not stable. The
-   arena promises the former and explicitly not the latter.
+1. **The id is the only thing that names a node.** A node naming another holds its id, and anything
+   kept past the lowering step that read it is an id or a value of its own, never a reference.
+   Unchanged from the first decision, and still the reason pools are indexed at all.
+2. **A pool never moves what it holds.** Growing a pool leaves every element where it is, so a
+   reference `Get` returned stays good for the pool's life, across any `Add`, `Declare` or `Intern`.
+   The storage is a segmented vector whose segments double in size, as `rustc_arena`'s chunks do, so
+   a small pool stays small and a large one is a few dozen allocations. A table a unit fills whole
+   before anything reads it -- what MIR and LIR record of other units' classes, for one -- never
+   grows under a reader, and stays a plain vector.
+3. **A reference from `Get` reads a node and never names one.** What the first decision called a
+   transient view is now a read that is sound wherever it appears, which is what makes ordinary
+   expression composition safe. It is still not a handle: holding a reference where an id belongs is
+   the same mistake it was, and nothing about the storage catches it, in either form -- a node field
+   `const Expr&` compiled over the moving pool exactly as it does now, and failed only later and
+   only sometimes.
+4. **A node's value is final once added.** Unchanged: other nodes name it by id, and a later shard
+   caches it without coordination.
 
 ## Rejected
 
-- **Stable-reference storage (deque / segmented / paged) so `Get` references survive `Add`.** This
-  extends the contract of every arena -- system-wide -- to serve a capability no site requires: the
-  usage evidence shows the value needed past a mutation is always a projectable fact, never a live
-  whole-node borrow. The deeper cost is not performance but the abstraction boundary: the
-  relocatable-`vector` contract is what forces every cross-mutation dataflow to be an explicit `Id`
-  or projected value. Stable-reference storage would invite treating a live `Get` reference as a
-  passable, savable identity -- an erosion of the id-first model, not a neutral container swap. It
-  also trades contiguity and locality on a read-heavy hot path for a guarantee nothing depends on.
-  Reconsider only if a genuine need appears for a live whole-node borrow held across an arena
-  mutation that cannot be re-expressed as an `Id`, a copy, a snapshot, or an owned descriptor; a
-  recurring copy-before-`Add` is the expected shape, not evidence for the change.
+- **Keeping a moving pool and the rule to copy before adding.** It rests on a rule C++ cannot check
+  and that ordinary code breaks without meaning to; twelve sites in five weeks measured that.
+- **Counting borrows at run time** (a `Get` returns a guard, and an `Add` with one alive is an
+  internal error, as Rust's `RefCell`). It reports every reached execution on both compilers, and it
+  still only detects a defect the storage can remove outright, at a cost on every read in every
+  stage, while flagging sound code whose guard happens to outlive the copy.
+- **Value-returning accessors for the common facts** (`TypeOf(id)` and a check refusing
+  `exprs.Get(...).type`). Worth having where they read better, but they cover one field of one pool,
+  and two of the twelve sites were references into the type pool.
+- **`std::deque`.** Its references survive `push_back`, but libstdc++ allocates a map and a 512-byte
+  block for a deque that holds nothing, again for one moved from, and an allocation per element for
+  a node larger than the block (`bits/stl_deque.h`); most pools are tiny, and many nodes are large.
+- **`Get` returns by value.** Copies a large node on every read when most reads touch one field.
 
-- **`Get` returns by value.** Safe by construction, but copies a fat node (`Type`, `Expr`) on every
-  read, on the hot path, when most reads touch a single field. The need is to copy the _one fact_
-  that must outlive a mutation, not the whole node on every access.
-
-- **Discipline alone ("remember to copy before `Add`").** Necessary but not sufficient as the only
-  safeguard: an unwritten rule rots. It is paired with the contract stated on the type, projection
-  at the call site, and review; a value fact projected before the mutation is the normal shape, and
-  a `Get` reference read after a same-arena `Add` is the forbidden one.
+What the first decision gave for rejecting storage that does not move is answered above: twelve
+sites needed the capability it said no site required, and a moving pool never stopped anyone storing
+a reference (decision 3).
 
 ## Consequences
 
-- The `Arena` header states the contract: `Get` is a transient view; a same-arena `Add` invalidates
-  prior references, pointers, and iterators; the `Id` is the only durable handle.
-- A lowering routine reads a node, projects the facts that must outlive any interning it does, then
-  interns / appends / recurses. Reads after a same-arena mutation go through the id or a projected
-  value.
-- High-frequency, semantically-meaningful projections (a type's kind, a pointer's pointee, an
-  expression's type) may gain value-returning accessors as consumers appear, so the projecting shape
-  reads cleanly; they are not added pre-emptively.
-- Holding a `Get` reference across a same-arena `Add` and reading it afterward is a forbidden shape.
-  No static check refuses it, so what is left is the contract, projection at the call site, review,
-  and -- since 2026-09-11 -- a nightly that runs the merge gate's own set under the address
-  sanitizer. Under the sanitizer a pool moves its storage on every append, so the forbidden shape is
-  reported on every execution that reads such a reference and not only where growth happened to
-  land. It still answers only for the executions the corpus reaches, so it narrows the gap rather
-  than closing it; the contract is still what the shape is judged against.
-- That nightly failed at build from its first run until 2026-10-01 and so checked nothing for three
-  weeks. Run for the first time, it reported three references held across an append, in code a
-  design of any size reaches. A detector is part of this decision only while it runs: one that has
-  never been green has never said anything.
-- Review alone was measured and found insufficient, which the "discipline alone" rejection
-  predicted. One violation stood in the tree: a reference to the result type's packed shape,
-  captured by a lambda that interned a fresh type on every run it emitted, so the second call read
-  what the first had invalidated. That is the shape to look for -- a `Get` reference whose lifetime
-  outlives the statement, which in practice means captured by a lambda or held across a loop.
-  Straight-line code is safe for a reason worth knowing: a branch that appends returns from it, and
-  a reference read as an argument to the appending call is sequenced before the append.
-- That last reason covers the appending call's own arguments and nothing beside it. Where the
-  appending call is itself one argument of a call, or one operand of an operator, and the reference
-  is read in another, C++ leaves the order to the compiler: GCC evaluates a call's arguments last to
-  first and clang first to last. Such a read is therefore wrong under one compiler only, and a
-  sanitizer run built by the other never reports it. Two stood in the tree on 2026-10-10, found by
-  reading after the nightly reported a third of the plain kind: a count read off an array type
-  beside the argument that built the element's default, and a count read off a library class beside
-  the operand that built its table. Lyra is built by both compilers, so the nightly runs the set
-  under each.
+- `Arena`, `Registry`, `Interner` and `SymbolTable` share one storage that never moves.
+- The sanitizer nightly no longer moves a pool on every `Add`; it goes on running the merge gate's
+  set for every other kind of memory error.
+- A walk over a pool that appends to it goes by index, as over a vector: an iterator holds the
+  segment table, which an append that opens a segment can move, and the sanitizer sees such a walk
+  only when one does.
+- Copies a lowering made only so that a fact survived an `Add`, and the comments that explained
+  them, are gone; a builder still reads a fact off a value it holds where that is the natural shape.
 
 ## Cross-references
 
-- [generic-lowering-machinery](generic-lowering-machinery.md) (the universal `Arena<T>` this
-  constrains).
-- `architecture/identity_and_ownership.md` (local entities are referenced by typed id, not by
-  pointer).
-- `architecture/incremental_build.md` (caching keys are ownership-based; raw pointer identity is a
-  forbidden key).
-- `architecture/mir.md` (MIR ids are the single source of identity at that layer).
+- [generic-lowering-machinery](generic-lowering-machinery.md) (the pools this governs).
+- `architecture/north_star.md` invariants 4 and 5 (why a node is named by an id).
+- `architecture/identity_and_ownership.md` (local entities are referenced by typed id).
+- `architecture/incremental_build.md` (caching keys are ownership-based; an address is never a key).

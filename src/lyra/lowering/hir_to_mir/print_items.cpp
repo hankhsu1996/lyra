@@ -133,8 +133,6 @@ auto BuildPrintValueItem(
   if (!lowered_or) return std::unexpected(std::move(lowered_or.error()));
   mir::Expr lowered = *std::move(lowered_or);
 
-  // What the operand is, taken as facts rather than held as a reference into
-  // the type pool, which the lift below may move by interning.
   const mir::Type& value_type = lowerer.Owner().Unit().types.Get(lowered.type);
   const bool is_string = value_type.Is<mir::StringType>();
   const bool is_integral = value_type.IsIntegral();

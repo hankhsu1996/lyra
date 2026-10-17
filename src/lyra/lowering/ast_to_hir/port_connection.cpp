@@ -346,7 +346,6 @@ auto ConnectInterfacePort(
   // child published rather than on a second reading of the frontend.
   hir::ExternalMemberLeaf member =
       unit_lowerer.ExternalMemberLeafOf(child.scope_class, published.member);
-  // A copy, since recording the routes adds to the pool it is read from.
   const auto* published_objects =
       unit_lowerer.Unit().types.Get(member.type).As<hir::UnitObjectsType>();
   if (published_objects == nullptr) {
@@ -354,9 +353,8 @@ auto ConnectInterfacePort(
         "ConnectInterfacePort: an interface port's published type names the "
         "instances that belong there, which is what makes it one");
   }
-  const hir::UnitObjectsType behind = *published_objects;
-  auto peers =
-      InterfaceActualRoutes(unit_lowerer, conn, behind, child.span, frame);
+  auto peers = InterfaceActualRoutes(
+      unit_lowerer, conn, *published_objects, child.span, frame);
   if (!peers) return std::unexpected(std::move(peers.error()));
   frame.current_structural_scope->port_connections.Add(
       hir::PortConnection{

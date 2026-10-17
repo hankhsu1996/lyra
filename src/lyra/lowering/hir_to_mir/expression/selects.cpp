@@ -217,8 +217,7 @@ auto RangeStep(
   const mir::ExprId index_id = block.exprs.Add(*std::move(index));
   const mir::ExprId position =
       WrapIndexAsPosition(unit, block, map, index_id, start.shift);
-  // By the pool again: placing the position interned types.
-  if (unit.types.Get(result_type).IsIntegral()) {
+  if (result.IsIntegral()) {
     return BitsStep(position, result_type);
   }
   return DescentStep{

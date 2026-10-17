@@ -349,8 +349,9 @@ the detail lives in the entry itself.
   rejected.
 - [generic-lowering-machinery](generic-lowering-machinery.md) -- generic arena and shared
   context-free expression-handler templates over the pass class; node types stay typed.
-- [arena-reference-lifetime](arena-reference-lifetime.md) -- `Arena::Get` is a transient view; the
-  `Id` is the only durable handle, so lowering projects value facts before mutating.
+- [arena-reference-lifetime](arena-reference-lifetime.md) -- a pool never moves what it holds, so a
+  reference `Get` returns stays good while the pool grows; the `Id` is still the only thing that
+  names a node.
 - [mir-type-interning](mir-type-interning.md) -- the MIR type pool is a structural-equality
   interner; each semantic type has one canonical `TypeId`, enabling recursive class types.
 - [lir-type-interning](lir-type-interning.md) -- the same for LIR, the layer that had not taken it:

@@ -311,7 +311,6 @@ auto BuildKeyedPatternBase(
 
   const auto& hir_ty = lowerer.Owner().Hir().types.Get(hir_result_type);
   if (hir_ty.template Is<hir::PackedArrayType>()) {
-    // By value: the pool's view does not survive the interning below.
     const mir::IntegralType result_integral =
         unit.types.Get(result_type).Integral();
     const mir::TypeId copies = mir::PackedVectorOf(
@@ -442,17 +441,15 @@ auto LowerHirAssignmentPatternReplicationExpr(
     item_ids.push_back(*item);
   }
 
+  const mir::Type& result_ty = unit.types.Get(result_type);
   // A fixed-size array is the items laid down until it is full, and how many
   // times that is its own type says, as a structure's does.
-  if (unit.types.Get(result_type).Is<mir::UnpackedArrayType>()) {
+  if (result_ty.Is<mir::UnpackedArrayType>()) {
     return BuildFixedArrayConstructionCall(
         unit, block, result_type, std::move(item_ids));
   }
 
-  // Every type read below is read by value or where it is used: lowering the
-  // count and building the concatenation intern types, which can relocate what
-  // the pool holds.
-  if (BuildsFromAnElementList(unit.types.Get(result_type))) {
+  if (BuildsFromAnElementList(result_ty)) {
     auto count_or = lowerer.LowerExpr(lowerer.HirExprs().Get(a.count), frame);
     if (!count_or) return std::unexpected(std::move(count_or.error()));
     const mir::ExprId count_value = block.exprs.Add(*std::move(count_or));
@@ -465,10 +462,8 @@ auto LowerHirAssignmentPatternReplicationExpr(
   const mir::ExprId inner_id = BuildPackedConcat(unit, block, item_ids);
   const mir::IntegralStateKind inner_state =
       unit.types.Get(block.exprs.Get(inner_id).type).Integral().state_kind;
-  const std::uint64_t result_width =
-      unit.types.Get(result_type).Integral().bit_width;
-  const mir::TypeId copies =
-      mir::PackedVectorOf(unit.types, result_width, inner_state);
+  const mir::TypeId copies = mir::PackedVectorOf(
+      unit.types, result_ty.Integral().bit_width, inner_state);
   const mir::ExprId repl_id =
       block.exprs.Add(BuildBitsReplication(unit, block, inner_id, copies));
   return BuildValueConversion(unit, block, repl_id, result_type);
