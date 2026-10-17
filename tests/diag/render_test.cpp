@@ -170,7 +170,7 @@ TEST(DiagRender, KindDerivesFromCode) {
       Make(DiagCode::kUnsupportedTypeKind, "x").primary.kind,
       DiagKind::kUnsupported);
   EXPECT_EQ(
-      Make(DiagCode::kErrorCaseEqualityOnRealOperand, "x").primary.kind,
+      Make(DiagCode::kErrorTopLevelPortMustBeConnected, "x").primary.kind,
       DiagKind::kError);
   EXPECT_EQ(
       Make(DiagCode::kHostIoError, "x").primary.kind, DiagKind::kHostError);
@@ -179,7 +179,7 @@ TEST(DiagRender, KindDerivesFromCode) {
 
   for (const DiagCode code :
        {DiagCode::kUnsupportedTypeKind,
-        DiagCode::kErrorCaseEqualityOnRealOperand, DiagCode::kHostIoError,
+        DiagCode::kErrorTopLevelPortMustBeConnected, DiagCode::kHostIoError,
         DiagCode::kWarningPedantic}) {
     EXPECT_EQ(Make(code, "x").primary.kind, DiagCodeKind(code));
   }

@@ -110,6 +110,20 @@ struct ConversionExpr {
   auto operator==(const ConversionExpr&) const -> bool = default;
 };
 
+// A value the unit being compiled fixes, standing where the source named it --
+// a parameter of the unit's parameterization, a `$bits` of a type it holds --
+// with `value` the literal or pattern that states it. A value that differs
+// between the objects built from the unit is never one; it is read where it is
+// held. It stays apart from a literal the source wrote because the language
+// can treat the two differently: in a display list a string literal is a format
+// and a string parameter is a value (LRM 21.2.1). clang names the same node
+// `ConstantExpr`.
+struct ConstantExpr {
+  ExprId value;
+
+  auto operator==(const ConstantExpr&) const -> bool = default;
+};
+
 // LRM 7.12 array-method `with` clause. `id` names this clause; the element
 // (`item`) and its index (`item.index`) are referenced inside `expr` by that
 // identity and role (`IterationBindingRef`), so a clause nested in `expr` that
@@ -442,13 +456,13 @@ struct AssignmentPatternKeyedExpr {
 
 using ExprData = std::variant<
     PrimaryExpr, UnaryExpr, BinaryExpr, ConditionalExpr, AssignExpr, IncDecExpr,
-    CallExpr, ConversionExpr, ValueRangeExpr, InsideExpr, ElementSelectExpr,
-    RangeSelectExpr, MemberAccessExpr, ClassPropertyAccessExpr,
-    InterfaceMemberAccessExpr, InterfaceInstanceAccessExpr, ConcatExpr,
-    StreamingConcatExpr, ReplicationExpr, AssignmentPatternExpr,
-    AssignmentPatternReplicationExpr, DynamicArrayNewExpr, ClassNewExpr,
-    AssociativeAssignmentPatternExpr, AssignmentPatternKeyedExpr,
-    TaggedUnionExpr, DynamicCastExpr>;
+    CallExpr, ConversionExpr, ConstantExpr, ValueRangeExpr, InsideExpr,
+    ElementSelectExpr, RangeSelectExpr, MemberAccessExpr,
+    ClassPropertyAccessExpr, InterfaceMemberAccessExpr,
+    InterfaceInstanceAccessExpr, ConcatExpr, StreamingConcatExpr,
+    ReplicationExpr, AssignmentPatternExpr, AssignmentPatternReplicationExpr,
+    DynamicArrayNewExpr, ClassNewExpr, AssociativeAssignmentPatternExpr,
+    AssignmentPatternKeyedExpr, TaggedUnionExpr, DynamicCastExpr>;
 
 struct Expr {
   TypeId type;

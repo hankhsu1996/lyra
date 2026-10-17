@@ -177,8 +177,7 @@ auto LowerDistributionSystemSubroutineCall(
   if (IsJoin(hir_seed)) {
     return diag::Fail(
         hir_seed.span, diag::DiagCode::kUnsupportedSubroutineArgument,
-        "the seed a random number is drawn through shall be an integral "
-        "variable (LRM 20.14.1)");
+        "a seed that joins several variables is not yet supported");
   }
   auto seed_place_or = LowerLvalue(lowerer, hir_seed, step_frame);
   if (!seed_place_or) {

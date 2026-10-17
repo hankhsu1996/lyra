@@ -22,9 +22,9 @@ struct StructMethod {
 // A struct this unit declares (LRM 7.2): which declaration of the unit it is,
 // which is what another unit reaches it by, its members' types in declaration
 // order, which an access reaches by position, and a method for every operation
-// on a whole value its type has -- a real member leaves no case equality (LRM
-// 11.4.5), a real or a chandle no bit stream (LRM 6.24.3), and a member not
-// valid for a net nothing to resolve (LRM 6.7.1).
+// on a whole value its type has -- a real or a chandle member leaves no bit
+// stream (LRM 6.24.3), and a member not valid for a net nothing to resolve (LRM
+// 6.7.1).
 struct StructDecl {
   support::DefPath path;
   std::vector<TypeId> elements;

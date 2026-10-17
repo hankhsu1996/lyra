@@ -22,14 +22,15 @@ namespace lyra::lowering::ast_to_hir {
 auto MakeConstantValue(const slang::ConstantValue& cv, diag::SourceSpan span)
     -> diag::Result<hir::ConstantValue>;
 
-// Materialize an already-evaluated slang ConstantValue as an HIR expression of
-// `type`. A scalar value (integral, real, shortreal, string) becomes a literal.
-// An unpacked array becomes an AssignmentPatternExpr whose elements are
-// themselves materialized constants, appended to the frame's expr arena; `unit`
-// supplies the element type the recursion descends into. Packed aggregates
-// never reach here -- slang folds them to a single integral value. Used
-// wherever a slang-folded constant is spliced into the HIR -- parameter and
-// enum-value references, and defaulted port connections.
+// Materialize an already-evaluated slang ConstantValue as an HIR constant of
+// `type`, a `ConstantExpr` holding what states it. A scalar value (integral,
+// real, shortreal, string) is stated by a literal, and an unpacked array by an
+// AssignmentPatternExpr whose elements are themselves stated so, appended to
+// the frame's expr arena; `unit` supplies the element type the recursion
+// descends into. Packed aggregates never reach here -- slang folds them to a
+// single integral value. Used wherever a slang-folded constant is spliced into
+// the HIR -- parameter references, type queries, and defaulted port
+// connections.
 auto MakeConstantValueExpr(
     const hir::CompilationUnit& unit, WalkFrame frame,
     const slang::ConstantValue& cv, hir::TypeId type, diag::SourceSpan span)

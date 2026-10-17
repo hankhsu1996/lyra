@@ -35,8 +35,8 @@ nothing else. Every operand is a generic expression; MIR does not know the role 
   result type `ServicesType`). MIR does not know it is "the services parameter". That the runtime
   free function takes the engine first is the SDK signature's business, not MIR's.
 - `kind` is a literal expression; `descriptor` already is an expression; each print `item` is a
-  value-build expression; `finish` `level` is a literal expression. The per-effect payload structs
-  flatten into the argument list.
+  value-build expression; `finish`'s finish number is an ordinary expression. The per-effect payload
+  structs flatten into the argument list.
 - The backend renders one generic shape: callee name, open paren, each argument rendered as an
   expression, comma-separated, close paren. No services injection, no payload parsing, no per-effect
   node. The C++ backend and the LLVM-via-LIR backend consume identical input.

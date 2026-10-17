@@ -119,7 +119,12 @@ auto MakeConstantValueExpr(
     -> diag::Result<hir::Expr> {
   auto value = MakeConstantValue(cv, span);
   if (!value) return std::unexpected(std::move(value.error()));
-  return MaterializeConstantExpr(unit, frame, *value, type, span);
+  auto stated = MaterializeConstantExpr(unit, frame, *value, type, span);
+  if (!stated) return std::unexpected(std::move(stated.error()));
+  return hir::Expr{
+      .type = type,
+      .data = hir::ConstantExpr{.value = frame.Exprs().Add(*std::move(stated))},
+      .span = span};
 }
 
 }  // namespace lyra::lowering::ast_to_hir

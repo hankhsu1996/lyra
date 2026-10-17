@@ -67,8 +67,13 @@ auto AdmittedByControlArguments(
   const auto& hir_exprs = lowerer.HirExprs();
   AdmittedBitValues admitted = 0;
   for (const hir::ExprId control : controls) {
-    const hir::Expr& arg = hir_exprs.Get(control);
-    const auto* primary = std::get_if<hir::PrimaryExpr>(&arg.data);
+    // A control bit known before the run is a literal the source wrote or a
+    // constant the front end settled, which states its value the same way.
+    const hir::Expr* arg = &hir_exprs.Get(control);
+    if (const auto* constant = std::get_if<hir::ConstantExpr>(&arg->data)) {
+      arg = &hir_exprs.Get(constant->value);
+    }
+    const auto* primary = std::get_if<hir::PrimaryExpr>(&arg->data);
     const auto* literal =
         primary == nullptr ? nullptr
                            : std::get_if<hir::IntegerLiteral>(&primary->data);
@@ -76,7 +81,7 @@ auto AdmittedByControlArguments(
       return diag::Fail(
           span, diag::DiagCode::kUnsupportedSubroutineArgument,
           "$countbits with a control bit the running simulation computes is "
-          "not yet supported; LRM 20.9 spells a control bit as a literal");
+          "not yet supported");
     }
     admitted =
         static_cast<AdmittedBitValues>(admitted | PlanesAt(literal->value, 0));

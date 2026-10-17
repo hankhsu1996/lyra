@@ -111,41 +111,6 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kError,
             .name = "top_level_port_must_be_connected"}},
-    std::pair{
-        DiagCode::kErrorCaseEqualityOnRealOperand,
-        DiagCodeInfo{
-            .kind = DiagKind::kError, .name = "case_equality_on_real_operand"}},
-    std::pair{
-        DiagCode::kErrorFormatStringTrailingPercent,
-        DiagCodeInfo{
-            .kind = DiagKind::kError,
-            .name = "format_string_trailing_percent"}},
-    std::pair{
-        DiagCode::kErrorFormatStringMissingPrecision,
-        DiagCodeInfo{
-            .kind = DiagKind::kError,
-            .name = "format_string_missing_precision"}},
-    std::pair{
-        DiagCode::kErrorFormatStringWidthOverflow,
-        DiagCodeInfo{
-            .kind = DiagKind::kError, .name = "format_string_width_overflow"}},
-    std::pair{
-        DiagCode::kErrorFormatStringUnknownSpecifier,
-        DiagCodeInfo{
-            .kind = DiagKind::kError,
-            .name = "format_string_unknown_specifier"}},
-    std::pair{
-        DiagCode::kErrorFormatStringModifierNotPermitted,
-        DiagCodeInfo{
-            .kind = DiagKind::kError,
-            .name = "format_string_modifier_not_permitted"}},
-    std::pair{
-        DiagCode::kErrorDisplayMissingArg,
-        DiagCodeInfo{.kind = DiagKind::kError, .name = "display_missing_arg"}},
-    std::pair{
-        DiagCode::kErrorHandleFormatConversion,
-        DiagCodeInfo{
-            .kind = DiagKind::kError, .name = "handle_format_conversion"}},
 
     std::pair{
         DiagCode::kHostInvalidCliArgs,

@@ -71,11 +71,12 @@ default (`docs/decisions/a-build-is-told-how-wide-to-run.md`), and every text Ly
 ## SystemVerilog version
 
 Lyra targets **IEEE 1800-2023**, defaulting the front end to `--std 1800-2023` and to its own
-reading of the standard. Text the standard forbids is an error whichever simulator takes it, and
-where the front end's reading is wrong the front end is corrected, never Lyra's settings; a caller
-may ask for a tolerant reading by name (`--compat all`). `docs/architecture/language_conformance.md`
-holds the rule and every disputed text ruled on so far. Testing a 2023 feature against slang
-directly needs `--std 1800-2023`.
+reading of the standard. Language analysis is the front end's alone. Lyra takes the text it accepts
+at the severity it gives, except where the standard leaves the choice to the tool. Lowering never
+judges legality again, and an analysis error is corrected in the front end, never in Lyra's
+settings. A caller may select a tolerant reading by name (`--compat all`).
+`docs/architecture/language_conformance.md` holds the rule and every disputed text ruled on so far.
+Testing a 2023 feature against slang directly needs `--std 1800-2023`.
 
 ## Architecture
 

@@ -16,7 +16,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
@@ -82,13 +81,13 @@ auto LiftStringSource(
     const auto& elem = unit_lowerer.Unit().types.Get(ua.element_type);
     if (!elem.IsIntegral() || elem.Integral().bit_width != 8U) {
       throw InternalError(
-          "LiftStringSource: $sscanf unpacked-array source must have an "
-          "8-bit integral element (LRM 21.3.4.3)");
+          "LiftStringSource: an unpacked-array $sscanf source reached "
+          "lowering whose element is not 8-bit integral");
     }
   } else if (!source.IsIntegral()) {
     throw InternalError(
-        "LiftStringSource: $sscanf source is not string, integral, or "
-        "unpacked array of byte (LRM 21.3.4.3)");
+        "LiftStringSource: a $sscanf source reached lowering that is not "
+        "string, integral, or an unpacked array of byte");
   }
 
   return frame.current_block->exprs.Add(BuildValueConversion(
@@ -105,8 +104,8 @@ auto LiftStringFormat(
   if (t.Is<mir::StringType>()) return format_id;
   if (!t.IsIntegral()) {
     throw InternalError(
-        "LiftStringFormat: scan format is not string or integral (LRM "
-        "21.3.4.3)");
+        "LiftStringFormat: a scan format reached lowering that is not string "
+        "or integral");
   }
   return frame.current_block->exprs.Add(BuildValueConversion(
       unit_lowerer.Unit(), *frame.current_block, format_id,
@@ -141,8 +140,8 @@ auto ValidateTargetType(
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedSubroutineArgument,
       std::format(
-          "{} output argument must be an integral or string lvalue "
-          "(LRM 21.3.4.3)",
+          "a {} output argument other than an integral or string variable is "
+          "not yet supported",
           source_kind == support::ScanSourceKind::kFile ? "$fscanf"
                                                         : "$sscanf"));
 }

@@ -95,6 +95,10 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::ConversionExpr& cv) -> diag::Result<mir::Expr> {
             return LowerHirConversionExpr(lowerer, frame, cv, result_type);
           },
+          // A settled constant is the value that states it.
+          [&](const hir::ConstantExpr& c) -> diag::Result<mir::Expr> {
+            return lowerer.LowerExpr(lowerer.HirExprs().Get(c.value), frame);
+          },
           [&](const hir::CallExpr& c) -> diag::Result<mir::Expr> {
             return LowerHirCallExpr(lowerer, frame, c, expr.span, result_type);
           },
@@ -306,6 +310,7 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           [&](const hir::IncDecExpr&) { return names_no_storage(); },
           [&](const hir::CallExpr&) { return names_no_storage(); },
           [&](const hir::ConversionExpr&) { return names_no_storage(); },
+          [&](const hir::ConstantExpr&) { return names_no_storage(); },
           [&](const hir::InterfaceInstanceAccessExpr&) {
             return names_no_storage();
           },

@@ -36,14 +36,6 @@ enum class DiagCode : std::uint32_t {
   kUnsupportedAssignmentPatternText,
 
   kErrorTopLevelPortMustBeConnected,
-  kErrorCaseEqualityOnRealOperand,
-  kErrorFormatStringTrailingPercent,
-  kErrorFormatStringMissingPrecision,
-  kErrorFormatStringWidthOverflow,
-  kErrorFormatStringUnknownSpecifier,
-  kErrorFormatStringModifierNotPermitted,
-  kErrorDisplayMissingArg,
-  kErrorHandleFormatConversion,
 
   kHostInvalidCliArgs,
   kHostInvalidManifest,

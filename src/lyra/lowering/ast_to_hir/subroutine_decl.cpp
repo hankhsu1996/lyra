@@ -81,9 +81,9 @@ auto ClassifyDpiType(const slang::ast::Type& type, diag::SourceSpan span)
 
 // Classifies one SV value type into its DPI-C carrier (LRM 35.5.6, Annex H.10 /
 // Table H.1). The dispatch is on the declared type shape, not the bit width --
-// WYSIWYG
-// (LRM 35.6.1.1) makes `int` (by-value C `int`) and `bit [31:0]` (canonical
-// `svBitVecVal*`) different DPI ABIs even though both are 32-bit 2-state.
+// WYSIWYG (LRM 35.6.1.1) makes `int` (by-value C `int`) and `bit [31:0]`
+// (canonical `svBitVecVal*`) different DPI ABIs even though both are 32-bit
+// 2-state.
 //
 //   scalar `bit` / `logic` (1 bit)        -> by-value `svBit` / `svLogic`
 //   predefined `byte`/`shortint`/`int`/`longint` (2-state) -> by-value C int
@@ -247,8 +247,8 @@ auto ClassifyDpiType(const slang::ast::Type& type, diag::SourceSpan span)
 
 // Classifies a DPI-C function result. LRM 35.5.5 restricts a result to a small
 // value -- a by-value scalar; a canonical vector (a packed value, `integer`, or
-// `time`) and an open array cannot be returned. So anything but a scalar
-// carrier here is an error, not a by-pointer or by-handle result.
+// `time`) and an open array cannot be returned, and the front end refuses a
+// subroutine that returns one. So every result here has a scalar carrier.
 auto ClassifyDpiScalarResult(
     const slang::ast::Type& type, diag::SourceSpan span)
     -> diag::Result<support::DpiScalarAbi> {
@@ -257,10 +257,7 @@ auto ClassifyDpiScalarResult(
   if (const auto* scalar = std::get_if<support::ScalarCarrier>(&abi->carrier)) {
     return scalar->abi;
   }
-  return diag::Fail(
-      span, diag::DiagCode::kUnsupportedDpi,
-      "a DPI-C function result must be a small value (LRM 35.5.5); a packed "
-      "vector, integer, or time cannot be returned");
+  throw InternalError("a DPI-C result reached lowering that is no small value");
 }
 
 // The direction of a DPI-C formal argument (LRM 35.5.1.2). `ref` is illegal in

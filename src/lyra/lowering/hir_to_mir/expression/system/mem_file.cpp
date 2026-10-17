@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr_id.hpp"
@@ -47,16 +48,14 @@ struct MemAddressing {
 
 auto DescribeMemory(
     ProcessLowerer& process, WalkFrame wrapper_frame, hir::TypeId mem_type,
-    std::string_view task) -> diag::Result<MemAddressing> {
+    std::string_view task, diag::SourceSpan span)
+    -> diag::Result<MemAddressing> {
   UnitLowerer& unit_lowerer = process.Owner();
   auto& wrapper = *wrapper_frame.current_block;
   const auto not_a_memory = [&]() -> diag::Result<MemAddressing> {
-    return diag::Fail(
-        diag::DiagCode::kUnsupportedSubroutineArgument,
+    throw InternalError(
         std::format(
-            "{} target must be an unpacked, dynamic-array, queue, or "
-            "associative memory (LRM 21.4 / 21.5)",
-            task));
+            "{} reached lowering with a target that is no memory", task));
   };
   return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
@@ -84,24 +83,31 @@ auto DescribeMemory(
           },
           [&](const hir::AssociativeArrayType& a)
               -> diag::Result<MemAddressing> {
-            // LRM 21.4.1: an associative memory is addressed by key, so its
-            // index type must be integral; a load builds its keys at the type
-            // the memory declares for them.
-            const mir::TypeId key = unit_lowerer.TranslateType(a.key_type);
-            if (!unit_lowerer.Unit().types.Get(key).IsIntegral()) {
+            // LRM 21.4.1: an associative memory is addressed by key, and a load
+            // builds its keys at the type the memory declares for them. A
+            // wildcard index (LRM 7.8.1) declares none.
+            const mir::Type& key = unit_lowerer.Unit().types.Get(
+                unit_lowerer.TranslateType(a.key_type));
+            if (key.Is<mir::WildcardIndexType>()) {
               return diag::Fail(
-                  diag::DiagCode::kUnsupportedSubroutineArgument,
+                  span, diag::DiagCode::kUnsupportedSubroutineArgument,
                   std::format(
-                      "{} associative memory: the index type must be integral "
-                      "(LRM 21.4.1)",
+                      "{} with an associative memory of wildcard index is not "
+                      "yet supported",
+                      task));
+            }
+            if (!key.IsIntegral()) {
+              throw InternalError(
+                  std::format(
+                      "{} reached lowering with an associative memory whose "
+                      "index type is not integral",
                       task));
             }
             return MemAddressing{
                 .element = a.element_type, .operands = {}, .lowest_address = 0};
           },
-          // LRM 21.4 / 21.5 name a memory as an array of integral elements, so
-          // every other form a declaration can take is one the task cannot be
-          // given, and the message names what it can.
+          // LRM 21.4 / 21.5 name a memory as an array of integral elements, and
+          // the front end refuses a task given any other form.
           [&](const hir::ScalarBitType&) { return not_a_memory(); },
           [&](const hir::PackedArrayType&) { return not_a_memory(); },
           [&](const hir::PackedStructType&) { return not_a_memory(); },
@@ -159,19 +165,20 @@ auto LowerMemFileSystemSubroutineCallStmt(
   const WalkFrame& step_frame = steps.Frame();
   mir::Block& body = steps.Body();
 
-  auto addressing = DescribeMemory(process, step_frame, mem_hir.type, task);
+  auto addressing =
+      DescribeMemory(process, step_frame, mem_hir.type, task, mem_hir.span);
   if (!addressing) return std::unexpected(std::move(addressing.error()));
 
-  // The element must lower to a single packed vector (LRM 21.4.1 / 21.5.1): a
-  // bit vector, or a packed struct / union / enum. A non-packed leaf (an
-  // unpacked struct, say) is not a memory word.
+  // A word is a single packed vector (LRM 21.4.1 / 21.5.1): a bit vector, or a
+  // packed struct / union / enum. The front end also accepts a memory of
+  // several dimensions with one of variable size, whose words are then arrays.
   const mir::TypeId elem_mir = unit_lowerer.TranslateType(addressing->element);
   if (!unit.types.Get(elem_mir).IsIntegral()) {
     return diag::Fail(
-        diag::DiagCode::kUnsupportedSubroutineArgument,
+        mem_hir.span, diag::DiagCode::kUnsupportedSubroutineArgument,
         std::format(
-            "{} memory: the element must be a packed vector (LRM 21.4.1 / "
-            "21.5.1)",
+            "{} with a memory of more than one dimension, one of them not of "
+            "fixed size, is not yet supported",
             task));
   }
 
@@ -224,11 +231,10 @@ auto LowerMemFileSystemSubroutineCallStmt(
         BuildToInt64Call(unit, body, body.exprs.Add(*std::move(start_or))));
   } else {
     if (finish.has_value()) {
-      return diag::Fail(
-          diag::DiagCode::kUnsupportedSubroutineArgument,
+      throw InternalError(
           std::format(
-              "{}: a finish address with the start elided is not supported "
-              "(LRM 21.4 / 21.5)",
+              "{} reached lowering with a finish address and no start, which "
+              "the front end refuses",
               task));
     }
     operands.push_back(

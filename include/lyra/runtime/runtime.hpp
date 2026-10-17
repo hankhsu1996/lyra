@@ -120,10 +120,10 @@ class Runtime final : public RuntimeEffects {
   void ReportToolFailure(std::string_view message);
 
   // LRM 20.2, Table 20-1: what a simulation control task prints, chosen by its
-  // level argument, where `task` names the one that was called and `origin` is
+  // finish number, where `task` names the one that was called and `origin` is
   // its source location.
   void ReportSimulationControl(
-      std::string_view task, std::string_view origin, int level);
+      std::string_view task, std::string_view origin, int finish_number);
 
   // Keeps `process`, which no process started: a procedure, or the carrier of
   // an update. It is kept for as long as it or anything it started runs.
@@ -315,15 +315,14 @@ class Runtime final : public RuntimeEffects {
 // Reached by the generated registration builtins: creates a process bound to
 // `owning_scope` and registers it in the ambient runtime. LRM 9.2 lifecycle:
 // every kind but a `final` starts at time zero, in the turn its kind has; a
-// `final` waits on the finals list until shutdown. The scope
-// handle arrives as a pointer because the generated call site is holding the
-// `self` pointer from its enclosing body.
-// `unit_instance` is the module, interface, or program instance the process is
-// declared within, which holds the seeds LRM 18.14.1 starts a static process
-// from. It is the scope itself unless the process is declared inside a generate
-// scope, which has no seeds of its own.
-// `written_at` is where the source writes the procedure, as text that stands
-// for the whole run.
+// `final` waits on the finals list until shutdown. The scope handle arrives as
+// a pointer because the generated call site is holding the `self` pointer from
+// its enclosing body. `unit_instance` is the module, interface, or program
+// instance the process is declared within, which holds the seeds LRM 18.14.1
+// starts a static process from. It is the scope itself unless the process is
+// declared inside a generate scope, which has no seeds of its own. `written_at`
+// is where the source writes the procedure, as text that stands for the whole
+// run.
 void RegisterAlwaysProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at);

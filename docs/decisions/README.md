@@ -1340,7 +1340,9 @@ the detail lives in the entry itself.
   end's own reading is the default, replacing the most tolerant one, because the evidence that
   forbidden text "works everywhere else" was one simulator and a forbidden text has no meaning to
   adopt; the front end is corrected where its reading is wrong, never Lyra's settings. A list of
-  diagnostics in Lyra and an exception for text every tool takes are rejected.
+  diagnostics in Lyra and an exception for text every tool takes are rejected. Revised 2026-10-16:
+  the front end's severity is shipped as given, so a forbidden text it accepts with a warning runs
+  with it, and lowering judges no legality.
 
 ### Conformance testing
 

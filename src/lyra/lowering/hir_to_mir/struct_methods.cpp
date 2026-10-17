@@ -71,13 +71,6 @@ auto EveryPart(
       parts, [&](mir::TypeId part) { return p(unit, part); });
 }
 
-// LRM 11.4.5 gives case equality to every type but the real ones.
-auto HasCaseEquality(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> bool {
-  return !unit.types.Get(type).IsRealFamily() &&
-         EveryPart(unit, PartTypes(unit, type), HasCaseEquality);
-}
-
 // LRM 6.24.3: neither a real nor a chandle is a bit-stream type, and a value
 // holding one has no stream either.
 auto HasBitStream(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
@@ -567,9 +560,7 @@ auto StructMethodsOf(
   methods.push_back(synthesize.DeclaredDefault());
   methods.push_back(synthesize.Equality());
   methods.push_back(synthesize.Inequality());
-  if (EveryPart(unit, members, HasCaseEquality)) {
-    methods.push_back(synthesize.CaseEqual());
-  }
+  methods.push_back(synthesize.CaseEqual());
   methods.push_back(synthesize.BitIdentical());
   methods.push_back(synthesize.HasUnknown());
   methods.push_back(synthesize.IsUnknown());

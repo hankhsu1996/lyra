@@ -904,6 +904,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_real_neg", &lyra_rt_real_neg);
   add("lyra_rt_real_eq", &lyra_rt_real_eq);
   add("lyra_rt_real_ne", &lyra_rt_real_ne);
+  add("lyra_rt_real_case_equal", &lyra_rt_real_case_equal);
   add("lyra_rt_real_lt", &lyra_rt_real_lt);
   add("lyra_rt_real_le", &lyra_rt_real_le);
   add("lyra_rt_real_gt", &lyra_rt_real_gt);
@@ -953,6 +954,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_shortreal_neg", &lyra_rt_shortreal_neg);
   add("lyra_rt_shortreal_eq", &lyra_rt_shortreal_eq);
   add("lyra_rt_shortreal_ne", &lyra_rt_shortreal_ne);
+  add("lyra_rt_shortreal_case_equal", &lyra_rt_shortreal_case_equal);
   add("lyra_rt_shortreal_lt", &lyra_rt_shortreal_lt);
   add("lyra_rt_shortreal_le", &lyra_rt_shortreal_le);
   add("lyra_rt_shortreal_gt", &lyra_rt_shortreal_gt);

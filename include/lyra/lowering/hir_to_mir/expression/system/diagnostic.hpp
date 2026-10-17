@@ -10,11 +10,10 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower $info / $warning / $error into the two-step composition the print
-// family uses: `runtime.Format(items)` yields the formatted text, then
-// `runtime.Diagnostic().EmitX(text)` emits at the severity selected by
-// `info.builtin_fn` (LRM 20.10). Shares format-item parsing with the print
-// path; the returned expression is the void Emit call.
+// Lower a severity task, $info / $warning / $error / $fatal (LRM 20.10): its
+// message is formatted as the print family formats one and reported at the
+// task's severity. A $fatal then ends the run, and that call is the returned
+// expression; for the others it is the report.
 auto LowerDiagnosticSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)

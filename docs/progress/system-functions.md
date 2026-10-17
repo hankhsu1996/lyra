@@ -12,10 +12,17 @@ the feature file its domain belongs to.
 
 ## Queued
 
-- [x] Simulation control beyond `$finish` (LRM 20.2): `$stop`, which suspends the run, and `$exit`,
-      which ends it once every program block has finished. The diagnostic-level argument (0 / 1 / 2)
-      and its end-of-simulation reporting are the axis `$finish` shares, tracked as `processes.md`
-      P14; this item is the two entry points and their termination behaviour.
+- [x] Simulation control beyond `$finish` (LRM 20.2): `$stop`, which suspends the run, and `$exit`.
+      The finish-number argument (0 / 1 / 2) and its end-of-simulation reporting are the axis
+      `$finish` shares, tracked as `processes.md` P14; this item is the two entry points and their
+      termination behaviour.
+  - [ ] `$exit` is tracked with the program block it belongs to, as `processes.md` P19.
+- [ ] `$readmemh` / `$readmemb` on an associative memory with a wildcard index, or on a memory of
+      several dimensions with one of variable size, stops the build as not yet supported.
+- [ ] `$dist_*` with a seed written as a concatenation of variables stops the build as not yet
+      supported.
+- [ ] `$countbits` with a control bit the running simulation computes (LRM 20.9 takes any 1-bit
+      logic expression there) stops the build as not yet supported; a literal or a constant runs.
 - [ ] `$isunbounded` (LRM 20.6). Answers whether a parameter's value is the unbounded `$`; a data
       query beside `$bits` and `$typename`, which run.
 - [x] `$typename` (LRM 20.6.1) of a structure or union holding an enumeration written in place

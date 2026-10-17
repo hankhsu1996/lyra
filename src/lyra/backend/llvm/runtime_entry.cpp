@@ -224,18 +224,16 @@ constexpr std::array kForQueues{RealizedFor{.domains = {Domain::kQueue}}};
 constexpr std::array kForReal{RealizedFor{.domains = {Domain::kReal}}};
 constexpr std::array kForReals{RealizedFor{.domains = kReals}};
 constexpr std::array kForStrings{RealizedFor{.domains = {Domain::kString}}};
-constexpr std::array kForWhatCaseEqualityCompares{RealizedFor{
+// What an entry answers `===`, a change of bits and an unknown bit for: every
+// value but an integral one, which the target answers itself.
+constexpr std::array kForWhatAnEntryComparesWhole{RealizedFor{
     .domains =
-        kContainers | kUnions |
+        kContainers | kUnions | kReals |
         DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
 // What an element is read out of by an entry: a fixed-size unpacked array's
 // lies where arithmetic on the array's address says, so none is asked for it.
 constexpr std::array kForWhatAnEntryReadsAnElementOf{
     RealizedFor{.domains = kLibrarySequences | DomainSet{Domain::kString}}};
-constexpr std::array kForWhatIsComparedBitForBit{RealizedFor{
-    .domains =
-        kContainers | kUnions | kReals |
-        DomainSet{Domain::kString, Domain::kChandle, Domain::kManagedRef}}};
 constexpr std::array kForBitstreams{RealizedFor{.domains = kBitstreams}};
 constexpr std::array kForTaggedUnions{
     RealizedFor{.domains = {Domain::kTaggedUnion}}};
@@ -1554,10 +1552,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kElement:
       return NamedByValue{.realized = kForWhatAnEntryReadsAnElementOf};
     case support::BuiltinFn::kCaseEqual:
-      return NamedByValue{.realized = kForWhatCaseEqualityCompares};
     case support::BuiltinFn::kBitIdentical:
     case support::BuiltinFn::kHasUnknown:
-      return NamedByValue{.realized = kForWhatIsComparedBitForBit};
+      return NamedByValue{.realized = kForWhatAnEntryComparesWhole};
     case support::BuiltinFn::kBitstreamWidth:
     case support::BuiltinFn::kToBitstream:
     case support::BuiltinFn::kCountBits:

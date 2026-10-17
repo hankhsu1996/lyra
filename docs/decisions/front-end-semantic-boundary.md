@@ -22,6 +22,10 @@ from 2026-09-10, when the last classifier reading the declaration table's member
 see "What the write path owed" below. A third breach, on the observation path and by a mechanism
 this entry did not describe, is "What an absence at this boundary is allowed to mean".
 
+Its section "What a refusal at this boundary is allowed to say" once let lowering refuse a text the
+front end accepts and the standard forbids. The revision of `architecture/language_conformance.md`
+of 2026-10-16 withdrew that, and the section states the rule as revised.
+
 ## Why this decision matters
 
 Two sensitivity defects share one root cause: Lyra reconstructs semantic facts that the front-end
@@ -185,27 +189,33 @@ for two months; the check would have failed the build the day it was written.
 ## What a refusal at this boundary is allowed to say
 
 The same boundary decides what a refusal downstream of the front end may claim, and a sweep of every
-one of them found the claim wrong more often than the code. Three verdicts are available and the
-error policy already assigns them; what had gone missing is that one situation was spelled all three
+one of them found the claim wrong more often than the code. Four outcomes are available and the
+error policy already assigns them. What had gone missing is that one situation was spelled several
 ways.
 
-- **The front end refuses the program.** The site is then unreachable -- lowering does not run when
-  the front end reported an error -- and it is usually one arm of a dispatch over the front end's
-  own enumeration, so the arm has to exist. It states a compiler invariant break, because reaching
-  it means the front end accepted what the language forbids. A user-facing refusal there claims a
-  gap that is not one.
+- **The front end refuses the program.** Lowering does not run, and the reader sees the front end's
+  diagnostic.
+- **The front end accepts it, under a tolerant reading, with no meaning.** The refusal is made where
+  the text was written, and says the front end could give it none.
 - **The front end accepts the program and this compiler does not carry it.** That is a gap, it is
   stated as one, and the message names the construct rather than telling the reader their correct
   code is wrong.
-- **The front end accepts it and the standard forbids it.** The refusal is this compiler's alone and
-  cites the clause -- and the clause is read before it is cited, which is the step that fails: a
-  refusal was found citing a clause that, read, says the opposite of what the refusal claimed.
+- **The analyzed representation breaks the hand-off contract.** That is a compiler error. It
+  includes an arm of a dispatch over the front end's own enumeration reached for a program the front
+  end refuses, since lowering should never have run. A user-facing message there describes the
+  source, where the defect is the compiler's.
 
-**Two signals find these mechanically, and neither is a function name.** A diagnostic from the "this
-program is illegal" family raised after the front end is a candidate by construction, since that
-family is the front end's job. So is a refusal phrased as a rule about the source -- "must be a
-...", "is not legal". Each candidate is then settled by feeding the front end alone the program the
-site refuses, which is one command and decides which of the three verdicts applies.
+Lowering never refuses a program because the standard forbids it. That judgement is the front end's.
+A text it accepts runs as it analyzed it, and an argument that such a text should be refused is made
+upstream (`architecture/language_conformance.md`).
+
+**Two signals find a wrong refusal mechanically, and neither is a function name.** A diagnostic from
+the "this program is illegal" family raised after the front end is a candidate by construction,
+since that family is the front end's job. So is a refusal phrased as a rule about the source --
+"must be a ...", "is not legal". Each candidate is settled by feeding the front end alone the
+program the site refuses, which is one command. Where the front end refuses it, the site states a
+broken hand-off contract. Where it accepts it, the site is a gap, or lowering carries the text out
+and the site goes.
 
 ## What an absence at this boundary is allowed to mean
 

@@ -15,10 +15,10 @@ namespace lyra::runtime {
 // task's own name is what reaches the engine.
 [[noreturn]] void Finish(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    std::int64_t level);
+    std::int64_t finish_number);
 
 [[noreturn]] void Stop(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    std::int64_t level);
+    std::int64_t finish_number);
 
 }  // namespace lyra::runtime

@@ -176,11 +176,11 @@ auto LowerEventListControl(
   std::vector<hir::EventTrigger> triggers;
   triggers.reserve(list.events.size());
   for (const auto* event : list.events) {
+    // The front end flattens a nested list into this one and refuses any other
+    // control written as an entry.
     if (event->kind != slang::ast::TimingControlKind::SignalEvent) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedTimingControlKind,
-          "event list entries must be signal events; nested timing "
-          "controls are not yet supported");
+      throw InternalError(
+          "an event list entry reached lowering that is no signal event");
     }
     auto trigger_or = LowerSignalEventTrigger(
         proc, frame, event->as<slang::ast::SignalEventControl>(), span);

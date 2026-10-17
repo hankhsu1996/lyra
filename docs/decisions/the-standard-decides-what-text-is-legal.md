@@ -10,6 +10,11 @@ Accepted. Replaces the decision of 2026-10-09 that made the front end's most tol
 default. The rule itself, how a disputed text is ruled on, and every ruling made so far are in
 `architecture/language_conformance.md`; this record holds why the default changed.
 
+Revised 2026-10-16 (below). A text the standard forbids is no longer an error in Lyra unless the
+front end refuses it. The default stays the front end's own reading and `--compat all` stays
+rejected as a default; what changed is that the severity the front end gives is shipped as given,
+except where the standard leaves the choice to the tool.
+
 ## What was decided before, and on what
 
 On 2026-10-09 Lyra began asking the front end for the union of every tolerance it knows
@@ -53,6 +58,20 @@ choice and not a defect, and there is nothing to correct upstream. Lyra makes th
 runs it with a warning. Refusing it stopped designs whose code, written for a larger configuration,
 selects past the end of a vector in a smaller one, while every reading of the standard gives that
 code a meaning.
+
+## Revised 2026-10-16
+
+`$fatal` with a message as its first argument is forbidden by 20.10, and the front end accepts it
+with a warning, deliberately and since 2020. Keeping "a forbidden text is an error" would have
+needed either a list in Lyra raising that warning or a request upstream to reverse a deliberate
+choice on no evidence beyond the grammar, and the first is what this record rejects. Lyra's own
+lowering also refused a level given by a constant expression, which 20.2 allows and the front end
+evaluates, so a second judgement of legality had grown beside the front end's.
+
+The rule was restated as a split of responsibilities. Lyra's policy chooses the front end and its
+defaults, the front end analyzes, and Lyra carries out what it analyzed, deciding only what the
+analysis leaves open. A forbidden text the front end accepts is shipped with its warning, and an
+argument that it should be an error is made upstream.
 
 ## Rejected
 

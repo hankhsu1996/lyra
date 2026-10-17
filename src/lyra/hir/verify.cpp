@@ -282,6 +282,7 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
             }
           },
           [&](const ConversionExpr& e) { operand(e.operand); },
+          [&](const ConstantExpr& e) { operand(e.value); },
           [&](const ValueRangeExpr& e) {
             optional_operand(e.lo);
             optional_operand(e.hi);
@@ -600,6 +601,7 @@ auto Describe(const ExprData& data) -> std::string {
             return DescribeCall(e.callee);
           },
           [](const ConversionExpr&) -> std::string { return "a conversion"; },
+          [](const ConstantExpr&) -> std::string { return "a constant"; },
           [](const ValueRangeExpr&) -> std::string { return "a value range"; },
           [](const InsideExpr&) -> std::string { return "a set membership"; },
           [](const ElementSelectExpr&) -> std::string {

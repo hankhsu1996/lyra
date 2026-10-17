@@ -42,6 +42,7 @@ auto ReadsOnly(
                    reads(e.then_value) && reads(e.else_value);
           },
           [&](const ConversionExpr& e) { return reads(e.operand); },
+          [&](const ConstantExpr& e) { return reads(e.value); },
           [&](const ValueRangeExpr& e) {
             return reads_if_present(e.lo) && reads_if_present(e.hi);
           },

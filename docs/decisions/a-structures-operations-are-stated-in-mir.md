@@ -50,9 +50,9 @@ call, and so is every whole-value question a structure's own body asks of a memb
   structure's typedef is interned with the unit's declarations for that reason, in whatever scope
   outside a body it stands in. Another unit naming the type calls them by the pair that identifies
   them, across the dependency it already has, and never states them again.
-- **An operation the type does not have has no method.** A real member leaves no case equality (LRM
-  11.4.5), a real or a chandle no bit stream (6.24.3), a stream is built only where the type fixes
-  its width, and only a type valid for a net (6.7.1) resolves.
+- **An operation the type does not have has no method.** A real or a chandle leaves no bit stream
+  (6.24.3), a stream is built only where the type fixes its width, and only a type valid for a net
+  (6.7.1) resolves.
 - **The questions the runtime asks as predicates are entries of their own**: whether two values are
   the same bits and whether one holds an unknown bit. So is each of the net's three truth tables,
   for the reason a net's installation is one entry per resolution. `!=` and `$isunknown`'s bit are

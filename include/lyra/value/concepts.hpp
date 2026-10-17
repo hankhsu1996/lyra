@@ -111,9 +111,9 @@ concept LyraValue = Storable<T> && requires(const T& a, const T& b) {
   { a.HasUnknown() } -> std::same_as<bool>;
 };
 
-// LRM 11.4.5 `===` / `!==` (Any data type except `real` and `shortreal`). A
-// value type opts in when its SV counterpart admits case equality; `real` /
-// `shortreal` does not. The answer is never unknown, so it is a bit.
+// LRM 11.4.5 `===` / `!==`. A value type opts in when its SV counterpart
+// admits case equality, and a real compares values, as the front end evaluates
+// it. The answer is never unknown, so it is a bit.
 template <typename T>
 concept CaseEqualComparable = LyraValue<T> && requires(const T& a, const T& b) {
   { a.CaseEqual(b) } -> std::same_as<Bit>;

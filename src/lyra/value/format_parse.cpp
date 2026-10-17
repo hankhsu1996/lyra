@@ -99,6 +99,30 @@ auto IsRealConversion(FormatKind kind) -> bool {
   return false;
 }
 
+// Whether a conversion fills a field, which a width sizes and a `-` justifies:
+// the radix, real, string and time conversions of a value. A character, an
+// assignment pattern and the two names `%m` and `%l` print their text as it is,
+// though an assignment pattern takes a leading zero.
+auto TakesAWidth(const SpecKind& spec) -> bool {
+  if (spec.role != FormatDirective::Role::kValue) return false;
+  switch (spec.kind) {
+    case FormatKind::kDecimal:
+    case FormatKind::kHex:
+    case FormatKind::kBinary:
+    case FormatKind::kOctal:
+    case FormatKind::kString:
+    case FormatKind::kTime:
+    case FormatKind::kRealDecimal:
+    case FormatKind::kRealExponential:
+    case FormatKind::kRealGeneral:
+      return true;
+    case FormatKind::kChar:
+    case FormatKind::kAssignmentPattern:
+      return false;
+  }
+  return false;
+}
+
 // Parses a digit run as a non-negative int32. Returns std::nullopt on overflow,
 // and -1 (through the value) when no digit is present.
 auto ParseInt32(std::string_view text, std::size_t& pos)
@@ -163,22 +187,31 @@ auto ParseFormatString(std::string_view text) -> FormatParseResult {
 
       // Which grammar this directive follows is settled by its conversion
       // character, which is read last, so the modifier text is taken as written
-      // here and read against that character below. A leading zero is the one
-      // place the same text means different things rather than existing in only
-      // one grammar: under LRM 21.2.1.2 it opens the field width, under C it
-      // asks for zero fill.
-      const bool minus_written = pos < text.size() && text[pos] == '-';
-      if (minus_written) ++pos;
+      // here and read against that character below. A justification and a
+      // leading zero may each be written once, in either order, before the
+      // digits of a width. The zero is the one place the same text means
+      // different things rather than existing in only one grammar: under C it
+      // asks for zero fill, and under LRM 21.2.1.2 it begins the field width.
+      bool minus_written = false;
+      bool zero_written = false;
+      while (pos < text.size()) {
+        if (text[pos] == '-' && !minus_written) {
+          minus_written = true;
+        } else if (text[pos] == '0' && !zero_written) {
+          zero_written = true;
+        } else {
+          break;
+        }
+        ++pos;
+      }
 
-      const bool zero_written = pos < text.size() && text[pos] == '0';
-      const std::size_t digits_start = pos;
       auto width_or = ParseInt32(text, pos);
       if (!width_or.has_value()) {
         return fail(FormatParseError::kWidthOverflow, directive_start);
       }
-      const std::size_t digit_count = pos - digits_start;
       mods.width = *width_or;
 
+      // A point with no digits after it asks for a precision of zero.
       const bool precision_written = pos < text.size() && text[pos] == '.';
       if (precision_written) {
         ++pos;
@@ -186,37 +219,45 @@ auto ParseFormatString(std::string_view text) -> FormatParseResult {
         if (!prec_or.has_value()) {
           return fail(FormatParseError::kPrecisionOverflow, directive_start);
         }
-        if (*prec_or == -1) {
-          return fail(FormatParseError::kMissingPrecision, directive_start);
-        }
-        mods.precision = *prec_or;
+        mods.precision = *prec_or == -1 ? 0 : *prec_or;
       }
 
+      // A `%` with no conversion after it prints a `%`, and the modifiers
+      // written after it nothing.
       if (pos >= text.size()) {
-        return fail(FormatParseError::kTrailingPercent, directive_start);
+        literal.push_back('%');
+        break;
       }
 
       const char spec_char = text[pos];
       auto spec_or = SpecCharToKind(spec_char);
       if (!spec_or.has_value()) {
+        // LRM 21.2.1.1 Table 21-1 defines `%u`, `%z` and `%v`, which are not
+        // yet carried out.
+        const bool defined = std::string_view{"uUzZvV"}.contains(spec_char);
         return fail(
-            FormatParseError::kUnknownSpecifier, directive_start, spec_char);
+            defined ? FormatParseError::kUnsupportedSpecifier
+                    : FormatParseError::kUnknownSpecifier,
+            directive_start, spec_char);
       }
       ++pos;
 
       if (IsRealConversion(spec_or->kind)) {
-        mods.left_align = minus_written;
         mods.zero_pad = zero_written;
-        // Digits that are exactly "0" are the fill flag alone, leaving C's
-        // field width unstated.
-        if (zero_written && digit_count == 1U) {
-          mods.width = -1;
-        }
-      } else if (minus_written || precision_written) {
+      } else if (
+          precision_written ||
+          (!TakesAWidth(*spec_or) &&
+           (minus_written || mods.width >= 0 ||
+            (zero_written &&
+             spec_or->kind != FormatKind::kAssignmentPattern)))) {
         return fail(
             FormatParseError::kModifierNotPermitted, directive_start,
             spec_char);
+      } else if (zero_written && mods.width < 0) {
+        // A lone zero is the whole field width.
+        mods.width = 0;
       }
+      mods.left_align = minus_written;
 
       result.directives.push_back(
           FormatDirective{

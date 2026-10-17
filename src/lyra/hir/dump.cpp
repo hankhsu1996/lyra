@@ -1266,6 +1266,9 @@ class HirDumper {
                   "ConversionExpr kind={} operand=Expr[{}]",
                   FormatConversionKind(cv.kind), cv.operand.value);
             },
+            [](const ConstantExpr& c) -> std::string {
+              return std::format("ConstantExpr value=Expr[{}]", c.value.value);
+            },
             [](const ValueRangeExpr& r) -> std::string {
               const auto bound = [](const std::optional<ExprId>& b) {
                 return b.has_value() ? std::format("Expr[{}]", b->value)

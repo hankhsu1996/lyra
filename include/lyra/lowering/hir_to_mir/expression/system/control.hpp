@@ -1,35 +1,41 @@
 #pragma once
 
-#include <string_view>
-
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/stmt.hpp"
+#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 // Lower a simulation control task ($finish, $stop, $exit, LRM 20.2) into a
 // generic `mir::CallExpr` on the runtime handle carrying the call's origin and
-// its level. The level comes from the call's own argument, falling back to the
-// descriptor's default when the call names none.
+// its finish number.
 auto LowerTerminationSystemSubroutineCall(
-    const ProcessLowerer& process, const WalkFrame& frame,
-    const hir::CallExpr& call, std::string_view name,
+    ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
     const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 
-// The diagnostic level that selects what a tool prints about a run ending (LRM
-// 20.2, Table 20-1). `$fatal` takes the same value as its first argument and
-// LRM 20.10 requires the two to agree, which is why one reading serves both.
-// It selects a message and nothing a program can observe, so it is fixed where
-// the program is compiled: a call that names one names a literal 0, 1, or 2,
-// and `argument` says which argument a diagnostic should name.
-auto LowerDiagnosticLevel(
-    const hir::Expr& level, std::string_view argument, diag::SourceSpan span)
-    -> diag::Result<int>;
+// The finish number of a call to `$finish`, `$stop` or `$fatal`, which selects
+// what is printed about the run ending (LRM 20.2, Table 20-1; 20.10 names it
+// for `$fatal`), as the machine integer the runtime takes. LRM 20.2 makes it an
+// expression, so it is read where the call runs, and converted to `int` as any
+// integer argument of a system task is. One the call omits is 1 (LRM 20.2). An
+// argument with no integer value is evaluated for what it does and stands for
+// 1, which is what the runtime makes of any number but 0, 1 and 2.
+auto BuildFinishNumber(
+    ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call)
+    -> diag::Result<mir::ExprId>;
+
+// The call to `entry` that ends the run (LRM 20.2), carrying the runtime
+// handle, where the call was written, and the finish number. It departs from
+// the calling execution rather than returning, so it answers nothing.
+auto BuildEndRunCall(
+    const ProcessLowerer& process, mir::Block& block, support::BuiltinFn entry,
+    mir::ExprId finish_number, diag::SourceSpan span) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir
