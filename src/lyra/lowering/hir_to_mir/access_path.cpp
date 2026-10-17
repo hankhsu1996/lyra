@@ -13,15 +13,14 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/binary_op.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
-#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -701,8 +700,9 @@ void AppendTagChecks(
         .descent = {
             path.descent.begin(),
             path.descent.begin() + static_cast<std::ptrdiff_t>(taken)}};
-    const mir::ExprId holds =
-        BuildTagMatches(unit, block, *tag, PlaceForRead(unit, block, before));
+    const mir::ExprId holds = BuildTagMatches(
+        unit, block, *tag, PlaceForRead(unit, block, before),
+        hir::CaseKeyword::kCase);
     const mir::ExprId text = block.exprs.Add(
         mir::MakeStringLiteral(
             unit.builtins.string, std::format(
@@ -720,12 +720,12 @@ void AppendTagChecks(
 
 auto BuildTagMatches(
     mir::CompilationUnit& unit, mir::Block& block, const TagRequirement& tag,
-    mir::ExprId into) -> mir::ExprId {
+    mir::ExprId into, hir::CaseKeyword keyword) -> mir::ExprId {
   return std::visit(
       Overloaded{
           // The tag is the most significant bits of the union's own vector
           // (LRM 7.3.2), so where it starts and the state domain it is read
-          // in are the union's, and it is compared bit for bit.
+          // in are the union's.
           [&](const TagInBits& bits) {
             const mir::IntegralType& vector =
                 unit.types.Get(block.exprs.Get(into).type).Integral();
@@ -745,11 +745,12 @@ auto BuildTagMatches(
                 unit, block, static_cast<std::int64_t>(bits.member.value));
             return ReduceToCondition(
                 unit, block,
-                block.exprs.Add(BuildMirBinaryExpr(
-                    unit, block, hir::BinaryOp::kCaseEquality, carried,
-                    ConvertToType(unit, block, named, tag_type),
-                    unit.builtins.bit1)));
+                BuildCaseComparison(
+                    unit, block, keyword, carried,
+                    ConvertToType(unit, block, named, tag_type)));
           },
+          // A tag held apart is set only by building a tagged value, so it
+          // carries no x or z, and every way of comparing it answers alike.
           [&](const HeldTag& held) {
             const mir::ExprId held_now = block.exprs.Add(
                 mir::MakeDiscriminantExpr(into, unit.builtins.machine_int64));

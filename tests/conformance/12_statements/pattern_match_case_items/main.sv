@@ -43,6 +43,7 @@ module Top;
   int nothing_selected_without_default;
   int filter_falls_through;
   int do_not_care_matched_as_a_bit;
+  int do_not_care_matched_by_itself;
 
   initial begin
     val_t v;
@@ -108,6 +109,14 @@ module Top;
       tagged Code 4'b10zz : do_not_care_matched_as_a_bit = -1;
       default             : do_not_care_matched_as_a_bit = 1;
     endcase
+
+    // And a value carrying that z is selected by it.
+    c = tagged Code 4'b10zz;
+    do_not_care_matched_by_itself = 0;
+    case (c) matches
+      tagged Code 4'b10zz : do_not_care_matched_by_itself = 1;
+      default             : do_not_care_matched_by_itself = -1;
+    endcase
   end
 
   final begin
@@ -133,6 +142,9 @@ module Top;
     if (do_not_care_matched_as_a_bit !== 1)
       $fatal(1, "do_not_care_matched_as_a_bit was %0d, expected 1",
              do_not_care_matched_as_a_bit);
+    if (do_not_care_matched_by_itself !== 1)
+      $fatal(1, "do_not_care_matched_by_itself was %0d, expected 1",
+             do_not_care_matched_by_itself);
     $display("All checks passed");
   end
 endmodule

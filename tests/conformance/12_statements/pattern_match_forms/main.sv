@@ -5,7 +5,9 @@
 // pattern succeeds when every member pattern matches the corresponding member,
 // whether the members are written by position or by name, and in a named list
 // the order does not matter and an omitted member is ignored. A constant
-// expression pattern succeeds when the value equals it. An identifier pattern
+// expression pattern succeeds when the value equals it, wherever it stands and
+// whatever integral type the value has, two-state, signed or an enumeration;
+// an x or a z in it is a bit the value has to carry. An identifier pattern
 // and the wildcard pattern .* always succeed, and an identifier pattern binds
 // what stood in its position to a new variable of that position's type
 // (LRM 12.6).
@@ -36,9 +38,18 @@ module Top;
     int     Flat;
   } outer_t;
 
+  typedef enum { kRed, kGreen, kBlue } color_t;
+
+  typedef union tagged {
+    void    Off;
+    color_t Lit;
+  } lamp_t;
+
   val_t v;
   code_t c;
   outer_t o;
+  lamp_t l;
+  pair_t p;
 
   int simple_binding;
   int wrong_tag;
@@ -49,6 +60,15 @@ module Top;
   int wildcard_member;
   int constant_equal;
   int constant_unequal;
+  int unknown_constant_equal;
+  int two_state_constant_equal;
+  int two_state_constant_unequal;
+  int negative_constant_equal;
+  int constant_member_equal;
+  int constant_member_unequal;
+  int structure_constant_equal;
+  int enumeration_constant_equal;
+  int enumeration_constant_unequal;
   int whole_value_bound;
   int nested_tags;
   int nested_wrong_inner_tag;
@@ -92,6 +112,37 @@ module Top;
     else constant_equal = 0;
     if (c matches tagged Code 8'h2B) constant_unequal = 1;
     else constant_unequal = 0;
+
+    c = tagged Code 8'b1x0z_0110;
+    if (c matches tagged Code 8'b1x0z_0110) unknown_constant_equal = 1;
+    else unknown_constant_equal = 0;
+
+    v = tagged Simple 42;
+    if (v matches tagged Simple 42) two_state_constant_equal = 1;
+    else two_state_constant_equal = 0;
+    if (v matches tagged Simple 43) two_state_constant_unequal = 1;
+    else two_state_constant_unequal = 0;
+
+    v = tagged Simple -7;
+    if (v matches tagged Simple -7) negative_constant_equal = 1;
+    else negative_constant_equal = 0;
+
+    v = tagged Pair '{100, 200};
+    if (v matches tagged Pair '{.*, 200}) constant_member_equal = 1;
+    else constant_member_equal = 0;
+    if (v matches tagged Pair '{.*, 201}) constant_member_unequal = 1;
+    else constant_member_unequal = 0;
+
+    // A structure is matched by its own pattern, with no tag around it.
+    p = '{100, 200};
+    if (p matches '{100, .b}) structure_constant_equal = b;
+    else structure_constant_equal = -1;
+
+    l = tagged Lit kGreen;
+    if (l matches tagged Lit kGreen) enumeration_constant_equal = 1;
+    else enumeration_constant_equal = 0;
+    if (l matches tagged Lit kBlue) enumeration_constant_unequal = 1;
+    else enumeration_constant_unequal = 0;
 
     // An identifier standing as the whole pattern matches any value, and what
     // it binds has the type of the value matched.
@@ -139,6 +190,33 @@ module Top;
       $fatal(1, "constant_equal was %0d, expected 1", constant_equal);
     if (constant_unequal !== 0)
       $fatal(1, "constant_unequal was %0d, expected 0", constant_unequal);
+    if (unknown_constant_equal !== 1)
+      $fatal(1, "unknown_constant_equal was %0d, expected 1",
+             unknown_constant_equal);
+    if (two_state_constant_equal !== 1)
+      $fatal(1, "two_state_constant_equal was %0d, expected 1",
+             two_state_constant_equal);
+    if (two_state_constant_unequal !== 0)
+      $fatal(1, "two_state_constant_unequal was %0d, expected 0",
+             two_state_constant_unequal);
+    if (negative_constant_equal !== 1)
+      $fatal(1, "negative_constant_equal was %0d, expected 1",
+             negative_constant_equal);
+    if (constant_member_equal !== 1)
+      $fatal(1, "constant_member_equal was %0d, expected 1",
+             constant_member_equal);
+    if (constant_member_unequal !== 0)
+      $fatal(1, "constant_member_unequal was %0d, expected 0",
+             constant_member_unequal);
+    if (structure_constant_equal !== 200)
+      $fatal(1, "structure_constant_equal was %0d, expected 200",
+             structure_constant_equal);
+    if (enumeration_constant_equal !== 1)
+      $fatal(1, "enumeration_constant_equal was %0d, expected 1",
+             enumeration_constant_equal);
+    if (enumeration_constant_unequal !== 0)
+      $fatal(1, "enumeration_constant_unequal was %0d, expected 0",
+             enumeration_constant_unequal);
     if (whole_value_bound !== 42)
       $fatal(1, "whole_value_bound was %0d, expected 42", whole_value_bound);
     if (nested_tags !== 12)

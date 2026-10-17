@@ -10,6 +10,7 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
@@ -389,7 +390,7 @@ auto Renderer::BuildUnpackedAggregate(
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
       const mir::ExprId live = BuildHoldsMember(
           Owner(), block, frame.current_block->LocalPlace(value, mir_type),
-          type, index);
+          type, index, hir::CaseKeyword::kCase);
       chain = block.exprs.Add(
           mir::Expr{
               .data =
@@ -437,7 +438,7 @@ auto Renderer::BuildPackedAggregate(
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
       const mir::ExprId live = BuildHoldsMember(
           Owner(), block, frame.current_block->LocalPlace(value, mir_type),
-          type, index);
+          type, index, hir::CaseKeyword::kCase);
       chain = block.exprs.Add(
           mir::Expr{
               .data =

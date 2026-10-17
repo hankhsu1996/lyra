@@ -3,12 +3,16 @@
 #include <expected>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include <slang/ast/Statement.h>
 #include <slang/ast/statements/ConditionalStatements.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/hir/case_keyword.hpp"
+#include "lyra/hir/stmt.hpp"
 #include "lyra/lowering/ast_to_hir/pattern.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -31,20 +35,35 @@ auto LowerUniquePriorityCheck(slang::ast::UniquePriorityCheck check)
       "LowerUniquePriorityCheck: unknown slang UniquePriorityCheck value");
 }
 
-auto LowerCaseCondition(slang::ast::CaseStatementCondition condition)
-    -> hir::CaseCondition {
+auto LowerLabelTest(slang::ast::CaseStatementCondition condition)
+    -> hir::CaseLabelTest {
   switch (condition) {
     case slang::ast::CaseStatementCondition::Normal:
-      return hir::CaseCondition::kNormal;
+      return hir::CaseKeyword::kCase;
     case slang::ast::CaseStatementCondition::WildcardJustZ:
-      return hir::CaseCondition::kWildcardJustZ;
+      return hir::CaseKeyword::kCasez;
     case slang::ast::CaseStatementCondition::WildcardXOrZ:
-      return hir::CaseCondition::kWildcardXOrZ;
+      return hir::CaseKeyword::kCasex;
     case slang::ast::CaseStatementCondition::Inside:
-      return hir::CaseCondition::kInside;
+      return hir::CaseInside{};
   }
-  throw InternalError(
-      "LowerCaseCondition: unknown slang CaseStatementCondition");
+  throw InternalError("LowerLabelTest: unknown slang CaseStatementCondition");
+}
+
+// A pattern-matching case statement is written with a case keyword: the
+// grammar writes `inside` only after a plain `case`, never with `matches`
+// (LRM A.6.7).
+auto LowerPatternCaseKeyword(slang::ast::CaseStatementCondition condition)
+    -> hir::CaseKeyword {
+  return std::visit(
+      Overloaded{
+          [](hir::CaseKeyword keyword) { return keyword; },
+          [](hir::CaseInside) -> hir::CaseKeyword {
+            throw InternalError(
+                "LowerPatternCaseKeyword: a pattern-matching case statement "
+                "has no inside form");
+          }},
+      LowerLabelTest(condition));
 }
 
 }  // namespace
@@ -52,7 +71,7 @@ auto LowerCaseCondition(slang::ast::CaseStatementCondition condition)
 auto LowerCaseStmt(
     ProcessLowerer& proc, WalkFrame frame, const slang::ast::CaseStatement& cs,
     diag::SourceSpan span) -> diag::Result<hir::Stmt> {
-  const hir::CaseCondition condition_kind = LowerCaseCondition(cs.condition);
+  const auto label_test = LowerLabelTest(cs.condition);
   const auto case_check = LowerUniquePriorityCheck(cs.check);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
@@ -85,7 +104,7 @@ auto LowerCaseStmt(
       .label = std::nullopt,
       .data =
           hir::CaseStmt{
-              .condition_kind = condition_kind,
+              .label_test = label_test,
               .condition = cond_id,
               .items = std::move(items),
               .default_stmt = default_id,
@@ -126,7 +145,7 @@ auto LowerPatternCaseStmt(
     const slang::ast::PatternCaseStatement& cs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt> {
   const auto case_check = LowerUniquePriorityCheck(cs.check);
-  const hir::CaseCondition condition_kind = LowerCaseCondition(cs.condition);
+  const hir::CaseKeyword keyword = LowerPatternCaseKeyword(cs.condition);
   auto cond_expr = proc.LowerExpr(cs.expr, frame);
   if (!cond_expr) return std::unexpected(std::move(cond_expr.error()));
   const hir::ExprId cond_id = frame.Exprs().Add(*std::move(cond_expr));
@@ -161,7 +180,7 @@ auto LowerPatternCaseStmt(
       .label = std::nullopt,
       .data =
           hir::PatternCaseStmt{
-              .condition_kind = condition_kind,
+              .keyword = keyword,
               .condition = cond_id,
               .items = std::move(items),
               .default_stmt = default_id,

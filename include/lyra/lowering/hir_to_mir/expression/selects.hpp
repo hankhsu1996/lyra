@@ -9,6 +9,7 @@
 
 #include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
@@ -51,12 +52,15 @@ namespace lyra::lowering::hir_to_mir {
     -> mir::Expr;
 
 // Whether `subject`, a tagged union of type `subject_type`, holds the member at
-// `index`, as a machine boolean; a packed union of one member carries a tag of
-// no bits (LRM 7.3.2) and always holds it. What a pattern tests (LRM 12.6) and
-// what `%p` prints (LRM 21.2.1.6) both ask it.
+// `index`, as a machine boolean, its tag compared as `keyword` compares; a
+// packed union of one member carries a tag of no bits (LRM 7.3.2) and always
+// holds it. What a pattern tests (LRM 12.6), under the keyword of the case
+// statement governing it, and what `%p` prints (LRM 21.2.1.6), exactly, both
+// ask it.
 [[nodiscard]] auto BuildHoldsMember(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId subject,
-    hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId;
+    hir::TypeId subject_type, base::ComponentIndex index,
+    hir::CaseKeyword keyword) -> mir::ExprId;
 
 // The two below read bits of a packed value's vector by position, for a
 // consumer that has no source-level select to lower: pattern matching (LRM

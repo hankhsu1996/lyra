@@ -26,7 +26,10 @@ struct WildcardPattern {
   auto operator==(const WildcardPattern&) const -> bool = default;
 };
 
-// LRM 12.6 constant pattern: matches if the case value equals `value`.
+// LRM 12.6 constant pattern: matches where what stands in its position
+// compares equal to `value`, as the case keyword governing the match compares
+// two values, a plain `case` where no case statement governs it (LRM 12.6.1,
+// 12.6.2, 12.6.3).
 struct ConstantPattern {
   ExprId value;
 

@@ -504,13 +504,14 @@ auto MemberStep(
 
 auto BuildHoldsMember(
     UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId subject,
-    hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
+    hir::TypeId subject_type, base::ComponentIndex index,
+    hir::CaseKeyword keyword) -> mir::ExprId {
   const std::optional<TagRequirement> tag = TagRequiredByMember(
       unit_lowerer, unit_lowerer.Hir().types.Get(subject_type), index);
   if (!tag.has_value()) {
     return BuildMachineBool(unit_lowerer.Unit(), block, true);
   }
-  return BuildTagMatches(unit_lowerer.Unit(), block, *tag, subject);
+  return BuildTagMatches(unit_lowerer.Unit(), block, *tag, subject, keyword);
 }
 
 auto ElementStep(

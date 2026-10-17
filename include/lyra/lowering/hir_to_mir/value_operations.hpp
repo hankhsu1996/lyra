@@ -4,6 +4,7 @@
 #include <span>
 #include <vector>
 
+#include "lyra/hir/case_keyword.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -95,6 +96,15 @@ class UnitLowerer;
 [[nodiscard]] auto BuildCaseEquality(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId lhs,
     mir::ExprId rhs) -> mir::ExprId;
+
+// Whether `value` matches `label` as a case statement of `keyword` compares
+// them: a known bit, where logical equality would answer x (LRM 12.5). Which
+// bits a form skips is the form's own business, so each form is a question of
+// its own rather than an operator a target applies.
+[[nodiscard]] auto BuildCaseComparison(
+    const mir::CompilationUnit& unit, mir::Block& block,
+    hir::CaseKeyword keyword, mir::ExprId value, mir::ExprId label)
+    -> mir::ExprId;
 
 // LRM 20.9 `$isunknown`, a known bit.
 [[nodiscard]] auto BuildUnknownTest(
