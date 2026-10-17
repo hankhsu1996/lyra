@@ -27,7 +27,9 @@ namespace lyra::base {
 // the count at the same moment, so a skipped or doubled entity is caught there.
 // Opening it and giving one answer at a time serves the fold whose answer for
 // one entity reads the answers before it; the count still bounds it, and an
-// entity left unanswered surfaces at the read.
+// entity left unanswered surfaces at the read. Opening it reserves room for the
+// count, so an answer already given stays where it is while the fold appends
+// the rest.
 //
 // `base::Arena` is the counterpart for a pool that does mint, handing out an id
 // per append. A container indexed by another pool's ids is not an arena however

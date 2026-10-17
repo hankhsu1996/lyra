@@ -1115,8 +1115,8 @@ auto UnitLowerer::ExternalClassOf(
               .behavior = *std::move(overridden)});
     }
   }
-  unit_.external_classes.push_back(std::move(record));
-  return unit_.external_classes.back();
+  return unit_.external_classes.Get(
+      unit_.external_classes.Add(std::move(record)));
 }
 
 auto UnitLowerer::NamespaceCalleeInterface(

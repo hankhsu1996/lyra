@@ -967,8 +967,7 @@ auto UnitLowerer::MakeMethodCallee(
   const auto& ext = std::get<hir::ExternalClassRef>(class_ref);
   // The class declaring the method published it, so what the call passes and
   // awaits (LRM 13.5) and whether the object decides which body runs (LRM
-  // 8.20) are read off that class's signature. Both are taken before anything
-  // else is read, since reading another signature may move the records.
+  // 8.20) are read off that class's signature.
   const hir::PublishedMethod* declared = hir::FindMethod(
       ExternalClassOf(ext.unit_name, ext.class_path).methods, method.name);
   if (declared == nullptr) {
@@ -1232,19 +1231,15 @@ auto UnitLowerer::StateConformance(
             },
             [&](const hir::ExternalClassRef& ext) -> diag::Result<void> {
               // The virtual methods it introduces, in the order that counts
-              // their ordinals, taken whole first: finding what answers one
-              // reads further signatures, which may move the records.
-              std::vector<std::string> introduced;
+              // their ordinals.
+              hir::PublishedBehaviorId ordinal{0};
               for (const hir::PublishedMethod& method :
                    ExternalClassOf(ext.unit_name, ext.class_path).methods) {
-                if (std::holds_alternative<hir::IntroducesVirtual>(
+                if (!std::holds_alternative<hir::IntroducesVirtual>(
                         method.dispatch)) {
-                  introduced.push_back(method.prototype.name);
+                  continue;
                 }
-              }
-              hir::PublishedBehaviorId ordinal{0};
-              for (const std::string& name : introduced) {
-                auto answered_by = answer_of(name);
+                auto answered_by = answer_of(method.prototype.name);
                 if (!answered_by) {
                   return std::unexpected(std::move(answered_by.error()));
                 }

@@ -363,27 +363,25 @@ gates**, so its findings are a backlog to pay down and a red run is not an alarm
 passing is a regression, and a red nightly is the thing to act on that day.
 
 `asan-nightly.yml` runs the merge gate's own set under the address sanitizer -- the gate's set and
-not the `nightly` complement, because the pools it is watching live in lowering rather than in the
-program the host-compiling group builds. It **gates its own run**, for the reason the host C++ one
-does: a sanitizer report carries a stack trace and names a defect. What makes it worth a nightly at
-all is that the class it catches is invisible to every other job: a reference held into a pool that
-has since grown reads correctly until the storage happens to move, so a green ordinary run is
-consistent with the code being wrong. Under the sanitizer a pool moves its storage on every append,
-so such a reference is reported on every execution that reads it; what the job still cannot see is
-an execution the corpus does not reach. It runs the set twice, once under each compiler that builds
-Lyra, both under remote execution where the key is set. The two evaluate a call's arguments and an
-operator's operands in opposite orders, which C++ leaves to the compiler, so a reference read in one
-operand and invalidated by another is reported under one of them only.
+not the `nightly` complement, because the compiler it is watching is exercised there rather than in
+the program the host-compiling group builds. It **gates its own run**, for the reason the host C++
+one does: a sanitizer report carries a stack trace and names a defect. What makes it worth a nightly
+at all is that the class it catches is invisible to every other job: a read of memory that is gone
+usually reads what was there, so a green ordinary run is consistent with the code being wrong. Under
+the sanitizer such a read is reported on every execution that makes it; what the job still cannot
+see is an execution the corpus does not reach. The compiler's own IR pools are not in that class,
+since they never move what they hold
+([arena-reference-lifetime](../decisions/arena-reference-lifetime.md)). It runs the set twice, once
+under each compiler that builds Lyra, both under remote execution where the key is set. The two
+evaluate a call's arguments and an operator's operands in opposite orders, which C++ leaves to the
+compiler, so a read in one operand of storage another one frees is reported under one of them only.
 
 Two things about it follow from what is instrumented. The compiler is; the runtime library a built
 program links is not, because that library is built as it ships whatever builds the compiler, and a
 user's link is told nothing about a sanitizer. So the job reports on lowering and says nothing about
-the memory a simulation touches while it runs. And `growth_tests` is left out of its set: moving a
-pool on every append makes an append cost the pool, so anything a design repeats compiles in the
-square of its count there, and a bound on what a compile costs would be measuring the
-instrumentation. `compile_stack_tests` is left out for the same reason on another axis: how long an
-expression the compiler follows is set by the size of its frames, which the instrumentation
-multiplies.
+the memory a simulation touches while it runs. And the targets tagged `cost` are left out of its
+set: each bounds what the compiler, or a program it built, costs as it ships -- time, stack, memory
+-- which is not what a sanitizer build is.
 
 `external-designs-nightly.yml` runs `external_design_tests`, one job per case, with the compiler
 built optimized. It **gates its own run**: a case that stops somewhere other than where it is

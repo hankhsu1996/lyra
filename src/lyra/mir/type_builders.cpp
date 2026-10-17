@@ -77,8 +77,8 @@ auto ErasedFunction(const TypePool& types) -> TypeId {
           .params = {}, .result = types.Intern(Type{VoidType{}})}});
 }
 
-// Asked while a type is being read, so it reads the type and interns nothing: a
-// pool that grows may move the type the asker is holding.
+// Asked of a finished unit by whatever reads it, so it reads the type rather
+// than interning the one it is compared against, which would add to the unit.
 auto IsErasedFunction(const TypePool& types, TypeId id) -> bool {
   const auto* function = types.Get(id).As<MachineFunctionType>();
   return function != nullptr && function->params.empty() &&

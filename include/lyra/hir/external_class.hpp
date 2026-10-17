@@ -137,8 +137,9 @@ struct ExternalClass {
 // where this unit holds no published record of it -- a class no signature the
 // design compiles carries.
 [[nodiscard]] inline auto FindExternalClass(
-    std::span<const ExternalClass> records, std::string_view unit_name,
-    const support::DefPath& class_path) -> const ExternalClass* {
+    const base::Arena<ExternalClass, ExternalClassId>& records,
+    std::string_view unit_name, const support::DefPath& class_path)
+    -> const ExternalClass* {
   for (const ExternalClass& record : records) {
     if (record.unit_name == unit_name && record.class_path == class_path) {
       return &record;

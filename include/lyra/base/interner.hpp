@@ -52,8 +52,8 @@ class Interner {
     return id;
   }
 
-  // Keeps the arena's transient-view contract: the `Id` is the durable handle,
-  // and a reference this returns must not be held across a later `Intern`.
+  // A reference this returns stays good across a later `Intern`, as an
+  // arena's does; the `Id` is what names the entity.
   [[nodiscard]] auto Get(Id id) const -> const T& {
     return storage_.Get(id);
   }

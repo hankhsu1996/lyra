@@ -2,13 +2,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/id_range.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/relocating_append.hpp"
+#include "lyra/base/segmented_vector.hpp"
 
 namespace lyra::base {
 
@@ -18,7 +18,9 @@ namespace lyra::base {
 // entities that must be referable before they are complete -- a forward or
 // mutually recursive declaration names another's identity before either body is
 // built. `Id` is a struct carrying a single `std::uint32_t value`, its position
-// in the pool; an identity, once minted, is stable for the pool's life.
+// in the pool; an identity, once minted, is stable for the pool's life. A
+// defined value never moves, so a reference `Get` returns stays good while the
+// registry grows, as an arena's does.
 //
 // Whether an identity may precede its value is a property of the entity, so a
 // pool holding entities of both kinds answers yes and offers both forms: `Add`
@@ -34,13 +36,12 @@ class Registry {
  public:
   auto Declare() -> Id {
     const Id id{static_cast<std::uint32_t>(slots_.size())};
-    MoveBeforeAppendUnderSanitizer(slots_);
-    slots_.emplace_back(std::nullopt);
+    slots_.push_back(std::nullopt);
     return id;
   }
 
   void Define(Id id, T value) {
-    auto& slot = slots_.at(id.value);
+    std::optional<T>& slot = Slot(id);
     if (slot.has_value()) {
       throw InternalError("Registry::Define: identity already defined");
     }
@@ -61,7 +62,7 @@ class Registry {
   // consumer walks the whole range and reads each entry -- which reports a
   // broken invariant rather than letting the consumer skip silently past it.
   [[nodiscard]] auto IsDefined(Id id) const -> bool {
-    return slots_.at(id.value).has_value();
+    return Slot(id).has_value();
   }
 
   [[nodiscard]] auto size() const -> std::size_t {
@@ -80,7 +81,7 @@ class Registry {
   }
 
   [[nodiscard]] auto Get(Id id) const -> const T& {
-    const auto& slot = slots_.at(id.value);
+    const std::optional<T>& slot = Slot(id);
     if (!slot.has_value()) {
       throw InternalError(
           "Registry::Get: identity is declared but not defined");
@@ -96,7 +97,6 @@ class Registry {
   [[nodiscard]] auto TransformValues(
       const Transform& transform) && -> Registry {
     Registry transformed;
-    transformed.slots_.reserve(slots_.size());
     for (const Id id : Ids()) {
       std::optional<T>& slot = slots_[id.value];
       transformed.slots_.push_back(
@@ -150,7 +150,29 @@ class Registry {
   auto operator==(const Registry&) const -> bool = default;
 
  private:
-  std::vector<std::optional<T>> slots_;
+  // An id this registry never minted was minted for another one or carried
+  // past this one's life.
+  [[nodiscard]] auto Slot(Id id) const -> const std::optional<T>& {
+    return SlotOf(*this, id);
+  }
+
+  [[nodiscard]] auto Slot(Id id) -> std::optional<T>& {
+    return SlotOf(*this, id);
+  }
+
+  template <typename Self>
+  [[nodiscard]] static auto SlotOf(Self& self, Id id) -> auto& {
+    if (id.value >= self.slots_.size()) {
+      throw InternalError(
+          std::format(
+              "Registry: id {} is out of range; the registry holds {} "
+              "identities",
+              id.value, self.slots_.size()));
+    }
+    return self.slots_[id.value];
+  }
+
+  SegmentedVector<std::optional<T>> slots_;
 };
 
 }  // namespace lyra::base

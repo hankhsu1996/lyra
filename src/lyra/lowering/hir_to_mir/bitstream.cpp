@@ -63,8 +63,7 @@ auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
         .width = integral.bit_width, .state_kind = integral.state_kind};
   }
   if (const auto* tuple = resolved.As<mir::TupleType>()) {
-    const std::vector<mir::TypeId> components = tuple->elements;
-    return FixedStreamShapeOfParts(unit, components);
+    return FixedStreamShapeOfParts(unit, tuple->elements);
   }
   // A structure streams its members end to end, an untagged union as its first
   // member, and a tagged union not at all (LRM 11.4.14.1).
@@ -131,8 +130,7 @@ auto BuildFromBitstream(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId bits_id,
     mir::TypeId dst_type, diag::SourceSpan span) -> diag::Result<mir::ExprId> {
   // A stream is a sequence of bits, so its own shape is on its type and asking
-  // for it cannot fail; only the destination can be a type with no stream. By
-  // value: the pool's view does not survive the interning below.
+  // for it cannot fail; only the destination can be a type with no stream.
   const mir::IntegralType stream =
       unit.types.Get(block.exprs.Get(bits_id).type).Integral();
   const std::optional<StreamShape> target = FixedStreamShapeOf(unit, dst_type);

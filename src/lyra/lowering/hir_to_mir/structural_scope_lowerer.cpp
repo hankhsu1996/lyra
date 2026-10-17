@@ -3010,12 +3010,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     const mir::TypeId mir_value_type = unit_lowerer.TranslateType(d.type);
     const auto* net = std::get_if<hir::StructuralNetDecl>(&d.kind);
     const auto* var = std::get_if<hir::StructuralVariableDecl>(&d.kind);
-    // Both are asked of the type here, ahead of the statements built below,
-    // because building one may add a type and the type table then moves.
-    const bool is_child_or_reference_slot = IsOwnedChildOrReferenceSlot(
-        unit_lowerer.Unit().types.Get(mir_value_type));
-    const bool is_event =
-        unit_lowerer.Unit().types.Get(mir_value_type).Is<mir::EventType>();
+    const mir::Type& value_ty = unit_lowerer.Unit().types.Get(mir_value_type);
     // Owned children, cross-instance reference slots (borrowed pointers filled
     // in the resolve phase), and named events have no "value assignment" --
     // their declaration shape itself fixes the field at construction. A net
@@ -3024,8 +3019,9 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     // string, real, unpacked / dynamic array) receive an LRM 10.5
     // initialization statement, run in the initialize phase after the tree's
     // references resolve, not in the constructor.
-    const bool is_assignable_value =
-        var != nullptr && !is_child_or_reference_slot && !is_event;
+    const bool is_assignable_value = var != nullptr &&
+                                     !IsOwnedChildOrReferenceSlot(value_ty) &&
+                                     !value_ty.Is<mir::EventType>();
     if (is_assignable_value) {
       const mir::ExprId init_target = initialize_block.exprs.Add(
           mir::MakeFieldAccessExpr(init_self_object(), cell, mir_field_type));
@@ -3084,7 +3080,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
       const mir::ExprId net_target = ctor_block.exprs.Add(
           mir::MakeFieldAccessExpr(self_object(), cell, mir_field_type));
       const NetData data =
-          unit_lowerer.Unit().types.Get(mir_value_type).IsIntegral()
+          value_ty.IsIntegral()
               ? NetData{IntegralNetData{}}
               : NetData{AggregateNetData{
                     .prototype = ctor_block.exprs.Add(BuildDefaultValueFromHir(

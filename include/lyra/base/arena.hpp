@@ -4,11 +4,10 @@
 #include <cstdint>
 #include <format>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/id_range.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/relocating_append.hpp"
+#include "lyra/base/segmented_vector.hpp"
 
 namespace lyra::base {
 
@@ -28,19 +27,17 @@ namespace lyra::base {
 // other nodes reference it by id and a later shard caches it without
 // coordination.
 //
-// Value immutability is not address stability. `Get` returns a transient view
-// into relocatable backing storage; any `Add` may relocate that storage and so
-// invalidates every reference, pointer, and iterator a prior `Get` returned. To
-// use a fact past an `Add`, project it to a value -- an `Id`, a kind, a copied
-// field -- before the `Add`; never hold a `Get` reference across one.
+// An appended node also never moves, so a reference `Get` returns stays good
+// while the arena grows: a lowering reads what it built while it goes on
+// building, and that read is sound however the expression around it is
+// evaluated. The reference is a way to read a node and never a way to name
+// one; what holds on to a node, and every node naming another, holds its id.
 template <typename T, typename Id>
 class Arena {
  public:
   [[nodiscard]] auto Get(Id id) const -> const T& {
-    // A typed id that overruns the pool is a compiler-invariant violation -- it
-    // was minted for a different arena or carried past its arena's lifetime --
-    // so report the id and pool size rather than let the bare bounds check
-    // throw a contextless std::out_of_range.
+    // A typed id that overruns the pool was minted for a different arena or
+    // carried past its arena's lifetime, which is a compiler bug.
     if (id.value >= items_.size()) {
       throw InternalError(
           std::format(
@@ -52,7 +49,6 @@ class Arena {
 
   auto Add(T value) -> Id {
     const Id id{static_cast<std::uint32_t>(items_.size())};
-    MoveBeforeAppendUnderSanitizer(items_);
     items_.push_back(std::move(value));
     return id;
   }
@@ -88,7 +84,7 @@ class Arena {
   auto operator==(const Arena&) const -> bool = default;
 
  private:
-  std::vector<T> items_;
+  SegmentedVector<T> items_;
 };
 
 }  // namespace lyra::base

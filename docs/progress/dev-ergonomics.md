@@ -216,11 +216,12 @@ layer directly.
       three compiles: the build peaks at 92 MB and ends as a reported failure.
 
 - [x] D19 -- A read of an object that is gone fails a gate instead of reaching a user. A warning in
-      Lyra's own sources fails the build under either compiler, and the address sanitizer run builds
-      and reports a reference held across a pool's growth on every execution that reads one, not
-      only where the growth happened to move the storage. Before this the one compiler warning in
-      the tree named a defect that made a design wait on the wrong bits of a packed structure's
-      first member, and the sanitizer run had failed at build on every run since it was added.
+      Lyra's own sources fails the build under either compiler, the address sanitizer run builds and
+      reports a read of freed memory on every execution that makes one, and the compiler's IR pools
+      never move what they hold, so reading a node while its pool grows is sound wherever it is
+      written. Before this the one compiler warning in the tree named a defect that made a design
+      wait on the wrong bits of a packed structure's first member, and the sanitizer run had failed
+      at build on every run since it was added.
 
 - [x] D20 -- Where a compile's time, memory and output went is read off one run. Asked, a run writes
       a trace with a span per stage, unit, scope and function, and a file with each stage's peak
@@ -249,10 +250,9 @@ layer directly.
       D19 and still reported nothing: the runtime library a built program links was instrumented
       along with the compiler, so every case stopped where its program was linked, and each printed
       more than a run's log keeps. The library is now built as it ships whatever builds the
-      compiler, and the run leaves out the one check that bounds what a compile costs, since under
-      the sanitizer an append costs the pool it lands in. On `main` the run is clean: no report over
-      the whole corpus. What a simulation's own memory does while it runs is not something this run
-      sees.
+      compiler, and the run leaves out the tests of what the compiler costs as it ships, which the
+      instrumentation changes. On `main` the run is clean: no report over the whole corpus. What a
+      simulation's own memory does while it runs is not something this run sees.
 
 - [x] D23 -- A library uses another by naming it. A `lyra.toml` lists the libraries its own depends
       on, each by name and the directory declaring it, and a build reads every library it reaches

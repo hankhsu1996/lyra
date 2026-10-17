@@ -716,8 +716,8 @@ void UnitLowerer::PublishAssignmentPatternTexts() {
 }
 
 void UnitLowerer::PublishTypeOperations() {
-  // A body built here interns types, so the pool is walked by position and
-  // its size read again at every step.
+  // A body built here interns types, and a type interned that way states its
+  // operations too, so the pool's size is read again at every step.
   for (std::uint32_t i = 0; i < unit_.types.size(); ++i) {
     const mir::TypeId type{.value = i};
     if (!mir::OperationsAreStatedPerUnit(unit_.types.Get(type))) {

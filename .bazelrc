@@ -86,11 +86,8 @@ build:fastbuild --compilation_mode=fastbuild
 build:fastbuild --cxxopt='-O1'
 
 # Address sanitizer, for the nightly that runs the merge gate's own set under
-# it. Every pool in the compiler hands out a view into relocatable storage and
-# an id is the only durable handle, so a reference kept across an append reads
-# correctly until the storage happens to move -- which makes an ordinary run
-# green and says nothing. Nothing cheaper distinguishes the two, because the
-# read is only wrong on the executions where the move landed in between.
+# it. A read of memory that is gone usually reads what was there, so an
+# ordinary run is green either way; under the sanitizer the read is reported.
 # `-O1` and a kept frame pointer are what make the report name the read.
 build:asan --copt='-fsanitize=address'
 build:asan --copt='-fno-omit-frame-pointer'
@@ -101,10 +98,8 @@ build:asan --strip=never
 # the check for a symbol defined twice in a static library reads as a
 # definition repeated across the archive.
 build:asan --features=-symbol_check
-# Moving a pool on every append makes an append cost the pool, so whatever a
-# design repeats compiles in the square of its count here and a test of what a
-# compile costs measures this build rather than the compiler. The set is
-# otherwise the gate's own.
+# A test of what the compiler costs as it ships -- time, stack, memory -- would
+# measure this build instead, so the set is the gate's own less those.
 test:asan --test_tag_filters=-nightly,-cost
 
 # Shared cache and result streaming with actions still running locally. Needs a

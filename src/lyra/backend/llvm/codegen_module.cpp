@@ -1363,11 +1363,8 @@ auto CodeGenModule::LineageIndexOf(const lir::StatedDispatchRef& behavior)
   // library's ones close its table the same way.
   if (const auto* library = unit_->types.Get(behavior.introduced_by)
                                 .As<lir::RuntimeClassType>()) {
-    // Counted first: building the table interns its base, which moves the pool
-    // this view is into.
-    const std::size_t introduced =
-        support::VirtualsDeclaredBy(library->which).size();
-    return TableOf(behavior.introduced_by).size() - introduced +
+    return TableOf(behavior.introduced_by).size() -
+           support::VirtualsDeclaredBy(library->which).size() +
            behavior.ordinal.value;
   }
   return TableOf(*LineageStepOf(behavior.introduced_by).base).size() +
