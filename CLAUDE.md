@@ -27,22 +27,24 @@ Three layers, and a setting belongs to exactly one:
 | `~/.bazelrc`    | this machine: resource limits, cache location, shared keys | no      |
 
 `git clone` then `bazel build //...` works with no account and no local setup. `--config=ci`,
-`--config=rbe`, and `--config=dev` are opt-in and each needs a BuildBuddy key from one of the two
-untracked layers; nobody is required to have one. `.bazelrc.user.example` lists what may go there.
+`--config=rbe`, `--config=dev` and `--config=gcc` are opt-in and each needs a BuildBuddy key from
+one of the two untracked layers; nobody is required to have one. `.bazelrc.user.example` lists what
+may go there.
 
 `ci` shares a cache while actions stay local; `rbe` runs the actions remotely for a gate that reads
 none of what it produces; `dev` is `rbe` for the edit loop, where top-level outputs come back so the
 binary just built can be run. Under either remote-execution config the concurrency of several
 sessions at once needs no local setting, because the remote scheduler is one queue across every
-invocation -- the coordination that separate Bazel servers on one machine cannot have. A test that
-drives the host C++ compiler finds whichever one the machine executing it has; the remote image has
-the platform's own and no clang, so only a test about clang itself is tagged to stay local.
+invocation -- the coordination that separate Bazel servers on one machine cannot have.
 
-**The compiler differs between configs.** `--action_env=CC=clang` names the local compiler by
-environment, but a config setting `--platforms` resolves a registered toolchain instead, so
-`--config=rbe` builds under the remote image's system GCC. Cache entries are keyed by toolchain, so
-local and `rbe` builds share nothing, and code compiling under one can fail under the other --
-usually through the standard library, whose version travels with the compiler.
+**Which compiler builds Lyra is a setting of its own, apart from where the actions run.** It is the
+clang release `MODULE.bazel` pins, fetched by the build, wherever they run. `--config=gcc` names the
+remote image's GCC instead, and runs the actions there because that is the only place it exists.
+Either one compiles against the libstdc++ of the machine running the actions, because a program Lyra
+builds is linked by the user's compiler against the runtime library built here. Every warning is
+fatal and each compiler warns of things the other does not, so the merge gate builds under both. A
+test that drives the host C++ compiler finds whichever one the machine executing it has on its PATH;
+the remote image has GCC and no clang, so only a test about clang itself is tagged to stay local.
 
 ## Lyra CLI
 
@@ -118,8 +120,9 @@ bazel test //tests:llvm_tests --test_filter='12_statements.case_default_item'
 
 `bazel test //...` is the merge gate's own set, so a green run before committing is what says "this
 lands green". Do not widen or narrow it: the answer holds only while the two are the same command.
-The gate asks one thing more, that the whole graph still builds optimized, and
-`bazel build -c opt //...` answers it here.
+The gate asks two things more: that the whole graph still builds optimized, which
+`bazel build -c opt //...` answers here, and that it builds under GCC, which
+`bazel build //... --config=gcc` answers.
 
 Two targets are out of it, and they are one subject: whether an emitted C++ project still builds and
 runs. `cpp_tests` asks that over the whole corpus, once per case, and `emitted_project_tests` asks

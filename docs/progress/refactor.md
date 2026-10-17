@@ -1034,7 +1034,7 @@ enough to warrant its own focused review.
       `bugprone-switch-missing-default-case`, is the opposite rule and was measured to fire only on
       non-enum switches, so it does not collide), and `-Wcovered-switch-default` -- the only thing
       that flags a catch-all left on an already-complete switch -- is Clang-only and so cannot join a
-      set that also compiles under the remote image's GCC.
+      set that also compiles under GCC.
 
       Target: say where a catch-all is the wrong shape in terms the policy check can decide, then
       enumerate those sites. Completeness is not the whole of it either -- whether each arm says the

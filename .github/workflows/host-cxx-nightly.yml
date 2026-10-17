@@ -32,12 +32,12 @@ jobs:
       - name: Setup Clang
         uses: ./.github/actions/setup-clang
 
-      # Runs on the runner rather than through `--config=rbe`, which is remote
-      # execution: an action sent there runs under the remote image's system
-      # GCC, and this target spawns a host C++ compiler of its own. Remote
-      # execution would silently test a different toolchain from the one
-      # installed above, and the precompiled-header path only engages for clang
-      # at all.
+      # Runs on the runner rather than through `--config=rbe`, because this
+      # target spawns a host C++ compiler of its own, found on the PATH of the
+      # machine that runs the test. The remote image has GCC there and no
+      # clang, so remote execution would silently test a different toolchain
+      # from the one installed above, and the precompiled-header path only
+      # engages for clang at all.
       #
       # `nightly` is the exact complement of the default set the merge gate
       # runs, so the two together cover every test target once. Both sets are

@@ -149,8 +149,8 @@ is.
   sanitizer run built by the other never reports it. Two stood in the tree on 2026-10-10, found by
   reading after the nightly reported a third of the plain kind: a count read off an array type
   beside the argument that built the element's default, and a count read off a library class beside
-  the operand that built its table. The remote image builds with GCC and a checkout is built with
-  clang, so the nightly runs the set under each.
+  the operand that built its table. Lyra is built by both compilers, so the nightly runs the set
+  under each.
 
 ## Cross-references
 
