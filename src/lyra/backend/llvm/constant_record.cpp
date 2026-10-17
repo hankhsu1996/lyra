@@ -16,6 +16,7 @@
 #include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/construction_table.hpp"
 #include "lyra/runtime/scope_info.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -144,7 +145,8 @@ template <typename Record>
 auto LayoutOf() -> LibraryRecordLayout {
   const Record record{};
   LibraryRecordLayout layout{
-      .size = sizeof(Record), .alignment = alignof(Record), .fields = {}};
+      .layout = {.size = sizeof(Record), .align = alignof(Record)},
+      .fields = {}};
   AppendRecord(layout.fields, 0, record);
   return layout;
 }
@@ -219,6 +221,14 @@ void ConstantRecord::Place(std::uint64_t offset, llvm::Constant* value) {
   PadTo(offset);
   fields_.push_back(value);
   end_ += TypeSize(value->getType());
+}
+
+void ConstantRecord::PlaceInteger(value::StatedAt at, std::uint64_t value) {
+  Place(
+      at.offset,
+      llvm::ConstantInt::get(
+          llvm::Type::getIntNTy(*context_, static_cast<unsigned>(8 * at.bytes)),
+          value));
 }
 
 auto ConstantRecord::Build() && -> llvm::Constant* {

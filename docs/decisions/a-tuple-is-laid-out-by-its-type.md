@@ -5,6 +5,13 @@ Date: 2026-09-26 Status: accepted. Supersedes
 realization that entry chose. What the table's operation slots hold, and who states those
 operations, is
 [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md).
+Superseded in part by
+[a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md): a tuple's bytes no
+longer open with its table's address, which crosses beside them instead, and the runtime no longer
+holds a tuple in storage of its own where a variable, a net or a local holds one. The layout, the
+generated lifecycle and the table itself stand. The table is no longer a C++ object's vtable, since
+a type is told to the library as a record both sides read
+([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)).
 
 ## Context
 

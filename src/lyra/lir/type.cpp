@@ -195,7 +195,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const DiagnosticType&) {},
           [&](const RuntimeLibraryType& t) { Combine(seed, t.kind); },
           [&](const CoroutineType& t) { Combine(seed, t.payload); },
-          [&](const RefType& t) {
+          [&](const VariableRefType& t) {
             Combine(seed, t.pointee);
             Combine(seed, t.mutability);
           },
@@ -207,18 +207,16 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const ManagedRefType& t) { Combine(seed, t.pointee); },
           [&](const VectorType& t) { Combine(seed, t.element); },
           [&](const TupleType& t) { Combine(seed, t.elements); },
-          [&](const StructType& t) {
+          [&](const RecordType& t) {
             std::visit(
                 Overloaded{
-                    [&](StructId id) { Combine(seed, id.value); },
+                    [&](RecordId id) { Combine(seed, id.value); },
                     [&](const TypeDeclarationRef& ref) {
                       Combine(seed, ref.unit_name);
                       Combine(seed, ref.path);
                     }},
                 t.declaration);
           },
-          [&](const UnionType& t) { Combine(seed, t.members); },
-          [&](const TaggedUnionType& t) { Combine(seed, t.members); },
           [&](const ResolvedType& t) { Combine(seed, t.value); },
           [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
@@ -256,7 +254,7 @@ auto Type::KindName() const -> std::string_view {
           [](const CrossUnitClassType&) { return "cross-unit class"; },
           [](const RuntimeClassType&) { return "runtime class"; },
           [](const ClosureType&) { return "closure"; },
-          [](const StructType&) { return "struct"; },
+          [](const RecordType&) { return "record"; },
           [](const RuntimeEffectsType&) { return "runtime services"; },
           [](const FilesType&) { return "file table"; },
           [](const DiagnosticType&) { return "diagnostic dispatcher"; },
@@ -264,13 +262,11 @@ auto Type::KindName() const -> std::string_view {
             return RuntimeLibraryKindName(t.kind);
           },
           [](const CoroutineType&) { return "coroutine"; },
-          [](const RefType&) { return "reference"; },
+          [](const VariableRefType&) { return "variable reference"; },
           [](const PointerType&) { return "pointer"; },
           [](const ManagedRefType&) { return "managed reference"; },
           [](const VectorType&) { return "vector"; },
           [](const TupleType&) { return "tuple"; },
-          [](const UnionType&) { return "union"; },
-          [](const TaggedUnionType&) { return "tagged union"; },
           [](const ResolvedType&) { return "net resolution node"; },
           [](const DriverType&) { return "net driver"; },
           [](const ObservableType&) { return "observable cell"; },
@@ -294,9 +290,9 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [](const CrossUnitClassType& t) -> Declared { return t; },
           [](const ClosureType& t) -> Declared { return t; },
 
-          // A struct names a declaration too, but of a value, whose components
-          // are reached by position as a tuple's are rather than as members.
-          [&](const StructType&) { return names_none(); },
+          // A record names a declaration too, but of a value, whose members
+          // are reached by position as a tuple's components are.
+          [&](const RecordType&) { return names_none(); },
 
           // A value, however it is shaped and however its elements are held.
           [&](const IntegralType&) { return names_none(); },
@@ -310,8 +306,6 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const ShortRealType&) { return names_none(); },
           [&](const ChandleType&) { return names_none(); },
           [&](const TupleType&) { return names_none(); },
-          [&](const UnionType&) { return names_none(); },
-          [&](const TaggedUnionType&) { return names_none(); },
           [&](const EmptyType&) { return names_none(); },
           [&](const VoidType&) { return names_none(); },
 
@@ -344,7 +338,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           [&](const DiagnosticType&) { return names_none(); },
           [&](const RuntimeLibraryType&) { return names_none(); },
           [&](const CoroutineType&) { return names_none(); },
-          [&](const RefType&) { return names_none(); },
+          [&](const VariableRefType&) { return names_none(); },
           [&](const PointerType&) { return names_none(); },
           [&](const ManagedRefType&) { return names_none(); },
           [&](const VectorType&) { return names_none(); }});
@@ -373,12 +367,10 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // vector rather than a value held beside the others.
           [](const IntegralType&) -> Element { return std::nullopt; },
 
-          // Held all at once, or one at a time, but never as a sequence of one
-          // type.
+          // Parts side by side, or members overlaid, but never a sequence of
+          // one type.
           [](const TupleType&) -> Element { return std::nullopt; },
-          [](const StructType&) -> Element { return std::nullopt; },
-          [](const UnionType&) -> Element { return std::nullopt; },
-          [](const TaggedUnionType&) -> Element { return std::nullopt; },
+          [](const RecordType&) -> Element { return std::nullopt; },
 
           // A single quantity or a single token.
           [](const WildcardIndexType&) -> Element { return std::nullopt; },
@@ -408,7 +400,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // These refer to a value living elsewhere rather than holding one,
           // so a container reached through one is reached by dereferencing it
           // first.
-          [](const RefType&) -> Element { return std::nullopt; },
+          [](const VariableRefType&) -> Element { return std::nullopt; },
           [](const PointerType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },
@@ -433,7 +425,7 @@ auto Type::Pointee() const -> std::optional<TypeId> {
   if (const auto* pointer = As<PointerType>()) {
     return pointer->pointee;
   }
-  if (const auto* reference = As<RefType>()) {
+  if (const auto* reference = As<VariableRefType>()) {
     return reference->pointee;
   }
   if (const auto* managed = As<ManagedRefType>()) {
@@ -518,32 +510,25 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const ShortRealType&) -> Held { return ValueDomain::kShortReal; },
           // A chandle (LRM 6.14) is a value holding one host pointer.
           [](const ChandleType&) -> Held { return ValueDomain::kChandle; },
-          // A product is held the same way whether its components are all it
-          // is or a declaration names it.
-          [](const TupleType&) -> Held { return ValueDomain::kTuple; },
-          [](const StructType&) -> Held { return ValueDomain::kTuple; },
-          // An untagged union erases its tag and gives a cross-member read the
-          // component default; a tagged union keeps the tag observable and
-          // faults a mismatched access (LRM 7.3 / 7.3.2), so the two are
-          // different runtime values.
-          [](const UnionType&) -> Held { return ValueDomain::kUnion; },
-          [](const TaggedUnionType&) -> Held {
-            return ValueDomain::kTaggedUnion;
+          // A value laid out by its type -- a tuple, a structure, a union of
+          // either kind, a fixed-size unpacked array (LRM 7.4.2) -- is held as
+          // the bytes that type lays out, whatever the type says lies where.
+          [](const TupleType&) -> Held { return ValueDomain::kLaidOut; },
+          [](const RecordType&) -> Held { return ValueDomain::kLaidOut; },
+          [](const UnpackedArrayType&) -> Held {
+            return ValueDomain::kLaidOut;
           },
           // A tagged union's `void` member (LRM 7.3.2) is a value carrying no
           // bits, a value of its own so a build's payload is uniform whatever
           // the member type.
           [](const EmptyType&) -> Held { return ValueDomain::kEmpty; },
-          // A container's value is how its elements are held and nothing its
-          // declaration says: an unpacked array's range (LRM 7.4.2), a queue's
-          // bound (LRM 7.10), and an associative array's index type (LRM 7.8)
-          // each reach an operation as an operand of their own, so one runtime
-          // value per kind serves every declared shape.
+          // A container whose size changes as the program runs holds its
+          // elements in storage of its own, and nothing its declaration says:
+          // a queue's bound (LRM 7.10) and an associative array's index type
+          // (LRM 7.8) each reach an operation as an operand of their own, so
+          // one runtime value per kind serves every declared shape.
           [](const DynamicArrayType&) -> Held {
             return ValueDomain::kDynArray;
-          },
-          [](const UnpackedArrayType&) -> Held {
-            return ValueDomain::kUnpackedArray;
           },
           [](const QueueType&) -> Held { return ValueDomain::kQueue; },
           [](const AssociativeArrayType&) -> Held {
@@ -561,13 +546,15 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // hands it on.
           [](const ClosureType&) -> Held { return LibraryObject::kClosure; },
           // A shared pointer is a hold on storage that outlives the scope
-          // asking for it, and letting the hold go is what ends it; the other
-          // two name storage somebody else ends.
+          // asking for it, and letting the hold go is what ends it; a unique
+          // one owns what it points at, and its end ends that and gives the
+          // storage back; a borrowed one names storage somebody else ends.
           [](const PointerType& pointer) -> Held {
             switch (pointer.ownership) {
               case PointerOwnership::kShared:
                 return LibraryObject::kSharedPointer;
               case PointerOwnership::kUnique:
+                return OwnedStorageAddress{};
               case PointerOwnership::kBorrowed:
                 return std::nullopt;
             }
@@ -672,29 +659,18 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           // Where a value lies and the variable, if any, it belongs to, so a
           // write through it is told to whoever waits on that variable. The
           // storage it names is somebody else's, so ending it ends nothing.
-          [](const RefType&) -> Held { return LibraryObject::kReference; }});
+          [](const VariableRefType&) -> Held {
+            return LibraryObject::kReference;
+          }});
 }
 
 auto Type::IsOwnedValue() const -> bool {
   return HeldAs().has_value();
 }
 
-auto Type::IsProduct() const -> bool {
-  return Is<TupleType>() || Is<StructType>();
-}
-
-auto Type::IsUnion() const -> bool {
-  return Is<UnionType>() || Is<TaggedUnionType>();
-}
-
-auto Type::UnionMemberTypes() const -> std::vector<TypeId> {
-  if (const auto* untagged = As<UnionType>()) {
-    return untagged->members;
-  }
-  if (const auto* tagged = As<TaggedUnionType>()) {
-    return tagged->members;
-  }
-  throw InternalError("lir: type is not a union");
+auto Type::IsMoveOnly() const -> bool {
+  const std::optional<Holding> held = HeldAs();
+  return held.has_value() && std::holds_alternative<OwnedStorageAddress>(*held);
 }
 
 auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {

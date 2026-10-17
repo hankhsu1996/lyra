@@ -135,9 +135,10 @@ struct UnpackedAggregateField {
 
 // The declaration a type is, named the way any unit names it: the unit that
 // holds it and which declaration of that unit it is. SystemVerilog identifies
-// a structure by its declaration rather than by its members (LRM 6.22.1), and a
-// type that crosses a unit boundary is declared by a unit the crossing ones
-// already depend on (LRM 6.22), so the pair identifies it from anywhere.
+// a structure and a union by its declaration rather than by its members (LRM
+// 6.22.1), and a type that crosses a unit boundary is declared by a unit the
+// crossing ones already depend on (LRM 6.22), so the pair identifies it from
+// anywhere.
 struct TypeDeclarationRef {
   std::string unit_name;
   support::DefPath path;
@@ -157,12 +158,14 @@ struct UnpackedStructType {
   auto operator==(const UnpackedStructType&) const -> bool = default;
 };
 
-// LRM 7.3 unpacked union: one storage shared across the member types, with one
-// member usable at a time. `tagged` (LRM 7.3.2) marks a type-checked union that
-// carries a tag identifying the active member; an untagged union (the default)
-// is the type-loophole form with no tag. A tagged union may declare a `void`
-// member (LRM 7.3.2) when all information is in the tag.
+// LRM 7.3 unpacked union: one storage its member types overlay. `tagged` (LRM
+// 7.3.2) marks a type-checked union that carries a tag naming the member it
+// holds; an untagged union (the default) is the type-loophole form with no
+// tag, read through any member. A tagged union may declare a `void`
+// member (LRM 7.3.2) when all information is in the tag. Two declarations with
+// the same members are two types (LRM 6.22.1).
 struct UnpackedUnionType {
+  TypeDeclarationRef declaration;
   std::vector<UnpackedAggregateField> fields;
   bool tagged;
 

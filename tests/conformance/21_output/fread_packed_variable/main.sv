@@ -2,7 +2,8 @@
 // order -- the first byte read fills the most significant location -- and
 // returns the number of characters read. A destination whose width is not a
 // whole number of bytes still takes every byte it spans, and what does not fit
-// is truncated (LRM 21.3.4.4).
+// is truncated (LRM 21.3.4.4). The count is a value like any other, so the call
+// stands as an operand where it is read.
 module Top;
   int fd;
 
@@ -17,6 +18,8 @@ module Top;
 
   bit [127:0] short_file;
   int short_file_count;
+
+  bit read_as_operand;
 
   initial begin
     fd = $fopen("word.bin", "wb");
@@ -50,6 +53,10 @@ module Top;
     fd = $fopen("short.bin", "rb");
     short_file_count = $fread(short_file, fd);
     $fclose(fd);
+
+    fd = $fopen("word.bin", "rb");
+    read_as_operand = $fread(word, fd) == 4;
+    $fclose(fd);
   end
 
   final begin
@@ -72,6 +79,8 @@ module Top;
     if (short_file_count !== 4)
       $fatal(1, "a four-byte file into 128 bits returned %0d, expected 4",
              short_file_count);
+    if (read_as_operand !== 1'b1)
+      $fatal(1, "the count compared where it was read did not equal 4");
     $display("All checks passed");
   end
 endmodule

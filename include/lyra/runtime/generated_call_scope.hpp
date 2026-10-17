@@ -1,9 +1,12 @@
 #pragma once
 
+#include <cstddef>
 #include <exception>
 #include <memory>
 #include <utility>
 #include <vector>
+
+#include "lyra/runtime/tail.hpp"
 
 namespace lyra::runtime {
 
@@ -18,6 +21,15 @@ class ActivationValueStore {
   template <typename T, typename... Args>
   auto New(Args&&... args) -> T* {
     auto owner = std::make_shared<T>(std::forward<Args>(args)...);
+    T* value = owner.get();
+    objects_.push_back(std::move(owner));
+    return value;
+  }
+
+  // The same of a `T` keeping a value of layout `held` at its tail.
+  template <typename T, typename... Args>
+  auto NewWithTail(support::Layout held, Args&&... args) -> T* {
+    auto owner = MakeWithTail<T>(held, std::forward<Args>(args)...);
     T* value = owner.get();
     objects_.push_back(std::move(owner));
     return value;

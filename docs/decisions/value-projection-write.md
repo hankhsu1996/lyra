@@ -13,7 +13,12 @@ and is written where it lies on both backends
 ([a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md),
 2026-09-24). Bits of a packed value are written where they lie as well
 ([a-packed-value-is-its-words](a-packed-value-is-its-words.md) D3, 2026-10-10), and D2 states both
-forms.
+forms. A union's member, the last view this entry covered whose representation the library owned, is
+a field step of a place since
+[an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md) and
+[a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md)
+(2026-10-13), so D2's functional form is left with a string's character alone, which is written by a
+mutating call on the string.
 
 D2 is the load-bearing half. It fixes what every interior write means, which is that the owner
 afterwards holds its old value with the selected part replaced, and that owner and coordinates were

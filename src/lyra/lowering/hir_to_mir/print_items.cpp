@@ -227,9 +227,7 @@ auto BuildRuntimeFormatOperand(
   block.AppendStmt(
       mir::LocalDeclStmt{
           .target = value, .init = block.exprs.Add(*std::move(lowered_or))});
-  const auto read_value = [&] {
-    return block.exprs.Add(mir::MakeLocalRefExpr(value, value_type));
-  };
+  const auto read_value = [&] { return block.ReadLocal(value, value_type); };
 
   const auto make_arg = [&](mir::Callee callee,
                             std::vector<mir::ExprId> parts) {
@@ -251,7 +249,7 @@ auto BuildRuntimeFormatOperand(
             .target = text,
             .init = BuildAssignmentPatternText(
                 lowerer.Owner(), frame, read_value(), source.type)});
-    return block.exprs.Add(mir::MakeLocalRefExpr(text, unit.builtins.string));
+    return block.ReadLocal(text, unit.builtins.string);
   };
 
   switch (PatternReadingOf(lowerer.Owner().Hir(), source.type)) {
@@ -290,8 +288,7 @@ auto BuildHierarchicalNameExpr(Lowerer& lowerer, const WalkFrame& frame)
           ? block.exprs.Add(BuildStructuralFieldAccessExpr(
                 frame, unit, mir::EnclosingHops{0},
                 *frame.scope_name_borrowed_handle))
-          : block.exprs.Add(
-                MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+          : block.exprs.Add(MakeSelfRefExpr(frame));
   return block.exprs.Add(
       mir::Expr{
           .data =

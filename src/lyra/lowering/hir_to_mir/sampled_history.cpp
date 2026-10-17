@@ -85,8 +85,7 @@ auto BuildSampledHistoryExpr(
     const StructuralScopeLowerer& lowerer, hir::SampledHistoryId id)
     -> mir::ExprId {
   const mir::FieldId field = lowerer.TranslateSampledHistory(id);
-  const mir::ExprId self = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(lowerer.Owner().Unit(), block, self),
@@ -138,7 +137,7 @@ auto LowerSampledHistorySampler(
   // "strictly prior" hold by construction rather than by anyone's ordering.
   ClosureBuilder closure(unit, body_frame);
   const mir::ExprId captured =
-      SnapshotIntoClosure(lowerer.Owner(), body_frame, closure, settled);
+      SnapshotValueIntoClosure(lowerer.Owner(), body_frame, closure, settled);
   closure.Body().AppendStmt(
       mir::ExprStmt{
           .expr = closure.Body().exprs.Add(

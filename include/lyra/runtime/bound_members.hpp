@@ -3,14 +3,10 @@
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/observable.hpp"
-#include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/support/takeover_level.hpp"
 
 namespace lyra::runtime {
 
@@ -110,13 +106,13 @@ class BoundMembers {
 
 // What generated code calls to bind a member, on the engine it runs under.
 template <value::LyraValue T>
-void BindMember(Ref<T>& member, const Ref<T>& bound) {
+void BindMember(VariableRef<T>& member, const VariableRef<T>& bound) {
   current_runtime().Bound().Bind(member.AsMember(), bound.Erased());
 }
 
 // What generated code calls to bind a `ref` port, on the engine it runs under.
 template <value::LyraValue T>
-void BindAlias(Ref<T>& alias, const Ref<T>& bound) {
+void BindAlias(VariableRef<T>& alias, const VariableRef<T>& bound) {
   current_runtime().Bound().Alias(alias.AsMember(), bound.Erased());
 }
 
@@ -138,39 +134,26 @@ void BindAlias(Ref<T>& alias, const Ref<T>& bound) {
 [[nodiscard]] auto ForcedMember(
     const ErasedReference& reference, std::int64_t level) -> ErasedReference&;
 
-// The variable a port's reference names, as the one of `T` it is: it is bound
-// to the whole of a variable, its connection's or a force's.
-template <value::LyraValue T>
-[[nodiscard]] auto VariableNamedBy(const ErasedReference& reference)
-    -> Var<T>& {
-  if (!reference.whole ||
-      !std::holds_alternative<VariableCell*>(reference.holder)) {
-    throw InternalError(
-        "VariableNamedBy: a port's reference names something other than the "
-        "whole of a variable");
-  }
-  return WholeVariable<T>(reference);
-}
-
 // The three operations of a procedural continuous assignment (LRM 10.6)
-// through a reference, on what it names: a variable is taken over where it
-// lies, and a member is given storage of the assignment's own to name, which
-// `refer` forms in whichever form the references of the running program take.
+// through a reference, on what it names, over the class `C` of the cells the
+// variables it names are: a variable is taken over where it lies, and a member
+// is given storage of the assignment's own to name. `fresh` makes that storage
+// holding what a cell holds, and `refer` forms the reference that names it, in
+// whichever form the references of the running program take.
 
-template <value::LyraValue T, class Refer>
+template <class C, class Fresh, class Refer>
 auto BeginTakeoverThrough(
-    const ErasedReference& reference, std::int64_t level, Refer refer)
-    -> std::int64_t {
+    const ErasedReference& reference, std::int64_t level, Fresh fresh,
+    Refer refer) -> std::int64_t {
   if (!NamesAMember(reference)) {
-    return VariableNamedBy<T>(reference).BeginTakeover(level);
+    return WholeVariable<C>(reference).BeginTakeover(level);
   }
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
   if (!bound.Forced(member)) {
     // The storage first holds what the member showed, so naming it changes
     // nothing a wait could see; the forced value then arrives as any write.
-    auto forced = std::make_shared<Var<T>>();
-    forced->Initialize(VariableNamedBy<T>(member).Get());
+    std::shared_ptr<C> forced = fresh(WholeVariable<C>(member));
     bound.Force(member, refer(*forced), forced);
   }
   return bound.NextGeneration(member);
@@ -179,50 +162,55 @@ auto BeginTakeoverThrough(
 // `drive` states the evaluation's value to a variable under its own takeover,
 // answering whether that evaluation is still in effect; `write` writes it to
 // the storage a member's force gave it, as any write.
-template <value::LyraValue T, class Drive, class Write>
+template <class C, class Drive, class Write>
 auto DriveTakeoverThrough(
     const ErasedReference& reference, std::int64_t level,
     std::int64_t generation, Drive drive, Write write) -> bool {
   if (!NamesAMember(reference)) {
-    return drive(VariableNamedBy<T>(reference));
+    return drive(WholeVariable<C>(reference));
   }
   const ErasedReference& member = ForcedMember(reference, level);
   if (!current_runtime().Bound().StillForcing(member, generation)) {
     return false;
   }
-  write(VariableNamedBy<T>(member));
+  write(WholeVariable<C>(member));
   return true;
 }
 
 // A member shows what drives it from here on, so the force's storage takes
 // that value first, as any write, and whoever waits on the member is told
 // exactly when the release changed what it shows.
-template <value::LyraValue T>
+template <class C>
 void EndTakeoverThrough(const ErasedReference& reference, std::int64_t level) {
   if (!NamesAMember(reference)) {
-    VariableNamedBy<T>(reference).EndTakeover(level);
+    WholeVariable<C>(reference).EndTakeover(level);
     return;
   }
   ErasedReference& member = ForcedMember(reference, level);
   BoundMembers& bound = current_runtime().Bound();
   if (bound.Forced(member)) {
-    VariableNamedBy<T>(member).Set(
-        VariableNamedBy<T>(bound.DriverOf(member)).Get());
+    WholeVariable<C>(member).SetFrom(WholeVariable<C>(bound.DriverOf(member)));
   }
   bound.Release(member);
 }
 
 template <value::LyraValue T>
-auto Ref<T>::BeginTakeover(std::int64_t level) const -> std::int64_t {
-  return BeginTakeoverThrough<T>(
-      erased_, level, [](Var<T>& forced) { return Ref<T>{forced}.Erased(); });
+auto VariableRef<T>::BeginTakeover(std::int64_t level) const -> std::int64_t {
+  return BeginTakeoverThrough<Var<T>>(
+      erased_, level,
+      [](const Var<T>& showing) {
+        auto forced = std::make_shared<Var<T>>();
+        forced->Initialize(showing.Get());
+        return forced;
+      },
+      [](Var<T>& forced) { return VariableRef<T>{forced}.Erased(); });
 }
 
 template <value::LyraValue T>
-auto Ref<T>::DriveTakeover(
+auto VariableRef<T>::DriveTakeover(
     std::int64_t level, std::int64_t generation, const T& new_val) const
     -> bool {
-  return DriveTakeoverThrough<T>(
+  return DriveTakeoverThrough<Var<T>>(
       erased_, level, generation,
       [&](Var<T>& variable) {
         return variable.DriveTakeover(level, generation, new_val);
@@ -231,8 +219,8 @@ auto Ref<T>::DriveTakeover(
 }
 
 template <value::LyraValue T>
-void Ref<T>::EndTakeover(std::int64_t level) const {
-  EndTakeoverThrough<T>(erased_, level);
+void VariableRef<T>::EndTakeover(std::int64_t level) const {
+  EndTakeoverThrough<Var<T>>(erased_, level);
 }
 
 }  // namespace lyra::runtime

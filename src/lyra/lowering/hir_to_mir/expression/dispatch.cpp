@@ -7,7 +7,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
 #include "lyra/hir/expr.hpp"
@@ -28,6 +27,8 @@
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_builders.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -52,19 +53,24 @@ auto KeepsSampledValue(const L& lowerer, const hir::Expr& expr) -> bool {
   return true;
 }
 
-// The one value-context expression dispatcher, shared by both pass classes. An
-// expression's meaning does not depend on whether a process body or a
-// structural scope encloses it, so every context-free kind routes to one shared
-// handler listed exactly once -- a kind cannot be wired in one context and
-// forgotten in the other. The one real difference is parameterized inline: a
-// bare name resolves to different storage per scope. An observable-cell leaf is
-// auto-wrapped in a `Get` call so the result is value-typed.
+// The one expression dispatcher, shared by both pass classes. An expression's
+// meaning does not depend on whether a process body or a structural scope
+// encloses it, so every context-free kind routes to one shared handler listed
+// exactly once -- a kind cannot be wired in one context and forgotten in the
+// other. The one real difference is parameterized inline: a bare name resolves
+// to different storage per scope. What an observable cell holds is named by
+// reading the cell, so the result is value-typed. An expression naming storage
+// comes out as that place, unread, as rustc's `as_place` leaves it: an access
+// to a part of it reaches the part where it lies.
 template <ExprLowerer L>
-auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+auto LowerAsPlaceImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   constexpr bool kProcedural = std::same_as<L, ProcessLowerer>;
   const diag::FailureContext at(expr.span);
   const mir::TypeId result_type = lowerer.Owner().TranslateType(expr.type);
+  if (IsTagCheckedRead(lowerer, frame, expr)) {
+    return LowerTagCheckedRead(lowerer, frame, expr);
+  }
   auto raw_or = std::visit(
       Overloaded{
           [&](const hir::PrimaryExpr& p) -> diag::Result<mir::Expr> {
@@ -169,9 +175,8 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                 lowerer, frame, a, result_type);
           },
           [&](const hir::ClassNewExpr& n) -> diag::Result<mir::Expr> {
-            // `new` allocates a managed object and runs its constructor: a
-            // construction whose result type (a managed reference) names what
-            // to build; the actuals flow to the constructor's formals.
+            // `new` allocates an object and initializes it by its constructor,
+            // to which the actuals flow; the handle owns it from there.
             std::vector<mir::ExprId> args;
             args.reserve(n.arguments.size() + 1);
             // A class declared in a structural scope is a type of that scope's
@@ -189,12 +194,13 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
               args.push_back(
                   frame.current_block->exprs.Add(*std::move(arg_or)));
             }
-            return mir::Expr{
-                .data =
-                    mir::CallExpr{
-                        .callee = mir::Construct{},
-                        .arguments = std::move(args)},
-                .type = result_type};
+            const mir::TypeId object_type =
+                *mir::AllocatedType(lowerer.Owner().Unit().types, result_type);
+            return mir::MakeNewExpr(
+                frame.current_block->exprs.Add(
+                    mir::MakeObjectConstructionExpr(
+                        object_type, std::move(args))),
+                result_type);
           },
           [&](const hir::TaggedUnionExpr& t) -> diag::Result<mir::Expr> {
             return LowerHirTaggedUnionExpr(
@@ -216,21 +222,39 @@ auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     // every leaf read is built.
     if (frame.reads_as_of == ReadsAsOf::kPreponed &&
         KeepsSampledValue(lowerer, expr)) {
-      return mir::MakeCellSampledLoadCallExpr(cell_id, result_type);
+      return frame.current_block->SampledWrapperContents(
+          lowerer.Owner().Unit().types, cell_id, result_type);
     }
-    return mir::MakeCellLoadCallExpr(cell_id, result_type);
+    // Reading what the wrapper holds names the storage it represents, which
+    // is then read where a value is wanted.
+    return frame.current_block->WrapperContents(
+        lowerer.Owner().Unit().types, cell_id, result_type);
   }
   return raw_or;
 }
 
+// The same expression where a value is wanted: a place standing there is read,
+// as Sema wraps an lvalue operand in its lvalue-to-rvalue conversion.
+template <ExprLowerer L>
+auto LowerExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<mir::Expr> {
+  auto lowered = LowerAsPlaceImpl(lowerer, expr, frame);
+  if (!lowered) {
+    return lowered;
+  }
+  return frame.current_block->AsValue(
+      lowerer.Owner().Unit().types, *std::move(lowered));
+}
+
 // The dispatcher for an expression named as a part rather than read, shared by
-// both pass classes. Addressable kinds only, and no `Get` auto-wrap, so an
-// observable-cell leaf flows out as the bare cell. It peels rather than
-// composes: a kind that reaches a part of a value adds one step to the descent
-// and recurses, and every other kind is the place the descent bottoms out in.
-// What it answers with is only a statement of which part is named: the part is
-// neither read nor written here, and the one thing appended is the binding of
-// a value the path is reached through where the path takes it more than once.
+// both pass classes. Addressable kinds only, and no cell is asked for what it
+// holds, so an observable-cell leaf flows out as the bare cell. It peels rather
+// than composes: a kind that reaches a part of a value adds one step to the
+// descent and recurses, and every other kind is the place the descent bottoms
+// out in. What it answers with is only a statement of which part is named: the
+// part is neither read nor written here, and the one thing appended is the
+// binding of a value the path is reached through where the path takes it more
+// than once.
 template <ExprLowerer L>
 auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
@@ -260,8 +284,7 @@ auto LowerAccessPathImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
                       std::get_if<hir::ClassPropertyRef>(&p.data)) {
                 return PropertyPath(
                     lowerer, frame,
-                    frame.current_block->exprs.Add(MakeSelfRefExpr(
-                        frame, frame.current_class->self_pointer_type)),
+                    frame.current_block->exprs.Add(MakeSelfRefExpr(frame)),
                     property->target, result_type);
               }
               return as_place(
@@ -353,14 +376,19 @@ auto LowerIgnoredExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
 }
 
 // The part `expr` names as the target of a write, shared by both pass classes:
-// the path, with the checks the write owes before it lands appended where the
+// the path, with whatever the write names more than once evaluated where the
 // statement is reached.
 template <ExprLowerer L>
 auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<AccessPath> {
   auto target = LowerAccessPathImpl(lowerer, expr, frame);
   if (!target) return std::unexpected(std::move(target.error()));
-  AppendTagChecks(lowerer.Owner(), frame, *target);
+  SettleForTagChecks(lowerer.Owner(), frame, *target);
+  // A write to bits of a character reads the character before putting it back,
+  // so the target is settled once for both (LRM 11.5.1, 6.16.2).
+  if (WritesBitsOfACharacter(*target)) {
+    *target = Settled(lowerer.Owner(), frame, *std::move(target));
+  }
   return target;
 }
 
@@ -369,6 +397,11 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
 auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
   return LowerExprImpl(*this, expr, frame);
+}
+
+auto ProcessLowerer::LowerAsPlace(const hir::Expr& expr, WalkFrame frame)
+    -> diag::Result<mir::Expr> {
+  return LowerAsPlaceImpl(*this, expr, frame);
 }
 
 auto ProcessLowerer::LowerIgnoredExpr(const hir::Expr& expr, WalkFrame frame)
@@ -389,6 +422,11 @@ auto ProcessLowerer::LowerLhsExpr(const hir::Expr& expr, WalkFrame frame)
 auto StructuralScopeLowerer::LowerExpr(
     const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
   return LowerExprImpl(*this, expr, frame);
+}
+
+auto StructuralScopeLowerer::LowerAsPlace(
+    const hir::Expr& expr, WalkFrame frame) const -> diag::Result<mir::Expr> {
+  return LowerAsPlaceImpl(*this, expr, frame);
 }
 
 auto StructuralScopeLowerer::LowerIgnoredExpr(

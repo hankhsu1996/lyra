@@ -14,7 +14,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
-#include "lyra/lir/struct_id.hpp"
+#include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
@@ -56,10 +56,12 @@ class LirDumper {
               "{} constant \"{}\" = {}", LinkageName(constant.linkage),
               constant.symbol, FormatConstant(constant.initializer)));
     }
-    for (const TypeDefault& stated : unit_->type_defaults) {
+    for (const TypeOperation& stated : unit_->type_operations) {
       Line(
           std::format(
-              "default of {} = \"{}\"", FormatType(stated.type),
+              R"("{}" of {} = "{}")",
+              support::ValueOperationName(stated.answers),
+              FormatType(stated.type),
               unit_->functions.Get(stated.function).name));
     }
     for (const ClassId id : unit_->classes.Ids()) {
@@ -68,11 +70,11 @@ class LirDumper {
     for (const ClosureId id : unit_->closures.Ids()) {
       DumpClosure(id);
     }
-    for (const ExternalStruct& external : unit_->external_structs) {
-      DumpExternalStruct(external);
+    for (const ExternalRecord& external : unit_->external_records) {
+      DumpExternalRecord(external);
     }
-    for (const StructId id : unit_->structs.Ids()) {
-      DumpStruct(id);
+    for (const RecordId id : unit_->records.Ids()) {
+      DumpRecord(id);
     }
     for (const Function& fn : unit_->functions) {
       DumpFunction(fn);
@@ -82,15 +84,15 @@ class LirDumper {
   }
 
  private:
-  void DumpStruct(StructId id) {
-    const Struct& declared = unit_->structs.Get(id);
+  void DumpRecord(RecordId id) {
+    const RecordDecl& declared = unit_->records.Get(id);
     Line(
         std::format(
-            R"(Struct "{}" (#{}))", support::DisplayOf(declared.path),
-            id.value));
+            R"({} "{}" (#{}))", RecordKindName(declared.kind),
+            support::DisplayOf(declared.path), id.value));
     Indent();
     DumpElements(declared.elements);
-    for (const StructMethod& method : declared.methods) {
+    for (const RecordMethod& method : declared.methods) {
       Line(
           std::format(
               R"("{}": {})", support::ValueOperationName(method.answers),
@@ -99,10 +101,11 @@ class LirDumper {
     Dedent();
   }
 
-  void DumpExternalStruct(const ExternalStruct& external) {
+  void DumpExternalRecord(const ExternalRecord& external) {
     Line(
         std::format(
-            "ExternalStruct \"{}.{}\"", external.declaration.unit_name,
+            R"(external {} "{}.{}")", RecordKindName(external.kind),
+            external.declaration.unit_name,
             support::DisplayOf(external.declaration.path)));
     Indent();
     DumpElements(external.elements);
@@ -257,8 +260,11 @@ class LirDumper {
     }
     Line(
         std::format(
-            "fn \"{}\"({}) -> {}", fn.name, params,
-            FormatType(fn.result_type)));
+            "fn \"{}\"({}) -> {}{}", fn.name, params,
+            FormatType(fn.result_type),
+            fn.return_place.has_value()
+                ? std::format(" return %{}", fn.return_place->value)
+                : std::string{}));
     Indent();
     for (std::size_t v = 0; v < fn.variables.size(); ++v) {
       Line(std::format("var {}: {}", v, FormatType(fn.variables[v])));
@@ -268,18 +274,62 @@ class LirDumper {
       Indent();
       const BasicBlock& block = fn.blocks[b];
       for (const Instr& instr : block.instrs) {
-        Line(
-            std::format(
-                "%{} = {} : {}", instr.result.value, FormatInstr(instr.data),
-                FormatType(fn.values.Get(instr.result).type)));
+        Line(FormatInstr(fn, instr.data));
       }
-      Line(FormatTerminator(block.terminator));
+      Line(FormatTerminator(fn, block.terminator));
       Dedent();
     }
     Dedent();
   }
 
-  [[nodiscard]] auto FormatInstr(const InstrData& data) const -> std::string {
+  // `%N: T` for a transient, or the place a value initializes.
+  [[nodiscard]] static auto FormatDestination(
+      const Function& fn, const Destination& destination) -> std::string {
+    return std::visit(
+        Overloaded{
+            [&](const Transient& defined) -> std::string {
+              return std::format(
+                  "%{}: {}", defined.value.value,
+                  FormatType(fn.values.Get(defined.value).type));
+            },
+            [&](const Place& place) -> std::string {
+              return std::format("init {}", FormatPlace(place));
+            }},
+        destination);
+  }
+
+  [[nodiscard]] auto FormatInstr(
+      const Function& fn, const InstrData& data) const -> std::string {
+    return std::visit(
+        Overloaded{
+            [&](const AssignInstr& assign) -> std::string {
+              return std::format(
+                  "{} = {}", FormatDestination(fn, assign.destination),
+                  FormatRvalue(assign.value));
+            },
+            [&](const CloseVariablesInstr& closed) -> std::string {
+              return std::format(
+                  "close variables {}", FormatOperand(closed.variables));
+            },
+            [&](const StoreInstr& store) -> std::string {
+              return std::format(
+                  "store {} = {}", FormatPlace(store.place),
+                  FormatOperand(store.value));
+            },
+            [&](const BitsStoreInstr& store) -> std::string {
+              return std::format(
+                  "store_bits {}{} = {}", FormatPlace(store.place),
+                  FormatBitsParts(store.parts), FormatOperand(store.bits));
+            },
+            [&](const StorageInstr& storage) -> std::string {
+              return std::format(
+                  "{} {}", StorageOpName(storage.op),
+                  FormatOperand(Use{.value = storage.of}));
+            }},
+        data);
+  }
+
+  [[nodiscard]] auto FormatRvalue(const Rvalue& value) const -> std::string {
     return std::visit(
         Overloaded{
             [&](const CallInstr& call) -> std::string {
@@ -290,8 +340,9 @@ class LirDumper {
             [](const ReceiveDepartureInstr&) -> std::string {
               return "receive departure";
             },
-            [&](const TupleInstr& tuple) -> std::string {
-              return std::format("tuple({})", FormatOperands(tuple.components));
+            [&](const ProductInstr& product) -> std::string {
+              return std::format(
+                  "product({})", FormatOperands(product.components));
             },
             [](const OpenVariablesInstr&) -> std::string {
               return "open variables";
@@ -300,10 +351,6 @@ class LirDumper {
               return std::format(
                   "variable {}[{}]", FormatOperand(reached.variables),
                   reached.position.value);
-            },
-            [&](const CloseVariablesInstr& closed) -> std::string {
-              return std::format(
-                  "close variables {}", FormatOperand(closed.variables));
             },
             [&](const ClosureInstr& built) -> std::string {
               return std::format("closure({})", FormatOperands(built.captures));
@@ -321,35 +368,27 @@ class LirDumper {
               return std::format(
                   "dynamic_cast {}", FormatOperand(cast.operand));
             },
-            [&](const AggregateExtractInstr& extract) -> std::string {
+            [&](const UnionInstr& built) -> std::string {
               return std::format(
-                  "aggregate_extract {}, {}", FormatOperand(extract.aggregate),
-                  FormatSelector(extract.selector));
+                  "union({}: {})", built.member.value,
+                  FormatOperand(built.value));
             },
-            [&](const AggregateUpdateInstr& update) -> std::string {
+            [&](const VectorGetInstr& get) -> std::string {
               return std::format(
-                  "aggregate_update {}, {}, {}",
-                  FormatOperand(update.aggregate),
-                  FormatSelector(update.selector),
-                  FormatOperand(update.replacement));
+                  "vector_get {}, {}", FormatOperand(get.vector),
+                  FormatOperand(get.index));
+            },
+            [&](const DiscriminantInstr& read) -> std::string {
+              return std::format("discriminant {}", FormatPlace(read.place));
             },
             [&](const LoadInstr& load) -> std::string {
               return std::format("load {}", FormatPlace(load.place));
             },
-            [&](const StoreInstr& store) -> std::string {
-              return std::format(
-                  "store {} = {}", FormatPlace(store.place),
-                  FormatOperand(store.value));
+            [&](const OverlaidLoadInstr& load) -> std::string {
+              return std::format("overlaid_load {}", FormatPlace(load.place));
             },
-            [&](const BitsStoreInstr& store) -> std::string {
-              return std::format(
-                  "store_bits {}{} = {}", FormatPlace(store.place),
-                  FormatBitsParts(store.parts), FormatOperand(store.bits));
-            },
-            [&](const StorageInstr& storage) -> std::string {
-              return std::format(
-                  "{} {}", StorageOpName(storage.op),
-                  FormatOperand(Use{.value = storage.of}));
+            [&](const UseInstr& use) -> std::string {
+              return std::format("use {}", FormatOperand(use.operand));
             },
             [&](const AddrOfInstr& addr) -> std::string {
               return std::format("addrof {}", FormatPlace(addr.place));
@@ -363,19 +402,14 @@ class LirDumper {
               return std::format(
                   "{} {}", UnaryOpName(un.op), FormatOperand(un.operand));
             }},
-        data);
+        value);
   }
 
-  [[nodiscard]] auto FormatTerminator(const Terminator& term) const
-      -> std::string {
+  [[nodiscard]] auto FormatTerminator(
+      const Function& fn, const Terminator& term) const -> std::string {
     return std::visit(
         Overloaded{
-            [&](const ReturnTerm& ret) -> std::string {
-              if (ret.value.has_value()) {
-                return std::format("return {}", FormatOperand(*ret.value));
-              }
-              return "return";
-            },
+            [](const ReturnTerm&) -> std::string { return "return"; },
             [](const BranchTerm& br) -> std::string {
               return std::format("br bb{}", br.target.value);
             },
@@ -396,7 +430,8 @@ class LirDumper {
             [](const UnreachableTerm&) -> std::string { return "unreachable"; },
             [&](const DepartingCallInstr& call) -> std::string {
               return std::format(
-                  "%{} = call {}({}) -> bb{} departs bb{}", call.result.value,
+                  "{} = call {}({}) -> bb{} departs bb{}",
+                  FormatDestination(fn, call.destination),
                   FormatCallTarget(call.target), FormatOperands(call.args),
                   call.returned.value, call.landing.value);
             }},
@@ -449,6 +484,9 @@ class LirDumper {
             },
             [](const EndValueTarget&) -> std::string { return "end"; },
             [](const CopyValueTarget&) -> std::string { return "copy"; },
+            [](const DynamicStorageTarget& d) -> std::string {
+              return std::string{DynamicStorageOpName(d.op)};
+            },
             [](const ControlEffectTarget& c) -> std::string {
               return std::string{ControlEffectOpName(c.op)};
             },
@@ -505,22 +543,6 @@ class LirDumper {
     return out;
   }
 
-  [[nodiscard]] static auto FormatSelector(const AggregateSelector& selector)
-      -> std::string {
-    return std::visit(
-        Overloaded{
-            [](const Component& c) -> std::string {
-              return std::format("component {}", c.index.value);
-            },
-            [&](const ContainerElement& e) -> std::string {
-              return std::format("element({})", FormatOperands(e.operands));
-            },
-            [&](const ContainerSlice& s) -> std::string {
-              return std::format("slice({})", FormatOperands(s.operands));
-            }},
-        selector);
-  }
-
   [[nodiscard]] static auto FormatOperand(const Operand& op) -> std::string {
     return std::visit(
         Overloaded{
@@ -548,6 +570,7 @@ class LirDumper {
             [](const BoolConst& c) -> std::string {
               return std::format("bool:{}", c.value ? "true" : "false");
             },
+            [](const VoidConst&) -> std::string { return "void"; },
             [](const EnumTableRef& c) -> std::string {
               return std::format("enumtable:{}", c.table.value);
             },
@@ -571,26 +594,40 @@ class LirDumper {
   }
 
   // One type as the table states it: its kind, and for a type that stands for
-  // storage or refers elsewhere, what it reaches, and for a struct, which
-  // declaration it is. Those are the ones whose kind alone leaves the reader
-  // where they started.
+  // storage or refers elsewhere, what it reaches, and for a struct or a union,
+  // which declaration it is. Those are the ones whose kind alone leaves the
+  // reader where they started.
   [[nodiscard]] auto DescribeType(TypeId id) const -> std::string {
     const Type& type = unit_->types.Get(id);
     if (const std::optional<TypeId> target = type.DerefTarget()) {
       return std::format("{}({})", type.KindName(), FormatType(*target));
     }
-    if (const auto* structure = type.As<StructType>()) {
+    if (const RecordRef* record = RecordOf(type)) {
       return std::format(
-          "{}({})", type.KindName(), FormatStructRef(structure->declaration));
+          "{}({})", RecordKindName(RecordKindOf(*unit_, *record)),
+          FormatRecordRef(*record));
     }
     return std::string{type.KindName()};
   }
 
-  [[nodiscard]] static auto FormatStructRef(const StructRef& ref)
+  [[nodiscard]] static auto RecordKindName(RecordKind kind)
+      -> std::string_view {
+    switch (kind) {
+      case RecordKind::kStruct:
+        return "struct";
+      case RecordKind::kUnion:
+        return "union";
+      case RecordKind::kTaggedUnion:
+        return "tagged union";
+    }
+    throw InternalError("LirDumper: unknown record kind");
+  }
+
+  [[nodiscard]] static auto FormatRecordRef(const RecordRef& ref)
       -> std::string {
     return std::visit(
         Overloaded{
-            [](StructId id) { return std::format("#{}", id.value); },
+            [](RecordId id) { return std::format("#{}", id.value); },
             [](const TypeDeclarationRef& declared) {
               return std::format(
                   "{}.{}", declared.unit_name,

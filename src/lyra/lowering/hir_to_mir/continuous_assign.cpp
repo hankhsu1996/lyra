@@ -29,7 +29,7 @@
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -63,8 +63,7 @@ auto AddField(mir::Class& mir_class, mir::TypeId type) -> ClassField {
 auto FieldOfSelf(
     const mir::CompilationUnit& unit, const WalkFrame& frame, mir::Block& block,
     const ClassField& field) -> mir::ExprId {
-  const mir::ExprId self = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
   return block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
@@ -444,7 +443,8 @@ auto LowerContinuousDrive(
       [&](const WalkFrame& frame) -> diag::Result<mir::ExprId> {
     auto value = lowerer.LowerExpr(source, frame);
     if (!value) return std::unexpected(std::move(value.error()));
-    return frame.current_block->exprs.Add(*std::move(value));
+    mir::Block& block = *frame.current_block;
+    return block.AsValue(unit.types, block.exprs.Add(*std::move(value)));
   };
 
   // A variable shows, once nothing overrides it, what its continuous driver
@@ -505,8 +505,10 @@ auto LowerContinuousDrive(
     ClosureBuilder propagation(unit, entry_frame);
     if (auto stored = store(
             propagation.Frame(),
-            FieldOfSelf(
-                unit, propagation.Frame(), propagation.Body(), scheduled));
+            propagation.Body().AsValue(
+                unit.types,
+                FieldOfSelf(
+                    unit, propagation.Frame(), propagation.Body(), scheduled)));
         !stored) {
       return std::unexpected(std::move(stored.error()));
     }
@@ -531,7 +533,8 @@ auto LowerContinuousDrive(
         unit, entry, FieldOfSelf(unit, entry_frame, entry, scheduled), *first);
     if (auto armed = AppendArm(
             lowerer, entry_frame, *delay, timer,
-            FieldOfSelf(unit, entry_frame, entry, scheduled));
+            entry.AsValue(
+                unit.types, FieldOfSelf(unit, entry_frame, entry, scheduled)));
         !armed) {
       return std::unexpected(std::move(armed.error()));
     }
@@ -551,19 +554,20 @@ auto LowerContinuousDrive(
         unit, body_block,
         BuildValueOperation(
             unit, body_block, support::BuiltinFn::kBitIdentical,
-            body_block.exprs.Add(mir::MakeLocalRefExpr(changed_to, value_type)),
-            {FieldOfSelf(unit, body_frame, body_block, scheduled)},
+            body_block.ReadLocal(changed_to, value_type),
+            {body_block.AsValue(
+                unit.types,
+                FieldOfSelf(unit, body_frame, body_block, scheduled))},
             unit.builtins.machine_bool));
     mir::Block rescheduled;
     const WalkFrame rescheduled_frame = body_frame.WithBlock(&rescheduled);
     AppendAssign(
         unit, rescheduled,
         FieldOfSelf(unit, rescheduled_frame, rescheduled, scheduled),
-        rescheduled.exprs.Add(mir::MakeLocalRefExpr(changed_to, value_type)));
+        rescheduled.ReadLocal(changed_to, value_type));
     if (auto armed = AppendArm(
             lowerer, rescheduled_frame, *delay, timer,
-            rescheduled.exprs.Add(
-                mir::MakeLocalRefExpr(changed_to, value_type)));
+            rescheduled.ReadLocal(changed_to, value_type));
         !armed) {
       return std::unexpected(std::move(armed.error()));
     }

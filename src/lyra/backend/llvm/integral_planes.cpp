@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <optional>
 #include <utility>
 
@@ -811,7 +812,8 @@ auto LowerOnPlanes(
     };
     return std::ranges::all_of(shapes.operands, held) && held(shapes.answer);
   };
-  if (!every_value(LiesInPlace)) {
+  if (!every_value(IsStatedOnPlanes) ||
+      (IsOnOneWordOnly(op) && !every_value(IsSingleWord))) {
     return std::nullopt;
   }
   const PlaneArithmetic words(builder);
@@ -871,20 +873,12 @@ auto LowerOnPlanes(
       return arithmetic(llvm::Instruction::Add);
     case IntegralOp::kSubtract:
       return arithmetic(llvm::Instruction::Sub);
-    // A product, a quotient and a remainder take work that grows with the
-    // square of the width, so past one machine word each is the library's.
     case IntegralOp::kMultiply:
-      return every_value(IsSingleWord) ? std::optional<PlaneAnswer>(
-                                             arithmetic(llvm::Instruction::Mul))
-                                       : std::nullopt;
+      return arithmetic(llvm::Instruction::Mul);
     case IntegralOp::kDivide:
-      return every_value(IsSingleWord)
-                 ? std::optional<PlaneAnswer>(divided(false))
-                 : std::nullopt;
+      return divided(false);
     case IntegralOp::kModulo:
-      return every_value(IsSingleWord)
-                 ? std::optional<PlaneAnswer>(divided(true))
-                 : std::nullopt;
+      return divided(true);
     case IntegralOp::kNegate:
       return words.Negated(load(0), answers_unknown());
     case IntegralOp::kBitwiseAnd:
@@ -1015,6 +1009,59 @@ auto LowerOnPlanes(
       return std::nullopt;
   }
   throw InternalError("llvm codegen: unknown integral operation");
+}
+
+auto LoadPlanes(
+    llvm::IRBuilderBase& builder, llvm::Value* at,
+    const value::IntegralShape& shape) -> Planes {
+  const std::size_t plane_bytes = value::PlaneBytesFor(shape.width);
+  llvm::Type* const unit =
+      builder.getIntNTy(static_cast<unsigned>(8 * plane_bytes));
+  const llvm::Align align(value::IntegralAlignFor(shape.width));
+  llvm::Type* const exact =
+      builder.getIntNTy(static_cast<unsigned>(shape.width));
+  const auto plane = [&](llvm::Value* plane_at) {
+    return builder.CreateTrunc(
+        builder.CreateAlignedLoad(unit, plane_at, align), exact);
+  };
+  llvm::Value* const value = plane(at);
+  return Planes{
+      .value = value,
+      .unknown = shape.IsFourState()
+                     ? plane(builder.CreateConstInBoundsGEP1_64(
+                           builder.getInt8Ty(), at, plane_bytes))
+                     : llvm::Constant::getNullValue(exact)};
+}
+
+void StorePlanes(
+    llvm::IRBuilderBase& builder, Planes planes, llvm::Value* at,
+    const value::IntegralShape& shape) {
+  if (planes.value->getType()->getIntegerBitWidth() != shape.width) {
+    throw InternalError(
+        std::format(
+            "llvm codegen: an operation on planes answers {} bits where "
+            "its answer's type has {} -- please report this as a bug",
+            planes.value->getType()->getIntegerBitWidth(), shape.width));
+  }
+  const std::size_t plane_bytes = value::PlaneBytesFor(shape.width);
+  llvm::Type* const unit =
+      builder.getIntNTy(static_cast<unsigned>(8 * plane_bytes));
+  const llvm::Align align(value::IntegralAlignFor(shape.width));
+  const auto plane = [&](llvm::Value* bits, llvm::Value* plane_at) {
+    builder.CreateAlignedStore(builder.CreateZExt(bits, unit), plane_at, align);
+  };
+  plane(planes.value, at);
+  if (shape.IsFourState()) {
+    plane(
+        planes.unknown, builder.CreateConstInBoundsGEP1_64(
+                            builder.getInt8Ty(), at, plane_bytes));
+  }
+}
+
+void ClearAboveWidth(
+    llvm::IRBuilderBase& builder, llvm::Value* at,
+    const value::IntegralShape& shape) {
+  StorePlanes(builder, LoadPlanes(builder, at, shape), at, shape);
 }
 
 }  // namespace lyra::backend::llvm_backend

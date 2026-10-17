@@ -93,7 +93,7 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   const BodyBindingRef parent_ref = parent_->EnsureCarrier(origin);
   const mir::TypeId parent_type = parent_->TypeOf(parent_ref);
   const mir::ExprId read = capture_site_->exprs.Add(
-      parent_->MakeReadExpr(parent_ref, *capture_site_));
+      parent_->MakeBindingPlace(parent_ref, *capture_site_));
 
   mir::ExprId source = read;
   mir::TypeId field_type = parent_type;
@@ -107,8 +107,10 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
     // is built, and belongs to the closure alone; no other process reaches it,
     // so it is the value rather than a cell that reports its writes.
     field_type = cell->value;
-    source =
-        capture_site_->exprs.Add(mir::MakeCellLoadCallExpr(read, field_type));
+    source = capture_site_->Read(capture_site_->exprs.Add(
+        capture_site_->WrapperContents(unit_->types, read, field_type)));
+  } else {
+    source = capture_site_->Read(read);
   }
 
   const mir::FieldId field =
@@ -119,8 +121,8 @@ auto CallableBindings::EnsureCarrier(BindingOriginId origin) -> BodyBindingRef {
   return result;
 }
 
-auto CallableBindings::MakeReadExpr(BodyBindingRef ref, mir::Block& block) const
-    -> mir::Expr {
+auto CallableBindings::MakeBindingPlace(
+    BodyBindingRef ref, mir::Block& block) const -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](mir::LocalId id) -> mir::Expr {
@@ -130,9 +132,7 @@ auto CallableBindings::MakeReadExpr(BodyBindingRef ref, mir::Block& block) const
             const mir::TypeId field_type =
                 closure_decl_->fields.Get(field).type;
             const mir::ExprId receiver = BuildObjectDeref(
-                *unit_, block,
-                block.exprs.Add(
-                    mir::MakeLocalRefExpr(self_local_, self_ptr_type_)));
+                *unit_, block, block.LocalPlace(self_local_, self_ptr_type_));
             return mir::MakeFieldAccessExpr(
                 receiver,
                 mir::ClosureFieldTarget{.owner = closure_id_, .slot = field},

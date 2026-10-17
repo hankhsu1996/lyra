@@ -100,17 +100,9 @@ auto CallMakesValue(const CallTarget& target) -> bool {
   }
   // Landing a write keeps what the part held, inside the write, and answers
   // with where the part lies; writing a slice lands it where the slice lies.
-  // Neither answers with a value of its own. Reading a slice answers with the
-  // slice as a value.
-  if (const auto* write = std::get_if<OpenWriteTarget>(&target)) {
-    switch (write->op) {
-      case OpenWriteTarget::Op::kLand:
-      case OpenWriteTarget::Op::kAssignSlice:
-        return false;
-      case OpenWriteTarget::Op::kReadSlice:
-        return true;
-    }
-    throw InternalError("lir: unknown open-write operation");
+  // Neither answers with a value of its own.
+  if (std::holds_alternative<OpenWriteTarget>(target)) {
+    return false;
   }
   // Writing bits lands them where they lie and answers nothing.
   if (std::holds_alternative<DesignatedBitsTarget>(target)) {
@@ -124,8 +116,10 @@ auto CallMakesValue(const CallTarget& target) -> bool {
     case support::EntryAnswer::kNewValue:
     case support::EntryAnswer::kExecution:
       return true;
-    case support::EntryAnswer::kTheReceiver:
-    case support::EntryAnswer::kPartOfTheReceiver:
+    case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+    case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+    case support::EntryAnswer::kReferenceToContents:
+    case support::EntryAnswer::kReferenceToSampledContents:
       return false;
   }
   throw InternalError("lir: unknown entry answer");
@@ -151,14 +145,16 @@ auto CallBuildsExecution(const CallTarget& target) -> bool {
     case support::EntryAnswer::kExecution:
       return true;
     case support::EntryAnswer::kNewValue:
-    case support::EntryAnswer::kTheReceiver:
-    case support::EntryAnswer::kPartOfTheReceiver:
+    case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+    case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+    case support::EntryAnswer::kReferenceToContents:
+    case support::EntryAnswer::kReferenceToSampledContents:
       return false;
   }
   throw InternalError("lir: unknown entry answer");
 }
 
-auto MakesValue(const InstrData& instr) -> bool {
+auto MakesValue(const Rvalue& value) -> bool {
   return std::visit(
       Overloaded{
           [](const CallInstr& call) { return CallMakesValue(call.target); },
@@ -166,25 +162,27 @@ auto MakesValue(const InstrData& instr) -> bool {
           // that storage owns; only a value the reader keeps is copied, and
           // keeping it is a step of its own.
           [](const LoadInstr&) { return false; },
+          // What the bits there stand for is made apart from them.
+          [](const OverlaidLoadInstr&) { return true; },
           [](const CastInstr&) { return false; },
           [](const HandleCastInstr&) { return true; },
           [](const DynamicCastInstr&) { return true; },
-          [](const TupleInstr&) { return true; },
+          [](const ProductInstr&) { return true; },
           [](const ClosureInstr&) { return true; },
-          [](const AggregateExtractInstr&) { return true; },
-          [](const AggregateUpdateInstr&) { return true; },
+          [](const UnionInstr&) { return true; },
+          [](const VectorGetInstr&) { return true; },
+          [](const DiscriminantInstr&) { return true; },
           [](const BinaryInstr&) { return true; },
           [](const UnaryInstr&) { return true; },
           [](const ArrayInstr&) { return true; },
           [](const AddrOfInstr&) { return true; },
-          [](const StoreInstr&) { return false; },
-          [](const BitsStoreInstr&) { return false; },
-          [](const StorageInstr&) { return false; },
           [](const ReceiveDepartureInstr&) { return true; },
           [](const OpenVariablesInstr&) { return true; },
           [](const VariableAddressInstr&) { return true; },
-          [](const CloseVariablesInstr&) { return false; }},
-      instr);
+          // A value moved in is one the destination owns from there on, as one
+          // made there would be.
+          [](const UseInstr&) { return true; }},
+      value);
 }
 
 auto PlaceType(
@@ -226,10 +224,11 @@ auto PlaceType(
             },
             [&](const ComponentProjection& projection) {
               const std::optional<std::span<const TypeId>> components =
-                  ProductElements(unit, current);
+                  ComponentTypes(unit, current);
               if (!components.has_value()) {
                 throw InternalError(
-                    "lir: a component step over a type that is not a product");
+                    "lir: a component step over a type that is neither a "
+                    "product nor a union");
               }
               if (projection.index.value >= components->size()) {
                 throw InternalError("lir: component step out of range");

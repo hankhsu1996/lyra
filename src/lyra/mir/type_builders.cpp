@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include "lyra/base/overloaded.hpp"
@@ -91,6 +92,19 @@ auto ErasedPointer(const TypePool& types) -> TypeId {
           .ownership = PointerOwnership::kBorrowed}});
 }
 
+auto AllocatedType(const TypePool& types, TypeId owner)
+    -> std::optional<TypeId> {
+  const Type& type = types.Get(owner);
+  if (const auto* handle = type.As<ManagedRefType>()) {
+    return handle->pointee;
+  }
+  const auto* pointer = type.As<PointerType>();
+  if (pointer == nullptr || pointer->ownership != PointerOwnership::kUnique) {
+    return std::nullopt;
+  }
+  return pointer->pointee;
+}
+
 auto ClassDefinitionType(const TypePool& types) -> TypeId {
   return types.Intern(
       Type{RuntimeLibraryType{.kind = RuntimeLibraryKind::kObjectDefinition}});
@@ -142,9 +156,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const RealType&) { return wrap(); },
           [&](const ShortRealType&) { return wrap(); },
           [&](const TupleType&) { return wrap(); },
-          [&](const StructType&) { return wrap(); },
-          [&](const UnionType&) { return wrap(); },
-          [&](const TaggedUnionType&) { return wrap(); },
+          [&](const RecordType&) { return wrap(); },
           [&](const EmptyType&) { return wrap(); },
           // A variable naming an object or holding a pointer is value storage
           // too: LRM 9.4.2 makes a write to an object handle or a chandle an
@@ -155,7 +167,7 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const ChandleType&) { return wrap(); },
           // Not value storage, so its own declaration shape is its storage and
           // it is not wrapped: a handle onto storage of another lifetime
-          // (pointer, borrowed reference, vector), an object (a class instance
+          // (pointer, reference, vector), an object (a class instance
           // or an instantiated child), a named event (LRM 15 -- it carries its
           // own subscribe mechanism), a runtime facade (effects, files,
           // diagnostics, a runtime-library type), a coroutine result, a machine
@@ -180,15 +192,17 @@ auto ObservableCellOf(const TypePool& types, TypeId value_type) -> TypeId {
           [&](const DiagnosticType&) { return bare(); },
           [&](const RuntimeLibraryType&) { return bare(); },
           [&](const CoroutineType&) { return bare(); },
-          [&](const RefType&) { return bare(); },
+          [&](const VariableRefType&) { return bare(); },
           [&](const ReferenceWrapperType&) { return bare(); },
           [&](const PointerType&) { return bare(); },
+          [&](const ReferenceType&) { return bare(); },
           [&](const VectorType&) { return bare(); },
           [&](const ObservableType&) { return bare(); },
           [&](const ResolvedType&) { return bare(); },
           [&](const DriverType&) { return bare(); },
           [&](const OpenWriteType&) { return bare(); },
           [&](const DesignationType&) { return bare(); },
+          [&](const BitsReferenceType&) { return bare(); },
           [&](const ObjectWriteType&) { return bare(); },
           [&](const SampledHistoryType&) { return bare(); },
           [&](const EvaluationAttemptsType&) { return bare(); },

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <format>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -26,9 +27,11 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/external_class.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
+#include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/struct_decl.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -86,10 +89,34 @@ auto Suspends(
   return suspends;
 }
 
-// Calls `reach` with each node `data` takes a value from. Every one is named in
-// the block holding `data` but a block expression's value, which is named in
-// the block of its steps and is reached from there.
+// How an operation takes an operand, as clang's Sema decides whether an
+// operand undergoes the lvalue-to-rvalue conversion and rustc's builder
+// whether it lowers one as an operand or as a place.
+enum class OperandUse : std::uint8_t {
+  // As a value: a place stands here only under a read.
+  kValue,
+  // As the storage itself, which a read would replace with a copy: what a
+  // write lands in, what a borrow or an address-of takes, the object a field
+  // is reached on.
+  kStorage,
+  // What a read or a move takes: a place holding a value.
+  kRead,
+  // The object a call is entered on: named where it lies, as C++ binds an
+  // implicit object argument, or already read. An entry taking it by value,
+  // as a Rust method taking `self` does, is handed it read by each target's
+  // realization of the call, so either stands here.
+  kObject,
+  // The pointer a dereference opens.
+  kPointer,
+};
+
+// Calls `reach` with each node `data` takes a value from, and how it takes
+// it. Every one is named in the block holding `data` but a block expression's
+// value, which is named in the block of its steps and is reached from there.
 void ForEachOperand(const ExprData& data, const auto& reach) {
+  const auto value = [&](ExprId operand) {
+    reach(operand, OperandUse::kValue);
+  };
   std::visit(
       Overloaded{
           [](const StringLiteral&) {},
@@ -98,58 +125,71 @@ void ForEachOperand(const ExprData& data, const auto& reach) {
           [](const MachineIntLiteral&) {},
           [](const MachineFloatLiteral&) {},
           [](const ReferenceExpr&) {},
-          [&](const UnaryExpr& e) { reach(e.operand); },
+          [&](const UnaryExpr& e) { value(e.operand); },
           [&](const BinaryExpr& e) {
-            reach(e.lhs);
-            reach(e.rhs);
+            value(e.lhs);
+            value(e.rhs);
           },
-          [&](const CastExpr& e) { reach(e.operand); },
-          [&](const DynamicCastExpr& e) { reach(e.operand); },
+          [&](const CastExpr& e) { value(e.operand); },
+          [&](const DynamicCastExpr& e) { value(e.operand); },
           [&](const ConditionalExpr& e) {
-            reach(e.condition);
-            reach(e.then_value);
-            reach(e.else_value);
+            value(e.condition);
+            value(e.then_value);
+            value(e.else_value);
           },
           [](const BlockExpr&) {},
           [&](const AssignExpr& e) {
-            reach(e.target);
-            reach(e.value);
+            reach(e.target, OperandUse::kStorage);
+            value(e.value);
           },
           [&](const CallExpr& e) {
             std::visit(
                 Overloaded{
                     [&](const Direct& callee) {
                       if (callee.receiver.has_value()) {
-                        reach(*callee.receiver);
+                        reach(*callee.receiver, OperandUse::kObject);
                       }
                     },
-                    [&](const Indirect& callee) { reach(callee.code); },
+                    [&](const Indirect& callee) { value(callee.code); },
                     [](const Construct&) {},
-                    [&](const Virtual& callee) { reach(callee.receiver); }},
+                    [&](const Virtual& callee) {
+                      reach(callee.receiver, OperandUse::kObject);
+                    }},
                 e.callee);
             for (const ExprId argument : e.arguments) {
-              reach(argument);
+              value(argument);
             }
           },
-          [&](const DerefExpr& e) { reach(e.pointer); },
-          [&](const AddressOfExpr& e) { reach(e.operand); },
-          [&](const MoveExpr& e) { reach(e.operand); },
-          [&](const FieldAccessExpr& e) { reach(e.receiver); },
+          [&](const NewExpr& e) { value(e.initializer); },
+          [&](const DerefExpr& e) { reach(e.pointer, OperandUse::kPointer); },
+          [&](const AddressOfExpr& e) {
+            reach(e.operand, OperandUse::kStorage);
+          },
+          [&](const BorrowExpr& e) { reach(e.operand, OperandUse::kStorage); },
+          [&](const MoveExpr& e) { reach(e.operand, OperandUse::kRead); },
+          [&](const CopyExpr& e) { reach(e.place, OperandUse::kRead); },
+          [&](const DiscriminantExpr& e) {
+            reach(e.tagged, OperandUse::kObject);
+          },
+          [&](const FieldAccessExpr& e) {
+            reach(e.receiver, OperandUse::kStorage);
+          },
           [&](const ClosureExpr& e) {
             for (const FieldInit& init : e.field_inits) {
-              reach(init.value);
+              value(init.value);
             }
           },
           [&](const CompositeExpr& e) {
             for (const ExprId part : e.parts) {
-              reach(part);
+              value(part);
             }
           },
-          [&](const AwaitExpr& e) { reach(e.execution); },
-          [&](const WaitExpr& e) { reach(e.park); },
+          [&](const UnionExpr& e) { value(e.value); },
+          [&](const AwaitExpr& e) { value(e.execution); },
+          [&](const WaitExpr& e) { value(e.park); },
           [&](const VectorGetExpr& e) {
-            reach(e.vector);
-            reach(e.index);
+            value(e.vector);
+            value(e.index);
           }},
       data);
 }
@@ -192,10 +232,10 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
 }
 
 // Whether a node computes nothing of its own: it names a declared thing, spells
-// a constant, or forms a place over what it reaches. What happens where such a
-// node stands is that place's, so one of them reached from two places and two
-// of them are the same program, and the evaluations it stands for are those of
-// what it reaches.
+// a constant, forms a place over what it reaches, or reads one. What happens
+// where such a node stands is that place's, so one of them reached from two
+// places and two of them are the same program, and the evaluations it stands
+// for are those of what it reaches.
 auto ComputesNothingItself(const ExprData& data) -> bool {
   return std::visit(
       Overloaded{
@@ -207,6 +247,9 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const ReferenceExpr&) { return true; },
           [](const DerefExpr&) { return true; },
           [](const AddressOfExpr&) { return true; },
+          [](const BorrowExpr&) { return true; },
+          [](const CopyExpr&) { return true; },
+          [](const DiscriminantExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
           [](const UnaryExpr&) { return false; },
           [](const BinaryExpr&) { return false; },
@@ -216,9 +259,11 @@ auto ComputesNothingItself(const ExprData& data) -> bool {
           [](const BlockExpr&) { return false; },
           [](const AssignExpr&) { return false; },
           [](const CallExpr&) { return false; },
+          [](const NewExpr&) { return false; },
           [](const MoveExpr&) { return false; },
           [](const ClosureExpr&) { return false; },
           [](const CompositeExpr&) { return false; },
+          [](const UnionExpr&) { return false; },
           [](const AwaitExpr&) { return false; },
           [](const WaitExpr&) { return false; },
           [](const VectorGetExpr&) { return false; }},
@@ -243,7 +288,7 @@ auto Describe(const ExprData& data) -> std::string {
           [](const MachineFloatLiteral&) -> std::string {
             return "a float literal";
           },
-          [](const ReferenceExpr&) -> std::string { return "a reference"; },
+          [](const ReferenceExpr&) -> std::string { return "a name"; },
           [](const UnaryExpr&) -> std::string { return "a unary operation"; },
           [](const BinaryExpr&) -> std::string { return "a binary operation"; },
           [](const CastExpr&) -> std::string { return "a cast"; },
@@ -255,14 +300,36 @@ auto Describe(const ExprData& data) -> std::string {
           [](const AssignExpr&) -> std::string { return "an assignment"; },
           [](const CallExpr& call) -> std::string {
             const auto entry = DirectBuiltinFn(call);
-            return entry.has_value() ? std::format(
-                                           "a call of the library entry '{}'",
-                                           support::RuntimeEntryOf(*entry).name)
-                                     : std::string{"a call"};
+            if (entry.has_value()) {
+              return std::format(
+                  "a call of the library entry '{}'",
+                  support::RuntimeEntryOf(*entry).name);
+            }
+            return std::visit(
+                Overloaded{
+                    [](const Direct&) -> std::string {
+                      return "a call of a body";
+                    },
+                    [](const Indirect&) -> std::string {
+                      return "a call through a code address";
+                    },
+                    [](const Construct&) -> std::string {
+                      return "a construction";
+                    },
+                    [](const Virtual&) -> std::string {
+                      return "a dispatched call";
+                    }},
+                call.callee);
           },
+          [](const NewExpr&) -> std::string { return "a new"; },
           [](const DerefExpr&) -> std::string { return "a dereference"; },
           [](const AddressOfExpr&) -> std::string { return "an address-of"; },
+          [](const BorrowExpr&) -> std::string { return "a borrow"; },
           [](const MoveExpr&) -> std::string { return "a move"; },
+          [](const CopyExpr&) -> std::string { return "a read"; },
+          [](const DiscriminantExpr&) -> std::string {
+            return "a read of a tag";
+          },
           [](const FieldAccessExpr&) -> std::string {
             return "a field access";
           },
@@ -270,6 +337,7 @@ auto Describe(const ExprData& data) -> std::string {
             return "a closure construction";
           },
           [](const CompositeExpr&) -> std::string { return "a composite"; },
+          [](const UnionExpr&) -> std::string { return "a union literal"; },
           [](const AwaitExpr&) -> std::string { return "an await"; },
           [](const WaitExpr&) -> std::string { return "a wait"; },
           [](const VectorGetExpr&) -> std::string {
@@ -337,8 +405,9 @@ void Reach(
     under.pop_back();
     return;
   }
-  ForEachOperand(
-      data, [&](ExprId operand) { Reach(block, reached, operand, id, under); });
+  ForEachOperand(data, [&](ExprId operand, OperandUse) {
+    Reach(block, reached, operand, id, under);
+  });
 }
 
 // Two of `places` that one run can both evaluate, where there are two.
@@ -403,6 +472,100 @@ void VerifyNoRunEvaluatesTwice(
   }
 }
 
+// A place stands as a value only under a read, and a read reads a place that
+// holds a value. Storage with no value to read stands as itself wherever it is
+// handed on, and what takes the storage itself is never handed a read, which
+// would make it act on a copy.
+//
+// `entered_at` is what the enclosing block's block expressions name as their
+// value among this block's nodes.
+void VerifyPlacesAreRead(
+    const CompilationUnit& unit, const Block& block,
+    std::span<const ExprId> entered_at, const auto& describe) {
+  const auto as_value = [&](ExprId id, std::string_view taker) {
+    if (IsReadablePlace(unit.types, block.exprs.Get(id))) {
+      throw InternalError(
+          std::format(
+              "mir verify: in {}, {} takes {} (expression {} of its block) as "
+              "a value, and a place stands as one only under a read",
+              describe(), taker, Describe(block.exprs.Get(id).data), id.value));
+    }
+  };
+  // A read of overlaid storage is the value a read through that member makes
+  // of the bits there, which lies in no storage, so it is held as any value
+  // is.
+  const auto as_storage = [&](ExprId id, std::string_view taker) {
+    if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data) &&
+        ValueLiesInStorage(unit, block, id)) {
+      throw InternalError(
+          std::format(
+              "mir verify: in {}, {} takes a read (expression {} of its "
+              "block) where it takes the storage itself, so it would act on a "
+              "copy",
+              describe(), taker, id.value));
+    }
+  };
+  for (const StmtId id : block.root_stmts) {
+    ForEachExpr(block.stmts.Get(id).data, [&](ExprId operand) {
+      as_value(operand, "a statement");
+    });
+  }
+  for (const ExprId id : entered_at) {
+    as_value(id, "a block expression");
+  }
+  std::vector<std::vector<ExprId>> entries(block.child_scopes.size());
+  for (const ExprId id : block.exprs.Ids()) {
+    const ExprData& data = block.exprs.Get(id).data;
+    const std::string taker = Describe(data);
+    // A reference is constructed over the storage it refers to, which it binds
+    // as a C++ reference parameter binds an lvalue, without reading it.
+    const auto* call = std::get_if<CallExpr>(&data);
+    const bool binds_storage =
+        call != nullptr &&
+        BindsReference(unit.types, *call, block.exprs.Get(id).type);
+    ForEachOperand(data, [&](ExprId operand, OperandUse use) {
+      switch (binds_storage ? OperandUse::kStorage : use) {
+        case OperandUse::kValue:
+          as_value(operand, taker);
+          return;
+        case OperandUse::kStorage:
+          as_storage(operand, taker);
+          return;
+        case OperandUse::kObject:
+          return;
+        case OperandUse::kRead:
+          if (!IsReadablePlace(unit.types, block.exprs.Get(operand))) {
+            throw InternalError(
+                std::format(
+                    "mir verify: in {}, {} takes {} (expression {} of its "
+                    "block), which names no place or names storage with no "
+                    "value to read",
+                    describe(), taker, Describe(block.exprs.Get(operand).data),
+                    operand.value));
+          }
+          return;
+        // A dereference opens a pointer it reads, as clang reads the operand
+        // of builtin `*p`. One that owns what it reaches is entered as an
+        // object, as C++ `*unique_ptr` enters `operator*` on it.
+        case OperandUse::kPointer:
+          if (unit.types.Get(block.exprs.Get(operand).type).OwnsPointee()) {
+            as_storage(operand, taker);
+          } else {
+            as_value(operand, taker);
+          }
+          return;
+      }
+    });
+    if (const auto* scope = std::get_if<BlockExpr>(&data)) {
+      entries.at(scope->scope.value).push_back(scope->value);
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyPlacesAreRead(
+        unit, block.child_scopes.Get(id), entries.at(id.value), describe);
+  }
+}
+
 // A member -- a field, or a member function a call enters -- is reached on the
 // object as a place, and whatever reaches an object is dereferenced to it
 // first. A receiver that still reaches one would leave every consumer to work
@@ -426,7 +589,7 @@ void VerifyMemberReceivers(
       const Type& receiver =
           unit.types.Get(block.exprs.Get(access->receiver).type);
       if (receiver.Is<PointerType>() || receiver.Is<ManagedRefType>() ||
-          receiver.Is<ObjectWriteType>() || receiver.IsReference()) {
+          receiver.Is<ObjectWriteType>() || receiver.IsVariableRef()) {
         refuse(id);
       }
     }
@@ -459,7 +622,8 @@ void VerifyReferenceBindings(
   for (const ExprId id : block.exprs.Ids()) {
     const ExprData& data = block.exprs.Get(id).data;
     if (const auto* assign = std::get_if<AssignExpr>(&data)) {
-      if (unit.types.Get(block.exprs.Get(assign->target).type).IsReference()) {
+      if (unit.types.Get(block.exprs.Get(assign->target).type)
+              .IsVariableRef()) {
         refuse(id, "stores into a reference, which only a binding names");
       }
     }
@@ -530,6 +694,91 @@ void VerifyTypeArguments(const Block& block, const auto& describe) {
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyTypeArguments(block.child_scopes.Get(id), describe);
+  }
+}
+
+// A call naming an operation of a type the unit states per type, or a method of
+// a record the unit declares, names a body the unit states; one naming another
+// leaves the call bound to nothing.
+void VerifyTypeOperationCalls(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const auto* call = std::get_if<CallExpr>(&block.exprs.Get(id).data);
+    if (call == nullptr) {
+      continue;
+    }
+    const auto* direct = std::get_if<Direct>(&call->callee);
+    if (direct == nullptr) {
+      continue;
+    }
+    // A method of a record this unit declares is one its declaration states.
+    if (const auto* method = std::get_if<RecordMethodTarget>(&direct->target);
+        method != nullptr && method->declaration.unit_name == unit.name) {
+      const auto records = unit.records.Ids();
+      const auto declared = std::ranges::find_if(records, [&](RecordId record) {
+        return unit.GetRecord(record).path == method->declaration.path;
+      });
+      if (declared == records.end() ||
+          std::ranges::none_of(
+              unit.GetRecordMethods(*declared), [&](const RecordMethod& m) {
+                return m.answers == method->answers;
+              })) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} calls the method \"{}\" of record '{}' "
+                "(expression {} of its block), which its declaration does not "
+                "state -- please report this as a bug",
+                describe(), support::ValueOperationName(method->answers),
+                support::DisplayOf(method->declaration.path), id.value));
+      }
+    }
+    const auto* target = std::get_if<TypeOperationTarget>(&direct->target);
+    if (target != nullptr &&
+        FindTypeOperation(unit, target->type, target->answers) == nullptr) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} calls the operation \"{}\" of type {} "
+              "(expression {} of its block), which its unit states no body "
+              "for -- please report this as a bug",
+              describe(), support::ValueOperationName(target->answers),
+              target->type.value, id.value));
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyTypeOperationCalls(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// A tag is read of a tagged union, and a union value holds one of the members
+// its type declares (LRM 7.3, 7.3.2).
+void VerifyUnionValues(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    if (const auto* read = std::get_if<DiscriminantExpr>(&expr.data);
+        read != nullptr &&
+        !IsTaggedUnion(unit, block.exprs.Get(read->tagged).type)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} reads a tag of something that is no tagged union "
+              "(expression {} of its block) -- please report this as a bug",
+              describe(), id.value));
+    }
+    if (const auto* built = std::get_if<UnionExpr>(&expr.data)) {
+      const std::optional<std::span<const TypeId>> members =
+          OverlaidMembers(unit, expr.type);
+      if (!members.has_value() || built->member.value >= members->size()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} builds a union holding a member its type does "
+                "not have (expression {} of its block) -- please report this "
+                "as a bug",
+                describe(), id.value));
+      }
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyUnionValues(unit, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -612,7 +861,7 @@ void VerifyOrdinals(
 auto ValueNamedBy(const TypePool& types, TypeId operand) -> const Type& {
   const Type* reached = &types.Get(operand);
   for (;;) {
-    if (reached->IsReference()) {
+    if (reached->IsVariableRef()) {
       reached = &types.Get(reached->WrappedValueType());
     } else if (const auto* pointer = reached->As<PointerType>()) {
       reached = &types.Get(pointer->pointee);
@@ -658,6 +907,28 @@ auto FirstOperand(const CallExpr& call) -> std::optional<ExprId> {
   return call.arguments.front();
 }
 
+// Whether what `pointer` reaches may only be read: a read-only reference or
+// pointer -- an element's read form among them, which answers the element
+// default where its position names no element (LRM 7.4.6).
+auto ReachesReadOnly(const Type& pointer) -> bool {
+  const auto read_only = [](Mutability mutability) {
+    switch (mutability) {
+      case Mutability::kReadOnly:
+        return true;
+      case Mutability::kMutable:
+        return false;
+    }
+    throw InternalError("mir verify: unknown mutability");
+  };
+  if (const auto* reference = pointer.As<ReferenceType>()) {
+    return read_only(reference->mutability);
+  }
+  if (const auto* raw = pointer.As<PointerType>()) {
+    return read_only(raw->mutability);
+  }
+  return false;
+}
+
 // A call on a library entry is held to the entry's one declaration, so no
 // consumer of the call has to ask what it was applied to: an entry the source
 // states over values of several kinds is named only where its first operand is
@@ -665,7 +936,8 @@ auto FirstOperand(const CallExpr& call) -> std::optional<ExprId> {
 // an argument the entry reads as a machine value is no integral value, which
 // would cross with nothing telling the entry how to read its bits; and an
 // entry reaching by a key is called on a container reached by keys, one
-// reaching by a position on something that numbers its parts.
+// reaching by a position on something that numbers its parts; and an entry
+// answering a reference is typed as that reference.
 void VerifyEntryDeclarations(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -696,6 +968,30 @@ void VerifyEntryDeclarations(
           id,
           "names an entry over values of several kinds where its first "
           "operand is integral");
+    }
+    // An entry answering a reference -- into its receiver, or to what the
+    // wrapper it is taken on holds -- is typed as that reference, at the
+    // mutability the entry answers it with, so its dereference is the part or
+    // the contents and the access made there is the entry's.
+    const Type& answered = unit.types.Get(block.exprs.Get(id).type);
+    const auto typed_as_reference = [&](bool read_only) {
+      if (!answered.Is<ReferenceType>() ||
+          ReachesReadOnly(answered) != read_only) {
+        refuse(id, "answers a reference and is typed as something else");
+      }
+    };
+    switch (declared.answer) {
+      case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
+      case support::EntryAnswer::kReferenceToContents:
+      case support::EntryAnswer::kReferenceToSampledContents:
+        typed_as_reference(true);
+        break;
+      case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
+        typed_as_reference(false);
+        break;
+      case support::EntryAnswer::kNewValue:
+      case support::EntryAnswer::kExecution:
+        break;
     }
     // An operation over integral values states what it takes in its own
     // declaration, which the folder and each target read.
@@ -749,6 +1045,120 @@ void VerifyEntryDeclarations(
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyEntryDeclarations(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// An assignment lands on a place. What a write lands on -- an assignment's
+// target, the object an entry changing its receiver acts on, or the value a
+// reference to bits is taken on -- is not reached through a read-only
+// reference, which an element's read form answers and whose referent may be
+// the element default every read of its type shares (LRM 7.4.6).
+void VerifyWritesLandInWritableStorage(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    std::optional<ExprId> reached;
+    if (const auto* write = std::get_if<AssignExpr>(&expr.data)) {
+      if (!IsPlace(block.exprs.Get(write->target).data)) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} assigns to {} (expression {} of its block), "
+                "which names no place -- please report this as a bug",
+                describe(), Describe(block.exprs.Get(write->target).data),
+                write->target.value));
+      }
+      reached = write->target;
+    } else if (const auto* call = std::get_if<CallExpr>(&expr.data)) {
+      const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
+      if (entry.has_value() &&
+          (support::RuntimeEntryOf(*entry).mutates_receiver ||
+           *entry == support::BuiltinFn::kSliceMut)) {
+        reached = CalleeReceiver(call->callee);
+      }
+    }
+    // A field is written through the object it is reached on, a selected part
+    // through the whole it is selected from, and what a reference is
+    // dereferenced to through that reference; a write lands through each.
+    while (reached.has_value()) {
+      const ExprData& data = block.exprs.Get(*reached).data;
+      if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
+        reached = field->receiver;
+      } else if (const auto* opened = std::get_if<DerefExpr>(&data)) {
+        if (ReachesReadOnly(
+                unit.types.Get(block.exprs.Get(opened->pointer).type))) {
+          throw InternalError(
+              std::format(
+                  "mir verify: {} writes through a read-only reference "
+                  "(expression {} of its block) -- please report this as a bug",
+                  describe(), id.value));
+        }
+        reached = opened->pointer;
+      } else if (
+          const std::optional<ExprId> whole = SelectedFrom(block, *reached)) {
+        reached = whole;
+      } else {
+        break;
+      }
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyWritesLandInWritableStorage(
+        unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// Storage with no address of its own -- a member of a union, and what lies
+// under one -- is never what a reference the program holds ends on (LRM
+// 13.5.2), so nothing takes its address. Storage another member of an
+// untagged union overlays holds bits that make a value of its type only once
+// read, so a borrow binds its read, and a call is entered on it only to reach
+// a part of it or to change it.
+void VerifyStorageWithoutAnAddress(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  const auto kind_of = [&](ExprId operand) {
+    return IsPlace(block.exprs.Get(operand).data)
+               ? KindOfPlace(unit, block, operand)
+               : PlaceKind::kOrdinary;
+  };
+  const auto refuse = [&](ExprId id, std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} {} (expression {} of its block) -- please report "
+            "this as a bug",
+            describe(), what, id.value));
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const ExprData& data = block.exprs.Get(id).data;
+    if (const auto* address = std::get_if<AddressOfExpr>(&data)) {
+      if (kind_of(address->operand) != PlaceKind::kOrdinary) {
+        refuse(id, "takes the address of storage with none of its own");
+      }
+    } else if (const auto* borrow = std::get_if<BorrowExpr>(&data)) {
+      if (kind_of(borrow->operand) == PlaceKind::kOverlaid) {
+        refuse(id, "borrows storage another member of a union overlays");
+      }
+    } else if (const auto* call = std::get_if<CallExpr>(&data)) {
+      const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
+      if (!receiver.has_value() || kind_of(*receiver) != PlaceKind::kOverlaid) {
+        continue;
+      }
+      // Only a step into a part, and a write of a window of elements, which
+      // writes what it is handed without reading what it replaces, are
+      // entered where overlaid storage lies; a method changing such storage
+      // reads what it changes, so it is entered on a read of it, written back.
+      const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
+      if (!entry.has_value() ||
+          (!SelectionOf(*call).has_value() &&
+           *entry != support::BuiltinFn::kAssignElementSlice)) {
+        refuse(
+            id,
+            "enters a call on storage another member of a union overlays "
+            "without reading it");
+      }
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyStorageWithoutAnAddress(unit, block.child_scopes.Get(id), describe);
   }
 }
 
@@ -822,15 +1232,113 @@ void VerifyConstantsAreFolded(
             [](const MachineFloatLiteral&) {}, [](const ReferenceExpr&) {},
             [](const DynamicCastExpr&) {}, [](const ConditionalExpr&) {},
             [](const BlockExpr&) {}, [](const AssignExpr&) {},
-            [](const DerefExpr&) {}, [](const AddressOfExpr&) {},
-            [](const MoveExpr&) {}, [](const FieldAccessExpr&) {},
+            [](const NewExpr&) {}, [](const DerefExpr&) {},
+            [](const AddressOfExpr&) {}, [](const BorrowExpr&) {},
+            [](const MoveExpr&) {}, [](const CopyExpr&) {},
+            [](const DiscriminantExpr&) {}, [](const FieldAccessExpr&) {},
             [](const ClosureExpr&) {}, [](const CompositeExpr&) {},
-            [](const AwaitExpr&) {}, [](const WaitExpr&) {},
-            [](const VectorGetExpr&) {}},
+            [](const UnionExpr&) {}, [](const AwaitExpr&) {},
+            [](const WaitExpr&) {}, [](const VectorGetExpr&) {}},
         expr.data);
   }
   for (const BlockId id : block.child_scopes.Ids()) {
     VerifyConstantsAreFolded(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// Storage a uniquely owning pointer or a class handle owns comes into existence
+// only by a new-expression, whose initializer is evaluated into that storage
+// and so has the type allocated.
+void VerifyAllocations(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  const auto refuse = [&](ExprId id, std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} holds {} (expression {} of its block), which {} -- "
+            "please report this as a bug",
+            describe(), Describe(block.exprs.Get(id).data), id.value, what));
+  };
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    const std::optional<TypeId> allocated =
+        AllocatedType(unit.types, expr.type);
+    if (const auto* call = std::get_if<CallExpr>(&expr.data);
+        call != nullptr && std::holds_alternative<Construct>(call->callee) &&
+        allocated.has_value()) {
+      refuse(id, "constructs what only a new-expression allocates");
+    }
+    const auto* allocation = std::get_if<NewExpr>(&expr.data);
+    if (allocation == nullptr) {
+      continue;
+    }
+    if (!allocated.has_value()) {
+      refuse(id, "yields a type that owns no storage it allocates");
+    }
+    if (block.exprs.Get(allocation->initializer).type != *allocated) {
+      refuse(id, "initializes its storage from a value of another type");
+    }
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyAllocations(unit, block.child_scopes.Get(id), describe);
+  }
+}
+
+// A value too large for a frame is made only in the storage a new-expression
+// allocates for it, or, where a body answers its caller, in the storage the
+// caller takes its answer in; it is otherwise only read where it lies.
+void VerifyLargeValuesLieInStorage(
+    const CompilationUnit& unit, const Block& block, bool answers_caller,
+    const auto& describe) {
+  std::vector<bool> made_in_storage(block.exprs.size(), false);
+  for (const Expr& expr : block.exprs) {
+    if (const auto* allocation = std::get_if<NewExpr>(&expr.data)) {
+      made_in_storage.at(allocation->initializer.value) = true;
+    }
+  }
+  if (answers_caller) {
+    for (const Stmt& stmt : block.stmts) {
+      if (const auto* returned = std::get_if<ReturnStmt>(&stmt.data);
+          returned != nullptr && returned->value.has_value()) {
+        made_in_storage.at(returned->value->value) = true;
+      }
+    }
+  }
+  for (const ExprId id : block.exprs.Ids()) {
+    if (made_in_storage.at(id.value) ||
+        !IsTooLargeForAFrame(unit, block.exprs.Get(id).type) ||
+        ValueLiesInStorage(unit, block, id)) {
+      continue;
+    }
+    throw InternalError(
+        std::format(
+            "mir verify: {} makes {} too large for a frame outside the storage "
+            "a new-expression allocates -- please report this as a bug",
+            describe(), Describe(block.exprs.Get(id).data)));
+  }
+  for (const BlockId id : block.child_scopes.Ids()) {
+    VerifyLargeValuesLieInStorage(
+        unit, block.child_scopes.Get(id), answers_caller, describe);
+  }
+}
+
+// No body keeps a value too large for a frame in one: every such local is held
+// through a box.
+void VerifyFramesHoldNoLargeValue(
+    const CompilationUnit& unit, const CallableCode& code,
+    const auto& describe) {
+  for (const LocalDecl& local : code.locals) {
+    if (IsTooLargeForAFrame(unit, local.type)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} declares a local too large for a frame -- please "
+              "report this as a bug",
+              describe()));
+    }
+  }
+  if (code.body.has_value()) {
+    VerifyLargeValuesLieInStorage(
+        unit, *code.body, !unit.types.Get(code.result_type).Is<CoroutineType>(),
+        describe);
   }
 }
 
@@ -840,16 +1348,23 @@ void VerifyConstantsAreFolded(
 void VerifyCode(
     const CompilationUnit& unit, const CallableCode& code,
     const auto& describe) {
+  VerifyFramesHoldNoLargeValue(unit, code, describe);
   if (!code.body.has_value()) {
     return;
   }
   VerifyNoRunEvaluatesTwice(*code.body, {}, describe);
+  VerifyPlacesAreRead(unit, *code.body, {}, describe);
+  VerifyWritesLandInWritableStorage(unit, *code.body, describe);
+  VerifyStorageWithoutAnAddress(unit, *code.body, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
   VerifyTypeArguments(*code.body, describe);
+  VerifyTypeOperationCalls(unit, *code.body, describe);
+  VerifyUnionValues(unit, *code.body, describe);
   VerifyOrdinals(unit, *code.body, describe);
   VerifyEntryDeclarations(unit, *code.body, describe);
   VerifyConstantsAreFolded(unit, *code.body, describe);
+  VerifyAllocations(unit, *code.body, describe);
   if (!Suspends(unit, *code.body, describe) ||
       unit.types.Get(code.result_type).Is<CoroutineType>()) {
     return;
@@ -918,13 +1433,12 @@ void VerifyOwnClassesNamedAsOwn(const CompilationUnit& unit) {
   }
 }
 
-// The code holding an array -- fixed-size, dynamic, associative or a queue --
-// asks for its element's default by the element type alone (LRM 7.4.5), and no
-// call building one states it. So the unit answers for exactly the types some
-// array of it has as its element: one with no default leaves the question
-// unanswered, one with two leaves which body answers to chance, and a default
-// no array asks for is a body nothing runs.
-void VerifyTypeDefaults(const CompilationUnit& unit) {
+// Every element type of an array -- fixed-size, dynamic, associative or a
+// queue -- has its default stated, since the code holding the array asks for
+// it by the element type alone (LRM 7.4.5); a type whose operations are stated
+// per unit has its other operations stated, and no other type has any. A pair
+// stated twice leaves which body answers to chance.
+void VerifyTypeOperations(const CompilationUnit& unit) {
   const auto refuse = [&](TypeId type, std::string_view defect) {
     throw InternalError(
         std::format(
@@ -932,32 +1446,38 @@ void VerifyTypeDefaults(const CompilationUnit& unit) {
             "bug",
             unit.name, defect, type.value));
   };
+  const support::ValueOperation default_value =
+      support::BuiltinFn::kDeclaredDefault;
   const std::vector<TypeId> elements = ArrayElementTypes(unit.types);
-  std::vector<bool> asked_for(unit.types.size(), false);
+  std::vector<bool> is_element(unit.types.size(), false);
   for (const TypeId element : elements) {
-    asked_for[element.value] = true;
+    is_element[element.value] = true;
   }
-  std::vector<bool> answered(unit.types.size(), false);
-  for (const TypeDefault& stated : unit.type_defaults) {
-    if (!asked_for[stated.type.value]) {
+  std::set<std::pair<TypeId, support::ValueOperation>> answered;
+  for (const TypeOperation& stated : unit.type_operations) {
+    if (!OperationsAreStatedPerUnit(unit.types.Get(stated.type)) &&
+        (stated.answers != default_value || !is_element[stated.type.value])) {
       refuse(
           stated.type,
-          "a default is stated for a type no array has as its element");
+          "an operation is stated for a type whose operations are not stated "
+          "per unit, or a default for a type no array holds");
     }
-    if (answered[stated.type.value]) {
-      refuse(stated.type, "a type has two defaults stated");
+    if (!answered.emplace(stated.type, stated.answers).second) {
+      refuse(stated.type, "a type has one operation stated twice");
     }
-    answered[stated.type.value] = true;
-    if (stated.code.result_type != stated.type) {
+    if (stated.answers == default_value &&
+        stated.code.result_type != stated.type) {
       refuse(stated.type, "a type's default answers a value of another type");
     }
     VerifyCode(unit, stated.code, [&] {
       return std::format(
-          "the default of type {} in unit '{}'", stated.type.value, unit.name);
+          "operation \"{}\" of type {} in unit '{}'",
+          support::ValueOperationName(stated.answers), stated.type.value,
+          unit.name);
     });
   }
   for (const TypeId element : elements) {
-    if (!answered[element.value]) {
+    if (!answered.contains({element, default_value})) {
       refuse(element, "the element type of an array has no default stated");
     }
   }
@@ -971,7 +1491,7 @@ auto EvaluatesNothing(const Block& block, ExprId id) -> bool {
     return false;
   }
   bool nothing = true;
-  ForEachOperand(data, [&](ExprId operand) {
+  ForEachOperand(data, [&](ExprId operand, OperandUse) {
     nothing = nothing && EvaluatesNothing(block, operand);
   });
   return nothing;
@@ -986,7 +1506,7 @@ void Verify(const CompilationUnit& unit) {
           BodyLabel(NameOf(unit.named_callables, id), id.value), unit.name);
     });
   }
-  VerifyTypeDefaults(unit);
+  VerifyTypeOperations(unit);
   for (const ForeignScopeEntry& entry : unit.foreign_scope_entries) {
     VerifyCode(unit, entry.definition, [&] {
       return std::format("the foreign entry '{}'", entry.linkage.foreign_name);
@@ -997,12 +1517,12 @@ void Verify(const CompilationUnit& unit) {
       return std::format("closure {} of unit '{}'", id.value, unit.name);
     });
   }
-  for (const StructId id : unit.structs.Ids()) {
-    const StructDecl& declaration = unit.GetStruct(id);
-    for (const StructMethod& method : declaration.methods) {
+  for (const RecordId id : unit.records.Ids()) {
+    const RecordDecl& declaration = unit.GetRecord(id);
+    for (const RecordMethod& method : unit.GetRecordMethods(id)) {
       VerifyCode(unit, method.code, [&] {
         return std::format(
-            "method '{}' of struct '{}' in unit '{}'",
+            "method '{}' of record '{}' in unit '{}'",
             support::ValueOperationName(method.answers),
             support::DisplayOf(declaration.path), unit.name);
       });

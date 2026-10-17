@@ -54,8 +54,8 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
 #include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -87,17 +87,17 @@ void AttachRuntimeScopeCtorPrefix(
       mir::ParamDecl{.type = builtins.hierarchy_segment});
 }
 
-// A parameter an instantiation may leave to its default is handed as a value
-// or none (LRM 23.10.2.2), the sum of nothing and the value: the type a
-// constructor takes it as, and what the construction passes.
-constexpr base::ComponentIndex kNoValueAssigned{0};
-constexpr base::ComponentIndex kValueAssigned{1};
+// A parameter an instantiation may leave to its default is handed as whether a
+// value was assigned (LRM 23.10.2.2) beside the value, which is its type's
+// default where none was: what C++'s `std::optional` holds, a flag and a slot
+// for the value. A union of MIR's is a declaration the source states, which
+// this is not, so the two cross as a product, the same type in every unit.
+constexpr base::ComponentIndex kHasValue{0};
+constexpr base::ComponentIndex kValue{1};
 
-auto AssignedOrNoneOf(mir::CompilationUnit& unit, mir::TypeId value)
-    -> mir::TypeId {
+auto OptionalOf(mir::CompilationUnit& unit, mir::TypeId value) -> mir::TypeId {
   return unit.types.Intern(
-      mir::Type{mir::TaggedUnionType{
-          .members = {unit.types.Intern(mir::Type{mir::EmptyType{}}), value}}});
+      mir::Type{mir::TupleType{.elements = {unit.builtins.bit1, value}}});
 }
 
 // The values whoever constructs the scope supplies, in the order they are
@@ -124,7 +124,7 @@ auto ConstructionValuesOf(
               supplied.push_back(
                   ConstructionValue{
                       .declared = id,
-                      .type = AssignedOrNoneOf(
+                      .type = OptionalOf(
                           unit_lowerer.Unit(),
                           unit_lowerer.TranslateType(decl.type))});
             },
@@ -253,17 +253,13 @@ void AppendToSequence(
                       mir::Direct{
                           .target = support::BuiltinFn::kExtendSequence},
                   .arguments =
-                      {block.exprs.Add(
-                           mir::MakeLocalRefExpr(sequence, sequence_type)),
-                       element}},
+                      {block.ReadLocal(sequence, sequence_type), element}},
           .type = sequence_type});
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeAssignExpr(
-                  unit.builtins,
-                  block.exprs.Add(
-                      mir::MakeLocalRefExpr(sequence, sequence_type)),
+                  unit.builtins, block.LocalPlace(sequence, sequence_type),
                   grown))});
 }
 
@@ -312,9 +308,11 @@ auto ReadConstructionTable(
     const mir::CompilationUnit& unit, const WalkFrame& frame) -> mir::Expr {
   const BodyBindingRef table =
       frame.bindings->EnsureCarrier(BindingOriginId::ConstructionTable());
-  mir::Expr read = frame.bindings->MakeReadExpr(table, *frame.current_block);
-  read.type = mir::ConstructionTablePointer(unit.types);
-  return read;
+  mir::Block& block = *frame.current_block;
+  const mir::TypeId type = mir::ConstructionTablePointer(unit.types);
+  mir::Expr place = frame.bindings->MakeBindingPlace(table, block);
+  place.type = type;
+  return mir::MakeCopyExpr(block.exprs.Add(std::move(place)), type);
 }
 
 // What the instantiation at `at` of the table the object under construction
@@ -353,7 +351,7 @@ auto ObjectEntryType(
       unit.builtins.scope_ptr, unit.builtins.hierarchy_segment,
       mir::ConstructionTablePointer(unit.types)};
   for (const hir::TypeId value : handed) {
-    params.push_back(AssignedOrNoneOf(unit, unit_lowerer.TranslateType(value)));
+    params.push_back(OptionalOf(unit, unit_lowerer.TranslateType(value)));
   }
   return unit.types.Intern(
       mir::Type{mir::MachineFunctionType{
@@ -432,7 +430,7 @@ auto BuildOwnedInstance(
   }
   const mir::TypeId table_type = mir::ConstructionTablePointer(unit.types);
   std::vector<mir::ExprId> entry_arguments{
-      parent_self, segment_id,
+      block.AsValue(unit.types, parent_self), segment_id,
       ReadInstantiation(
           unit, frame, support::BuiltinFn::kInstantiationTable, instantiation,
           table_type)};
@@ -502,24 +500,28 @@ auto LowerConstructorArguments(
   std::vector<mir::Expr> lowered;
   lowered.reserve(assignments.size());
   for (const hir::ParameterValueAssignment& assigned : assignments) {
-    const mir::TypeId passed = AssignedOrNoneOf(
-        unit_lowerer.Unit(), unit_lowerer.TranslateType(assigned.type));
+    const mir::TypeId value_type = unit_lowerer.TranslateType(assigned.type);
+    const mir::TypeId passed = OptionalOf(unit_lowerer.Unit(), value_type);
+    const auto handed = [&](bool was_assigned, mir::ExprId value) {
+      return mir::Expr{
+          .data =
+              mir::CompositeExpr{
+                  .parts =
+                      {BuildBit1Literal(
+                           unit_lowerer.Unit(), block, was_assigned),
+                       value}},
+          .type = passed};
+    };
     if (!assigned.value.has_value()) {
-      const mir::TypeId none =
-          TaggedComponentType(unit_lowerer.Unit(), passed, kNoValueAssigned);
-      lowered.push_back(
-          mir::MakeActiveMemberExpr(
-              block.exprs.Add(
-                  BuildDefaultValueExpr(unit_lowerer.Unit(), block, none)),
-              kNoValueAssigned, passed));
+      lowered.push_back(handed(
+          false, block.exprs.Add(BuildDefaultValueExpr(
+                     unit_lowerer.Unit(), block, value_type))));
       continue;
     }
     auto value =
         lowerer.LowerExpr(lowerer.HirScope().exprs.Get(*assigned.value), frame);
     if (!value) return std::unexpected(std::move(value.error()));
-    lowered.push_back(
-        mir::MakeActiveMemberExpr(
-            block.exprs.Add(*std::move(value)), kValueAssigned, passed));
+    lowered.push_back(handed(true, block.exprs.Add(*std::move(value))));
   }
   return lowered;
 }
@@ -539,8 +541,7 @@ auto BuildAlternative(
   const hir::InstanceAlternative& alternative = member.alternatives[which];
   const mir::TypeId borrowed = MakeExternalUnitPointer(
       unit_lowerer, alternative, mir::PointerOwnership::kBorrowed);
-  const mir::ExprId parent_self = block.exprs.Add(
-      MakeSelfRefExpr(frame, frame.current_class->self_pointer_type));
+  const mir::ExprId parent_self = block.exprs.Add(MakeSelfRefExpr(frame));
   auto arguments =
       LowerConstructorArguments(lowerer, frame, alternative.assignments);
   if (!arguments) return std::unexpected(std::move(arguments.error()));
@@ -558,9 +559,7 @@ auto BuildAlternative(
                     .op = mir::BinaryOp::kAdd,
                     .lhs = BuildIntLiteral(
                         unit, block, member.array_dims[d].LowestIndex()),
-                    .rhs = block.exprs.Add(
-                        mir::MakeLocalRefExpr(
-                            coords[d], unit.builtins.int_type))},
+                    .rhs = block.ReadLocal(coords[d], unit.builtins.int_type)},
             .type = unit.builtins.int_type}));
   }
   std::vector<hir::TypeId> handed;
@@ -649,8 +648,7 @@ auto BuildElement(
           unit.builtins.int_type));
       at = block.exprs.Add(MakeBinary(
           unit, block, mir::BinaryOp::kAdd, scaled,
-          block.exprs.Add(
-              mir::MakeLocalRefExpr(coords[d], unit.builtins.int_type)),
+          block.ReadLocal(coords[d], unit.builtins.int_type),
           unit.builtins.int_type));
     }
     return at;
@@ -717,8 +715,7 @@ auto BuildInstanceMemberValue(
       BuildIntLiteral(unit, body, static_cast<std::int64_t>(count)), position,
       element_scope));
 
-  return block.exprs.Add(steps.Build(
-      body.exprs.Add(mir::MakeLocalRefExpr(sequence, sequence_type))));
+  return block.exprs.Add(steps.Build(body.LocalPlace(sequence, sequence_type)));
 }
 
 // Emits the constructor-body construction for every object the scope's instance
@@ -749,8 +746,7 @@ auto EmitInstanceMemberConstruction(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
                 unit_lowerer.Unit(), block,
-                block.exprs.Add(MakeSelfRefExpr(
-                    frame, frame.current_class->self_pointer_type))),
+                block.exprs.Add(MakeSelfRefExpr(frame))),
             field, member_type));
     block.AppendStmt(
         mir::ExprStmt{
@@ -1129,8 +1125,7 @@ void FillScopeSlot(
   mir::Class& mir_class = *frame.current_class;
   mir::Block& block = *frame.current_block;
   const mir::TypeId slot_type = mir_class.fields.Get(slot).type;
-  const mir::ExprId self =
-      block.exprs.Add(MakeSelfRefExpr(frame, mir_class.self_pointer_type));
+  const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(frame));
   const mir::ExprId target = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(unit, block, self),
@@ -1192,11 +1187,9 @@ void AppendProcessRegistration(
     mir::CallableId body, support::BuiltinFn registration,
     diag::SourceSpan written_at) {
   mir::Block& block = *activate_frame.current_block;
-  const mir::TypeId self_ptr_type =
-      activate_frame.current_class->self_pointer_type;
   const mir::ExprId body_self = BuildObjectDeref(
       unit_lowerer.Unit(), block,
-      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type)));
+      block.exprs.Add(MakeSelfRefExpr(activate_frame)));
   const mir::ExprId body_call = block.exprs.Add(
       mir::Expr{
           .data =
@@ -1211,7 +1204,7 @@ void AppendProcessRegistration(
                   .arguments = {}},
           .type = unit_lowerer.Unit().builtins.coroutine_void});
   const mir::ExprId reg_self =
-      block.exprs.Add(MakeSelfRefExpr(activate_frame, self_ptr_type));
+      block.Read(block.exprs.Add(MakeSelfRefExpr(activate_frame)));
   const mir::ExprId unit_instance = BuildEnclosingScopeReceiver(
       activate_frame, unit_lowerer.Unit(), activate_frame.HopsToUnitRoot());
   const mir::ExprId place = block.exprs.Add(
@@ -1307,8 +1300,8 @@ void InstallInterfacePortConnection(
       unit_lowerer.TranslateType(port.type), port.storage);
   const mir::ExprId nav =
       BuildRouteValue(lowerer, resolve_frame, conn.endpoint);
-  const mir::ExprId target = block.exprs.Add(
-      mir::Expr{.data = mir::DerefExpr{.pointer = nav}, .type = member_type});
+  const mir::ExprId target =
+      block.Deref(unit_lowerer.Unit().types, nav, member_type);
 
   std::vector<mir::ExprId> handles;
   handles.reserve(conn.peers.size());
@@ -1536,18 +1529,16 @@ auto BindInputPort(
   const mir::TypeId ref_type =
       unit_lowerer.MemberCellType(value_type, member.storage);
   const auto bind_to = [&](const AccessPath& storage) {
-    const mir::ExprId target = resolve_block.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::DerefExpr{
-                    .pointer = BuildRouteValue(lowerer, resolve_frame, route)},
-            .type = ref_type});
+    const mir::ExprId target = resolve_block.Deref(
+        unit_lowerer.Unit().types,
+        BuildRouteValue(lowerer, resolve_frame, route), ref_type);
     resolve_block.AppendStmt(
         mir::ExprStmt{
             .expr = resolve_block.exprs.Add(
                 mir::MakeCallExpr(
                     mir::Direct{.target = support::BuiltinFn::kBindMember},
-                    {target, PathReference(unit, resolve_block, storage)},
+                    {resolve_block.AsValue(unit.types, target),
+                     PathReference(unit, resolve_block, storage)},
                     unit.builtins.void_type))});
   };
 
@@ -1566,8 +1557,7 @@ auto BindInputPort(
       mir_class.fields.Add(mir::FieldDecl{.type = cell_type});
   const auto kept_cell = [&](const WalkFrame& in) -> diag::Result<AccessPath> {
     mir::Block& block = *in.current_block;
-    const mir::ExprId self = block.exprs.Add(
-        MakeSelfRefExpr(in, in.current_class->self_pointer_type));
+    const mir::ExprId self = block.exprs.Add(MakeSelfRefExpr(in));
     return AccessPath{
         .owner = block.exprs.Add(
             mir::MakeFieldAccessExpr(
@@ -1671,9 +1661,8 @@ auto InstallPortConnections(
         const mir::TypeId ref_type = unit_lowerer.MemberCellType(
             unit_lowerer.TranslateType(member.type), member.storage);
         const mir::ExprId nav = BuildRouteValue(lowerer, resolve_frame, route);
-        const mir::ExprId target = resolve_block.exprs.Add(
-            mir::Expr{
-                .data = mir::DerefExpr{.pointer = nav}, .type = ref_type});
+        const mir::ExprId target =
+            resolve_block.Deref(unit_lowerer.Unit().types, nav, ref_type);
 
         // The peer is lent as a `ref` actual is. A part of a variable is not
         // yet: the member is bound before the variable takes its declared
@@ -1693,7 +1682,8 @@ auto InstallPortConnections(
                 .expr = resolve_block.exprs.Add(
                     mir::MakeCallExpr(
                         mir::Direct{.target = support::BuiltinFn::kBindAlias},
-                        {target,
+                        {resolve_block.AsValue(
+                             unit_lowerer.Unit().types, target),
                          PathReference(
                              unit_lowerer.Unit(), resolve_block, *peer_or)},
                         unit_lowerer.Unit().builtins.void_type))});
@@ -1773,12 +1763,11 @@ auto BuildOwnedChildHandle(
   ValidateOwnedChildConstruction(owner_class, child_scope_id);
 
   const auto& builtins = unit_lowerer.Unit().builtins;
-  const mir::TypeId self_ptr_type = owner_class.self_pointer_type;
   const mir::TypeId child_ptr_type =
       MakeUniqueObjectPointer(unit_lowerer, child_scope_id);
 
   const auto self_read = [&]() -> mir::ExprId {
-    return arm_block.exprs.Add(MakeSelfRefExpr(arm_frame, self_ptr_type));
+    return arm_block.exprs.Add(MakeSelfRefExpr(arm_frame));
   };
   const auto parent_read = [&]() -> mir::ExprId {
     if (!runtime_parent_handle.has_value()) {
@@ -1801,18 +1790,20 @@ auto BuildOwnedChildHandle(
 
   std::vector<mir::ExprId> ctor_call_args;
   ctor_call_args.reserve(2 + arguments.size());
-  ctor_call_args.push_back(parent_read());
+  ctor_call_args.push_back(
+      arm_block.AsValue(unit_lowerer.Unit().types, parent_read()));
   ctor_call_args.push_back(segment_id);
   for (mir::Expr& value : arguments) {
     ctor_call_args.push_back(arm_block.exprs.Add(std::move(value)));
   }
   const mir::ExprId ctor_call_id = arm_block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{},
-                  .arguments = std::move(ctor_call_args)},
-          .type = child_ptr_type});
+      mir::MakeNewExpr(
+          arm_block.exprs.Add(
+              mir::MakeObjectConstructionExpr(
+                  *mir::AllocatedType(
+                      unit_lowerer.Unit().types, child_ptr_type),
+                  std::move(ctor_call_args))),
+          child_ptr_type));
 
   // The runtime tree owns the child (AddOwnedChild consumes the freshly built
   // unique pointer); ownership transfers after the child's constructor commits,
@@ -1843,7 +1834,6 @@ void AppendOwnedChildConstruction(
     const mir::ClassFieldTarget& handle_field,
     std::vector<mir::Expr> arguments) {
   mir::Block& arm_block = *arm_frame.current_block;
-  const mir::Class& owner_class = *arm_frame.current_class;
   const mir::TypeId handle_type = FieldTypeOf(unit_lowerer, handle_field);
   const mir::ExprId typed_handle = BuildOwnedChildHandle(
       unit_lowerer, arm_frame, runtime_parent_handle, runtime_label,
@@ -1852,8 +1842,7 @@ void AppendOwnedChildConstruction(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(
               unit_lowerer.Unit(), arm_block,
-              arm_block.exprs.Add(
-                  MakeSelfRefExpr(arm_frame, owner_class.self_pointer_type))),
+              arm_block.exprs.Add(MakeSelfRefExpr(arm_frame))),
           handle_field, handle_type));
   arm_block.AppendStmt(
       mir::ExprStmt{
@@ -1881,9 +1870,7 @@ void AppendLoopBlockConstruction(
   const mir::ExprId member = block.exprs.Add(
       mir::MakeFieldAccessExpr(
           BuildObjectDeref(
-              unit, block,
-              block.exprs.Add(MakeSelfRefExpr(
-                  frame, frame.current_class->self_pointer_type))),
+              unit, block, block.exprs.Add(MakeSelfRefExpr(frame))),
           blocks, FieldTypeOf(unit_lowerer, blocks)));
   block.AppendStmt(
       mir::ExprStmt{
@@ -1913,7 +1900,6 @@ auto LowerRepeatedGenerate(
   UnitLowerer& unit_lowerer = lowerer.Owner();
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::StructuralScope& hir_scope = lowerer.HirScope();
-  const mir::Class& owner_class = *frame.current_class;
 
   const mir::TypeId index_type = unit_lowerer.TranslateType(
       hir_scope.structural_data_objects.Get(repeat.variable).type);
@@ -1929,22 +1915,12 @@ auto LowerRepeatedGenerate(
     return in.exprs.Add(
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
-                unit, in,
-                in.exprs.Add(MakeSelfRefExpr(
-                    frame.WithBlock(&in), owner_class.self_pointer_type))),
+                unit, in, in.exprs.Add(MakeSelfRefExpr(frame.WithBlock(&in)))),
             index_field, FieldTypeOf(unit_lowerer, index_field)));
   };
   const auto index_read = [&](mir::Block& in) -> mir::ExprId {
-    return in.exprs.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kLoad,
-                            .receiver = index_place(in)},
-                    .arguments = {}},
-            .type = index_type});
+    return in.Read(in.exprs.Add(
+        in.WrapperContents(unit.types, index_place(in), index_type)));
   };
 
   // The block standing at the index the loop then holds, built into `in`.
@@ -2079,7 +2055,8 @@ auto LowerSelectionBranchInto(
 // own labels. LRM 12.5 fixes that comparison: it succeeds only where every bit
 // matches exactly, `x` and `z` included, so the selector is read against each
 // label rather than reduced to a value first. `selector` stands under every
-// one of those comparisons, so it is a read that evaluates nothing.
+// one of those comparisons, so it is a place that evaluates nothing, which
+// each comparison reads or borrows as it takes its operands.
 auto MatchesAnyLabel(
     StructuralScopeLowerer& lowerer, WalkFrame frame, mir::ExprId selector,
     const std::vector<hir::ExprId>& labels) -> diag::Result<mir::ExprId> {
@@ -2090,7 +2067,7 @@ auto MatchesAnyLabel(
   std::vector<mir::ExprId> matches;
   matches.reserve(labels.size());
   for (const hir::ExprId label : labels) {
-    auto lowered = lowerer.LowerExpr(hir_scope.exprs.Get(label), frame);
+    auto lowered = lowerer.LowerAsPlace(hir_scope.exprs.Get(label), frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     matches.push_back(BuildCaseEquality(
         unit, block, selector, block.exprs.Add(*std::move(lowered))));
@@ -2135,8 +2112,7 @@ auto LowerLabelledChoiceInto(
 
     mir::Block step;
     auto test = MatchesAnyLabel(
-        lowerer, frame.WithBlock(&step),
-        step.exprs.Add(mir::MakeLocalRefExpr(held, selector_type)),
+        lowerer, frame.WithBlock(&step), step.LocalPlace(held, selector_type),
         item.labels);
     if (!test) return std::unexpected(std::move(test.error()));
     step.AppendStmt(
@@ -2259,7 +2235,8 @@ auto ApplyInstanceSelects(
         mir::Expr{
             .data =
                 mir::VectorGetExpr{
-                    .vector = reached.expr,
+                    .vector =
+                        block.AsValue(unit_lowerer.Unit().types, reached.expr),
                     .index = BuildSequenceIndex(unit_lowerer, block, select)},
             .type = reached.type});
   }
@@ -2477,7 +2454,7 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
     if (data_object_fields[id.value].has_value()) continue;
     const auto& d = hir_scope.structural_data_objects.Get(id);
     const mir::TypeId cell = unit_lowerer.MemberCellType(
-        unit_lowerer.TranslateType(d.type), hir::StorageOf(d));
+        unit_lowerer.TranslateType(d.type), hir::PublishedStorageOf(d));
     data_object_fields[id.value] = mir::ClassFieldTarget{
         .owner = mir::IntraUnitClassRef{class_id_},
         .slot = hir::AnsweredByName(d) ? shape.AddNamedField(d.name, cell)
@@ -2759,10 +2736,9 @@ void FinalizeConstructor(
   base_args.reserve(prefix_local_ids.size() + base_trailing_args.size());
   for (const mir::LocalId id : prefix_local_ids) {
     const mir::TypeId ty = ctor_code.locals.Get(id).type;
-    const mir::ExprId local_ref =
-        ctor_code.Body().exprs.Add(mir::MakeLocalRefExpr(id, ty));
+    const mir::ExprId local_ref = ctor_code.Body().LocalPlace(id, ty);
     if (unit.types.Get(ty).IsAliasHandle()) {
-      base_args.push_back(local_ref);
+      base_args.push_back(ctor_code.Body().Read(local_ref));
     } else {
       base_args.push_back(ctor_code.Body().exprs.Add(
           mir::Expr{.data = mir::MoveExpr{.operand = local_ref}, .type = ty}));
@@ -2879,12 +2855,12 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
   const auto self_object = [&]() -> mir::ExprId {
     return BuildObjectDeref(
         unit_lowerer.Unit(), ctor_block,
-        ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame, self_ptr_type)));
+        ctor_block.exprs.Add(MakeSelfRefExpr(ctor_frame)));
   };
   const auto init_self_object = [&]() -> mir::ExprId {
     return BuildObjectDeref(
         unit_lowerer.Unit(), initialize_block,
-        initialize_block.exprs.Add(MakeSelfRefExpr(init_frame, self_ptr_type)));
+        initialize_block.exprs.Add(MakeSelfRefExpr(init_frame)));
   };
 
   // A cell takes its declared representation and default as the object is
@@ -2928,7 +2904,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::MakeFieldAccessExpr(
             BuildObjectDeref(
                 unit_lowerer.Unit(), block,
-                block.exprs.Add(MakeSelfRefExpr(at, self_ptr_type))),
+                block.exprs.Add(MakeSelfRefExpr(at))),
             field, FieldTypeOf(unit_lowerer, field)));
     block.AppendStmt(
         mir::ExprStmt{
@@ -2948,16 +2924,19 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     install_in_constructor(handed.value.declared);
     store_into(
         ctor_block, ctor_frame, handed.value.declared,
-        mir::MakeLocalRefExpr(handed.local, handed.value.type));
+        mir::MakeCopyExpr(
+            ctor_block.exprs.Add(
+                mir::MakeLocalRefExpr(handed.local, handed.value.type)),
+            handed.value.type));
   }
 
   // A constant the scope settles for itself is settled after whatever
   // construction supplied is in its cell, because such a constant may be
   // written from it, and in declaration order, because one may be written from
   // an earlier one (LRM 6.20). So is a parameter the construction hands a
-  // value or none for: the value assigned where there is one, and otherwise
+  // flag and a value for: the value assigned where there is one, and otherwise
   // the default its declaration states, evaluated only then (LRM 6.20.1,
-  // 23.10.2.2) -- `D = D_handed ? *D_handed : W * 2`.
+  // 23.10.2.2) -- `D = has_value ? value : W * 2`.
   for (const hir::StructuralDataObjectId id :
        hir_scope.structural_data_objects.Ids()) {
     const auto& settled_decl = hir_scope.structural_data_objects.Get(id);
@@ -2975,14 +2954,20 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
     if (parameter == nullptr) continue;
     install_in_constructor(id);
     const SuppliedLocal& handed = handed_for.at(id);
-    const auto read_handed = [&] {
-      return ctor_block.exprs.Add(
-          mir::MakeLocalRefExpr(handed.local, handed.value.type));
+    // The component `which` of what the parameter was handed, read where the
+    // constructor holds it.
+    const auto read_handed = [&](base::ComponentIndex which, mir::TypeId type) {
+      return mir::MakeCopyExpr(
+          ctor_block.exprs.Add(
+              mir::MakeFieldAccessExpr(
+                  ctor_block.exprs.Add(
+                      mir::MakeLocalRefExpr(handed.local, handed.value.type)),
+                  mir::ComponentFieldTarget{.position = which}, type)),
+          type);
     };
     const mir::TypeId value_type =
         unit_lowerer.TranslateType(settled_decl.type);
-    mir::Expr assigned =
-        mir::MakeComponentExpr(read_handed(), kValueAssigned, value_type);
+    mir::Expr assigned = read_handed(kValue, value_type);
     if (!parameter->default_value.has_value()) {
       store_into(ctor_block, ctor_frame, id, std::move(assigned));
       continue;
@@ -3000,10 +2985,10 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
         mir::Expr{
             .data =
                 mir::ConditionalExpr{
-                    .condition = ctor_block.exprs.Add(
-                        mir::MakeTagMatchesExpr(
-                            read_handed(), kValueAssigned,
-                            unit_lowerer.Unit().builtins.machine_bool)),
+                    .condition = ReduceToCondition(
+                        unit_lowerer.Unit(), ctor_block,
+                        ctor_block.exprs.Add(read_handed(
+                            kHasValue, unit_lowerer.Unit().builtins.bit1))),
                     .then_value = ctor_block.exprs.Add(std::move(assigned)),
                     .else_value = *defaulted},
             .type = value_type});
@@ -3093,9 +3078,7 @@ auto StructuralScopeLowerer::PopulateBodies(WalkFrame parent_frame)
           mir::MakeFieldAccessExpr(self_object(), cell, mir_field_type));
       const NetData data =
           unit_lowerer.Unit().types.Get(mir_value_type).IsIntegral()
-              ? NetData{IntegralNetData{
-                    .position_count = BuildNetPositionCount(
-                        unit_lowerer.Unit(), ctor_block, mir_value_type)}}
+              ? NetData{IntegralNetData{}}
               : NetData{AggregateNetData{
                     .prototype = ctor_block.exprs.Add(BuildDefaultValueFromHir(
                         unit_lowerer, ctor_block, d.type))}};

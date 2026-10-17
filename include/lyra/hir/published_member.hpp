@@ -82,8 +82,8 @@ struct PublishedMember {
 
 // A unit states a declaration's storage on its signature and builds its own
 // object from it, so the two cannot describe different storage.
-[[nodiscard]] inline auto StorageOf(const StructuralDataObjectDecl& decl)
-    -> PublishedStorage {
+[[nodiscard]] inline auto PublishedStorageOf(
+    const StructuralDataObjectDecl& decl) -> PublishedStorage {
   return std::visit(
       Overloaded{
           [](const StructuralVariableDecl&) -> PublishedStorage {

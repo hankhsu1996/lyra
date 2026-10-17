@@ -31,7 +31,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/def_path.hpp"
 
@@ -469,27 +469,33 @@ class UnitLowerer {
   // so no class is its owner.
   void PublishAssignmentPatternTexts();
 
-  // States the default of every type the unit holds an array of, whatever the
-  // array's kind (LRM 7.4.5). Which types those are follows from the source's
-  // types alone, every one of which is translated before any body lowers, so
-  // the set is whole here and no body adds to it.
-  void PublishTypeDefaults();
+  // States every operation on a whole value of each union, tagged union and
+  // fixed-size unpacked array the unit names (LRM 7.3, 7.4.2), and the default
+  // of every type the unit holds an array of, whatever the array's kind
+  // (LRM 7.4.5). Which types those are follows from the source's types alone,
+  // every one of which is translated before any body lowers, so the set is
+  // whole here and no body adds to it.
+  void PublishTypeOperations();
 
   [[nodiscard]] auto TranslateType(const hir::Type& type) -> mir::Type;
 
-  // The struct type naming `src`. A struct this unit declares takes its
-  // identity here and its declaration once its type is interned, since a
-  // method names the type of the value it is asked of; one another unit
-  // declares is named by that declaration, and holding a value of it depends
-  // on that unit.
-  [[nodiscard]] auto TranslateStructType(const hir::UnpackedStructType& src)
-      -> mir::StructType;
+  // The record type naming the declaration `source`, a structure or a union
+  // of `kind` whose members are of `elements`. One this unit declares is
+  // settled here and its methods once its type is interned, since a method
+  // names the type of the value it is asked of; one another unit declares is
+  // named by that declaration, and holding a value of it depends on that unit.
+  [[nodiscard]] auto TranslateRecordType(
+      const hir::TypeDeclarationRef& source, mir::RecordKind kind,
+      std::vector<mir::TypeId> elements) -> mir::RecordType;
 
-  // Settles the declaration `id` of a struct this unit declares, over values of
-  // the interned type `structure` naming it.
-  void DefineOwnStruct(
-      const hir::UnpackedStructType& src, mir::StructId id,
-      mir::TypeId structure);
+  // The types of a union's members, a `void` one holding no information.
+  [[nodiscard]] auto UnionMemberTypes(const hir::UnpackedUnionType& src)
+      -> std::vector<mir::TypeId>;
+
+  // States the methods of the struct or the union `id` this unit declares from
+  // `source`, over values of `type`, the interned type naming it.
+  void DefineRecordMethods(
+      const hir::Type& source, mir::RecordId id, mir::TypeId type);
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* source_manager_;

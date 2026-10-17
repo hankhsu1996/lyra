@@ -62,17 +62,35 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "element",
           .declaration = Method{"Element"},
+          .answer = EntryAnswer::kReadOnlyReferenceIntoTheReceiver,
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kPosition}};
+    case BuiltinFn::kElementMut:
+      return {
+          .name = "element_mut",
+          .declaration = Method{"ElementMut"},
+          .answer = EntryAnswer::kMutableReferenceIntoTheReceiver,
           .selects = PartSelection::kElement,
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocElement:
       return {
           .name = "assocarray_element",
           .declaration = Method{"Element"},
+          .answer = EntryAnswer::kReadOnlyReferenceIntoTheReceiver,
+          .selects = PartSelection::kElement,
+          .operands = {kMachine, kKey}};
+    case BuiltinFn::kAssocElementMut:
+      return {
+          .name = "assocarray_element_mut",
+          .declaration = Method{"ElementMut"},
+          .answer = EntryAnswer::kMutableReferenceIntoTheReceiver,
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
     case BuiltinFn::kSlice:
       return IntegralEntry(
           IntegralOp::kSlice, ValueFunction("Slice"), PartSelection::kBits);
+    case BuiltinFn::kWithSlice:
+      return IntegralEntry(IntegralOp::kWithSlice, ValueFunction("WithSlice"));
     case BuiltinFn::kElementSlice:
       return {
           .name = "element_slice",
@@ -88,60 +106,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .selects = PartSelection::kSlice,
           .operands = {kMachine, kPosition, kPosition},
           .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kElementRef:
+    case BuiltinFn::kSliceMut:
       return {
-          .name = "element_ref",
-          .declaration = Method{"ElementRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kElement,
-          .operands = {kMachine, kPosition}};
-    case BuiltinFn::kAssocElementRef:
-      return {
-          .name = "assocarray_element_ref",
-          .declaration = Method{"ElementRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kElement,
-          .operands = {kMachine, kKey}};
-    case BuiltinFn::kSliceRef:
-      return {
-          .name = "slice_ref",
-          .declaration = Method{"SliceRef"},
+          .name = "slice_mut",
+          .declaration = Method{"SliceMut"},
           .takes_a_type_argument = true,
-          .answer = EntryAnswer::kPartOfTheReceiver,
           .selects = PartSelection::kBits,
           .operands = {kMachine, kPosition}};
-    case BuiltinFn::kElementSliceRef:
+    case BuiltinFn::kAssignElementSlice:
       return {
-          .name = "element_slice_ref",
-          .declaration = Method{"SliceRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kSlice,
+          .name = "assign_element_slice",
+          .declaration = Method{"AssignSlice"},
+          .mutates_receiver = true,
           .operands = {kMachine, kPosition, kMachine, kTyped}};
-    case BuiltinFn::kComponent:
-      return {
-          .name = "component",
-          .declaration = Method{"Component"},
-          .selects = PartSelection::kComponent};
-    case BuiltinFn::kComponentRef:
-      return {
-          .name = "component_ref",
-          .declaration = Method{"ComponentRef"},
-          .answer = EntryAnswer::kPartOfTheReceiver,
-          .selects = PartSelection::kComponent};
-    case BuiltinFn::kTagMatches:
-      return {.name = "tag_matches", .declaration = Method{"IsTagged"}};
-    case BuiltinFn::kMakeActiveMember:
-      return {
-          .name = "make",
-          .declaration = StaticFactory{"Make"},
-          .takes_a_type_argument = true,
-          .operands = {kHeld}};
-    case BuiltinFn::kRequire:
-      return {
-          .name = "require",
-          .declaration = ValueFunction("Require"),
-          .answer = EntryAnswer::kTheReceiver,
-          .operands = {kHeld, kBits}};
+    case BuiltinFn::kAssert:
+      return {.name = "assert", .declaration = ValueFunction("Assert")};
     case BuiltinFn::kSize:
       return {.name = "size", .declaration = Method{"Size"}};
     case BuiltinFn::kLen:
@@ -347,25 +326,29 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "assoc_first",
           .declaration = Method{"First"},
           .writes_the_index_back = true,
-          .operands = {kMachine, kKey}};
+          .operands = {kMachine, kKey},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kAssocLast:
       return {
           .name = "assoc_last",
           .declaration = Method{"Last"},
           .writes_the_index_back = true,
-          .operands = {kMachine, kKey}};
+          .operands = {kMachine, kKey},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kAssocNext:
       return {
           .name = "assoc_next",
           .declaration = Method{"Next"},
           .writes_the_index_back = true,
-          .operands = {kMachine, kKey}};
+          .operands = {kMachine, kKey},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kAssocPrev:
       return {
           .name = "assoc_prev",
           .declaration = Method{"Prev"},
           .writes_the_index_back = true,
-          .operands = {kMachine, kKey}};
+          .operands = {kMachine, kKey},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kAssocMinIndex:
       return {
           .name = "assoc_min_index",
@@ -668,15 +651,21 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "aggregate_net_initialize_retaining",
           .declaration = Method{"InitializeRetaining"},
           .operands = {kMachine, kHeld}};
-    case BuiltinFn::kLoad:
-      return {.name = "get", .declaration = Method{"Get"}};
-    case BuiltinFn::kStore:
+    case BuiltinFn::kGet:
+      return {
+          .name = "get",
+          .declaration = Method{"Get"},
+          .answer = EntryAnswer::kReferenceToContents};
+    case BuiltinFn::kSet:
       return {
           .name = "set",
           .declaration = Method{"Set"},
           .operands = {kMachine, kHeld}};
-    case BuiltinFn::kSampledLoad:
-      return {.name = "sampled_load", .declaration = Method{"SampledGet"}};
+    case BuiltinFn::kSampledGet:
+      return {
+          .name = "sampled_get",
+          .declaration = Method{"SampledGet"},
+          .answer = EntryAnswer::kReferenceToSampledContents};
     case BuiltinFn::kArmSampling:
       return {.name = "arm_sampling", .declaration = Method{"ArmSampling"}};
     case BuiltinFn::kOpenForWrite:
@@ -686,33 +675,25 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kDesignateElement:
       return {
           .name = "designate_element",
-          .declaration = Method{"ElementRef"},
+          .declaration = Method{"DesignateElement"},
           .selects = PartSelection::kElement,
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocDesignateElement:
       return {
           .name = "assocarray_designate_element",
-          .declaration = Method{"ElementRef"},
+          .declaration = Method{"DesignateElement"},
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
     case BuiltinFn::kDesignateComponent:
       return {
           .name = "designate_component",
-          .declaration = Method{"ComponentRef"},
+          .declaration = Method{"DesignateComponent"},
           .selects = PartSelection::kComponent};
-    case BuiltinFn::kDesignateSlice:
+    case BuiltinFn::kDesignateMember:
       return {
-          .name = "designate_slice",
-          .declaration = Method{"SliceRef"},
-          .takes_a_type_argument = true,
-          .selects = PartSelection::kBits,
-          .operands = {kMachine, kPosition}};
-    case BuiltinFn::kDesignateElementSlice:
-      return {
-          .name = "designate_element_slice",
-          .declaration = Method{"SliceRef"},
-          .selects = PartSelection::kSlice,
-          .operands = {kMachine, kPosition}};
+          .name = "designate_member",
+          .declaration = Method{"DesignateMember"},
+          .selects = PartSelection::kComponent};
     case BuiltinFn::kReferElement:
       return {
           .name = "refer_element",
@@ -892,11 +873,20 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "reset_time_format",
           .declaration = Method{"ResetTimeFormat"},
           .takes_the_runtime_handle = true};
+    // The input, the format, and the value each conversion starts from, a
+    // tuple crossing with its type (LRM 21.3.4.3).
     case BuiltinFn::kScanString:
       return {
-          .name = "scan_string", .declaration = ValueFunction("ScanString")};
+          .name = "scan_string",
+          .declaration = ValueFunction("ScanString"),
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kScanFile:
-      return {.name = "scan_file", .declaration = ValueFunction("ScanFile")};
+      return {
+          .name = "scan_file",
+          .declaration = ValueFunction("ScanFile"),
+          .operands = {kMachine, kMachine, kTyped},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kPeekBuffered:
       return {.name = "peek_buffered", .declaration = Method{"PeekBuffered"}};
     case BuiltinFn::kAdvanceFd:
@@ -912,17 +902,22 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kFileUngetc:
       return {.name = "file_ungetc", .declaration = Method{"Ungetc"}};
     case BuiltinFn::kFileGets:
-      return {.name = "file_gets", .declaration = Method{"Gets"}};
+      return {
+          .name = "file_gets",
+          .declaration = Method{"Gets"},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kFileRead:
       return {
           .name = "file_read",
           .declaration = Method{"Read"},
-          .operands = {kMachine, kNumber}};
+          .operands = {kMachine, kNumber},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kFileReadMemory:
       return {
           .name = "file_read_memory",
           .declaration = Method{"ReadMemory"},
-          .operands = {kMachine, kTyped}};
+          .operands = {kMachine, kTyped},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kFileSeek:
       return {.name = "file_seek", .declaration = Method{"Seek"}};
     case BuiltinFn::kFileRewind:
@@ -932,7 +927,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kFileEof:
       return {.name = "file_eof", .declaration = Method{"Eof"}};
     case BuiltinFn::kFileError:
-      return {.name = "file_error", .declaration = Method{"Error"}};
+      return {
+          .name = "file_error",
+          .declaration = Method{"Error"},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kFileFlush:
       return {.name = "file_flush", .declaration = Method{"Flush"}};
     case BuiltinFn::kFileFlushAll:
@@ -947,12 +945,14 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "integral_value_plusargs",
           .declaration = RuntimeFunction("ValuePlusargs"),
           .takes_the_runtime_handle = true,
-          .operands = {kMachine, kMachine, kNumber}};
+          .operands = {kMachine, kMachine, kNumber},
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kValuePlusargsString:
       return {
           .name = "string_value_plusargs",
           .declaration = RuntimeFunction("ValuePlusargs"),
-          .takes_the_runtime_handle = true};
+          .takes_the_runtime_handle = true,
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kRunHostCommand:
       return {
           .name = "run_host_command",
@@ -963,11 +963,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "run_null_host_command",
           .declaration = RuntimeFunction("RunNullHostCommand")};
     case BuiltinFn::kReadMem:
-      return {.name = "read_mem", .declaration = RuntimeFunction("ReadMem")};
+      return {
+          .name = "read_mem",
+          .declaration = RuntimeFunction("ReadMem"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kReadMemWithin:
       return {
           .name = "read_mem_within",
-          .declaration = RuntimeFunction("ReadMemWithin")};
+          .declaration = RuntimeFunction("ReadMemWithin"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kWriteMem:
       return {.name = "write_mem", .declaration = RuntimeFunction("WriteMem")};
     case BuiltinFn::kWriteMemWithin:
@@ -1122,27 +1126,38 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kDistUniform:
       return {
           .name = "dist_uniform",
-          .declaration = RuntimeFunction("DistUniform")};
+          .declaration = RuntimeFunction("DistUniform"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kDistNormal:
       return {
-          .name = "dist_normal", .declaration = RuntimeFunction("DistNormal")};
+          .name = "dist_normal",
+          .declaration = RuntimeFunction("DistNormal"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kDistExponential:
       return {
           .name = "dist_exponential",
-          .declaration = RuntimeFunction("DistExponential")};
+          .declaration = RuntimeFunction("DistExponential"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kDistPoisson:
       return {
           .name = "dist_poisson",
-          .declaration = RuntimeFunction("DistPoisson")};
+          .declaration = RuntimeFunction("DistPoisson"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kDistChiSquare:
       return {
           .name = "dist_chi_square",
-          .declaration = RuntimeFunction("DistChiSquare")};
+          .declaration = RuntimeFunction("DistChiSquare"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kDistT:
-      return {.name = "dist_t", .declaration = RuntimeFunction("DistT")};
+      return {
+          .name = "dist_t",
+          .declaration = RuntimeFunction("DistT"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kDistErlang:
       return {
-          .name = "dist_erlang", .declaration = RuntimeFunction("DistErlang")};
+          .name = "dist_erlang",
+          .declaration = RuntimeFunction("DistErlang"),
+          .answer_told = AnswerTold::kAnswerType};
     case BuiltinFn::kFinish:
       return {
           .name = "finish",

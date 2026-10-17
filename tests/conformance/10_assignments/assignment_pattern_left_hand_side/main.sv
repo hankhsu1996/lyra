@@ -4,9 +4,11 @@
 // structure (LRM 10.9). Prefixed with a data type it is an assignment pattern
 // expression whose type is that data type. The right-hand side is evaluated
 // before any member is written, so a pattern naming on its left what its right
-// reads rotates the values (LRM 10.9, `U'{c, a, b} = '{a+1, b+1, c+1}`). A
-// member expression may itself be a pattern, taking a member that is an
-// aggregate apart in turn, and the members need not be of one type.
+// reads rotates the values (LRM 10.9, `U'{c, a, b} = '{a+1, b+1, c+1}`), and a
+// pattern naming the elements of the very array it is assigned rotates them,
+// in an automatic scope as anywhere else. A member expression may itself be a
+// pattern, taking a member that is an aggregate apart in turn, and the members
+// need not be of one type.
 module Top;
   typedef byte triple_t[3];
   typedef struct packed {
@@ -30,6 +32,13 @@ module Top;
   logic [3:0] pair_upper, pair_lower;
 
   record_t source_record;
+  triple_t rotated;
+
+  function automatic triple_t rotate(triple_t t);
+    triple_t'{t[2], t[0], t[1]} = t;
+    return t;
+  endfunction
+
   int record_count;
   string record_label;
   byte record_x, record_y, record_z;
@@ -67,6 +76,8 @@ module Top;
     record_z = 0;
     record_t'{record_count, record_label, triple_t'{record_x, record_y, record_z}} =
         source_record;
+
+    rotated = rotate('{8'd1, 8'd2, 8'd3});
   end
 
   final begin
@@ -85,6 +96,9 @@ module Top;
       $fatal(1, "record_label was '%s'", record_label);
     if (record_x !== 8'd7 || record_y !== 8'd8 || record_z !== 8'd9)
       $fatal(1, "nested members were %0d %0d %0d", record_x, record_y, record_z);
+    if (rotated[0] !== 8'd2 || rotated[1] !== 8'd3 || rotated[2] !== 8'd1)
+      $fatal(1, "rotated in place was %0d %0d %0d", rotated[0], rotated[1],
+             rotated[2]);
     $display("All checks passed");
   end
 endmodule

@@ -4,12 +4,33 @@
 // every member matches, and they yield x when x or z in a member leaves the
 // relation ambiguous -- which a definite mismatch in another member settles,
 // so the result stays known there. The comparison descends into a member that
-// is itself a structure or an array (LRM 11.2.2, 11.4.5, 7.2).
+// is itself a structure or an array (LRM 11.2.2, 11.4.5, 7.2). Either operand
+// may be any expression of the type -- a variable, an array element, or a value
+// a function returns -- however large the structure is.
 module Top;
   typedef struct {
     int count;
     byte code;
   } entry_t;
+
+  typedef struct {
+    logic [4095:0] bits;
+    int tag;
+  } wide_t;
+
+  function automatic entry_t entry_of(int count, byte code);
+    entry_t e;
+    e.count = count;
+    e.code = code;
+    return e;
+  endfunction
+
+  function automatic wide_t wide_of(int tag);
+    wide_t w;
+    w.bits = {64{64'h0123_4567_89ab_cdef}};
+    w.tag = tag;
+    return w;
+  endfunction
 
   typedef struct {
     entry_t entry;
@@ -32,6 +53,11 @@ module Top;
 
   logic ambiguous_equal, ambiguous_different;
   logic settled_equal, settled_different;
+
+  entry_t entries [2];
+  wide_t wide_a;
+  logic equal_returned, different_returned, equal_elements;
+  logic equal_wide, different_wide, equal_wide_returned;
 
   initial begin
     entry_a.count = 5;
@@ -67,6 +93,17 @@ module Top;
     ambiguous_different = (masked_a != masked_b);
     settled_equal = (masked_a == masked_c);
     settled_different = (masked_a != masked_c);
+
+    equal_returned = (entry_a == entry_of(5, 8'd6));
+    different_returned = (entry_of(5, 8'd7) != entry_a);
+    entries[0] = entry_a;
+    entries[1] = entry_of(5, 8'd6);
+    equal_elements = (entries[0] == entries[1]);
+
+    wide_a = wide_of(1);
+    equal_wide = (wide_a == wide_of(1));
+    different_wide = (wide_of(2) != wide_a);
+    equal_wide_returned = (wide_of(3) == wide_of(3));
   end
 
   final begin
@@ -94,6 +131,19 @@ module Top;
       $fatal(1, "settled_equal was %0h, expected 0", settled_equal);
     if (settled_different !== 1'b1)
       $fatal(1, "settled_different was %0h, expected 1", settled_different);
+
+    if (equal_returned !== 1'b1)
+      $fatal(1, "equal_returned was %0h, expected 1", equal_returned);
+    if (different_returned !== 1'b1)
+      $fatal(1, "different_returned was %0h, expected 1", different_returned);
+    if (equal_elements !== 1'b1)
+      $fatal(1, "equal_elements was %0h, expected 1", equal_elements);
+    if (equal_wide !== 1'b1)
+      $fatal(1, "equal_wide was %0h, expected 1", equal_wide);
+    if (different_wide !== 1'b1)
+      $fatal(1, "different_wide was %0h, expected 1", different_wide);
+    if (equal_wide_returned !== 1'b1)
+      $fatal(1, "equal_wide_returned was %0h, expected 1", equal_wide_returned);
     $display("All checks passed");
   end
 endmodule

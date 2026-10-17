@@ -107,11 +107,11 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
 
   // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no
   // element of the array.
-  [[nodiscard]] auto ElementRef(const Position& position, Formation& formed)
+  [[nodiscard]] auto ElementMut(const Position& position, Formation& formed)
       -> T& {
-    return *static_cast<T*>(core_.ElementRef(ReadPosition(position), formed));
+    return *static_cast<T*>(core_.ElementMut(ReadPosition(position), formed));
   }
-  [[nodiscard]] auto ElementRef(const Position& position) -> T& {
+  [[nodiscard]] auto ElementMut(const Position& position) -> T& {
     return *static_cast<T*>(core_.ExistingAt(ReadPosition(position)));
   }
 
@@ -131,10 +131,14 @@ class DynamicArray : public OrdinalArrayMethods<DynamicArray<T>, T> {
     return Result::SliceOf(Elements(), ReadPosition(start));
   }
 
-  [[nodiscard]] auto SliceRef(const Position& start, std::int64_t count)
-      -> ArraySliceRef<T> {
-    return ArraySliceRef<T>{
-        MutableElements(), ReadPosition(start), SliceCount(count)};
+  // LRM 7.6: `value` written into the `count` elements from `start`, one
+  // assignment to the whole window, answering whether any element took a
+  // different value (LRM 4.3).
+  template <OrdinalElements C>
+  auto AssignSlice(const Position& start, std::int64_t count, const C& value)
+      -> bool {
+    return AssignRun(
+        MutableElements(), ReadPosition(start), SliceCount(count), value);
   }
 
   [[nodiscard]] auto operator==(const DynamicArray& other) const ->
@@ -229,7 +233,6 @@ static_assert(Sized<DynamicArray<LogicVector<4>>>);
 static_assert(BitstreamSizable<DynamicArray<LogicVector<4>>>);
 static_assert(ConditionallyMergeable<DynamicArray<LogicVector<4>>>);
 static_assert(Indexable<DynamicArray<LogicVector<4>>>);
-static_assert(SliceableRef<DynamicArray<LogicVector<4>>>);
 static_assert(Sortable<DynamicArray<LogicVector<4>>>);
 static_assert(OrdinalElements<DynamicArray<LogicVector<4>>>);
 

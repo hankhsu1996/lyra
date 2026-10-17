@@ -1,8 +1,10 @@
 #include "lyra/value/fixed_array_type.hpp"
 
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <gtest/gtest.h>
 #include <memory>
 #include <new>
@@ -15,6 +17,7 @@
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/element_type.hpp"
+#include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
@@ -22,7 +25,6 @@
 #include "lyra/value/library_value_types.hpp"
 #include "lyra/value/queue_type.hpp"
 #include "lyra/value/reduction.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
 #include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
@@ -37,40 +39,176 @@ auto BuildDefault(void* out) -> void* {
   return std::construct_at(static_cast<T*>(out));
 }
 
-template <typename T>
-auto ValueTypeOfElement() -> const ValueType& {
-  if constexpr (IntegralValue<T>) {
-    return IntegralValueType::Of<T>();
-  } else {
-    return LibraryTypeOf<T>();
-  }
-}
-
 // The element type of `T`, stated once with a scratch of its own, as a unit
 // states one for each element type it names.
 template <typename T>
 auto ElementTypeOf() -> const ElementType& {
   static ElementScratch scratch;
   static const ElementType element(
-      ValueTypeOfElement<T>(), BuildDefault<T>, scratch);
+      LibraryTypeOf<T>(), BuildDefault<T>, scratch);
   return element;
 }
 
-// An array of `N` elements, and the default of one, which is what an array of
-// such arrays is told its element type starts as.
-template <std::uint32_t N>
-auto ArrayOfElements() -> const FixedArrayType& {
-  static const FixedArrayType array(ElementTypeOf<Element>(), N);
-  return array;
+// An operation no test here asks of a type stated below.
+[[noreturn]] void Unused() {
+  throw InternalError("an operation no test here asks for");
 }
 
-template <std::uint32_t N>
-auto BuildArrayDefault(void* out) -> void* {
-  ArrayOfElements<N>().BuildEach(out, [](std::size_t, void* element) {
-    std::construct_at(static_cast<Element*>(element));
-  });
-  return out;
-}
+// A table asked nothing: each function fails the test, and a move or an
+// ending, which may not throw, ends the program. The witnesses below answer
+// what their tests ask and take the rest from here.
+struct NothingAsked {
+  static constexpr auto Copy = [](const ValueType&, const void*, void*) {
+    Unused();
+  };
+  static constexpr auto Move = [](const ValueType&, void*, void*) noexcept {
+    std::terminate();
+  };
+  static constexpr auto Destroy = [](const ValueType&, void*) noexcept {
+    std::terminate();
+  };
+  static constexpr auto Assign = [](const ValueType&, void*, const void*) {
+    Unused();
+  };
+  static constexpr auto Equal = [](const ValueType&, const void*,
+                                   const void*) -> FourStateBit { Unused(); };
+  static constexpr auto CaseEqual = [](const ValueType&, const void*,
+                                       const void*) -> bool { Unused(); };
+  static constexpr auto BitIdentical = [](const ValueType&, const void*,
+                                          const void*) -> bool { Unused(); };
+  static constexpr auto HasUnknown = [](const ValueType&, const void*) -> bool {
+    Unused();
+  };
+  static constexpr auto BuildDefault = [](const ValueType&, void*) {
+    Unused();
+  };
+  static constexpr auto BitstreamWidth = [](const ValueType&, const void*,
+                                            void*) { Unused(); };
+  static constexpr auto CountBits = [](const ValueType&, const void*,
+                                       const ConstIntegralView&,
+                                       void*) { Unused(); };
+  static constexpr auto WriteToStream =
+      [](const ValueType&, const void*, const IntegralView&,
+         std::uint64_t) -> std::uint64_t { Unused(); };
+  static constexpr auto ReadFromStream =
+      [](const ValueType&, const ConstIntegralView&, std::uint64_t,
+         void*) -> std::uint64_t { Unused(); };
+  static constexpr auto ResolveTriState = [](const ValueType&, const void*,
+                                             const void*, void*) { Unused(); };
+  static constexpr auto ResolveWiredAnd = [](const ValueType&, const void*,
+                                             const void*, void*) { Unused(); };
+  static constexpr auto ResolveWiredOr = [](const ValueType&, const void*,
+                                            const void*, void*) { Unused(); };
+  static constexpr auto Dominating = [](const ValueType&, const void*,
+                                        const void*, void*) { Unused(); };
+  static constexpr auto FilledLike = [](const ValueType&, const void*,
+                                        const void*, void*) { Unused(); };
+  static constexpr auto OrderBefore = [](const ValueType&, const void*,
+                                         const void*) -> bool { Unused(); };
+  static constexpr auto IsTrue = [](const ValueType&, const void*) -> bool {
+    Unused();
+  };
+  static constexpr auto Reduce = [](const ValueType&, Reduction, const void*,
+                                    const void*, void*) { Unused(); };
+  static constexpr const PartsWitnessTable* kParts = nullptr;
+};
+
+// The functions of an array type as a unit states them: each operation on the
+// whole value is code compiled for it, which here is each element's operation
+// in turn. The library's own part is what reaches an element, and that is
+// what these tests hold to account.
+struct ArrayWitnesses : NothingAsked {
+  static auto ArrayOf(const ValueType& type) -> const FixedArrayType& {
+    return *type.AsFixedArray();
+  }
+  static auto ElementOf(const ValueType& type) -> const ValueType& {
+    return ArrayOf(type).ElementType().Type();
+  }
+  template <typename Holds>
+  static auto Every(const ValueType& type, Holds holds) -> bool {
+    for (std::size_t i = 0; i < ArrayOf(type).Count(); ++i) {
+      if (!holds(i)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static void Copy(const ValueType& type, const void* value, void* out) {
+    const FixedArrayType& array = ArrayOf(type);
+    array.BuildEach(out, [&](std::size_t i, void* element) {
+      ElementOf(type).Copy(array.ElementAt(value, i), element);
+    });
+  }
+  static void Move(const ValueType& type, void* value, void* out) noexcept {
+    const FixedArrayType& array = ArrayOf(type);
+    for (std::size_t i = 0; i < array.Count(); ++i) {
+      ElementOf(type).Move(array.ElementAt(value, i), array.ElementAt(out, i));
+    }
+  }
+  static void Destroy(const ValueType& type, void* value) noexcept {
+    const FixedArrayType& array = ArrayOf(type);
+    for (std::size_t i = 0; i < array.Count(); ++i) {
+      ElementOf(type).Destroy(array.ElementAt(value, i));
+    }
+  }
+  static void Assign(const ValueType& type, void* storage, const void* value) {
+    const FixedArrayType& array = ArrayOf(type);
+    for (std::size_t i = 0; i < array.Count(); ++i) {
+      ElementOf(type).Assign(
+          array.ElementAt(storage, i), array.ElementAt(value, i));
+    }
+  }
+  static auto Equal(const ValueType& type, const void* lhs, const void* rhs)
+      -> FourStateBit {
+    const FixedArrayType& array = ArrayOf(type);
+    FourStateBit all = FourStateBit::kOne;
+    for (std::size_t i = 0; i < array.Count(); ++i) {
+      const FourStateBit one = ElementOf(type).Equal(
+          array.ElementAt(lhs, i), array.ElementAt(rhs, i));
+      if (one == FourStateBit::kZero) {
+        return one;
+      }
+      if (one != FourStateBit::kOne) {
+        all = one;
+      }
+    }
+    return all;
+  }
+  static auto CaseEqual(const ValueType& type, const void* lhs, const void* rhs)
+      -> bool {
+    const FixedArrayType& array = ArrayOf(type);
+    return Every(type, [&](std::size_t i) {
+      return ElementOf(type).CaseEqual(
+          array.ElementAt(lhs, i), array.ElementAt(rhs, i));
+    });
+  }
+  static auto BitIdentical(
+      const ValueType& type, const void* lhs, const void* rhs) -> bool {
+    const FixedArrayType& array = ArrayOf(type);
+    return Every(type, [&](std::size_t i) {
+      return ElementOf(type).BitIdentical(
+          array.ElementAt(lhs, i), array.ElementAt(rhs, i));
+    });
+  }
+  static auto HasUnknown(const ValueType& type, const void* value) -> bool {
+    const FixedArrayType& array = ArrayOf(type);
+    return !Every(type, [&](std::size_t i) {
+      return !ElementOf(type).HasUnknown(array.ElementAt(value, i));
+    });
+  }
+  static void BuildDefault(const ValueType& type, void* out) {
+    ArrayOf(type).BuildEach(out, [&](std::size_t, void* element) {
+      ElementOf(type).BuildDefault(element);
+    });
+  }
+
+  static constexpr const PartsWitnessTable* kParts =
+      &lyra_rt_fixed_array_parts_witness_table;
+};
+
+constexpr const ValueWitnessTable& kArrayWitnesses =
+    kValueWitnessTableFor<ArrayWitnesses>;
 
 // Storage for one array of `type`, holding none until the test builds one.
 class Storage {
@@ -112,8 +250,8 @@ auto NumberAt(const FixedArrayType& type, const void* array, std::size_t i)
 }
 
 auto CountingArray(const FixedArrayType& type, std::int64_t first)
-    -> RuntimeFixedArray {
-  return RuntimeFixedArray::Built(type, [&](std::size_t i, void* element) {
+    -> LaidOutValue {
+  return BuiltArray(type, [&](std::size_t i, void* element) {
     std::construct_at(
         static_cast<Element*>(element),
         Element::FromInt(first + static_cast<std::int64_t>(i)));
@@ -128,208 +266,75 @@ struct Lifecycle {
 
 // The byte element type, counting each copy and each ending it is asked for
 // and failing the copy whose number `counts` names.
-class CountedElementType final : public ValueType {
+class CountedElementType {
  public:
-  explicit CountedElementType(Lifecycle& counts)
-      : ValueType(
-            static_cast<std::uint32_t>(Inner().Size()),
-            static_cast<std::uint32_t>(Inner().Align())),
-        counts_(&counts) {
+  explicit CountedElementType(Lifecycle& counts);
+
+  [[nodiscard]] auto Type() const -> const ValueType& {
+    return type_;
   }
 
-  void Copy(const void* value, void* out) const override {
-    ++counts_->copies;
-    if (counts_->copies == counts_->failing_copy) {
+  static void Copy(const ValueType& type, const void* value, void* out) {
+    Lifecycle& counts = CountsOf(type);
+    ++counts.copies;
+    if (counts.copies == counts.failing_copy) {
       throw InternalError("CountedElementType: the copy the test fails");
     }
     Inner().Copy(value, out);
   }
-  void Move(void* value, void* out) const noexcept override {
-    Inner().Move(value, out);
-  }
-  void Destroy(void* value) const noexcept override {
-    ++counts_->destroyed;
+  static void Destroy(const ValueType& type, void* value) noexcept {
+    ++CountsOf(type).destroyed;
     Inner().Destroy(value);
-  }
-  void Assign(void* storage, const void* value) const override {
-    Inner().Assign(storage, value);
-  }
-
-  [[nodiscard]] auto Equal(const void* lhs, const void* rhs) const
-      -> FourStateBit override {
-    return Inner().Equal(lhs, rhs);
-  }
-  [[nodiscard]] auto CaseEqual(const void* lhs, const void* rhs) const
-      -> bool override {
-    return Inner().CaseEqual(lhs, rhs);
-  }
-  [[nodiscard]] auto BitIdentical(const void* lhs, const void* rhs) const
-      -> bool override {
-    return Inner().BitIdentical(lhs, rhs);
-  }
-  [[nodiscard]] auto HasUnknown(const void* value) const -> bool override {
-    return Inner().HasUnknown(value);
-  }
-
-  void BuildDefault(void* out) const override {
-    Inner().BuildDefault(out);
-  }
-
-  void BitstreamWidth(const void* value, void* out) const override {
-    Inner().BitstreamWidth(value, out);
-  }
-  void CountBits(
-      const void* value, const ConstIntegralView& control_bits,
-      void* out) const override {
-    Inner().CountBits(value, control_bits, out);
-  }
-  auto WriteToStream(
-      const void* value, const IntegralView& stream, std::uint64_t filled) const
-      -> std::uint64_t override {
-    return Inner().WriteToStream(value, stream, filled);
-  }
-  auto ReadFromStream(
-      const ConstIntegralView& stream, std::uint64_t taken, void* out) const
-      -> std::uint64_t override {
-    return Inner().ReadFromStream(stream, taken, out);
-  }
-
-  void ResolveTriState(
-      const void* lhs, const void* rhs, void* out) const override {
-    Inner().ResolveTriState(lhs, rhs, out);
-  }
-  void ResolveWiredAnd(
-      const void* lhs, const void* rhs, void* out) const override {
-    Inner().ResolveWiredAnd(lhs, rhs, out);
-  }
-  void ResolveWiredOr(
-      const void* lhs, const void* rhs, void* out) const override {
-    Inner().ResolveWiredOr(lhs, rhs, out);
-  }
-  void Dominating(
-      const void* stronger, const void* weaker, void* out) const override {
-    Inner().Dominating(stronger, weaker, out);
-  }
-  void FilledLike(
-      const void* prototype, const void* fill, void* out) const override {
-    Inner().FilledLike(prototype, fill, out);
-  }
-
-  [[nodiscard]] auto OrderBefore(const void* lhs, const void* rhs) const
-      -> bool override {
-    return Inner().OrderBefore(lhs, rhs);
-  }
-  [[nodiscard]] auto IsTrue(const void* value) const -> bool override {
-    return Inner().IsTrue(value);
-  }
-  void Reduce(Reduction reduction, const void* lhs, const void* rhs, void* out)
-      const override {
-    Inner().Reduce(reduction, lhs, rhs, out);
-  }
-
-  [[nodiscard]] auto Parts() const -> const PartsByPosition* override {
-    return Inner().Parts();
-  }
-  [[nodiscard]] auto AsIntegral() const -> const IntegralValueType* override {
-    return Inner().AsIntegral();
-  }
-  [[nodiscard]] auto AsFixedArray() const -> const FixedArrayType* override {
-    return Inner().AsFixedArray();
   }
 
  private:
   [[nodiscard]] static auto Inner() -> const ValueType& {
-    return IntegralValueType::Of<Element>();
+    return IntegralValueType::Of<Element>().Type();
+  }
+  [[nodiscard]] static auto CountsOf(const ValueType& type) -> Lifecycle& {
+    return *std::bit_cast<const CountedElementType*>(&type)->counts_;
   }
 
+  ValueType type_;
   Lifecycle* counts_;
 };
 
-TEST(FixedArrayType, ASmallArrayLiesWhereItIs) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 4);
-  EXPECT_TRUE(type.LiesInPlace());
-  EXPECT_EQ(type.Size(), 4 * sizeof(Element));
-  EXPECT_EQ(type.Align(), alignof(Element));
+// A copy and an ending are counted, a move and an assignment are the byte's
+// own, and nothing else is asked of an element here.
+struct CountedWitnesses : NothingAsked {
+  static constexpr auto Copy = &CountedElementType::Copy;
+  static constexpr auto Destroy = &CountedElementType::Destroy;
+  static constexpr auto Move = [](const ValueType&, void* value,
+                                  void* out) noexcept {
+    IntegralValueType::Of<Element>().Type().Move(value, out);
+  };
+  static constexpr auto Assign = [](const ValueType&, void* storage,
+                                    const void* value) {
+    IntegralValueType::Of<Element>().Type().Assign(storage, value);
+  };
+};
 
-  const Storage array(type);
-  BuildCounting(type, array.Bytes(), 10);
-  EXPECT_EQ(type.ElementAt(array.Bytes(), 0), array.Bytes());
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 3), 13);
-  type.Destroy(array.Bytes());
+CountedElementType::CountedElementType(Lifecycle& counts)
+    : type_(
+          kValueWitnessTableFor<CountedWitnesses>,
+          static_cast<std::uint32_t>(Inner().Size()),
+          static_cast<std::uint32_t>(Inner().Align()), ValueTypeKind::kOther),
+      counts_(&counts) {
 }
 
-TEST(FixedArrayType, ALargeArrayIsOneAddress) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 4000);
-  EXPECT_FALSE(type.LiesInPlace());
-  EXPECT_EQ(type.Size(), sizeof(void*));
-
-  const Storage array(type);
-  BuildCounting(type, array.Bytes(), 0);
-  const Storage copy(type);
-  type.Copy(array.Bytes(), copy.Bytes());
-  EXPECT_NE(type.ElementAt(copy.Bytes(), 0), type.ElementAt(array.Bytes(), 0));
-  EXPECT_EQ(NumberAt(type, copy.Bytes(), 100), 100);
-
-  const void* run = type.ElementAt(copy.Bytes(), 0);
-  const Storage moved(type);
-  type.Move(copy.Bytes(), moved.Bytes());
-  EXPECT_EQ(type.ElementAt(moved.Bytes(), 0), run);
-  EXPECT_EQ(NumberAt(type, moved.Bytes(), 100), 100);
-  EXPECT_EQ(*static_cast<void* const*>(copy.Bytes()), nullptr);
-
-  // What was moved from holds no run, and is assigned and ended like any
-  // other: the assignment obtains a run of its own.
-  type.Assign(copy.Bytes(), array.Bytes());
-  EXPECT_NE(type.ElementAt(copy.Bytes(), 0), type.ElementAt(moved.Bytes(), 0));
-  EXPECT_EQ(NumberAt(type, copy.Bytes(), 7), 7);
-
-  const Storage ended(type);
-  type.Move(copy.Bytes(), ended.Bytes());
-  type.Destroy(copy.Bytes());
-
-  type.Destroy(ended.Bytes());
-  type.Destroy(moved.Bytes());
-  type.Destroy(array.Bytes());
-}
-
-TEST(FixedArrayType, AnArrayLyingInPlaceMovesElementByElement) {
-  const FixedArrayType type(ElementTypeOf<String>(), 3);
-  ASSERT_TRUE(type.LiesInPlace());
-  // Long enough that each element owns storage of its own, which the move has
-  // to hand over.
-  const std::string text(200, 'm');
-  const Storage array(type);
-  type.BuildEach(array.Bytes(), [&](std::size_t, void* element) {
-    std::construct_at(static_cast<String*>(element), text);
-  });
-
-  const Storage moved(type);
-  type.Move(array.Bytes(), moved.Bytes());
-  for (std::size_t i = 0; i < type.Count(); ++i) {
-    EXPECT_EQ(
-        static_cast<const String*>(type.ElementAt(moved.Bytes(), i))->View(),
-        text);
-  }
-  EXPECT_EQ(type.ElementAt(moved.Bytes(), 0), moved.Bytes());
-
-  // The elements moved from are still values, which their holder ends.
-  type.Destroy(array.Bytes());
-  type.Destroy(moved.Bytes());
-}
-
-TEST(FixedArrayType, AnAssignmentLeavesEveryElementWhereItLies) {
+// An array is its elements one after another where the array lies, whatever
+// its size.
+TEST(FixedArrayType, AnArrayIsItsElementsWhereItLiesAtEverySize) {
   for (const std::uint32_t count : {4U, 4000U}) {
-    const FixedArrayType type(ElementTypeOf<Element>(), count);
-    const Storage target(type);
-    const Storage source(type);
-    BuildCounting(type, target.Bytes(), 0);
-    BuildCounting(type, source.Bytes(), 50);
-    const void* before = type.ElementAt(target.Bytes(), 2);
-    type.Assign(target.Bytes(), source.Bytes());
-    EXPECT_EQ(type.ElementAt(target.Bytes(), 2), before);
-    EXPECT_EQ(NumberAt(type, target.Bytes(), 2), 52);
-    type.Destroy(target.Bytes());
-    type.Destroy(source.Bytes());
+    const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), count);
+    EXPECT_EQ(type.Type().Size(), count * sizeof(Element));
+    EXPECT_EQ(type.Type().Align(), alignof(Element));
+
+    const Storage array(type.Type());
+    BuildCounting(type, array.Bytes(), 10);
+    EXPECT_EQ(type.ElementAt(array.Bytes(), 0), array.Bytes());
+    EXPECT_EQ(NumberAt(type, array.Bytes(), 3), 13);
+    type.Type().Destroy(array.Bytes());
   }
 }
 
@@ -338,100 +343,54 @@ TEST(FixedArrayType, ABuildThatFailsEndsWhatItBuilt) {
     static ElementScratch scratch;
     Lifecycle counts;
     const CountedElementType element(counts);
-    const ElementType type_element(element, BuildDefault<Element>, scratch);
-    const FixedArrayType type(type_element, count);
-    const Storage source(type);
+    const ElementType type_element(
+        element.Type(), BuildDefault<Element>, scratch);
+    const FixedArrayType type(kArrayWitnesses, type_element, count);
+    const Storage source(type.Type());
     BuildCounting(type, source.Bytes(), 0);
 
     counts.failing_copy = 3;
-    const Storage target(type);
-    EXPECT_THROW(type.Copy(source.Bytes(), target.Bytes()), InternalError);
+    const Storage target(type.Type());
+    EXPECT_THROW(
+        type.Type().Copy(source.Bytes(), target.Bytes()), InternalError);
     EXPECT_EQ(counts.copies, 3U);
     EXPECT_EQ(counts.destroyed, 2U);
 
     // A holder building its own copy ends the same two and keeps nothing.
-    counts = Lifecycle{.copies = 0, .destroyed = 0, .failing_copy = 3};
+    counts = Lifecycle{.failing_copy = 3};
     EXPECT_THROW(
         {
-          const RuntimeFixedArray kept =
-              RuntimeFixedArray::CopyOf(type, source.Bytes());
+          const LaidOutValue kept =
+              LaidOutValue::CopyOf(type.Type(), source.Bytes());
         },
         InternalError);
     EXPECT_EQ(counts.destroyed, 2U);
 
-    counts = Lifecycle{};
-    type.Destroy(source.Bytes());
-    EXPECT_EQ(counts.destroyed, count);
+    type.Type().Destroy(source.Bytes());
   }
 }
 
-TEST(FixedArrayType, ComparesElementByElement) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 3);
-  const Storage a(type);
-  const Storage b(type);
-  const Storage unknown(type);
-  BuildCounting(type, a.Bytes(), 1);
-  BuildCounting(type, b.Bytes(), 1);
-  // An element at its default is all x.
-  type.BuildEach(unknown.Bytes(), [](std::size_t, void* element) {
-    std::construct_at(static_cast<Element*>(element));
-  });
+// The program holds one description of each array type, so a type is the
+// same as itself and as no other, whatever count and element the other states.
+TEST(FixedArrayType, AnArrayTypeIsTheSameTypeOnlyAsItself) {
+  const FixedArrayType four(kArrayWitnesses, ElementTypeOf<Element>(), 4);
+  const FixedArrayType four_again(kArrayWitnesses, ElementTypeOf<Element>(), 4);
+  const FixedArrayType five(kArrayWitnesses, ElementTypeOf<Element>(), 5);
 
-  EXPECT_EQ(type.Equal(a.Bytes(), b.Bytes()), FourStateBit::kOne);
-  EXPECT_TRUE(type.CaseEqual(a.Bytes(), b.Bytes()));
-  EXPECT_TRUE(type.BitIdentical(a.Bytes(), b.Bytes()));
-  EXPECT_FALSE(type.HasUnknown(a.Bytes()));
-
-  EXPECT_EQ(type.Equal(a.Bytes(), unknown.Bytes()), FourStateBit::kUnknown);
-  EXPECT_FALSE(type.CaseEqual(a.Bytes(), unknown.Bytes()));
-  EXPECT_TRUE(type.HasUnknown(unknown.Bytes()));
-
-  *static_cast<Element*>(type.ElementAt(b.Bytes(), 2)) = Element::FromInt(9);
-  EXPECT_EQ(type.Equal(a.Bytes(), b.Bytes()), FourStateBit::kZero);
-  EXPECT_FALSE(type.BitIdentical(a.Bytes(), b.Bytes()));
-
-  type.Destroy(a.Bytes());
-  type.Destroy(b.Bytes());
-  type.Destroy(unknown.Bytes());
-}
-
-TEST(FixedArrayType, TwoStatementsOfOneArrayTypeAreTheSameType) {
-  const FixedArrayType four(ElementTypeOf<Element>(), 4);
-  const FixedArrayType four_again(ElementTypeOf<Element>(), 4);
-  const FixedArrayType five(ElementTypeOf<Element>(), 5);
-  const FixedArrayType four_wider(ElementTypeOf<LogicVector<16>>(), 4);
-
-  EXPECT_TRUE(SameType(four, four));
-  EXPECT_TRUE(SameType(four, four_again));
-  EXPECT_FALSE(SameType(four, five));
-  EXPECT_FALSE(SameType(four, four_wider));
-  EXPECT_FALSE(SameType(four, IntegralValueType::Of<Element>()));
-  EXPECT_FALSE(SameType(IntegralValueType::Of<Element>(), four));
-
-  // An array of arrays is the same type where its element arrays are, each
-  // element array type stated with a scratch of its own.
-  ElementScratch outer_scratch;
-  ElementScratch outer_again_scratch;
-  ElementScratch outer_of_five_scratch;
-  const ElementType outer_element(four, BuildArrayDefault<4>, outer_scratch);
-  const FixedArrayType outer(outer_element, 2);
-  const ElementType outer_again_element(
-      four_again, BuildArrayDefault<4>, outer_again_scratch);
-  const FixedArrayType outer_again(outer_again_element, 2);
-  const ElementType outer_of_five_element(
-      five, BuildArrayDefault<5>, outer_of_five_scratch);
-  const FixedArrayType outer_of_five(outer_of_five_element, 2);
-  EXPECT_TRUE(SameType(outer, outer_again));
-  EXPECT_FALSE(SameType(outer, outer_of_five));
+  EXPECT_TRUE(SameType(four.Type(), four.Type()));
+  EXPECT_FALSE(SameType(four.Type(), four_again.Type()));
+  EXPECT_FALSE(SameType(four.Type(), five.Type()));
+  EXPECT_FALSE(SameType(four.Type(), IntegralValueType::Of<Element>().Type()));
+  EXPECT_FALSE(SameType(IntegralValueType::Of<Element>().Type(), four.Type()));
 }
 
 TEST(FixedArrayType, AnIndexNamingNoElementLandsInTheDiscardedWrite) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 3);
-  const Storage array(type);
+  const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), 3);
+  const Storage array(type.Type());
   BuildCounting(type, array.Bytes(), 0);
   Formation formed = Formation::kMade;
   EXPECT_EQ(
-      type.ElementRef(array.Bytes(), 2, formed),
+      type.ElementMut(array.Bytes(), 2, formed),
       type.ElementAt(array.Bytes(), 2));
   EXPECT_EQ(formed, Formation::kExisting);
   for (const std::optional<std::int64_t> position :
@@ -439,11 +398,11 @@ TEST(FixedArrayType, AnIndexNamingNoElementLandsInTheDiscardedWrite) {
         std::optional<std::int64_t>{}}) {
     formed = Formation::kMade;
     EXPECT_EQ(
-        type.ElementRef(array.Bytes(), position, formed),
+        type.ElementMut(array.Bytes(), position, formed),
         type.ElementType().DiscardedWrite());
     EXPECT_EQ(formed, Formation::kNowhere);
   }
-  type.Destroy(array.Bytes());
+  type.Type().Destroy(array.Bytes());
 }
 
 // How often the counted default below was built, and whether the next build
@@ -469,7 +428,7 @@ auto BuildCountedDefault(void* out) -> void* {
 TEST(ElementType, BuildsItsDefaultOnceAndResetsTheDiscardedWrite) {
   static ElementScratch scratch;
   const ElementType element(
-      IntegralValueType::Of<Element>(), BuildCountedDefault, scratch);
+      IntegralValueType::Of<Element>().Type(), BuildCountedDefault, scratch);
   Builds() = DefaultBuilds{};
 
   // A build that fails leaves the scratch as it was, and the next one asked
@@ -495,8 +454,8 @@ TEST(ElementType, BuildsItsDefaultOnceAndResetsTheDiscardedWrite) {
 }
 
 TEST(FixedArrayType, ASliceAssignmentWritesTheElementsItReaches) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 5);
-  const Storage array(type);
+  const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), 5);
+  const Storage array(type.Type());
   BuildCounting(type, array.Bytes(), 0);
   const std::array<Element, 3> values{
       Element::FromInt(20), Element::FromInt(21), Element::FromInt(22)};
@@ -530,108 +489,73 @@ TEST(FixedArrayType, ASliceAssignmentWritesTheElementsItReaches) {
   EXPECT_EQ(NumberAt(type, array.Bytes(), 2), 21);
   EXPECT_EQ(NumberAt(type, array.Bytes(), 4), 21);
 
-  type.Destroy(array.Bytes());
-}
-
-TEST(FixedArrayType, StreamsItsElementsFirstMostSignificant) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 3);
-  const Storage array(type);
-  BuildCounting(type, array.Bytes(), 1);
-
-  LogicVector<24> stream = LogicVector<24>::Zero();
-  EXPECT_EQ(
-      type.WriteToStream(
-          array.Bytes(), stream.AsMutableWords().MutableView(), 0),
-      24U);
-  EXPECT_EQ(stream.ToInt64(), 0x010203);
-
-  // The read is told nothing but the stream, the type fixing every element's
-  // width.
-  const Storage read(type);
-  EXPECT_EQ(type.ReadFromStream(stream.AsWords().View(), 0, read.Bytes()), 24U);
-  EXPECT_TRUE(type.BitIdentical(array.Bytes(), read.Bytes()));
-
-  Int width = Int::Zero();
-  type.BitstreamWidth(array.Bytes(), &width);
-  EXPECT_EQ(width.ToInt64(), 24);
-
-  type.Destroy(array.Bytes());
-  type.Destroy(read.Bytes());
+  type.Type().Destroy(array.Bytes());
 }
 
 TEST(FixedArrayType, HoldsElementsThatOwnStorage) {
-  const FixedArrayType type(ElementTypeOf<String>(), 3);
+  const FixedArrayType type(kArrayWitnesses, ElementTypeOf<String>(), 3);
   const std::string text(200, 'a');
-  const Storage array(type);
+  const Storage array(type.Type());
   type.BuildEach(array.Bytes(), [&](std::size_t, void* element) {
     std::construct_at(static_cast<String*>(element), text);
   });
-  const Storage copy(type);
-  type.Copy(array.Bytes(), copy.Bytes());
-  EXPECT_EQ(type.Equal(array.Bytes(), copy.Bytes()), FourStateBit::kOne);
-  EXPECT_EQ(
-      static_cast<const String*>(type.ElementAt(copy.Bytes(), 2))->View(),
-      text);
+  const Storage copy(type.Type());
+  type.Type().Copy(array.Bytes(), copy.Bytes());
+  for (std::size_t i = 0; i < type.Count(); ++i) {
+    EXPECT_EQ(
+        static_cast<const String*>(type.ElementAt(copy.Bytes(), i))->View(),
+        text);
+  }
 
-  const PartsByPosition* parts = type.Parts();
-  ASSERT_NE(parts, nullptr);
-  EXPECT_EQ(parts->Count(array.Bytes()), 3U);
-  EXPECT_EQ(parts->At(array.Bytes(), 1), type.ElementAt(array.Bytes(), 1));
-
-  type.Destroy(array.Bytes());
-  type.Destroy(copy.Bytes());
+  type.Type().Destroy(array.Bytes());
+  type.Type().Destroy(copy.Bytes());
 }
 
-TEST(RuntimeFixedArray, HoldsACopyInStorageOfItsOwn) {
+TEST(LaidOutValue, HoldsACopyInStorageOfItsOwn) {
   for (const std::uint32_t count : {4U, 4000U}) {
-    const FixedArrayType type(ElementTypeOf<Element>(), count);
-    const Storage laid_out(type);
+    const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), count);
+    const Storage laid_out(type.Type());
     BuildCounting(type, laid_out.Bytes(), 30);
 
-    const RuntimeFixedArray copy =
-        RuntimeFixedArray::CopyOf(type, laid_out.Bytes());
-    EXPECT_EQ(&copy.Type(), &type);
+    const LaidOutValue copy =
+        LaidOutValue::CopyOf(type.Type(), laid_out.Bytes());
+    EXPECT_EQ(copy.Type().AsFixedArray(), &type);
     EXPECT_NE(copy.Bytes(), laid_out.Bytes());
     EXPECT_NE(
         type.ElementAt(copy.Bytes(), 0), type.ElementAt(laid_out.Bytes(), 0));
     EXPECT_EQ(NumberAt(type, copy.Bytes(), 3), 33);
-    EXPECT_TRUE(copy.HoldsBytes(laid_out.Bytes()));
+    EXPECT_TRUE(copy.IsBitIdenticalTo(laid_out.Bytes()));
 
-    const RuntimeFixedArray built = CountingArray(type, 30);
-    EXPECT_EQ(&built.Type(), &type);
+    const LaidOutValue built = CountingArray(type, 30);
+    EXPECT_EQ(built.Type().AsFixedArray(), &type);
     EXPECT_TRUE(built.IsBitIdentical(copy));
     EXPECT_EQ(built == copy, FourStateBit::kOne);
 
-    type.Destroy(laid_out.Bytes());
+    type.Type().Destroy(laid_out.Bytes());
   }
 }
 
-TEST(RuntimeFixedArray, IsBuiltFromElementsTextAndBits) {
-  const FixedArrayType type(ElementTypeOf<Element>(), 4);
+TEST(LaidOutValue, IsBuiltFromElementsTextAndBits) {
+  const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), 4);
   const std::array<Element, 4> values{
       Element::FromInt(7), Element::FromInt(8), Element::FromInt(9),
       Element::FromInt(10)};
   const std::array<const void*, 4> items{
       values.data(), &values[1], &values[2], &values[3]};
 
-  const RuntimeFixedArray from_elements =
-      RuntimeFixedArray::FromElements(type, items);
+  const LaidOutValue from_elements = ArrayFromElements(type, items);
   EXPECT_EQ(NumberAt(type, from_elements.Bytes(), 0), 7);
   EXPECT_EQ(NumberAt(type, from_elements.Bytes(), 3), 10);
   // LRM 7.6: a source of another size is a run-time error.
   const std::array<const void*, 3> too_few{
       values.data(), &values[1], &values[2]};
   EXPECT_THROW(
-      {
-        const RuntimeFixedArray built =
-            RuntimeFixedArray::FromElements(type, too_few);
-      },
+      { const LaidOutValue built = ArrayFromElements(type, too_few); },
       SimulationError);
 
   // LRM 5.9: the text is left-justified and the elements past its end keep
   // the element default.
-  const RuntimeFixedArray from_string =
-      RuntimeFixedArray::FromString(type, String("AB"));
+  const LaidOutValue from_string = ArrayFromString(type, String("AB"));
   EXPECT_EQ(NumberAt(type, from_string.Bytes(), 0), 'A');
   EXPECT_EQ(NumberAt(type, from_string.Bytes(), 1), 'B');
   EXPECT_TRUE(
@@ -642,82 +566,80 @@ TEST(RuntimeFixedArray, IsBuiltFromElementsTextAndBits) {
           ->HasUnknown());
 
   const LogicVector<16> literal = LogicVector<16>::FromInt(0x4142);
-  const RuntimeFixedArray from_integral =
-      RuntimeFixedArray::FromIntegral(type, literal.AsWords().View());
+  const LaidOutValue from_integral =
+      ArrayFromIntegral(type, literal.AsWords().View());
   EXPECT_TRUE(from_integral.IsBitIdentical(from_string));
 
   // Text longer than the array loses what does not fit.
-  const RuntimeFixedArray truncated =
-      RuntimeFixedArray::FromString(type, String("ABCDEF"));
+  const LaidOutValue truncated = ArrayFromString(type, String("ABCDEF"));
   EXPECT_EQ(NumberAt(type, truncated.Bytes(), 3), 'D');
 }
 
-TEST(RuntimeFixedArray, AnAssignmentKeepsEveryElementWhereItLies) {
+TEST(LaidOutValue, AnAssignmentKeepsEveryElementWhereItLies) {
   for (const std::uint32_t count : {4U, 4000U}) {
-    const FixedArrayType type(ElementTypeOf<Element>(), count);
-    // A second statement of the same type, as another unit would make.
-    const FixedArrayType restated(ElementTypeOf<Element>(), count);
-    RuntimeFixedArray held = CountingArray(type, 0);
+    const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), count);
+    LaidOutValue held = CountingArray(type, 0);
     const void* bytes = held.Bytes();
     const void* third = type.ElementAt(held.Bytes(), 2);
 
-    const RuntimeFixedArray source = CountingArray(restated, 50);
+    const LaidOutValue source = CountingArray(type, 50);
     held = source;
     EXPECT_EQ(held.Bytes(), bytes);
     EXPECT_EQ(type.ElementAt(held.Bytes(), 2), third);
     EXPECT_EQ(NumberAt(type, held.Bytes(), 2), 52);
-    EXPECT_EQ(&held.Type(), &type);
+    EXPECT_EQ(held.Type().AsFixedArray(), &type);
 
-    const Storage laid_out(type);
+    const Storage laid_out(type.Type());
     BuildCounting(type, laid_out.Bytes(), 80);
-    EXPECT_FALSE(held.HoldsBytes(laid_out.Bytes()));
-    held.TakeBytes(laid_out.Bytes());
-    EXPECT_TRUE(held.HoldsBytes(laid_out.Bytes()));
+    EXPECT_FALSE(held.IsBitIdenticalTo(laid_out.Bytes()));
+    held.AssignBytes(laid_out.Bytes());
+    EXPECT_TRUE(held.IsBitIdenticalTo(laid_out.Bytes()));
     EXPECT_EQ(type.ElementAt(held.Bytes(), 2), third);
     EXPECT_EQ(NumberAt(type, held.Bytes(), 2), 82);
 
     // The bytes handed in may be the ones held.
-    EXPECT_TRUE(held.HoldsBytes(held.Bytes()));
-    held.TakeBytes(held.Bytes());
+    EXPECT_TRUE(held.IsBitIdenticalTo(held.Bytes()));
+    held.AssignBytes(held.Bytes());
     EXPECT_EQ(NumberAt(type, held.Bytes(), 2), 82);
 
-    type.Destroy(laid_out.Bytes());
+    type.Type().Destroy(laid_out.Bytes());
   }
 }
 
-TEST(RuntimeFixedArray, LaysItsArrayOutWhereItIsAsked) {
+TEST(LaidOutValue, LaysItsArrayOutWhereItIsAsked) {
   for (const std::uint32_t count : {4U, 4000U}) {
-    const FixedArrayType type(ElementTypeOf<Element>(), count);
-    RuntimeFixedArray held = CountingArray(type, 60);
+    const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), count);
+    LaidOutValue held = CountingArray(type, 60);
 
-    const Storage copied(type);
+    const Storage copied(type.Type());
     EXPECT_EQ(held.CopyInto(copied.Bytes()), copied.Bytes());
     EXPECT_NE(
         type.ElementAt(copied.Bytes(), 0), type.ElementAt(held.Bytes(), 0));
     EXPECT_EQ(NumberAt(type, copied.Bytes(), 3), 63);
     EXPECT_EQ(NumberAt(type, held.Bytes(), 3), 63);
 
-    const Storage moved(type);
+    const Storage moved(type.Type());
     EXPECT_EQ(std::move(held).MoveInto(moved.Bytes()), moved.Bytes());
     EXPECT_EQ(NumberAt(type, moved.Bytes(), 3), 63);
     EXPECT_NE(
         type.ElementAt(moved.Bytes(), 0), type.ElementAt(copied.Bytes(), 0));
 
-    type.Destroy(copied.Bytes());
-    type.Destroy(moved.Bytes());
+    type.Type().Destroy(copied.Bytes());
+    type.Type().Destroy(moved.Bytes());
   }
 }
 
-TEST(ValueType, ASingularTypeBuildsItsDefaultAndAnAggregateIsNeverAsked) {
+TEST(ValueType, EveryTypeBuildsWhatItsStorageHoldsBeforeAnyWrite) {
   // LRM Table 6-7: x in every position of a four-state integral, 0 in every
-  // position of a two-state one, and the empty string.
+  // position of a two-state one, and the empty string; an array with every
+  // element at its element type's, and a queue holding nothing.
   Element logic = Element::FromInt(5);
-  IntegralValueType::Of<Element>().BuildDefault(&logic);
+  IntegralValueType::Of<Element>().Type().BuildDefault(&logic);
   EXPECT_TRUE(logic.HasUnknown());
   EXPECT_TRUE(logic.CaseEqual(Element{}).IsTruthy());
 
   BitVector<8> bits = BitVector<8>::FromInt(5);
-  IntegralValueType::Of<BitVector<8>>().BuildDefault(&bits);
+  IntegralValueType::Of<BitVector<8>>().Type().BuildDefault(&bits);
   EXPECT_EQ(bits.ToInt64(), 0);
 
   const Storage text(LibraryTypeOf<String>());
@@ -725,12 +647,20 @@ TEST(ValueType, ASingularTypeBuildsItsDefaultAndAnAggregateIsNeverAsked) {
   EXPECT_TRUE(static_cast<const String*>(text.Bytes())->View().empty());
   LibraryTypeOf<String>().Destroy(text.Bytes());
 
-  const FixedArrayType array(ElementTypeOf<Element>(), 2);
-  const Storage never(array);
-  EXPECT_THROW(array.BuildDefault(never.Bytes()), InternalError);
+  const FixedArrayType array(kArrayWitnesses, ElementTypeOf<Element>(), 2);
+  const Storage pair(array.Type());
+  array.Type().BuildDefault(pair.Bytes());
+  for (std::size_t i = 0; i < 2; ++i) {
+    const auto* element =
+        static_cast<const Element*>(array.ElementAt(pair.Bytes(), i));
+    EXPECT_TRUE(element->CaseEqual(Element{}).IsTruthy());
+  }
+  array.Type().Destroy(pair.Bytes());
+
   const Storage queue(LibraryTypeOf<RuntimeQueue>());
-  EXPECT_THROW(
-      LibraryTypeOf<RuntimeQueue>().BuildDefault(queue.Bytes()), InternalError);
+  LibraryTypeOf<RuntimeQueue>().BuildDefault(queue.Bytes());
+  EXPECT_EQ(static_cast<const RuntimeQueue*>(queue.Bytes())->Count(), 0U);
+  LibraryTypeOf<RuntimeQueue>().Destroy(queue.Bytes());
 }
 
 TEST(RuntimeQueue, HoldsTheBoundItsTypeStates) {

@@ -127,15 +127,16 @@ auto Tokenize(std::string_view text) -> std::vector<std::string> {
 auto ParseAtAddress(
     RuntimeEffects& runtime, unsigned base, const std::string& token)
     -> std::optional<std::int64_t> {
-  const std::optional<value::LongInt> address =
-      ParsedMemoryWord<value::LongInt>(std::string_view{token}.substr(1), 16U);
-  if (!address) {
+  value::LongInt address;
+  if (!value::FromDigits(
+          address, value::DigitRadix::kHex,
+          std::string_view{token}.substr(1))) {
     Error(
         runtime, base, Direction::kLoad,
         std::format("malformed address '{}'", token));
     return std::nullopt;
   }
-  return address->ToInt64();
+  return address.ToInt64();
 }
 
 void MalformedWord(

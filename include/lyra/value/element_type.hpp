@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <type_traits>
+
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -22,16 +25,15 @@ struct ElementScratch {
 // of its own.
 //
 // Each unit of generated code states one of these for each element type it
-// names, as constant data of this class, so its layout is part of what the two
-// sides agree on.
+// names, as constant data laid out as this record is.
 class ElementType {
  public:
   // Builds the type's default in the storage it is handed, and answers that
   // storage.
-  using BuildDefault = void* (*)(void* out);
+  using DefaultBuilder = void* (*)(void* out);
 
   constexpr ElementType(
-      const ValueType& type, BuildDefault build_default,
+      const ValueType& type, DefaultBuilder build_default,
       ElementScratch& scratch)
       : type_(&type), build_default_(build_default), scratch_(&scratch) {
   }
@@ -49,14 +51,22 @@ class ElementType {
 
   // Where the type states each of its own parts, which code stating one as
   // constant data places them by.
-  [[nodiscard]] auto TypeStatedAt() const -> StatedAt;
-  [[nodiscard]] auto BuildDefaultStatedAt() const -> StatedAt;
-  [[nodiscard]] auto ScratchStatedAt() const -> StatedAt;
+  [[nodiscard]] static constexpr auto TypeStatedAt() -> std::size_t {
+    return offsetof(ElementType, type_);
+  }
+  [[nodiscard]] static constexpr auto BuildDefaultStatedAt() -> std::size_t {
+    return offsetof(ElementType, build_default_);
+  }
+  [[nodiscard]] static constexpr auto ScratchStatedAt() -> std::size_t {
+    return offsetof(ElementType, scratch_);
+  }
 
  private:
   const ValueType* type_;
-  BuildDefault build_default_;
+  DefaultBuilder build_default_;
   ElementScratch* scratch_;
 };
+
+static_assert(std::is_standard_layout_v<ElementType>);
 
 }  // namespace lyra::value

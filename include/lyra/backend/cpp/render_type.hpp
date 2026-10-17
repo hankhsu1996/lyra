@@ -7,6 +7,7 @@
 
 #include "lyra/backend/cpp/precedence.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -30,6 +31,11 @@ namespace lyra::backend::cpp {
 // `co_await Suspension{call(...)}`. The call returns whether it parked, and C++
 // can only suspend by awaiting something.
 [[nodiscard]] auto SuspensionCppType() -> std::string_view;
+
+// What reads a value out of storage another member of an untagged union may
+// have written, `lyra::value::ReadOverlaid(place)`: the value the bits there
+// stand for at the place's type (LRM 7.3.2).
+[[nodiscard]] auto OverlaidReadCppFunction() -> std::string_view;
 
 // A MIR type, written into the output as its C++ type. An enum is written as
 // its base type; there is no C++ enum. It holds a view of the unit, which
@@ -98,24 +104,52 @@ class CppEnumTableLiteral {
 void WriteOne(TargetText& out, const CppEnumTableLiteral& literal);
 
 // What a construction call names before its argument list. Usually the type
-// itself, `T(args)`; for an owning pointer the function that allocates and
-// constructs, `std::make_unique<T>(args)`; for a sequence the library function
-// that takes the elements, since the container type takes no element list.
+// itself, `T(args)`; for a sequence the library function that takes the
+// elements, since the container type takes no element list.
 struct CppConstructorName {
   CppType of;
 };
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor);
 
+// What says which member a union is built holding, ahead of that member's
+// value: `std::in_place_index<I>`, the tag a union type takes a constructor by,
+// as `std::variant` does. The constructor places the member at the start of
+// the union's storage with every other byte zero.
+struct CppUnionMemberTag {
+  base::ComponentIndex member;
+};
+
+void WriteOne(TargetText& out, const CppUnionMemberTag& tag);
+
+// What takes ownership of the storage a `new` allocated, applied to the
+// pointer `new` yields: `std::unique_ptr<T>(new T(init))` for a uniquely
+// owning pointer, `lyra::runtime::AdoptObject(new C(init))` for a class handle.
+struct CppNewOwner {
+  CppType of;
+};
+
+void WriteOne(TargetText& out, const CppNewOwner& owner);
+
 // The library's product of a product type's components, `Tuple<Ts...>`: what a
-// tuple is spelled as, and what the type a unit defines for a struct is built
-// on.
+// tuple is spelled as.
 struct CppTupleComponents {
   const mir::CompilationUnit* unit;
   std::span<const mir::TypeId> of;
 };
 
 void WriteOne(TargetText& out, const CppTupleComponents& components);
+
+// The library type a struct or a union the unit declares is built on, holding
+// its members: the product of a struct's, `Tuple<Ts...>`, or the one storage a
+// union's overlay, `Union<Ts...>`, with the tag a tagged one adds,
+// `TaggedUnion<Ts...>`.
+struct CppRecordBase {
+  const mir::CompilationUnit* unit;
+  const mir::RecordDecl* of;
+};
+
+void WriteOne(TargetText& out, const CppRecordBase& base);
 
 // A name written into a file needs the file declaring it read first, and how
 // the name is used says whether a declaration is enough or the definition is
@@ -163,20 +197,25 @@ void WriteOne(TargetText& out, const CppBaseClass& base);
 // An object reference declares neither, being one type whatever class it
 // refers to, so it is opened through its view as the class the code assumes,
 // which is also where a null reference is caught (LRM 8.4). Any other type
-// reaches nothing to dereference and is refused.
+// reaches nothing to dereference and is refused. A reference is already its
+// referent wherever C++ names it ([expr.type]), so opening one writes nothing.
 struct DerefByOperator {};
 
 struct DerefThroughView {
   mir::TypeId pointee;
 };
 
-using DerefSpelling = std::variant<DerefByOperator, DerefThroughView>;
+struct DerefImplicit {};
+
+using DerefSpelling =
+    std::variant<DerefByOperator, DerefThroughView, DerefImplicit>;
 
 [[nodiscard]] auto DerefSpellingAsCpp(
     const mir::CompilationUnit& unit, mir::TypeId type_id) -> DerefSpelling;
 
 // C++'s indirection over a value of `pointer_type`, `(*p)` ([expr.unary.op]),
-// or `r.Deref<T>()` where the dereference goes through a view. `write_pointer`
+// `r.Deref<T>()` where the dereference goes through a view, or `r` itself for a
+// reference. `write_pointer`
 // writes the pointer and is told the precedence its position needs.
 template <typename WritePointer>
 void WriteDeref(
@@ -192,14 +231,16 @@ void WriteDeref(
           [&](const DerefThroughView& view) {
             write_pointer(Precedence::kPostfix);
             Write(out, ".Deref<", CppType(unit, view.pointee), ">()");
-          }},
+          },
+          [&](DerefImplicit) { write_pointer(Precedence::kPostfix); }},
       DerefSpellingAsCpp(unit, pointer_type));
 }
 
 // A member access through what `pointer_type` designates, up to the member's
-// name: `p->`, which C++ defines as `(*p).` ([expr.ref]), or `r.Deref<T>().`
-// where the dereference goes through a view. `write_pointer` writes the
-// pointer and is told the precedence its position needs.
+// name: `p->`, which C++ defines as `(*p).` ([expr.ref]), `r.Deref<T>().`
+// where the dereference goes through a view, or `r.` for a reference.
+// `write_pointer` writes the pointer and is told the precedence its position
+// needs.
 template <typename WritePointer>
 void WriteArrowAccess(
     TargetText& out, const mir::CompilationUnit& unit, mir::TypeId pointer_type,
@@ -210,7 +251,8 @@ void WriteArrowAccess(
           [&](DerefByOperator) { out += "->"; },
           [&](const DerefThroughView& view) {
             Write(out, ".Deref<", CppType(unit, view.pointee), ">().");
-          }},
+          },
+          [&](DerefImplicit) { out += "."; }},
       DerefSpellingAsCpp(unit, pointer_type));
 }
 

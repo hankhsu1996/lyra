@@ -26,12 +26,11 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/struct_decl.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/value_build.hpp"
-#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 
 namespace lyra::backend::cpp {
@@ -62,14 +61,14 @@ void WriteReceiverBinding(
       CppLocalName(code.named_locals, receiver), " = ", from..., ";\n");
 }
 
-// Whether a body receives the object it runs against as a value rather than
-// through a pointer, which is how a struct's method receives its struct: it
-// runs against a copy, so it cannot change the object it is called on.
-auto ReceivesAValue(
+// Whether a body refers to the object it runs against by reference rather
+// than through a pointer, which is how a record's method receives its record:
+// it reads the record where it lies.
+auto ReceivesAReference(
     const mir::CompilationUnit& unit, const mir::CallableCode& code) -> bool {
   return code.TakesReceiver() &&
-         !unit.types.Get(code.locals.Get(*code.receiver).type)
-              .Is<mir::PointerType>();
+         unit.types.Get(code.locals.Get(*code.receiver).type)
+             .Is<mir::ReferenceType>();
 }
 
 // `static ` for a member function entered on no object (LRM 8.10), or handed
@@ -79,25 +78,40 @@ auto StaticPrefix(const mir::CallableCode& code) -> std::string_view {
 }
 
 // What a member function's declaration and its definition share after its
-// name, `(params) -> R`, with `const` for a body receiving its object as a
-// value.
+// name, `(params) -> R`, with `const` for a body referring to its object by a
+// read-only reference.
 void WriteMemberSignatureTail(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
     TargetText& out) {
+  const auto qualifier = [&]() -> std::string_view {
+    if (!code.TakesReceiver()) {
+      return "";
+    }
+    const auto* referred = unit.types.Get(code.locals.Get(*code.receiver).type)
+                               .As<mir::ReferenceType>();
+    if (referred == nullptr) {
+      return "";
+    }
+    switch (referred->mutability) {
+      case mir::Mutability::kReadOnly:
+        return " const";
+      case mir::Mutability::kMutable:
+        return "";
+    }
+    throw InternalError("backend::cpp: unknown Mutability");
+  };
   out += "(";
   WriteParameters(unit, code, code.ParamsAfterReceiver(), out);
-  Write(
-      out, ")", ReceivesAValue(unit, code) ? " const" : "", " -> ",
-      CppType(unit, code.result_type));
+  Write(out, ")", qualifier(), " -> ", CppType(unit, code.result_type));
 }
 
 // The definition of a member function -- a class's method (LRM 8.6), static
 // method (LRM 8.10), process or lifecycle body, the entry a scope answers a
-// foreign caller with (LRM 35.5.3), or a struct's method -- written
+// foreign caller with (LRM 35.5.3), or a record's method -- written
 // outside its type so the body can use any type of the unit as a complete one.
 // The body starts by binding its receiver, because MIR reaches the object
 // through a parameter like any other: `C* self = this;` for an object reached
-// through a pointer, `S self = *this;` for a struct received as a value.
+// through a pointer, `const S& self = *this;` for a record referred to.
 template <typename Owner, typename Member>
 void RenderMemberFunctionDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
@@ -109,7 +123,7 @@ void RenderMemberFunctionDef(
   WriteBody(out, [&] {
     if (code.TakesReceiver()) {
       WriteReceiverBinding(
-          unit, code, out, ReceivesAValue(unit, code) ? "*this" : "this");
+          unit, code, out, ReceivesAReference(unit, code) ? "*this" : "this");
     }
     RenderBlockStatements(ScopeView::ForCode(unit, code, report), out);
   });
@@ -546,38 +560,30 @@ void RenderFreeCallable(
   out += "\n";
 }
 
-// A struct the unit declares: the library's product of its components, as a
-// struct of its own so that two structs with the same components stay two
-// types (LRM 6.22.1), whose member functions are the struct's methods --
-// declared in it, and defined apart from it once every struct of the unit is
-// declared.
-void RenderStruct(
+// A struct or a union the unit declares: the library type holding its members,
+// as a type of its own so that two declarations with the same members stay two
+// types (LRM 6.22.1), whose member functions are its methods -- declared in it,
+// and defined apart from it once every one of the unit is declared.
+void RenderRecord(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    mir::StructId id, TargetText& declared, TargetText& defined) {
-  const mir::StructDecl& decl = unit.GetStruct(id);
-  const CppName name = CppStructName(decl);
+    mir::RecordId id, TargetText& declared, TargetText& defined) {
+  const mir::RecordDecl& decl = unit.GetRecord(id);
+  const CppName name = CppRecordName(decl);
   // Every body's code file defines the methods, and another unit calls them
   // with only the declaration in hand. So each definition is weak, and the
   // link keeps one: an `inline` one would be emitted only by a file that calls
   // it, which none of these need to.
   const std::string_view specifiers = "[[gnu::weak]] ";
-  const CppTupleComponents components{.unit = &unit, .of = decl.elements};
-  const MintedWord base = CppTupleBaseName();
-  Write(declared, "struct ", name, " : ", components, " {\n");
+  const CppRecordBase library_type{.unit = &unit, .of = &decl};
+  const MintedWord base = CppRecordBaseName();
+  Write(declared, "struct ", name, " : ", library_type, " {\n");
   declared.Indent();
   declared.OpenLine();
-  Write(declared, "using ", base, " = ", components, ";\n");
+  Write(declared, "using ", base, " = ", library_type, ";\n");
   declared.OpenLine();
   Write(declared, "using ", base, "::", base, ";\n");
-  // A struct built from nothing is the one its declaration states (LRM Table
-  // 7-1, 7.2.2), which is what makes the default of an array of them, and of
-  // anything else holding one, the default of the type.
-  declared.OpenLine();
-  Write(
-      declared, name, "() : ", name, "(",
-      CppStructMethodName(support::BuiltinFn::kDeclaredDefault), "()) {}\n");
-  for (const mir::StructMethod& method : decl.methods) {
-    const VerbatimName member = CppStructMethodName(method.answers);
+  for (const mir::RecordMethod& method : unit.GetRecordMethods(id)) {
+    const VerbatimName member = CppValueOperationMemberName(method.answers);
     declared.OpenLine();
     Write(declared, StaticPrefix(method.code), "auto ", member);
     WriteMemberSignatureTail(unit, method.code, declared);
@@ -729,25 +735,25 @@ auto RenderUnitCallables(
   return text;
 }
 
-auto RenderUnitStructs(
-    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitStructs {
-  // Another unit names a struct by the declaration it answers to, so it is
-  // declared where that unit reads, in the unit's types namespace, and its
-  // methods are defined in the same namespace in the code file.
-  UnitStructs structs;
+auto RenderUnitRecords(
+    const mir::CompilationUnit& unit, UnitRenderReport& report) -> UnitRecords {
+  // Another unit names a struct or a union by the declaration it answers to,
+  // so it is declared where that unit reads, in the unit's types namespace, and
+  // its methods are defined in the same namespace in the code file.
+  UnitRecords records;
   TargetText definitions;
-  for (const mir::StructId id : unit.structs.Ids()) {
+  for (const mir::RecordId id : unit.records.Ids()) {
     TargetText declared;
     const TargetText::Section defined_section(definitions);
-    RenderStruct(unit, report, id, declared, definitions);
+    RenderRecord(unit, report, id, declared, definitions);
     TargetText declaration;
-    AppendSectionInNamespace(declaration, CppStructTypesNamespace(), declared);
-    structs.declared.push_back(
-        UnitStruct{.id = id, .declaration = std::move(declaration)});
+    AppendSectionInNamespace(declaration, CppRecordTypesNamespace(), declared);
+    records.declared.push_back(
+        UnitRecord{.id = id, .declaration = std::move(declaration)});
   }
   AppendSectionInNamespace(
-      structs.code, CppStructTypesNamespace(), definitions);
-  return structs;
+      records.code, CppRecordTypesNamespace(), definitions);
+  return records;
 }
 
 // Package variables (LRM 26.2), one cell for the whole program: declared

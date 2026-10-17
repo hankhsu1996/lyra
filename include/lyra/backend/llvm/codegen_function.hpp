@@ -6,13 +6,14 @@
 #include <span>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include <llvm/ADT/STLFunctionalExtras.h>
 #include <llvm/IR/IRBuilder.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
-#include "lyra/backend/llvm/codegen_tuple.hpp"
+#include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -55,11 +56,45 @@ class CodeGenFunction {
   struct ResolvedCall {
     llvm::FunctionCallee callee;
     std::vector<llvm::Value*> args;
+    // The storage the callee builds its return value in, handed to it last,
+    // or nothing where its convention returns the value directly.
+    llvm::Value* return_slot;
   };
 
   // The LLVM argument each of the body's parameters reads, one for one.
   auto BindParameters() -> void;
-  auto LowerInstr(const lir::Instr& instr) -> diag::Result<llvm::Value*>;
+  auto LowerInstrInto(const lir::Instr& instr) -> diag::Result<void>;
+  // An assignment: its value computed and put where its destination says.
+  auto LowerAssignInto(const lir::AssignInstr& assign) -> diag::Result<void>;
+  // What this target makes of a LIR destination, named as rustc's codegen
+  // names what it makes of a MIR place, operand or local (`PlaceRef`,
+  // `OperandRef`, `LocalRef`): a transient whose value is not kept in storage,
+  // still to be defined, as rustc's `LocalRef::PendingOperand`; or storage
+  // lying at `address` that holds a value of `type`, as rustc's `PlaceRef`.
+  struct PendingOperand {
+    lir::ValueId value;
+  };
+  struct PlaceRef {
+    llvm::Value* address = nullptr;
+    lir::TypeId type;
+  };
+  using DestinationRef = std::variant<PendingOperand, PlaceRef>;
+  auto ResolveDestination(const lir::Destination& destination)
+      -> diag::Result<DestinationRef>;
+  // The type of the value `destination` holds.
+  [[nodiscard]] auto TypeOf(const DestinationRef& destination) const
+      -> lir::TypeId;
+  // The storage a value lying in storage is built in: the place `destination`
+  // names, or storage of its own for a transient, made only by the step that
+  // builds a value there, as clang's `EnsureDest` makes a temporary only when
+  // handed no slot -- a transient that reads or moves in a value already made
+  // is that value and takes none. Nothing for a value computed as itself.
+  auto EnsureDestination(const DestinationRef& destination) -> llvm::Value*;
+  // What an rvalue computes, built in the storage its destination gives where
+  // it is built in storage, as rustc's `codegen_rvalue` and
+  // `codegen_rvalue_operand` do for a place and for an operand.
+  auto LowerRvalue(const lir::Rvalue& value, const DestinationRef& destination)
+      -> diag::Result<llvm::Value*>;
 
   // Storage in the body's own frame, allocated where the body opens: every
   // path reaching an instruction then names the same storage, and a loop
@@ -70,34 +105,20 @@ class CodeGenFunction {
   // Frame storage for one runtime object, sized and aligned as the library
   // states that object.
   auto ObjectStorage(support::RuntimeObject object) -> llvm::Value*;
-  // Where a value of `type` an instruction makes is built: storage for an
-  // owned value, and nothing for any other value, which the instruction
-  // answers as itself. Every owned value is built in storage its maker gives,
-  // as clang builds a class-type result through `sret`, and is ended by the end
-  // LIR states for it.
+  // Where a value of `type` an instruction makes is built: storage for a value
+  // lying in storage and for a sequence of machine values, as clang builds a
+  // class-type result through `sret`, and nothing for any other value, which
+  // the instruction answers as itself. LIR states where each is ended.
   auto StorageFor(lir::TypeId type) -> llvm::Value*;
-  // The storage the instruction's result `made` is built in: in the frame
-  // while its bytes are few enough to lie there, and otherwise bytes allocated
-  // here, where the value is made, which the frame keeps only the address of.
-  auto StorageForResult(lir::ValueId made, lir::TypeId type) -> llvm::Value*;
-  // Whether a value of `type` this body makes or declares has its bytes kept
-  // apart from the frame: a frame is taken from a stack whose size no design
-  // chose, so it keeps a value's bytes only up to the size the value library
-  // keeps one in place.
-  [[nodiscard]] auto NeedsHeapStorage(lir::TypeId type) const -> bool;
-  // Gives every value this body makes or declares whose bytes are kept apart
-  // the frame slot that holds their address, holding none until they are
-  // obtained. All of them exist before any code is generated, because a way
-  // out that gives one's bytes back may be generated ahead of the instruction
-  // that obtains them.
-  void DeclareHeapPointers();
-  // Obtains the bytes of `of` and keeps their address, and gives them back
-  // where any are held.
-  auto AllocateBytes(lir::ValueId of) -> llvm::Value*;
-  void DeallocateBytes(lir::ValueId of);
-  // Where the value `id` names is: what generating it answered, or the bytes
-  // kept apart for it.
-  auto AddressOf(lir::ValueId id) -> llvm::Value*;
+  // Whether a value of `type` is built in storage -- one lying in storage of
+  // its own, or a sequence of machine values -- rather than computed as itself.
+  [[nodiscard]] auto IsBuiltInStorage(lir::TypeId type) const -> bool;
+  // Leaves what was computed where `destination` says, as rustc's
+  // `store_return`: a pending transient becomes that value, and a value not
+  // built in storage is stored into its place.
+  void StoreInto(
+      const DestinationRef& destination, llvm::Value* value,
+      llvm::IRBuilderBase& at);
   // `count` arguments that are each an address this target computed.
   [[nodiscard]] auto Addresses(std::size_t count) const -> std::vector<ArgAbi>;
   // Calls the library entry `symbol` on this target's own account, handing it
@@ -167,8 +188,8 @@ class CodeGenFunction {
   };
   // `bits` written over the bits `parts` name, outermost first, in the value
   // of type `whole` lying at `at`, as instructions on planes. Emits nothing
-  // and answers false where the value, a part or the bits does not lie in
-  // place.
+  // and answers false where the value, a part or the bits is not stated on
+  // planes.
   auto StoreBitsOnPlanes(
       llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
       OperandRef bits) -> bool;
@@ -181,20 +202,27 @@ class CodeGenFunction {
       support::IntegralOp op, const lir::BuiltinTarget& target,
       const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  // Where component `index` of a tuple lives, given where the tuple does.
+  // Where component `index` of a tuple, or member `index` of a union, lives,
+  // given where the aggregate does.
   auto ComponentAddress(
-      lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value*;
+      lir::TypeId aggregate, llvm::Value* value, std::size_t index)
+      -> llvm::Value*;
 
+  // The call settled against its convention, which alone decides whether the
+  // callee builds its return value in a return slot, as clang's `EmitCall`
+  // and rustc's `make_return_dest` read the return's ABI; `return_slot` is
+  // asked for one only where it does.
   auto ResolveCall(
-      const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
+      const lir::CallInstr& call, lir::TypeId result_type,
+      llvm::function_ref<llvm::Value*()> return_slot)
       -> diag::Result<ResolvedCall>;
-  // What a call answers with: the answer the callee builds in `out` where the
-  // call makes a value, the callee's own answer otherwise, and nothing for a
-  // call that answers nothing. Whether a target is entered as a callee or
+  // What the call answers with: the value the callee builds in storage -- the
+  // place `destination` names, or storage of its own for a transient -- the
+  // callee's own answer otherwise, and nothing for a call that answers
+  // nothing. Whether a target is entered as a callee or
   // realized as instructions of this body is decided by the target's kind and
   // the types it states, never by the values in hand.
-  auto LowerCall(
-      const lir::CallInstr& call, lir::TypeId result_type, llvm::Value* out)
+  auto LowerCall(const lir::CallInstr& call, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
   // Opens a landing: the pad the platform transfers to, and the target the
   // departure names, which is what the body's own test reads.
@@ -206,32 +234,45 @@ class CodeGenFunction {
   auto ResolveCallee(
       const lir::CallInstr& call, lir::TypeId result_type, const FnAbi& abi,
       std::span<llvm::Value*> args) -> diag::Result<llvm::FunctionCallee>;
-  // A {pointer, length} view over a scratch buffer of `element` this function
-  // fills with `values`, for an entry that takes a sequence of them.
-  auto SpanOver(std::span<llvm::Value* const> values, llvm::Type* element)
-      -> llvm::Value*;
-  auto LowerArray(const lir::ArrayInstr& array, lir::TypeId result_type)
+  // A {pointer, length} view over `storage` of `element`, which this fills
+  // with `values`, for an entry that takes a sequence of them.
+  auto SpanOver(
+      std::span<llvm::Value* const> values, llvm::Type* element,
+      llvm::Value* storage) -> llvm::Value*;
+  // The {pointer, length} view over `count` values lying at `storage`.
+  auto ViewOver(llvm::Value* storage, std::uint64_t count) -> llvm::Value*;
+  auto LowerArray(
+      const lir::ArrayInstr& array, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
-  auto LowerTuple(
-      const lir::TupleInstr& tuple, lir::TypeId result_type, llvm::Value* out)
-      -> diag::Result<llvm::Value*>;
-  auto LowerAggregateExtract(
-      const lir::AggregateExtractInstr& extract, lir::TypeId result_type,
+  auto LowerProduct(
+      const lir::ProductInstr& product, lir::TypeId result_type,
       llvm::Value* out) -> diag::Result<llvm::Value*>;
-  auto LowerAggregateUpdate(
-      const lir::AggregateUpdateInstr& update, llvm::Value* out)
+  // A union laid out in place: its storage zeroed, the member it holds built
+  // at its start, and a tagged union's tag stored after its members.
+  auto LowerUnion(
+      const lir::UnionInstr& built, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  // The position a selector names bits of an integral value by (LRM 11.5.1).
-  // It names them by that one operand: how many bits is the width of the type
-  // they are read at, or of the value written over them.
-  auto IntegralPosition(const lir::AggregateSelector& selector)
-      -> diag::Result<OperandRef>;
-  auto LowerLoad(const lir::LoadInstr& load, lir::TypeId result_type)
+  auto LowerVectorGet(const lir::VectorGetInstr& get)
       -> diag::Result<llvm::Value*>;
+  auto LowerDiscriminant(
+      const lir::DiscriminantInstr& read, lir::TypeId result_type)
+      -> diag::Result<llvm::Value*>;
+  // What `place` holds, as a value of `result_type` is handed on: the value
+  // itself, or the address of one laid out by its type.
+  auto LoadPlace(const lir::Place& place, lir::TypeId result_type)
+      -> diag::Result<llvm::Value*>;
+  // A load through a member of an untagged union, whose bits may be another
+  // member's (LRM 7.3.2): the value copied into `out` and every position its
+  // type keeps clear cleared there.
+  auto LowerOverlaidLoad(
+      const lir::OverlaidLoadInstr& load, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
+  auto LowerUse(const lir::UseInstr& use, const DestinationRef& destination)
+      -> diag::Result<llvm::Value*>;
   // Bits written into the integral value at a place, where it lies: the
-  // insertion as instructions where the value, every part and the bits each
-  // lie in place, and a call on the library's insertion otherwise.
+  // insertion as instructions where the value, every part and the bits are
+  // each stated on planes, and a call on the library's insertion otherwise.
   auto LowerBitsStore(const lir::BitsStoreInstr& store)
       -> diag::Result<llvm::Value*>;
   // Bits written into the integral value a write in progress designates, by
@@ -295,7 +336,7 @@ class CodeGenFunction {
   // compiler lays out locals: each variable's storage at its own offset, sized
   // and aligned as the library states that storage. Opening builds each in
   // place, a variable is its offset, and closing ends each, last first.
-  auto Variables() -> diag::Result<const RecordLayout*>;
+  auto Variables() -> diag::Result<const PlacedMembers*>;
   auto LowerOpenVariables() -> diag::Result<llvm::Value*>;
   auto LowerVariableAddress(const lir::VariableAddressInstr& reached)
       -> diag::Result<llvm::Value*>;
@@ -326,6 +367,9 @@ class CodeGenFunction {
   // default and changes nothing, and a write to one allocates or discards it by
   // the container's own rule.
   enum class Access : std::uint8_t { kRead, kWrite };
+  // What an address of `address_type` may be used for: a read-only pointer
+  // only reads, and every other address may be written through.
+  auto AccessGranted(lir::TypeId address_type) const -> Access;
   // The planes of `position`, which has to be stated as the position type
   // every ordinal of the layer above is brought to.
   auto LoadPosition(const OperandRef& position) -> Planes;
@@ -355,8 +399,8 @@ class CodeGenFunction {
   auto LowerTerminatorInto(const lir::Terminator& terminator)
       -> diag::Result<void>;
 
-  // Where the value `storage` holds lies in it, or nothing where what `held`
-  // states is storage that hands its contents out through its own access.
+  // Where the value `storage` holds lies, or nothing where what `held` states
+  // is storage that hands its contents out through its own access.
   auto HeldAt(llvm::Value* storage, support::DeclaredMemberStorage held)
       -> std::optional<llvm::Value*>;
   // Appends to `args` the arguments `operands` cross as, and to `arranged`
@@ -409,12 +453,6 @@ class CodeGenFunction {
       const lir::ClosureInstr& built, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
 
-  // Whether a type is the sequence of handles a declaration standing for
-  // several objects builds. It belongs to no value domain -- what it holds are
-  // objects, not values -- so an operation over one is answered by the entry
-  // that knows sequences rather than through the value model.
-  [[nodiscard]] auto IsHandleSequence(lir::TypeId type) const -> bool;
-
   // The address of the storage a member step reaches. A class's storage extends
   // its base's, so the step names the class that declares the member beside the
   // slot that class gave it, and the member sits at the offset that class's
@@ -437,15 +475,12 @@ class CodeGenFunction {
   // depart; nothing while what is lowered continues in place.
   std::optional<InvokeDest> invoke_dest_;
   std::unordered_map<lir::ValueId, llvm::Value*> values_;
-  // For each value whose bytes are allocated rather than taken from the
-  // frame, the frame's pointer to them.
-  std::unordered_map<lir::ValueId, llvm::AllocaInst*> heap_pointers_;
   std::vector<llvm::BasicBlock*> blocks_;
   // Where frame storage is allocated: the end of the code the body opens with,
   // ahead of its first statement.
   llvm::Instruction* frame_storage_point_ = nullptr;
   // Where the body's variables sit, laid out once for the whole body.
-  std::optional<RecordLayout> variables_;
+  std::optional<PlacedMembers> variables_;
   // A coroutine body's ramp state: the coroutine identity (which names the
   // frame to release) and its handle, plus the blocks every suspension and
   // return funnels through. The frame's layout and the resume state machine are

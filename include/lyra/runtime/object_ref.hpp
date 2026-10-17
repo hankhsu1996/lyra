@@ -76,9 +76,10 @@ auto RefToObject(std::shared_ptr<T> owned) -> value::ObjectRef {
   }
 }
 
-template <typename T, typename... Args>
-auto GcNew(Args&&... args) -> value::ObjectRef {
-  return RefToObject(std::make_shared<T>(std::forward<Args>(args)...));
+// A reference to an object a `new` built as `T`, which from here owns it.
+template <typename T>
+auto AdoptObject(T* object) -> value::ObjectRef {
+  return RefToObject(std::shared_ptr<T>(object));
 }
 
 // The same object seen as `To`, where the program point holding it saw it as

@@ -28,8 +28,9 @@ auto EndpointAt(const mir::CompilationUnit& unit, MemberPlace place)
       place);
   return BoundEndpoint{
       .place = place,
-      .kind = unit.types.Get(member_type).IsReference() ? MemberKind::kReference
-                                                        : MemberKind::kCell};
+      .kind = unit.types.Get(member_type).IsVariableRef()
+                  ? MemberKind::kReference
+                  : MemberKind::kCell};
 }
 
 // The endpoint a route of parent edges gives: the member it ends at, reached
@@ -80,9 +81,9 @@ auto MemberExpr(
             const mir::ExprId pointer =
                 frame.current_block->exprs.Add(BuildStructuralFieldAccessExpr(
                     frame, unit, mir::EnclosingHops{0}, through.slot));
-            return mir::Expr{
-                .data = mir::DerefExpr{.pointer = pointer},
-                .type = through.member_type};
+            return mir::MakeDerefExpr(
+                frame.current_block->DerefOperand(unit.types, pointer),
+                through.member_type);
           }},
       place);
 }
@@ -171,7 +172,7 @@ auto ReferenceReportsTo(
                   .callee =
                       mir::Direct{
                           .target = support::BuiltinFn::kReferenceReportsTo},
-                  .arguments = {reference}},
+                  .arguments = {block.AsValue(unit.types, reference)}},
           .type = mir::ErasedPointer(unit.types)});
 }
 

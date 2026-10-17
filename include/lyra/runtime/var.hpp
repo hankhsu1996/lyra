@@ -18,6 +18,8 @@
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/sampled_value.hpp"
+#include "lyra/runtime/storage_for.hpp"
+#include "lyra/runtime/tail.hpp"
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
@@ -25,6 +27,7 @@
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/object_ref.hpp"
+#include "lyra/value/small_box.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::value {
@@ -166,7 +169,7 @@ template <class Sink>
 class ScopedMutation;
 
 template <value::LyraValue T>
-class Ref;
+class VariableRef;
 
 template <value::LyraValue T>
 class Var;
@@ -226,13 +229,25 @@ class VariableCell : public Observable {
   std::unique_ptr<RareWriteState> rare_;
 };
 
-// What a sampled or taken-over variable of type `T` keeps: its sampled value
-// (LRM 16.5.1), and the procedural continuous assignments it has been put under
-// (LRM 10.6). Each part is empty until its feature is used.
-template <value::LyraValue T>
+// What a sampled or taken-over variable keeps, over how the variable holds its
+// value: its sampled value (LRM 16.5.1), and the procedural continuous
+// assignments it has been put under (LRM 10.6). Each part is empty until its
+// feature is used.
+template <class HeldAs>
 class CellRareState final : public RareWriteState {
  public:
-  CellRareState() = default;
+  using Owned = typename HeldAs::Owned;
+
+  // Assigns what the variable holds to `out`, a value of the owned type, as its
+  // sampled value takes it.
+  void TakeHeldInto(Owned& out) const {
+    out = storage_->AsOwned();
+  }
+  using TakenHeld =
+      TakenFrom<CellRareState, Owned, &CellRareState::TakeHeldInto>;
+
+  explicit CellRareState(const HeldAs& storage) : storage_(&storage) {
+  }
   CellRareState(const CellRareState&) = delete;
   auto operator=(const CellRareState&) -> CellRareState& = delete;
   CellRareState(CellRareState&&) = delete;
@@ -243,36 +258,39 @@ class CellRareState final : public RareWriteState {
     return takeovers_ != nullptr && takeovers_->Highest() != nullptr;
   }
 
-  // Keeps the sampled value of `variable` from now on, its default sampled
-  // value being what it holds now. Keeping one already kept changes nothing.
-  void ArmSampling(Var<T>& variable) {
+  // Keeps the sampled value of `variable`, the cell over this state's holding,
+  // from now on, its default sampled value being what it holds now. Keeping one
+  // already kept changes nothing.
+  void ArmSampling(Observable& variable) {
     if (sampled_ != nullptr) {
       return;
     }
-    sampled_ = std::make_unique<SampledValueOf<Var<T>>>(
-        variable, variable.Get(), Trigger(&variable, Observation{}, {}, 0, 0));
+    sampled_ = std::make_unique<SampledValueOf<TakenHeld>>(
+        TakenHeld(*this), [&] -> Owned { return storage_->AsOwned(); },
+        Trigger(&variable, Observation{}, {}, 0, 0));
   }
-  [[nodiscard]] auto Sampled() const -> const SampledValueOf<Var<T>>* {
+  [[nodiscard]] auto Sampled() const -> const SampledValueOf<TakenHeld>* {
     return sampled_.get();
   }
 
-  [[nodiscard]] auto Takeovers() -> runtime::Takeovers<T>& {
+  [[nodiscard]] auto Takeovers() -> runtime::Takeovers<Owned>& {
     if (takeovers_ == nullptr) {
-      takeovers_ = std::make_unique<runtime::Takeovers<T>>();
+      takeovers_ = std::make_unique<runtime::Takeovers<Owned>>();
     }
     return *takeovers_;
   }
-  [[nodiscard]] auto ExistingTakeovers() const -> runtime::Takeovers<T>* {
+  [[nodiscard]] auto ExistingTakeovers() const -> runtime::Takeovers<Owned>* {
     return takeovers_.get();
   }
 
  private:
-  std::unique_ptr<SampledValueOf<Var<T>>> sampled_;
-  std::unique_ptr<runtime::Takeovers<T>> takeovers_;
+  const HeldAs* storage_;
+  std::unique_ptr<SampledValueOf<TakenHeld>> sampled_;
+  std::unique_ptr<runtime::Takeovers<Owned>> takeovers_;
 };
 
-template <value::LyraValue T>
-CellRareState<T>::~CellRareState() = default;
+template <class HeldAs>
+CellRareState<HeldAs>::~CellRareState() = default;
 
 // Replaces the whole of `storage` by `overwrite`, a write already known to
 // change it, and answers what its waits are told. Of a bit-addressed value the
@@ -292,32 +310,22 @@ auto ReplaceWhole(const T& storage, Overwrite overwrite) -> Change {
   }
 }
 
-template <value::LyraValue T>
-class Var : public VariableCell, public ValueStorageCore<T> {
+// A variable (LRM 6.8) as the library keeps one: what every variable is,
+// followed by the storage of its value. That storage is the cell's last part,
+// so a value whose size the library is told lies at the cell's tail. Every
+// write a variable takes follows one protocol whatever it holds, which is
+// written here once; what depends on the value is asked of the storage.
+template <class HeldAs>
+class Cell : public VariableCell {
  public:
-  Var();
-  Var(const Var&) = delete;
-  auto operator=(const Var&) -> Var& = delete;
-  Var(Var&&) = delete;
-  auto operator=(Var&&) -> Var& = delete;
-  ~Var();
+  // A value of the cell's type that the cell keeps for itself: what a write
+  // turned away lands in, what a takeover level holds, what sampling retains.
+  using Owned = typename HeldAs::Owned;
 
-  // The write a declaration makes, which may run more than once: a declaration
-  // reached again begins a fresh variable in the one storage. A value whose
-  // type states its representation is overwritten every time. A value
-  // represented at run time takes its representation from the first such
-  // write and is overwritten at it by each later one, so what is fixed is the
-  // representation, not the number of times a declaration runs: a value that
-  // does not match the installed one is the lowering defect and is what
-  // refuses, and so is a store into such a cell before any declaration ran,
-  // which the store path refuses.
-  void Initialize(T prototype) {
-    if (!this->IsInstalled()) {
-      this->Install(std::move(prototype));
-      return;
-    }
-    this->Overwrite(prototype);
-  }
+  Cell(const Cell&) = delete;
+  auto operator=(const Cell&) -> Cell& = delete;
+  Cell(Cell&&) = delete;
+  auto operator=(Cell&&) -> Cell& = delete;
 
   // Commits a whole-variable write and, on a real change (LRM 4.3 update
   // event), wakes whoever waits through the engine. The engine is the ambient
@@ -328,22 +336,38 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // here is discarded outright rather than held anywhere: after the takeover
   // ends the cell keeps what the takeover last gave it, and never the write
   // that was overridden.
-  void Set(const T& new_val);
+  void Set(const Owned& new_val);
 
-  // The same write of a value handed as its bytes, laid out as what the cell
-  // holds is, which the cell compares with and takes into the storage it has.
-  void SetBytes(const void* bytes)
-    requires value::TakesBytesInPlace<T>
-  {
+  // The same write of what another cell of this storage holds.
+  void SetFrom(const Cell& other) {
     if (TakenOver()) {
-      if (T* beneath = DisplacedStorage()) {
-        beneath->TakeBytes(bytes);
+      if (Owned* beneath = DisplacedStorage()) {
+        *beneath = other.storage_.AsOwned();
       }
       return;
     }
     StoreBy(
-        [&] { return this->Get().HoldsBytes(bytes); },
-        [&] { this->Storage().TakeBytes(bytes); });
+        [&] { return storage_.IsBitIdentical(other.storage_); },
+        [&] { storage_.Assign(other.storage_); });
+  }
+
+  // The same write of a value handed as its bytes, laid out as what the cell
+  // holds is, which the cell compares with and takes into the storage it has.
+  void SetBytes(const void* bytes)
+    requires requires(HeldAs& held, Owned& owned) {
+      held.AssignBytes(bytes);
+      owned.AssignBytes(bytes);
+    }
+  {
+    if (TakenOver()) {
+      if (Owned* beneath = DisplacedStorage()) {
+        beneath->AssignBytes(bytes);
+      }
+      return;
+    }
+    StoreBy(
+        [&] { return storage_.IsBitIdenticalTo(bytes); },
+        [&] { storage_.AssignBytes(bytes); });
   }
 
   // Starts a procedural continuous assignment at `level`, superseding whatever
@@ -358,13 +382,17 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // is how an evaluation superseded by a later takeover, or ended by a
   // `deassign` or `release`, learns to stop.
   auto DriveTakeover(
-      std::int64_t level, std::int64_t generation, const T& new_val) -> bool;
+      std::int64_t level, std::int64_t generation, const Owned& new_val)
+      -> bool;
 
   // The same of a value handed as its bytes, laid out as what the cell holds
   // is, which the level takes into the storage it has once it holds a value.
   auto DriveTakeoverBytes(
       std::int64_t level, std::int64_t generation, const void* bytes) -> bool
-    requires value::TakesBytesInPlace<T>;
+    requires requires(const HeldAs& held, Owned& owned) {
+      { held.ToOwned(bytes) } -> std::same_as<Owned>;
+      owned.AssignBytes(bytes);
+    };
 
   // Ends the procedural continuous assignment at `level`, handing the cell to
   // the highest level still in effect. Where none is left a cell something
@@ -377,9 +405,9 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // it is kept: what the cell's continuous driver last produced, held beneath
   // the assignment. None where nothing drives the cell continuously, or
   // nothing covers it.
-  [[nodiscard]] auto DisplacedStorage() const -> T* {
-    const CellRareState<T>* rare = ExistingRareState();
-    Takeovers<T>* takeovers =
+  [[nodiscard]] auto DisplacedStorage() const -> Owned* {
+    const CellRareState<HeldAs>* rare = ExistingRareState();
+    Takeovers<Owned>* takeovers =
         rare == nullptr ? nullptr : rare->ExistingTakeovers();
     return takeovers == nullptr ? nullptr : takeovers->Beneath();
   }
@@ -397,8 +425,8 @@ class Var : public VariableCell, public ValueStorageCore<T> {
 
   // What the cell held in the Preponed region of the current time slot -- its
   // value before anything in that slot ran (LRM 4.4.2.1, 16.5.1).
-  [[nodiscard]] auto SampledGet() const -> const T& {
-    const CellRareState<T>* rare = ExistingRareState();
+  [[nodiscard]] auto SampledGet() const -> const Owned& {
+    const CellRareState<HeldAs>* rare = ExistingRareState();
     return SampledOf(rare == nullptr ? nullptr : rare->Sampled());
   }
 
@@ -410,26 +438,31 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     current_runtime().WakeParkedOn(*this, reached, change);
   }
 
-  // Opens a write into the cell for the full-expression that writes. The cell's
-  // own storage is designated within it, the steps into parts are taken from
-  // there, and the write lands where they are dereferenced, so a part is
-  // written in the cell as it lies and the cell is told once whether it
-  // changed. The write is non-copyable and non-movable, so keeping it past the
-  // statement is rejected at compile time.
-  auto Mutate() -> ScopedMutation<Ref<T>>;
+ protected:
+  Cell()
+    requires std::default_initializable<HeldAs>;
+  // A storage told what it holds where it is built.
+  template <class Told>
+  explicit Cell(const Told& told) : storage_(told) {
+  }
+  ~Cell();
+
+  [[nodiscard]] auto Held() -> HeldAs& {
+    return storage_;
+  }
+  [[nodiscard]] auto Held() const -> const HeldAs& {
+    return storage_;
+  }
 
  private:
   // The one path a whole value reaches the cell's storage by, whoever sent it.
-  // What it adds over a partial write is the representation match, which only
-  // a whole value can be checked for -- a partial write lands a part and never
-  // restates the whole. The value arriving is compared with the one it would
-  // replace before anything is written, so telling whoever waits keeps no copy
-  // of the old value, except the old words a packed value's waits are passed
-  // over by.
-  void Store(const T& new_val) {
+  // The value arriving is compared with the one it would replace before
+  // anything is written, so telling whoever waits keeps no copy of the old
+  // value, except the old words a packed value's waits are passed over by.
+  void Store(const Owned& new_val) {
     StoreBy(
-        [&] { return this->Get().IsBitIdentical(new_val); },
-        [&] { this->Overwrite(new_val); });
+        [&] { return storage_.IsBitIdentical(new_val); },
+        [&] { storage_.Assign(new_val); });
   }
 
   // That path over however the arriving value is held: `already_held` answers
@@ -437,8 +470,10 @@ class Var : public VariableCell, public ValueStorageCore<T> {
   // holds.
   template <class AlreadyHeld, class Overwrite>
   void StoreBy(AlreadyHeld already_held, Overwrite overwrite) {
-    if (!this->IsInstalled()) {
-      throw InternalError("Var: store into a cell that was never initialized");
+    if (!storage_.IsInstalled()) {
+      throw InternalError(
+          "Cell: a store reached a cell that was never initialized -- please "
+          "report this as a bug");
     }
     if (!this->HasMembers()) {
       overwrite();
@@ -447,13 +482,13 @@ class Var : public VariableCell, public ValueStorageCore<T> {
     if (already_held()) {
       return;
     }
-    PublishTransition(PartPath{}, ReplaceWhole(this->Get(), overwrite));
+    PublishTransition(PartPath{}, ReplaceWhole(storage_.Get(), overwrite));
   }
 
   // Whether a procedural continuous assignment shows through the cell (LRM
   // 10.6).
   [[nodiscard]] auto TakenOver() const -> bool {
-    const CellRareState<T>* rare = ExistingRareState();
+    const CellRareState<HeldAs>* rare = ExistingRareState();
     return rare != nullptr && rare->TakenOver();
   }
 
@@ -465,20 +500,137 @@ class Var : public VariableCell, public ValueStorageCore<T> {
 
   // What only a sampled or taken-over cell keeps, made the first time either
   // is asked for. This cell is the only thing that makes it, so it is always
-  // of the cell's own type.
-  [[nodiscard]] auto RareState() -> CellRareState<T>& {
+  // over the cell's own storage.
+  [[nodiscard]] auto RareState() -> CellRareState<HeldAs>& {
     if (Rare() == nullptr) {
-      InstallRare(std::make_unique<CellRareState<T>>());
+      InstallRare(std::make_unique<CellRareState<HeldAs>>(storage_));
     }
-    return static_cast<CellRareState<T>&>(*Rare());
+    return static_cast<CellRareState<HeldAs>&>(*Rare());
   }
-  [[nodiscard]] auto ExistingRareState() const -> CellRareState<T>* {
-    return static_cast<CellRareState<T>*>(Rare());
+  [[nodiscard]] auto ExistingRareState() const -> CellRareState<HeldAs>* {
+    return static_cast<CellRareState<HeldAs>*>(Rare());
+  }
+
+  // Comes last, so that a value whose size the library is told follows it.
+  HeldAs storage_;
+};
+
+// A variable of a type known where it is compiled: the cell holding the value
+// itself. What the language's own operations ask of it -- the value, the
+// storage a write descends into, the write a declaration makes -- is typed by
+// the value.
+template <value::LyraValue T>
+class Var final : public Cell<ValueStorageCore<T>> {
+ public:
+  Var();
+  Var(const Var&) = delete;
+  auto operator=(const Var&) -> Var& = delete;
+  Var(Var&&) = delete;
+  auto operator=(Var&&) -> Var& = delete;
+  ~Var();
+
+  [[nodiscard]] auto Get() const noexcept -> const T& {
+    return this->Held().Get();
+  }
+  [[nodiscard]] auto Storage() noexcept -> T& {
+    return this->Held().Storage();
+  }
+  [[nodiscard]] auto IsInstalled() const noexcept -> bool {
+    return this->Held().IsInstalled();
+  }
+
+  // The write a declaration makes, which may run more than once: a declaration
+  // reached again begins a fresh variable in the one storage. A value whose
+  // type states its representation is overwritten every time. A value
+  // represented at run time takes its representation from the first such
+  // write and is overwritten at it by each later one, so what is fixed is the
+  // representation, not the number of times a declaration runs: a value that
+  // does not match the installed one is the lowering defect and is what
+  // refuses, and so is a store into such a cell before any declaration ran,
+  // which the store path refuses.
+  void Initialize(const T& prototype) {
+    if (!this->Held().IsInstalled()) {
+      this->Held().Install(prototype);
+      return;
+    }
+    this->Held().Overwrite(prototype);
+  }
+  void Initialize(T&& prototype) {
+    if (!this->Held().IsInstalled()) {
+      this->Held().Install(std::move(prototype));
+      return;
+    }
+    this->Held().Overwrite(prototype);
+  }
+
+  // Opens a write into the cell for the full-expression that writes. The cell's
+  // own storage is designated within it, the steps into parts are taken from
+  // there, and the write lands where they are dereferenced, so a part is
+  // written in the cell as it lies and the cell is told once whether it
+  // changed. The write is non-copyable and non-movable, so keeping it past the
+  // statement is rejected at compile time.
+  auto Mutate() -> ScopedMutation<VariableRef<T>>;
+};
+
+// A variable whose value lies after it, held as `HeldAs` holds it -- the
+// words of an integral value wider than a word, or a tuple, a union or a
+// fixed-size unpacked array laid out by its type -- told its width or type
+// where it is built. Generated code knows the type and reads and writes the
+// value as its bytes, so that is all this answers with.
+template <class HeldAs>
+class TailCell final : public Cell<HeldAs> {
+ public:
+  template <class Told>
+  explicit TailCell(const Told& told);
+  TailCell(const TailCell&) = delete;
+  auto operator=(const TailCell&) -> TailCell& = delete;
+  TailCell(TailCell&&) = delete;
+  auto operator=(TailCell&&) -> TailCell& = delete;
+  ~TailCell();
+
+  // How the value is held, which says how wide it is or its type.
+  [[nodiscard]] auto HeldStorage() const -> const HeldAs& {
+    return this->Held();
+  }
+
+  // The write a declaration makes, which may run more than once.
+  void Initialize(const void* bytes) {
+    this->Held().AssignBytes(bytes);
+  }
+
+  [[nodiscard]] auto Bytes() const -> void* {
+    return this->Held().Bytes();
+  }
+
+  // What the cell held in the Preponed region of the current time slot (LRM
+  // 4.4.2.1, 16.5.1), where it lies.
+  [[nodiscard]] auto SampledBytes() const -> const void* {
+    return this->SampledGet().Bytes();
   }
 };
 
+// The cell a variable of `T` is.
+template <class T>
+struct VariableOf {
+  using Type = Var<T>;
+};
+template <DynamicallySized T>
+struct VariableOf<T> {
+  using Type = TailCell<typename StorageFor<T>::Type>;
+};
+
+// A variable the library makes for itself -- a force's storage, a cell a
+// branch outlives its block for -- of a value held as `HeldAs` holds one,
+// told `told`, in storage of the size such a cell takes.
+template <class HeldAs, class Told>
+auto MakeTailCell(const Told& told) -> std::shared_ptr<TailCell<HeldAs>> {
+  return MakeWithTail<TailCell<HeldAs>>(HeldAs::ValueLayoutFor(told), told);
+}
+
 // What a write keeps of the part it lands on, to tell afterwards what it did
-// to it: a copy, of which nothing but whether it moved can be shown.
+// to it: a copy, of which nothing but whether it moved can be shown. The write
+// lies in the frame of whatever writes, so the copy is kept as a frame keeps a
+// value aside.
 template <class Part>
 class KeptPart {
  public:
@@ -487,14 +639,14 @@ class KeptPart {
 
   // What the write did to `part`, none where it left it as it was.
   [[nodiscard]] auto ChangeTo(const Part& part) -> std::optional<Change> {
-    if (before_.IsBitIdentical(part)) {
+    if (before_->IsBitIdentical(part)) {
       return std::nullopt;
     }
     return Change::Whole();
   }
 
  private:
-  Part before_;
+  value::SmallBox<Part> before_;
 };
 
 // A bit-addressed part keeps only the words it lies in, as a change reaching
@@ -531,12 +683,12 @@ auto WriteBits(Bits& bits, const Value& value, bool watched)
   const std::optional<value::BitPositions> reached =
       watched ? bits.Reached() : std::nullopt;
   if (!reached.has_value()) {
-    bits = value;
+    bits.Set(value);
     return std::nullopt;
   }
   KeptPart<std::remove_cvref_t<decltype(bits.Root())>> kept(
       bits.Root(), *reached);
-  bits = value;
+  bits.Set(value);
   return kept.ChangeTo(bits.Root());
 }
 
@@ -653,11 +805,60 @@ struct ErasedReference {
       -> ErasedReference;
 };
 
-// The variable a reference to the whole of it names, whose value is then of
-// the reference's own type `T`.
+// A write of a whole value through `lent` (LRM 4.3, 10.6): one the variable
+// turns away lands only beneath its takeover, as `beneath` writes it, one
+// nobody waits on is written as `assign` writes it, and one that leaves the
+// bits as `identical` finds them is no change. Otherwise `replace` writes it
+// and answers the change, which whoever waits through `lent` is told.
+template <class Beneath, class Assign, class Identical, class Replace>
+void SetThrough(
+    const ErasedReference& lent, Beneath beneath, Assign assign,
+    Identical identical, Replace replace) {
+  if (!lent.Admits()) {
+    beneath();
+    return;
+  }
+  if (!lent.Watched()) {
+    assign();
+    return;
+  }
+  if (identical()) {
+    return;
+  }
+  lent.Report(PartPath{}, replace());
+}
+
+// The variable a reference to the whole of it names, as the cell of class `C`
+// it is, which the reference's own type decides.
+template <class C>
+auto WholeVariable(const ErasedReference& reference) -> C& {
+  if (!reference.whole ||
+      !std::holds_alternative<VariableCell*>(reference.holder)) {
+    throw InternalError(
+        "WholeVariable: a reference names something other than the whole of a "
+        "variable");
+  }
+  return static_cast<C&>(**std::get_if<VariableCell*>(&reference.holder));
+}
+
+// A reference to the whole of a variable, which names its value where every
+// reference to a value of its type names one: the bytes a tuple, a union, an
+// integral value wider than a word and a fixed-size unpacked array lay out,
+// since no object of the runtime's stands for such a value where it lies in
+// another, and the object for every other.
 template <value::LyraValue T>
-auto WholeVariable(const ErasedReference& reference) -> Var<T>& {
-  return static_cast<Var<T>&>(**std::get_if<VariableCell*>(&reference.holder));
+auto WholeReference(Var<T>& variable) -> ErasedReference {
+  return {
+      .holder = static_cast<VariableCell*>(&variable),
+      .storage = HandleTo(variable.Storage()),
+      .whole = true};
+}
+template <class HeldAs>
+auto WholeReference(TailCell<HeldAs>& variable) -> ErasedReference {
+  return {
+      .holder = static_cast<VariableCell*>(&variable),
+      .storage = variable.Bytes(),
+      .whole = true};
 }
 
 // A reference, typed by the value it names. A reference to the whole of a
@@ -666,23 +867,24 @@ auto WholeVariable(const ErasedReference& reference) -> Var<T>& {
 // moment it lands (LRM 4.3). Copyable, so a ref formal can be forwarded as a
 // ref argument to a nested call.
 template <value::LyraValue T>
-class Ref {
+class VariableRef {
  public:
   using ValueType = T;
 
   // A null view, default-constructed as a member and bound before first use:
   // a `ref` port's child-side member is declared with the child and filled by
   // the parent during elaboration (LRM 23.3.3.2), before simulation reads it.
-  Ref() = default;
-  explicit Ref(Var<T>& cell)
+  VariableRef() = default;
+  explicit VariableRef(Var<T>& cell)
       : erased_{
             .holder = static_cast<VariableCell*>(&cell),
             .storage = &cell.Storage(),
             .whole = true} {
   }
-  explicit Ref(T& storage) : erased_{.holder = {}, .storage = &storage} {
+  explicit VariableRef(T& storage)
+      : erased_{.holder = {}, .storage = &storage} {
   }
-  explicit Ref(const ErasedReference& erased) : erased_(erased) {
+  explicit VariableRef(const ErasedReference& erased) : erased_(erased) {
   }
 
   [[nodiscard]] auto Erased() const -> const ErasedReference& {
@@ -699,31 +901,26 @@ class Ref {
     return Storage();
   }
 
-  // Const: a `Ref` is a view, so `Set` writes the referenced storage, not the
-  // handle's own pointers -- as `*p = v` is allowed through a `T* const p`.
+  // Const: a `VariableRef` is a view, so `Set` writes the referenced storage,
+  // not the handle's own pointers -- as `*p = v` is allowed through a `T* const
+  // p`.
   void Set(const T& new_val) const {
-    if (!erased_.Admits()) {
-      if (T* beneath = DisplacedStorage()) {
-        *beneath = new_val;
-      }
-      return;
-    }
-    if (!erased_.Watched()) {
-      StoreInto(Storage(), new_val);
-      return;
-    }
-    if (Storage().IsBitIdentical(new_val)) {
-      return;
-    }
-    PublishTransition(PartPath{}, ReplaceWhole(Storage(), [&] {
-                        StoreInto(Storage(), new_val);
-                      }));
+    const auto assign = [&] { StoreInto(Storage(), new_val); };
+    SetThrough(
+        erased_,
+        [&] {
+          if (T* beneath = DisplacedStorage()) {
+            *beneath = new_val;
+          }
+        },
+        assign, [&] { return Storage().IsBitIdentical(new_val); },
+        [&] { return ReplaceWhole(Storage(), assign); });
   }
 
   // Opens a write into the referenced storage, as an observable cell itself
   // does; only storage that belongs to a variable has anyone to tell what the
   // write did.
-  [[nodiscard]] auto Mutate() const -> ScopedMutation<Ref<T>>;
+  [[nodiscard]] auto Mutate() const -> ScopedMutation<VariableRef<T>>;
 
   // A procedural continuous assignment on a name that owns no storage (LRM
   // 10.6.2), by the operations a variable itself answers: the reference is a
@@ -741,16 +938,17 @@ class Ref {
   [[nodiscard]] auto ReferElement(const Key& key) const {
     erased_.AdmitStep();
     value::Formation formed{};
-    auto& element = Storage().ElementRef(key, formed);
-    return Ref<std::remove_reference_t<decltype(element)>>{
+    auto& element = Storage().ElementMut(key, formed);
+    return VariableRef<std::remove_reference_t<decltype(element)>>{
         erased_.Part(&element, formed, RetainedStepTo<T>(key))};
   }
 
   template <std::size_t I>
   [[nodiscard]] auto ReferComponent() const {
-    auto& component = Storage().template ComponentRef<I>();
-    return Ref<std::remove_reference_t<decltype(component)>>{erased_.Part(
-        &component, value::Formation::kExisting, PartPath::Child(I))};
+    auto& component = Storage().template Component<I>();
+    return VariableRef<std::remove_reference_t<decltype(component)>>{
+        erased_.Part(
+            &component, value::Formation::kExisting, PartPath::Child(I))};
   }
 
   // The `MutationSink` surface. Storage that belongs to no variable has no
@@ -824,7 +1022,7 @@ class Ref {
   }
 
   [[nodiscard]] auto Cell() const -> Var<T>& {
-    return WholeVariable<T>(erased_);
+    return WholeVariable<Var<T>>(erased_);
   }
 
   ErasedReference erased_;
@@ -849,18 +1047,19 @@ struct MemberOf<T C::*> {
 // design's own failure.
 template <auto Property>
 auto ReferProperty(typename MemberOf<decltype(Property)>::Class* object)
-    -> Ref<typename MemberOf<decltype(Property)>::Value> {
+    -> VariableRef<typename MemberOf<decltype(Property)>::Value> {
   if (object == nullptr) {
     value::RaiseNullObjectHandleAccess();
   }
-  return Ref<typename MemberOf<decltype(Property)>::Value>{ErasedReference{
-      .holder = static_cast<GcObject*>(object),
-      .storage = &(object->*Property)}};
+  return VariableRef<typename MemberOf<decltype(Property)>::Value>{
+      ErasedReference{
+          .holder = static_cast<GcObject*>(object),
+          .storage = &(object->*Property)}};
 }
 
 template <auto Property>
 auto ReferProperty(const value::ObjectRef& handle)
-    -> Ref<typename MemberOf<decltype(Property)>::Value> {
+    -> VariableRef<typename MemberOf<decltype(Property)>::Value> {
   return ReferProperty<Property>(
       handle.View<typename MemberOf<decltype(Property)>::Class>());
 }
@@ -868,14 +1067,14 @@ auto ReferProperty(const value::ObjectRef& handle)
 // What a wait on the storage `reference` names enrols on (LRM 13.5.2): what
 // a write through the reference is told to, never the reference itself.
 template <value::LyraValue T>
-auto ReportsTo(const Ref<T>& reference) -> WatchedPlace {
+auto ReportsTo(const VariableRef<T>& reference) -> WatchedPlace {
   return WatchedPlace::Through(reference.Erased());
 }
 
 // States that a continuous assignment drives the storage `reference` names
 // (LRM 10.3), once, as the design is built.
 template <value::LyraValue T>
-void DrivesContinuously(const Ref<T>& reference) {
+void DrivesContinuously(const VariableRef<T>& reference) {
   reference.Erased().DriveContinuously();
 }
 
@@ -883,19 +1082,35 @@ void DrivesContinuously(const Ref<T>& reference) {
 // destructor defaulted on its first declaration is not user-provided, so a unit
 // constructing a cell would define it itself with everything it reaches, and a
 // family stated as already compiled would not withhold it.
+template <class HeldAs>
+Cell<HeldAs>::Cell()
+  requires std::default_initializable<HeldAs>
+= default;
+
+template <class HeldAs>
+Cell<HeldAs>::~Cell() = default;
+
 template <value::LyraValue T>
 Var<T>::Var() = default;
 
 template <value::LyraValue T>
 Var<T>::~Var() = default;
 
-template <value::LyraValue T>
-void Var<T>::Set(const T& new_val) {
+template <class HeldAs>
+template <class Told>
+TailCell<HeldAs>::TailCell(const Told& told) : Cell<HeldAs>(told) {
+}
+
+template <class HeldAs>
+TailCell<HeldAs>::~TailCell() = default;
+
+template <class HeldAs>
+void Cell<HeldAs>::Set(const Owned& new_val) {
   // A procedural write is discarded outright while any takeover shows through
   // this cell (LRM 10.6). A cell nobody has ever taken over holds no record at
   // all, so the ordinary write pays one null test.
   if (TakenOver()) {
-    if (T* beneath = DisplacedStorage()) {
+    if (Owned* beneath = DisplacedStorage()) {
       *beneath = new_val;
     }
     return;
@@ -903,38 +1118,41 @@ void Var<T>::Set(const T& new_val) {
   Store(new_val);
 }
 
-template <value::LyraValue T>
-auto Var<T>::BeginTakeover(std::int64_t level) -> std::int64_t {
+template <class HeldAs>
+auto Cell<HeldAs>::BeginTakeover(std::int64_t level) -> std::int64_t {
   return std::int64_t{RareState().Takeovers().Begin(TakeoverLevelOf(level))};
 }
 
-template <value::LyraValue T>
-auto Var<T>::DriveTakeover(
-    std::int64_t level, std::int64_t generation, const T& new_val) -> bool {
+template <class HeldAs>
+auto Cell<HeldAs>::DriveTakeover(
+    std::int64_t level, std::int64_t generation, const Owned& new_val) -> bool {
   return RecordTakeover(
-      level, generation, [&](std::optional<T>& held) { held = new_val; });
+      level, generation, [&](std::optional<Owned>& held) { held = new_val; });
 }
 
-template <value::LyraValue T>
-auto Var<T>::DriveTakeoverBytes(
+template <class HeldAs>
+auto Cell<HeldAs>::DriveTakeoverBytes(
     std::int64_t level, std::int64_t generation, const void* bytes) -> bool
-  requires value::TakesBytesInPlace<T>
+  requires requires(const HeldAs& held, Owned& owned) {
+    { held.ToOwned(bytes) } -> std::same_as<Owned>;
+    owned.AssignBytes(bytes);
+  }
 {
-  return RecordTakeover(level, generation, [&](std::optional<T>& held) {
+  return RecordTakeover(level, generation, [&](std::optional<Owned>& held) {
     if (held.has_value()) {
-      held->TakeBytes(bytes);
+      held->AssignBytes(bytes);
     } else {
-      held.emplace(this->Get().Holding(bytes));
+      held.emplace(storage_.ToOwned(bytes));
     }
   });
 }
 
-template <value::LyraValue T>
+template <class HeldAs>
 template <class Record>
-auto Var<T>::RecordTakeover(
+auto Cell<HeldAs>::RecordTakeover(
     std::int64_t level, std::int64_t generation, Record record) -> bool {
-  const CellRareState<T>* rare = ExistingRareState();
-  Takeovers<T>* takeovers =
+  const CellRareState<HeldAs>* rare = ExistingRareState();
+  Takeovers<Owned>* takeovers =
       rare == nullptr ? nullptr : rare->ExistingTakeovers();
   if (takeovers == nullptr) {
     return false;
@@ -948,7 +1166,7 @@ auto Var<T>::RecordTakeover(
   // what that driver last produced, which is what the cell shows again once
   // nothing covers it (LRM 10.6.2).
   if (!was_covered && current_runtime().DrivenContinuously(*this)) {
-    takeovers->KeepBeneath(this->Get());
+    takeovers->KeepBeneath(storage_.AsOwned());
   }
   // A level that just recorded always leaves something showing, and it is this
   // value only where no higher level covers it. Storing whatever shows needs
@@ -958,12 +1176,12 @@ auto Var<T>::RecordTakeover(
   return true;
 }
 
-template <value::LyraValue T>
-void Var<T>::EndTakeover(std::int64_t level) {
+template <class HeldAs>
+void Cell<HeldAs>::EndTakeover(std::int64_t level) {
   // Ending a level nothing occupies is what a `release` on an untaken variable
   // does, and the language gives it no effect (LRM 10.6.2).
-  const CellRareState<T>* rare = ExistingRareState();
-  Takeovers<T>* takeovers =
+  const CellRareState<HeldAs>* rare = ExistingRareState();
+  Takeovers<Owned>* takeovers =
       rare == nullptr ? nullptr : rare->ExistingTakeovers();
   if (takeovers == nullptr) {
     return;
@@ -972,13 +1190,11 @@ void Var<T>::EndTakeover(std::int64_t level) {
   // Where a level is still in effect underneath, the cell takes what that
   // level already holds. Where none is, the cell keeps what it has, which is
   // the value the ended takeover last gave it.
-  if (const T* showing = takeovers->Highest(); showing != nullptr) {
+  if (const Owned* showing = takeovers->Highest(); showing != nullptr) {
     Store(*showing);
     return;
   }
-  if (const std::optional<T> beneath = takeovers->TakeBeneath()) {
-    Store(*beneath);
-  }
+  takeovers->TakeBeneath([&](const Owned& beneath) { Store(beneath); });
 }
 
 // One write in progress into what a sink stands for, and what it has learned
@@ -1014,7 +1230,7 @@ class WriteBracket {
     } else if (ValueType* kept = sink_.DisplacedStorage()) {
       storage_ = kept;
     } else {
-      storage_ = &discarded_.emplace(sink_.MutationStorage());
+      storage_ = &*discarded_.emplace(sink_.MutationStorage());
     }
   }
 
@@ -1113,22 +1329,22 @@ class WriteBracket {
   // The elements of that part a slice write moved, none in particular where
   // the write changed the part by forming one.
   value::BitPositions moved_{};
-  std::optional<ValueType> discarded_;
+  // A copy of the storage for a write turned away to land in, kept as a frame
+  // keeps a value aside, since the write lies in the frame of whatever writes.
+  std::optional<value::SmallBox<ValueType>> discarded_;
 };
-
-template <class Sink, class Slice>
-class DesignatedSlice;
 
 template <class Sink, class Bits>
 class DesignatedBits;
 
 // A place designated within a write: the whole of what the write was opened
 // on, or a part of it reached by the steps below. It borrows the write. The
-// steps reach the parts that are storage of their own (LRM 13.5.2) -- an
-// element, reported to the write as it is formed, a component, and a slice of
-// elements -- each answering with the part designated within the same write.
-// Dereferencing it is where the write lands, which is when the value from
-// before the write is kept.
+// steps reach the parts a write lands on -- an element, reported to the write
+// as it is formed, a component, and a union's member (LRM 7.2, 7.3, 7.4) --
+// each answering with the part designated within the same write; bits are
+// reached by a reference to them and a run of elements is written in one call,
+// each telling the write what moved. Dereferencing it is where the write lands,
+// which is when the value from before the write is kept.
 template <class Sink, class Part>
 class Designation {
  public:
@@ -1151,9 +1367,9 @@ class Designation {
   }
 
   template <typename Key>
-  auto ElementRef(const Key& key) {
+  auto DesignateElement(const Key& key) {
     value::Formation formed{};
-    auto& element = part_->ElementRef(key, formed);
+    auto& element = part_->ElementMut(key, formed);
     write_->Formed(formed);
     if (write_->Undecided()) {
       write_->Stepped(StepTo(key));
@@ -1163,8 +1379,8 @@ class Designation {
   }
 
   template <std::size_t I>
-  auto ComponentRef() {
-    auto& component = part_->template ComponentRef<I>();
+  auto DesignateComponent() {
+    auto& component = part_->template Component<I>();
     if (write_->Undecided()) {
       write_->Stepped(PartPath::Child(I));
     }
@@ -1172,21 +1388,38 @@ class Designation {
         *write_, component};
   }
 
-  // The bits of a value of `Bits` at `position` within the part (LRM 11.5.1).
-  // They lie in the part's own words, so they are a place the write lands on.
+  // A member of a union lies where every other member does (LRM 7.3), so no
+  // step of a path stands for it: the path stops at the union, which every
+  // member reads, while the write keeps only what it lands on below it.
+  template <std::size_t I>
+  auto DesignateMember() {
+    auto& member = part_->template Component<I>();
+    if (write_->Undecided()) {
+      write_->Stepped(PartPath::Inexact());
+    }
+    return Designation<Sink, std::remove_reference_t<decltype(member)>>{
+        *write_, member};
+  }
+
+  // A reference to the bits of a value of `Bits` at `position` within the
+  // part (LRM 11.5.1), written within this write. They lie in the part's own
+  // words, so a write through it lands on them where they are.
   template <typename Bits, typename Position>
-  auto SliceRef(const Position& position) {
-    auto bits = part_->template SliceRef<Bits>(position);
+  auto SliceMut(const Position& position) {
+    auto bits = part_->template SliceMut<Bits>(position);
     return DesignatedBits<Sink, decltype(bits)>{*write_, std::move(bits)};
   }
 
-  // `count` elements of the part from `start` (LRM 7.4.6), which are several
-  // places rather than one.
-  template <typename Position>
-  auto SliceRef(const Position& start, std::int64_t count) {
-    auto slice = part_->SliceRef(start, count);
-    return DesignatedSlice<Sink, decltype(slice)>{
-        *write_, std::move(slice), value::ReadPosition(start), count};
+  // `value` written into `count` elements of the part from `start` (LRM 7.6),
+  // several elements rather than one place, so the write learns what moved
+  // from the assignment, which compares each element before writing it. A
+  // start that names no position assigns nothing.
+  template <typename Position, typename Value>
+  void AssignSlice(
+      const Position& start, std::int64_t count, const Value& value) {
+    if (part_->AssignSlice(start, count, value)) {
+      write_->Moved(*value::ReadPosition(start), count);
+    }
   }
 
   auto operator*() -> Part& {
@@ -1208,50 +1441,11 @@ class Designation {
   std::optional<KeptPart<Part>> kept_;
 };
 
-// A slice of elements designated within a write (LRM 7.6). It is several
-// elements rather than one place, so what the write learns comes from the
-// assignment into it, which compares each element before writing it.
-template <class Sink, class Slice>
-class DesignatedSlice {
- public:
-  DesignatedSlice(
-      WriteBracket<Sink>& write, Slice slice, std::optional<std::int64_t> start,
-      std::int64_t count)
-      : write_(&write), slice_(std::move(slice)), start_(start), count_(count) {
-  }
-
-  DesignatedSlice(const DesignatedSlice&) = delete;
-  auto operator=(const DesignatedSlice&) -> DesignatedSlice& = delete;
-  DesignatedSlice(DesignatedSlice&&) = delete;
-  auto operator=(DesignatedSlice&&) -> DesignatedSlice& = delete;
-  ~DesignatedSlice() = default;
-
-  auto operator*() -> DesignatedSlice& {
-    return *this;
-  }
-
-  template <typename Value>
-  auto operator=(const Value& value) -> DesignatedSlice& {
-    // A start that names no position assigns nothing, so one that moved an
-    // element names one.
-    if (slice_.Assign(value)) {
-      write_->Moved(*start_, count_);
-    }
-    return *this;
-  }
-
- private:
-  WriteBracket<Sink>* write_;
-  Slice slice_;
-  std::optional<std::int64_t> start_;
-  std::int64_t count_;
-};
-
-// Bits of a bit-addressed value designated within a write (LRM 11.5.1), named
-// by `Bits`, the designation of them the value hands out. They lie in the
-// value's own words, so the write lands on them where they are, and each
-// assignment through them keeps what they held, writes them, and tells the
-// write which bits it reached.
+// A reference to bits of a bit-addressed value within a write (LRM 11.5.1),
+// named by `Bits`, the reference to them the value hands out. They lie in the
+// value's own words, so the write lands on them where they are, and each write
+// through them keeps what they held, writes them, and tells the write which
+// bits it reached.
 template <class Sink, class Bits>
 class DesignatedBits {
  public:
@@ -1265,27 +1459,19 @@ class DesignatedBits {
   auto operator=(DesignatedBits&&) -> DesignatedBits& = delete;
   ~DesignatedBits() = default;
 
-  auto operator*() -> DesignatedBits& {
-    return *this;
-  }
-  auto operator->() -> DesignatedBits* {
-    return this;
-  }
-
   template <class Value>
-  auto operator=(const Value& value) -> DesignatedBits& {
+  void Set(const Value& value) {
     if (const std::optional<Change> change =
             WriteBits(bits_, value, write_->Undecided())) {
       write_->Landed(*change);
     }
-    return *this;
   }
 
-  // The bits of a value of `Inner` within these, written within the same
-  // write.
+  // A reference to the bits of a value of `Inner` within these, written
+  // within the same write.
   template <class Inner, class Position>
-  [[nodiscard]] auto SliceRef(const Position& position) const {
-    auto inner = bits_.template SliceRef<Inner>(position);
+  [[nodiscard]] auto SliceMut(const Position& position) const {
+    auto inner = bits_.template SliceMut<Inner>(position);
     return DesignatedBits<Sink, decltype(inner)>{*write_, std::move(inner)};
   }
 
@@ -1326,15 +1512,15 @@ class ScopedMutation {
 };
 
 template <value::LyraValue T>
-auto Var<T>::Mutate() -> ScopedMutation<Ref<T>> {
-  return ScopedMutation<Ref<T>>{Ref<T>{*this}};
+auto Var<T>::Mutate() -> ScopedMutation<VariableRef<T>> {
+  return ScopedMutation<VariableRef<T>>{VariableRef<T>{*this}};
 }
 
 template <value::LyraValue T>
-auto Ref<T>::Mutate() const -> ScopedMutation<Ref<T>> {
-  return ScopedMutation<Ref<T>>{*this};
+auto VariableRef<T>::Mutate() const -> ScopedMutation<VariableRef<T>> {
+  return ScopedMutation<VariableRef<T>>{*this};
 }
 
-static_assert(MutationSink<Ref<value::Logic>>);
+static_assert(MutationSink<VariableRef<value::Logic>>);
 
 }  // namespace lyra::runtime

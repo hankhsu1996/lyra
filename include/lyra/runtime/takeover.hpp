@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <utility>
 
 #include "lyra/support/takeover_level.hpp"
 
@@ -100,9 +99,14 @@ class Takeovers {
     return beneath_.has_value() ? &*beneath_ : nullptr;
   }
 
-  // Gives up what was kept beneath, once no level covers the cell.
-  [[nodiscard]] auto TakeBeneath() -> std::optional<T> {
-    return std::exchange(beneath_, std::nullopt);
+  // Gives up what was kept beneath, once no level covers the cell: `take` is
+  // handed it where it lies, and it is forgotten after.
+  template <std::invocable<const T&> Take>
+  void TakeBeneath(Take take) {
+    if (beneath_.has_value()) {
+      take(*beneath_);
+      beneath_.reset();
+    }
   }
 
   // The value the cell should be showing, or nothing where no level is in

@@ -10,7 +10,8 @@
 // map() (LRM 7.12.1, 7.12.5), or written by an associative literal (LRM
 // 7.9.11). A write at an invalid index is ignored (LRM 7.4.5), so it leaves
 // what a later invalid read answers unchanged; and a literal's own default:
-// answers its missing entries instead.
+// answers its missing entries instead. An element that is itself a fixed-size
+// array of such structs holds the declared value in each of its elements.
 module Top;
   typedef struct {
     int declared = 7;
@@ -37,6 +38,10 @@ module Top;
   Element written_dynamic[];
   Element written_fixed[2];
 
+  typedef Element Pair[2];
+  Pair nested_dynamic[];
+  Pair nested_queue[$];
+
   Element custom = '{declared: 1, plain: 2};
   Element stated = '{declared: 3, plain: 4};
   int nowhere = 9;
@@ -61,6 +66,9 @@ module Top;
   int stated_declared = -1;
   int written_dynamic_declared = -1;
   int written_fixed_declared = -1;
+  int nested_sized_declared = -1;
+  int nested_invalid_declared = -1;
+  int nested_queue_declared = -1;
 
   initial begin
     sized_dynamic = new [1];
@@ -110,6 +118,11 @@ module Top;
     written_dynamic_declared = written_dynamic[nowhere].declared;
     written_fixed[nowhere] = custom;
     written_fixed_declared = written_fixed[nowhere].declared;
+
+    nested_dynamic = new [1];
+    nested_sized_declared = nested_dynamic[0][1].declared;
+    nested_invalid_declared = nested_dynamic[nowhere][0].declared;
+    nested_queue_declared = nested_queue[nowhere][1].declared;
   end
 
   final begin
@@ -158,6 +171,14 @@ module Top;
     if (written_fixed_declared !== 7)
       $fatal(1, "a fixed-size array read %0d after an invalid write, expected 7",
              written_fixed_declared);
+    if (nested_sized_declared !== 7)
+      $fatal(1, "an array element new[] built read %0d, expected 7", nested_sized_declared);
+    if (nested_invalid_declared !== 7)
+      $fatal(1, "an invalid read of a dynamic array of arrays gave %0d, expected 7",
+             nested_invalid_declared);
+    if (nested_queue_declared !== 7)
+      $fatal(1, "an invalid read of a queue of arrays gave %0d, expected 7",
+             nested_queue_declared);
     $display("All checks passed");
   end
 endmodule

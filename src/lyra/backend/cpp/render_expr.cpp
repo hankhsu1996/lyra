@@ -25,6 +25,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 
@@ -250,6 +251,13 @@ void RenderFieldAccessExpr(
           },
           [&](const mir::ClosureFieldTarget& t) {
             Write(out, CppClosureCaptureName(t.slot));
+          },
+          // `p.template Component<2>()`: the position is a template argument
+          // of the member, so the call is written with `template`.
+          [&](const mir::ComponentFieldTarget& t) {
+            Write(
+                out, "template ", CppTupleComponentAccessor(), "<",
+                t.position.value, ">()");
           }},
       m.field);
 }
@@ -348,19 +356,24 @@ auto FieldInitValue(
 // aggregate on every evaluation, and every arm of a chain of selections stands
 // in such a block, so wrapping each would nest the text a lambda per link.
 void RenderBlockExpr(
-    const ScopeView& view, const mir::BlockExpr& block, Precedence at_least,
-    TargetText& out) {
+    const ScopeView& view, const mir::BlockExpr& block, mir::TypeId type,
+    Precedence at_least, TargetText& out) {
   const ScopeView body_view =
       view.WithBlock(view.Block().child_scopes.Get(block.scope));
   if (body_view.Block().root_stmts.empty()) {
     Write(body_view, out, Operand{.expr = block.value, .at_least = at_least});
     return;
   }
-  out += "[&] ";
+  // The lambda answers the block's own type, so a block yielding a reference
+  // answers the reference rather than a copy of what it refers to. A block
+  // yielding nothing ends with its last step, which C++ may give a value of
+  // its own that a lambda answering nothing cannot return.
+  const bool yields_nothing = type == view.Unit().builtins.void_type;
+  Write(out, "[&]() -> ", CppType(view.Unit(), type), " ");
   WriteBody(out, [&] {
     RenderBlockStatements(body_view, out);
     out.OpenLine();
-    Write(body_view, out, "return ", block.value, ";\n");
+    Write(body_view, out, yields_nothing ? "" : "return ", block.value, ";\n");
   });
   out += "()";
 }
@@ -578,11 +591,20 @@ void RenderExpr(
             RenderConditionalExpr(view, c, at_least, out);
           },
           [&](const mir::BlockExpr& b) {
-            RenderBlockExpr(view, b, at_least, out);
+            RenderBlockExpr(view, b, expr.type, at_least, out);
           },
           [&](const mir::AssignExpr& a) { RenderAssignExpr(view, a, out); },
           [&](const mir::CallExpr& call) {
             RenderCallExpr(view, call, expr.type, out);
+          },
+          // The initializer is formed in the storage `new` allocates, which
+          // C++ guarantees where it is a value of the type allocated
+          // ([dcl.init.general]/16.6.1), whatever that type's constructors.
+          [&](const mir::NewExpr& n) {
+            Write(
+                view, out, CppNewOwner{.of = CppType(view.Unit(), expr.type)},
+                "(new ", CppType(view.Unit(), view.Expr(n.initializer).type),
+                "(", n.initializer, "))");
           },
           [&](const mir::DerefExpr& d) { RenderDerefExpr(view, d, out); },
           [&](const mir::AddressOfExpr& a) {
@@ -591,8 +613,36 @@ void RenderExpr(
                 view, out, "&",
                 Operand{.expr = a.operand, .at_least = Precedence::kPostfix});
           },
+          // A C++ reference binds to what it is initialized from, a temporary
+          // included ([dcl.init.ref]), so the operand is the whole spelling.
+          [&](const mir::BorrowExpr& b) {
+            Write(view, out, Operand{.expr = b.operand, .at_least = at_least});
+          },
           [&](const mir::MoveExpr& m) {
             Write(view, out, "std::move(", m.operand, ")");
+          },
+          // C++ reads an lvalue where a value is wanted ([conv.lval]), so a
+          // read is the place's own spelling; storage another member of an
+          // untagged union overlays is read through the type mapping's read of
+          // it.
+          [&](const mir::CopyExpr& c) {
+            switch (mir::KindOfPlace(view.Unit(), view.Block(), c.place)) {
+              case mir::PlaceKind::kOrdinary:
+              case mir::PlaceKind::kNoAddress:
+                Write(
+                    view, out, Operand{.expr = c.place, .at_least = at_least});
+                return;
+              case mir::PlaceKind::kOverlaid:
+                Write(view, out, OverlaidReadCppFunction(), "(", c.place, ")");
+                return;
+            }
+            throw InternalError("backend::cpp: unknown place kind");
+          },
+          [&](const mir::DiscriminantExpr& d) {
+            Write(
+                view, out,
+                Operand{.expr = d.tagged, .at_least = Precedence::kPostfix},
+                ".", CppDiscriminantAccessor(), "()");
           },
           [&](const mir::FieldAccessExpr& m) {
             RenderFieldAccessExpr(view, m, out);
@@ -600,6 +650,11 @@ void RenderExpr(
           [&](const mir::ClosureExpr& cl) { RenderClosureExpr(view, cl, out); },
           [&](const mir::CompositeExpr& c) {
             RenderPartsAsBraceInit(view, expr.type, c.parts, out);
+          },
+          [&](const mir::UnionExpr& u) {
+            Write(
+                view, out, CppType(view.Unit(), expr.type), "(",
+                CppUnionMemberTag{.member = u.member}, ", ", u.value, ")");
           },
           [&](const mir::AwaitExpr& a) {
             const Enclosure enclosure(out, Precedence::kPrefix, at_least);

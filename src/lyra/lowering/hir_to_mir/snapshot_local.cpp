@@ -24,8 +24,7 @@ auto SnapshotExprToLocal(
   wrapper.AppendStmt(
       mir::LocalDeclStmt{.target = snap_var, .init = default_init});
 
-  const mir::ExprId target_id =
-      wrapper.exprs.Add(mir::MakeLocalRefExpr(snap_var, type));
+  const mir::ExprId target_id = wrapper.LocalPlace(snap_var, type);
   const mir::ExprId assign_id = wrapper.exprs.Add(
       mir::MakeAssignExpr(unit_lowerer.Unit().builtins, target_id, expr_id));
   wrapper.AppendStmt(mir::ExprStmt{.expr = assign_id});
@@ -35,6 +34,10 @@ auto SnapshotExprToLocal(
 
 auto DeclareLocal(const WalkFrame& frame, mir::ExprId init) -> mir::LocalId {
   mir::Block& block = *frame.current_block;
+  // A local starts as a value, so storage it is initialized from is read.
+  if (mir::IsPlace(block.exprs.Get(init).data)) {
+    init = block.Read(init);
+  }
   const mir::LocalId local =
       frame.bindings->DeclareAnonymous(block.exprs.Get(init).type);
   block.AppendStmt(mir::LocalDeclStmt{.target = local, .init = init});
@@ -47,11 +50,17 @@ auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
     return value;
   }
   const mir::TypeId type = block.exprs.Get(value).type;
-  return block.exprs.Add(
-      mir::MakeLocalRefExpr(DeclareLocal(frame, value), type));
+  return block.ReadLocal(DeclareLocal(frame, value), type);
 }
 
-auto SnapshotIntoClosure(
+auto SnapshotValueIntoClosure(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
+    ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId {
+  return closure.Body().Read(
+      SnapshotPlaceIntoClosure(unit_lowerer, outer_frame, closure, outer_expr));
+}
+
+auto SnapshotPlaceIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId {
   mir::Block& outer_block = *outer_frame.current_block;
@@ -60,8 +69,8 @@ auto SnapshotIntoClosure(
   // The site uniquely identifies this synthesized carrier, so several snapshots
   // in one outer body never collide on origin. The temp initializes directly
   // from the snapshotted expression (not a default-then-assign), so a carrier
-  // with no default value -- a `Ref<T>` over the target cell -- is materialized
-  // correctly.
+  // with no default value -- a `VariableRef<T>` over the target cell -- is
+  // materialized correctly.
   const std::uint32_t site = unit_lowerer.NextSynthesizedSite();
   const BindingOriginId origin = BindingOriginId::Synthesized(site, 0);
   const mir::LocalId temp = outer_frame.bindings->Declare(origin, type);
@@ -70,7 +79,7 @@ auto SnapshotIntoClosure(
 
   const BodyBindingRef ref = closure.Bindings().EnsureCarrier(origin);
   return closure.Body().exprs.Add(
-      closure.Bindings().MakeReadExpr(ref, closure.Body()));
+      closure.Bindings().MakeBindingPlace(ref, closure.Body()));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

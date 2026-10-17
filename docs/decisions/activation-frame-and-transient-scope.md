@@ -54,10 +54,10 @@ its own name.
   On the execution backend it is not: there the generated body has a frame of its own, and what the
   runtime holds is only the values. Naming the runtime type after the architecture's concept hid
   that second frame, so the type is `ActivationValueStore` -- a store, of values, belonging to one
-  execution -- and what lives in it is an `ActivationValueCell<T>`, which had the right word all
-  along. The LIR operation that allocates, reads and writes such a value is `ValueCellTarget`. The
-  store is a distinct type from the per-stretch arena even though both allocate the same way, so the
-  two lifetimes cannot be passed for each other.
+  execution -- and what lives in it is a `ValueCell<T>`, which had the right word all along. The LIR
+  operation that allocates, reads and writes such a value is `ValueCellTarget`. The store is a
+  distinct type from the per-stretch arena even though both allocate the same way, so the two
+  lifetimes cannot be passed for each other.
 
 - **`GeneratedCallScope` is the transient, per-stretch store only.** It owns the values one stretch
   of generated code materializes and releases them when the stretch returns. It is never an
@@ -71,14 +71,14 @@ its own name.
 > cell, a member, a closure capture, a deferred effect -- copies or promotes the value; a raw
 > transient handle is never installed into longer-lived storage.
 
-This holds today: a frame-value store copies (`ActivationValueCell::Store`), a cell set copies
-(`Var::Set`), a closure capture snapshots. The one path that does not copy is a **method's return
-value**: it is returned as-is, and it stays valid only because a generated method call runs in the
-caller's own `GeneratedCallScope` -- no scope is pushed per call, so a returned transient's arena is
-the caller's, still live. This is a load-bearing assumption, recorded here so it is not silently
-broken: **a per-call `GeneratedCallScope` must not be introduced without promoting return values out
-of the callee's scope first.** Only the construct entry, each lifecycle body, and each resumed
-process push a scope; an ordinary call does not.
+This holds today: a frame-value store copies (`ValueCell::Store`), a cell set copies (`Var::Set`), a
+closure capture snapshots. The one path that does not copy is a **method's return value**: it is
+returned as-is, and it stays valid only because a generated method call runs in the caller's own
+`GeneratedCallScope` -- no scope is pushed per call, so a returned transient's arena is the
+caller's, still live. This is a load-bearing assumption, recorded here so it is not silently broken:
+**a per-call `GeneratedCallScope` must not be introduced without promoting return values out of the
+callee's scope first.** Only the construct entry, each lifecycle body, and each resumed process push
+a scope; an ordinary call does not.
 
 Enforcement is by construction and by name, not yet by a verifier pass: the longer-lived stores are
 copy-by-contract, and the ABI/LIR operations that install into longer-lived storage are named so a

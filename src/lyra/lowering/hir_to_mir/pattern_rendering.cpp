@@ -51,16 +51,12 @@ constexpr std::string_view kNameMark = ":";
 // is what the spec a leaf is handed asks for.
 constexpr std::int32_t kNoField = 0;
 
-auto Read(const WalkFrame& frame, mir::LocalId local, mir::TypeId type)
-    -> mir::ExprId {
-  return frame.current_block->exprs.Add(mir::MakeLocalRefExpr(local, type));
-}
-
 auto Assign(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::LocalId target, mir::TypeId type, mir::ExprId value) -> mir::ExprId {
   return frame.current_block->exprs.Add(
-      mir::MakeAssignExpr(unit.builtins, Read(frame, target, type), value));
+      mir::MakeAssignExpr(
+          unit.builtins, frame.current_block->LocalPlace(target, type), value));
 }
 
 // Builds one type's text out of the texts of the types it reaches. Each is a
@@ -116,8 +112,8 @@ class Renderer {
 
   auto UnpackedMember(
       const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
-      const hir::UnpackedAggregateField& field, base::ComponentIndex index)
-      -> mir::ExprId;
+      const hir::Type& aggregate, const hir::UnpackedAggregateField& field,
+      base::ComponentIndex index) -> mir::ExprId;
   auto PackedMember(
       const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
       const PackedProjection& projection,
@@ -187,8 +183,8 @@ auto Renderer::SeparatorAfterFirst(const WalkFrame& frame, mir::LocalId ordinal)
   mir::Block& block = *frame.current_block;
   const mir::ExprId past_first = block.exprs.Add(MakeBinary(
       Unit(), block, mir::BinaryOp::kInequality,
-      Read(frame, ordinal, IntType()), BuildIntLiteral(Unit(), block, 0),
-      Unit().builtins.bit1));
+      frame.current_block->ReadLocal(ordinal, IntType()),
+      BuildIntLiteral(Unit(), block, 0), Unit().builtins.bit1));
   return block.exprs.Add(
       mir::Expr{
           .data =
@@ -204,7 +200,8 @@ auto Renderer::Advanced(
     -> mir::ExprId {
   mir::Block& block = *frame.current_block;
   return block.exprs.Add(MakeBinary(
-      Unit(), block, mir::BinaryOp::kAdd, Read(frame, counter, IntType()),
+      Unit(), block, mir::BinaryOp::kAdd,
+      frame.current_block->ReadLocal(counter, IntType()),
       BuildIntLiteral(Unit(), block, step), IntType()));
 }
 
@@ -330,26 +327,26 @@ auto Renderer::BuildBody(
 
 auto Renderer::UnpackedMember(
     const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
-    const hir::UnpackedAggregateField& field, base::ComponentIndex index)
-    -> mir::ExprId {
+    const hir::Type& aggregate, const hir::UnpackedAggregateField& field,
+    base::ComponentIndex index) -> mir::ExprId {
   // LRM 7.3.2 allows a tagged union member declared `void`, which is all
   // information in the tag: the name is the whole of what there is to print.
   if (HirType(field.type).Is<hir::VoidType>()) {
     return Text(frame, field.name);
   }
   mir::Block& block = *frame.current_block;
-  const mir::ExprId subject = Read(frame, value, mir_type);
-  const mir::ExprId member = block.exprs.Add(
-      mir::MakeComponentExpr(
-          subject, index, Owner().TranslateType(field.type)));
+  const mir::ExprId subject = frame.current_block->LocalPlace(value, mir_type);
+  const mir::ExprId member = block.exprs.Add(StepRead(
+      Unit(), block,
+      MemberStep(
+          Owner(), block, aggregate, index, Owner().TranslateType(field.type)),
+      subject));
   return Named(frame, field.name, Render(frame, member, field.type));
 }
 
-// Reads the bits the member occupies rather than the member the source named:
-// the rendering has already settled which member it is printing -- every one
-// of a structure's, the first of a union's, the one a tag names -- so the
-// check LRM 11.9 puts on a written access would be this operation asking again
-// what it just decided.
+// Reads the bits the member occupies, at the member's declared type: the
+// rendering has already settled which member it prints -- every one of a
+// structure's, the first of a union's, the one a tag names (LRM 21.2.1.6).
 auto Renderer::PackedMember(
     const WalkFrame& frame, mir::LocalId value, mir::TypeId mir_type,
     const PackedProjection& projection, const hir::PackedAggregateField& field,
@@ -362,7 +359,7 @@ auto Renderer::PackedMember(
   }
   mir::Block& block = *frame.current_block;
   const ProjectedMember& projected = projection.members.at(index.value);
-  const mir::ExprId subject = Read(frame, value, mir_type);
+  const mir::ExprId subject = frame.current_block->LocalPlace(value, mir_type);
   const mir::ExprId member = block.exprs.Add(BuildPackedBitsRead(
       Owner(), block, subject, projected.bit_offset,
       Owner().TranslateType(field.type)));
@@ -390,17 +387,16 @@ auto Renderer::BuildUnpackedAggregate(
     mir::ExprId chain = Text(frame, "");
     for (std::size_t i = fields.size(); i-- > 0;) {
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      const mir::ExprId subject = Read(frame, value, mir_type);
-      const mir::ExprId live = block.exprs.Add(
-          mir::MakeTagMatchesExpr(
-              subject, index, Unit().builtins.machine_bool));
+      const mir::ExprId live = BuildHoldsMember(
+          Owner(), block, frame.current_block->LocalPlace(value, mir_type),
+          type, index);
       chain = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::ConditionalExpr{
-                      .condition = ReduceToCondition(Unit(), block, live),
+                      .condition = live,
                       .then_value = UnpackedMember(
-                          frame, value, mir_type, fields[i], index),
+                          frame, value, mir_type, t, fields[i], index),
                       .else_value = chain},
               .type = StringType()});
     }
@@ -412,7 +408,8 @@ auto Renderer::BuildUnpackedAggregate(
     for (std::size_t i = 0; i < count; ++i) {
       if (i != 0) parts.push_back(Text(frame, kSeparator));
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      parts.push_back(UnpackedMember(frame, value, mir_type, fields[i], index));
+      parts.push_back(
+          UnpackedMember(frame, value, mir_type, t, fields[i], index));
     }
   }
   parts.push_back(Text(frame, kClose));
@@ -438,14 +435,14 @@ auto Renderer::BuildPackedAggregate(
     mir::ExprId chain = Text(frame, "");
     for (std::size_t i = fields.size(); i-- > 0;) {
       const auto index = base::ComponentIndex{static_cast<std::uint32_t>(i)};
-      const mir::ExprId subject = Read(frame, value, mir_type);
-      const mir::ExprId live =
-          BuildPackedTagTest(Owner(), block, subject, projection, index);
+      const mir::ExprId live = BuildHoldsMember(
+          Owner(), block, frame.current_block->LocalPlace(value, mir_type),
+          type, index);
       chain = block.exprs.Add(
           mir::Expr{
               .data =
                   mir::ConditionalExpr{
-                      .condition = ReduceToCondition(Unit(), block, live),
+                      .condition = live,
                       .then_value = PackedMember(
                           frame, value, mir_type, projection, fields[i], index),
                       .else_value = chain},
@@ -481,9 +478,10 @@ auto Renderer::BuildEnumeration(
   // looked up once.
   const mir::ExprId name = EvaluatedOnce(
       frame, block.exprs.Add(BuildEnumNameCallExpr(
-                 Owner(), block, Read(frame, value, mir_type), type)));
-  const mir::ExprId base_text =
-      FormatLeaf(frame, Read(frame, value, mir_type), mir_type);
+                 Owner(), block,
+                 frame.current_block->ReadLocal(value, mir_type), type)));
+  const mir::ExprId base_text = FormatLeaf(
+      frame, frame.current_block->ReadLocal(value, mir_type), mir_type);
 
   const mir::ExprId length = block.exprs.Add(
       mir::Expr{
@@ -536,7 +534,8 @@ auto Renderer::BuildIndexedElements(
                     .callee =
                         mir::Direct{
                             .target = support::BuiltinFn::kSize,
-                            .receiver = Read(frame, value, mir_type)},
+                            .receiver = frame.current_block->LocalPlace(
+                                value, mir_type)},
                     .arguments = {}},
             .type = IntType()});
   }
@@ -559,11 +558,12 @@ auto Renderer::BuildIndexedElements(
   {
     const mir::ExprId separator = SeparatorAfterFirst(body_frame, ordinal);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body, Read(body_frame, value, mir_type), type,
-        Read(body_frame, index, IntType()), element_mir));
+        Owner(), loop_body,
+        body_frame.current_block->LocalPlace(value, mir_type), type,
+        body_frame.current_block->ReadLocal(index, IntType()), element_mir));
     const mir::ExprId grown = Join(
-        body_frame, {Read(body_frame, text, StringType()), separator,
-                     Render(body_frame, element, element_type)});
+        body_frame, {body_frame.current_block->ReadLocal(text, StringType()),
+                     separator, Render(body_frame, element, element_type)});
     loop_body.AppendStmt(
         mir::ExprStmt{
             .expr = Assign(Unit(), body_frame, text, StringType(), grown)});
@@ -571,8 +571,9 @@ auto Renderer::BuildIndexedElements(
   const mir::BlockId loop_scope = block.child_scopes.Add(std::move(loop_body));
 
   const mir::ExprId bound = block.exprs.Add(MakeBinary(
-      Unit(), block, mir::BinaryOp::kLessThan, Read(frame, ordinal, IntType()),
-      count, Unit().builtins.bit1));
+      Unit(), block, mir::BinaryOp::kLessThan,
+      frame.current_block->ReadLocal(ordinal, IntType()), count,
+      Unit().builtins.bit1));
   const mir::ExprId next_ordinal =
       Assign(Unit(), frame, ordinal, IntType(), Advanced(frame, ordinal, 1));
   const mir::ExprId next_index = Assign(
@@ -589,7 +590,9 @@ auto Renderer::BuildIndexedElements(
           .step = {next_ordinal, next_index},
           .scope = loop_scope});
 
-  return Join(frame, {Read(frame, text, StringType()), Text(frame, kClose)});
+  return Join(
+      frame, {frame.current_block->ReadLocal(text, StringType()),
+              Text(frame, kClose)});
 }
 
 // One step of the LRM 7.9.4 / 7.9.6 traversal of `value`, leaving the index it
@@ -600,11 +603,13 @@ auto Renderer::TraversalStep(
     -> mir::ExprId {
   BlockBuilder step(frame);
   const WalkFrame& inner = step.Frame();
-  const mir::ExprId array = Read(inner, value, mir_type);
+  const mir::ExprId array = inner.current_block->LocalPlace(value, mir_type);
   return frame.current_block->exprs.Add(BuildAssociativeTraversal(
       Owner(), step, entry, array,
-      AccessPath{.owner = Read(inner, key, key_type), .descent = {}}, key_type,
-      IntType()));
+      AccessPath{
+          .owner = inner.current_block->LocalPlace(key, key_type),
+          .descent = {}},
+      key_type, IntType()));
 }
 
 // The entries of an associative array (LRM 7.8), each printed under the index
@@ -638,14 +643,16 @@ auto Renderer::BuildAssociativeEntries(
   const WalkFrame body_frame = frame.WithBlock(&loop_body);
   {
     const mir::ExprId separator = SeparatorAfterFirst(body_frame, ordinal);
-    const mir::ExprId index_text =
-        Render(body_frame, Read(body_frame, key, key_type), array.key_type);
+    const mir::ExprId index_text = Render(
+        body_frame, body_frame.current_block->ReadLocal(key, key_type),
+        array.key_type);
     const mir::ExprId element = loop_body.exprs.Add(BuildElementAccessCallExpr(
-        Owner(), loop_body, Read(body_frame, value, mir_type), type,
-        Read(body_frame, key, key_type), element_mir));
+        Owner(), loop_body,
+        body_frame.current_block->LocalPlace(value, mir_type), type,
+        body_frame.current_block->ReadLocal(key, key_type), element_mir));
     const mir::ExprId grown = Join(
-        body_frame, {Read(body_frame, text, StringType()), separator,
-                     index_text, Text(body_frame, kNameMark),
+        body_frame, {body_frame.current_block->ReadLocal(text, StringType()),
+                     separator, index_text, Text(body_frame, kNameMark),
                      Render(body_frame, element, array.element_type)});
     loop_body.AppendStmt(
         mir::ExprStmt{
@@ -666,12 +673,14 @@ auto Renderer::BuildAssociativeEntries(
   block.AppendStmt(
       mir::ForStmt{
           .init = std::move(init),
-          .condition =
-              ReduceToCondition(Unit(), block, Read(frame, more, IntType())),
+          .condition = ReduceToCondition(
+              Unit(), block, frame.current_block->ReadLocal(more, IntType())),
           .step = {next_more, next_ordinal},
           .scope = loop_scope});
 
-  return Join(frame, {Read(frame, text, StringType()), Text(frame, kClose)});
+  return Join(
+      frame, {frame.current_block->ReadLocal(text, StringType()),
+              Text(frame, kClose)});
 }
 
 }  // namespace

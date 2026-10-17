@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
+#include <memory>
 #include <vector>
+
+#include "lyra/runtime/owned_call.hpp"
 
 namespace lyra::runtime {
 
@@ -55,7 +57,7 @@ class EvaluationAttempts {
   // `final` procedures, which read what those statements wrote.
   void Install(
       RuntimeEffects& effects, std::uint64_t words, bool pending_holds,
-      std::function<void()> pass_action, std::function<void()> fail_action);
+      OwnedCall pass_action, OwnedCall fail_action);
 
   // Stages one word of the position set the next `BeginTick` or `Seed` starts
   // an evaluation from. A seed is a constant of the automaton, so it is written
@@ -133,8 +135,10 @@ class EvaluationAttempts {
   std::vector<Evaluation> evaluations_;
   std::vector<Attempt> attempts_;
   std::vector<std::uint64_t> seed_;
-  std::function<void()> pass_action_;
-  std::function<void()> fail_action_;
+  // Each is kept and handed to a region again every time an attempt settles,
+  // so every submission shares it rather than one of them owning it.
+  std::shared_ptr<OwnedCall> pass_action_;
+  std::shared_ptr<OwnedCall> fail_action_;
   std::size_t width_ = 0;
   // Every evaluation before it has been stepped this tick, which is what makes
   // the sweep a forward scan rather than a search.

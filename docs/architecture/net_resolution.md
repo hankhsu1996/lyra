@@ -280,13 +280,10 @@ and a `trireg` says it with a contribution resolution itself keeps current (LRM 
 A net's data type may be an unpacked aggregate whose elements are themselves valid for a net (LRM
 6.7.1), and the fold then reaches an aggregate by recursing into its elements: a contribution is a
 whole-net-shaped value, and a driver that covers only part of the net carries the resolution
-identity everywhere it does not drive. The one aggregate the fold cannot always answer for is the
-unpacked union: LRM 7.3 gives it no required storage representation and, unlike a packed union, no
-reading back of a member written as another, so two contributions that are both driving different
-members overlay in no defined bit space. The cases a design has resolve exactly -- one driver on any
-member, several on the same member, and the undriven seed, which is the identity whichever member it
-carries -- and the combination the standard leaves undefined is reported as such rather than
-answered with an invented value.
+identity everywhere it does not drive. An unpacked union is one storage its members overlay, and the
+fold reads each contribution as its first member, the member every whole-value use of an untagged
+union reads (LRM 21.2.1.6, 11.4.14.1 name it for the uses they define). The standard names no
+resolution for a union, so this is the one rule applied where it is silent.
 
 A bidirectional port connection is "a non-strength-reducing transistor connection" (LRM 23.3.3), and
 the standard settles what that means by merging the nets on both sides into one simulated net (LRM

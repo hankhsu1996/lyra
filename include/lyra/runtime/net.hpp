@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -15,30 +16,43 @@
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/storage_for.hpp"
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/strength_level.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/small_box.hpp"
+#include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
 
+// `into` made a value of an integral type of `count` positions with every one
+// holding `fill` (LRM 6.7.1), as the type `T` lays it out: `fill` in each of
+// its positions and every position above them clear, written where `into`
+// lies, so a wide value is never made in the caller's frame first.
+template <BitAddressed T>
+void FillOver(T& into, std::uint64_t count, value::FourStateBit fill) {
+  if constexpr (value::IntegralValue<T>) {
+    value::FillScalar(into.MutableView(), value::FourStateBit::kZero);
+    value::FillScalar(into.MutableView().Truncated(count), fill);
+  } else {
+    into = T::Filled(count, fill);
+  }
+}
+
 // A value of an integral type of `count` positions with every one holding
-// `fill` (LRM 6.7.1), as a value of the type `T` that lays it out: `fill` in
-// each of its positions, and every position above them clear.
+// `fill`, as `FillOver` writes it.
 template <BitAddressed T>
 [[nodiscard]] auto FilledOver(std::uint64_t count, value::FourStateBit fill)
     -> T {
-  if constexpr (value::IntegralValue<T>) {
-    T out = T::Zero();
-    value::FillScalar(out.MutableView().Truncated(count), fill);
-    return out;
-  } else {
-    return T::Filled(count, fill);
-  }
+  T out{};
+  FillOver(out, count, fill);
+  return out;
 }
 
 // The scalar a net type contributes at each position (LRM 6.7.1), which
@@ -111,7 +125,7 @@ struct Contributing {
 };
 template <class T>
 struct Showing {
-  T* shown;
+  typename StorageFor<T>::Type* shown;
   bool watched;
 };
 template <class T>
@@ -121,14 +135,29 @@ struct KeptBeneath {
 template <class T>
 using DriverLanding = std::variant<Contributing<T>, Showing<T>, KeptBeneath<T>>;
 
-// The driver's value as it stands, wherever its writes land.
+// The driver's value as it stands, wherever its writes land, of a type the
+// net holds as the value itself.
 template <class T>
+  requires(!DynamicallySized<T>)
 [[nodiscard]] auto DriverValueAt(const DriverLanding<T>& landing) -> T& {
   return std::visit(
       Overloaded{
           [](const Contributing<T>& to) -> T& { return *to.contribution; },
-          [](const Showing<T>& to) -> T& { return *to.shown; },
+          [](const Showing<T>& to) -> T& { return to.shown->Storage(); },
           [](const KeptBeneath<T>& to) -> T& { return *to.kept; }},
+      landing);
+}
+
+// Where the driver's value lies, as a reference names it.
+template <class T>
+[[nodiscard]] auto DriverBytesAt(const DriverLanding<T>& landing) -> void* {
+  return std::visit(
+      Overloaded{
+          [](const Contributing<T>& to) -> void* {
+            return HandleTo(*to.contribution);
+          },
+          [](const Showing<T>& to) -> void* { return to.shown->Bytes(); },
+          [](const KeptBeneath<T>& to) -> void* { return HandleTo(*to.kept); }},
       landing);
 }
 
@@ -229,11 +258,15 @@ class ResolvedNet;
 // covering the net is a force of the member onto the net's own value, which
 // first holds what the net showed, so it never reaches the object; its release
 // binds the member back (LRM 10.6.2).
-template <NetValue T>
+//
+// The member names a value where it lies, as every reference does, and the net
+// holds its own value as `HeldAs` holds it, which reads and takes a value
+// lying anywhere as its own is laid out.
+template <class HeldAs>
 class NetShowing {
  public:
-  NetShowing(Observable& net, T& own)
-      : own_{.holder = HeldByNet{&net}, .storage = &own, .whole = true},
+  explicit NetShowing(Observable& net)
+      : own_{.holder = HeldByNet{&net}, .storage = nullptr, .whole = true},
         shown_(own_) {
     shown_.member = &shown_;
   }
@@ -243,8 +276,17 @@ class NetShowing {
   auto operator=(NetShowing&&) -> NetShowing& = delete;
   ~NetShowing() = default;
 
-  [[nodiscard]] auto Value() const noexcept -> const T& {
-    return *static_cast<const T*>(shown_.storage);
+  // The net's own value is `own`, built after this and before anything names
+  // the net, so the member names it from the net's construction on.
+  void ShowOwn(HeldAs& own) {
+    own_value_ = &own;
+    own_.storage = own.Bytes();
+    shown_.storage = own_.storage;
+  }
+
+  // Where what the net shows lies.
+  [[nodiscard]] auto Shown() const noexcept -> const void* {
+    return shown_.storage;
   }
 
   // Where the address of what the net shows is kept, which is what generated
@@ -304,12 +346,12 @@ class NetShowing {
   void Uncover() {
     BoundMembers& bound = current_runtime().Bound();
     const bool forced = bound.Forced(shown_);
-    const T& next = *static_cast<const T*>(
-        forced ? bound.DriverOf(shown_).storage : LiveSource().storage);
-    T& own = *static_cast<T*>(own_.storage);
+    const void* next =
+        forced ? bound.DriverOf(shown_).storage : LiveSource().storage;
     ShowDriverValue(
-        current_runtime(), *std::get<HeldByNet>(own_.holder).net, own,
-        [&] { return own.IsBitIdentical(next); }, [&] { own = next; });
+        current_runtime(), *std::get<HeldByNet>(own_.holder).net,
+        own_value_->Get(), [&] { return own_value_->IsBitIdenticalTo(next); },
+        [&] { own_value_->AssignBytes(next); });
     if (forced) {
       bound.Release(shown_);
     } else {
@@ -325,7 +367,7 @@ class NetShowing {
     if (!started_ || bound.Forced(shown_)) {
       return;
     }
-    *static_cast<T*>(own_.storage) = Value();
+    own_value_->AssignBytes(Shown());
     bound.Force(shown_, own_, nullptr);
   }
 
@@ -339,8 +381,9 @@ class NetShowing {
     return *source_;
   }
 
-  // The net's own value, which the member names until the driver's turn and
-  // while something covers the net.
+  // The net's own value, and the reference to it, which the member is until the
+  // driver's turn and while something covers the net.
+  HeldAs* own_value_ = nullptr;
   ErasedReference own_;
   ErasedReference shown_;
   // A reference to the whole of the variable the driver carries, where that is
@@ -615,45 +658,47 @@ template <NetValue T>
   requires BitAddressed<T>
 class ResolvedNet<T> : public ConnectableNet {
  public:
-  ResolvedNet();
+  using HeldAs = typename StorageFor<T>::Type;
 
-  // Fixes what the net's declaration gives it -- how many positions its
-  // declared type has, which the type laying its value out does not say where
-  // it lays out a narrower one, and what its declared net type states: which
-  // truth table resolves contributions of equal strength, and the contribution
-  // the net type itself makes, as the scalar it shows where nothing drives it
-  // and the strength it holds that scalar at (LRM 6.7.1). The net is therefore
-  // a readable observable of its declared count before any driver attaches,
-  // showing what its net type's own contribution resolves to. Installing twice
-  // is a lowering defect.
+  // A net is built told how many positions its declared type has, which the
+  // type laying its value out does not say where it lays out a narrower one;
+  // one of a type that does say it is built at that. A net of a value wider
+  // than a word lays the words out after itself at that width.
+  ResolvedNet()
+    requires(!value::HeldAsWords<T>);
+  explicit ResolvedNet(std::uint64_t count);
+
+  // Fixes what the net's declared net type states: which truth table resolves
+  // contributions of equal strength, and the contribution the net type itself
+  // makes, as the scalar it shows where nothing drives it and the strength it
+  // holds that scalar at (LRM 6.7.1). The net is therefore a readable
+  // observable of its declared count before any driver attaches, showing what
+  // its net type's own contribution resolves to. Installing twice is a
+  // lowering defect.
   //
   // One entry per resolution: tri-state for `wire` / `tri` (LRM 6.6.1 Table
   // 6-2), wired-and for `wand` / `triand` and wired-or for `wor` / `trior` (LRM
   // 6.6.3 Tables 6-3 and 6-4), and one that resolves tri-state and leaves its
   // own contribution holding what the drivers last decided, which is how a net
   // stores a value (LRM 6.6.4).
-  void InitializeTriState(
-      std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  void InitializeTriState(std::int64_t fill, std::int64_t strength) {
     Install(
-        count, fill, strength, value::NetResolution::kTriState,
+        fill, strength, value::NetResolution::kTriState,
         OwnContribution::kFixed);
   }
-  void InitializeWiredAnd(
-      std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  void InitializeWiredAnd(std::int64_t fill, std::int64_t strength) {
     Install(
-        count, fill, strength, value::NetResolution::kWiredAnd,
+        fill, strength, value::NetResolution::kWiredAnd,
         OwnContribution::kFixed);
   }
-  void InitializeWiredOr(
-      std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  void InitializeWiredOr(std::int64_t fill, std::int64_t strength) {
     Install(
-        count, fill, strength, value::NetResolution::kWiredOr,
+        fill, strength, value::NetResolution::kWiredOr,
         OwnContribution::kFixed);
   }
-  void InitializeRetaining(
-      std::int64_t count, std::int64_t fill, std::int64_t strength) {
+  void InitializeRetaining(std::int64_t fill, std::int64_t strength) {
     Install(
-        count, fill, strength, value::NetResolution::kTriState,
+        fill, strength, value::NetResolution::kTriState,
         OwnContribution::kRetained);
   }
 
@@ -663,8 +708,15 @@ class ResolvedNet<T> : public ConnectableNet {
   auto operator=(ResolvedNet&&) -> ResolvedNet& = delete;
   ~ResolvedNet();
 
-  [[nodiscard]] auto Get() const noexcept -> const T& {
-    return showing_.Value();
+  // Where what the net shows lies, as a reference names it.
+  [[nodiscard]] auto Shown() const noexcept -> const void* {
+    return showing_.Shown();
+  }
+  // What the net shows, of a type it holds as the value itself.
+  [[nodiscard]] auto Get() const noexcept -> const T&
+    requires(!value::HeldAsWords<T>)
+  {
+    return *static_cast<const T*>(showing_.Shown());
   }
   [[nodiscard]] auto ShownThrough() const noexcept -> void* const* {
     return showing_.ShownThrough();
@@ -680,12 +732,21 @@ class ResolvedNet<T> : public ConnectableNet {
     if (sampled_ != nullptr) {
       return;
     }
-    sampled_ = std::make_unique<SampledValueOf<ResolvedNet>>(
-        *this, FilledOver<T>(count_, value::FourStateBit::kUnknown),
+    sampled_ = std::make_unique<SampledValueOf<TakenShown>>(
+        TakenShown(*this),
+        [&] { return FilledOver<T>(count_, value::FourStateBit::kUnknown); },
         Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
   }
   [[nodiscard]] auto SampledGet() const -> const T& {
     return SampledOf(sampled_.get());
+  }
+  // Assigns what the net shows to `out`, as its sampled value takes it.
+  void TakeShownInto(T& out) const {
+    if constexpr (value::HeldAsWords<T>) {
+      out = held_.ToOwned(showing_.Shown());
+    } else {
+      out = Get();
+    }
   }
 
   // Puts the positions this net reaches under a procedural continuous
@@ -713,7 +774,8 @@ class ResolvedNet<T> : public ConnectableNet {
       std::int64_t level, std::int64_t generation, const void* bytes) -> bool
     requires value::TakesBytesInPlace<T>
   {
-    return DriveTakeoverFromView(level, generation, resolved_.ReadAt(bytes));
+    return DriveTakeoverFromView(
+        level, generation, value::WideViewAt(bytes, count_, T::kDomain));
   }
 
   void EndTakeover(std::int64_t level) {
@@ -736,9 +798,9 @@ class ResolvedNet<T> : public ConnectableNet {
       case NetDecision::kOneDriver:
         if (const std::unique_ptr<T> kept = std::move(kept_beneath_)) {
           ShowDriverValue(
-              runtime, *this, resolved_,
-              [&] { return resolved_.IsBitIdentical(*kept); },
-              [&] { resolved_ = *kept; });
+              runtime, *this, held_.Get(),
+              [&] { return held_.IsBitIdentical(*kept); },
+              [&] { held_.Assign(*kept); });
         }
         return;
       // The object its driver carries is what such a net shows once nothing
@@ -822,11 +884,11 @@ class ResolvedNet<T> : public ConnectableNet {
     void ShowPositions(
         RuntimeEffects& runtime, std::uint32_t offset,
         const NetPositions& positions) override {
-      KeptPart<T> kept(
-          net_->resolved_,
-          value::BitPositions{.lsb = offset, .width = positions.Count()});
-      WritePositions(net_->resolved_, offset, positions);
-      if (const std::optional<Change> change = kept.ChangeTo(net_->resolved_)) {
+      auto&& own = net_->Own();
+      KeptPart<std::remove_cvref_t<decltype(own)>> kept(
+          own, value::BitPositions{.lsb = offset, .width = positions.Count()});
+      WritePositions(own, offset, positions);
+      if (const std::optional<Change> change = kept.ChangeTo(own)) {
         runtime.WakeParkedOn(*net_, PartPath{}, *change);
       }
     }
@@ -835,20 +897,41 @@ class ResolvedNet<T> : public ConnectableNet {
   };
 
   void Install(
-      std::int64_t count, std::int64_t fill, std::int64_t strength,
-      value::NetResolution resolution, OwnContribution own_kind) {
-    if (count_ != 0) {
+      std::int64_t fill, std::int64_t strength, value::NetResolution resolution,
+      OwnContribution own_kind) {
+    if (installed_) {
       throw InternalError(
-          "ResolvedNet: the net's declared type is already fixed");
+          "ResolvedNet: the net's declared net type is already fixed");
     }
-    count_ = static_cast<std::uint32_t>(count);
-    nondriving_ = FilledOver<T>(count_, value::FourStateBit::kHighImpedance);
-    resolved_ = nondriving_;
+    installed_ = true;
+    FillOver(nondriving_, count_, value::FourStateBit::kHighImpedance);
+    held_.Assign(nondriving_);
+    auto&& own = Own();
     WritePositions(
-        resolved_, 0,
+        own, 0,
         name_.Declare(
             static_cast<support::StrengthLevel>(strength), NetFillOf(fill),
             resolution, own_kind, count_));
+  }
+
+  // The storage of a net of `count` positions, which keeps words at its tail
+  // at that width and holds any other value as itself.
+  [[nodiscard]] static auto HeldFor(std::uint64_t count) -> HeldAs {
+    if constexpr (value::HeldAsWords<T>) {
+      return HeldAs(count);
+    } else {
+      return HeldAs();
+    }
+  }
+
+  // The net's own value, to write positions into where it lies: the value
+  // itself, or its words with their width.
+  [[nodiscard]] auto Own() -> decltype(auto) {
+    if constexpr (value::HeldAsWords<T>) {
+      return held_.Get();
+    } else {
+      return held_.Storage();
+    }
   }
 
   auto DriveTakeoverFromView(
@@ -869,7 +952,7 @@ class ResolvedNet<T> : public ConnectableNet {
         break;
       case NetDecision::kOneDriver:
         if (kept_beneath_ == nullptr) {
-          kept_beneath_ = std::make_unique<T>(resolved_);
+          kept_beneath_ = std::make_unique<T>(held_.AsOwned());
         }
         break;
       case NetDecision::kShowsSource:
@@ -931,7 +1014,7 @@ class ResolvedNet<T> : public ConnectableNet {
         if (kept_beneath_ != nullptr) {
           return KeptBeneath<T>{.kept = kept_beneath_.get()};
         }
-        return Showing<T>{.shown = &resolved_, .watched = this->HasMembers()};
+        return Showing<T>{.shown = &held_, .watched = this->HasMembers()};
       case NetDecision::kShowsSource:
         throw InternalError(
             "ResolvedNet: a driver whose net shows the object it carries is "
@@ -950,9 +1033,9 @@ class ResolvedNet<T> : public ConnectableNet {
             },
             [&](const Showing<T>& to) {
               ShowDriverValue(
-                  runtime, *this, *to.shown,
+                  runtime, *this, to.shown->Get(),
                   [&] { return to.shown->IsBitIdentical(value); },
-                  [&] { *to.shown = value; });
+                  [&] { to.shown->Assign(value); });
             },
             [&](const KeptBeneath<T>& to) { *to.kept = value; }},
         LandingOf(index));
@@ -968,19 +1051,19 @@ class ResolvedNet<T> : public ConnectableNet {
     std::visit(
         Overloaded{
             [&](const Contributing<T>& to) {
-              if (to.contribution->HoldsBytes(bytes)) {
+              if (to.contribution->IsBitIdenticalTo(bytes)) {
                 return;
               }
-              to.contribution->TakeBytes(bytes);
+              to.contribution->AssignBytes(bytes);
               ReresolveJoint(runtime, Change::Whole());
             },
             [&](const Showing<T>& to) {
               ShowDriverValue(
-                  runtime, *this, *to.shown,
-                  [&] { return to.shown->HoldsBytes(bytes); },
-                  [&] { to.shown->TakeBytes(bytes); });
+                  runtime, *this, to.shown->Get(),
+                  [&] { return to.shown->IsBitIdenticalTo(bytes); },
+                  [&] { to.shown->AssignBytes(bytes); });
             },
-            [&](const KeptBeneath<T>& to) { to.kept->TakeBytes(bytes); }},
+            [&](const KeptBeneath<T>& to) { to.kept->AssignBytes(bytes); }},
         LandingOf(index));
   }
 
@@ -1029,12 +1112,11 @@ class ResolvedNet<T> : public ConnectableNet {
     return contributions_[index];
   }
 
-  T resolved_{};
-  NetShowing<T> showing_{*this, resolved_};
+  NetShowing<HeldAs> showing_{*this};
   T nondriving_{};
-  // How many positions the declared type has, none until the net is
-  // installed.
-  std::uint32_t count_ = 0;
+  // How many positions the declared type has.
+  std::uint32_t count_;
+  bool installed_ = false;
   std::optional<NetDecision> decision_;
   // What the one driver deciding this net produced while a procedural
   // continuous assignment covers the net (LRM 10.6.2), absent otherwise.
@@ -1047,8 +1129,13 @@ class ResolvedNet<T> : public ConnectableNet {
   // and what a reorganization would have to rewrite is these, which it can.
   // Growth therefore must not move what has already been handed out.
   std::deque<Driver<T>> drivers_;
+  // What the net's sampled value takes what the net shows through.
+  using TakenShown = TakenFrom<ResolvedNet, T, &ResolvedNet::TakeShownInto>;
   // The net's sampled value, absent until something samples it.
-  std::unique_ptr<SampledValueOf<ResolvedNet>> sampled_;
+  std::unique_ptr<SampledValueOf<TakenShown>> sampled_;
+  // The net's own value, last, so words it lays out after itself lie where
+  // the net ends.
+  HeldAs held_;
 };
 
 // A net of an unpacked aggregate (LRM 6.7.1): a structure, a union, or a
@@ -1061,7 +1148,12 @@ template <NetValue T>
   requires(!BitAddressed<T>)
 class ResolvedNet<T> : public Observable {
  public:
-  ResolvedNet();
+  using HeldAs = typename StorageFor<T>::Type;
+
+  ResolvedNet()
+    requires(!value::LaidOutByType<T>);
+  explicit ResolvedNet(const value::ValueType& type)
+    requires value::LaidOutByType<T>;
 
   // Fixes what the net's declaration gives it: the declared type, from a value
   // carrying it, the scalar the net type contributes in every bit and the
@@ -1100,8 +1192,18 @@ class ResolvedNet<T> : public Observable {
   auto operator=(ResolvedNet&&) -> ResolvedNet& = delete;
   ~ResolvedNet();
 
-  [[nodiscard]] auto Get() const noexcept -> const T& {
-    return showing_.Value();
+  // Where what the net shows lies, as a reference names it.
+  [[nodiscard]] auto Shown() const noexcept -> const void* {
+    return showing_.Shown();
+  }
+  // What the net shows, of a type it holds as the value itself.
+  [[nodiscard]] auto Get() const noexcept -> const T&
+    requires(!value::LaidOutByType<T>)
+  {
+    return *static_cast<const T*>(showing_.Shown());
+  }
+  [[nodiscard]] auto ShownThrough() const noexcept -> void* const* {
+    return showing_.ShownThrough();
   }
   [[nodiscard]] auto Member() const noexcept -> const ErasedReference& {
     return showing_.Member();
@@ -1114,14 +1216,33 @@ class ResolvedNet<T> : public Observable {
     if (sampled_ != nullptr) {
       return;
     }
-    sampled_ = std::make_unique<SampledValueOf<ResolvedNet>>(
-        *this,
-        T::FilledLike(
-            nondriving_, value::Logic::Filled(value::FourStateBit::kUnknown)),
+    sampled_ = std::make_unique<SampledValueOf<TakenShown>>(
+        TakenShown(*this),
+        [&] {
+          return T::FilledLike(
+              nondriving_, value::Logic::Filled(value::FourStateBit::kUnknown));
+        },
         Trigger(WatchedPlace::Through(Member()), Observation{}, {}, 0, 0));
   }
   [[nodiscard]] auto SampledGet() const -> const T& {
     return SampledOf(sampled_.get());
+  }
+  // Assigns what the net shows to `out`, as its sampled value takes it.
+  void TakeShownInto(T& out) const {
+    if constexpr (value::LaidOutByType<T>) {
+      out = ToOwned(showing_.Shown());
+    } else {
+      out = *static_cast<const T*>(showing_.Shown());
+    }
+  }
+
+  // A value of the net's own type handed as its bytes, as the net keeps one of
+  // its own: a tuple, a union or an array is laid out by the type the net was
+  // built with.
+  [[nodiscard]] auto ToOwned(const void* bytes) const -> T
+    requires value::LaidOutByType<T>
+  {
+    return held_.ToOwned(bytes);
   }
 
   // Puts the net under a procedural continuous assignment and takes it back
@@ -1137,35 +1258,24 @@ class ResolvedNet<T> : public Observable {
 
   auto DriveTakeover(
       std::int64_t level, std::int64_t generation, const T& value) -> bool {
-    if (takeovers_ == nullptr) {
-      return false;
-    }
-    const bool was_covered = Overridden();
-    if (!takeovers_->Drive(
-            TakeoverLevelOf(level), TakeoverGenerationOf(generation), value)) {
-      return false;
-    }
-    // The first override to cover a net one driver decides finds in it what
-    // that driver last produced, which is kept beneath for the net to show
-    // again once nothing covers it (LRM 10.6.2). One showing the object its
-    // driver carries goes back to its own storage, so the object is never
-    // forced with it.
-    if (!was_covered) {
-      switch (Decision()) {
-        case NetDecision::kResolution:
-          break;
-        case NetDecision::kOneDriver:
-          takeovers_->KeepBeneath(resolved_);
-          break;
-        case NetDecision::kShowsSource:
-          showing_.Cover();
-          break;
-      }
-    }
-    Reresolve(current_runtime());
-    return true;
+    return DriveTakeoverBy(
+        level, generation, [&](std::optional<T>& held) { held = value; });
   }
 
+  // The same of a value handed as its bytes, laid out by the net's type, which
+  // the level takes into the value it has once it holds one.
+  auto DriveTakeoverBytes(
+      std::int64_t level, std::int64_t generation, const void* bytes) -> bool
+    requires value::LaidOutByType<T>
+  {
+    return DriveTakeoverBy(level, generation, [&](std::optional<T>& held) {
+      if (held.has_value()) {
+        held->AssignBytes(bytes);
+      } else {
+        held.emplace(held_.ToOwned(bytes));
+      }
+    });
+  }
   void EndTakeover(std::int64_t level) {
     if (takeovers_ == nullptr) {
       return;
@@ -1184,12 +1294,12 @@ class ResolvedNet<T> : public Observable {
       // that driver produced meanwhile (LRM 10.6.2), where an override ever
       // gave a value at all.
       case NetDecision::kOneDriver:
-        if (const std::optional<T> kept = takeovers_->TakeBeneath()) {
+        takeovers_->TakeBeneath([&](const T& kept) {
           ShowDriverValue(
-              runtime, *this, resolved_,
-              [&] { return resolved_.IsBitIdentical(*kept); },
-              [&] { resolved_ = *kept; });
-        }
+              runtime, *this, held_.Get(),
+              [&] { return held_.IsBitIdentical(kept); },
+              [&] { held_.Assign(kept); });
+        });
         return;
       // The object its driver carries is what such a net shows once nothing
       // covers it, from the driver's turn on; before that it shows what an
@@ -1212,45 +1322,84 @@ class ResolvedNet<T> : public Observable {
  private:
   friend class Driver<T>;
 
+  // Has the takeover at `level` record what it evaluated to, through `record`,
+  // and shows whatever the highest level in effect then holds.
+  template <class Record>
+  auto DriveTakeoverBy(
+      std::int64_t level, std::int64_t generation, Record record) -> bool {
+    if (takeovers_ == nullptr) {
+      return false;
+    }
+    const bool was_covered = Overridden();
+    if (!takeovers_->Drive(
+            TakeoverLevelOf(level), TakeoverGenerationOf(generation), record)) {
+      return false;
+    }
+    // The first override to cover a net one driver decides finds in it what
+    // that driver last produced, which is kept beneath for the net to show
+    // again once nothing covers it (LRM 10.6.2). One showing the object its
+    // driver carries goes back to its own storage, so the object is never
+    // forced with it.
+    if (!was_covered) {
+      switch (Decision()) {
+        case NetDecision::kResolution:
+          break;
+        case NetDecision::kOneDriver:
+          takeovers_->KeepBeneath(held_.AsOwned());
+          break;
+        case NetDecision::kShowsSource:
+          showing_.Cover();
+          break;
+      }
+    }
+    Reresolve(current_runtime());
+    return true;
+  }
+
   void Install(
       const T& prototype, std::int64_t fill, std::int64_t strength,
       value::NetResolution resolution, OwnContribution own_kind) {
-    if constexpr (RepresentedAtRunTime<T>) {
-      if (!resolved_.IsUninitialized()) {
-        throw InternalError(
-            "ResolvedNet: the net's declared type is already fixed");
-      }
+    if (installed_) {
+      throw InternalError(
+          "ResolvedNet: the net's declaration is installed twice");
     }
-    nondriving_ = T::FilledLike(
-        prototype, value::Logic::Filled(value::FourStateBit::kHighImpedance));
-    own_ = DriveContribution<T>{
-        .value =
-            T::FilledLike(prototype, value::Logic::Filled(NetFillOf(fill))),
-        .strength = static_cast<support::StrengthLevel>(strength)};
+    installed_ = true;
+    value::RebuildFrom(nondriving_, [&] {
+      return T::FilledLike(
+          prototype, value::Logic::Filled(value::FourStateBit::kHighImpedance));
+    });
+    value::RebuildFrom(own_.value, [&] {
+      return T::FilledLike(prototype, value::Logic::Filled(NetFillOf(fill)));
+    });
+    own_.strength = static_cast<support::StrengthLevel>(strength);
     fold_ = resolution;
     own_kind_ = own_kind;
-    resolved_ = Resolve();
+    held_.Assign(*Resolve());
   }
 
   // What the net resolves to: between levels the stronger contribution
   // determines every bit it drives (LRM 28.12.1), and within one the net
   // type's table folds them (LRM 6.6.1, 6.6.3), each level starting from the
   // all-`z` value every fold treats as its identity.
-  [[nodiscard]] auto Resolve() const -> T {
+  // Each value it works through is kept where a value of the net's type may
+  // be kept, so a net too large for a frame keeps none in one.
+  [[nodiscard]] auto Resolve() const -> value::SmallBox<T> {
     const OccupiedLevels occupied = occupied_ | LevelBit(own_.strength);
-    T resolved = nondriving_;
+    value::SmallBox<T> resolved(nondriving_);
     for (std::size_t level = support::kStrengthLevelCount; level-- > 0;) {
       const auto at = static_cast<support::StrengthLevel>(level);
       if ((occupied & LevelBit(at)) == 0U) {
         continue;
       }
-      T group = own_.strength == at ? own_.value : nondriving_;
+      value::SmallBox<T> group(own_.strength == at ? own_.value : nondriving_);
       for (const DriveContribution<T>& driver : contributions_) {
         if (driver.strength == at) {
-          group = value::Resolve(fold_, group, driver.value);
+          group = value::SmallBox<T>::BuiltBy(
+              [&] { return value::Resolve(fold_, *group, driver.value); });
         }
       }
-      resolved = resolved.Dominating(group);
+      resolved = value::SmallBox<T>::BuiltBy(
+          [&] { return resolved->Dominating(*group); });
     }
     return resolved;
   }
@@ -1260,12 +1409,12 @@ class ResolvedNet<T> : public Observable {
   // contribution (LRM 6.6.4), and a takeover displaces what the net shows and
   // not what it holds (LRM 10.6.2).
   void Reresolve(RuntimeEffects& runtime) {
-    const T resolved = Resolve();
+    const value::SmallBox<T> resolved = Resolve();
     if (own_kind_ == OwnContribution::kRetained) {
-      own_.value = resolved;
+      own_.value = *resolved;
     }
     const T* forced = takeovers_ == nullptr ? nullptr : takeovers_->Highest();
-    PublishIfChanged(runtime, forced == nullptr ? resolved : *forced);
+    PublishIfChanged(runtime, forced == nullptr ? *resolved : *forced);
   }
 
   // What decides this net, settled the first time it is asked. No connection
@@ -1314,7 +1463,7 @@ class ResolvedNet<T> : public Observable {
         if (T* kept = takeovers_ == nullptr ? nullptr : takeovers_->Beneath()) {
           return KeptBeneath<T>{.kept = kept};
         }
-        return Showing<T>{.shown = &resolved_, .watched = this->HasMembers()};
+        return Showing<T>{.shown = &held_, .watched = this->HasMembers()};
       case NetDecision::kShowsSource:
         throw InternalError(
             "ResolvedNet: a driver whose net shows the object it carries is "
@@ -1333,9 +1482,9 @@ class ResolvedNet<T> : public Observable {
             },
             [&](const Showing<T>& to) {
               ShowDriverValue(
-                  runtime, *this, *to.shown,
+                  runtime, *this, to.shown->Get(),
                   [&] { return to.shown->IsBitIdentical(value); },
-                  [&] { *to.shown = value; });
+                  [&] { to.shown->Assign(value); });
             },
             [&](const KeptBeneath<T>& to) { *to.kept = value; }},
         LandingOf(index));
@@ -1351,19 +1500,19 @@ class ResolvedNet<T> : public Observable {
     std::visit(
         Overloaded{
             [&](const Contributing<T>& to) {
-              if (to.contribution->HoldsBytes(bytes)) {
+              if (to.contribution->IsBitIdenticalTo(bytes)) {
                 return;
               }
-              to.contribution->TakeBytes(bytes);
+              to.contribution->AssignBytes(bytes);
               Reresolve(runtime);
             },
             [&](const Showing<T>& to) {
               ShowDriverValue(
-                  runtime, *this, *to.shown,
-                  [&] { return to.shown->HoldsBytes(bytes); },
-                  [&] { to.shown->TakeBytes(bytes); });
+                  runtime, *this, to.shown->Get(),
+                  [&] { return to.shown->IsBitIdenticalTo(bytes); },
+                  [&] { to.shown->AssignBytes(bytes); });
             },
-            [&](const KeptBeneath<T>& to) { to.kept->TakeBytes(bytes); }},
+            [&](const KeptBeneath<T>& to) { to.kept->AssignBytes(bytes); }},
         LandingOf(index));
   }
 
@@ -1399,15 +1548,14 @@ class ResolvedNet<T> : public Observable {
   // Stores the resolved value and wakes subscribers only when it actually
   // changed (LRM 9.4.2).
   void PublishIfChanged(RuntimeEffects& runtime, const T& next) {
-    if (resolved_.IsBitIdentical(next)) {
+    if (held_.IsBitIdentical(next)) {
       return;
     }
-    resolved_ = next;
+    held_.Assign(next);
     runtime.WakeParkedOn(*this, PartPath{}, Change::Whole());
   }
 
-  T resolved_{};
-  NetShowing<T> showing_{*this, resolved_};
+  NetShowing<HeldAs> showing_{*this};
   T nondriving_{};
   // The contribution the net type makes to its own resolution, the table
   // contributions of equal strength fold under, and whether resolution keeps
@@ -1415,6 +1563,7 @@ class ResolvedNet<T> : public Observable {
   DriveContribution<T> own_{};
   value::NetResolution fold_{};
   OwnContribution own_kind_{};
+  bool installed_ = false;
   // The procedural continuous assignments the net has been put under (LRM
   // 10.6.2), absent until the first one starts.
   std::unique_ptr<Takeovers<T>> takeovers_;
@@ -1424,8 +1573,13 @@ class ResolvedNet<T> : public Observable {
   std::vector<DriveContribution<T>> contributions_;
   // The handles this net has issued, which growth must not move.
   std::deque<Driver<T>> drivers_;
+  // What the net's sampled value takes what the net shows through.
+  using TakenShown = TakenFrom<ResolvedNet, T, &ResolvedNet::TakeShownInto>;
   // The net's sampled value, absent until something samples it.
-  std::unique_ptr<SampledValueOf<ResolvedNet>> sampled_;
+  std::unique_ptr<SampledValueOf<TakenShown>> sampled_;
+  // The net's own value, last, so a value it lays out after itself lies where
+  // the net ends.
+  HeldAs held_;
 };
 
 // Defaulted here rather than where they are declared, for the reason a variable
@@ -1433,7 +1587,18 @@ class ResolvedNet<T> : public Observable {
 // that holds a net.
 template <NetValue T>
   requires BitAddressed<T>
-ResolvedNet<T>::ResolvedNet() : ConnectableNet(name_) {
+ResolvedNet<T>::ResolvedNet()
+  requires(!value::HeldAsWords<T>)
+    : ResolvedNet(T::kWidth) {
+}
+
+template <NetValue T>
+  requires BitAddressed<T>
+ResolvedNet<T>::ResolvedNet(std::uint64_t count)
+    : ConnectableNet(name_),
+      count_(static_cast<std::uint32_t>(count)),
+      held_(HeldFor(count)) {
+  showing_.ShowOwn(held_);
 }
 
 template <NetValue T>
@@ -1442,7 +1607,19 @@ ResolvedNet<T>::~ResolvedNet() = default;
 
 template <NetValue T>
   requires(!BitAddressed<T>)
-ResolvedNet<T>::ResolvedNet() = default;
+ResolvedNet<T>::ResolvedNet()
+  requires(!value::LaidOutByType<T>)
+{
+  showing_.ShowOwn(held_);
+}
+
+template <NetValue T>
+  requires(!BitAddressed<T>)
+ResolvedNet<T>::ResolvedNet(const value::ValueType& type)
+  requires value::LaidOutByType<T>
+    : held_(type) {
+  showing_.ShowOwn(held_);
+}
 
 template <NetValue T>
   requires(!BitAddressed<T>)
@@ -1486,18 +1663,29 @@ class Driver {
   // States, while the design resolves, that what this driver gives is the
   // whole of `source`, unchanged: a variable, a net, or an input port declared
   // as a variable, of the net's own type. Where the driver alone decides its
-  // net, the net then shows `source` where it lies.
-  void DriveFrom(Var<T>* source) const {
-    RequireUnsettled(Net().decision_);
-    Net().showing_.Record(Ref<T>{*source}.Erased());
+  // net, the net then shows `source` where it lies. A variable is named as a
+  // reference to the whole of it names it.
+  void DriveFrom(Var<T>* source) const
+    requires(!DynamicallySized<T>)
+  {
+    RecordVariable(WholeReference(*source));
+  }
+  template <class HeldAs>
+  void DriveFrom(TailCell<HeldAs>* source) const
+    requires std::same_as<HeldAs, typename StorageFor<T>::Type>
+  {
+    RecordVariable(WholeReference(*source));
   }
   void DriveFrom(ResolvedNet<T>* source) const {
     RequireUnsettled(Net().decision_);
     Net().showing_.Record(&source->Member());
   }
-  void DriveFrom(Ref<T>* source) const {
+  void DriveFrom(ErasedReference* source) const {
     RequireUnsettled(Net().decision_);
-    Net().showing_.Record(&source->AsMember());
+    Net().showing_.Record(source);
+  }
+  void DriveFrom(VariableRef<T>* source) const {
+    DriveFrom(&source->AsMember());
   }
 
   // This driver's turn has come at time zero: answers whether its net shows
@@ -1507,12 +1695,35 @@ class Driver {
     return Net().ShowSource();
   }
 
-  // This driver's own value as it currently stands.
-  [[nodiscard]] auto Get() const -> const T& {
+  // This driver's own value as it currently stands, of a type the net holds as
+  // the value itself.
+  [[nodiscard]] auto Get() const -> const T&
+    requires(!DynamicallySized<T>)
+  {
     return DriverValueAt(Landing());
   }
 
-  [[nodiscard]] auto Mutate() const -> ScopedMutation<Driver> {
+  // Where this driver's own value lies, as a reference names it, and how many
+  // positions an integral one has.
+  [[nodiscard]] auto Bytes() const -> void* {
+    return DriverBytesAt(Landing());
+  }
+  [[nodiscard]] auto Width() const -> std::uint64_t
+    requires BitAddressed<T>
+  {
+    return Net().count_;
+  }
+  // How the net holds a value it keeps after itself, which says how wide it
+  // is or its type.
+  [[nodiscard]] auto HeldStorage() const -> const typename StorageFor<T>::Type&
+    requires DynamicallySized<T>
+  {
+    return Net().held_;
+  }
+
+  [[nodiscard]] auto Mutate() const -> ScopedMutation<Driver>
+    requires(!DynamicallySized<T>)
+  {
     return ScopedMutation<Driver>{*this};
   }
 
@@ -1534,7 +1745,9 @@ class Driver {
             [](const KeptBeneath<T>& to) -> T* { return to.kept; }},
         Landing());
   }
-  [[nodiscard]] auto MutationStorage() const -> T& {
+  [[nodiscard]] auto MutationStorage() const -> T&
+    requires(!DynamicallySized<T>)
+  {
     return DriverValueAt(Landing());
   }
   [[nodiscard]] auto Watched() const -> bool {
@@ -1550,6 +1763,11 @@ class Driver {
   }
 
  private:
+  void RecordVariable(const ErasedReference& variable) const {
+    RequireUnsettled(Net().decision_);
+    Net().showing_.Record(variable);
+  }
+
   [[nodiscard]] auto Landing() const -> DriverLanding<T> {
     return Net().LandingOf(contribution_);
   }
@@ -1575,8 +1793,7 @@ template <NetValue T>
 auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
   RequireUnsettled(decision_);
   const auto level = static_cast<support::StrengthLevel>(strength);
-  contributions_.push_back(
-      DriveContribution<T>{.value = nondriving_, .strength = level});
+  contributions_.emplace_back(nondriving_, level);
   name_.Occupy(level);
   drivers_.emplace_back(*this, contributions_.size() - 1);
   return drivers_.back();
@@ -1587,8 +1804,7 @@ template <NetValue T>
 auto ResolvedNet<T>::AttachDriver(std::int64_t strength) -> Driver<T>& {
   RequireUnsettled(decision_);
   const auto level = static_cast<support::StrengthLevel>(strength);
-  contributions_.push_back(
-      DriveContribution<T>{.value = nondriving_, .strength = level});
+  contributions_.emplace_back(nondriving_, level);
   occupied_ |= LevelBit(level);
   drivers_.emplace_back(*this, contributions_.size() - 1);
   return drivers_.back();

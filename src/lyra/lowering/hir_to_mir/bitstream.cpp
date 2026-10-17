@@ -3,12 +3,13 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -27,8 +28,7 @@ auto WidenedWith(StreamShape shape, StreamShape part) -> StreamShape {
 
 // Several kinds of type reach here -- one whose bit count only the running
 // program has, and one whose stream the value layer does not carry yet -- and
-// this cannot tell them apart, so it names neither. A union is among them and
-// its width its type does fix, so naming a dynamic size would be false for it.
+// this cannot tell them apart, so it names neither.
 auto RefuseUnfixedStream(diag::SourceSpan span)
     -> std::unexpected<diag::Diagnostic> {
   return diag::Fail(
@@ -62,9 +62,24 @@ auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
     return StreamShape{
         .width = integral.bit_width, .state_kind = integral.state_kind};
   }
-  if (const std::optional<std::span<const mir::TypeId>> parts =
-          mir::ProductElements(unit, type)) {
-    return FixedStreamShapeOfParts(unit, *parts);
+  if (const auto* tuple = resolved.As<mir::TupleType>()) {
+    const std::vector<mir::TypeId> components = tuple->elements;
+    return FixedStreamShapeOfParts(unit, components);
+  }
+  // A structure streams its members end to end, an untagged union as its first
+  // member, and a tagged union not at all (LRM 11.4.14.1).
+  if (const mir::RecordRef* record = mir::RecordOf(resolved)) {
+    const std::span<const mir::TypeId> members =
+        mir::RecordElements(unit, *record);
+    switch (mir::RecordKindOf(unit, *record)) {
+      case mir::RecordKind::kStruct:
+        return FixedStreamShapeOfParts(unit, members);
+      case mir::RecordKind::kUnion:
+        return FixedStreamShapeOf(unit, members.front());
+      case mir::RecordKind::kTaggedUnion:
+        return std::nullopt;
+    }
+    throw InternalError("FixedStreamShapeOf: unknown record kind");
   }
   if (resolved.Is<mir::UnpackedArrayType>()) {
     const auto& array = resolved.Get<mir::UnpackedArrayType>();
@@ -92,7 +107,7 @@ auto BuildToBitstream(
       mir::PackedVectorOf(unit.types, shape->width, shape->state_kind);
   // A packed value's stream is its own bits, read unsigned (LRM 6.24.3).
   if (unit.types.Get(block.exprs.Get(value_id).type).IsIntegral()) {
-    return ConvertToType(unit, block, value_id, stream);
+    return AtType(unit, block, value_id, stream);
   }
   return BuildValueOperation(
       unit, block, support::BuiltinFn::kToBitstream, value_id, {}, stream);
@@ -151,7 +166,7 @@ auto BuildFromBitstream(
   }
   // The destination takes its stream in the state domain its own parts settle,
   // which a stream cast from a value of the other domain is brought to.
-  const mir::ExprId stream_id = ConvertToType(
+  const mir::ExprId stream_id = AtType(
       unit, block, filled,
       mir::PackedVectorOf(unit.types, target->width, target->state_kind));
   return BuildValueOperation(

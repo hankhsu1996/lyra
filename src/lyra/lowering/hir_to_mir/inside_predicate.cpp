@@ -15,9 +15,9 @@
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
@@ -77,10 +77,10 @@ auto BuildMatchAnywhereIn(
   const mir::LocalId item = each.AddParamAnonymous(*element);
   each.AddParamAnonymous(ArrayMethodIndexType(unit, held));
   const mir::ExprId left_in_each =
-      SnapshotIntoClosure(unit_lowerer, frame, each, left);
+      SnapshotValueIntoClosure(unit_lowerer, frame, each, left);
   const mir::ExprId matched = BuildMatchAnywhereIn(
       unit_lowerer, each.Frame(), left_in_each,
-      each.Body().exprs.Add(mir::MakeLocalRefExpr(item, *element)));
+      each.Body().ReadLocal(item, *element));
   const mir::TypeId answer = each.Body().exprs.Get(matched).type;
   const mir::ExprId question = block.exprs.Add(each.Build(matched));
   return block.exprs.Add(BuildBuiltinMethodCall(

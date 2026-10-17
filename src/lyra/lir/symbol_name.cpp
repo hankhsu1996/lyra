@@ -32,7 +32,7 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'n';
     case SymbolCategory::kClassCallable:
       return 'm';
-    case SymbolCategory::kStructMethod:
+    case SymbolCategory::kRecordMethod:
       return 'r';
     case SymbolCategory::kNamespaceCallable:
       return 'f';
@@ -48,7 +48,7 @@ auto CategoryTag(SymbolCategory category) -> char {
       return 'p';
     case SymbolCategory::kClosureInvoke:
       return 'i';
-    case SymbolCategory::kTypeDefault:
+    case SymbolCategory::kTypeOperation:
       return 't';
     case SymbolCategory::kConstructorPrologue:
       return 's';
@@ -164,12 +164,12 @@ auto ClassCallableSymbol(
       {SymbolPart::Name(unit_name), std::move(cls), std::move(callable)});
 }
 
-auto StructMethodSymbol(
-    std::string_view unit_name, const support::DefPath& structure,
+auto RecordMethodSymbol(
+    std::string_view unit_name, const support::DefPath& record,
     support::ValueOperation operation) -> std::string {
   return SymbolName(
-      SymbolCategory::kStructMethod,
-      {SymbolPart::Name(unit_name), SymbolPartOf(structure),
+      SymbolCategory::kRecordMethod,
+      {SymbolPart::Name(unit_name), SymbolPartOf(record),
        SymbolPart::Name(support::ValueOperationName(operation))});
 }
 
@@ -221,10 +221,10 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 
-auto TypeDefaultSymbol(std::string_view unit_name, std::uint32_t ordinal)
+auto TypeOperationSymbol(std::string_view unit_name, std::uint32_t ordinal)
     -> std::string {
   return SymbolName(
-      SymbolCategory::kTypeDefault,
+      SymbolCategory::kTypeOperation,
       {SymbolPart::Name(unit_name), SymbolPart::Ordinal(ordinal)});
 }
 

@@ -121,9 +121,9 @@ auto RuntimeAssociativeArray::Element(IndexView index) const -> const void* {
   return Installed().ElementAt(index);
 }
 
-auto RuntimeAssociativeArray::ElementRef(IndexView index, Formation& formed)
+auto RuntimeAssociativeArray::ElementMut(IndexView index, Formation& formed)
     -> void* {
-  return Installed().ElementRef(index, formed);
+  return Installed().ElementMut(index, formed);
 }
 
 void RuntimeAssociativeArray::Store(IndexView index, const void* value) {

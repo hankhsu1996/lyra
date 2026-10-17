@@ -27,8 +27,6 @@ auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view {
       return "land";
     case OpenWriteTarget::Op::kAssignSlice:
       return "assign_slice";
-    case OpenWriteTarget::Op::kReadSlice:
-      return "read_slice";
   }
   throw InternalError("lir: unknown open-write operation");
 }
@@ -43,6 +41,16 @@ auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view {
       return "decline_departure";
   }
   throw InternalError("lir: unknown control-effect operation");
+}
+
+auto DynamicStorageOpName(DynamicStorageTarget::Op op) -> std::string_view {
+  switch (op) {
+    case DynamicStorageTarget::Op::kAllocate:
+      return "allocate";
+    case DynamicStorageTarget::Op::kDeallocate:
+      return "deallocate";
+  }
+  throw InternalError("lir: unknown dynamic-storage operation");
 }
 
 auto StorageOpName(StorageInstr::Op op) -> std::string_view {
@@ -86,14 +94,13 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
             return CallEnding::kReturnsOrDeparts;
           },
           [](const ValueCellTarget&) { return CallEnding::kReturns; },
-          // Keeping a part's value only moves memory; writing or reading a
-          // slice is what any storage's slice takes, which can raise.
+          // Keeping a part's value only moves memory; writing a slice is what
+          // any storage's slice takes, which can raise.
           [](const OpenWriteTarget& write) {
             switch (write.op) {
               case OpenWriteTarget::Op::kLand:
                 return CallEnding::kReturns;
               case OpenWriteTarget::Op::kAssignSlice:
-              case OpenWriteTarget::Op::kReadSlice:
                 return CallEnding::kReturnsOrDeparts;
             }
             throw InternalError("lir: unknown open-write operation");
@@ -105,6 +112,7 @@ auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
           },
           [](const EndValueTarget&) { return CallEnding::kReturns; },
           [](const CopyValueTarget&) { return CallEnding::kReturns; },
+          [](const DynamicStorageTarget&) { return CallEnding::kReturns; },
           [](const ControlEffectTarget& effect) {
             switch (effect.op) {
               case ControlEffectTarget::Op::kTakeDepartureIfDue:
@@ -142,6 +150,7 @@ auto OperandType(const Function& fn, const Operand& operand) -> TypeId {
           [](const RealConst& c) { return c.type; },
           [](const NullConst& c) { return c.type; },
           [](const BoolConst& c) { return c.type; },
+          [](const VoidConst& c) { return c.type; },
           [](const EnumTableRef& c) { return c.type; },
           [](const IntegralConstantRef& c) { return c.type; },
           [](const StaticRef& s) { return s.type; },

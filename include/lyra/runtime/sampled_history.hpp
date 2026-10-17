@@ -63,7 +63,7 @@ class SampledHistory {
   void PushBytes(const void* bytes)
     requires value::TakesBytesInPlace<T>
   {
-    Advance().TakeBytes(bytes);
+    Advance().AssignBytes(bytes);
   }
 
   // What the tick `back` ticks before this one settled, counting from 1

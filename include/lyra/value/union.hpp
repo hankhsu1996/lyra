@@ -1,73 +1,103 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
+#include <bit>
 #include <cstddef>
+#include <memory>
+#include <new>
+#include <tuple>
+#include <type_traits>
 #include <utility>
-#include <variant>
 
-#include "lyra/value/basic_union.hpp"
-#include "lyra/value/concepts.hpp"
-#include "lyra/value/format.hpp"
+#include "lyra/value/clear_above_widths.hpp"
+#include "lyra/value/element_policy.hpp"
 #include "lyra/value/integral.hpp"
 
 namespace lyra::value {
 
-// An untagged unpacked union (LRM 7.3) compiled with its members' C++ types:
-// holds one member at a time, identified by a declaration-order index, since a
-// union may declare two members of the same type.
+namespace detail {
+
+// The storage every member of a union lies at the start of, as large as the
+// largest and aligned as the strictest (LRM 7.3). A member is reached where it
+// lies by retyping that start, as C reaches one.
 template <typename... Ts>
-class Union : public BasicUnion<Union<Ts...>, VariantMember<Ts...>> {
-  using Base = BasicUnion<Union<Ts...>, VariantMember<Ts...>>;
-
+class UnionStorage {
  public:
-  // LRM Table 7-1: an unpacked union defaults to its first member. The default
-  // construction is a placeholder; the lowering emits an explicit first-member
-  // default value at each default-init site.
-  Union() = default;
+  template <std::size_t I>
+  using Member = std::tuple_element_t<I, std::tuple<Ts...>>;
 
-  // A union whose live member is component `I`, carrying `value`. The index
-  // form (not a type form) is mandatory because components may repeat.
+  template <std::size_t I>
+  [[nodiscard]] auto At() -> Member<I>& {
+    return *std::launder(std::bit_cast<Member<I>*>(bytes_.data()));
+  }
+  template <std::size_t I>
+  [[nodiscard]] auto At() const -> const Member<I>& {
+    return *std::launder(std::bit_cast<const Member<I>*>(bytes_.data()));
+  }
+
+  // Member `I` built from `value` over storage holding no member.
   template <std::size_t I, typename V>
-  [[nodiscard]] static auto Make(V&& value) -> Union {
-    Union u;
-    u.Live().Alternatives().template emplace<I>(std::forward<V>(value));
-    return u;
-  }
-
-  // Read component `I` (the read side of member access), which must be the
-  // live member.
-  template <std::size_t I>
-  [[nodiscard]] auto Component() const
-      -> std::variant_alternative_t<I, std::variant<Ts...>> {
-    if (const auto* live = std::get_if<I>(&this->Live().Alternatives())) {
-      return *live;
-    }
-    RefuseReadOfAnotherMember();
-  }
-
-  // The writable location of component `I` (the write side of member access),
-  // making `I` live first if it is not -- so a write activates the member it
-  // targets. A read never activates; only a write takes this reference, so
-  // `u.f = v`, `u.f op= v`, and a nested `u.f.g = v` all compose on it the way
-  // a struct member's reference does.
-  template <std::size_t I>
-  [[nodiscard]] auto ComponentRef()
-      -> std::variant_alternative_t<I, std::variant<Ts...>>& {
-    auto& alternatives = this->Live().Alternatives();
-    if (auto* live = std::get_if<I>(&alternatives)) {
-      return *live;
-    }
-    return alternatives.template emplace<I>();
+  void Build(V&& value) {
+    std::construct_at(
+        std::bit_cast<Member<I>*>(bytes_.data()), std::forward<V>(value));
   }
 
  private:
-  friend Base;
-
-  explicit Union(VariantMember<Ts...> live) : Base(std::move(live)) {
-  }
+  alignas(Ts...) std::array<std::byte, std::max({sizeof(Ts)...})> bytes_{};
 };
 
-static_assert(LyraValue<Union<LogicVector<4>, LogicVector<8>>>);
-static_assert(CaseEqualComparable<Union<LogicVector<4>, LogicVector<8>>>);
-static_assert(NetResolvable<Union<LogicVector<4>, LogicVector<8>>>);
+}  // namespace detail
+
+// The value of `T` the bits lying where `held` lies stand for, which is what
+// reading a member of an untagged union answers whatever member wrote them
+// (LRM 7.3.2).
+template <typename T>
+[[nodiscard]] auto ReadOverlaid(const T& held) -> T {
+  T value = held;
+  ClearAboveWidths(value);
+  return value;
+}
+
+// An untagged unpacked union (LRM 7.3): one storage its members overlay, each
+// at its start. A member is written where it lies and read as the bits there,
+// whichever member wrote them, so the union records nothing of which member it
+// holds. Its members own nothing, so copying it copies its bytes and ending it
+// does nothing. What the union answers as a whole value is its declaration's
+// own methods, on the type the unit declares over this one.
+template <typename... Ts>
+class Union {
+  using Storage = detail::UnionStorage<Ts...>;
+
+ public:
+  template <std::size_t I>
+  using Member = typename Storage::template Member<I>;
+
+  // LRM 7.3: the first member at its default.
+  Union() {
+    storage_.template Build<0>(detail::DefaultOf<Member<0>>());
+  }
+
+  // The union holding member `I` as `value` and every other byte zero, which
+  // a read through another member may read.
+  template <std::size_t I, typename V>
+  Union(std::in_place_index_t<I>, V&& value) {
+    storage_.template Build<I>(std::forward<V>(value));
+  }
+
+  template <std::size_t I>
+  [[nodiscard]] auto Component() & -> Member<I>& {
+    return storage_.template At<I>();
+  }
+  template <std::size_t I>
+  [[nodiscard]] auto Component() const& -> const Member<I>& {
+    return storage_.template At<I>();
+  }
+
+ private:
+  Storage storage_;
+};
+
+static_assert(std::is_trivially_copyable_v<Union<Int, LogicVector<33>>>);
 
 }  // namespace lyra::value

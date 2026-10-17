@@ -7,9 +7,9 @@
 
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/runtime_fixed_array.hpp"
+#include "lyra/value/kept_copy.hpp"
+#include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -98,26 +98,15 @@ class OpenWrite {
     landing_of_ = &kLandingOf<Part>;
   }
 
-  // The same, for a tuple where it lies. No object stands for one there -- a
-  // component of a tuple is bytes of the tuple holding it -- so the part is the
-  // tuple's bytes, and its value from before the write is a tuple of its own.
-  void LandTuple(void* part) {
+  // The same, for a value laid out by its type where it lies, which is its
+  // bytes and nothing that says what they are: `type` states it. Its value
+  // from before the write is a value of its own.
+  void LandLaidOut(const value::ValueType& type, void* part) {
     if (!Undecided()) {
       return;
     }
-    std::construct_at(Landing<TupleLanding>(landing_.data()), part);
-    landing_of_ = &kTupleLandingOf;
-  }
-
-  // The same, for a fixed-size unpacked array where it lies, which is its
-  // elements and nothing that says what they are: `type` states it. Its value
-  // from before the write is an array of its own.
-  void LandArray(const value::FixedArrayType& type, void* part) {
-    if (!Undecided()) {
-      return;
-    }
-    std::construct_at(Landing<ArrayLanding>(landing_.data()), type, part);
-    landing_of_ = &kArrayLandingOf;
+    std::construct_at(Landing<LaidOutLanding>(landing_.data()), type, part);
+    landing_of_ = &kLaidOutLandingOf;
   }
 
   // The same, for an integral value wider than a word where it lies, which is
@@ -199,20 +188,15 @@ class OpenWrite {
     KeptPart<Part> kept;
   };
 
-  struct TupleLanding {
-    explicit TupleLanding(void* landed)
-        : part(landed), before(value::RuntimeTuple::CopyOf(landed)) {
+  // A part whose type the library is handed keeps its value from before the
+  // write aside, as the C++ backend's write keeps a part of a type it knows.
+  struct LaidOutLanding {
+    LaidOutLanding(const value::ValueType& type, void* landed)
+        : part(landed), kept(type, landed) {
     }
-    void* part;
-    value::RuntimeTuple before;
-  };
 
-  struct ArrayLanding {
-    ArrayLanding(const value::FixedArrayType& type, void* landed)
-        : part(landed), before(value::RuntimeFixedArray::CopyOf(type, landed)) {
-    }
     void* part;
-    value::RuntimeFixedArray before;
+    value::KeptCopy kept;
   };
 
   template <value::HeldAsWords Wide>
@@ -247,20 +231,10 @@ class OpenWrite {
         std::destroy_at(landing);
       }};
 
-  static constexpr ResolveBitRange kTupleLandingOf{
+  static constexpr ResolveBitRange kLaidOutLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
-        auto* landing = Landing<TupleLanding>(room);
-        if (!value::RuntimeTuple::BitIdentical(
-                landing->before.Bytes(), landing->part)) {
-          bracket_of.landed(bracket, Change::Whole());
-        }
-        std::destroy_at(landing);
-      }};
-
-  static constexpr ResolveBitRange kArrayLandingOf{
-      .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
-        auto* landing = Landing<ArrayLanding>(room);
-        if (!landing->before.HoldsBytes(landing->part)) {
+        auto* landing = Landing<LaidOutLanding>(room);
+        if (!landing->kept.IsBitIdenticalTo(landing->part)) {
           bracket_of.landed(bracket, Change::Whole());
         }
         std::destroy_at(landing);

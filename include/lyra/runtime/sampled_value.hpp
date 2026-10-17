@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <optional>
 #include <type_traits>
 #include <utility>
@@ -52,20 +53,42 @@ class SampledValue {
   WaitMembership membership_;
 };
 
-// The sampled value of a place read from `Source`, whatever holds it, by its
-// `Get()`.
+// A place a sampled value takes what it holds from, by `kTakeInto`, which
+// assigns what the place holds now to the value it is handed. The place writes
+// into the sampled value where it lies, so a value too large for a frame is
+// never made in one on its way there.
+template <class Place, class T, void (Place::*kTakeInto)(T&) const>
+class TakenFrom {
+ public:
+  using ValueType = T;
+
+  explicit TakenFrom(const Place& place) : place_(&place) {
+  }
+
+  void TakeInto(T& out) const {
+    (place_->*kTakeInto)(out);
+  }
+
+ private:
+  const Place* place_;
+};
+
+// The sampled value of a place taken from `Source`, whatever holds it, by its
+// `TakeInto`.
 template <class Source>
 class SampledValueOf final : public SampledValue {
  public:
-  using ValueType = std::remove_cvref_t<decltype(std::declval<Source>().Get())>;
+  using ValueType = typename Source::ValueType;
 
-  // Answers `default_value` until the end of the first slot the place changes
-  // in.
+  // Answers what `make_default` makes until the end of the first slot the place
+  // changes in, made where it is kept.
+  template <std::invocable MakeDefault>
+    requires std::same_as<std::invoke_result_t<MakeDefault&>, ValueType>
   SampledValueOf(
-      const Source& source, ValueType default_value, const Trigger& watched)
+      Source source, MakeDefault make_default, const Trigger& watched)
       : SampledValue(watched),
-        source_(&source),
-        taken_(std::move(default_value)) {
+        source_(std::move(source)),
+        taken_(make_default()) {
   }
   SampledValueOf(const SampledValueOf&) = delete;
   auto operator=(const SampledValueOf&) -> SampledValueOf& = delete;
@@ -79,10 +102,10 @@ class SampledValueOf final : public SampledValue {
 
  private:
   void Take() override {
-    taken_ = source_->Get();
+    source_.TakeInto(taken_);
   }
 
-  const Source* source_;
+  Source source_;
   ValueType taken_;
 };
 

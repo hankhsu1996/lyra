@@ -12,7 +12,7 @@
 #include "lyra/mir/closure_id.hpp"
 #include "lyra/mir/declared_class.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -47,13 +47,6 @@ struct IntegralType {
 
 // The states a bit of a type holds, as the value library names them.
 [[nodiscard]] auto StateDomainOf(IntegralStateKind state) -> value::StateDomain;
-
-// Whether a value of `integral` owns its words apart from where it is held,
-// which the value library decides from how many bytes the type lays one out in.
-// A value held in place is small enough to be carried as data wherever it is a
-// constant; one that owns its words is as large as its type says, so a unit
-// states one as data only where the source wrote that much data.
-[[nodiscard]] auto UsesHeapWords(const IntegralType& integral) -> bool;
 
 // The planes a value of `integral` is held in, every position clear: one word
 // per 64 bits of its width, and an unknown plane only where a bit of the type
@@ -439,34 +432,35 @@ struct RuntimeLibraryType {
 // site must await or spawn, and awaiting it produces a value of `payload` --
 // the completion payload (a task's output pack, or `Void` when the completion
 // yields nothing). A fork branch (LRM 9.3.2) is a closure whose result type is
-// this. `payload` is a MIR-level type; the C++ backend realizes every coroutine
-// as one monomorphic `lyra::runtime::Coroutine` and transports the payload
-// through a caller-owned completion slot, so the scheduler holds a single
-// coroutine-handle type regardless of `payload`.
+// this. What an execution completes with lands in storage of its own that its
+// awaiter is handed, never in the frame that made it, so `payload` is never
+// boxed, whatever its size. The scheduler holds a single coroutine-handle type
+// regardless of `payload`.
 struct CoroutineType {
   TypeId payload;
 
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
-// Which declaration a struct type is: one this unit declares, reached by where
-// it sits in the unit's struct registry, or one another unit declares, named
-// the way that unit names it. Only a struct the source declared has a name, so
-// only such a struct is reached from another unit.
-using StructRef = std::variant<StructId, TypeDeclarationRef>;
+// Which declaration a record type is: one this unit declares, reached by where
+// it sits in the unit's record registry, or one another unit declares, named
+// the way that unit names it.
+using RecordRef = std::variant<RecordId, TypeDeclarationRef>;
 
-// A heterogeneous fixed product identified by its declaration (the C++, Rust
-// and Swift struct): two declarations with the same members are two types. Its
-// members are reached by position, as a tuple's components are. The source
-// declares one -- an SV unpacked structure (LRM 7.2, 6.22.1) -- and so does a
-// lowering, for the variables a scope must keep past its end (LRM 6.21), held
-// through a shared pointer the way a program in a language without a collector
-// would hold them. A value of one is a value: reference semantics come from the
-// wrapper around it, never from the type.
-struct StructType {
-  StructRef declaration;
+// A structure, a union or a tagged union the source declared (LRM 7.2, 7.3), as
+// clang's record type names its record declaration and rustc's ADT type its
+// definition: two declarations with the same members are two types (LRM
+// 6.22.1). The type is the declaration; which aggregate it is and its members'
+// types are the declaration's. A structure's members each hold storage of their
+// own; a union's overlay one storage, read through any member (LRM 7.3); a
+// tagged union's do too, with the position of the member it holds observable
+// as its tag (LRM 7.3.2, 11.9), and a `void` member carries `EmptyType`. A
+// member is reached by position. A value of one is a value: reference
+// semantics come from the wrapper around it, never from the type.
+struct RecordType {
+  RecordRef declaration;
 
-  auto operator==(const StructType&) const -> bool = default;
+  auto operator==(const RecordType&) const -> bool = default;
 };
 
 // The type of a closure value: an anonymous concrete callable value, named by
@@ -474,8 +468,8 @@ struct StructType {
 // declaration (its capture fields and one invoke body). Distinct per closure
 // site, so two closures of the same signature but different captures are
 // different types. Callable directly: a call resolves its signature from the
-// declaration's invoke. A separate category from `StructType`: a closure has an
-// invoke body, and a struct is a value with none.
+// declaration's invoke. A separate category from `RecordType`: a closure has an
+// invoke body, and a record is a value with none.
 struct ClosureType {
   ClosureId closure_id;
 
@@ -494,26 +488,26 @@ enum class Mutability : std::uint8_t {
 
 // A reference value aliasing a storage cell of `pointee` type (LRM 13.5.2
 // pass-by-reference; a fork branch / `$sscanf` / with-clause body sharing
-// enclosing storage). The runtime wrapper `lyra::runtime::Ref<T>` routes reads
-// through `Get` and writes through the cell's `Set` (its update-event path), so
-// a value of this type is read and written like an observable cell. A read-only
-// `mutability` marks a `const ref` formal (LRM 13.5.2). A library wrapper, like
-// ObservableType; constructing one from a cell is an explicit MIR operation,
-// not a backend-synthesized wrap.
-struct RefType {
+// enclosing storage). It is read and written like an observable cell: a read
+// asks it for the cell's contents and a write publishes through the cell, so it
+// wakes what waits on the cell (LRM 4.3). A read-only `mutability` marks a
+// `const ref` formal (LRM 13.5.2). A library wrapper, like ObservableType;
+// constructing one from a cell is an explicit MIR operation, not a
+// backend-synthesized wrap.
+struct VariableRefType {
   TypeId pointee;
   Mutability mutability;
 
-  auto operator==(const RefType&) const -> bool = default;
+  auto operator==(const VariableRefType&) const -> bool = default;
 };
 
 // A reference held as a member and bound after the object holding it is built
-// (C++ `std::reference_wrapper`), where a `RefType` is bound once, as it is
-// created. Reading, writing and waiting through one reach what it names as
-// through a `RefType`; only a binding makes one name other storage, never an
-// assignment. A port is such a
-// member: its connection binds it while the design's references are resolved
-// (LRM 23.3.3), and a connection may name a port of an instance resolved later.
+// (C++ `std::reference_wrapper`), where a `VariableRefType` is bound once, as
+// it is created. Reading, writing and waiting through one reach what it names
+// as through a `VariableRefType`; only a binding makes one name other storage,
+// never an assignment. A port is such a member: its connection binds it while
+// the design's references are resolved (LRM 23.3.3), and a connection may name
+// a port of an instance resolved later.
 struct ReferenceWrapperType {
   TypeId pointee;
   Mutability mutability;
@@ -541,6 +535,20 @@ struct PointerType {
   Mutability mutability = Mutability::kMutable;
 
   auto operator==(const PointerType&) const -> bool = default;
+};
+
+// A reference: another name for an object that exists elsewhere, bound once
+// and never null, as `&T` in Rust and `T&` in C++. Unlike a borrowed pointer it
+// cannot be rebound or tested, so holding one says only that its referent is
+// reached without being copied; `mutability` says whether it may be written
+// through. A whole-value operation takes its operands this way, as Rust's
+// `PartialEq::eq(&self, other: &Self)` does, so that a value is read where it
+// lies rather than copied in to be asked about.
+struct ReferenceType {
+  TypeId referent;
+  Mutability mutability;
+
+  auto operator==(const ReferenceType&) const -> bool = default;
 };
 
 // A managed reference (LRM 8.3 class handle): a traced edge to a
@@ -573,23 +581,15 @@ struct VectorType {
 };
 
 // A heterogeneous fixed product identified by its components (the Rust / Python
-// tuple, C++ `std::tuple`), where `VectorType` is the homogeneous one and
-// `StructType` the one identified by its declaration. A lowering composes one
-// for itself -- the `(key, value)` pair an associative literal is a sequence
-// of, a call's completion -- so two with the same components are one type.
+// tuple, C++ `std::tuple`), where `VectorType` is the homogeneous one and a
+// structure's `RecordType` the one identified by its declaration. A lowering
+// composes one for itself -- the `(key, value)` pair an associative literal is
+// a sequence of, a call's completion -- so two with the same components are one
+// type.
 struct TupleType {
   std::vector<TypeId> elements;
 
   auto operator==(const TupleType&) const -> bool = default;
-};
-
-// Overlapping member storage: one of an ordered list of member types is the
-// value at a time (the C `union`, distinct from the product and from a tagged
-// sum). The value-layer realization of an SV untagged unpacked union (LRM 7.3).
-struct UnionType {
-  std::vector<TypeId> members;
-
-  auto operator==(const UnionType&) const -> bool = default;
 };
 
 // A value type carrying no information: it has exactly one value, so nothing
@@ -600,21 +600,6 @@ struct UnionType {
 // a type that has a value, which absence-of-a-type cannot supply.
 struct EmptyType {
   auto operator==(const EmptyType&) const -> bool = default;
-};
-
-// Type-checked sum: one of an ordered list of component types is the value at
-// a time, with the tag observably part of the value. The value-layer
-// realization of an SV tagged unpacked union (LRM 7.3.2 / 11.9). Distinct from
-// `UnionType`: an untagged union erases the tag and gives a cross-member read
-// a deterministic fallback; here the tag is observable through the pattern-
-// matching surface (LRM 12.6) and a member access whose type is inconsistent
-// with the tag is a run-time error. A member's position is what the tag codes.
-// A `void` member -- allowed only in tagged unions (LRM 7.3.2) -- carries
-// `EmptyType`.
-struct TaggedUnionType {
-  std::vector<TypeId> members;
-
-  auto operator==(const TaggedUnionType&) const -> bool = default;
 };
 
 // Observable storage wrapper around a value type. Declares that a member's
@@ -719,6 +704,19 @@ struct DesignationType {
   auto operator==(const DesignationType&) const -> bool = default;
 };
 
+// A reference to some bits of an integral value lying in storage, of type
+// `bits`, through which a write lands on them where they lie (LRM 11.5.1), as
+// `std::bitset`'s `operator[]` answers a reference to one bit. Bits are no
+// storage of their own, so it is no pointer: it names the storage they lie
+// in, or a place designated within a write in progress, and where in it they
+// start, and a write through it is its `set`. Nothing holds one past the
+// full-expression that takes it.
+struct BitsReferenceType {
+  TypeId bits;
+
+  auto operator==(const BitsReferenceType&) const -> bool = default;
+};
+
 // A write in progress into the properties of an object (LRM 8.4), opened on
 // the object alone, which answers the object as `object`, the class its
 // properties are reached through. It is an object the writer holds and it ends
@@ -748,12 +746,12 @@ class Type {
       MachineBoolType, MachineIntType, MachineFloatType, MachineArrayType,
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
       VoidType, ObjectType, RuntimeClassType, RuntimeEffectsType, FilesType,
-      DiagnosticType, RuntimeLibraryType, CoroutineType, RefType,
-      ReferenceWrapperType, PointerType, ManagedRefType, VectorType, TupleType,
-      UnionType, TaggedUnionType, EmptyType, ObservableType, ResolvedType,
-      DriverType, OpenWriteType, DesignationType, ObjectWriteType,
-      SampledHistoryType, EvaluationAttemptsType, LoopBlocksType, StructType,
-      ClosureType>;
+      DiagnosticType, RuntimeLibraryType, CoroutineType, VariableRefType,
+      ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType,
+      VectorType, TupleType, EmptyType, ObservableType, ResolvedType,
+      DriverType, OpenWriteType, DesignationType, BitsReferenceType,
+      ObjectWriteType, SampledHistoryType, EvaluationAttemptsType,
+      LoopBlocksType, RecordType, ClosureType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -790,25 +788,30 @@ class Type {
   // True for a reference to storage elsewhere, whether bound as it is created
   // or held and bound later: what is read, written or waited on through either
   // is what it names.
-  [[nodiscard]] auto IsReference() const -> bool;
+  [[nodiscard]] auto IsVariableRef() const -> bool;
 
-  // True for a type whose value lives in storage the runtime owns, so whatever
-  // holds such a value holds a handle onto that storage rather than the value
-  // itself. What follows is that the handle is not the whole of the value:
-  // whoever ends the storage ends the value, and a holder that outlives it is
-  // left naming nothing. A type answering false is one the holder has entire --
-  // an integral value, a machine quantity, or an address whose value is the
-  // address.
+  // True for storage that has no value to read and is only ever reached
+  // through where it lies: an observable cell, a net's resolved cell, an
+  // object, an event, a history, an attempt record. A place of one stands as
+  // itself wherever it is handed on, since there is nothing to read out of it.
+  [[nodiscard]] auto IsAddressOnly() const -> bool;
+
+  // True for a pointer that owns what it reaches. One is an object with an
+  // owner's duties, so `*owner` reaches the pointee through the owner itself,
+  // as C++ `*unique_ptr` enters `operator*` on it rather than reading it as
+  // builtin `*p` reads a pointer.
+  [[nodiscard]] auto OwnsPointee() const -> bool;
+
+  // True for a value built of other values or represented by the library --
+  // an array of any kind, a structure, a union, a string, a real, a class
+  // handle -- as opposed to an integral value, a machine quantity or an address
+  // whose value is the address, which whoever holds it holds as one quantity
+  // entire.
   //
   // Narrower than being a domain the runtime realizes values of, which a
   // chandle also is: its value is the pointer it carries, and the pointer is in
   // the holder's own hands.
   [[nodiscard]] auto IsRuntimeStoredValue() const -> bool;
-
-  // True for a value whose parts are each storage of its own, so a write to one
-  // lands in it where it lies. A part of any other value is a view, written by
-  // writing the whole it is a view of.
-  [[nodiscard]] auto PartsAreStorage() const -> bool;
 
   // True for a value whose bits lie contiguously (LRM 7.4.1), so a write into
   // some of them lands on those bits where they lie, at the cost of those bits,

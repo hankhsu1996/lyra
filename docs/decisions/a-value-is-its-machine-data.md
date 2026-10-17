@@ -13,9 +13,9 @@ otherwise -- and narrows D5 for them: code compiled once is told a packed value'
 numbers and is handed no function for one.
 [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) carries out the
 last sentence of D6, and narrows D5 for a fixed-size unpacked array: code compiled once is handed
-the array's type as constant data -- a count and the element's type -- and no function generated for
-the array type. The element's type is handed with the function that builds its default, for an array
-of any kind
+the array's type as constant data -- a count and the element's type -- whose table holds the
+functions generated for the array type. The element's type is handed with the function that builds
+its default, for an array of any kind
 ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
 
 ## Context

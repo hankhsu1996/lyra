@@ -33,12 +33,21 @@ part tells the write what forming it did.**
   is taken within the same write, so the write reaches the part through its own steps:
   `*x.open_for_write().designate_whole().designate_element(i).designate_component<k>() = v`. Each
   such step is an entry of its own, named where the source is read and paired with the step into
-  storage it stands beside (`element_ref`, `component_ref`, `slice_ref`), because it answers with a
-  designation of the part rather than with the part and it is heard by the write. Where the write
-  lands is where the designation is dereferenced, which is what lets a backend rendering one node at
-  a time keep the part rather than the whole. A step into a string's character or a union's member
-  is taken after that, on the value landed on, because the library owns what such a view is made of
-  and writes it by writing its whole.
+  storage it stands beside (an element's write form, a component's field step), because it answers
+  with a designation of the part rather than with the part and it is heard by the write. Where the
+  write lands is where the designation is dereferenced, which is what lets a backend rendering one
+  node at a time keep the part rather than the whole. A string's character is written after that by
+  the string's `putc` on the place landed on, since it lies inside the string's value (LRM 6.16).
+- **A union's member is designated too, and the path the write reports stops at the union** (revised
+  2026-10-15). A member lies where every other member does (LRM 7.3), so a write of one leaves every
+  byte outside it as it was, and the union changed exactly where the member did: the write keeps and
+  compares only what it lands on below the member. No step of a path stands for a member, since a
+  wait on one member reads bytes another member's write moves, so the path stops at the union as it
+  does at an associative array's entry, and the change is reported whole there, reaching every
+  member's waits. A designation is the write's own handle on where it lands and binds nothing the
+  program keeps, so LRM 13.5.2, which keeps a reference off a member, does not reach it. This
+  revises the earlier rule that landed a member write on the union and took the member as a field
+  step, which kept and compared the whole union for a write of one member.
 - **An element step and a slice step taken within a write report to it.** Forming an element can
   change the variable whatever is then written -- an associative array entry allocated by being
   written (LRM 7.8.7), a queue element appended at `$+1` (LRM 7.10.1) -- or reach no part of it at
@@ -67,14 +76,15 @@ part tells the write what forming it did.**
   bit-select, a part-select or a packed member a write names is designated within the write, and the
   write lands on those bits rather than on the whole. It keeps only the words they lie in, and it
   tells the waits which bits it reached and what they held: a wait reading none of them is passed
-  over without a comparison, and one reading some compares only those it shares with the write. A
-  part of a part is designated the same way, as one slice naming each part it is reached through,
-  outermost first. No part is read out at its own type to write a part of it, so a write to one bit
-  of a two-state member of a four-state structure leaves the member's other bits what the vector
-  holds, x included (LRM 7.2.1, 11.5.1). A whole-value store into a packed variable reaches every
-  bit and keeps its words the same way. This revises the earlier rule that a packed variable, having
-  no parts that are storage, is landed on whole: that rule kept a copy of the whole value for any
-  write into it, which designating the bits removes.
+  over without a comparison, and one reading some compares only those it shares with the write. The
+  bits are written through the reference to them the value's `slice_mut` answers taken on the
+  designation, and a part of a part through `slice_mut` taken on that reference, so the write hears
+  each part they are reached through, outermost first. No part is read out at its own type to write
+  a part of it, so a write to one bit of a two-state member of a four-state structure leaves the
+  member's other bits what the vector holds, x included (LRM 7.2.1, 11.5.1). A whole-value store
+  into a packed variable reaches every bit and keeps its words the same way. This revises the
+  earlier rule that a packed variable, having no parts that are storage, is landed on whole: that
+  rule kept a copy of the whole value for any write into it, which designating the bits removes.
 - **Every way a write reaches its part is a landing.** An assignment, a compound assignment or an
   increment, and a method changing its receiver in place each land the write before anything is
   written, and each reaches the part the way a write does, so an element a write would form is

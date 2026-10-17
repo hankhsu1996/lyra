@@ -6,13 +6,14 @@
 // bits pass through unchanged. A member may itself be a part-select, in which
 // case only the bits it selects are written. The whole right-hand side is
 // evaluated before any member is written, so a concatenation on both sides
-// exchanges values rather than duplicating one of them. A member is any
-// integral type (LRM 6.11.1) -- an enumeration, a packed structure and a packed
-// union each take their share of the bits exactly as a vector of their width
-// does, since the concatenation is a packed vector of bits and writing through
-// it is writing bits. A member may itself be a concatenation (Table 10-1,
-// "nested concatenation"), which takes the bits at its position and splits them
-// among its own members the same way.
+// exchanges values rather than duplicating one of them, and so does a variable
+// whose own bits the members name, in an automatic scope as anywhere else. A
+// member is any integral type (LRM 6.11.1) -- an enumeration, a packed
+// structure and a packed union each take their share of the bits exactly as a
+// vector of their width does, since the concatenation is a packed vector of
+// bits and writing through it is writing bits. A member may itself be a
+// concatenation (Table 10-1, "nested concatenation"), which takes the bits at
+// its position and splits them among its own members the same way.
 module Top;
   typedef enum bit [7:0] {LOW = 8'h11, HIGH = 8'h22} opcode_t;
   typedef struct packed {
@@ -39,10 +40,17 @@ module Top;
 
   logic [3:0] outer_first, inner_first, inner_second, outer_last;
   logic [7:0] lone;
+  logic [7:0] nibbles_swapped;
+
+  function automatic logic [7:0] swap_nibbles(logic [7:0] v);
+    {v[3:0], v[7:4]} = v;
+    return v;
+  endfunction
 
   initial begin
     {outer_first, {inner_first, {inner_second}}, outer_last} = 16'h9C4E;
     {{lone}} = 8'hD2;
+    nibbles_swapped = swap_nibbles(8'h12);
 
     {high, mid, low} = 24'h123456;
     {narrow, middle, widest} = 24'hABCDEF;
@@ -102,6 +110,8 @@ module Top;
     if (outer_last !== 4'hE)
       $fatal(1, "outer_last was %h, expected e", outer_last);
     if (lone !== 8'hD2) $fatal(1, "lone was %h, expected d2", lone);
+    if (nibbles_swapped !== 8'h21)
+      $fatal(1, "nibbles_swapped was %h, expected 21", nibbles_swapped);
     $display("All checks passed");
   end
 endmodule

@@ -27,6 +27,9 @@ concept ExprLowerer = requires(
     L& lowerer, const hir::Expr& expr, WalkFrame frame) {
   { lowerer.LowerExpr(expr, frame) } -> std::same_as<diag::Result<mir::Expr>>;
   {
+    lowerer.LowerAsPlace(expr, frame)
+  } -> std::same_as<diag::Result<mir::Expr>>;
+  {
     lowerer.LowerAccessPath(expr, frame)
   } -> std::same_as<diag::Result<AccessPath>>;
   {

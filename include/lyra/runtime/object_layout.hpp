@@ -4,12 +4,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 
 #include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
-#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -23,79 +23,35 @@ auto LayoutOf(support::LibraryObject object) -> support::ObjectLayout;
 auto LayoutOf(const support::RuntimeObject& object) -> support::ObjectLayout;
 
 // The same for the storage one member of a declaration occupies where the
-// declaration is laid out, for each kind over each domain it is realized for.
-// A pair it is not realized for is a compiler bug, since the kind is chosen
-// from the member's type and a type names only realized pairs.
-auto LayoutOf(support::DeclaredMemberStorage storage) -> support::ObjectLayout;
+// declaration is laid out, for each kind over each domain it is realized for,
+// holding values laid out as `held` is, none for storage holding no value of
+// the program's. Storage that holds a value whose size the library is told
+// keeps that value at its tail, so it is as large as the value where the value
+// lies inline; every other holds it in the library's own type. A pair it is not
+// realized for is a compiler bug, since the kind is chosen from the member's
+// type and a type names only realized pairs.
+auto LayoutOf(
+    support::DeclaredMemberStorage storage,
+    std::optional<support::ObjectLayout> held) -> support::ObjectLayout;
 
-// Where the value a member's storage holds lies in that storage, for storage
-// that holds an integral value as its own bytes and answers a read with them.
-// A target reads such a value at this offset, as a compiler holding the
-// storage's class reads the member through the class's own accessor. Nothing
-// for any other storage, whose contents its own access hands out.
-auto ContentsOffsetOf(support::DeclaredMemberStorage storage)
-    -> std::optional<std::uint64_t>;
-
-// Where a net of an integral value of `domain` keeps the address of the value
-// it shows, which is its own or that of the object its one driver carries. A
-// target reads the net's value through the address it finds at this offset.
-// Nothing for a net whose value its own access hands out.
-auto ShownThroughOffsetOf(support::ValueDomain domain)
-    -> std::optional<std::uint64_t>;
-
-// The constant that tells the library an integral type's numbers, as a target
-// stating one lays it out: what the whole occupies, the symbol of the table
-// the library defines for it, which the constant opens with the address of
-// (C++ ABI 2.4), and where it states the size and the alignment of a value of
-// the type and the type's shape.
-struct IntegralTypeConstantLayout {
-  support::ObjectLayout object;
-  std::string table_symbol;
-  value::StatedAt value_size;
-  value::StatedAt value_align;
-  std::uint64_t shape_at;
+// Where the value a member's storage holds is found in that storage, which a
+// target reads and writes it at as a compiler holding the storage's class
+// reaches the member through the class's own accessor. The value lies at an
+// offset in storage holding an integral value no wider than a word as its own
+// bytes. Storage that keeps the value's address keeps it at an offset, which is
+// the same whatever the value's type: a net, whose value is its own or that of
+// the object its one driver carries, and a variable or a procedural local
+// laying its value out after itself, where it lies at its end or apart by its
+// size. Nothing for storage whose contents its own access hands out.
+struct ContentsAt {
+  std::uint64_t offset;
 };
-auto LayoutOfIntegralTypeConstant() -> IntegralTypeConstantLayout;
-
-// The constant that tells the library the type of an array's elements: where
-// it states the address of the element's value type, the function building a
-// value of it at its default, and the address of the scratch it names. It
-// opens with no table. `scratch_object` is what one scratch occupies, which a
-// target defines zeroed beside each constant.
-struct ElementTypeConstantLayout {
-  support::ObjectLayout object;
-  value::StatedAt type;
-  value::StatedAt build_default;
-  value::StatedAt scratch;
-  support::ObjectLayout scratch_object;
+struct ContentsIndirectAt {
+  std::uint64_t offset;
 };
-auto LayoutOfElementTypeConstant() -> ElementTypeConstantLayout;
-
-// The same for the type of a fixed-size unpacked array: beside what every
-// value type states, how many elements, the address of the constant stating
-// their type, and the part of the constant that answers for its elements,
-// which opens with a table of its own and names the constant it lies in.
-struct FixedArrayTypeConstantLayout {
-  support::ObjectLayout object;
-  std::string table_symbol;
-  std::string parts_table_symbol;
-  value::StatedAt value_size;
-  value::StatedAt value_align;
-  value::StatedAt count;
-  value::StatedAt element;
-  value::StatedAt parts;
-  value::StatedAt parts_owner;
-};
-auto LayoutOfFixedArrayTypeConstant() -> FixedArrayTypeConstantLayout;
-
-// The same for the type of a queue, which opens with no table: where it states
-// the address of the constant stating its elements' type, and its bound.
-struct QueueTypeConstantLayout {
-  support::ObjectLayout object;
-  value::StatedAt element;
-  value::StatedAt bound;
-};
-auto LayoutOfQueueTypeConstant() -> QueueTypeConstantLayout;
+using HeldContents = std::variant<ContentsAt, ContentsIndirectAt>;
+auto HeldContentsOf(support::DeclaredMemberStorage storage)
+    -> std::optional<HeldContents>;
 
 // The same for the part of a value this library builds where a class of the
 // source extends one of its classes: what that part occupies, which is where

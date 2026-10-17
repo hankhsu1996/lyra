@@ -344,14 +344,14 @@ enough to warrant its own focused review.
       type-dependent argument projection. Signature drift on any pinned protocol is now a
       compile-time failure. Subsumes R17b.
 
-- [x] R28 -- The read-vs-write access surface is aligned at the noun-level naming axis across every
-      container and across both lowering and runtime: bare `Element` / `Slice` for read,
-      `ElementRef` / `SliceRef` for write. Lowering carries the read-vs-write choice as one
-      access-side parameter at the slice-builder boundary; the runtime concepts pin the
-      bare-and-`Ref` pair as part of `Indexable` (write-side present on every keyed container) and
-      state the write side of a slice as `SliceableRef` alone, a slice read answering a type of its
-      own that the caller names. No separate `Writable` concept: the pair belongs with the read-side
-      concept it shadows.
+- [x] R28 -- The read-vs-write access surface is named the same across every container and across
+      both lowering and runtime: one name for a read, and for a write an element's answering a
+      reference to it, as rustc's IndexMut does, and a slice's assigning the slice, within a write
+      in progress or outside one. Lowering carries the read-vs-write choice as one access-side
+      parameter at the slice-builder boundary; the runtime's container concept pins the read and
+      write pair, the write side present on every keyed container; a slice is read as a type of its
+      own that the caller names and written by its assignment, which no concept probes. No separate
+      concept for writing: the pair belongs with the read-side concept it shadows.
 
 - [x] R29 -- Built-in method calls and runtime entries carry one flat closed-namespace identifier
       shared between HIR and MIR, replacing the per-family variant. The receiver's MIR type drives
@@ -1138,12 +1138,10 @@ enough to warrant its own focused review.
       it is an argument of the map, an argument of a call that looks something up rather than
       writing it, or admitted with the reason it is neither.
 
-- [x] R77 -- A union's whole-value operations are one algorithm over how its live member is held:
-      compare the live member indices, then apply the operation to the member. The C++ backend's
-      untagged and tagged unions hold the member as an alternative of the members' C++ types, the
-      library's as a value with its type, and each union kind adds only what it lets a program read
-      or write of a member. Before, the same algorithm was written four times, once per union kind
-      and realization.
+- [x] R77 -- A union's whole-value operations are one algorithm per union kind on both backends: an
+      untagged union's read its first member, and a tagged union's compare the tags and then apply
+      the operation to the member the tag names. Before, the same algorithm was written four times,
+      once per union kind and realization.
 
 - [x] R78 -- A pairwise operation over the elements of a fixed-size array is one algorithm on both
       backends, and the ones a net applies -- resolution and domination -- refuse contributions of
@@ -1744,9 +1742,9 @@ enough to warrant its own focused review.
 - [ ] R114 -- A kind of value a storage family was never published for is reported to the user as a
       missing runtime library symbol. The check is real and fires at the right moment, but its
       audience is this compiler and its own library, and what it prints is a list of internal entry
-      names -- so someone who wrote an assertion over a class handle is told that
-      `lyra_rt_managedref_cell_sampled_load` does not exist. The error policy asks that an operation
-      a legal program requests and this tool does not carry out be refused by naming the construct.
+      names -- so someone who wrote an assertion over a class handle is told that an entry of the
+      library's for sampling it does not exist. The error policy asks that an operation a legal
+      program requests and this tool does not carry out be refused by naming the construct.
 
       Target: the refusal names the construct and the kind of value, and the symbol list stays where
       it helps, which is a build of this compiler rather than a run of someone's design. What has to
@@ -2439,14 +2437,15 @@ enough to warrant its own focused review.
       largest part of what remains. Not blocked.
 
 - [ ] R153 -- Where a value is copied, moved and ended is decided twice, once per backend. The
-      execution backend decides it lowering MIR to LIR, which states each copy and each end; the C++
-      backend is told nothing and takes C++'s own answer -- a copy for every by-value pass, an end
-      at every scope exit, and whatever elision C++ allows. Nothing keeps the two in step: a copy
-      one makes and the other does not costs time rather than correctness, but an end one omits is a
-      leak. The target states it once, above both, as Swift's SIL states `copy_value` /
-      `destroy_value` and Rust's MIR states moves, copies and drops (both recalled, to be read), and
-      each backend follows it. What a type's own copy and end do stays below MIR: in SystemVerilog a
-      program cannot define it, so it is member by member with no choice, as layout is.
+      execution backend decides it lowering MIR to LIR, which states each copy and each end but the
+      copies an aggregate's operands are taken into, which its code generator makes; the C++ backend
+      is told nothing and takes C++'s own answer -- a copy for every by-value pass, an end at every
+      scope exit, and whatever elision C++ allows. Nothing keeps the two in step: a copy one makes
+      and the other does not costs time rather than correctness, but an end one omits is a leak. The
+      target states it once, above both, as Swift's SIL states `copy_value` / `destroy_value` and
+      Rust's MIR states moves, copies and drops (both recalled, to be read), and each backend
+      follows it. What a type's own copy and end do stays below MIR: in SystemVerilog a program
+      cannot define it, so it is member by member with no choice, as layout is.
 
       What stands in the way is `mir.md`'s forbidden "lifecycle node family for value copy or move",
       whose stated reason -- MIR states only what a program spells -- does not hold: MIR already
@@ -3032,6 +3031,77 @@ enough to warrant its own focused review.
       a failure of the compiler's own. Target: a write a takeover turns away is kept beneath it
       wherever the write names a part of the variable, however the variable was reached. Not
       blocked.
+- [x] R234 -- A read through a member a tag guards is one access with its check: the whole of what
+      it selects below the member is read and kept among the steps that check the tag, so a sibling
+      operand retagging the union can no longer have the read land on a member the union no longer
+      holds, on either backend.
+
+- [x] R235 -- An operation the execution backend's library carries out on values laid out by their
+      type -- designating an element of a fixed-size array, writing a run of elements into one,
+      holding one in a variable -- is told their type once, after its operands, as a generic
+      function takes its type argument once; a value of another type it takes is read with its own.
+
+- [x] R236 -- A write through a member of a union keeps and compares only what it lands on below the
+      member, on both backends, as a write through a structure's member does, and reports the change
+      to the whole union, so a wait on any member of it is told.
+
+- [x] R237 -- A method that only reads what a member a tag guards selects is entered on it where it
+      lies, among the steps that check the tag, after the call's own operands, so `size` of a queue
+      a tagged union holds copies nothing.
+
+- [x] R238 -- The type a library entry's realization is realized for is bound to the realization
+      where the entry is chosen, so what it is told of a type is read from there and no entry
+      carries that type beside it as something it may lack.
+
+- [ ] R239 -- A value type's table of operations is one interface every type answers in full, so a
+      type the language gives no operation of some kind still overrides it with a body that refuses
+      and ignores what it is handed. Each such parameter is unnamed, which clang-tidy's
+      readability-named-parameter reports, and naming it instead is reported by the build's own
+      `-Wunused-parameter`; the one spelling both accept, a name written as a comment, is a
+      suppression the project's style forbids. Seen on the library value types' refusing overrides;
+      the code generator fills the same slots of every table it generates with a body nothing
+      enters. Target: a type answers only the operations it has, so no override exists to refuse --
+      the operations no type of a family answers move to the family that does. Not blocked.
+
+- [ ] R240 -- clang-tidy reports readability-static-accessed-through-instance on the generated
+      process body the runtime resumes, at the coroutine's own declaration, where nothing in the
+      source names a static member. The cause is not established; a coroutine's promise type has
+      static members the compiler's expansion of the body reaches, which is the first thing to
+      check. Target: the body reads clean, by a change to whatever the expansion reaches and not by
+      silencing the check. Not blocked.
+
+- [x] R241 -- Whether an expression names storage is stated by MIR for a union's member too: it is a
+      field step on the place holding the union, at the union's start, and is designated within a
+      write in progress, on both backends, so a select into a member reads only what it selects and
+      a write to one leaves the union in place.
+
+- [x] R242 -- Every operation on a whole value of a union, a tagged union or a fixed-size array is
+      code compiled for the type on both backends: a union's stated by its declaration, as a
+      structure's is, and an array's by each unit naming the type; the execution backend's library
+      is told no description of the type to carry one out by. A tuple's default and its clearing are
+      compiled for its type too.
+
+- [x] R243 -- What a read of overlaid storage clears above a value's widths is one function per type
+      on the execution backend, which the function's code calls where it reads such storage; the
+      library is asked nothing for it, and a type's table carries no slot for it.
+
+- [x] R244 -- A type reaches the execution backend's prebuilt library as a record laid out as C lays
+      one out, declared once and read by both the code generator and the library, opening with the
+      address of a table of functions each handed the type. Generated code no longer imitates an
+      object of a library C++ class, and nothing measures one at compiler run time.
+
+- [ ] R245 -- The algorithms the prebuilt library carries out over values of any type -- a
+      container's search, sort and fold, a net's resolution, a variable's change test -- reach each
+      type's operations through its table, where clang on the C++ backend compiles each one for the
+      type and can inline it. Target: an optimized build sees through a type's table to the
+      operation it names. Two forms reach it: the library also prebuilt as optimizer input that an
+      optimized build links in, so a call through a table that is a constant is specialized and
+      inlined, as Swift lets a client specialize a library function marked inlinable; or those
+      algorithms stated where the compiler compiles them per type, as rustc compiles its own
+      library's generic code. The first keeps the library one source and the default build
+      unchanged. Not blocked; it is a trade of run time against build time, and the measurement that
+      would select it -- a design whose time goes into calls through a type's table -- has not been
+      taken.
 
 The entries from R221 on come from one audit of the lowering against the front end: places where
 this compiler works out again, or steps around, something the front end already knows or could keep.

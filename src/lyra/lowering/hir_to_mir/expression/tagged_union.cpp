@@ -105,7 +105,7 @@ auto LowerHirTaggedUnionExpr(
     payload = block.exprs.Add(
         BuildDefaultValueExpr(lowerer.Owner().Unit(), block, component));
   }
-  return mir::MakeActiveMemberExpr(*payload, t.member_index, result_type);
+  return mir::MakeUnionExpr(*payload, t.member_index, result_type);
 }
 
 template auto LowerHirTaggedUnionExpr(

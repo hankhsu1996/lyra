@@ -1,9 +1,12 @@
-# Unpacked struct is a nominal product type (MIR `StructType`)
+# Unpacked struct is a nominal product type
 
 Date: 2026-06-25 (revised 2026-09-29). Status: accepted. The first form lowered an unpacked struct
 to the structural `TupleType`, and a later one gave that tuple an optional declaration to carry the
 struct's identity and methods. This revision makes the struct a product type of its own, nominal
-where the tuple is structural; points 2, 3 and 5 stand as they were.
+where the tuple is structural; points 2, 3 and 5 stand as they were. Revised 2026-10-16: a
+structure, a union and a tagged union are one MIR type, a record naming its declaration, whose kind
+and members the declaration states
+([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)).
 
 ## Why this decision matters
 

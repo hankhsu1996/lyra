@@ -24,13 +24,16 @@ namespace lyra::lowering::hir_to_mir {
 auto LowerBinaryOp(hir::BinaryOp op) -> mir::BinaryOp;
 
 // A source binary operator over two operands that are both evaluated. Takes the
-// lowered operand ids (already in `block`): an operator a library performs is a
-// call of the entry that performs it, and the rest are the operator a target
-// applies. `&&`, `||` and `->` may leave their second operand unevaluated, so
-// they are built before both operands are lowered and never reach this.
+// lowered operand ids (already in `block`), each as it stands, a place or a
+// value -- a struct is compared by its own methods, which borrow a place
+// where it lies, and every other operator reads it: an operator a library
+// performs is a call of the entry that performs it, and the rest are the
+// operator a target applies. `&&`, `||` and `->` may leave their second operand
+// unevaluated, so they are built before both operands are lowered and never
+// reach this.
 auto BuildMirBinaryExpr(
     const mir::CompilationUnit& unit, mir::Block& block, hir::BinaryOp op,
-    mir::ExprId lhs_id, mir::ExprId rhs_id, mir::TypeId result_type)
+    mir::ExprId lhs_named, mir::ExprId rhs_named, mir::TypeId result_type)
     -> mir::Expr;
 
 // The conjunction and the disjunction of `tests`, every one of them evaluated,

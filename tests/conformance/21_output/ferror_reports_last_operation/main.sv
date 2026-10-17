@@ -2,7 +2,8 @@
 // a descriptor met, and writes a description of that error into its string
 // argument. When the most recent operation met no error it returns zero and
 // clears the string instead (LRM 21.3.7). $fseek returns -1 when it cannot
-// reposition the file, and 0 when it can (LRM 21.3.5).
+// reposition the file, and 0 when it can (LRM 21.3.5). The code is a value
+// like any other, so the call stands as an operand where it is read.
 module Top;
   int fd;
   int first_byte;
@@ -17,6 +18,8 @@ module Top;
   int good_seek;
   string after_good_seek_text;
   int after_good_seek;
+  string described;
+  bit read_as_operand;
 
   initial begin
     fd = $fopen("errors.txt", "w");
@@ -36,6 +39,7 @@ module Top;
     good_seek = $fseek(fd, 0, 0);
     after_good_seek_text = "stale";
     after_good_seek = $ferror(fd, after_good_seek_text);
+    read_as_operand = $ferror(fd, described) == 0;
     $fclose(fd);
   end
 
@@ -65,6 +69,8 @@ module Top;
     if (after_good_seek_text != "")
       $fatal(1, "$ferror left '%s' after a successful seek",
              after_good_seek_text);
+    if (read_as_operand !== 1'b1)
+      $fatal(1, "the code compared where it was read did not equal 0");
     $display("All checks passed");
   end
 endmodule

@@ -96,9 +96,9 @@ auto RuntimeQueue::Element(std::optional<std::int64_t> position) const -> const
   return Core().ElementAt(position);
 }
 
-auto RuntimeQueue::ElementRef(
+auto RuntimeQueue::ElementMut(
     std::optional<std::int64_t> position, Formation& formed) -> void* {
-  return Core().ElementRef(position, formed);
+  return Core().ElementMut(position, formed);
 }
 
 auto RuntimeQueue::Slice(

@@ -1,12 +1,12 @@
 # Aggregate values are runtime-owned opaque values on the JIT, not monomorphized
 
-Date: 2026-07-18 Status: accepted for unions and containers, which stay runtime-owned objects behind
-a handle; superseded for tuples by
-[a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md), once every value came to live
-in its maker's frame rather than behind a handle; revised 2026-10-05 for what those objects hold. A
-container holds its elements as the element type's bytes and acts on them through that type's
-operations, and a union holds its member with the member's type, as
-[a-value-is-its-machine-data](a-value-is-its-machine-data.md) decides.
+Date: 2026-07-18 Status: accepted for containers, which stay runtime-owned objects behind a handle;
+superseded for unions by
+[a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md), and for
+tuples by [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md), once every value
+came to live in its maker's frame rather than behind a handle; revised 2026-10-05 for what those
+objects hold. A container holds its elements as the element type's bytes and acts on them through
+that type's operations, as [a-value-is-its-machine-data](a-value-is-its-machine-data.md) decides.
 
 ## Why this decision matters
 
@@ -51,10 +51,9 @@ structurally monomorphized; that is deferred until the backend commits to a phys
 for the whole value model, at which point the native path is adopted uniformly (scalars included),
 not for aggregates alone.
 
-The LIR aggregate operations -- `AggregateExtractInstr`, `AggregateUpdateInstr`, and the
-`AggregateSelector` they carry -- are realization-agnostic logical value operations. This decision
-is entirely below LIR, in LIR-to-LLVM codegen; LIR does not change with it, and a future physical
-layout changes only the codegen realization of the same LIR operations.
+The LIR operations on such a value were realization-agnostic logical value operations when this was
+decided. This decision is entirely below LIR, in LIR-to-LLVM codegen; LIR does not change with it,
+and a future physical layout changes only the codegen realization of the same LIR operations.
 
 The containers and unions are the aggregate members of the opaque-handle value model, not a
 temporary mechanism. What they hold was revised on 2026-10-05: a value whose type the library was
@@ -124,5 +123,5 @@ answers every operation by asking what kind of value it is.
   backends share, the pure-reuse case aggregates contrast with.
 - [unpacked-struct-representation](unpacked-struct-representation.md) -- the struct is a value
   product; this decides how that product is realized on the execution backend.
-- `../architecture/lir.md` -- `AggregateExtractInstr` / `AggregateUpdateInstr` are logical value
-  operations; physical realization is below LIR.
+- `../architecture/lir.md` -- LIR's operations on values are logical; physical realization is below
+  LIR.

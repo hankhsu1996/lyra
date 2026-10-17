@@ -354,24 +354,24 @@ auto BuildValueConversion(
           [&](const mir::DiagnosticType& t) { return none(t); },
           [&](const mir::RuntimeLibraryType& t) { return none(t); },
           [&](const mir::CoroutineType& t) { return none(t); },
-          [&](const mir::RefType& t) { return none(t); },
+          [&](const mir::VariableRefType& t) { return none(t); },
           [&](const mir::ReferenceWrapperType& t) { return none(t); },
           [&](const mir::PointerType& t) { return none(t); },
+          [&](const mir::ReferenceType& t) { return none(t); },
           [&](const mir::VectorType& t) { return none(t); },
           [&](const mir::TupleType& t) { return none(t); },
-          [&](const mir::UnionType& t) { return none(t); },
-          [&](const mir::TaggedUnionType& t) { return none(t); },
           [&](const mir::EmptyType& t) { return none(t); },
           [&](const mir::ObservableType& t) { return none(t); },
           [&](const mir::ResolvedType& t) { return none(t); },
           [&](const mir::DriverType& t) { return none(t); },
           [&](const mir::OpenWriteType& t) { return none(t); },
           [&](const mir::DesignationType& t) { return none(t); },
+          [&](const mir::BitsReferenceType& t) { return none(t); },
           [&](const mir::ObjectWriteType& t) { return none(t); },
           [&](const mir::SampledHistoryType& t) { return none(t); },
           [&](const mir::EvaluationAttemptsType& t) { return none(t); },
           [&](const mir::LoopBlocksType& t) { return none(t); },
-          [&](const mir::StructType& t) { return none(t); },
+          [&](const mir::RecordType& t) { return none(t); },
           [&](const mir::ClosureType& t) { return none(t); },
       });
 }
@@ -399,6 +399,8 @@ auto BuildPropagatedConversion(
 auto ConvertToType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId {
+  // A conversion acts on a value, so a place it is handed is read first.
+  operand_id = block.AsValue(unit.types, operand_id);
   if (block.exprs.Get(operand_id).type == dst_type) {
     return operand_id;
   }
@@ -406,9 +408,19 @@ auto ConvertToType(
       BuildValueConversion(unit, block, operand_id, dst_type));
 }
 
+auto AtType(
+    const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
+    mir::TypeId type) -> mir::ExprId {
+  if (block.exprs.Get(operand_id).type == type) {
+    return operand_id;
+  }
+  return ConvertToType(unit, block, operand_id, type);
+}
+
 auto ConvertToPropagatedType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId operand_id,
     mir::TypeId dst_type) -> mir::ExprId {
+  operand_id = block.AsValue(unit.types, operand_id);
   if (block.exprs.Get(operand_id).type == dst_type) {
     return operand_id;
   }

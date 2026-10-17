@@ -27,8 +27,9 @@ namespace lyra::lowering::hir_to_mir {
 
 // How a body uses a captured binding (its carrier/view, the snapshot-vs-alias
 // axis of the captured field's type). A snapshot owns a copy taken at
-// construction; an alias is a `Ref<T>` over a live cell; an owning carrier is a
-// copy of a shared handle that keeps its referent alive (LRM 6.21 activation).
+// construction; an alias is a reference variable over a live cell; an owning
+// carrier is a copy of a shared handle that keeps its referent alive (LRM 6.21
+// activation).
 enum class CaptureView : std::uint8_t {
   kSnapshot,
   kAlias,
@@ -155,11 +156,11 @@ class CallableBindings {
   // A second call for the same origin returns the same binding.
   auto EnsureCarrier(BindingOriginId origin) -> BodyBindingRef;
 
-  // A read of a binding owned by this body, typed from its arena. For a
-  // captured field the closure receiver operand is appended to `block` and the
-  // returned field access (to be appended to the same block) reads it.
-  [[nodiscard]] auto MakeReadExpr(BodyBindingRef ref, mir::Block& block) const
-      -> mir::Expr;
+  // The place of a binding owned by this body, typed from its arena: the local
+  // itself, or for a captured field the field of the closure receiver, whose
+  // operand is appended to `block` and which is appended to the same block.
+  [[nodiscard]] auto MakeBindingPlace(
+      BodyBindingRef ref, mir::Block& block) const -> mir::Expr;
   [[nodiscard]] auto TypeOf(BodyBindingRef ref) const -> mir::TypeId;
 
   // Freeze the capture set: compute the closure's canonical field order (by

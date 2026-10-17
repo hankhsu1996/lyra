@@ -37,7 +37,7 @@ struct ProjectedMember {
 // `tag_bits` is the width of the leading run a tagged union carries to name
 // the member it currently holds (LRM 7.3.2). It is zero whenever nothing
 // distinguishes the members -- a struct, an untagged union, or a tagged union
-// declaring a single member -- so a member access is guarded exactly when the
+// declaring a single member -- so a member access is checked exactly when the
 // tag is wide enough to name more than one thing.
 struct PackedProjection {
   std::vector<ProjectedMember> members;

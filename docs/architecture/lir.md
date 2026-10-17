@@ -53,19 +53,37 @@ below LIR, at LIR-to-LLVM.
   element, and component steps, spelled inside the instruction that consumes it and never held.
   Every load, store, and address-of names a place by logical identity, and address-of is the one
   operation that turns the path into a value the program can retain. An element or component step
-  reaches a part that is storage of its own -- an array's element, a structure's member. A part that
-  is a view of its whole -- a packed value's bits, a string's character, a union's member -- is no
-  step of a place: it is read by value projection, and bits of a packed value lying at a place are
-  written by a store that names the place and the bits. There is no slice step, because a window is
-  several elements rather than one storage, and storage behind an indirection is reached by a
-  dereference step.
+  reaches a part of storage -- an array's element, a structure's member, a union's member, which
+  lies at the union's own start. A union's member has no identity of its own, so nothing the program
+  keeps is the address of one; MIR states that, and an address taken here for a transient access
+  through the step is the union's own. A packed value's bits are no step of a place: they are read
+  by the integral's own operation on the value read, and bits lying at a place are written by a
+  store that names the place and the bits. A string's character is no step either; the string's own
+  operations read and write it. There is no slice step, because a window is several elements rather
+  than one storage, and storage behind an indirection is reached by a dereference step.
 - When the bytes a frame keeps for a value are in use: from where a slot's first value is stored or
   a value is made, to a point stated on every way out of the extent it belongs to.
+- Whether a write initializes or assigns: a value put into storage holding none -- a slot's first
+  value, or one whose value was ended before -- is an assignment naming that storage as its
+  destination, made there or moved in, and every other write is a store into the value already
+  there. Both are stated, so nothing below works out which a write is from the shape of its place,
+  as SIL states `store [init]` beside `store [assign]`.
+- Who ends a value a pointer owns: a uniquely owning pointer is an owned value with no copy, moved
+  wherever it is handed on -- into a slot, to a caller, to a callee -- and ended by its last holder,
+  which ends what it points at and gives the storage back. Storage of dynamic duration is allocated
+  holding nothing, initialized there, given back if the initialization departs, and only then owned.
 - The transient-value vocabulary: a computed value with a pure dataflow origin, not backed by a
   named memory location.
-- The value-aggregate selector vocabulary: which subvalue of a view a step names -- the one member
-  an active-member value holds at a time, a runtime coordinate, a fixed-width window. One extract
-  and one update carry every step; the selector never says how the step is realized.
+- Where every computed value goes, stated on the step that computes it as Rust's MIR states an
+  assignment's place and a call's `destination`: a transient the step defines, or storage holding
+  nothing yet that the value is made in and whose holder then owns it. A step that yields nothing --
+  a store, an initialization, a frame's bytes coming into or going out of use -- names no
+  destination, and an evaluation yielding nothing stands as the void value where one is wanted.
+- Where a callable's answer goes: its return place, storage of the answer's type that every way out
+  makes the answer in before returning, as Rust's MIR writes `_0`, whose value the caller then owns.
+  Whether that storage is the caller's or the frame's is the target's convention for answering.
+- Which element of a sequence of handles is taken out of it by value, at the position the program
+  computes. A part of any other value is reached as a step of the place the value is held in.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
   identity of every class member and callable a node refers to. A member step reaches a class this
   unit compiles or a class another unit published, both member-bearing objects of this unit's own
@@ -118,12 +136,12 @@ identity is the suspect, not the analysis.
 2. Each LIR local either names storage or is a transient value, and which one is explicit. Which one
    a local is follows a canonical lowering rule, not the source language's notion of a variable: a
    local is a place -- named storage -- exactly when the canonical lowering names it as storage (a
-   declared local, a value a part is reached in, or a result that control-flow paths join at). A
-   value computed once and consumed is a transient value with a pure dataflow origin. The rule fixes
-   the storage topology; it does not minimize it -- recovering a register where the address is never
-   truly needed is a separate derivation below LIR. _Machine-execution consequence: the codegen
-   knows for every value whether it lives in memory or in a register-class temporary; no value's
-   storage class must be inferred._
+   declared local, a value a part is reached in, a result that control-flow paths join at, or the
+   callable's return place). A value computed once and consumed is a transient value with a pure
+   dataflow origin. The rule fixes the storage topology; it does not minimize it -- recovering a
+   register where the address is never truly needed is a separate derivation below LIR.
+   _Machine-execution consequence: the codegen knows for every value whether it lives in memory or
+   in a register-class temporary; no value's storage class must be inferred._
 3. LIR fixes logical storage topology, not physical layout. A place names storage by logical
    identity -- a base local and a projection chain of steps naming a member, a referent, an element,
    or a component -- never as a byte offset, an address, or pointer arithmetic. The physical
@@ -159,8 +177,9 @@ identity is the suspect, not the analysis.
 9. The end of a value and the end of its storage's use are two statements. A value handed on leaves
    behind the bytes it was made in while it goes on existing, and a slot's bytes hold one value
    after another, so neither end implies the other. The statement says only how long a frame's bytes
-   are needed. _Machine-execution consequence: where those bytes are kept is the layout derivation's
-   answer from their size, and no node records it._
+   are needed. _Machine-execution consequence: those bytes are the frame's, because a value too
+   large for a frame never reaches one -- MIR holds it through storage the program allocates -- so
+   no layer below decides from a value's size where it is kept._
 10. A write states what it writes and nothing wider. Bits written within a packed value that lies
     somewhere a write can land -- at a place, or within a write in progress -- are one statement
     naming where the value lies, the parts the bits are reached through, and the bits. No node
@@ -217,10 +236,11 @@ shape is "what identity property does this break".
   or runtime calls at HIR-to-MIR; one reappearing at LIR is an upstream leak, never a LIR node to
   add.
 - A source language's ownership discipline reconstructed at LIR -- move semantics, borrow checking.
-  LIR's value model is value-copy plus explicit borrowed references, and an affine discipline is a
-  rule about what a program may write, decided where the program is still that language. (Deriving
-  where storage is released is not this: it is a lowering computing a fact about the code in front
-  of it, which is what an execution-model IR is for, and both peers named in Purpose do it.)
+  LIR's value model is value-copy, a uniquely owning pointer moved wherever it is handed on, and
+  explicit borrowed references; an affine discipline is a rule about what a program may write,
+  decided where the program is still that language. (Deriving where storage is released is not this:
+  it is a lowering computing a fact about the code in front of it, which is what an execution-model
+  IR is for, and both peers named in Purpose do it.)
 - Implicit control flow. Every control transfer is an explicit edge. (Machine-execution IRs do not
   carry implicit transitions; the codegen relies on edges being explicit.)
 - Reintroducing semantic structure that MIR has already lowered away.
@@ -253,17 +273,18 @@ the enclosing class reached through `self` as a place. The bulk of a program's s
 storage reached through receivers, not locals on a frame.
 
 LIR is not an SSA form. A local is either a transient -- computed once, consumed, with a pure
-dataflow origin -- or a place, which is storage on the frame. Which one a local is follows a
+dataflow origin -- or a place, which is named storage: the frame's, or for the callable's return
+place, wherever the target's convention for answering puts it. Which one a local is follows a
 canonical lowering rule, not the source language's notion of a variable: a local is a place exactly
 when the canonical lowering needs an address for it -- its address is taken, it is assigned after
-its initialization, or it holds a control-flow join. Everything else is a transient. So there is no
-phi and none is needed: a value produced on more than one path is a place each path writes, a
-conditional expression writes its result into a place from each arm, and a loop-carried variable is
-a place the body updates. A parameter arrives as a transient (the incoming argument) and becomes a
-place only when the body assigns it or takes its address, in which case the entry block copies the
-argument into that place. Recovering a register where the address is never truly needed is a
-target-side derivation, not a property LIR must establish: LIR states the storage topology, it does
-not minimize it.
+its initialization, it holds a control-flow join, or it is the callable's return place. Everything
+else is a transient. So there is no phi and none is needed: a value produced on more than one path
+is a place each path writes, a conditional expression writes its result into a place from each arm,
+and a loop-carried variable is a place the body updates. A parameter arrives as a transient (the
+incoming argument) and becomes a place only when the body assigns it or takes its address, in which
+case the entry block copies the argument into that place. Recovering a register where the address is
+never truly needed is a target-side derivation, not a property LIR must establish: LIR states the
+storage topology, it does not minimize it.
 
 A closure lowers to a value of its declaration, built from its captures by an instruction of its
 own; its one body is entered with that value as `self`. `self` is the first argument, supplied like
@@ -299,37 +320,43 @@ this layer's. An element of an array, queue or associative array, and a member o
 structure, each have an identity a second name may denote (`storage.md`), so each is a place: a step
 into it extends the place holding its value, a load reads it where it lies, and a store writes into
 the object already there. Value semantics hold because a copy of the aggregate copies its parts, so
-no two values share one and a write through one is seen through no other. A packed value's bits, a
-string's character and a union's member have no identity of their own; each is a view of its whole.
-A view is read by value projection -- an extract, the aggregate peer of LLVM's `extractvalue` -- and
-one extract and one update carry every such view, the selector saying only which subvalue is named:
-the one member an active-member value holds at a time, a runtime coordinate, a fixed-width window. A
-view of a value that is itself only a value is written by the update producing the whole again
-(`insertvalue`), and so is a string's character or a union's member at a place, the whole then being
-stored where it lives. Bits of a packed value lying at a place are written where they lie. The store
-names the place, each part the bits are reached through, outermost first -- where the part starts
-within the one before it and the type that fixes how many bits it has -- and the bits. The bits ride
-on the statement and not on the place, because a place is storage a load, a store and an address-of
-can each name, and some bits of a value are none of those alone. A part reaches nothing outside the
-part it is taken in, and a start that names no position writes nothing; both are outcomes of the
-insertion the store is realized by, never control flow or a test stated here. A step's direction is
-the access's: reading a missing element reads the default, and writing one allocates or discards it
-by the container's own rule, which the library applies when the step is realized. A write in
-progress is not a place but a value: the write itself, which the writer owns and ends and which
-names no place, and each place designated within it -- the whole of what it was opened on, and each
-part reached from there -- which borrows the write. Each step MIR takes within a write is one call
-on a designation answering with the next, and what the step does to the write -- an element step
-tells it what forming the element did -- is the library's, as it is in the C++ rendering of the same
-MIR. Where the write lands is a call on a designation, stated before anything is written there, that
-answers with the part's address; the part is then storage like any other. A run of elements written
-within a write is a call on the container's designation. Bits written within one are one call on the
-designation of the value they lie in, naming the same parts and bits a store at a place names; the
-write keeps what those bits held and hears which of them moved. That is how the variable learns
-whether the write changed it (LRM 4.3). Which library entry realizes a step, and whether it is an
-instruction or a call at all, is a realization question answered below LIR; it never decides which
-node the step is expressed as. A mutating method on a receiver -- a container's `delete`, a queue's
-`push` -- changes the storage the receiver names in place; where the receiver is a view, it is read
-out, changed, and written back.
+no two values share one and a write through one is seen through no other. A union's member has no
+identity of its own and is still reached in place: a component step on the union, at the union's own
+start, with a load and a store through it as through any step. Where the union is untagged, the
+member's bits may be another member's, so a read of a place reached through that step, an element
+step after it included, is an overlaid load: it reads the bits at the loaded type and clears the
+positions the type's representation keeps clear, as clang's load of a bit-field makes its bits a
+value of the field's type. MIR's place determines which reads those are, and the lowering says so by
+the instruction it emits, so no consumer of LIR works it out from the chain again. A tagged union's
+tag is read by its own instruction over the union's place, rustc's `Discriminant`, and a whole union
+is built by one instruction naming the member and its value, which leaves every other byte zero. A
+value that lies in no storage is held in a local before a part of it is reached, so no layer
+extracts a part of a value or rebuilds a value around one; the one element taken by value is an
+element of a sequence of handles. Bits of a packed value are not parts of that kind either: the
+integral's own operations read them out of a value and write them into one. Bits of a packed value
+lying at a place are written where they lie. The store names the place, each part the bits are
+reached through, outermost first -- where the part starts within the one before it and the type that
+fixes how many bits it has -- and the bits. The bits ride on the statement and not on the place,
+because a place is storage a load, a store and an address-of can each name, and some bits of a value
+are none of those alone. A part reaches nothing outside the part it is taken in, and a start that
+names no position writes nothing; both are outcomes of the insertion the store is realized by, never
+control flow or a test stated here. A step's direction is the access's: reading a missing element
+reads the default, and writing one allocates or discards it by the container's own rule, which the
+library applies when the step is realized. A write in progress is not a place but a value: the write
+itself, which the writer owns and ends and which names no place, and each place designated within it
+-- the whole of what it was opened on, and each part reached from there -- which borrows the write.
+Each step MIR takes within a write is one call on a designation answering with the next, and what
+the step does to the write -- an element step tells it what forming the element did -- is the
+library's, as it is in the C++ rendering of the same MIR. Where the write lands is a call on a
+designation, stated before anything is written there, that answers with the part's address; the part
+is then storage like any other. A run of elements written within a write is a call on the
+container's designation. Bits written within one are one call on the designation of the value they
+lie in, naming the same parts and bits a store at a place names; the write keeps what those bits
+held and hears which of them moved. That is how the variable learns whether the write changed it
+(LRM 4.3). Which library entry realizes a step, and whether it is an instruction or a call at all,
+is a realization question answered below LIR; it never decides which node the step is expressed as.
+A mutating method on a receiver -- a container's `delete`, a queue's `push` -- changes the storage
+the receiver names in place.
 
 LIR states an integral type as MIR does: its width, its signedness, and whether it is two-state or
 four-state. It names an operation on one by the language's operator and carries a constant of one as

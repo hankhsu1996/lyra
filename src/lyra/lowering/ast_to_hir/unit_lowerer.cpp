@@ -143,8 +143,8 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
     }
   }
   {
-    const profiling::TimeTraceScope step("declare structures");
-    if (auto r = InternOwnStructureDeclarations(); !r) {
+    const profiling::TimeTraceScope step("declare records");
+    if (auto r = InternOwnRecordDeclarations(); !r) {
       return std::unexpected(std::move(r.error()));
     }
   }
@@ -152,20 +152,20 @@ auto UnitLowerer::Declare() -> diag::Result<void> {
   return PublishSignature();
 }
 
-auto UnitLowerer::InternOwnStructureDeclarations() -> diag::Result<void> {
-  // A structure's typedef declares the type, and the declaration brings the
-  // operations the language defines on a whole structure (LRM 7.2), so the
-  // type exists in the unit that declares it whether or not that unit ever
-  // holds a value of it -- another unit naming it reaches those operations
-  // here. It runs after the class walk, because a member of a structure may be
-  // a handle to any class the unit declares.
+auto UnitLowerer::InternOwnRecordDeclarations() -> diag::Result<void> {
+  // A structure's or a union's typedef declares the type, and the declaration
+  // brings the operations the language defines on its whole value (LRM 7.2,
+  // 7.3), so the type exists in the unit that declares it whether or not that
+  // unit ever holds a value of it -- another unit naming it reaches those
+  // operations here. It runs after the class walk, because a member may be a
+  // handle to any class the unit declares.
   auto visit = [&](const slang::ast::Symbol& member) -> diag::Result<void> {
     if (member.kind != slang::ast::SymbolKind::TypeAlias) {
       return {};
     }
     const slang::ast::Type& declared =
         member.as<slang::ast::TypeAliasType>().targetType.getType();
-    if (!declared.isUnpackedStruct()) {
+    if (!declared.isUnpackedStruct() && !declared.isUnpackedUnion()) {
       return {};
     }
     if (auto r = InternType(declared, frontend::PointSpanOf(member.location));

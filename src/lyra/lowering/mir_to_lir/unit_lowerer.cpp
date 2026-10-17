@@ -8,7 +8,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -30,12 +29,13 @@
 #include "lyra/mir/enum_table_id.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
+#include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/static_variable_id.hpp"
-#include "lyra/mir/struct_decl.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/value_build.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -74,6 +74,18 @@ auto UnitCallableLinkage(const mir::NamespaceReach& reach) -> lir::Linkage {
       reach);
 }
 
+auto TranslateRecordKind(mir::RecordKind kind) -> lir::RecordKind {
+  switch (kind) {
+    case mir::RecordKind::kStruct:
+      return lir::RecordKind::kStruct;
+    case mir::RecordKind::kUnion:
+      return lir::RecordKind::kUnion;
+    case mir::RecordKind::kTaggedUnion:
+      return lir::RecordKind::kTaggedUnion;
+  }
+  throw InternalError("mir_to_lir: unknown record kind");
+}
+
 }  // namespace
 
 auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
@@ -88,14 +100,14 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   class_identities_ = {mir_->classes.size(), std::move(classes)};
 
-  // So is every struct this unit declares, since what another unit published
-  // may hold one -- a specialization of its generic on this unit's struct.
-  std::vector<lir::StructId> structs;
-  structs.reserve(mir_->structs.size());
-  for (std::size_t i = 0; i < mir_->structs.size(); ++i) {
-    structs.push_back(out_.structs.Declare());
+  // So is every record this unit declares, since what another unit published
+  // may hold one -- a specialization of its generic on this unit's record.
+  std::vector<lir::RecordId> records;
+  records.reserve(mir_->records.size());
+  for (std::size_t i = 0; i < mir_->records.size(); ++i) {
+    records.push_back(out_.records.Declare());
   }
-  struct_identities_ = {mir_->structs.size(), std::move(structs)};
+  record_identities_ = {mir_->records.size(), std::move(records)};
 
   // What each class of another unit published, taken whole: a property step on
   // one names a slot counted out of the published list, and a class extending
@@ -152,30 +164,51 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
 
-  // What every struct is made of is settled before any body lowers, since a
-  // body reaching a component of one reads it -- a method of the struct
+  // What every record is made of is settled before any body lowers, since a
+  // body reaching a member of one reads it -- a method of the record
   // included, which is why each method's function is only reserved here. A
-  // struct is a declaration of the unit another unit names (LRM 7.2), which no
-  // body's code adds to, so every body states it alike and the link keeps one.
-  for (const mir::ExternalStruct& external : mir_->external_structs) {
-    out_.external_structs.push_back(
-        lir::ExternalStruct{
+  // record is a declaration of the unit another unit names (LRM 7.2, 7.3),
+  // which no body's code adds to, so every body states it alike and the link
+  // keeps one.
+  for (const mir::ExternalRecord& external : mir_->external_records) {
+    out_.external_records.push_back(
+        lir::ExternalRecord{
             .declaration = TranslateDeclaration(external.declaration),
+            .kind = TranslateRecordKind(external.kind),
             .elements = TranslateTypes(external.elements)});
   }
-  for (const mir::StructId id : mir_->structs.Ids()) {
-    const mir::StructDecl& decl = mir_->GetStruct(id);
-    lir::Struct lowered{
+  for (const mir::RecordId id : mir_->records.Ids()) {
+    const mir::RecordDecl& decl = mir_->GetRecord(id);
+    lir::RecordDecl lowered{
         .path = decl.path,
         .linkage = lir::Linkage::kShared,
+        .kind = TranslateRecordKind(decl.kind),
         .elements = TranslateTypes(decl.elements),
         .methods = {}};
-    for (const mir::StructMethod& method : decl.methods) {
+    for (const mir::RecordMethod& method : mir_->GetRecordMethods(id)) {
       lowered.methods.push_back(
-          lir::StructMethod{
+          lir::RecordMethod{
               .answers = method.answers, .function = out_.functions.Declare()});
     }
-    out_.structs.Define(StructDeclaration(id), std::move(lowered));
+    out_.records.Define(RecordDeclaration(id), std::move(lowered));
+  }
+  // Each operation a type whose operations the unit states answers is
+  // reserved the same way, since a body of the unit may call it. Two types MIR
+  // tells apart and LIR does not are one representation with one function per
+  // operation, which the first of them states: a type's bodies read only what
+  // LIR keeps of it, so the two bodies are the same.
+  std::vector<const mir::CallableCode*> stating;
+  for (const mir::TypeOperation& stated : mir_->type_operations) {
+    const lir::TypeId type = TranslateType(stated.type);
+    const auto [at, reserved] = type_operation_functions_.try_emplace(
+        std::pair{type, stated.answers}, lir::FunctionId{});
+    if (reserved) {
+      at->second = out_.functions.Declare();
+      out_.type_operations.push_back(
+          lir::TypeOperation{
+              .type = type, .answers = stated.answers, .function = at->second});
+      stating.push_back(&stated.code);
+    }
   }
 
   // A variable the unit's namespace owns -- a package's (LRM 26.2), a
@@ -246,40 +279,33 @@ auto UnitLowerer::Run() -> diag::Result<lir::CompilationUnit> {
     out_.functions.Add(*std::move(fn));
   }
 
-  // A type's default is a function no call of the program names, so its symbol
-  // is counted. Two types MIR tells apart and LIR does not are one
-  // representation with one default, which the first of them states.
-  std::unordered_set<lir::TypeId> defaulted;
-  for (const mir::TypeDefault& stated : mir_->type_defaults) {
-    const lir::TypeId type = TranslateType(stated.type);
-    if (!defaulted.insert(type).second) {
-      continue;
-    }
+  // An operation a type with no declaration answers is a function no other
+  // unit names, so its symbol is counted, within this body.
+  for (std::size_t i = 0; i < stating.size(); ++i) {
     auto fn = FunctionLowerer(
-                  *this, stated.code,
-                  lir::TypeDefaultSymbol(
+                  *this, *stating[i],
+                  lir::TypeOperationSymbol(
                       lir::QualifierOf(out_, std::nullopt),
-                      static_cast<std::uint32_t>(out_.type_defaults.size())))
+                      static_cast<std::uint32_t>(i)))
                   .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    out_.type_defaults.push_back(
-        lir::TypeDefault{
-            .type = type, .function = out_.functions.Add(*std::move(fn))});
+    out_.functions.Define(out_.type_operations[i].function, *std::move(fn));
   }
 
-  // A struct's method is a function under a symbol composed from the struct
+  // A record's method is a function under a symbol composed from the record
   // and the operation it answers, which is how every unit reaching it names it.
-  for (const mir::StructId id : mir_->structs.Ids()) {
-    const mir::StructDecl& decl = mir_->GetStruct(id);
-    const lir::Struct& lowered = out_.structs.Get(StructDeclaration(id));
-    for (std::size_t i = 0; i < decl.methods.size(); ++i) {
-      const mir::StructMethod& method = decl.methods[i];
+  for (const mir::RecordId id : mir_->records.Ids()) {
+    const mir::RecordDecl& decl = mir_->GetRecord(id);
+    const mir::RecordMethods& methods = mir_->GetRecordMethods(id);
+    const lir::RecordDecl& lowered = out_.records.Get(RecordDeclaration(id));
+    for (std::size_t i = 0; i < methods.size(); ++i) {
+      const mir::RecordMethod& method = methods[i];
       auto fn =
           FunctionLowerer(
               *this, method.code,
-              lir::StructMethodSymbol(mir_->name, decl.path, method.answers))
+              lir::RecordMethodSymbol(mir_->name, decl.path, method.answers))
               .Run();
       if (!fn) {
         return std::unexpected(std::move(fn.error()));
@@ -749,12 +775,19 @@ auto UnitLowerer::LowerConstant(const mir::ValueBuild& build, mir::ExprId id)
           [&](const mir::BlockExpr&) { return not_data("a block"); },
           [&](const mir::AssignExpr&) { return not_data("an assignment"); },
           [&](const mir::CallExpr&) { return not_data("a call"); },
+          [&](const mir::NewExpr&) { return not_data("an allocation"); },
           [&](const mir::DerefExpr&) { return not_data("a dereference"); },
+          [&](const mir::BorrowExpr&) { return not_data("a reference"); },
           [&](const mir::MoveExpr&) { return not_data("a move"); },
+          [&](const mir::CopyExpr&) { return not_data("a read"); },
+          [&](const mir::DiscriminantExpr&) {
+            return not_data("a read of a tag");
+          },
           [&](const mir::FieldAccessExpr&) {
             return not_data("a field access");
           },
           [&](const mir::ClosureExpr&) { return not_data("a closure"); },
+          [&](const mir::UnionExpr&) { return not_data("a union"); },
           [&](const mir::AwaitExpr&) { return not_data("an await"); },
           [&](const mir::WaitExpr&) { return not_data("a wait"); },
           [&](const mir::VectorGetExpr&) {
@@ -887,9 +920,23 @@ auto UnitLowerer::ClosureDeclaration(mir::ClosureId closure) const
   return closure_identities_.Get(closure).declaration;
 }
 
-auto UnitLowerer::StructDeclaration(mir::StructId record) const
-    -> lir::StructId {
-  return struct_identities_.Get(record);
+auto UnitLowerer::RecordDeclaration(mir::RecordId record) const
+    -> lir::RecordId {
+  return record_identities_.Get(record);
+}
+
+auto UnitLowerer::TypeOperationFunction(
+    mir::TypeId type, support::ValueOperation answers) -> lir::FunctionId {
+  const auto found =
+      type_operation_functions_.find(std::pair{TranslateType(type), answers});
+  if (found != type_operation_functions_.end()) {
+    return found->second;
+  }
+  throw InternalError(
+      std::format(
+          "mir_to_lir: a call names the operation \"{}\" of a type the unit "
+          "states no such operation for -- please report this as a bug",
+          support::ValueOperationName(answers)));
 }
 
 auto UnitLowerer::MachineBoolType() -> lir::TypeId {

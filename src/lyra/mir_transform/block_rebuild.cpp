@@ -173,6 +173,10 @@ auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
             e.arguments = each(std::move(e.arguments));
             return e;
           },
+          [&](mir::NewExpr e) -> mir::ExprData {
+            e.initializer = Expr(e.initializer);
+            return e;
+          },
           [&](mir::DerefExpr e) -> mir::ExprData {
             e.pointer = Expr(e.pointer);
             return e;
@@ -181,8 +185,20 @@ auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
             e.operand = Expr(e.operand);
             return e;
           },
+          [&](mir::BorrowExpr e) -> mir::ExprData {
+            e.operand = Expr(e.operand);
+            return e;
+          },
           [&](mir::MoveExpr e) -> mir::ExprData {
             e.operand = Expr(e.operand);
+            return e;
+          },
+          [&](mir::CopyExpr e) -> mir::ExprData {
+            e.place = Expr(e.place);
+            return e;
+          },
+          [&](mir::DiscriminantExpr e) -> mir::ExprData {
+            e.tagged = Expr(e.tagged);
             return e;
           },
           [&](mir::FieldAccessExpr e) -> mir::ExprData {
@@ -197,6 +213,10 @@ auto BlockRebuild::WithOperandsCarried(const mir::ExprData& data)
           },
           [&](mir::CompositeExpr e) -> mir::ExprData {
             e.parts = each(std::move(e.parts));
+            return e;
+          },
+          [&](mir::UnionExpr e) -> mir::ExprData {
+            e.value = Expr(e.value);
             return e;
           },
           [&](mir::AwaitExpr e) -> mir::ExprData {

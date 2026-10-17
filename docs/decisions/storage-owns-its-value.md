@@ -1,6 +1,8 @@
 # Storage owns its value, and a referenceable component is storage
 
-Date: 2026-09-11 Status: accepted
+Date: 2026-09-11 Status: accepted; D4 superseded for an unpacked union's member by
+[a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md), under
+which a member is a step of the union's place, in its storage.
 
 ## Context
 

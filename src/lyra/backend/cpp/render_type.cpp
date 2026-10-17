@@ -33,6 +33,10 @@ auto SuspensionCppType() -> std::string_view {
   return "lyra::runtime::Suspension";
 }
 
+auto OverlaidReadCppFunction() -> std::string_view {
+  return "lyra::value::ReadOverlaid";
+}
+
 namespace {
 
 auto RuntimeClassCppType(support::RuntimeClass klass) -> std::string_view {
@@ -182,6 +186,12 @@ void WriteOne(TargetText& out, const CppType& spelling) {
   const mir::CompilationUnit& unit = spelling.Unit();
   const mir::TypeId type_id = spelling.Type();
   const auto type = [&unit](mir::TypeId t) { return CppType(unit, t); };
+  // A struct or a union is named by its declaration, wherever it is declared.
+  const auto record = [&](const mir::RecordRef& declaration) {
+    const mir::TypeDeclarationRef ref =
+        mir::RecordDeclarationOf(unit, declaration);
+    Write(out, CppRecordQualifiedName(ref.unit_name, ref.path));
+  };
   unit.types.Get(type_id).Visit(
       Overloaded{
           [&](const mir::IntegralType& t) { WriteIntegralCppType(out, t); },
@@ -246,19 +256,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::ObjectType& o) {
             Write(out, CppClassRef(unit, o.of));
           },
-          [&](const mir::StructType& s) {
-            std::visit(
-                Overloaded{
-                    [&](mir::StructId id) {
-                      Write(
-                          out,
-                          CppStructRef(unit.name, unit.GetStruct(id).path));
-                    },
-                    [&](const mir::TypeDeclarationRef& ref) {
-                      Write(out, CppStructRef(ref.unit_name, ref.path));
-                    }},
-                s.declaration);
-          },
+          [&](const mir::RecordType& r) { record(r.declaration); },
           [&](const mir::RuntimeClassType& e) {
             out += RuntimeClassCppType(e.which);
           },
@@ -275,18 +273,18 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::CoroutineType& c) {
             Write(out, "lyra::runtime::Coroutine<", type(c.payload), ">");
           },
-          [&](const mir::RefType& r) {
+          [&](const mir::VariableRefType& r) {
             if (r.mutability == mir::Mutability::kReadOnly) {
               out += "const ";
             }
-            Write(out, "lyra::runtime::Ref<", type(r.pointee), ">");
+            Write(out, "lyra::runtime::VariableRef<", type(r.pointee), ">");
           },
           // The runtime's reference is re-seatable, so it holds a reference
           // bound after its object is built as well. Binding writes the
           // wrapper itself, so it is never a const object whatever it may
           // write through.
           [&](const mir::ReferenceWrapperType& r) {
-            Write(out, "lyra::runtime::Ref<", type(r.pointee), ">");
+            Write(out, "lyra::runtime::VariableRef<", type(r.pointee), ">");
           },
           [&](const mir::VoidType&) { out += "void"; },
           [&](const mir::PointerType& p) {
@@ -308,6 +306,17 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             }
             throw InternalError("backend::cpp: unknown PointerOwnership");
           },
+          [&](const mir::ReferenceType& r) {
+            switch (r.mutability) {
+              case mir::Mutability::kReadOnly:
+                Write(out, "const ", type(r.referent), "&");
+                return;
+              case mir::Mutability::kMutable:
+                Write(out, type(r.referent), "&");
+                return;
+            }
+            throw InternalError("backend::cpp: unknown Mutability");
+          },
           // Every object reference is one type, whatever class it is seen as.
           // The class is written where the reference is used, because two
           // units may hold one cell as different classes, and a type per
@@ -320,17 +329,7 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::TupleType& t) {
             Write(out, CppTupleComponents{.unit = &unit, .of = t.elements});
           },
-          [&](const mir::UnionType& u) {
-            out += "lyra::value::Union<";
-            WriteTypeList(out, unit, u.members);
-            out += ">";
-          },
           [&](const mir::EmptyType&) { out += "lyra::value::Empty"; },
-          [&](const mir::TaggedUnionType& u) {
-            out += "lyra::value::TaggedUnion<";
-            WriteTypeList(out, unit, u.members);
-            out += ">";
-          },
           [&](const mir::ObservableType& o) {
             Write(out, "lyra::runtime::Var<", type(o.value), ">");
           },
@@ -354,6 +353,12 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 "backend::cpp: a place designated within a write ends with "
                 "the expression that opens the write, so nothing names its "
                 "type -- please report this as a bug");
+          },
+          [](const mir::BitsReferenceType&) {
+            throw InternalError(
+                "backend::cpp: a reference to bits is written through where "
+                "it is taken, so nothing names its type -- please report this "
+                "as a bug");
           },
           // Named where it is opened, by constructing it on the object.
           [&](const mir::ObjectWriteType& w) {
@@ -449,9 +454,12 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::PointerType&) -> DerefSpelling {
             return DerefByOperator{};
           },
+          [&](const mir::ReferenceType&) -> DerefSpelling {
+            return DerefImplicit{};
+          },
           // A `ref` is dereferenced like a pointer, which reaches the cell it
           // is bound to (LRM 23.3.3.2).
-          [&](const mir::RefType&) -> DerefSpelling {
+          [&](const mir::VariableRefType&) -> DerefSpelling {
             return DerefByOperator{};
           },
           [&](const mir::ReferenceWrapperType&) -> DerefSpelling {
@@ -464,6 +472,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return DerefByOperator{};
           },
           [&](const mir::OpenWriteType&) { return reaches_nothing(); },
+          [&](const mir::BitsReferenceType&) { return reaches_nothing(); },
           // A write in progress into an object is dereferenced to the object,
           // as a guard is to what it guards.
           [&](const mir::ObjectWriteType&) -> DerefSpelling {
@@ -503,15 +512,13 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::CoroutineType&) { return reaches_nothing(); },
           [&](const mir::VectorType&) { return reaches_nothing(); },
           [&](const mir::TupleType&) { return reaches_nothing(); },
-          [&](const mir::UnionType&) { return reaches_nothing(); },
-          [&](const mir::TaggedUnionType&) { return reaches_nothing(); },
           [&](const mir::ObservableType&) { return reaches_nothing(); },
           [&](const mir::ResolvedType&) { return reaches_nothing(); },
           [&](const mir::DriverType&) { return reaches_nothing(); },
           [&](const mir::SampledHistoryType&) { return reaches_nothing(); },
           [&](const mir::EvaluationAttemptsType&) { return reaches_nothing(); },
           [&](const mir::LoopBlocksType&) { return reaches_nothing(); },
-          [&](const mir::StructType&) { return reaches_nothing(); },
+          [&](const mir::RecordType&) { return reaches_nothing(); },
           [&](const mir::ClosureType&) { return reaches_nothing(); },
       });
 }
@@ -600,6 +607,10 @@ void WriteNull(
       spelling);
 }
 
+void WriteOne(TargetText& out, const CppUnionMemberTag& tag) {
+  Write(out, "std::in_place_index<", tag.member.value, ">");
+}
+
 void WriteOne(TargetText& out, const CppConstructorName& constructor) {
   const mir::CompilationUnit& unit = constructor.of.Unit();
   const mir::TypeId type_id = constructor.of.Type();
@@ -610,18 +621,20 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
   };
   unit.types.Get(type_id).Visit(
       Overloaded{
-          // An owning pointer is made by the function that allocates and
-          // constructs the pointee, `std::make_unique<T>(args)`. A borrowed
-          // pointer points at storage that already exists and is never
-          // constructed.
+          // A shared pointer is made by the function that allocates and
+          // constructs what it holds, `std::make_shared<T>(args)`. Storage a
+          // unique pointer or a class handle owns is allocated by a
+          // new-expression, and a borrowed pointer points at storage that
+          // already exists, so neither is constructed.
           [&](const mir::PointerType& p) {
             switch (p.ownership) {
-              case mir::PointerOwnership::kUnique:
-                Write(out, "std::make_unique<", CppType(unit, p.pointee), ">");
-                return;
               case mir::PointerOwnership::kShared:
                 Write(out, "std::make_shared<", CppType(unit, p.pointee), ">");
                 return;
+              case mir::PointerOwnership::kUnique:
+                throw InternalError(
+                    "backend::cpp: what a unique pointer owns is allocated by "
+                    "a new-expression, so none is constructed");
               case mir::PointerOwnership::kBorrowed:
                 throw InternalError(
                     "backend::cpp: a borrowed pointer is bound to storage "
@@ -629,11 +642,15 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
             }
             throw InternalError("backend::cpp: unknown PointerOwnership");
           },
-          [&](const mir::ManagedRefType& m) {
-            Write(
-                out, "lyra::runtime::GcNew<",
-                CppClassRef(unit, mir::ClassOfObject(unit.types, m.pointee)),
-                ">");
+          [](const mir::ManagedRefType&) {
+            throw InternalError(
+                "backend::cpp: the object a class handle owns is allocated by "
+                "a new-expression, so no handle is constructed");
+          },
+          [](const mir::ReferenceType&) {
+            throw InternalError(
+                "backend::cpp: a reference is bound to what already exists, so "
+                "none is constructed");
           },
           // A sequence is built by the library function that takes its
           // elements, since the container type takes no element list.
@@ -661,25 +678,24 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::AssociativeArrayType& t) { by_naming_itself(t); },
           [&](const mir::WildcardIndexType& t) { by_naming_itself(t); },
           [&](const mir::ObjectType& t) { by_naming_itself(t); },
-          [&](const mir::StructType& t) { by_naming_itself(t); },
+          [&](const mir::RecordType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeClassType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeEffectsType& t) { by_naming_itself(t); },
           [&](const mir::FilesType& t) { by_naming_itself(t); },
           [&](const mir::DiagnosticType& t) { by_naming_itself(t); },
           [&](const mir::RuntimeLibraryType& t) { by_naming_itself(t); },
           [&](const mir::CoroutineType& t) { by_naming_itself(t); },
-          [&](const mir::RefType& t) { by_naming_itself(t); },
+          [&](const mir::VariableRefType& t) { by_naming_itself(t); },
           [&](const mir::ReferenceWrapperType& t) { by_naming_itself(t); },
           [&](const mir::VoidType& t) { by_naming_itself(t); },
           [&](const mir::TupleType& t) { by_naming_itself(t); },
-          [&](const mir::UnionType& t) { by_naming_itself(t); },
-          [&](const mir::TaggedUnionType& t) { by_naming_itself(t); },
           [&](const mir::EmptyType& t) { by_naming_itself(t); },
           [&](const mir::ObservableType& t) { by_naming_itself(t); },
           [&](const mir::ResolvedType& t) { by_naming_itself(t); },
           [&](const mir::DriverType& t) { by_naming_itself(t); },
           [&](const mir::OpenWriteType& t) { by_naming_itself(t); },
           [&](const mir::DesignationType& t) { by_naming_itself(t); },
+          [&](const mir::BitsReferenceType& t) { by_naming_itself(t); },
           [&](const mir::ObjectWriteType& t) { by_naming_itself(t); },
           [&](const mir::SampledHistoryType& t) { by_naming_itself(t); },
           [&](const mir::EvaluationAttemptsType& t) { by_naming_itself(t); },
@@ -688,10 +704,52 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
       });
 }
 
+void WriteOne(TargetText& out, const CppNewOwner& owner) {
+  const mir::Type& type = owner.of.Unit().types.Get(owner.of.Type());
+  if (type.Is<mir::ManagedRefType>()) {
+    out += "lyra::runtime::AdoptObject";
+    return;
+  }
+  if (const auto* pointer = type.As<mir::PointerType>()) {
+    switch (pointer->ownership) {
+      case mir::PointerOwnership::kUnique:
+        Write(out, owner.of);
+        return;
+      case mir::PointerOwnership::kShared:
+      case mir::PointerOwnership::kBorrowed:
+        break;
+    }
+  }
+  throw InternalError(
+      "backend::cpp: storage a new-expression allocates is owned by a unique "
+      "pointer or a class handle -- please report this as a bug");
+}
+
 void WriteOne(TargetText& out, const CppTupleComponents& components) {
   out += "lyra::value::Tuple<";
   WriteTypeList(out, *components.unit, components.of);
   out += ">";
+}
+
+void WriteOne(TargetText& out, const CppRecordBase& base) {
+  const auto overlay = [&](std::string_view library_type) {
+    out += library_type;
+    WriteTypeList(out, *base.unit, base.of->elements);
+    out += ">";
+  };
+  switch (base.of->kind) {
+    case mir::RecordKind::kStruct:
+      Write(
+          out, CppTupleComponents{.unit = base.unit, .of = base.of->elements});
+      return;
+    case mir::RecordKind::kUnion:
+      overlay("lyra::value::Union<");
+      return;
+    case mir::RecordKind::kTaggedUnion:
+      overlay("lyra::value::TaggedUnion<");
+      return;
+  }
+  throw InternalError("backend::cpp: unknown record kind");
 }
 
 void WriteOne(TargetText& out, const CppClassRef& ref) {

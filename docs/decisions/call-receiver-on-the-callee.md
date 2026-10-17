@@ -84,7 +84,7 @@ nothing.
 A receiver is stated once; how it reaches the callee in a target language is that target's business.
 The C++ backend binds it into the callee text for a method (`(recv).Name(args)`) and passes it as
 the leading argument where the runtime library publishes a free function
-(`lyra::value::Require(subject, ...)`, `lyra::runtime::symbol(handle, ...)`), because a C++ free
+(`lyra::value::Slice<T>(value, start)`, `lyra::runtime::symbol(handle, ...)`), because a C++ free
 function has no receiver to bind. The execution backend puts it first in the operand list, which is
 where the runtime ABI takes it.
 

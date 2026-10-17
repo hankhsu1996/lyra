@@ -1,12 +1,8 @@
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
-#include <span>
-#include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -15,14 +11,12 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/binary_op.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
@@ -36,7 +30,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
 
 // HIR-to-MIR lowering for the three ways the source selects part of a value:
 // `a[i]`, `a[hi:lo]` with its `+:` and `-:` forms, and `s.member`.
@@ -57,11 +50,12 @@
 // belong to (LRM 7.4.5, 11.5.1). There is one function per source form, and
 // nothing else places a part.
 //
-// Then the step is used. A select read as a value takes the step on its base,
-// lowered as a value. A select named as a part -- by a write, a reference, a
-// wait, a join of nets -- adds the step to the path its base names, so
-// `s.b[1]` is the owner `s` and two steps, and whatever is done with the part
-// is done to that one statement of it.
+// Then the step is used. A select read as a value takes the step on the place
+// its base names, so nothing on the way to the part is read whole, or on the
+// base's value where it names no storage. A select named as a part -- by a
+// write, a reference, a wait, a join of nets -- adds the step to the path its
+// base names, so `s.b[1]` is the owner `s` and two steps, and whatever is done
+// with the part is done to that one statement of it.
 //
 // Naming convention used here, matching the rest of HIR-to-MIR:
 //   - `Lower*` -- top-level HIR-to-MIR for a HIR construct, returns
@@ -232,63 +226,53 @@ auto RangeStep(
       .part_type = result_type};
 }
 
-// The tag a step into member `index` of the tagged union `projection`
-// describes needs the union to carry.
-auto RequiredTagOf(
-    const PackedProjection& projection, base::ComponentIndex index)
-    -> RequiredTag {
+// The tag a member of the packed aggregate `projection` describes needs carried
+// in the aggregate's own bits: none where they carry no tag.
+auto TagInBitsOf(const PackedProjection& projection, base::ComponentIndex index)
+    -> std::optional<TagInBits> {
   if (projection.tag_bits == 0) {
-    throw InternalError("RequiredTagOf: value carries no tag to test against");
+    return std::nullopt;
   }
-  return RequiredTag{.tag_bits = projection.tag_bits, .member = index};
+  return TagInBits{.tag_bits = projection.tag_bits, .member = index};
+}
+
+// The tag a step into member `index` of `aggregate` needs the union to hold
+// (LRM 11.9): none outside a tagged union, nor in a packed one of one member,
+// whose tag has no bits (LRM 7.3.2).
+auto TagRequiredByMember(
+    const UnitLowerer& unit_lowerer, const hir::Type& aggregate,
+    base::ComponentIndex index) -> std::optional<TagRequirement> {
+  if (const auto* unpacked = aggregate.As<hir::UnpackedUnionType>()) {
+    if (!unpacked->tagged) {
+      return std::nullopt;
+    }
+    return HeldTag{.member = index};
+  }
+  if (!aggregate.Is<hir::PackedUnionType>()) {
+    return std::nullopt;
+  }
+  return TagInBitsOf(ProjectPackedAggregate(unit_lowerer, aggregate), index);
 }
 
 // The step member `index` of a packed aggregate takes: the bits of the
 // aggregate's vector the member occupies (LRM 7.2.1, 7.3.1), and the tag the
-// aggregate has to carry where it is a tagged union naming more than one
-// member.
+// step needs the aggregate to carry, where it needs one.
 auto PackedMemberStep(
     mir::CompilationUnit& unit, mir::Block& block,
     const PackedProjection& projection, base::ComponentIndex index,
-    mir::TypeId part_type) -> DescentStep {
+    mir::TypeId part_type, std::optional<TagInBits> required_tag)
+    -> DescentStep {
   if (index.value >= projection.members.size()) {
     throw InternalError("PackedMemberStep: member index out of range");
   }
   const ProjectedMember& member = projection.members[index.value];
-  StepToBits bits{
-      .start = BuildConstantPosition(
-          unit, block, static_cast<std::int64_t>(member.bit_offset))};
-  if (projection.tag_bits != 0) {
-    bits.required_tag = RequiredTagOf(projection, index);
-  }
-  return DescentStep{.to = bits, .part_type = part_type};
-}
-
-// The step `aggregate.member` takes (LRM 7.2, 7.3). An unpacked aggregate's
-// member is storage of its own, named by its declaration-order position;
-// whether every part is live at once or one at a time is the value's own
-// semantics and reaches the step through the domain its type names. A packed
-// aggregate's member is bits of the one vector the aggregate is.
-auto MemberStep(
-    UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
-    base::ComponentIndex index, mir::TypeId part_type) -> DescentStep {
-  if (aggregate.Is<hir::UnpackedStructType>() ||
-      aggregate.Is<hir::UnpackedUnionType>()) {
-    return DescentStep{
-        .to = StepToComponent{.position = index}, .part_type = part_type};
-  }
-  return PackedMemberStep(
-      unit_lowerer.Unit(), block,
-      ProjectPackedAggregate(unit_lowerer, aggregate), index, part_type);
-}
-
-// Whether reaching a member of `aggregate` is checked against a tag carried in
-// the aggregate's own bits (LRM 11.9), which is so only of a packed tagged
-// union naming more than one member.
-auto CarriesATag(const UnitLowerer& unit_lowerer, const hir::Type& aggregate)
-    -> bool {
-  return aggregate.Is<hir::PackedUnionType>() &&
-         ProjectPackedAggregate(unit_lowerer, aggregate).tag_bits != 0;
+  return DescentStep{
+      .to =
+          StepToBits{
+              .start = BuildConstantPosition(
+                  unit, block, static_cast<std::int64_t>(member.bit_offset)),
+              .required_tag = required_tag},
+      .part_type = part_type};
 }
 
 // Reconciles a field read materialised at its part-select natural type to the
@@ -300,95 +284,45 @@ auto WrapSliceToDeclaredType(
     const mir::CompilationUnit& unit, mir::Block& block, mir::Expr owned,
     mir::TypeId final_type) -> mir::Expr {
   if (owned.type == final_type) return owned;
-  const mir::ExprId owned_id = block.exprs.Add(std::move(owned));
+  const mir::ExprId owned_id =
+      block.AsValue(unit.types, block.exprs.Add(std::move(owned)));
   return BuildValueConversion(unit, block, owned_id, final_type);
 }
 
-// The one-bit test that the tag the value `base` carries is `tag`. Bit-pattern
-// equality, not a logical compare, so a tag carrying x or z names no member.
-auto BuildTagTest(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
-    const RequiredTag& tag) -> mir::ExprId {
-  auto& unit = unit_lowerer.Unit();
-  // The tag is the most significant bits of the union's own vector (LRM 7.3.2),
-  // so where it starts and the state domain it is read in are the union's.
-  const mir::TypeId union_type = block.exprs.Get(base).type;
-  const std::uint64_t union_bits =
-      unit.types.Get(union_type).Integral().bit_width;
-  const mir::IntegralStateKind state_kind =
-      unit.types.Get(union_type).Integral().state_kind;
-  const mir::TypeId tag_type =
-      mir::PackedVectorOf(unit.types, tag.tag_bits, state_kind);
-  const mir::ExprId carried = block.exprs.Add(BuildPackedBitsRead(
-      unit_lowerer, block, base, union_bits - tag.tag_bits, tag_type));
-  const mir::ExprId named =
-      BuildIntLiteral(unit, block, static_cast<std::int64_t>(tag.member.value));
-  return block.exprs.Add(BuildMirBinaryExpr(
-      unit, block, hir::BinaryOp::kCaseEquality, carried,
-      ConvertToType(unit, block, named, tag_type), unit.builtins.bit1));
-}
-
-// The value `base_id` names, guarded by its tag being `tag` (LRM 11.9). The
-// guard yields that value, so the member's own slice composes onto it. In a
-// read the check has to be part of evaluating the access and not a test
-// hoisted ahead of it: LRM 11.3.5 requires a short-circuited operand to raise
-// none of the run-time errors its evaluation would have. The guard names
-// `base_id` twice, to test it and to yield it, so `base_id` is a read that
-// evaluates nothing.
-auto BuildTagGuard(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base_id,
-    const RequiredTag& tag, std::string_view message) -> mir::Expr {
-  auto& unit = unit_lowerer.Unit();
-  const mir::TypeId value_type = block.exprs.Get(base_id).type;
-  const mir::ExprId test = BuildTagTest(unit_lowerer, block, base_id, tag);
-  const mir::ExprId message_id = block.exprs.Add(
-      mir::MakeStringLiteral(unit.builtins.string, std::string{message}));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kRequire,
-                      .receiver = base_id},
-              .arguments = {test, message_id}},
-      .type = value_type};
-}
-
-// The value of the member `step` reaches in the value `base_id` names, at the
-// member's declared type. A component is read at that type. A packed member
-// is bits of the aggregate's vector (LRM 7.2.1: it "can be selected as if it
-// were a packed array"), so it is read at its part-select natural type and
-// brought to the declared type, behind the tag check where the aggregate is a
-// tagged union.
+// The member `step` reaches in what `base_id` names, at the member's declared
+// type. A structure's component and a union's member are the place they lie
+// in, which a read then reads. A packed member is bits of
+// the aggregate's vector (LRM 7.2.1: it "can be selected as if it were a packed
+// array"), so it is read at its part-select natural type and brought to the
+// declared type.
 auto ReadMember(
     UnitLowerer& unit_lowerer, mir::Block& block, const DescentStep& step,
     mir::ExprId base_id, mir::TypeId result_type) -> mir::Expr {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const std::optional<RequiredTag> tag = TagRequiredBy(step);
-  const mir::ExprId subject =
-      tag.has_value()
-          ? block.exprs.Add(BuildTagGuard(
-                unit_lowerer, block, base_id, *tag,
-                "read of a tagged union member inconsistent with the current "
-                "tag (LRM 11.9)"))
-          : base_id;
   return WrapSliceToDeclaredType(
-      unit, block, StepRead(unit, block, step, subject), result_type);
+      unit, block, StepForRead(unit, block, step, base_id), result_type);
 }
 
-// Whether a read of `expr` finds its value lying in storage, as opposed to
-// being handed a value that lies nowhere: a name, or a part of what a name
-// reaches. This is a question about reading and not about what may be written:
-// a concatenation names destinations to a write and is still a value built
-// from its operands to a read.
+// Where a read of `expr` finds its value: in no storage, handed a value that
+// lies nowhere; in storage that lasts only while the steps reading it run -- an
+// object whose one handle those steps hold; or in storage that outlives them --
+// a name, or a part of what a name reaches. This is a question about reading
+// and not about what may be written: a concatenation names destinations to a
+// write and is still a value built from its operands to a read.
+enum class StorageFound : std::uint8_t {
+  kNone,
+  kWhileTheStepsRun,
+  kBeyondTheSteps
+};
+
 template <ExprLowerer Lowerer>
-auto LiesInStorage(Lowerer& lowerer, const hir::Expr& expr) -> bool {
+auto StorageFoundBy(Lowerer& lowerer, const hir::Expr& expr) -> StorageFound {
   const auto base_lies = [&](hir::ExprId base) {
-    return LiesInStorage(lowerer, lowerer.HirExprs().Get(base));
+    return StorageFoundBy(lowerer, lowerer.HirExprs().Get(base));
   };
   return std::visit(
       Overloaded{
-          [](const hir::PrimaryExpr&) { return true; },
+          [](const hir::PrimaryExpr&) { return StorageFound::kBeyondTheSteps; },
           [&](const hir::ElementSelectExpr& e) {
             return base_lies(e.base_value);
           },
@@ -398,59 +332,133 @@ auto LiesInStorage(Lowerer& lowerer, const hir::Expr& expr) -> bool {
           [&](const hir::MemberAccessExpr& e) {
             return base_lies(e.base_value);
           },
-          // A property lies in the object its handle reaches (LRM 8.4), however
-          // the handle was come by.
-          [](const hir::ClassPropertyAccessExpr&) { return true; },
-          [](const hir::InterfaceMemberAccessExpr&) { return true; },
-          [](const hir::UnaryExpr&) { return false; },
-          [](const hir::BinaryExpr&) { return false; },
-          [](const hir::ConditionalExpr&) { return false; },
-          [](const hir::AssignExpr&) { return false; },
-          [](const hir::IncDecExpr&) { return false; },
-          [](const hir::CallExpr&) { return false; },
-          [](const hir::ConversionExpr&) { return false; },
-          [](const hir::ConstantExpr&) { return false; },
-          [](const hir::ValueRangeExpr&) { return false; },
-          [](const hir::InsideExpr&) { return false; },
-          [](const hir::InterfaceInstanceAccessExpr&) { return false; },
-          [](const hir::ConcatExpr&) { return false; },
-          [](const hir::StreamingConcatExpr&) { return false; },
-          [](const hir::ReplicationExpr&) { return false; },
-          [](const hir::AssignmentPatternExpr&) { return false; },
-          [](const hir::AssignmentPatternReplicationExpr&) { return false; },
-          [](const hir::DynamicArrayNewExpr&) { return false; },
-          [](const hir::ClassNewExpr&) { return false; },
-          [](const hir::AssociativeAssignmentPatternExpr&) { return false; },
-          [](const hir::AssignmentPatternKeyedExpr&) { return false; },
-          [](const hir::TaggedUnionExpr&) { return false; },
-          [](const hir::DynamicCastExpr&) { return false; }},
+          // A property lies in the object its handle reaches (LRM 8.4): one
+          // the steps hold the only handle to lives while they run, and one a
+          // stored handle reaches outlives them.
+          [&](const hir::ClassPropertyAccessExpr& e) {
+            switch (base_lies(e.base_value)) {
+              case StorageFound::kNone:
+              case StorageFound::kWhileTheStepsRun:
+                return StorageFound::kWhileTheStepsRun;
+              case StorageFound::kBeyondTheSteps:
+                return StorageFound::kBeyondTheSteps;
+            }
+            throw InternalError("StorageFoundBy: unknown storage found");
+          },
+          [](const hir::InterfaceMemberAccessExpr&) {
+            return StorageFound::kBeyondTheSteps;
+          },
+          [](const hir::UnaryExpr&) { return StorageFound::kNone; },
+          [](const hir::BinaryExpr&) { return StorageFound::kNone; },
+          [](const hir::ConditionalExpr&) { return StorageFound::kNone; },
+          [](const hir::AssignExpr&) { return StorageFound::kNone; },
+          [](const hir::IncDecExpr&) { return StorageFound::kNone; },
+          [](const hir::CallExpr&) { return StorageFound::kNone; },
+          [](const hir::ConversionExpr&) { return StorageFound::kNone; },
+          [](const hir::ConstantExpr&) { return StorageFound::kNone; },
+          [](const hir::ValueRangeExpr&) { return StorageFound::kNone; },
+          [](const hir::InsideExpr&) { return StorageFound::kNone; },
+          [](const hir::InterfaceInstanceAccessExpr&) {
+            return StorageFound::kNone;
+          },
+          [](const hir::ConcatExpr&) { return StorageFound::kNone; },
+          [](const hir::StreamingConcatExpr&) { return StorageFound::kNone; },
+          [](const hir::ReplicationExpr&) { return StorageFound::kNone; },
+          [](const hir::AssignmentPatternExpr&) { return StorageFound::kNone; },
+          [](const hir::AssignmentPatternReplicationExpr&) {
+            return StorageFound::kNone;
+          },
+          [](const hir::DynamicArrayNewExpr&) { return StorageFound::kNone; },
+          [](const hir::ClassNewExpr&) { return StorageFound::kNone; },
+          [](const hir::AssociativeAssignmentPatternExpr&) {
+            return StorageFound::kNone;
+          },
+          [](const hir::AssignmentPatternKeyedExpr&) {
+            return StorageFound::kNone;
+          },
+          [](const hir::TaggedUnionExpr&) { return StorageFound::kNone; },
+          [](const hir::DynamicCastExpr&) { return StorageFound::kNone; }},
       expr.data);
 }
 
-// The queue a select read as a value is taken from, evaluated here, once (LRM
-// 11.4.1: the source wrote it once, and both the select and each `$` under it
-// take it). A queue lying in storage is read where it lies, so only what is
-// computed on the way to it is evaluated and the queue itself is not copied; a
-// queue that lies nowhere -- a function's result -- is kept in a local.
+// The value a select is taken from, as evaluated once for it.
+struct SelectedBase {
+  SettledPath path;
+  // Whether the value lies in storage that outlives the block of steps it is
+  // evaluated in, rather than in a local of that block or in an object only
+  // that block holds a handle to.
+  bool outlives_the_steps;
+};
+
+// The value a select read as a value is taken from, evaluated here, once,
+// because the select names it more than once (LRM 11.4.1): a queue for the
+// part and for each `$` under the select (LRM 7.10.1). A value lying in storage
+// is named where it lies -- in an object a function's handle reaches too, which
+// the handle the steps hold keeps alive while they run -- so only what is
+// computed on the way to it is evaluated and the value itself is not copied; a
+// value that lies nowhere -- a function's result, a sampled value, a part of
+// either -- is kept in a local, which is then the place it lies in.
 template <ExprLowerer Lowerer>
-auto EvaluateSelectedQueue(
+auto EvaluateSelectedBase(
     Lowerer& lowerer, const WalkFrame& at, const hir::Expr& base)
-    -> diag::Result<SettledPath> {
+    -> diag::Result<SelectedBase> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
   mir::Block& block = *at.current_block;
   // A sampled read answers with the value each cell kept (LRM 16.5.1), which
   // is a question a read of the value asks and a path does not.
-  if (at.reads_as_of == ReadsAsOf::kNow && LiesInStorage(lowerer, base)) {
+  const StorageFound found = at.reads_as_of == ReadsAsOf::kNow
+                                 ? StorageFoundBy(lowerer, base)
+                                 : StorageFound::kNone;
+  const auto named_where_it_lies =
+      [&](bool outlives_the_steps) -> diag::Result<SelectedBase> {
     auto path = lowerer.LowerAccessPath(base, at);
     if (!path) return std::unexpected(std::move(path.error()));
-    return SettledForRead(unit_lowerer, at, *std::move(path));
+    return SelectedBase{
+        .path = SettledForRead(unit_lowerer, at, *std::move(path)),
+        .outlives_the_steps = outlives_the_steps};
+  };
+  switch (found) {
+    case StorageFound::kNone:
+      break;
+    case StorageFound::kWhileTheStepsRun:
+      return named_where_it_lies(false);
+    case StorageFound::kBeyondTheSteps:
+      return named_where_it_lies(true);
   }
   auto value = lowerer.LowerExpr(base, at);
   if (!value) return std::unexpected(std::move(value.error()));
-  return SettledPath{
-      .named_in = &block,
-      .owner = EvaluatedOnce(at, block.exprs.Add(*std::move(value))),
-      .descent = {}};
+  const mir::TypeId type = value->type;
+  return SelectedBase{
+      .path =
+          SettledPath{
+              .named_in = &block,
+              .owner = block.LocalPlace(
+                  DeclareLocal(at, block.exprs.Add(*std::move(value))), type),
+              .descent = {}},
+      .outlives_the_steps = false};
+}
+
+// Whether reading `expr` reaches through a member a tag guards (LRM 11.9), at
+// any of the selects it is written as.
+template <ExprLowerer Lowerer>
+auto ReachesThroughATag(Lowerer& lowerer, const hir::Expr& expr) -> bool {
+  const auto base_reaches = [&](hir::ExprId base) {
+    return ReachesThroughATag(lowerer, lowerer.HirExprs().Get(base));
+  };
+  if (const auto* member = std::get_if<hir::MemberAccessExpr>(&expr.data)) {
+    const hir::Type& aggregate = lowerer.Owner().Hir().types.Get(
+        lowerer.HirExprs().Get(member->base_value).type);
+    return TagRequiredByMember(lowerer.Owner(), aggregate, member->field_index)
+               .has_value() ||
+           base_reaches(member->base_value);
+  }
+  if (const auto* element = std::get_if<hir::ElementSelectExpr>(&expr.data)) {
+    return base_reaches(element->base_value);
+  }
+  if (const auto* range = std::get_if<hir::RangeSelectExpr>(&expr.data)) {
+    return base_reaches(range->base_value);
+  }
+  return false;
 }
 
 // The queue a select named as a part is taken from, where it is taken from
@@ -471,6 +479,39 @@ auto SettleSelectedQueue(
 }
 
 }  // namespace
+
+auto MemberStep(
+    UnitLowerer& unit_lowerer, mir::Block& block, const hir::Type& aggregate,
+    base::ComponentIndex index, mir::TypeId part_type) -> DescentStep {
+  if (aggregate.Is<hir::UnpackedStructType>()) {
+    return DescentStep{
+        .to = StepToComponent{.position = index}, .part_type = part_type};
+  }
+  if (const auto* unpacked = aggregate.As<hir::UnpackedUnionType>()) {
+    if (unpacked->tagged) {
+      return DescentStep{
+          .to = StepToTaggedMember{.position = index}, .part_type = part_type};
+    }
+    return DescentStep{
+        .to = StepToUnionMember{.position = index}, .part_type = part_type};
+  }
+  const PackedProjection projection =
+      ProjectPackedAggregate(unit_lowerer, aggregate);
+  return PackedMemberStep(
+      unit_lowerer.Unit(), block, projection, index, part_type,
+      TagInBitsOf(projection, index));
+}
+
+auto BuildHoldsMember(
+    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId subject,
+    hir::TypeId subject_type, base::ComponentIndex index) -> mir::ExprId {
+  const std::optional<TagRequirement> tag = TagRequiredByMember(
+      unit_lowerer, unit_lowerer.Hir().types.Get(subject_type), index);
+  if (!tag.has_value()) {
+    return BuildMachineBool(unit_lowerer.Unit(), block, true);
+  }
+  return BuildTagMatches(unit_lowerer.Unit(), block, *tag, subject);
+}
 
 auto ElementStep(
     UnitLowerer& unit_lowerer, mir::Block& block, hir::TypeId receiver_type,
@@ -494,6 +535,10 @@ auto ElementStep(
   const mir::ExprId position = WrapIndexAsPosition(unit, block, map, index, 0);
   if (receiver.IsIntegral()) {
     return BitsStep(position, part_type);
+  }
+  if (receiver.Is<hir::StringType>()) {
+    return DescentStep{
+        .to = StepToCharacter{.position = position}, .part_type = part_type};
   }
   return OneElementStep(position, part_type);
 }
@@ -526,57 +571,8 @@ auto BuildPackedMemberRead(
       PartSelectNaturalType(unit, block.exprs.Get(base).type, result_type);
   return ReadMember(
       unit_lowerer, block,
-      PackedMemberStep(unit, block, projection, index, natural), base,
-      result_type);
-}
-
-auto BuildPackedTagTest(
-    UnitLowerer& unit_lowerer, mir::Block& block, mir::ExprId base,
-    const PackedProjection& projection, base::ComponentIndex index)
-    -> mir::ExprId {
-  return BuildTagTest(
-      unit_lowerer, block, base, RequiredTagOf(projection, index));
-}
-
-void AppendTagChecks(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, AccessPath& target) {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Block& block = *frame.current_block;
-  // How many of the leading steps have had what they evaluate settled into
-  // locals.
-  std::size_t settled = 0;
-  for (std::size_t taken = 0; taken < target.descent.size(); ++taken) {
-    const std::optional<RequiredTag> required =
-        TagRequiredBy(target.descent[taken]);
-    if (!required.has_value()) {
-      continue;
-    }
-    const RequiredTag tag = *required;
-    // The check and the write both take the owner and the steps before this
-    // one, so what those evaluate is evaluated here and both read the result.
-    target.owner = SettledOwner(unit_lowerer, frame, target.owner);
-    for (; settled < taken; ++settled) {
-      ForEachOperand(target.descent[settled], [&](mir::ExprId& operand) {
-        operand = EvaluatedOnce(frame, operand);
-      });
-    }
-    // The tag is a fact of the value the step is taken into, which is what the
-    // steps before it reach.
-    const std::span<const DescentStep> before =
-        std::span<const DescentStep>(target.descent).first(taken);
-    const mir::ExprId stepped_into = EvaluatedOnce(
-        frame, PathValueAsDeclared(
-                   unit, block,
-                   AccessPath{
-                       .owner = target.owner,
-                       .descent = {before.begin(), before.end()}}));
-    block.AppendStmt(
-        mir::ExprStmt{
-            .expr = block.exprs.Add(BuildTagGuard(
-                unit_lowerer, block, stepped_into, tag,
-                "write to a tagged union member inconsistent with the current "
-                "tag (LRM 11.9)"))});
-  }
+      PackedMemberStep(unit, block, projection, index, natural, std::nullopt),
+      base, result_type);
 }
 
 template <ExprLowerer Lowerer>
@@ -588,31 +584,44 @@ auto LowerHirElementSelectExpr(
   const hir::Expr& base_expr = exprs.Get(sel.base_value);
   // An element of a queue may be indexed from the queue's own last index (LRM
   // 7.10.1), so the queue is evaluated once in a block of steps, where the
-  // select is written, and the read is what those steps yield.
+  // select is written. Where the queue outlives those steps they yield the
+  // reference to the element, which is then the place the element lies in;
+  // where it lies in a local of theirs, they yield the element's value.
   if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
     BlockBuilder steps(frame);
     mir::Block& body = steps.Body();
-    auto queue = EvaluateSelectedQueue(lowerer, steps.Frame(), base_expr);
+    auto queue = EvaluateSelectedBase(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
     const mir::ExprId queue_id =
-        PathValue(unit_lowerer.Unit(), body, NamedIn(*queue, body));
+        PathAsPlace(unit_lowerer.Unit(), body, NamedIn(queue->path, body));
     auto index = lowerer.LowerExpr(
-        exprs.Get(sel.index), steps.Frame().WithSelectedQueue(&*queue));
+        exprs.Get(sel.index), steps.Frame().WithSelectedQueue(&queue->path));
     if (!index) return std::unexpected(std::move(index.error()));
     const mir::ExprId index_id = body.exprs.Add(*std::move(index));
-    return steps.Build(body.exprs.Add(BuildElementAccessCallExpr(
-        unit_lowerer, body, queue_id, base_expr.type, index_id, result_type)));
+    const DescentStep element =
+        ElementStep(unit_lowerer, body, base_expr.type, index_id, result_type);
+    if (!queue->outlives_the_steps) {
+      return steps.Build(body.exprs.Add(
+          StepRead(unit_lowerer.Unit(), body, element, queue_id)));
+    }
+    const mir::ExprId reference =
+        frame.current_block->exprs.Add(steps.Build(body.exprs.Add(
+            ElementReference(unit_lowerer.Unit(), body, element, queue_id))));
+    return mir::MakeDerefExpr(reference, result_type);
   }
   auto& block = *frame.current_block;
-  auto base_or = lowerer.LowerExpr(base_expr, frame);
+  auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   auto idx_or = lowerer.LowerExpr(exprs.Get(sel.index), frame);
   if (!idx_or) return std::unexpected(std::move(idx_or.error()));
   const mir::ExprId idx_id = block.exprs.Add(*std::move(idx_or));
 
-  return BuildElementAccessCallExpr(
-      unit_lowerer, block, base_id, base_expr.type, idx_id, result_type);
+  // The element is named where it lies, and read only where a value is wanted.
+  return StepForRead(
+      unit_lowerer.Unit(), block,
+      ElementStep(unit_lowerer, block, base_expr.type, idx_id, result_type),
+      base_id);
 }
 
 template <ExprLowerer Lowerer>
@@ -629,17 +638,18 @@ auto LowerHirRangeSelectExpr(
   if (unit_lowerer.Hir().types.Get(base_expr.type).Is<hir::QueueType>()) {
     BlockBuilder steps(frame);
     mir::Block& body = steps.Body();
-    auto queue = EvaluateSelectedQueue(lowerer, steps.Frame(), base_expr);
+    auto queue = EvaluateSelectedBase(lowerer, steps.Frame(), base_expr);
     if (!queue) return std::unexpected(std::move(queue.error()));
-    const mir::ExprId queue_id = PathValue(unit, body, NamedIn(*queue, body));
+    const mir::ExprId queue_id =
+        PathAsPlace(unit, body, NamedIn(queue->path, body));
     auto step = RangeStep(
-        lowerer, steps.Frame().WithSelectedQueue(&*queue), sel.bounds,
+        lowerer, steps.Frame().WithSelectedQueue(&queue->path), sel.bounds,
         base_expr.type, result_type);
     if (!step) return std::unexpected(std::move(step.error()));
     return steps.Build(body.exprs.Add(StepRead(unit, body, *step, queue_id)));
   }
   auto& block = *frame.current_block;
-  auto base_or = lowerer.LowerExpr(base_expr, frame);
+  auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
   const mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
   auto step =
@@ -653,32 +663,45 @@ auto LowerHirMemberAccessExpr(
     Lowerer& lowerer, WalkFrame frame, const hir::MemberAccessExpr& sel,
     mir::TypeId result_type) -> diag::Result<mir::Expr> {
   UnitLowerer& unit_lowerer = lowerer.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::Expr& base_expr = lowerer.HirExprs().Get(sel.base_value);
   const hir::Type& aggregate = unit_lowerer.Hir().types.Get(base_expr.type);
+  mir::Block& block = *frame.current_block;
+  const auto read_member = [&](mir::Block& into, mir::ExprId base_id) {
+    const mir::TypeId natural =
+        PartSelectNaturalType(unit, into.exprs.Get(base_id).type, result_type);
+    return ReadMember(
+        unit_lowerer, into,
+        MemberStep(unit_lowerer, into, aggregate, sel.field_index, natural),
+        base_id, result_type);
+  };
   // A member behind a tag is read by naming its aggregate twice, to test the
-  // tag and to take the member, so the aggregate is evaluated once into a
-  // local of a block of steps, and the read is what those steps yield.
-  std::optional<BlockBuilder> steps;
-  if (CarriesATag(unit_lowerer, aggregate)) {
-    steps.emplace(frame);
+  // tag and to take the member (LRM 11.3.5). A union lying in storage is read
+  // with its whole select as one checked access; one met here is a value --
+  // computed, or sampled (LRM 16.5.1) -- held in a local of a block of steps,
+  // checked there, and the member read out among them.
+  if (TagRequiredByMember(unit_lowerer, aggregate, sel.field_index)
+          .has_value()) {
+    BlockBuilder steps(frame);
+    mir::Block& body = steps.Body();
+    auto base = lowerer.LowerExpr(base_expr, steps.Frame());
+    if (!base) return std::unexpected(std::move(base.error()));
+    const mir::TypeId union_type = base->type;
+    const mir::ExprId held_union = body.LocalPlace(
+        DeclareLocal(steps.Frame(), body.exprs.Add(*std::move(base))),
+        union_type);
+    const DescentStep member = MemberStep(
+        unit_lowerer, body, aggregate, sel.field_index,
+        PartSelectNaturalType(unit, union_type, result_type));
+    AppendReadChecks(
+        unit, body, AccessPath{.owner = held_union, .descent = {member}});
+    return steps.Build(body.AsValue(
+        unit.types, body.exprs.Add(ReadMember(
+                        unit_lowerer, body, member, held_union, result_type))));
   }
-  const WalkFrame& at = steps.has_value() ? steps->Frame() : frame;
-  auto& block = *at.current_block;
-  auto base_or = lowerer.LowerExpr(base_expr, at);
+  auto base_or = lowerer.LowerAsPlace(base_expr, frame);
   if (!base_or) return std::unexpected(std::move(base_or.error()));
-  mir::ExprId base_id = block.exprs.Add(*std::move(base_or));
-  if (steps.has_value()) {
-    base_id = EvaluatedOnce(at, base_id);
-  }
-  const mir::TypeId natural = PartSelectNaturalType(
-      unit_lowerer.Unit(), block.exprs.Get(base_id).type, result_type);
-  const DescentStep step =
-      MemberStep(unit_lowerer, block, aggregate, sel.field_index, natural);
-  mir::Expr read = ReadMember(unit_lowerer, block, step, base_id, result_type);
-  if (!steps.has_value()) {
-    return read;
-  }
-  return steps->Build(block.exprs.Add(std::move(read)));
+  return read_member(block, block.exprs.Add(*std::move(base_or)));
 }
 
 // LRM 8.4: a class property read reaches the object through the handle.
@@ -751,6 +774,47 @@ auto LowerHirMemberAccessExprPath(
                             sel.field_index, result_type));
 }
 
+template <ExprLowerer Lowerer>
+auto IsTagCheckedRead(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::Expr& select) -> bool {
+  return frame.reads_as_of == ReadsAsOf::kNow &&
+         ReachesThroughATag(lowerer, select) &&
+         StorageFoundBy(lowerer, select) != StorageFound::kNone;
+}
+
+template <ExprLowerer Lowerer>
+auto LowerTagCheckedUse(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& select,
+    const TagCheckedUse& use) -> diag::Result<mir::Expr> {
+  BlockBuilder steps(frame);
+  mir::Block& body = steps.Body();
+  auto path = lowerer.LowerAccessPath(select, steps.Frame());
+  if (!path) return std::unexpected(std::move(path.error()));
+  const SettledPath settled =
+      SettledForRead(lowerer.Owner(), steps.Frame(), *std::move(path));
+  auto value = use(steps, NamedIn(settled, body));
+  if (!value) return std::unexpected(std::move(value.error()));
+  return steps.Build(*value);
+}
+
+template <ExprLowerer Lowerer>
+auto LowerTagCheckedRead(
+    Lowerer& lowerer, WalkFrame frame, const hir::Expr& select)
+    -> diag::Result<mir::Expr> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  return LowerTagCheckedUse(
+      lowerer, frame, select,
+      [&](BlockBuilder& steps,
+          const AccessPath& path) -> diag::Result<mir::ExprId> {
+        // A read answers with the storage it reached until its value is kept,
+        // so the value is kept here, before the steps end.
+        mir::Block& body = steps.Body();
+        const mir::ExprId value = PathValueAsDeclared(unit, body, path);
+        const mir::TypeId type = body.exprs.Get(value).type;
+        return body.ReadLocal(steps.DeclareLocal(type, value), type);
+      });
+}
+
 // LRM 8.4: a class property is reached through the handle naming its object.
 // The path holds the object and which of its properties, and what the path is
 // taken for decides how the object is reached, so the handle the source wrote
@@ -789,11 +853,11 @@ auto LowerHirInterfaceMemberAccessExpr(
   if (!held) return std::unexpected(std::move(held.error()));
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   const mir::ExprId storage = ReportedPlace(unit, frame, *held);
-  return mir::Expr{
-      .data = mir::DerefExpr{.pointer = storage},
-      .type = unit.types.Get(frame.current_block->exprs.Get(storage).type)
-                  .template Get<mir::PointerType>()
-                  .pointee};
+  return mir::MakeDerefExpr(
+      frame.current_block->DerefOperand(unit.types, storage),
+      unit.types.Get(frame.current_block->exprs.Get(storage).type)
+          .template Get<mir::PointerType>()
+          .pointee);
 }
 
 template <ExprLowerer Lowerer>
@@ -856,6 +920,21 @@ template auto LowerHirMemberAccessExprPath(
 template auto PropertyPath(
     ProcessLowerer&, const WalkFrame&, mir::ExprId,
     const hir::ClassPropertyTarget&, mir::TypeId) -> AccessPath;
+template auto IsTagCheckedRead(
+    ProcessLowerer&, const WalkFrame&, const hir::Expr&) -> bool;
+template auto IsTagCheckedRead(
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::Expr&) -> bool;
+template auto LowerTagCheckedUse(
+    ProcessLowerer&, WalkFrame, const hir::Expr&, const TagCheckedUse&)
+    -> diag::Result<mir::Expr>;
+template auto LowerTagCheckedUse(
+    const StructuralScopeLowerer&, WalkFrame, const hir::Expr&,
+    const TagCheckedUse&) -> diag::Result<mir::Expr>;
+template auto LowerTagCheckedRead(ProcessLowerer&, WalkFrame, const hir::Expr&)
+    -> diag::Result<mir::Expr>;
+template auto LowerTagCheckedRead(
+    const StructuralScopeLowerer&, WalkFrame, const hir::Expr&)
+    -> diag::Result<mir::Expr>;
 template auto PropertyPath(
     const StructuralScopeLowerer&, const WalkFrame&, mir::ExprId,
     const hir::ClassPropertyTarget&, mir::TypeId) -> AccessPath;

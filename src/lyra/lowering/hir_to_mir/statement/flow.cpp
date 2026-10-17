@@ -73,7 +73,8 @@ auto LowerPromotedVarDeclaration(
   process.MapProceduralVar(var, pb);
   auto& block = *frame.current_block;
   mir::CompilationUnit& unit = process.Owner().Unit();
-  const mir::ExprId target = block.exprs.Add(PromotedVarPlace(frame, pb));
+  const mir::ExprId target =
+      block.exprs.Add(PromotedVarPlace(unit.types, frame, pb));
   auto initial = BuildInitialValue(process, frame, hir_local, type);
   if (!initial) return std::unexpected(std::move(initial.error()));
   return mir::Stmt{

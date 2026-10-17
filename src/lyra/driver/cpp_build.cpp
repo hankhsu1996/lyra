@@ -160,7 +160,7 @@ if [ "$USE_PCH" = "1" ]; then
   # nothing else: the headers it was built from, and the command line below that
   # says what goes into it. Re-emitting into a directory that already holds one
   # then cannot reuse a header prepared a different way from the same headers.
-  PREP="@STD@ @OPT@ @VALIDATE@ @PREPARE@"
+  PREP="@DESIGN_FLAGS@ @VALIDATE@ @PREPARE@"
   FP=$( { find @INCLUDE@ -name '*.hpp' -print0 | sort -z | xargs -0 sha1sum; echo "$PREP"; } | sha1sum | cut -c1-16)
   PCH="@CACHE@/prelude-${FP}-@OPTTAG@.pch"
   if [ ! -f "$PCH" ]; then
@@ -194,7 +194,7 @@ compile_all() {
   STATUS=0
   for src in @SOURCES@; do
     OBJS="$OBJS @OBJDIR@/$src.o"
-    "$CXX" @STD@ @OPT@ -I @INCLUDE@ $1 -c "$src" -o "@OBJDIR@/$src.o" \
+    "$CXX" @DESIGN_FLAGS@ -I @INCLUDE@ $1 -c "$src" -o "@OBJDIR@/$src.o" \
       >>"$LOG" 2>&1 &
     PIDS="$PIDS $!"
     LIVE=$((LIVE + 1))
@@ -290,14 +290,14 @@ auto RenderBuildScript(
   // The recipe keys its own PCH cache by header content, which does not
   // separate two builds clang will refuse to share.
   const std::string_view optimization_tag = optimization_flag.substr(1);
-  const std::array<std::pair<std::string_view, std::string_view>, 16> bindings =
+  const std::string design_flags = JoinWords(DesignCompileFlags(optimization));
+  const std::array<std::pair<std::string_view, std::string_view>, 15> bindings =
       {{
           {"@INCLUDE@", kRuntimeIncludeDir},
           {"@PRELUDE@", support::kRuntimePreludeHeader},
           {"@CACHE@", kRuntimeCacheDir},
           {"@OBJDIR@", kObjectDir},
-          {"@STD@", kCxxStandardFlag},
-          {"@OPT@", optimization_flag},
+          {"@DESIGN_FLAGS@", design_flags},
           {"@VALIDATE@", kPchContentValidationFlag},
           {"@PREPARE@", kPchInstantiateTemplatesFlag},
           {"@OPTTAG@", optimization_tag},
@@ -366,9 +366,10 @@ auto CopyDpiSources(
 auto CompileFlags(
     const std::filesystem::path& include_root, Optimization optimization)
     -> std::vector<std::string> {
-  return {
-      std::string(kCxxStandardFlag),
-      std::string(OptimizationFlag(optimization)), "-I", include_root.string()};
+  std::vector<std::string> flags = DesignCompileFlags(optimization);
+  flags.emplace_back("-I");
+  flags.push_back(include_root.string());
+  return flags;
 }
 
 // The action compiling `unit`: the file, every file of the project it

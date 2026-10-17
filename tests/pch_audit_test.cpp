@@ -181,11 +181,12 @@ TEST(PchCoverage, EveryInputIsCovered) {
 
   const auto prelude =
       loc_or->include_root / lyra::support::kRuntimePreludeHeader;
-  const std::vector<std::string> args = {
-      "-std=c++23",   "-H",
-      "-I",           loc_or->include_root.string(),
-      "-xc++-header", prelude.string(),
-      "-o",           "/dev/null"};
+  std::vector<std::string> args(
+      lyra::driver::kDesignCompileFlags.begin(),
+      lyra::driver::kDesignCompileFlags.end());
+  args.insert(
+      args.end(), {"-H", "-I", loc_or->include_root.string(), "-xc++-header",
+                   prelude.string(), "-o", "/dev/null"});
 
   auto result_or = lyra::driver::RunProcessCaptured(*cxx_or, args);
   ASSERT_TRUE(result_or) << result_or.error();
@@ -281,18 +282,12 @@ TEST(PchStaleness, CurrencyIsDecidedByContent) {
                 lyra::support::kRuntimePreludeHeader));
 
   const auto compile_against = [&](const std::filesystem::path& pch) {
-    const std::vector<std::string> args = {
-        std::string(lyra::driver::kCxxStandardFlag),
-        std::string(lyra::driver::OptimizationFlag(optimization)),
-        "-I",
-        include_root.string(),
-        "-include-pch",
-        pch.string(),
-        std::string(lyra::driver::kPchContentValidationFlag),
-        "-c",
-        unit.string(),
-        "-o",
-        (project / "unit.o").string()};
+    std::vector<std::string> args =
+        lyra::driver::DesignCompileFlags(optimization);
+    args.insert(
+        args.end(), {"-I", include_root.string(), "-include-pch", pch.string(),
+                     std::string(lyra::driver::kPchContentValidationFlag), "-c",
+                     unit.string(), "-o", (project / "unit.o").string()});
     return lyra::driver::RunProcessCaptured(*cxx, args);
   };
 

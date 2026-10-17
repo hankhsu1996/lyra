@@ -297,12 +297,13 @@ forbids is one edge that also carries the consumer.
 
 The C++ backend realizes an activation as a coroutine frame. Its activation token is the coroutine
 promise's non-templated base (the scheduler holds a pointer to it); its completion slot is the typed
-result the promise carries; a task enable is `co_await` of the activation, with symmetric transfer
-realizing the continuation and `await_resume` consuming the terminal outcome. Each timing control is
-a wait the frame holds as a local, carrying what its construct needs to answer a stop there again --
-a delay its absolute deadline, an event control its observables and edges -- and the activation
-names the one it is parked on for as long as it waits. The promise base, the `coroutine_handle`, and
-symmetric transfer are this realization's mechanics; the activation, completion slot, memberships,
-disposition, and what it waits for are the model they realize. The LIR / LLVM backend realizes the
-same model with coroutine intrinsics and explicit control edges instead, reaching the same object
-rather than re-entering the suspended body.
+result the promise carries, which keeps a value too large for a frame in storage of its own; a task
+enable is `co_await` of the activation, with symmetric transfer realizing the continuation and
+`await_resume` consuming the terminal outcome. Each timing control is a wait the frame holds as a
+local, carrying what its construct needs to answer a stop there again -- a delay its absolute
+deadline, an event control its observables and edges -- and the activation names the one it is
+parked on for as long as it waits. The promise base, the `coroutine_handle`, and symmetric transfer
+are this realization's mechanics; the activation, completion slot, memberships, disposition, and
+what it waits for are the model they realize. The LIR / LLVM backend realizes the same model with
+coroutine intrinsics and explicit control edges instead, reaching the same object rather than
+re-entering the suspended body.

@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/hash.hpp"
@@ -70,11 +71,6 @@ auto StateDomainOf(IntegralStateKind state) -> value::StateDomain {
       return value::StateDomain::kFourState;
   }
   throw InternalError("mir: unknown integral state kind");
-}
-
-auto UsesHeapWords(const IntegralType& integral) -> bool {
-  return value::UsesHeapWords(
-      integral.bit_width, StateDomainOf(integral.state_kind));
 }
 
 auto BlankIntegralConstant(const IntegralType& integral) -> IntegralConstant {
@@ -167,7 +163,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [](const DiagnosticType&) {},
           [&](const RuntimeLibraryType& t) { HashEnum(seed, t.kind); },
           [&](const CoroutineType& t) { HashId(seed, t.payload); },
-          [&](const RefType& t) {
+          [&](const VariableRefType& t) {
             HashId(seed, t.pointee);
             HashEnum(seed, t.mutability);
           },
@@ -180,25 +176,28 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
             HashEnum(seed, t.ownership);
             HashEnum(seed, t.mutability);
           },
+          [&](const ReferenceType& t) {
+            HashId(seed, t.referent);
+            HashEnum(seed, t.mutability);
+          },
           [&](const ManagedRefType& t) { HashId(seed, t.pointee); },
           [&](const VectorType& t) { HashId(seed, t.element); },
           [&](const TupleType& t) { HashIds(seed, t.elements); },
-          [&](const UnionType& t) { HashIds(seed, t.members); },
-          [&](const TaggedUnionType& t) { HashIds(seed, t.members); },
           [](const EmptyType&) {},
           [&](const ObservableType& t) { HashId(seed, t.value); },
           [&](const ResolvedType& t) { HashId(seed, t.value); },
           [&](const DriverType& t) { HashId(seed, t.value); },
           [&](const OpenWriteType& t) { HashId(seed, t.value); },
           [&](const DesignationType& t) { HashId(seed, t.value); },
+          [&](const BitsReferenceType& t) { HashId(seed, t.bits); },
           [&](const ObjectWriteType& t) { HashId(seed, t.object); },
           [&](const SampledHistoryType& t) { HashId(seed, t.value); },
           [](const EvaluationAttemptsType&) {},
           [](const LoopBlocksType&) {},
-          [&](const StructType& t) {
+          [&](const RecordType& t) {
             std::visit(
                 Overloaded{
-                    [&](StructId id) { HashField(seed, id.value); },
+                    [&](RecordId id) { HashField(seed, id.value); },
                     [&](const TypeDeclarationRef& ref) {
                       HashField(seed, ref.unit_name);
                       HashField(seed, ref.path);
@@ -232,19 +231,135 @@ auto Type::IsAliasHandle() const -> bool {
 }
 
 auto Type::IsCapabilityWrapper() const -> bool {
-  return Is<ObservableType>() || IsReference() || Is<ResolvedType>() ||
+  return Is<ObservableType>() || IsVariableRef() || Is<ResolvedType>() ||
          Is<DriverType>();
 }
 
-auto Type::IsReference() const -> bool {
-  return Is<RefType>() || Is<ReferenceWrapperType>();
+auto Type::IsVariableRef() const -> bool {
+  return Is<VariableRefType>() || Is<ReferenceWrapperType>();
+}
+
+namespace {
+
+// Whether an object of the library's of `kind` is storage reached by its
+// address, as LIR states it: what a disable names, and what a delayed
+// continuous assignment propagates through.
+auto IsReachedByAddress(RuntimeLibraryKind kind) -> bool {
+  switch (kind) {
+    case RuntimeLibraryKind::kCancellationTarget:
+    case RuntimeLibraryKind::kTimer:
+      return true;
+    case RuntimeLibraryKind::kPrintItem:
+    case RuntimeLibraryKind::kPrintLiteralItem:
+    case RuntimeLibraryKind::kPrintValueItem:
+    case RuntimeLibraryKind::kFormatSpec:
+    case RuntimeLibraryKind::kFormatArg:
+    case RuntimeLibraryKind::kTimeFormat:
+    case RuntimeLibraryKind::kDpiBitBuffer:
+    case RuntimeLibraryKind::kDpiLogicBuffer:
+    case RuntimeLibraryKind::kDpiOpenArray:
+    case RuntimeLibraryKind::kEnumeration:
+    case RuntimeLibraryKind::kTrigger:
+    case RuntimeLibraryKind::kObservation:
+    case RuntimeLibraryKind::kReadReport:
+    case RuntimeLibraryKind::kWait:
+    case RuntimeLibraryKind::kHierarchySegment:
+    case RuntimeLibraryKind::kChannelCancellation:
+    case RuntimeLibraryKind::kDpiBitChunk:
+    case RuntimeLibraryKind::kDpiLogicChunk:
+    case RuntimeLibraryKind::kDpiOpenArrayHandle:
+    case RuntimeLibraryKind::kControlEffect:
+    case RuntimeLibraryKind::kObjectDefinition:
+    case RuntimeLibraryKind::kScopeInfo:
+    case RuntimeLibraryKind::kScopeCallable:
+    case RuntimeLibraryKind::kConstructionTable:
+    case RuntimeLibraryKind::kInstantiation:
+      return false;
+  }
+  throw InternalError("mir: unknown runtime library kind");
+}
+
+}  // namespace
+
+auto Type::IsAddressOnly() const -> bool {
+  // One arm per MIR type and no catch-all, so a type added later fails to
+  // compile here until it says which it is; answering that it has a value to
+  // read would refuse a read of it wrongly rather than refuse it by name.
+  return Visit(
+      Overloaded{
+          // Storage the runtime keeps, which is consumed where it lies.
+          [](const ObservableType&) { return true; },
+          [](const ResolvedType&) { return true; },
+          [](const ObjectType&) { return true; },
+          [](const RuntimeClassType&) { return true; },
+          [](const EventType&) { return true; },
+          [](const SampledHistoryType&) { return true; },
+          [](const EvaluationAttemptsType&) { return true; },
+          [](const LoopBlocksType&) { return true; },
+
+          // A value, or something whose value is what it holds.
+          [](const IntegralType&) { return false; },
+          [](const EnumType&) { return false; },
+          [](const UnpackedArrayType&) { return false; },
+          [](const DynamicArrayType&) { return false; },
+          [](const QueueType&) { return false; },
+          [](const AssociativeArrayType&) { return false; },
+          [](const WildcardIndexType&) { return false; },
+          [](const StringType&) { return false; },
+          [](const MachineCStringType&) { return false; },
+          [](const MachineBoolType&) { return false; },
+          [](const MachineIntType&) { return false; },
+          [](const MachineFloatType&) { return false; },
+          [](const MachineArrayType&) { return false; },
+          [](const MachineFunctionType&) { return false; },
+          [](const RealType&) { return false; },
+          [](const ShortRealType&) { return false; },
+          [](const ChandleType&) { return false; },
+          [](const VoidType&) { return false; },
+          [](const RuntimeEffectsType&) { return false; },
+          [](const FilesType&) { return false; },
+          [](const DiagnosticType&) { return false; },
+          [](const RuntimeLibraryType& t) {
+            return IsReachedByAddress(t.kind);
+          },
+          [](const CoroutineType&) { return false; },
+          [](const VariableRefType&) { return false; },
+          [](const ReferenceWrapperType&) { return false; },
+          [](const PointerType&) { return false; },
+          [](const ReferenceType&) { return false; },
+          [](const ManagedRefType&) { return false; },
+          [](const VectorType&) { return false; },
+          [](const TupleType&) { return false; },
+          [](const EmptyType&) { return false; },
+          [](const DriverType&) { return false; },
+          [](const OpenWriteType&) { return false; },
+          [](const DesignationType&) { return false; },
+          [](const BitsReferenceType&) { return false; },
+          [](const ObjectWriteType&) { return false; },
+          [](const RecordType&) { return false; },
+          [](const ClosureType&) { return false; }});
+}
+
+auto Type::OwnsPointee() const -> bool {
+  const auto* pointer = As<PointerType>();
+  if (pointer == nullptr) {
+    return false;
+  }
+  switch (pointer->ownership) {
+    case PointerOwnership::kUnique:
+    case PointerOwnership::kShared:
+      return true;
+    case PointerOwnership::kBorrowed:
+      return false;
+  }
+  std::unreachable();
 }
 
 auto Type::WrappedValueType() const -> TypeId {
   if (const auto* observable = As<ObservableType>()) {
     return observable->value;
   }
-  if (const auto* reference = As<RefType>()) {
+  if (const auto* reference = As<VariableRefType>()) {
     return reference->pointee;
   }
   if (const auto* wrapper = As<ReferenceWrapperType>()) {
@@ -272,18 +387,15 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const IntegralType&) { return false; },
           [](const EnumType&) { return false; },
 
-          // The simulation values the runtime builds and keeps: a sequence of
-          // values however it is sized and indexed, the ones held all at once
-          // or one at a time, and the single quantities whose representation
-          // the library decides.
+          // A value built of other values -- a sequence however it is sized
+          // and indexed, a product, the members a union overlays -- and the
+          // single quantities whose representation the library decides.
           [](const UnpackedArrayType&) { return true; },
           [](const DynamicArrayType&) { return true; },
           [](const QueueType&) { return true; },
           [](const AssociativeArrayType&) { return true; },
           [](const TupleType&) { return true; },
-          [](const StructType&) { return true; },
-          [](const UnionType&) { return true; },
-          [](const TaggedUnionType&) { return true; },
+          [](const RecordType&) { return true; },
           [](const StringType&) { return true; },
           [](const RealType&) { return true; },
           [](const ShortRealType&) { return true; },
@@ -309,9 +421,10 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // An address whose value is the address: what it names lives for its
           // own reasons and ends for them, so nothing about holding the address
           // keeps it or loses it.
-          [](const RefType&) { return false; },
+          [](const VariableRefType&) { return false; },
           [](const ReferenceWrapperType&) { return false; },
           [](const PointerType&) { return false; },
+          [](const ReferenceType&) { return false; },
           [](const VectorType&) { return false; },
           [](const DriverType&) { return false; },
           [](const CoroutineType&) { return false; },
@@ -329,6 +442,7 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           [](const ResolvedType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
+          [](const BitsReferenceType&) { return false; },
           [](const ObjectWriteType&) { return false; },
           [](const SampledHistoryType&) { return false; },
           [](const EvaluationAttemptsType&) { return false; },
@@ -343,68 +457,6 @@ auto Type::IsRuntimeStoredValue() const -> bool {
           // admits rather than a type any value has, and `void` and a tagged
           // union's empty payload (LRM 7.3.2) are values no declaration holds
           // on its own.
-          [](const WildcardIndexType&) { return false; },
-          [](const EmptyType&) { return false; },
-          [](const VoidType&) { return false; }});
-}
-
-auto Type::PartsAreStorage() const -> bool {
-  return Visit(
-      Overloaded{
-          // Each element of an unpacked array, and each member of an unpacked
-          // structure, is a place of its own that a reference can bind (LRM
-          // 7.4, 7.8, 7.10, 13.5.2); a product the lowering composes is laid
-          // out the same way.
-          [](const UnpackedArrayType&) { return true; },
-          [](const DynamicArrayType&) { return true; },
-          [](const QueueType&) { return true; },
-          [](const AssociativeArrayType&) { return true; },
-          [](const TupleType&) { return true; },
-          [](const StructType&) { return true; },
-
-          // A packed value is one vector however its bits are named (LRM
-          // 7.4.1), a string one sequence of characters (LRM 6.16), and a union
-          // holds one member at a time over storage its members share (LRM
-          // 7.3), so a part of any of them is a view of the whole.
-          [](const IntegralType&) { return false; },
-          [](const EnumType&) { return false; },
-          [](const StringType&) { return false; },
-          [](const UnionType&) { return false; },
-          [](const TaggedUnionType&) { return false; },
-
-          // Everything else has no parts a write reaches.
-          [](const RealType&) { return false; },
-          [](const ShortRealType&) { return false; },
-          [](const ManagedRefType&) { return false; },
-          [](const ChandleType&) { return false; },
-          [](const MachineCStringType&) { return false; },
-          [](const MachineBoolType&) { return false; },
-          [](const MachineIntType&) { return false; },
-          [](const MachineFloatType&) { return false; },
-          [](const MachineArrayType&) { return false; },
-          [](const MachineFunctionType&) { return false; },
-          [](const RefType&) { return false; },
-          [](const ReferenceWrapperType&) { return false; },
-          [](const PointerType&) { return false; },
-          [](const VectorType&) { return false; },
-          [](const DriverType&) { return false; },
-          [](const CoroutineType&) { return false; },
-          [](const ObjectType&) { return false; },
-          [](const RuntimeClassType&) { return false; },
-          [](const ClosureType&) { return false; },
-          [](const ObservableType&) { return false; },
-          [](const ResolvedType&) { return false; },
-          [](const OpenWriteType&) { return false; },
-          [](const DesignationType&) { return false; },
-          [](const ObjectWriteType&) { return false; },
-          [](const SampledHistoryType&) { return false; },
-          [](const EvaluationAttemptsType&) { return false; },
-          [](const LoopBlocksType&) { return false; },
-          [](const EventType&) { return false; },
-          [](const RuntimeEffectsType&) { return false; },
-          [](const FilesType&) { return false; },
-          [](const DiagnosticType&) { return false; },
-          [](const RuntimeLibraryType&) { return false; },
           [](const WildcardIndexType&) { return false; },
           [](const EmptyType&) { return false; },
           [](const VoidType&) { return false; }});
@@ -439,12 +491,10 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const IntegralType&) -> Element { return std::nullopt; },
           [](const EnumType&) -> Element { return std::nullopt; },
 
-          // Held all at once, or one at a time, but never as a sequence of one
-          // type.
+          // Parts side by side, or members overlaid, but never a sequence of
+          // one type.
           [](const TupleType&) -> Element { return std::nullopt; },
-          [](const StructType&) -> Element { return std::nullopt; },
-          [](const UnionType&) -> Element { return std::nullopt; },
-          [](const TaggedUnionType&) -> Element { return std::nullopt; },
+          [](const RecordType&) -> Element { return std::nullopt; },
 
           // A single quantity or a single token.
           [](const WildcardIndexType&) -> Element { return std::nullopt; },
@@ -467,6 +517,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const DriverType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
           [](const DesignationType&) -> Element { return std::nullopt; },
+          [](const BitsReferenceType&) -> Element { return std::nullopt; },
           [](const ObjectWriteType&) -> Element { return std::nullopt; },
           [](const SampledHistoryType&) -> Element { return std::nullopt; },
           [](const EvaluationAttemptsType&) -> Element { return std::nullopt; },
@@ -475,9 +526,10 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // These refer to a value living elsewhere rather than holding one,
           // so a container reached through one is reached by dereferencing it
           // first.
-          [](const RefType&) -> Element { return std::nullopt; },
+          [](const VariableRefType&) -> Element { return std::nullopt; },
           [](const ReferenceWrapperType&) -> Element { return std::nullopt; },
           [](const PointerType&) -> Element { return std::nullopt; },
+          [](const ReferenceType&) -> Element { return std::nullopt; },
           [](const ManagedRefType&) -> Element { return std::nullopt; },
           [](const CoroutineType&) -> Element { return std::nullopt; },
           [](const MachineFunctionType&) -> Element { return std::nullopt; },

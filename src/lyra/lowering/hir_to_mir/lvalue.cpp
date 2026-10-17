@@ -49,8 +49,9 @@ auto DistributePacked(
   mir::Block& block = *frame.current_block;
   // By value: the pool's view does not survive the interning below.
   const mir::IntegralType whole = unit.types.Get(lvalue.type).Integral();
-  const mir::ExprId held =
-      EvaluatedOnce(frame, ConvertToType(unit, block, value, lvalue.type));
+  const mir::ExprId held = EvaluatedOnce(
+      frame, ConvertToType(
+                 unit, block, block.AsValue(unit.types, value), lvalue.type));
   std::uint64_t offset = whole.bit_width;
   for (const Lvalue& elem : concat.elems) {
     const mir::Type& elem_type = unit.types.Get(elem.type);
@@ -144,7 +145,7 @@ auto DistributeStreamed(
 // of a product, or an element of a fixed-size array in the order its elements
 // are numbered (LRM 10.9.1, 10.9.2). Nothing for an aggregate whose members
 // are not counted by its type.
-auto MemberStep(
+auto PatternMemberStep(
     mir::CompilationUnit& unit, mir::Block& block, mir::TypeId whole,
     std::size_t position) -> std::optional<DescentStep> {
   if (const auto components = mir::ProductElements(unit, whole)) {
@@ -173,10 +174,16 @@ auto DistributeUnpacked(
     -> diag::Result<void> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Block& block = *frame.current_block;
-  const mir::ExprId held = EvaluatedOnce(frame, value);
+  // Each member is taken where it lies in what is distributed; a value that
+  // lies nowhere is held in a local first, as a place is needed to step into.
+  const mir::ExprId held =
+      mir::IsReadablePlace(unit.types, block.exprs.Get(value))
+          ? value
+          : block.LocalPlace(
+                DeclareLocal(frame, value), block.exprs.Get(value).type);
   for (std::size_t i = 0; i < concat.elems.size(); ++i) {
     const std::optional<DescentStep> step =
-        MemberStep(unit, block, lvalue.type, i);
+        PatternMemberStep(unit, block, lvalue.type, i);
     if (!step.has_value()) {
       return diag::Fail(
           lvalue.span, diag::DiagCode::kUnsupportedExpressionForm,
@@ -198,7 +205,11 @@ auto Distribute(
   return std::visit(
       Overloaded{
           [&](const AccessPath& place) -> diag::Result<void> {
-            shares.push_back(Share{.place = place, .value = value});
+            shares.push_back(
+                Share{
+                    .place = place,
+                    .value = frame.current_block->AsValue(
+                        unit_lowerer.Unit().types, value)});
             return {};
           },
           [&](const LvalueConcat& concat) -> diag::Result<void> {
@@ -296,12 +307,16 @@ auto AppendStores(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,
     mir::ExprId value) -> diag::Result<void> {
   mir::Block& block = *frame.current_block;
-  // The value is held before the places are located, so what it reads is what
-  // stood when the write began. One place alone has no other store to be
-  // ordered against and is left as it was named.
-  const mir::ExprId held = std::holds_alternative<LvalueConcat>(lvalue.form)
-                               ? EvaluatedOnce(frame, value)
-                               : value;
+  // What a join distributes is held in a local of its own before any place is
+  // located, so a member written first changes nothing a later one is taken
+  // from, even where the value was read out of a member's own storage (LRM
+  // 10.9, 11.4.12). One place alone has no other store to be ordered against
+  // and takes the value as it was named.
+  const mir::ExprId held =
+      std::holds_alternative<LvalueConcat>(lvalue.form)
+          ? block.LocalPlace(
+                DeclareLocal(frame, value), block.exprs.Get(value).type)
+          : value;
   Lvalue located = lvalue;
   if (std::holds_alternative<LvalueConcat>(located.form)) {
     ForEachPlace(located, [&](AccessPath& place) {
@@ -352,7 +367,7 @@ auto ReadThenWrite(
           [&](const UnpackedJoin&) -> mir::ExprId {
             for (std::size_t i = 0; i < incoming.size(); ++i) {
               const std::optional<DescentStep> member =
-                  MemberStep(unit, block, lvalue.type, i);
+                  PatternMemberStep(unit, block, lvalue.type, i);
               if (member.has_value()) {
                 incoming[i] =
                     ConvertToType(unit, block, incoming[i], member->part_type);

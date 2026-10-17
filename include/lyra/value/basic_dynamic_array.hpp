@@ -126,13 +126,13 @@ class BasicDynamicArray {
   // no read reaches, so a write there is discarded.
   [[nodiscard]] auto ExistingAt(std::optional<std::int64_t> position) -> void* {
     Formation formed{};
-    return ElementRef(position, formed);
+    return ElementMut(position, formed);
   }
 
   // The same, saying whether the position named an element: an array never
   // grows by being written, so a write either lands in an existing element or
   // nowhere.
-  [[nodiscard]] auto ElementRef(
+  [[nodiscard]] auto ElementMut(
       std::optional<std::int64_t> position, Formation& formed) -> void* {
     const auto ordinal = ElementOrdinal(position, count_);
     formed = ordinal ? Formation::kExisting : Formation::kNowhere;

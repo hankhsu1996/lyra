@@ -70,9 +70,11 @@ This workstream reasons from these and does not restate them:
       with no data type is that net implicitly. Resolution is stated over any value a net may hold
       instead of over one value type, so the undriven value, the fold, and change detection reach an
       aggregate by recursing into its elements, and the set is closed: the frontend admits exactly
-      the four shapes the clause allows and rejects the rest, so all four resolve. The one
-      combination without an answer is two drivers on different members of an unpacked union, which
-      LRM 7.3 leaves without a defined storage overlay.
+      the four shapes the clause allows and rejects the rest, so all four resolve. Two drivers on
+      different members of an unpacked union each drive the bits their member overlays and fold as
+      the first member; a narrower member keeps the bits above its width clear, so its driver drives
+      them as 0, where LRM 7.3 defines nothing past a common initial sequence. A net holding a
+      tagged union is refused as not yet supported.
 - [x] N3b -- A continuous assignment naming only part of a net drives only that part: its driver
       contributes high-impedance everywhere it does not drive, so disjoint partial drivers compose
       and overlapping ones conflict exactly as whole-net drivers do. This is the whole-net rule read

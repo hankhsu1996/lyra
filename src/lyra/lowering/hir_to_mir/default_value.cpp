@@ -152,18 +152,6 @@ auto BuildDefaultValueExpr(
   // The type an arm receives is a view into the pool, and building a component
   // default can intern a type and relocate what the pool holds. An arm that
   // recurses therefore reads what it needs out of its type first.
-  //
-  // LRM Table 7-1: an unpacked union defaults to its first member's default.
-  // LRM 11.9 leaves an uninitialized tagged union undefined, and Lyra's
-  // deterministic fallback is that same first member, so one build answers
-  // both. Synthesized at each use rather than stored on the interned type, so
-  // two source declarations with the same component types share one type.
-  const auto first_member_default = [&](mir::TypeId first) -> mir::Expr {
-    constexpr base::ComponentIndex kFirstMember{0};
-    return mir::MakeActiveMemberExpr(
-        block.exprs.Add(BuildDefaultValueExpr(unit, block, first)),
-        kFirstMember, type);
-  };
   const auto component_wise =
       [&](std::span<const mir::TypeId> view) -> mir::Expr {
     const std::vector<mir::TypeId> components(view.begin(), view.end());
@@ -236,28 +224,23 @@ auto BuildDefaultValueExpr(
           [&](const mir::TupleType& t) -> mir::Expr {
             return component_wise(t.elements);
           },
-          // A structure states its own default, where its members' initial
-          // values are written (LRM 7.2.2).
-          [&](const mir::StructType& s) -> mir::Expr {
+          // A structure or a union states its own default: a structure's
+          // members at their declared initial values (LRM 7.2.2), a union's
+          // first member at its default (LRM Table 7-1).
+          [&](const mir::RecordType& s) -> mir::Expr {
             return mir::Expr{
                 .data =
                     mir::CallExpr{
                         .callee =
                             mir::Direct{
                                 .target =
-                                    mir::StructMethodTarget{
-                                        .declaration =
-                                            mir::StructDeclarationOf(unit, s),
+                                    mir::RecordMethodTarget{
+                                        .declaration = mir::RecordDeclarationOf(
+                                            unit, s.declaration),
                                         .answers = support::BuiltinFn::
                                             kDeclaredDefault}},
                         .arguments = {}},
                 .type = type};
-          },
-          [&](const mir::UnionType& u) -> mir::Expr {
-            return first_member_default(u.members.front());
-          },
-          [&](const mir::TaggedUnionType& u) -> mir::Expr {
-            return first_member_default(u.members.front());
           },
           // LRM Table 7-1: a dynamic array's default and a queue's are the
           // empty array, which its own construction builds from a list of no
@@ -300,6 +283,10 @@ auto BuildDefaultValueExpr(
           },
           [&](const mir::PointerType&) -> mir::Expr {
             return mir::Expr{.data = mir::NullLiteral{}, .type = type};
+          },
+          // A reference is bound where it is declared and is never null.
+          [&](const mir::ReferenceType&) -> mir::Expr {
+            return holds_no_declared_value("a reference");
           },
           // LRM 8.4 / Table 7-1: an uninitialized class handle defaults to
           // null.
@@ -381,6 +368,9 @@ auto BuildDefaultValueExpr(
           [&](const mir::DesignationType&) -> mir::Expr {
             return holds_no_declared_value("a part a write designates");
           },
+          [&](const mir::BitsReferenceType&) -> mir::Expr {
+            return holds_no_declared_value("a reference to bits");
+          },
           [&](const mir::ObjectWriteType&) -> mir::Expr {
             return holds_no_declared_value("a write into an object");
           },
@@ -415,7 +405,7 @@ auto BuildDefaultValueExpr(
           [&](const mir::ClosureType&) -> mir::Expr {
             return holds_no_declared_value("a closure");
           },
-          [&](const mir::RefType&) -> mir::Expr {
+          [&](const mir::VariableRefType&) -> mir::Expr {
             return holds_no_declared_value("a reference to a cell");
           },
           [&](const mir::ReferenceWrapperType&) -> mir::Expr {

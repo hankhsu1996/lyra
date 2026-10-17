@@ -146,7 +146,7 @@ void AppendToHeader(
 // written across these files, `Body` being the unit's name where the unit is
 // compiled to one body:
 //
-//   Top.<Struct>.types.hpp  one per struct the unit declares under a name
+//   Top.<Record>.types.hpp  one per struct or union the unit declares
 //   Top.forward.hpp         the classes other units may name, declared
 //   Top.opening.hpp         namespace functions and variables
 //   Body.opening.hpp        the entry that makes an object of this body
@@ -162,14 +162,15 @@ void AppendToHeader(
 //
 // A declaration has a file of its own only where a declaration of another unit
 // needs it complete ahead of its own: a class another class may extend, a
-// struct another holds by value. Nothing outside a unit extends the class of
-// one of its scopes, so those are written together in the file that carries
-// the unit's name, and no file is named after a path through the hierarchy.
+// struct or union another holds by value. Nothing outside a unit extends the
+// class of one of its scopes, so those are written together in the file that
+// carries the unit's name, and no file is named after a path through the
+// hierarchy.
 //
 // Every file includes what its own text asked for as it named things: the
 // forward header of a class reached through a pointer, the header of a base,
-// the header of a struct held by value. A class cannot be its own ancestor and
-// a struct cannot hold itself, a forward header includes nothing, and a scope's
+// the header of a record held by value. A class cannot be its own ancestor and
+// a record cannot hold itself, a forward header includes nothing, and a scope's
 // class holds what it reaches in another unit through the class every scope
 // extends, so two units can include each other's headers without a cycle.
 // Anything other units never name goes into the `.cpp`, so changing it
@@ -182,7 +183,7 @@ auto RenderUnitFiles(
   // name.
   UnitRenderReport report{
       .refusals = &refusals, .constants_named = {}, .enum_tables_named = {}};
-  UnitStructs structs = RenderUnitStructs(unit, report);
+  UnitRecords records = RenderUnitRecords(unit, report);
   const UnitCallables callables = RenderUnitCallables(unit, report);
   const UnitText variables = RenderUnitStaticVariables(unit);
   const UnitText forwards = RenderUnitForwardDeclarations(unit);
@@ -205,9 +206,9 @@ auto RenderUnitFiles(
   };
 
   std::vector<CppArtifact> declarations;
-  for (const UnitStruct& declared : structs.declared) {
+  for (const UnitRecord& declared : records.declared) {
     std::string relpath =
-        UnitStructFileOf(unit.name, CppStructName(unit.GetStruct(declared.id)));
+        UnitRecordFileOf(unit.name, CppRecordName(unit.GetRecord(declared.id)));
     ProjectFile file;
     file.text += "#pragma once\n";
     WriteInclude(file.text, support::kRuntimePreludeHeader);
@@ -298,7 +299,7 @@ auto RenderUnitFiles(
     const TargetText::Section constants(realized);
     RenderIntegralConstants(unit, report, realized);
   }
-  AppendSection(realized, structs.code);
+  AppendSection(realized, records.code);
   AppendSectionInUnnamedNamespace(realized, own_classes);
   AppendSection(realized, variables.code);
   AppendSection(realized, closures.definitions);

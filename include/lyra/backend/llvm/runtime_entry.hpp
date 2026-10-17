@@ -41,6 +41,13 @@ inline constexpr std::string_view kRuntimeSymbolPrefix = "lyra_rt_";
 auto HeldObjectOf(const lir::Type& type)
     -> std::optional<support::RuntimeObject>;
 
+// Whether a value of `type` is its bytes laid out by the type, which state
+// nothing of it: a tuple, a structure, a union, and a fixed-size unpacked
+// array.
+auto IsLaidOutByType(const lir::Type& type) -> bool;
+// The same of a value of `domain`.
+auto IsLaidOutByType(support::ValueDomain domain) -> bool;
+
 // The domain a LIR type is realized in, absent for a type whose values are not
 // values of the design. It is the type's held object where that object is a
 // domain's, so the entry a call names and the storage a cell owns read one
@@ -87,40 +94,46 @@ class DomainSet {
 // off its own layout, so most realizations are told nothing. Storage holding
 // the words of a wider value, and a designation of an integral value, are told
 // how wide the values held there are, after operand `after`, and an entry
-// making such storage out of nothing is told it ahead of whatever it takes. A
-// memory reached by a key is told the type its keys are built at (LRM 21.4.1),
-// and a union the type of the member its callee names (LRM 7.3), each after
-// the operand it concerns.
+// making such storage, or a net of any integral value, is told it ahead of
+// whatever it takes. A memory reached by a key is told the type its keys are
+// built at (LRM 21.4.1), and an associative array built from a literal the
+// type of the pairs its entries cross as (LRM 7.9.11), each after the operand
+// it concerns.
 struct ToldNothing {};
-struct ToldHeldWidth {
+struct ToldWidthMetadata {
   std::size_t after;
 };
-struct ToldHeldWidthAhead {};
-// A fixed-size unpacked array is its elements and nothing more, so a
-// realization for one is told the type of every array it is handed as the
-// value it is, after that array. Where it reaches the array through a
-// reference or a designation instead, which name bytes lying in something
-// else, it is told the type of the array reached, after operand
-// `reached_after`.
-struct ToldArrayTypes {
-  std::optional<std::size_t> reached_after = std::nullopt;
-};
+struct ToldWidthMetadataAhead {};
+// Storage laying a value out after itself by the value's type is told that
+// type ahead of whatever it takes where it is made, and an entry acting on
+// such storage once it is made is told nothing of the values it is handed,
+// which the storage keeps the type of.
+struct ToldTypeMetadataAhead {};
+// A tuple, a union and a fixed-size unpacked array are their bytes laid out by
+// their type and nothing more, so a realization for one is told that type,
+// after its operands, once however many values of it it takes or builds, as a
+// generic function takes its type argument once. That holds where it reaches
+// the value through a reference or a designation too, which name bytes lying
+// in something else. A value of another type it is handed is read with its
+// own.
+struct ToldLaidOutType {};
 struct ToldKeyType {
   std::size_t after;
 };
-struct ToldMemberType {
+struct ToldEntryType {
   std::size_t after;
 };
 using Told = std::variant<
-    ToldNothing, ToldHeldWidth, ToldHeldWidthAhead, ToldArrayTypes, ToldKeyType,
-    ToldMemberType>;
+    ToldNothing, ToldWidthMetadata, ToldWidthMetadataAhead,
+    ToldTypeMetadataAhead, ToldLaidOutType, ToldKeyType, ToldEntryType>;
 
 // The domains the library realizes an entry for that are told the same thing.
 // An entry states one of these per thing its realizations are told, and a
-// domain in none of them is one the library holds no realization for.
+// domain in none of them is one the library holds no realization for. One
+// that states nothing is told what every realization for its domain is.
 struct RealizedFor {
   DomainSet domains;
-  Told told = ToldNothing{};
+  std::optional<Told> told = std::nullopt;
 };
 
 // A library entry a step into a value is taken by, and the symbol its
@@ -170,9 +183,6 @@ enum class RuntimeOp : std::uint8_t {
   // the integral value with the type it was written in, which no index type
   // states (LRM 7.8.1).
   kMakeWildcardIndex,
-  kWithComponent,
-  kWithElement,
-  kWithSlice,
   kDefault,
   kFromLiteral,
   // A fixed-size unpacked array built from an element list, laid down as many
@@ -199,10 +209,10 @@ enum class RuntimeOp : std::uint8_t {
   kMakeDpiLogicBuffer,
   kMakeDpiOpenArray,
   kSettleDeparture,
-  // What stands between a structure's own operations and the type the library
-  // asks them through: the stream a structure's function answers written into
-  // the stream the type was handed, a stream's bits laid out as an integral
-  // value, and a structure built by its function out of such a stream.
+  // What stands between a type's own operations and the type the library asks
+  // them through: the stream a type's function answers written into the stream
+  // the type was handed, a stream's bits laid out as an integral value, and a
+  // value built by its type's function out of such a stream.
   kStreamWrite,
   kStreamRead,
   kStreamBuild,
@@ -212,10 +222,6 @@ enum class RuntimeOp : std::uint8_t {
   // that value is held in.
   kInsertBits,
   kInsertDesignatedBits,
-  // The bytes a body keeps apart from its frame for one value, obtained and
-  // given back.
-  kAllocBytes,
-  kDeallocBytes,
   // What a position of a fixed-size unpacked array naming no element reaches
   // (LRM 7.4.5), which the element type answers since no array is asked: the
   // default a read yields, and storage no read reaches for a write to land in.
@@ -254,6 +260,16 @@ auto LifecycleOp(LifecycleStep step) -> RuntimeOp;
 // generated code hands over beside such a value. It names data, where every
 // other symbol here names an entry.
 auto ValueTypeSymbol(support::ValueDomain domain) -> std::string;
+
+// Witnesses the library defines once for every type of a kind, which generated
+// code names where it states such a type, and the entry a table names for an
+// operation the language does not define for its type.
+inline constexpr std::string_view kIntegralValueWitnessTableSymbol =
+    "lyra_rt_integral_value_witness_table";
+inline constexpr std::string_view kFixedArrayPartsWitnessTableSymbol =
+    "lyra_rt_fixed_array_parts_witness_table";
+inline constexpr std::string_view kTypeLacksOperationSymbol =
+    "lyra_rt_type_lacks_operation";
 
 // What a member slot is for, which two declarations answer differently for a
 // slot of the same type: a variable is written through its own store for as
@@ -331,7 +347,7 @@ struct NamedByResult {
 struct ThroughWrapper {
   WrapperKind wrapper;
   DomainSet domains;
-  Told told = ToldNothing{};
+  std::optional<Told> told = std::nullopt;
 };
 
 // The operation acts on the capability wrapper an argument reaches rather than
@@ -413,6 +429,15 @@ auto ToldOf(
 // for every operator. No table states which domains realize an operator, so
 // none is refused here.
 auto ToldOfAnOperator(support::ValueDomain domain) -> Told;
+// What the entry building a member's storage is told of the values held there,
+// ahead of the storage it is built in, as a cell the library makes is. Storage
+// laying the words of a value wider than a word out after itself is built at
+// their width, and storage laying a value out after itself by the value's
+// type with that type, so the value has its place from the moment the
+// storage exists; and a net of any integral type is built at its width, which
+// is how many positions it has and which a layout of a narrower type does not
+// say.
+auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told;
 
 // The symbol a runtime entry is published under. An operation realized per
 // value representation leads with that representation, so one library serves
@@ -429,11 +454,6 @@ auto RuntimeSymbol(support::RuntimeObject object, RuntimeOp op) -> std::string;
 // holds any, and then the kind.
 auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
     -> std::string;
-// Whether the entry building a member's storage is told, after the storage it
-// builds, how wide the values held there are: a variable nothing subscribes to
-// that holds the words of a value wider than a word has no declaration to
-// install it, so it is built at its width.
-auto BuiltAtTheWidthHeld(support::DeclaredMemberStorage storage) -> bool;
 auto RuntimeSymbol(support::ValueDomain domain, lir::BinaryOp op)
     -> std::string;
 auto RuntimeSymbol(support::ValueDomain domain, lir::UnaryOp op) -> std::string;

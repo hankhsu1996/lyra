@@ -1,11 +1,11 @@
 #pragma once
 
-#include "lyra/runtime/activation_value_cell.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/net.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/takeover.hpp"
+#include "lyra/runtime/value_cell.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/chandle.hpp"
@@ -40,28 +40,34 @@ extern template class ValueStorageCore<value::ShortReal>;
 extern template class ValueStorageCore<value::Chandle>;
 extern template class ValueStorageCore<value::ObjectRef>;
 
+extern template class Cell<ValueStorageCore<value::String>>;
+extern template class Cell<ValueStorageCore<value::Real>>;
+extern template class Cell<ValueStorageCore<value::ShortReal>>;
+extern template class Cell<ValueStorageCore<value::Chandle>>;
+extern template class Cell<ValueStorageCore<value::ObjectRef>>;
+
 extern template class Var<value::String>;
 extern template class Var<value::Real>;
 extern template class Var<value::ShortReal>;
 extern template class Var<value::Chandle>;
 extern template class Var<value::ObjectRef>;
 
-extern template class CellRareState<value::String>;
-extern template class CellRareState<value::Real>;
-extern template class CellRareState<value::ShortReal>;
-extern template class CellRareState<value::ObjectRef>;
+extern template class CellRareState<ValueStorageCore<value::String>>;
+extern template class CellRareState<ValueStorageCore<value::Real>>;
+extern template class CellRareState<ValueStorageCore<value::ShortReal>>;
+extern template class CellRareState<ValueStorageCore<value::ObjectRef>>;
 
-extern template class Ref<value::String>;
-extern template class Ref<value::Real>;
-extern template class Ref<value::ShortReal>;
-extern template class Ref<value::Chandle>;
-extern template class Ref<value::ObjectRef>;
+extern template class VariableRef<value::String>;
+extern template class VariableRef<value::Real>;
+extern template class VariableRef<value::ShortReal>;
+extern template class VariableRef<value::Chandle>;
+extern template class VariableRef<value::ObjectRef>;
 
-extern template class ScopedMutation<Ref<value::String>>;
-extern template class ScopedMutation<Ref<value::Real>>;
-extern template class ScopedMutation<Ref<value::ShortReal>>;
-extern template class ScopedMutation<Ref<value::Chandle>>;
-extern template class ScopedMutation<Ref<value::ObjectRef>>;
+extern template class ScopedMutation<VariableRef<value::String>>;
+extern template class ScopedMutation<VariableRef<value::Real>>;
+extern template class ScopedMutation<VariableRef<value::ShortReal>>;
+extern template class ScopedMutation<VariableRef<value::Chandle>>;
+extern template class ScopedMutation<VariableRef<value::ObjectRef>>;
 
 extern template class Takeovers<value::String>;
 extern template class Takeovers<value::Real>;
@@ -69,11 +75,11 @@ extern template class Takeovers<value::ShortReal>;
 extern template class Takeovers<value::Chandle>;
 extern template class Takeovers<value::ObjectRef>;
 
-extern template class ActivationValueCell<value::String>;
-extern template class ActivationValueCell<value::Real>;
-extern template class ActivationValueCell<value::ShortReal>;
-extern template class ActivationValueCell<value::Chandle>;
-extern template class ActivationValueCell<value::ObjectRef>;
+extern template class ValueCell<value::String>;
+extern template class ValueCell<value::Real>;
+extern template class ValueCell<value::ShortReal>;
+extern template class ValueCell<value::Chandle>;
+extern template class ValueCell<value::ObjectRef>;
 
 extern template class SampledHistory<value::String>;
 extern template class SampledHistory<value::Real>;

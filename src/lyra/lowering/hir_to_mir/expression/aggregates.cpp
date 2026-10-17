@@ -200,12 +200,12 @@ auto LowerHirStreamingConcatExpr(
   runs.reserve(s.operands.size());
   for (const auto& id : s.operands) {
     const hir::Expr& operand = lowerer.HirExprs().Get(id);
-    auto lowered = lowerer.LowerExpr(operand, frame);
+    auto lowered = lowerer.LowerAsPlace(operand, frame);
     if (!lowered) return std::unexpected(std::move(lowered.error()));
     auto run_or = BuildToBitstream(
         unit, block, block.exprs.Add(*std::move(lowered)), operand.span);
     if (!run_or) return std::unexpected(std::move(run_or.error()));
-    runs.push_back(*run_or);
+    runs.push_back(block.AsValue(unit.types, *run_or));
   }
   const mir::ExprId stream = BuildReorderedStream(
       unit, block, BuildPackedConcat(unit, block, runs), s.block_bits);
@@ -386,8 +386,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
     if (!value) return std::unexpected(std::move(value.error()));
     const mir::ExprId index_id = body.exprs.Add(*std::move(index));
     const mir::ExprId value_id = body.exprs.Add(*std::move(value));
-    const mir::ExprId owner =
-        body.exprs.Add(mir::MakeLocalRefExpr(built, result_type));
+    const mir::ExprId owner = body.LocalPlace(built, result_type);
     const AccessPath target = DescendInto(
         AccessPath{.owner = owner, .descent = {}},
         ElementStep(
@@ -398,7 +397,7 @@ auto LowerHirAssignmentPatternKeyedExpr(
                 body.exprs.Add(BuildStoreExpr(unit, body, target, value_id))});
   }
 
-  return steps.Build(body.exprs.Add(mir::MakeLocalRefExpr(built, result_type)));
+  return steps.Build(body.LocalPlace(built, result_type));
 }
 
 template <ExprLowerer Lowerer>

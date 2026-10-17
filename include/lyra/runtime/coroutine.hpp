@@ -8,6 +8,7 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/value/small_box.hpp"
 
 namespace lyra::runtime {
 
@@ -147,10 +148,18 @@ struct Raised {
 // answered -- rather than being re-derived later by raising it again to ask, or
 // carried beside the slot in a flag nothing checks against it. Both hold the
 // same `exception_ptr`; the one it sits in is what says which it is.
+//
+// The slot is part of the frame of the body it is the promise of, and a host
+// compiler may take stack for every part of a coroutine's frame as well, so the
+// value is kept as any value a frame keeps aside: inline in the slot where it
+// fits a frame, and in storage of its own past that.
 template <class T>
 class CompletionSlot {
  public:
-  void return_value(T value) {
+  void return_value(const T& value) {
+    outcome_.template emplace<Value>(value);
+  }
+  void return_value(T&& value) {
     outcome_.template emplace<Value>(std::move(value));
   }
   void unhandled_exception() noexcept {
@@ -162,21 +171,20 @@ class CompletionSlot {
     outcome_.template emplace<Raised>(std::move(unwound.raised));
   }
   // An awaiting frame is not the activation's landing: both departures carry on
-  // past it, which is why both are raised here.
-  auto Take() -> T {
+  // past it, which is why both are raised here. The value is handed over where
+  // it lies, for its taker to move from while the slot lasts.
+  auto Take() -> T&& {
     if (const auto* cancelled = std::get_if<Cancelled>(&outcome_)) {
       std::rethrow_exception(cancelled->effect);
     }
     if (const auto* raised = std::get_if<Raised>(&outcome_)) {
       std::rethrow_exception(raised->error);
     }
-    return std::move(std::get<Value>(outcome_).held);
+    return std::move(*std::get<Value>(outcome_));
   }
 
  private:
-  struct Value {
-    T held;
-  };
+  using Value = value::SmallBox<T>;
   std::variant<std::monostate, Value, Cancelled, Raised> outcome_;
 };
 
@@ -214,9 +222,10 @@ class CompletionSlot<void> {
 // A suspendable activation that completes with a value of `T` -- a task body,
 // or a process body with `T = void`. The completion value travels through the
 // promise: the body's `co_return v` stores it, and the awaiting frame moves it
-// out in `await_resume` before this `Coroutine` (which owns the frame) is
-// destroyed. All scheduling lives on the non-templated `Activation` the engine
-// sees; nothing per-`T` reaches the scheduler.
+// out of the promise, which `await_resume` hands it where it lies, before this
+// `Coroutine` (which owns the frame) is destroyed at the end of the awaiting
+// full-expression. All scheduling lives on the non-templated `Activation` the
+// engine sees; nothing per-`T` reaches the scheduler.
 //
 // A `Coroutine` is lazy (suspends before its first statement) and is its own
 // awaiter, so a task is enabled with `co_await task(args)`. The awaiting
@@ -292,7 +301,7 @@ class Coroutine {
     EnterNestedActivation(handle_.promise(), caller);
     return handle_;
   }
-  auto await_resume() -> T {
+  auto await_resume() -> decltype(auto) {
     LeaveActivation(handle_.promise());
     return handle_.promise().Take();
   }

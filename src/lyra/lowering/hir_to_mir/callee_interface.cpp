@@ -72,7 +72,7 @@ auto ParamTypeOf(
     case hir::ParamDirection::kRef:
     case hir::ParamDirection::kConstRef:
       return unit_lowerer.Unit().types.Intern(
-          mir::Type{mir::RefType{
+          mir::Type{mir::VariableRefType{
               .pointee = mir_value,
               .mutability = direction == hir::ParamDirection::kConstRef
                                 ? mir::Mutability::kReadOnly
@@ -246,10 +246,11 @@ auto PrototypeOf(
 auto ProjectCompletionComponent(
     mir::Block& block, mir::LocalId completion, mir::TypeId payload_type,
     base::ComponentIndex index, mir::TypeId component_type) -> mir::ExprId {
-  const mir::ExprId tuple_ref =
-      block.exprs.Add(mir::MakeLocalRefExpr(completion, payload_type));
-  return block.exprs.Add(
-      mir::MakeComponentExpr(tuple_ref, index, component_type));
+  const mir::ExprId payload = block.LocalPlace(completion, payload_type);
+  return block.Read(block.exprs.Add(
+      mir::MakeFieldAccessExpr(
+          payload, mir::ComponentFieldTarget{.position = index},
+          component_type)));
 }
 
 auto BindCompletion(

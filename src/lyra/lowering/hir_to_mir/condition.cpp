@@ -28,6 +28,7 @@ auto BuildMachineBool(
 auto ReduceToCondition(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ExprId cond)
     -> mir::ExprId {
+  cond = block.AsValue(unit.types, cond);
   if (block.exprs.Get(cond).type == unit.builtins.machine_bool) {
     return cond;
   }

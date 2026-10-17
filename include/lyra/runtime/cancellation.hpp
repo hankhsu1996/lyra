@@ -2,8 +2,9 @@
 
 #include <cstdint>
 #include <exception>
-#include <functional>
+#include <utility>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 
 namespace lyra::runtime {
@@ -185,8 +186,19 @@ void SettleRaised(RuntimeEffects& effects, const std::exception_ptr& raised);
 // left it is settled, and either way the caller carries on to the run's end. A
 // claimable departure never arrives here: it names a region the departing
 // execution is inside, and that region claims it first.
-void RunAsLanding(
-    RuntimeEffects& effects, const std::function<void()>& stretch);
+template <typename Stretch>
+void RunAsLanding(RuntimeEffects& effects, Stretch&& stretch) {
+  try {
+    std::forward<Stretch>(stretch)();
+  } catch (const ControlEffect& effect) {
+    if (effect.target != nullptr) {
+      throw InternalError(
+          "RunAsLanding: a departure a region owns left every region");
+    }
+  } catch (const std::exception&) {
+    SettleRaised(effects, std::current_exception());
+  }
+}
 
 // The two ends of an execution's membership of a target (LRM 9.6.2). Entering
 // captures the target's current generation and marks the executing process as

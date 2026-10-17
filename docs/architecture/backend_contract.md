@@ -117,7 +117,7 @@ two ways.
    and dispatching on it is a spelling exactly when both readings are one operation seen two ways: a
    product answers with the component either way, so only the receiver's own form differs. Where
    they are not one operation -- where writing the part does something reading it does not, such as
-   making the part it names the live one -- position selects an operation, and that is the same
+   allocating the associative entry it names -- position selects an operation, and that is the same
    defect as selecting one from an operand's type. Run the test on it; "value category" is not a
    reason to skip running it.
 
@@ -286,10 +286,8 @@ Writing part of what it holds descends through it: the wrapper is opened for the
 then one call per level, each naming the entry the lowering settled and taking the level above it as
 its receiver, and the write lands where what those calls designate is dereferenced, with an ordinary
 assignment there. Only that dereference reaches the place-access dispatch. How a target realizes
-such a call is its own answer -- reaching into the storage in place, or reading the whole value,
-rebuilding it and storing that back -- and it is a property of that target's value representation
-rather than a decision taken per site, so neither form is visible above render and neither is chosen
-by an emitter.
+such a call is its own answer, a property of that target's value representation rather than a
+decision taken per site, so it is not visible above render and no emitter chooses it.
 
 Naming that storage as an lvalue is not a call: it names storage rather than operating on it, and it
 is the one question the place-access dispatch answers. Two things ask it and both compose onto the
@@ -335,9 +333,9 @@ many copies as fill a replication -- says so once, in its own declaration, and a
 the type on its callee, beside the part a callee names. Each backend then tells the entry the way
 that backend tells a type: one that resolves types where the call is written names the type there,
 and one calling code compiled once for every type hands that code the facts of the type it needs.
-Neither works the type out from the call's own: a write into some bits answers with the place it
-designates, and the entry is called at the type of the bits. The unit's verification refuses a call
-to such an entry that states no type, and a type stated to a callee generic over none. A count or a
+Neither works the type out from the call's own: a write into some bits answers with a reference to
+them, and the entry is called at the type of the bits. The unit's verification refuses a call to
+such an entry that states no type, and a type stated to a callee generic over none. A count or a
 width the type fixes is therefore never an operand, on a read, a write or a reference alike.
 
 An operand that stands for a type survives only where its contents are an input: a value no type

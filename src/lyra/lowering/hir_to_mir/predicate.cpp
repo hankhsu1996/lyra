@@ -20,8 +20,8 @@
 #include "lyra/lowering/hir_to_mir/pattern.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -34,11 +34,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-auto ReadLocal(mir::Block& block, mir::LocalId local, mir::TypeId type)
-    -> mir::ExprId {
-  return block.exprs.Add(mir::MakeLocalRefExpr(local, type));
-}
 
 // LRM 11.4.11 compares the results of two arms neither of which was selected
 // and answers the value they share where they are equal. Where they differ, a
@@ -60,18 +55,18 @@ auto BuildCombinedArms(
   if (combines_by_part) {
     return block.exprs.Add(MakeBuiltinCall(
         unit, block, support::BuiltinFn::kMergeConditional,
-        ReadLocal(block, one, result_type),
-        {ReadLocal(block, other, result_type)}, result_type));
+        block.ReadLocal(one, result_type),
+        {block.ReadLocal(other, result_type)}, result_type));
   }
   const std::array compared{result_type, result_type};
   const mir::ExprId equal = block.exprs.Add(BuildMirBinaryExpr(
-      unit, block, hir::BinaryOp::kEquality, ReadLocal(block, one, result_type),
-      ReadLocal(block, other, result_type), OneBitAnswerType(unit, compared)));
+      unit, block, hir::BinaryOp::kEquality, block.LocalPlace(one, result_type),
+      block.LocalPlace(other, result_type), OneBitAnswerType(unit, compared)));
   return BuildSelectionChain(
       block,
       std::array{SelectedValue{
           .selected = ReduceToCondition(unit, block, equal),
-          .value = ReadLocal(block, one, result_type)}},
+          .value = block.ReadLocal(one, result_type)}},
       block.exprs.Add(BuildDefaultValueExpr(unit, block, result_type)),
       result_type);
 }
@@ -99,7 +94,7 @@ void AppendAssign(
       mir::ExprStmt{
           .expr = block.exprs.Add(
               mir::MakeAssignExpr(
-                  unit.builtins, ReadLocal(block, local, type), value))});
+                  unit.builtins, block.LocalPlace(local, type), value))});
 }
 
 // The selection where no predicate can be unknown, which is the chain of its
@@ -179,15 +174,15 @@ auto BuildMergingSelection(
         BuildSelectionChain(
             block,
             std::array{SelectedValue{
-                .selected = ReadLocal(block, answered, boolean),
+                .selected = block.ReadLocal(answered, boolean),
                 .value = combined}},
-            ReadLocal(block, held, result_type), result_type));
+            block.ReadLocal(held, result_type), result_type));
     AppendAssign(unit, block, answered, BuildMachineBool(unit, block, true));
     return {};
   };
   const auto append_unless_ended = [&](mir::Block step) {
     body.AppendIfThen(
-        BuildConditionNot(unit, body, ReadLocal(body, ended, boolean)),
+        BuildConditionNot(unit, body, body.ReadLocal(ended, boolean)),
         std::move(step));
   };
 
@@ -205,12 +200,12 @@ auto BuildMergingSelection(
     AppendAssign(
         unit, taken, ended,
         BuildIsKnownTrue(
-            unit, taken, ReadLocal(taken, predicate, predicate_type)));
+            unit, taken, taken.ReadLocal(predicate, predicate_type)));
     reached.AppendIfThen(
         BuildConditionNot(
             unit, reached,
             BuildIsKnownFalse(
-                unit, reached, ReadLocal(reached, predicate, predicate_type))),
+                unit, reached, reached.ReadLocal(predicate, predicate_type))),
         std::move(taken));
     append_unless_ended(std::move(reached));
   }
@@ -218,7 +213,7 @@ auto BuildMergingSelection(
   auto contributed = contribute(last, otherwise);
   if (!contributed) return std::unexpected(std::move(contributed.error()));
   append_unless_ended(std::move(last));
-  return steps.Build(ReadLocal(body, answer, result_type));
+  return steps.Build(body.ReadLocal(answer, result_type));
 }
 
 // One clause as a predicate: its expression, or, where it matches a pattern,
@@ -365,11 +360,11 @@ auto BuildOpenSearch(
     if (!term_or) return std::unexpected(std::move(term_or.error()));
     AppendAssign(
         unit, step, answer,
-        folded(step, ReadLocal(step, answer, type), truth(step, *term_or)));
-    body.AppendIfThen(is_open(ReadLocal(body, answer, type)), std::move(step));
+        folded(step, step.ReadLocal(answer, type), truth(step, *term_or)));
+    body.AppendIfThen(is_open(body.ReadLocal(answer, type)), std::move(step));
   }
   return frame.current_block->exprs.Add(
-      steps.Build(ReadLocal(body, answer, type)));
+      steps.Build(body.ReadLocal(answer, type)));
 }
 
 }  // namespace

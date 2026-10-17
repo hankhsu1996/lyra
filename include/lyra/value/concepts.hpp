@@ -248,49 +248,27 @@ concept BitstreamSizable = requires(const T& t, const Control& control) {
   { t.CountBits(control) } -> std::same_as<Int>;
 };
 
-// Indexable: single-element access by position. The container
-// exposes a value-form (`Element`) returning a snapshot or const view, and
-// a reference-form (`ElementRef`) returning a write-through reference. The
-// pair models the bare-vs-`Ref`-suffix naming convention: the bare method
-// hands you the element, the `Ref` method hands you a handle to it. String
-// participates through character access -- `Element` is the indexed read and
-// `ElementRef` a write-through proxy (a `StringCharRef`) -- while the LRM-named
-// `Getc` / `Putc` methods (LRM 6.16) stay for the explicit method calls. A
-// position is a value of the position type, which names none where it holds x
-// or z or lies outside the container.
+// Indexable: one element reached by position, for reading and for writing,
+// as rustc's `Index` and `IndexMut` reach one. `Element` answers a read-only
+// reference to the element, or to the element default where the position
+// names none; `ElementMut` answers the element, or storage no read reaches
+// where the position names none (LRM 7.4.6). A position is a value of the
+// position type, which names none where it holds x or z or lies outside the
+// container.
 template <typename T>
 concept Indexable = requires(T& t, const Position& pos) {
   { t.Element(pos) };
-  { t.ElementRef(pos) };
+  { t.ElementMut(pos) };
 };
 
-// AssocIndexable: associative-array indexed access by key. Same bare-vs-Ref
-// pair as `Indexable`, but the key type is a free template parameter rather
-// than a position. AA's `Element(K)` reads with the LRM 7.5 default-on-miss
-// policy; `ElementRef(K)` creates the key on missing access (LRM 7.5).
+// AssocIndexable: the same two by key. A read of a key holding no entry
+// answers the array's default and creates nothing; `ElementMut` creates the
+// entry (LRM 7.8.6, 7.8.7).
 template <typename T, typename K>
 concept AssocIndexable = requires(T& t, const K& key) {
   { t.Element(key) };
-  { t.ElementRef(key) };
+  { t.ElementMut(key) };
 };
-
-// SliceableRef: `count` parts in a row starting at a position, written through
-// (LRM 7.4.5 for the elements of an unpacked array). The count is fixed by the
-// type the select produces; the start arrives as a position, which may also
-// name no position at all. `SliceRef` returns a write-through proxy that, on
-// `operator=`, writes the value back into the receiver's storage at the
-// positions that exist. The value form, `Slice`, answers a fixed-size array of
-// that count, a type of its own which the caller names, so no concept probes
-// it.
-//
-// A queue's slice is bounded by two positions that the running program can
-// move (LRM 7.10.1), and a string slices by `Substr(i, j)` (LRM 6.16.8);
-// neither is a fixed count of parts, so neither claims this.
-template <typename T>
-concept SliceableRef =
-    requires(T& t, const Position& start, std::int64_t count) {
-      { t.SliceRef(start, count) };
-    };
 
 // Sortable: in-place ordering family. Conforming containers expose
 // `Sort(F)` / `Rsort(F)` taking a with-clause key closure (LRM 7.12.2) plus
@@ -336,5 +314,15 @@ concept OrdinalElements = requires(const T& t, std::size_t ordinal) {
 // `Sum/Product/And/Or/Xor` (Reducible, LRM 7.12.3) or
 // `Find/FindIndex/.../Min/Max/Unique` (Searchable, LRM 7.12.1) breaks the
 // caller, not the concept.
+
+// A held value that compares itself with, and takes, the bytes of a value laid
+// out as it is itself: an integral value as wide, or a tuple, a union or an
+// array of the same type.
+template <class T>
+concept TakesBytesInPlace =
+    requires(T& held, const T& read, const void* bytes) {
+      { read.IsBitIdenticalTo(bytes) } -> std::same_as<bool>;
+      held.AssignBytes(bytes);
+    };
 
 }  // namespace lyra::value

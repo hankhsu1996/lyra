@@ -69,6 +69,8 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
                 p.mutability == mir::Mutability::kReadOnly ? "const " : "",
                 RenderTypeAsC(types, p.pointee));
           },
+          // C has no references (LRM 35.5.6 passes by pointer).
+          [&](const mir::ReferenceType&) { return crosses_no_boundary(); },
           [](const mir::RuntimeLibraryType& r) -> std::string {
             if (r.kind == mir::RuntimeLibraryKind::kDpiBitChunk) {
               return "svBitVecVal";
@@ -115,27 +117,26 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::FilesType&) { return crosses_no_boundary(); },
           [&](const mir::DiagnosticType&) { return crosses_no_boundary(); },
           [&](const mir::CoroutineType&) { return crosses_no_boundary(); },
-          [&](const mir::RefType&) { return crosses_no_boundary(); },
+          [&](const mir::VariableRefType&) { return crosses_no_boundary(); },
           [&](const mir::ReferenceWrapperType&) {
             return crosses_no_boundary();
           },
           [&](const mir::ManagedRefType&) { return crosses_no_boundary(); },
           [&](const mir::VectorType&) { return crosses_no_boundary(); },
           [&](const mir::TupleType&) { return crosses_no_boundary(); },
-          [&](const mir::UnionType&) { return crosses_no_boundary(); },
-          [&](const mir::TaggedUnionType&) { return crosses_no_boundary(); },
           [&](const mir::ObservableType&) { return crosses_no_boundary(); },
           [&](const mir::ResolvedType&) { return crosses_no_boundary(); },
           [&](const mir::DriverType&) { return crosses_no_boundary(); },
           [&](const mir::OpenWriteType&) { return crosses_no_boundary(); },
           [&](const mir::DesignationType&) { return crosses_no_boundary(); },
+          [&](const mir::BitsReferenceType&) { return crosses_no_boundary(); },
           [&](const mir::ObjectWriteType&) { return crosses_no_boundary(); },
           [&](const mir::SampledHistoryType&) { return crosses_no_boundary(); },
           [&](const mir::EvaluationAttemptsType&) {
             return crosses_no_boundary();
           },
           [&](const mir::LoopBlocksType&) { return crosses_no_boundary(); },
-          [&](const mir::StructType&) { return crosses_no_boundary(); },
+          [&](const mir::RecordType&) { return crosses_no_boundary(); },
           [&](const mir::ClosureType&) { return crosses_no_boundary(); }});
 }
 

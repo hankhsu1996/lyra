@@ -1,7 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace lyra::driver {
 
@@ -38,6 +41,25 @@ inline constexpr std::string_view kRuntimeCacheDir = "runtime/cache";
 inline constexpr std::string_view kObjectDir = "obj";
 inline constexpr std::string_view kProgramName = "program";
 inline constexpr std::string_view kCxxStandardFlag = "-std=c++23";
+// The design's code is read without type-based aliasing. A member of an
+// untagged union is written through one type and read through another (LRM
+// 7.3.2), which C++ gives a meaning only where the access names the union, and
+// a member is reached through a reference to it; the execution backend states
+// no aliasing by type either, so both read the program alike.
+inline constexpr std::string_view kNoTypeBasedAliasingFlag =
+    "-fno-strict-aliasing";
+// How every compile of the design's own code reads it.
+inline constexpr std::array<std::string_view, 2> kDesignCompileFlags{
+    kCxxStandardFlag, kNoTypeBasedAliasingFlag};
+
+// What every compile of the design's own code is told, at `optimization`.
+[[nodiscard]] inline auto DesignCompileFlags(Optimization optimization)
+    -> std::vector<std::string> {
+  std::vector<std::string> flags(
+      kDesignCompileFlags.begin(), kDesignCompileFlags.end());
+  flags.emplace_back(OptimizationFlag(optimization));
+  return flags;
+}
 // A precompiled header stays usable only while the headers it was built from
 // are unchanged, and the compiler decides that by timestamp unless asked to
 // read the bytes. Not every one of those headers is ours to leave alone -- a

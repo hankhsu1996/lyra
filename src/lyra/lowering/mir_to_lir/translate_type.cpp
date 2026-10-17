@@ -7,7 +7,7 @@
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lowering/mir_to_lir/unit_lowerer.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -109,6 +109,19 @@ auto UnitLowerer::TranslateDeclaration(const mir::TypeDeclarationRef& ref)
 }
 
 auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
+  // A record of this unit is the declaration it took here, and one another
+  // unit declares is named by that declaration.
+  const auto record_of = [&](const mir::RecordRef& record) -> lir::RecordRef {
+    return std::visit(
+        Overloaded{
+            [&](mir::RecordId id) -> lir::RecordRef {
+              return RecordDeclaration(id);
+            },
+            [&](const mir::TypeDeclarationRef& ref) -> lir::RecordRef {
+              return TranslateDeclaration(ref);
+            }},
+        record);
+  };
   return ty.Visit(
       Overloaded{
           [&](const mir::IntegralType& integral) -> lir::Type {
@@ -230,15 +243,15 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           // to (LRM 13.5.2). A body taking a reference is lowered once for
           // every caller, so the type cannot say which of the two it was
           // handed: what it states is the values that storage holds.
-          [&](const mir::RefType& r) -> lir::Type {
-            return lir::Type{lir::RefType{
+          [&](const mir::VariableRefType& r) -> lir::Type {
+            return lir::Type{lir::VariableRefType{
                 .pointee = TranslateType(r.pointee),
                 .mutability = TranslateMutability(r.mutability)}};
           },
           // Bound later than a reference created bound, and named through
           // alike, so LIR carries either as one reference.
           [&](const mir::ReferenceWrapperType& r) -> lir::Type {
-            return lir::Type{lir::RefType{
+            return lir::Type{lir::VariableRefType{
                 .pointee = TranslateType(r.pointee),
                 .mutability = TranslateMutability(r.mutability)}};
           },
@@ -247,6 +260,16 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
                 .pointee = TranslateType(pt.pointee),
                 .ownership = TranslatePointerOwnership(pt.ownership),
                 .mutability = TranslateMutability(pt.mutability)}};
+          },
+          // Executed, a reference is the address of its referent, as a C++
+          // reference is to clang's code generation: what sets it apart from a
+          // borrowed pointer -- bound once, never null -- is a rule its holder
+          // keeps, not something the address carries.
+          [&](const mir::ReferenceType& r) -> lir::Type {
+            return lir::Type{lir::PointerType{
+                .pointee = TranslateType(r.referent),
+                .ownership = lir::PointerOwnership::kBorrowed,
+                .mutability = TranslateMutability(r.mutability)}};
           },
           [&](const mir::ManagedRefType& mr) -> lir::Type {
             return lir::Type{
@@ -259,14 +282,6 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [&](const mir::TupleType& t) -> lir::Type {
             return lir::Type{
                 lir::TupleType{.elements = TranslateTypes(t.elements)}};
-          },
-          [&](const mir::UnionType& u) -> lir::Type {
-            return lir::Type{
-                lir::UnionType{.members = TranslateTypes(u.members)}};
-          },
-          [&](const mir::TaggedUnionType& u) -> lir::Type {
-            return lir::Type{
-                lir::TaggedUnionType{.members = TranslateTypes(u.members)}};
           },
           [&](const mir::ResolvedType& r) -> lir::Type {
             return lir::Type{
@@ -282,6 +297,14 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [&](const mir::DesignationType& d) -> lir::Type {
             return lir::Type{
                 lir::DesignationType{.value = TranslateType(d.value)}};
+          },
+          // A reference to bits is written through where it is taken, so the
+          // write it is taken for is what lowers, and no value of it does.
+          [](const mir::BitsReferenceType&) -> lir::Type {
+            throw InternalError(
+                "mir_to_lir: a reference to bits is written through where it "
+                "is taken and is never a value of its own -- please report "
+                "this as a bug");
           },
           // Which class the write answers its object as is a fact of the
           // writer's own accesses, each of which states its member's class, so
@@ -304,18 +327,9 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
           [](const mir::LoopBlocksType&) -> lir::Type {
             return lir::Type{lir::LoopBlocksType{}};
           },
-          [&](const mir::StructType& s) -> lir::Type {
-            return lir::Type{lir::StructType{
-                .declaration = std::visit(
-                    Overloaded{
-                        [&](mir::StructId id) -> lir::StructRef {
-                          return StructDeclaration(id);
-                        },
-                        [](const mir::TypeDeclarationRef& ref)
-                            -> lir::StructRef {
-                          return TranslateDeclaration(ref);
-                        }},
-                    s.declaration)}};
+          [&](const mir::RecordType& r) -> lir::Type {
+            return lir::Type{
+                lir::RecordType{.declaration = record_of(r.declaration)}};
           },
           [&](const mir::ClosureType& c) -> lir::Type {
             return lir::Type{lir::ClosureType{

@@ -104,6 +104,16 @@ cc_test(
 )
 
 cc_test(
+    name = "value_small_box_test",
+    srcs = ["value/small_box_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "hir_verify_test",
     srcs = ["hir/verify_test.cpp"],
     copts = LYRA_COPTS,
@@ -111,6 +121,17 @@ cc_test(
         "//:base",
         "//:hir",
         "//:support",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "lir_verify_test",
+    srcs = ["lir/verify_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:base",
+        "//:lir",
         "@googletest//:gtest_main",
     ],
 )
@@ -470,6 +491,27 @@ cc_test(
     copts = LYRA_COPTS,
     data = ["//:lyra"],
     tags = ["cost"],
+    deps = [
+        ":framework",
+        "//:driver",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# How much of the stack a program's body takes is its host compiler's as much
+# as the compiler's, and clang's is the one that reserves stack for what a
+# coroutine's frame holds, so the case builds with clang and stays where clang
+# is.
+cc_test(
+    name = "values_off_the_stack_tests",
+    size = "medium",
+    srcs = ["values_off_the_stack_test.cpp"],
+    copts = LYRA_COPTS,
+    data = ["//:lyra"],
+    tags = [
+        "cost",
+        "no-remote-exec",
+    ],
     deps = [
         ":framework",
         "//:driver",

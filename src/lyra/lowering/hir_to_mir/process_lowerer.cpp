@@ -41,12 +41,14 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto PromotedVarPlace(const WalkFrame& frame, const PromotedVarBinding& binding)
-    -> mir::Expr {
+auto PromotedVarPlace(
+    const mir::TypePool& types, const WalkFrame& frame,
+    const PromotedVarBinding& binding) -> mir::Expr {
   mir::Block& block = *frame.current_block;
-  const mir::ExprId handle = block.exprs.Add(frame.bindings->MakeReadExpr(
+  const mir::ExprId handle = block.exprs.Add(frame.bindings->MakeBindingPlace(
       frame.bindings->EnsureCarrier(binding.handle_origin), block));
-  return mir::MakeDerefExpr(handle, binding.cell_type);
+  return mir::MakeDerefExpr(
+      block.DerefOperand(types, handle), binding.cell_type);
 }
 
 auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
@@ -293,8 +295,7 @@ auto DeclareParameter(
       unit, *frame.bindings, body, origin, name, value_type,
       frame.body_can_wait);
   body.AppendStmt(InitializeVariable(
-      unit, body, variable,
-      body.exprs.Add(mir::MakeLocalRefExpr(parameter, value_type))));
+      unit, body, variable, body.ReadLocal(parameter, value_type)));
   return {parameter, variable};
 }
 
@@ -385,7 +386,7 @@ auto ProcessLowerer::Run(const hir::SubroutineDecl& src)
 
     // A `ref` formal names its actual's storage, which reports its own writes
     // (LRM 13.5.2), so it is the parameter itself.
-    if (unit.types.Get(*param_type).Is<mir::RefType>()) {
+    if (unit.types.Get(*param_type).Is<mir::VariableRefType>()) {
       const mir::LocalId mir_var =
           bindings.DeclareProcedural(origin, hir_var.name, *param_type);
       MapProceduralVar(param.var, AutomaticVarBinding{.type = *param_type});
@@ -564,8 +565,8 @@ auto ProcessLowerer::BuildReportPrologue(
           .then_scope = asked.child_scopes.Add(std::move(stands_in)),
           .else_scope = std::nullopt});
 
-  const mir::ExprId report_read = block.exprs.Add(
-      mir::MakeLocalRefExpr(report, unit.builtins.read_report_ptr));
+  const mir::ExprId report_read =
+      block.ReadLocal(report, unit.builtins.read_report_ptr);
   const mir::ExprId no_report = block.exprs.Add(
       mir::Expr{
           .data = mir::NullLiteral{}, .type = unit.builtins.read_report_ptr});

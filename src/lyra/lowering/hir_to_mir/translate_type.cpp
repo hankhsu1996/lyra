@@ -9,10 +9,10 @@
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/packed_projection.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
-#include "lyra/mir/struct_decl.hpp"
-#include "lyra/mir/struct_id.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -83,39 +83,71 @@ auto TranslateMemberTypes(
 
 }  // namespace
 
-auto UnitLowerer::TranslateStructType(const hir::UnpackedStructType& src)
-    -> mir::StructType {
-  if (hir_->IsItself(src.declaration.unit_name)) {
-    return mir::StructType{.declaration = unit_.structs.Declare()};
+auto UnitLowerer::TranslateRecordType(
+    const hir::TypeDeclarationRef& source, mir::RecordKind kind,
+    std::vector<mir::TypeId> elements) -> mir::RecordType {
+  if (hir_->IsItself(source.unit_name)) {
+    const mir::RecordId id = unit_.records.Add(
+        mir::RecordDecl{
+            .path = source.path,
+            .kind = kind,
+            .elements = std::move(elements)});
+    if (unit_.record_methods.Declare() != id) {
+      throw InternalError(
+          "hir_to_mir: a record's methods and its declaration took different "
+          "identities -- please report this as a bug");
+    }
+    return mir::RecordType{.declaration = id};
   }
   mir::TypeDeclarationRef declaration{
-      .unit_name = src.declaration.unit_name, .path = src.declaration.path};
-  // A struct another unit declares brings that unit's statement of its
+      .unit_name = source.unit_name, .path = source.path};
+  // A record another unit declares brings that unit's statement of its
   // operations with it, which is a dependency on that unit.
   unit_.ConsumeNamespaceOf(declaration.unit_name);
-  if (mir::FindExternalStruct(unit_, declaration) == nullptr) {
-    unit_.external_structs.push_back(
-        mir::ExternalStruct{
+  if (mir::FindExternalRecord(unit_, declaration) == nullptr) {
+    unit_.external_records.push_back(
+        mir::ExternalRecord{
             .declaration = declaration,
-            .elements = TranslateMemberTypes(*this, src.fields)});
+            .kind = kind,
+            .elements = std::move(elements)});
   }
-  return mir::StructType{.declaration = std::move(declaration)};
+  return mir::RecordType{.declaration = std::move(declaration)};
 }
 
-void UnitLowerer::DefineOwnStruct(
-    const hir::UnpackedStructType& src, mir::StructId id,
-    mir::TypeId structure) {
-  std::vector<mir::TypeId> elements = TranslateMemberTypes(*this, src.fields);
-  std::vector<mir::StructMethod> methods = StructMethodsOf(
-      *this, src,
-      mir::TypeDeclarationRef{
-          .unit_name = unit_.name, .path = src.declaration.path},
-      structure, elements);
-  unit_.structs.Define(
-      id, mir::StructDecl{
-              .path = src.declaration.path,
-              .elements = std::move(elements),
-              .methods = std::move(methods)});
+auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionType& src)
+    -> std::vector<mir::TypeId> {
+  std::vector<mir::TypeId> members = TranslateMemberTypes(*this, src.fields);
+  // A `void` member (LRM 7.3.2) occupies a value slot, so its component is
+  // the type carrying no information rather than the absence of a type the SV
+  // keyword otherwise names.
+  for (mir::TypeId& member : members) {
+    if (unit_.types.Get(member).Is<mir::VoidType>()) {
+      member = unit_.types.Intern(mir::Type{mir::EmptyType{}});
+    }
+  }
+  return members;
+}
+
+void UnitLowerer::DefineRecordMethods(
+    const hir::Type& source, mir::RecordId id, mir::TypeId type) {
+  // Copied, since building a body can declare a record and move the registry.
+  const mir::RecordDecl declared = unit_.GetRecord(id);
+  const mir::TypeDeclarationRef declaration{
+      .unit_name = unit_.name, .path = declared.path};
+  unit_.record_methods.Define(id, [&] {
+    switch (declared.kind) {
+      case mir::RecordKind::kStruct:
+        return StructMethodsOf(
+            *this, source.Get<hir::UnpackedStructType>(), declaration, type,
+            declared.elements);
+      case mir::RecordKind::kUnion:
+        return UnionMethodsOf(*this, declaration, type, declared.elements);
+      case mir::RecordKind::kTaggedUnion:
+        return TaggedUnionMethodsOf(
+            *this, declaration, type, declared.elements);
+    }
+    throw InternalError("hir_to_mir: unknown record kind");
+  }());
 }
 
 auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
@@ -172,28 +204,16 @@ auto UnitLowerer::TranslateType(const hir::Type& type) -> mir::Type {
             }};
           },
           [&](const hir::UnpackedStructType& src) -> mir::Type {
-            return mir::Type{TranslateStructType(src)};
+            return mir::Type{TranslateRecordType(
+                src.declaration, mir::RecordKind::kStruct,
+                TranslateMemberTypes(*this, src.fields))};
           },
           [&](const hir::UnpackedUnionType& src) -> mir::Type {
-            // The untagged overlapping-storage form (LRM 7.3) maps to
-            // `UnionType`; the tagged, type-checked sum form (LRM 7.3.2) to
-            // `TaggedUnionType` -- MIR keeps them as distinct types because
-            // their value spaces and access semantics genuinely differ.
-            std::vector<mir::TypeId> members =
-                TranslateMemberTypes(*this, src.fields);
-            if (!src.tagged) {
-              return mir::Type{mir::UnionType{.members = std::move(members)}};
-            }
-            // A `void` member (LRM 7.3.2) occupies a value slot, so its
-            // component is the type carrying no information rather than the
-            // absence of a type the SV keyword otherwise names.
-            for (mir::TypeId& member : members) {
-              if (unit_.types.Get(member).Is<mir::VoidType>()) {
-                member = unit_.types.Intern(mir::Type{mir::EmptyType{}});
-              }
-            }
-            return mir::Type{
-                mir::TaggedUnionType{.members = std::move(members)}};
+            return mir::Type{TranslateRecordType(
+                src.declaration,
+                src.tagged ? mir::RecordKind::kTaggedUnion
+                           : mir::RecordKind::kUnion,
+                UnionMemberTypes(src))};
           },
           [&](const hir::UnpackedArrayType& src) -> mir::Type {
             return mir::Type{mir::UnpackedArrayType{

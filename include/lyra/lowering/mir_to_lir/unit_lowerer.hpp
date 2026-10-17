@@ -1,10 +1,12 @@
 #pragma once
 
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "lyra/base/translation.hpp"
@@ -28,6 +30,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -88,6 +91,12 @@ class UnitLowerer {
     return out_.types;
   }
 
+  // The LIR unit being built, whose records are settled before any body
+  // lowers, so a body may ask what any of them is made of.
+  [[nodiscard]] auto Lir() const -> const lir::CompilationUnit& {
+    return out_;
+  }
+
   // The scalar a conditional branch tests: MIR's own machine boolean
   // translated, so the two layers cannot disagree about what a predicate
   // reduces to.
@@ -134,6 +143,10 @@ class UnitLowerer {
   [[nodiscard]] auto MethodRef(mir::ClassId owner, mir::CallableId callable)
       -> lir::StatedDispatchRef;
 
+  // The function of this unit answering `answers` at `type`.
+  [[nodiscard]] auto TypeOperationFunction(
+      mir::TypeId type, support::ValueOperation answers) -> lir::FunctionId;
+
   // The behavior a MIR slot names, whichever unit introduced it.
   [[nodiscard]] auto SlotRef(const mir::VirtualSlot& slot)
       -> lir::StatedDispatchRef;
@@ -176,10 +189,10 @@ class UnitLowerer {
   [[nodiscard]] auto ClosureFunction(mir::ClosureId closure) const
       -> lir::FunctionId;
 
-  // The declaration a struct of this unit is, which its components and its
-  // methods are listed on.
-  [[nodiscard]] auto StructDeclaration(mir::StructId record) const
-      -> lir::StructId;
+  // The declaration a struct or a union of this unit is, which its members and
+  // its methods are listed on.
+  [[nodiscard]] auto RecordDeclaration(mir::RecordId record) const
+      -> lir::RecordId;
 
   // What is settled about one MIR class before any body of it is lowered: its
   // own LIR identity, its constructor's function where it has a constructor,
@@ -244,7 +257,11 @@ class UnitLowerer {
   std::unordered_map<mir::TypeId, lir::TypeId> type_memo_;
   base::Translation<mir::ClassId, ClassIdentities> class_identities_;
   base::Translation<mir::ClosureId, ClosureIdentities> closure_identities_;
-  base::Translation<mir::StructId, lir::StructId> struct_identities_;
+  base::Translation<mir::RecordId, lir::RecordId> record_identities_;
+  // The function answering each operation of each type the unit states its
+  // operations for, by the type and the operation.
+  std::map<std::pair<lir::TypeId, support::ValueOperation>, lir::FunctionId>
+      type_operation_functions_;
 };
 
 }  // namespace lyra::lowering::mir_to_lir

@@ -427,8 +427,12 @@ void Runtime::RunRegion(Region region) {
   draining_.timers.Append(queue.timers);
   std::swap(queue.effects, draining_.effects);
   // LRM 4.6: nonblocking updates are performed in the order they were placed.
+  // A deferred effect -- a nonblocking update, a report maturing, an
+  // assertion's action -- runs with no activation holding it, so each runs as
+  // a landing of its own: a run-time error it raises is reported and the
+  // region goes on to the effects after it.
   for (OwnedCall& effect : draining_.effects) {
-    effect();
+    RunAsLanding(*this, effect);
   }
   draining_.effects.clear();
   // A timer comes off its queue as it fires, so arming it again from what the

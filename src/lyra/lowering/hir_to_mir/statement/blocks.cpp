@@ -159,8 +159,7 @@ auto BuildCancellableRegion(
   // through a frame whose current block is that scope.
   mir::Block handler;
   const WalkFrame handler_frame = frame.WithBlock(&handler);
-  const mir::ExprId caught_ref =
-      handler.exprs.Add(mir::MakeLocalRefExpr(caught, effect_type));
+  const mir::ExprId caught_ref = handler.ReadLocal(caught, effect_type);
   const mir::ExprId reached =
       CancellationTarget(process, handler_frame, target);
   const mir::ExprId claims = handler.exprs.Add(
@@ -175,8 +174,7 @@ auto BuildCancellableRegion(
   const mir::ExprId declined = BuildLogicalNot(unit, handler, claims);
 
   mir::Block decline;
-  const mir::ExprId raised =
-      decline.exprs.Add(mir::MakeLocalRefExpr(caught, effect_type));
+  const mir::ExprId raised = decline.ReadLocal(caught, effect_type);
   decline.AppendStmt(mir::RaiseStmt{.effect = raised});
   handler.AppendStmt(
       mir::IfStmt{
@@ -284,7 +282,7 @@ auto LowerDisableStmt(
           .data =
               mir::CallExpr{
                   .callee = mir::Direct{.target = support::BuiltinFn::kDisable},
-                  .arguments = {member, services}},
+                  .arguments = {block.AsValue(unit.types, member), services}},
           .type = unit.builtins.void_type});
   return mir::Stmt{
       .label = std::move(label), .data = mir::ExprStmt{.expr = disable}};

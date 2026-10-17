@@ -13,6 +13,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
 #include "lyra/mir/integral_constant_id.hpp"
@@ -110,12 +111,12 @@ auto MinimalExtendingType(
 auto BuildIntegralLiteral(
     const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId type,
     const mir::IntegralConstant& value) -> mir::ExprId {
-  // A value of a type that owns its words is as large as the type, however
-  // little it says: a fill, a default and a small number widened are one scalar
-  // above a few bits. So it is stated as the extension of those bits, and what
-  // the unit holds as data is as long as what differs.
+  // A constant of a type too large for a frame is as large as the type,
+  // however little it says: a fill, a default and a small number widened are
+  // one scalar above a few bits. So it is stated as the extension of those
+  // bits, and what the unit holds as data is as long as what differs.
   if (const auto* integral = unit.types.Get(type).As<mir::IntegralType>();
-      integral != nullptr && mir::UsesHeapWords(*integral)) {
+      integral != nullptr && mir::IsTooLargeForAFrame(unit, type)) {
     const mir::IntegralConstant canonical =
         CanonicalIntegralConstant(*integral, value);
     const mir::IntegralType narrowest =

@@ -226,7 +226,7 @@ class FileTable {
   // and answers how many it read; a read that reaches no byte leaves the
   // destination as it was.
   template <value::IntegralValue T>
-  auto Read(T dest, std::int64_t fd) -> BinaryRead<T>;
+  auto Read(const T& dest, std::int64_t fd) -> BinaryRead<T>;
   auto ReadInto(const value::IntegralView& dest, std::int64_t fd) -> value::Int;
 
   // LRM 21.3.4.4 $fread into a memory. Iterates `dest` from SV index
@@ -237,7 +237,7 @@ class FileTable {
   // out, so one entry serves every form the source may write.
   template <value::IntegralValue T, std::size_t N>
   auto ReadMemory(
-      value::UnpackedArray<T, N> dest, std::int64_t fd,
+      const value::UnpackedArray<T, N>& dest, std::int64_t fd,
       std::span<const std::int64_t> bounds, std::int64_t sv_start,
       std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>>;
 
@@ -310,27 +310,35 @@ void ReadBigEndian(
     const value::IntegralView& dest, std::span<const char> bytes);
 
 template <value::IntegralValue T>
-auto FileTable::Read(T dest, std::int64_t fd) -> BinaryRead<T> {
-  const value::Int read = ReadInto(dest.AsMutableWords().MutableView(), fd);
-  return BinaryRead<T>{read, std::move(dest)};
+auto FileTable::Read(const T& dest, std::int64_t fd) -> BinaryRead<T> {
+  // The destination is read into where the answer keeps it.
+  BinaryRead<T> answer(value::Int{}, dest);
+  answer.template Component<0>() = ReadInto(
+      answer.template Component<1>().AsMutableWords().MutableView(), fd);
+  return answer;
 }
 
 template <value::IntegralValue T, std::size_t N>
 auto FileTable::ReadMemory(
-    value::UnpackedArray<T, N> dest, std::int64_t fd,
+    const value::UnpackedArray<T, N>& dest, std::int64_t fd,
     std::span<const std::int64_t> bounds, std::int64_t sv_start,
     std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>> {
+  // The memory is read into where the answer keeps it.
+  BinaryRead<value::UnpackedArray<T, N>> answer(value::Int{}, dest);
+  value::UnpackedArray<T, N>& memory = answer.template Component<1>();
   const value::UnpackedRange declared = value::UnpackedRangesOf(bounds).front();
-  const std::int32_t read = ReadMemoryWords(
+  answer.template Component<0>() = value::Int::FromInt(ReadMemoryWords(
       *this, fd, T::kWidth, declared, sv_start, count,
-      [&dest, &declared](std::int64_t sv_index, std::span<const char> bytes) {
-        T word = T::Zero();
-        ReadBigEndian(word.AsMutableWords().MutableView(), bytes);
-        dest.ElementRef(
-            value::Position::FromInt(declared.ToOrdinal(sv_index))) = word;
-      });
-  return BinaryRead<value::UnpackedArray<T, N>>{
-      value::Int::FromInt(read), std::move(dest)};
+      [&memory, &declared](std::int64_t sv_index, std::span<const char> bytes) {
+        ReadBigEndian(
+            memory
+                .ElementMut(
+                    value::Position::FromInt(declared.ToOrdinal(sv_index)))
+                .AsMutableWords()
+                .MutableView(),
+            bytes);
+      }));
+  return answer;
 }
 
 }  // namespace lyra::runtime

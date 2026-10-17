@@ -20,16 +20,13 @@
 #include <llvm/IR/Type.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
-#include "lyra/backend/llvm/codegen_tuple.hpp"
+#include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
-#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
-#include "lyra/lir/place_query.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
-#include "lyra/value/integral.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -77,20 +74,35 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
 
   // A place local is frame storage: its slot is allocated once, in the entry
   // block, so every path that reaches it names the same address. A slot of an
-  // owned type holds the value itself, as a C++ local of class type does.
+  // owned type holds the value itself, as a C++ local of class type does. The
+  // return place of an answer lying in storage is the storage the caller gave,
+  // as clang's return value is the address an indirect result arrives in.
   builder_.SetInsertPoint(entry);
   frame_storage_point_ =
       builder_.CreateAlloca(builder_.getInt8Ty(), nullptr, "frame.storage");
-  DeclareHeapPointers();
   for (const lir::ValueId id : fn_->values.Ids()) {
     const lir::Local& local = fn_->values.Get(id);
-    if (!local.NamesStorage() || NeedsHeapStorage(local.type)) {
+    if (!local.NamesStorage()) {
       continue;
     }
-    llvm::Value* owned = StorageFor(local.type);
+    const auto own_storage = [&] -> llvm::Value* {
+      llvm::Value* owned = StorageFor(local.type);
+      return owned != nullptr ? owned
+                              : FrameStorage(module_->Types().Map(local.type));
+    };
+    if (id != fn_->return_place) {
+      values_.emplace(id, own_storage());
+      continue;
+    }
     values_.emplace(
-        id, owned != nullptr ? owned
-                             : FrameStorage(module_->Types().Map(local.type)));
+        id,
+        std::visit(
+            Overloaded{
+                [&](const ReturnDirect&) { return own_storage(); },
+                [&](const ReturnIndirect&) -> llvm::Value* {
+                  return value_->getArg(value_->arg_size() - 1);
+                }},
+            CallArranger::ReturnOfValue(module_->Types(), fn_->result_type)));
   }
   if (IsCoroutine()) {
     // The ramp places the arguments in the frame and stops before the body's
@@ -105,11 +117,10 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
     builder_.SetInsertPoint(blocks_[i]);
     const lir::BasicBlock& block = fn_->blocks[i];
     for (const lir::Instr& instr : block.instrs) {
-      auto lowered = LowerInstr(instr);
+      auto lowered = LowerInstrInto(instr);
       if (!lowered) {
         return std::unexpected(std::move(lowered.error()));
       }
-      values_.emplace(instr.result, *lowered);
     }
     auto terminated = LowerTerminatorInto(block.terminator);
     if (!terminated) {
@@ -130,8 +141,8 @@ auto CodeGenFunction::LaidOutStorage(support::ObjectLayout layout)
     -> llvm::Value* {
   llvm::IRBuilder<> at(frame_storage_point_);
   llvm::AllocaInst* storage =
-      at.CreateAlloca(llvm::ArrayType::get(at.getInt8Ty(), layout.size));
-  storage->setAlignment(llvm::Align(layout.align));
+      at.CreateAlloca(llvm::ArrayType::get(at.getInt8Ty(), layout.layout.size));
+  storage->setAlignment(llvm::Align(layout.layout.align));
   return storage;
 }
 
@@ -141,93 +152,79 @@ auto CodeGenFunction::ObjectStorage(support::RuntimeObject object)
 }
 
 auto CodeGenFunction::StorageFor(lir::TypeId type) -> llvm::Value* {
-  if (!module_->Unit().types.Get(type).IsOwnedValue()) {
+  if (!IsBuiltInStorage(type)) {
     return nullptr;
   }
-  return LaidOutStorage(module_->Types().StorageOf(type));
+  return LaidOutStorage(module_->Types().LayoutOf(type));
 }
 
-auto CodeGenFunction::NeedsHeapStorage(lir::TypeId type) const -> bool {
-  return module_->Unit().types.Get(type).IsOwnedValue() &&
-         module_->Types().StorageOf(type).size > value::kMaxInlineBytes;
+auto CodeGenFunction::IsBuiltInStorage(lir::TypeId type) const -> bool {
+  return module_->Types().HasAggregateEvaluationKind(type) ||
+         module_->Types().IsReadAsView(type);
 }
 
-void CodeGenFunction::DeclareHeapPointers() {
-  const auto declare = [&](lir::ValueId id) {
-    llvm::IRBuilder<> at(frame_storage_point_);
-    llvm::AllocaInst* const pointer = at.CreateAlloca(module_->Types().Ptr());
-    at.CreateStore(
-        llvm::ConstantPointerNull::get(module_->Types().Ptr()), pointer);
-    heap_pointers_.emplace(id, pointer);
-  };
-  for (const lir::ValueId id : fn_->values.Ids()) {
-    const lir::Local& local = fn_->values.Get(id);
-    if (local.NamesStorage() && NeedsHeapStorage(local.type)) {
-      declare(id);
-    }
-  }
-  for (const lir::BasicBlock& block : fn_->blocks) {
-    for (const lir::Instr& instr : block.instrs) {
-      if (lir::MakesValue(instr.data) &&
-          NeedsHeapStorage(fn_->values.Get(instr.result).type)) {
-        declare(instr.result);
-      }
-    }
-    if (const auto* call =
-            std::get_if<lir::DepartingCallInstr>(&block.terminator.data);
-        call != nullptr && lir::CallMakesValue(call->target) &&
-        NeedsHeapStorage(fn_->values.Get(call->result).type)) {
-      declare(call->result);
-    }
-  }
+auto CodeGenFunction::ResolveDestination(const lir::Destination& destination)
+    -> diag::Result<DestinationRef> {
+  return std::visit(
+      Overloaded{
+          [&](const lir::Transient& defined) -> diag::Result<DestinationRef> {
+            return PendingOperand{.value = defined.value};
+          },
+          [&](const lir::Place& place) -> diag::Result<DestinationRef> {
+            auto address = ResolvePlaceAddress(place, Access::kWrite);
+            if (!address) {
+              return std::unexpected(std::move(address.error()));
+            }
+            return PlaceRef{
+                .address = *address,
+                .type = ReachedType(place, std::ssize(place.chain))};
+          }},
+      destination);
 }
 
-auto CodeGenFunction::StorageForResult(lir::ValueId made, lir::TypeId type)
+auto CodeGenFunction::TypeOf(const DestinationRef& destination) const
+    -> lir::TypeId {
+  return std::visit(
+      Overloaded{
+          [&](const PendingOperand& pending) {
+            return fn_->values.Get(pending.value).type;
+          },
+          [](const PlaceRef& place) { return place.type; }},
+      destination);
+}
+
+auto CodeGenFunction::EnsureDestination(const DestinationRef& destination)
     -> llvm::Value* {
-  return NeedsHeapStorage(type) ? AllocateBytes(made) : StorageFor(type);
+  return std::visit(
+      Overloaded{
+          [&](const PendingOperand& pending) {
+            return StorageFor(fn_->values.Get(pending.value).type);
+          },
+          [&](const PlaceRef& place) -> llvm::Value* {
+            if (!IsBuiltInStorage(place.type)) {
+              return nullptr;
+            }
+            return place.address;
+          }},
+      destination);
 }
 
-auto CodeGenFunction::AllocateBytes(lir::ValueId of) -> llvm::Value* {
-  const auto kept = heap_pointers_.find(of);
-  if (kept == heap_pointers_.end()) {
-    throw InternalError(
-        "llvm codegen: bytes are obtained for a value that was given no "
-        "pointer "
-        "to keep their address in -- please report this as a bug");
-  }
-  const std::array<llvm::Value*, 1> args{builder_.getInt64(
-      module_->Types().StorageOf(fn_->values.Get(of).type).size)};
-  llvm::Value* const bytes = CallEntry(
-      RuntimeSymbol(RuntimeOp::kAllocBytes), module_->Types().Ptr(),
-      {CallArranger::Direct(builder_.getInt64Ty())}, args);
-  builder_.CreateStore(bytes, kept->second);
-  return bytes;
-}
-
-void CodeGenFunction::DeallocateBytes(lir::ValueId of) {
-  const auto kept = heap_pointers_.find(of);
-  if (kept == heap_pointers_.end()) {
-    return;
-  }
-  const std::array<llvm::Value*, 2> args{
-      builder_.CreateLoad(module_->Types().Ptr(), kept->second),
-      builder_.getInt64(
-          module_->Types().StorageOf(fn_->values.Get(of).type).size)};
-  CallEntry(
-      RuntimeSymbol(RuntimeOp::kDeallocBytes), builder_.getVoidTy(),
-      {CallArranger::Direct(module_->Types().Ptr()),
-       CallArranger::Direct(builder_.getInt64Ty())},
-      args);
-  builder_.CreateStore(
-      llvm::ConstantPointerNull::get(module_->Types().Ptr()), kept->second);
-}
-
-auto CodeGenFunction::AddressOf(lir::ValueId id) -> llvm::Value* {
-  const auto kept = heap_pointers_.find(id);
-  if (kept != heap_pointers_.end()) {
-    return builder_.CreateLoad(module_->Types().Ptr(), kept->second);
-  }
-  return values_.at(id);
+void CodeGenFunction::StoreInto(
+    const DestinationRef& destination, llvm::Value* value,
+    llvm::IRBuilderBase& at) {
+  std::visit(
+      Overloaded{
+          [&](const PendingOperand& pending) {
+            values_.emplace(pending.value, value);
+          },
+          // What lies in storage of its own, and a sequence of machine values,
+          // was built where the place is.
+          [&](const PlaceRef& place) {
+            if (!IsBuiltInStorage(place.type)) {
+              at.CreateStore(value, place.address);
+            }
+          }},
+      destination);
 }
 
 auto CodeGenFunction::Addresses(std::size_t count) const
@@ -261,7 +258,11 @@ auto CodeGenFunction::BuildInto(
 
 auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
     -> diag::Result<void> {
-  if (module_->Types().StorageOf(type).ends_with_nothing_to_do) {
+  // A pointer owning what it points at is that address where it is an operand.
+  if (module_->Unit().types.Get(type).IsMoveOnly()) {
+    return module_->EndOwnedStorage(builder_, type, value);
+  }
+  if (module_->Types().LayoutOf(type).ends_with_nothing_to_do) {
     return {};
   }
   const std::array<llvm::Value*, 1> args{value};
@@ -300,43 +301,57 @@ auto CodeGenFunction::RelocateValue(
 }
 
 auto CodeGenFunction::ComponentAddress(
-    lir::TypeId tuple, llvm::Value* value, std::size_t index) -> llvm::Value* {
-  return builder_.CreateConstInBoundsGEP1_64(
-      builder_.getInt8Ty(), value,
-      module_->Types().LayoutOfTuple(tuple).offsets.at(index));
+    lir::TypeId aggregate, llvm::Value* value, std::size_t index)
+    -> llvm::Value* {
+  return std::visit(
+      Overloaded{
+          [&](const ProductLayout* product) -> llvm::Value* {
+            return builder_.CreateConstInBoundsGEP1_64(
+                builder_.getInt8Ty(), value, product->offsets.at(index));
+          },
+          // Every member of a union lies at its start (LRM 7.3), as C reaches
+          // one by retyping the union's own address.
+          [&](const UnionLayout*) -> llvm::Value* { return value; },
+          [&](const ArrayLayout* array) -> llvm::Value* {
+            return builder_.CreateConstInBoundsGEP1_64(
+                builder_.getInt8Ty(), value, array->stride * index);
+          }},
+      module_->Types().FieldsOf(aggregate));
 }
 
-auto CodeGenFunction::Variables() -> diag::Result<const RecordLayout*> {
+auto CodeGenFunction::Variables() -> diag::Result<const PlacedMembers*> {
   if (variables_.has_value()) {
     return &*variables_;
   }
-  auto record = module_->PlaceMembers(
-      fn_->variables, MemberSlotRole::kVariable, RecordLayout{}, "a variable");
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = module_->PlaceMembers(
+      fn_->variables, MemberSlotRole::kVariable, PlacedMembers{}, "a variable");
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
-  return &variables_.emplace(*std::move(record));
+  return &variables_.emplace(*std::move(placed));
 }
 
 auto CodeGenFunction::LowerOpenVariables() -> diag::Result<llvm::Value*> {
-  auto record = Variables();
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = Variables();
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
   llvm::IRBuilder<> at(frame_storage_point_);
   llvm::AllocaInst* storage = at.CreateAlloca(
-      llvm::ArrayType::get(at.getInt8Ty(), (*record)->size), nullptr,
+      llvm::ArrayType::get(at.getInt8Ty(), (*placed)->layout.size), nullptr,
       "variables");
-  storage->setAlignment(llvm::Align((*record)->align));
-  module_->BeginMembers(builder_, storage, **record);
+  storage->setAlignment(llvm::Align((*placed)->layout.align));
+  if (auto begun = module_->BeginMembers(builder_, storage, **placed); !begun) {
+    return std::unexpected(std::move(begun.error()));
+  }
   return storage;
 }
 
 auto CodeGenFunction::LowerVariableAddress(
     const lir::VariableAddressInstr& reached) -> diag::Result<llvm::Value*> {
-  auto record = Variables();
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = Variables();
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
   auto storage = LowerOperand(reached.variables);
   if (!storage) {
@@ -344,20 +359,20 @@ auto CodeGenFunction::LowerVariableAddress(
   }
   return builder_.CreateConstInBoundsGEP1_64(
       builder_.getInt8Ty(), *storage,
-      (*record)->offsets.at(reached.position.value));
+      (*placed)->offsets.at(reached.position.value));
 }
 
 auto CodeGenFunction::LowerCloseVariables(
     const lir::CloseVariablesInstr& closed) -> diag::Result<llvm::Value*> {
-  auto record = Variables();
-  if (!record) {
-    return std::unexpected(std::move(record.error()));
+  auto placed = Variables();
+  if (!placed) {
+    return std::unexpected(std::move(placed.error()));
   }
   auto storage = LowerOperand(closed.variables);
   if (!storage) {
     return std::unexpected(std::move(storage.error()));
   }
-  auto ended = module_->EndMembers(builder_, *storage, **record);
+  auto ended = module_->EndMembers(builder_, *storage, **placed);
   if (!ended) {
     return std::unexpected(std::move(ended.error()));
   }
@@ -446,38 +461,29 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
     -> diag::Result<void> {
   return std::visit(
       Overloaded{
-          [&](const lir::ReturnTerm& ret) -> diag::Result<void> {
+          [&](const lir::ReturnTerm&) -> diag::Result<void> {
             if (IsCoroutine()) {
               // A coroutine completes through its final suspension; its owner
               // reads completion from the handle, never from a returned value.
               builder_.CreateBr(coro_final_);
               return {};
             }
-            if (!ret.value.has_value()) {
+            if (!fn_->return_place.has_value()) {
               builder_.CreateRetVoid();
               return {};
             }
-            auto value = LowerOperand(*ret.value);
-            if (!value) {
-              return std::unexpected(std::move(value.error()));
-            }
-            // An owned answer is built in the storage the caller gave, which
-            // the body answers with as an entry does.
-            if (module_->Unit().types.Get(fn_->result_type).IsOwnedValue()) {
-              llvm::Value* out = value_->getArg(value_->arg_size() - 1);
-              auto relocated = RelocateValue(fn_->result_type, *value, out);
-              if (!relocated) {
-                return relocated;
-              }
-              // The bytes the answer was made in go out of use with the
-              // return, once the answer lies where the caller reads it.
-              if (const auto* made = std::get_if<lir::Use>(&*ret.value)) {
-                DeallocateBytes(made->value);
-              }
-              builder_.CreateRet(out);
-              return {};
-            }
-            builder_.CreateRet(*value);
+            // An answer lying in storage is already in the storage the caller
+            // gave, which the body answers with as an entry does.
+            llvm::Value* answer = values_.at(*fn_->return_place);
+            builder_.CreateRet(
+                std::visit(
+                    Overloaded{
+                        [&](const ReturnDirect& direct) -> llvm::Value* {
+                          return builder_.CreateLoad(direct.type, answer);
+                        },
+                        [&](const ReturnIndirect&) { return answer; }},
+                    CallArranger::ReturnOfValue(
+                        module_->Types(), fn_->result_type)));
             return {};
           },
           [&](const lir::BranchTerm& br) -> diag::Result<void> {
@@ -535,22 +541,24 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             return {};
           },
           [&](const lir::DepartingCallInstr& call) -> diag::Result<void> {
-            const lir::TypeId result_type = fn_->values.Get(call.result).type;
-            llvm::Value* const out =
-                lir::CallMakesValue(call.target)
-                    ? StorageForResult(call.result, result_type)
-                    : nullptr;
+            auto destination = ResolveDestination(call.destination);
+            if (!destination) {
+              return std::unexpected(std::move(destination.error()));
+            }
             const lir::CallInstr stated{
                 .target = call.target, .args = call.args};
             invoke_dest_ = InvokeDest{
                 .normal = blocks_[call.returned.value],
                 .unwind = blocks_[call.landing.value]};
-            auto answered = LowerCall(stated, result_type, out);
+            auto answered = LowerCall(stated, *destination);
             invoke_dest_.reset();
             if (!answered) {
               return std::unexpected(std::move(answered.error()));
             }
-            values_[call.result] = *answered;
+            // An answer exists only where the call returned to, so that is
+            // where it is put.
+            llvm::IRBuilder<> at(blocks_[call.returned.value]);
+            StoreInto(*destination, *answered, at);
             // A call emitted as instructions of this body departs from
             // nowhere, so control goes on to where the call returns.
             if (!builder_.GetInsertBlock()->hasTerminator()) {

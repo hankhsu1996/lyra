@@ -5,16 +5,16 @@
 #include <type_traits>
 #include <utility>
 
-#include "lyra/value/runtime_fixed_array.hpp"
-#include "lyra/value/runtime_tuple.hpp"
+#include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
 // A value and the handle generated code holds it by. A handle is the address
 // of storage laid out as the value's type states: for a value of most domains
-// that is the runtime object itself, and for an integral value, a tuple and a
-// fixed-size unpacked array it is the value's own bytes, which the runtime
-// holds inside the object it keeps one in. These state that correspondence
-// once, in both directions, so no entry spells it.
+// that is the runtime object itself, and for an integral value, a tuple, a
+// union and a fixed-size unpacked array it is the value's own bytes, wherever
+// they lie -- in what holds the value, or inside an object the runtime keeps a
+// copy in. These state that correspondence once, in both directions, so no
+// entry spells it.
 namespace lyra::runtime {
 
 // The handle a value the runtime holds crosses as: its bytes, for a value laid
@@ -39,33 +39,29 @@ auto HandleTo(T& value) -> void* {
 }
 
 // The value a handle names, as the runtime takes it: the object itself, read
-// where it lies, and for a tuple a copy of it in the one form the runtime
-// holds every tuple in. An integral value of a type the library states is its
-// bytes, so it is read where it lies too. An integral value wider than a word
-// is bytes whose extent only what holds one knows, so it is read by its
-// holder, and a fixed-size unpacked array is elements whose type only what
-// hands it over knows, so it is read with that type.
+// where it lies. An integral value of a type the library states is its bytes,
+// so it is read where it lies too. An integral value wider than a word is
+// bytes whose extent only what holds one knows, so it is read by its holder,
+// and a value laid out by its type -- a tuple, a union, a fixed-size unpacked
+// array -- is bytes whose type only what hands them over knows, so each is
+// read with that type.
 template <typename T>
-auto Read(const void* handle) -> decltype(auto) {
+auto Read(const void* handle) -> const T& {
   static_assert(
       !value::HeldAsWords<T>,
       "an integral value wider than a word is read at the width its holder "
       "was told");
   static_assert(
-      !std::same_as<T, value::RuntimeFixedArray>,
-      "a fixed-size unpacked array is read with the type its bytes do not "
+      !value::LaidOutByType<T>,
+      "a value laid out by its type is read with the type its bytes do not "
       "state");
-  if constexpr (std::same_as<T, value::RuntimeTuple>) {
-    return value::RuntimeTuple::CopyOf(handle);
-  } else {
-    return *static_cast<const T*>(handle);
-  }
+  return *static_cast<const T*>(handle);
 }
 
 // A value the runtime holds in a form of its own, which lays the bytes
-// generated code holds one by out in storage it is handed: a tuple, the words
-// of an integral value wider than a word, and the elements of a fixed-size
-// unpacked array.
+// generated code holds one by out in storage it is handed: a tuple or a union,
+// the words of an integral value wider than a word, and the elements of a
+// fixed-size unpacked array.
 template <typename T>
 concept LaysItsBytesOut = requires(const T& kept, T given, void* out) {
   { kept.CopyInto(out) } -> std::convertible_to<void*>;

@@ -59,8 +59,7 @@ auto BuildParkStmt(
       block.exprs.Add(BuildCurrentRuntimeCallExpr(unit_lowerer));
   const mir::ExprId wait_ptr = block.exprs.Add(
       mir::MakeAddressOfExpr(
-          block.exprs.Add(mir::MakeLocalRefExpr(wait, unit.builtins.wait)),
-          unit.builtins.wait_ptr));
+          block.LocalPlace(wait, unit.builtins.wait), unit.builtins.wait_ptr));
   const mir::ExprId call_id = block.exprs.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = support::BuiltinFn::kParkAt},

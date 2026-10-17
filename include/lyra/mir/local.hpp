@@ -29,9 +29,9 @@ struct LocalId {
 // Static-lifetime (LRM 6.21) body locals do not live here -- HIR-to-MIR
 // realizes each as a cell of whatever its declaration belongs to. A
 // pass-by-reference binding (LRM 13.5.2, a `ref` formal or a by-reference
-// capture) carries no flag here: its `type` is a `RefType`, so a reference to
-// it reaches the place that reference stands for by dereferencing it, the same
-// as an observable cell.
+// capture) carries no flag here: its `type` is a `VariableRefType`, so a
+// reference to it reaches the place that reference stands for by dereferencing
+// it, the same as an observable cell.
 struct LocalDecl {
   TypeId type;
 };

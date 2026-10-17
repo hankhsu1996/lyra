@@ -121,6 +121,7 @@ auto TypeImporter::Import(const Type& type) -> Type {
           },
           [this](const UnpackedUnionType& t) -> Type {
             return Type{UnpackedUnionType{
+                .declaration = t.declaration,
                 .fields = ImportUnpackedFields(t.fields, *this),
                 .tagged = t.tagged}};
           },

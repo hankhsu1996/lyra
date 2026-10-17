@@ -2,7 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <functional>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -15,7 +15,7 @@ namespace lyra::runtime {
 
 void EvaluationAttempts::Install(
     RuntimeEffects& effects, std::uint64_t words, bool pending_holds,
-    std::function<void()> pass_action, std::function<void()> fail_action) {
+    OwnedCall pass_action, OwnedCall fail_action) {
   if (words == 0) {
     throw InternalError(
         "EvaluationAttempts::Install: a property with no position to be live "
@@ -23,8 +23,8 @@ void EvaluationAttempts::Install(
   }
   width_ = static_cast<std::size_t>(words);
   pending_holds_ = pending_holds;
-  pass_action_ = std::move(pass_action);
-  fail_action_ = std::move(fail_action);
+  pass_action_ = std::make_shared<OwnedCall>(std::move(pass_action));
+  fail_action_ = std::make_shared<OwnedCall>(std::move(fail_action));
   seed_.assign(width_, 0);
   installed_ = true;
   effects.RegisterConcurrentAssertion(*this);
@@ -130,11 +130,15 @@ void EvaluationAttempts::Settle(RuntimeEffects& effects) {
   std::vector<Attempt> kept_attempts;
   for (std::size_t attempt = 0; attempt < attempts_.size(); ++attempt) {
     if (attempts_[attempt].failed) {
-      effects.Submit(effects.Now(), Region::kReactive, fail_action_);
+      effects.Submit(effects.Now(), Region::kReactive, [action = fail_action_] {
+        (*action)();
+      });
       continue;
     }
     if (live_evaluations[attempt] == 0) {
-      effects.Submit(effects.Now(), Region::kReactive, pass_action_);
+      effects.Submit(effects.Now(), Region::kReactive, [action = pass_action_] {
+        (*action)();
+      });
       continue;
     }
     renumbered[attempt] = kept_attempts.size();
@@ -167,7 +171,7 @@ void EvaluationAttempts::SettleAtEndOfRun() {
   RequireInstalled();
   const std::size_t answered = pending_holds_ ? attempts_.size() : 0;
   for (std::size_t i = 0; i < answered; ++i) {
-    pass_action_();
+    (*pass_action_)();
   }
   words_.clear();
   evaluations_.clear();

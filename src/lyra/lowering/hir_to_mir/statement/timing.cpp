@@ -144,10 +144,9 @@ auto BuildObservationLocal(
   ClosureBuilder closure(unit, frame);
   WalkFrame evaluation = closure.Frame();
   if (report.has_value()) {
-    const mir::ExprId held = SnapshotIntoClosure(
+    const mir::ExprId held = SnapshotValueIntoClosure(
         lowerer.Owner(), frame, closure,
-        block.exprs.Add(
-            mir::MakeLocalRefExpr(*report, unit.builtins.read_report_ptr)));
+        block.ReadLocal(*report, unit.builtins.read_report_ptr));
     const mir::LocalId reported_to =
         evaluation.bindings->DeclareAnonymous(unit.builtins.read_report_ptr);
     closure.Body().AppendStmt(
@@ -315,8 +314,8 @@ auto ObservationCall(
     const mir::CompilationUnit& unit, mir::Block& block,
     support::BuiltinFn entry, mir::LocalId observation, mir::TypeId type)
     -> mir::ExprId {
-  const mir::ExprId held = block.exprs.Add(
-      mir::MakeLocalRefExpr(observation, unit.builtins.observation));
+  const mir::ExprId held =
+      block.LocalPlace(observation, unit.builtins.observation);
   return block.exprs.Add(
       mir::MakeCallExpr(
           mir::Direct{.target = entry, .receiver = held}, {}, type));
@@ -364,8 +363,7 @@ auto DeclareReport(const mir::CompilationUnit& unit, const WalkFrame& frame)
           mir::MakeCallExpr(
               mir::Direct{.target = support::BuiltinFn::kReadReportEmpty}, {},
               unit.builtins.read_report)));
-  const mir::ExprId held =
-      block.exprs.Add(mir::MakeLocalRefExpr(report, unit.builtins.read_report));
+  const mir::ExprId held = block.LocalPlace(report, unit.builtins.read_report);
   return DeclareLocal(
       frame, block.exprs.Add(
                  mir::MakeAddressOfExpr(held, unit.builtins.read_report_ptr)));
@@ -416,8 +414,7 @@ auto BuildProcessDecidedEventWaitStmt(
   const mir::ExprId reports_id = LocalsAsArray(
       unit, waiting, unit.builtins.read_report_ptr, reports,
       [&](mir::LocalId report) {
-        return waiting.exprs.Add(
-            mir::MakeLocalRefExpr(report, unit.builtins.read_report_ptr));
+        return waiting.ReadLocal(report, unit.builtins.read_report_ptr);
       });
   const mir::TypeId observation_ptr = unit.types.Intern(
       mir::Type{mir::PointerType{
@@ -429,9 +426,7 @@ auto BuildProcessDecidedEventWaitStmt(
       [&](mir::LocalId observation) {
         return waiting.exprs.Add(
             mir::MakeAddressOfExpr(
-                waiting.exprs.Add(
-                    mir::MakeLocalRefExpr(
-                        observation, unit.builtins.observation)),
+                waiting.LocalPlace(observation, unit.builtins.observation),
                 observation_ptr));
       });
   const mir::ExprId wait_id = waiting.exprs.Add(
@@ -677,8 +672,7 @@ auto LowerWaitStmt(
   const mir::ExprId reports_id = LocalsAsArray(
       unit, inner_block, unit.builtins.read_report_ptr, reports,
       [&](mir::LocalId reported) {
-        return inner_block.exprs.Add(
-            mir::MakeLocalRefExpr(reported, unit.builtins.read_report_ptr));
+        return inner_block.ReadLocal(reported, unit.builtins.read_report_ptr);
       });
   const mir::ExprId wait_id = inner_block.exprs.Add(
       mir::MakeCallExpr(

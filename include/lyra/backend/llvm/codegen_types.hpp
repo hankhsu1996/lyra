@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include <llvm/IR/DerivedTypes.h>
@@ -11,6 +13,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/layout.hpp"
 
 namespace lyra::lir {
 struct CompilationUnit;
@@ -21,30 +24,43 @@ namespace lyra::backend::llvm_backend {
 
 struct FnAbi;
 
-// Where each component of a tuple value -- the runtime's one form for a
-// product, a struct a declaration names among them -- sits in the storage the
-// value occupies. A tuple opens with the address of its type's operation table
-// and is laid out after it the way a C record is: each component at the first
-// offset its own alignment allows after the one before, and the whole rounded
-// to the widest alignment among them, so a component's position follows from
-// the components ahead of it and nothing else.
-struct TupleLayout {
+// Where each component of a product -- a tuple, or a structure a declaration
+// names -- sits in the storage the value occupies. A product is laid out the
+// way a C record is: each component at the first offset its own alignment
+// allows after the one before, and the whole rounded to the widest alignment
+// among them, so a component's position follows from the components ahead of it
+// and nothing else.
+struct ProductLayout {
   std::vector<lir::TypeId> components;
-  std::vector<std::uint32_t> offsets;
+  std::vector<std::size_t> offsets;
   support::ObjectLayout storage;
 };
 
 // How a fixed-size unpacked array is laid out: its elements one after another
-// `stride` bytes apart, where the array lies when `in_place`, and otherwise in
-// a run the array owns and holds the address of. `storage` is what the array
+// `stride` bytes apart, where the array lies. `storage` is what the array
 // takes of whatever holds it.
 struct ArrayLayout {
   lir::TypeId element;
-  std::uint64_t count;
-  std::uint64_t stride;
-  bool in_place;
-  support::ObjectLayout storage;
+  std::uint64_t count = 0;
+  std::uint64_t stride = 0;
+  support::ObjectLayout storage{};
 };
+
+// How a union is laid out: its members overlaid at its start, as large as the
+// largest and aligned as the strictest, and for a tagged union the tag after
+// them at its own alignment (LRM 7.3, 7.3.2), and nothing for an untagged one.
+// `storage` is what the union takes of whatever holds it.
+struct UnionLayout {
+  std::vector<lir::TypeId> members;
+  std::optional<value::TagPlacement> tag;
+  support::ObjectLayout storage{};
+};
+
+// How a value laid out by its type places its parts, as rustc's layout states
+// a type's `FieldsShape`: a product's components side by side, an array's
+// elements in a row, or a union's members overlaid at its start.
+using FieldsShape =
+    std::variant<const ProductLayout*, const ArrayLayout*, const UnionLayout*>;
 
 // An integral type as the value layer states one.
 [[nodiscard]] auto ShapeOf(const lir::IntegralType& integral)
@@ -66,26 +82,46 @@ class CodeGenTypes {
   // is handed, and what comes back.
   auto GetFunctionType(const FnAbi& abi) -> llvm::FunctionType*;
 
-  // The storage a value an owner holds occupies. A tuple's is composed from
-  // its components'; a fixed-size unpacked array's is its elements', or the
-  // address of them where they are too many to lie in what holds the array;
-  // an integral value's is the bytes the value layer lays a value of its
-  // width and states out in; a machine integer's is that integer's; every
+  // The storage a value an owner holds occupies. A product's -- a tuple, or
+  // a structure -- is composed from its components'; a fixed-size unpacked
+  // array's is its elements'; a union's is its members' overlaid, then a tagged
+  // union's tag; an integral value's is the bytes the value layer lays a value
+  // of its width and states out in; a machine integer's is that integer's; a
+  // sequence of machine values is the values, as a C++ `std::array` is; every
   // other owned value is one runtime object, whose storage the library states.
-  auto StorageOf(lir::TypeId type) -> support::ObjectLayout;
+  auto LayoutOf(lir::TypeId type) -> support::ObjectLayout;
+  // Whether a value of `type` lies in storage of its own, which an operand of
+  // it then names by address, as clang evaluates an aggregate into a slot
+  // rather than into a register. Every owned value does but a pointer owning
+  // what it points at, which is that address itself, as a Rust `Box` is.
+  [[nodiscard]] auto HasAggregateEvaluationKind(lir::TypeId type) const -> bool;
+  // Whether a value of `type` is a sequence of machine values, which is built
+  // where it is kept and read as the {pointer, length} view over that, as C++
+  // forms a `std::span` over a `std::array` where one is taken.
+  [[nodiscard]] auto IsReadAsView(lir::TypeId type) const -> bool;
   // An integral type as the value layer states one, or nothing for a type that
   // is not integral.
   [[nodiscard]] auto IntegralShapeOf(lir::TypeId type) const
       -> std::optional<value::IntegralShape>;
-  // The same of a type that has to be integral, which is what a library entry
-  // is told the width, the signedness or the states of: any other type there
-  // is a compiler defect.
+  // The same of a type that has to be integral -- one held as its bits, or one
+  // a library entry is told the width, the signedness or the states of: any
+  // other type there is a compiler defect.
   [[nodiscard]] auto RequiredIntegralShapeOf(lir::TypeId type) const
       -> value::IntegralShape;
-  // Where each component of a tuple sits. Asked only of a product.
-  auto LayoutOfTuple(lir::TypeId tuple) -> const TupleLayout&;
+  // Whether a value of `type` has positions above an integral's width that
+  // its representation keeps clear, which a read through a member of an
+  // untagged union then has to clear (LRM 7.3.2).
+  [[nodiscard]] auto KeepsAboveWidthsClear(lir::TypeId type) const -> bool;
+  // Where each component of a product sits. Asked only of a product.
+  auto LayoutOfProduct(lir::TypeId product) -> const ProductLayout&;
   // Where the elements of a fixed-size unpacked array lie. Asked only of one.
   auto LayoutOfArray(lir::TypeId array) -> const ArrayLayout&;
+  // Where a union's members lie. Asked only of a union.
+  auto LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout&;
+  // How a value laid out by its type places its parts. Asked only of one.
+  auto FieldsOf(lir::TypeId laid_out) -> FieldsShape;
+  // Where a tagged union keeps its tag. Asked only of a tagged union.
+  auto TagOf(lir::TypeId tagged) -> value::TagPlacement;
 
   auto Ptr() const -> llvm::PointerType* {
     return ptr_ty_;
@@ -103,14 +139,24 @@ class CodeGenTypes {
   auto Void() const -> llvm::Type*;
 
  private:
+  // The storage a machine value of `type` takes where it lies: what a register
+  // holding it holds.
+  auto MachineValueLayout(lir::TypeId type) -> support::ObjectLayout;
+  // The storage machine data the design does not hold takes where it lies: a
+  // machine integer, or a sequence of machine values.
+  auto MachineDataLayout(lir::TypeId type) -> support::ObjectLayout;
+  // The storage `members` overlay, each laid out by its own type.
+  auto OverlayOf(std::span<const lir::TypeId> members) -> support::Layout;
+
   llvm::LLVMContext* ctx_;
   const lir::CompilationUnit* unit_;
   llvm::PointerType* ptr_ty_;
   llvm::StructType* span_ty_;
   llvm::StructType* bits_part_ty_;
   std::unordered_map<lir::TypeId, llvm::Type*> cache_;
-  std::unordered_map<lir::TypeId, TupleLayout> tuples_;
+  std::unordered_map<lir::TypeId, ProductLayout> products_;
   std::unordered_map<lir::TypeId, ArrayLayout> arrays_;
+  std::unordered_map<lir::TypeId, UnionLayout> unions_;
 };
 
 }  // namespace lyra::backend::llvm_backend

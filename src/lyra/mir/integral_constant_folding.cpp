@@ -17,6 +17,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/frame_size.hpp"
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -256,11 +257,10 @@ auto FoldIntegral(
     return std::nullopt;
   }
   // Folding states as data what the operands already state as data. Where the
-  // answer owns its words and is wider than everything it was computed from --
-  // a fill, an extension, a replication -- the data would be made here, as
-  // large as the type, so the operation stays what the unit states.
-  if (answer_shape.has_value() &&
-      UsesHeapWords(unit.types.Get(result).Integral())) {
+  // answer is too large for a frame and wider than everything it was computed
+  // from -- a fill, an extension, a replication -- the data would be made here,
+  // as large as the type, so the operation stays what the unit states.
+  if (answer_shape.has_value() && IsTooLargeForAFrame(unit, result)) {
     std::uint64_t stated = 0;
     for (const value::IntegralShape& operand : integral) {
       stated += operand.width;

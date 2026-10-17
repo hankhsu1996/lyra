@@ -32,7 +32,7 @@ TEST(FunctionTypeTest, TheTypeIsWhatTheArrangementHandsOver) {
   const lir::TypeId any{};
 
   const FnAbi abi{
-      .implicit_arg = HeldWidthArg{.of = any},
+      .implicit_arg = WidthMetadataArg{.of = any},
       .named_part = NamedPartArg{.before = 1, .position = 3},
       .args =
           {ArgAbi{.type = ptr, .mode = PassDirect{}},

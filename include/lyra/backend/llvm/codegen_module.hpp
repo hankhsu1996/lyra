@@ -13,8 +13,8 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 
-#include "lyra/backend/llvm/codegen_tuple.hpp"
 #include "lyra/backend/llvm/codegen_types.hpp"
+#include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
@@ -27,6 +27,7 @@
 #include "lyra/lir/integral_constant_id.hpp"
 #include "lyra/lir/linkage.hpp"
 #include "lyra/lir/type_id.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/support/member_storage_kind.hpp"
 #include "lyra/support/runtime_class.hpp"
 #include "lyra/support/runtime_object.hpp"
@@ -69,25 +70,23 @@ auto LinkageOf(lir::Linkage linkage) -> llvm::GlobalValue::LinkageTypes;
 //
 // A member holding a product, a fixed-size unpacked array, an integral value
 // or a machine integer inline holds its bytes, laid out by this backend as a
-// tuple holds a component that is one, so that member is built and ended as
+// product holds a component that is one, so that member is built and ended as
 // its type says rather than as an object of the library is; which type each
 // member holds is kept beside its storage for that.
-struct RecordLayout {
+struct PlacedMembers {
   std::vector<lir::TypeId> types;
   std::vector<support::DeclaredMemberStorage> storage;
   std::vector<std::uint64_t> offsets;
   std::uint64_t end = 0;
-  std::uint64_t size = 0;
-  std::uint64_t align = 1;
+  support::Layout layout{.size = 0, .align = 1};
 };
 
-// What a whole value of a class occupies, and where each of its interface class
-// parts sits, in the order those parts are placed. A class's own record is laid
-// out without them, since a class extending it places them again after its own
-// members.
-struct WholeRecord {
-  std::uint64_t size = 0;
-  std::uint64_t align = 1;
+// What a complete object of a class occupies, and where each of its interface
+// class parts sits, in the order those parts are placed. A class's own members
+// are laid out without them, since a class extending it places them again after
+// its own members.
+struct CompleteObjectLayout {
+  support::Layout layout{.size = 0, .align = 1};
   std::vector<std::uint64_t> interface_parts;
 };
 
@@ -113,8 +112,8 @@ using DispatchSlot = std::variant<LineageSlot, InterfaceSlot>;
 // offset to top), the first of the two entries every table opens with.
 inline constexpr std::uint64_t kOffsetToTopEntry = 2;
 
-// What a table holds where no class gives a virtual function a body: the host's
-// C++ runtime ends the program if it is ever entered.
+// What a class's table holds where no class gives a virtual function a body:
+// the host's C++ runtime ends the program if it is ever entered.
 inline constexpr std::string_view kNoBody = "__cxa_pure_virtual";
 
 // The allocation function storage the program asks for comes from (C++ ABI
@@ -140,9 +139,6 @@ class CodeGenModule {
   auto Types() -> CodeGenTypes& {
     return types_;
   }
-  auto Tuples() -> CodeGenTuples& {
-    return tuples_;
-  }
   auto Unit() const -> const lir::CompilationUnit& {
     return *unit_;
   }
@@ -152,18 +148,16 @@ class CodeGenModule {
   // name.
   auto UnitFunction(lir::FunctionId function) -> llvm::Function*;
 
+  // Data the library defines and generated code names by address, linked
+  // under `symbol`.
+  auto LibraryData(std::string_view symbol) -> llvm::Constant*;
+
   // The definition the library reads of a type whose values it builds -- a
   // class, a struct, or a closure: a constant the unit declaring the type
   // emits, which every unit reaches by the symbol it is linked under. A use
   // forwards its address without inspecting it, and a declaration of this unit
   // and one of another are named the same way.
   auto DefinitionOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
-
-  // The type the library asks of a value of `type`: a tuple's own, which this
-  // unit emits with the tuple type; an integral type's and a fixed-size
-  // unpacked array's, which it emits too; or the library's for a value of one
-  // of its own kinds.
-  auto ValueTypeOf(lir::TypeId type) -> diag::Result<llvm::Constant*>;
 
   // A function something outside this module defines -- an entry the runtime
   // publishes, a body of another artifact, a function of the host -- declared
@@ -186,6 +180,12 @@ class CodeGenModule {
   auto BuildCallArg(
       const PassMode& mode, llvm::Value* value, std::vector<llvm::Value*>& args)
       -> diag::Result<void>;
+  // Ends what the pointer `storage`, of the uniquely owning type `owner`,
+  // owns: the value where it lies, and then the storage, given back to the
+  // host's sized deallocation function, as Rust drops a `Box`.
+  auto EndOwnedStorage(
+      llvm::IRBuilderBase& builder, lir::TypeId owner, llvm::Value* storage)
+      -> diag::Result<void>;
   // One step of the life of a value of `type`, emitted where `builder`
   // stands: a copy or a move takes the value and the storage it is built in,
   // an assignment the storage written into and the value, an end the value.
@@ -195,6 +195,18 @@ class CodeGenModule {
   auto EmitLifecycle(
       llvm::IRBuilderBase& builder, lir::TypeId type, LifecycleStep step,
       std::span<llvm::Value* const> args) -> diag::Result<void>;
+  // Defines the constant `value` under `symbol`, linked as `linkage` says and
+  // kept at `align`, which every reference made to a declaration of that
+  // symbol before then names instead.
+  auto DefineConstant(
+      const std::string& symbol, llvm::Constant* value,
+      llvm::GlobalValue::LinkageTypes linkage, llvm::Align align)
+      -> llvm::GlobalVariable*;
+  // Every position above an integral's width in the value of `type` lying at
+  // `at` made clear, emitted where `builder` stands, as the C++ rendering's
+  // clear is once a compiler inlines it.
+  void EmitClearAboveWidths(
+      llvm::IRBuilderBase& builder, lir::TypeId type, llvm::Value* at);
   // The host's dynamic cast (C++ ABI 2.9.7): handed a part of an object, the
   // descriptions of that part's class and of the wanted one, and a hint of
   // where the wanted part sits, it answers the wanted part or null.
@@ -230,19 +242,26 @@ class CodeGenModule {
   // unit or of another, or the part the runtime library builds where a class
   // extends one of its classes. Laid out once per
   // declaration: its own members after the whole of what it extends.
-  auto RecordOf(lir::TypeId type) -> diag::Result<const RecordLayout*>;
+  auto PlacedMembersOf(lir::TypeId type) -> diag::Result<const PlacedMembers*>;
 
-  // The size of a complete object of the declaration `type` names, which is
-  // what `operator new` is asked for where one is built.
+  // The size of a complete object of `type` -- the whole layout of the
+  // declaration it names, or what any other value is laid out in -- which is
+  // what `operator new` is asked for and sized `operator delete` told.
   auto CompleteObjectSize(lir::TypeId type) -> diag::Result<std::uint64_t>;
+
+  // `storage`, holding a complete object of `pointee` no longer, given back to
+  // the host's sized deallocation function, as clang's `EmitDeleteCall` does.
+  auto EmitDeleteCall(
+      llvm::IRBuilderBase& builder, lir::TypeId pointee, llvm::Value* storage)
+      -> diag::Result<void>;
 
   // Members of the types `members`, each in the slot `role` asks for, laid out
   // after `after`, naming each as `what` where it has no storage on this
   // backend.
   auto PlaceMembers(
       std::span<const lir::TypeId> members, MemberSlotRole role,
-      const RecordLayout& after, std::string_view what)
-      -> diag::Result<RecordLayout>;
+      const PlacedMembers& after, std::string_view what)
+      -> diag::Result<PlacedMembers>;
 
   // Where a dispatch on `behavior` finds the body a value answers it with.
   auto DispatchSlotOf(const lir::StatedDispatchRef& behavior)
@@ -264,12 +283,12 @@ class CodeGenModule {
 
   // Building each member `placed` lays out, in the storage at `value`, and
   // ending each of them, last placed first as a C++ class ends its members.
-  void BeginMembers(
+  auto BeginMembers(
       llvm::IRBuilderBase& builder, llvm::Value* value,
-      const RecordLayout& placed);
+      const PlacedMembers& placed) -> diag::Result<void>;
   auto EndMembers(
       llvm::IRBuilderBase& builder, llvm::Value* value,
-      const RecordLayout& placed) -> diag::Result<void>;
+      const PlacedMembers& placed) -> diag::Result<void>;
 
  private:
   // Whether a member of `type` held as `storage` is the bytes this backend lays
@@ -282,19 +301,20 @@ class CodeGenModule {
   [[nodiscard]] auto MemberLayout(
       lir::TypeId type, support::DeclaredMemberStorage storage)
       -> support::ObjectLayout;
+  // The values a member of `type` holds: its own value, or what the storage
+  // it is holds.
+  [[nodiscard]] auto ValuesHeldByMember(lir::TypeId type) const
+      -> std::optional<lir::TypeId>;
   // Builds, at `at`, the storage a member of `type` is held as.
-  void BuildMemberStorage(
+  auto BuildMemberStorage(
       llvm::IRBuilderBase& builder, lir::TypeId type,
-      support::DeclaredMemberStorage storage, llvm::Value* at);
+      support::DeclaredMemberStorage storage, llvm::Value* at)
+      -> diag::Result<void>;
   // The arguments that tell an entry how wide an integral type is, and whether
   // it is four-state.
   auto WidthArg(const value::IntegralShape& shape) -> llvm::Constant*;
   auto FourStateArg(const value::IntegralShape& shape) -> llvm::Constant*;
-  // What builds the storage of a member held as `storage`, handed where that
-  // storage is and, where it is built at the width of what it holds, that
-  // width; and what ends it, handed where it is.
-  auto MemberStorageConstructor(support::DeclaredMemberStorage storage)
-      -> llvm::FunctionCallee;
+  // What ends the storage of a member held as `storage`, handed where it is.
   auto MemberStorageDestructor(support::DeclaredMemberStorage storage)
       -> llvm::Function*;
   // What registers a function to run on an object when the program exits (C++
@@ -374,8 +394,9 @@ class CodeGenModule {
       -> std::optional<lir::TypeId>;
   // Which of a lineage's bodies answers `behavior`, counted from the first.
   auto LineageIndexOf(const lir::StatedDispatchRef& behavior) -> std::uint64_t;
-  // How a whole value of `declared` is laid out.
-  auto WholeLayOut(const Declared& declared) -> diag::Result<WholeRecord>;
+  // How a complete object of `declared` is laid out.
+  auto CompleteObjectLayoutOf(const Declared& declared)
+      -> diag::Result<CompleteObjectLayout>;
   // Where, in a class's table group, each table a value holds starts: the one
   // for its lineage and one per interface class part, in the order the parts
   // are placed.
@@ -403,20 +424,16 @@ class CodeGenModule {
       lir::TypeId type, const Declared& declared,
       std::span<const lir::ConformingBehavior> conforming)
       -> diag::Result<void>;
-  // Defines the constant `value` under `symbol`, linked as `linkage` says.
-  auto DefineConstant(
-      const std::string& symbol, llvm::Constant* value, lir::Linkage linkage)
-      -> llvm::GlobalVariable*;
   // The address, `point` entries into the table group of the class whose
   // definition is linked under `definition`, that a value holds as where one
   // of its tables is.
   auto TableAddressPoint(std::string_view definition, std::uint64_t point)
       -> llvm::Constant*;
   // How a value of `declared` is laid out.
-  auto LayOut(const Declared& declared) -> diag::Result<RecordLayout>;
+  auto LayOut(const Declared& declared) -> diag::Result<PlacedMembers>;
   // How the storage a closure's captures live in is laid out. A closure extends
   // nothing, so its first capture starts where that storage does.
-  auto LayOutCaptures(lir::ClosureId id) -> diag::Result<RecordLayout>;
+  auto LayOutCaptures(lir::ClosureId id) -> diag::Result<PlacedMembers>;
   // Emits the constructor prologue of `declared`, which its constructor runs
   // once its base is built: the value's table address, then its own members,
   // then the table address of each interface class part a complete object of
@@ -431,11 +448,15 @@ class CodeGenModule {
   // storage back.
   auto EmitDestructors(const Declared& declared, lir::Linkage linkage)
       -> diag::Result<void>;
+  // The address a value holds as where the table of the library class whose
+  // table is linked under `table` is: its first virtual function (C++ ABI
+  // 2.5.2).
+  auto LibraryTableAddressPoint(std::string_view table) -> llvm::Constant*;
   // The definition linked under `symbol`, or a declaration of it where nothing
   // has defined it yet.
   auto DefinitionGlobal(const std::string& symbol) -> llvm::GlobalVariable*;
   // An integer of `bytes` bytes, as a field of a constant record.
-  auto Int(std::uint64_t value, unsigned bytes) -> llvm::Constant*;
+  auto Int(std::uint64_t value, std::size_t bytes) -> llvm::Constant*;
   // The address of `name` as a NUL-terminated constant.
   auto NameConstant(std::string_view name) -> llvm::Constant*;
   // A body a declaration's values are built or ended by, this unit's or
@@ -445,41 +466,17 @@ class CodeGenModule {
   auto DefineEnumTable(lir::EnumTableId table) -> llvm::GlobalVariable*;
   auto DefineIntegralConstant(lir::IntegralConstantId constant)
       -> llvm::GlobalVariable*;
-  // What the library is handed as the type of a value of the integral type
-  // `type`, where a value crosses with its type: constant data of the class
-  // the library declares for an integral type, stating the width, signedness
-  // and states that class's operations read. The module defines one per
-  // integral type it hands over that way.
-  auto GetAddrOfIntegralType(lir::TypeId type) -> llvm::Constant*;
-  // The constant that states a fixed-size unpacked array type to the library:
-  // how many elements, and the constant stating their type.
-  auto GetAddrOfFixedArrayType(lir::TypeId type)
-      -> diag::Result<llvm::Constant*>;
-  // The constant that states `element` to the library as the type of an
-  // array's elements: the type, and the function of this unit that builds the
-  // value one starts as (LRM Table 7-1). The module defines one per element
-  // type it hands over, whatever kind of array holds the elements.
-  auto GetAddrOfElementType(lir::TypeId element)
-      -> diag::Result<llvm::Constant*>;
-  // The constant that states the queue type `queue` to the library: the
-  // constant stating its elements' type, and the bound it declares (LRM
-  // 7.10.5). The module defines one per queue type it hands over.
-  auto GetAddrOfQueueType(lir::TypeId queue) -> diag::Result<llvm::Constant*>;
 
   std::unique_ptr<llvm::LLVMContext> context_;
   std::unique_ptr<llvm::Module> module_;
   const lir::CompilationUnit* unit_;
   CodeGenTypes types_;
-  CodeGenTuples tuples_;
+  CodeGenValueTypes value_types_;
   base::Translation<lir::FunctionId, llvm::Function*> functions_;
   std::unordered_map<lir::EnumTableId, llvm::GlobalVariable*> enum_tables_;
   std::unordered_map<lir::IntegralConstantId, llvm::GlobalVariable*>
       integral_constants_;
-  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> integral_types_;
-  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> fixed_array_types_;
-  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> element_types_;
-  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> queue_types_;
-  std::unordered_map<lir::TypeId, RecordLayout> records_;
+  std::unordered_map<lir::TypeId, PlacedMembers> placed_members_;
   std::unordered_map<lir::TypeId, std::vector<std::optional<std::string>>>
       tables_;
   // Where each table group this unit emitted starts each table, by the

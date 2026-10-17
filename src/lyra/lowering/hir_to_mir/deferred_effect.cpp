@@ -112,7 +112,7 @@ auto BuildDueSlotWaitStmt(
             auto count_or = process.LowerExpr(
                 process.HirBody().exprs.Get(r.count), outer_frame);
             if (!count_or) return std::unexpected(std::move(count_or.error()));
-            const mir::ExprId count = SnapshotIntoClosure(
+            const mir::ExprId count = SnapshotValueIntoClosure(
                 unit_lowerer, outer_frame, carrier,
                 outer_frame.current_block->exprs.Add(*std::move(count_or)));
             mir::Block loop_body;

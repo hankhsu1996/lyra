@@ -28,7 +28,7 @@
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
-#include "lyra/lowering/hir_to_mir/struct_methods.hpp"
+#include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -123,8 +123,8 @@ auto EmitScanOperandsKnown(
   std::vector<mir::ExprId> known;
   for (const mir::ExprId operand : operands) {
     if (!CarriesUnknowns(unit, body.exprs.Get(operand).type)) continue;
-    const mir::ExprId unknown_id = body.exprs.Add(MakeBuiltinCall(
-        unit, body, support::BuiltinFn::kIsUnknown, operand, {}, bit_t));
+    const mir::ExprId unknown_id =
+        ConvertToType(unit, body, BuildUnknownTest(unit, body, operand), bit_t);
     known.push_back(BuildLogicalNot(unit, body, unknown_id));
   }
   return BuildMirLogicalAnd(unit, body, bit_t, known);
@@ -227,11 +227,9 @@ auto LowerScanSystemSubroutineCall(
   // buffered text.
   std::vector<mir::ExprId> rule_operands;
   if (!is_file) {
-    rule_operands.push_back(
-        body.exprs.Add(mir::MakeLocalRefExpr(source_var, raw_source_type)));
+    rule_operands.push_back(body.ReadLocal(source_var, raw_source_type));
   }
-  rule_operands.push_back(
-      body.exprs.Add(mir::MakeLocalRefExpr(format_var, format_type)));
+  rule_operands.push_back(body.ReadLocal(format_var, format_type));
   const mir::ExprId known_id =
       EmitScanOperandsKnown(unit, body, bit_t, rule_operands);
 
@@ -242,9 +240,7 @@ auto LowerScanSystemSubroutineCall(
   // call names it.
   const auto fd_number = [&]() {
     return BuildToInt64Call(
-        unit, scan_body,
-        scan_body.exprs.Add(
-            mir::MakeLocalRefExpr(source_var, raw_source_type)));
+        unit, scan_body, scan_body.ReadLocal(source_var, raw_source_type));
   };
   mir::ExprId source_id{};
   if (is_file) {
@@ -277,13 +273,12 @@ auto LowerScanSystemSubroutineCall(
   } else {
     source_id = LiftStringSource(
         unit_lowerer, scan_frame, raw_source_type,
-        scan_body.exprs.Add(
-            mir::MakeLocalRefExpr(source_var, raw_source_type)));
+        scan_body.ReadLocal(source_var, raw_source_type));
   }
 
   const mir::ExprId format_id = LiftStringFormat(
       unit_lowerer, scan_frame, format_type,
-      scan_body.exprs.Add(mir::MakeLocalRefExpr(format_var, format_type)));
+      scan_body.ReadLocal(format_var, format_type));
 
   // One prototype per conversion. It states the shape that conversion parses
   // into, which nothing else on the call states, and it is what the completion
@@ -319,8 +314,7 @@ auto LowerScanSystemSubroutineCall(
   scan_body.AppendStmt(
       mir::LocalDeclStmt{.target = completion, .init = parse_call_id});
 
-  const mir::ExprId count_target =
-      scan_body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
+  const mir::ExprId count_target = scan_body.LocalPlace(count_var, integer_t);
   scan_body.AppendStmt(
       mir::ExprStmt{
           .expr = scan_body.exprs.Add(
@@ -366,8 +360,7 @@ auto LowerScanSystemSubroutineCall(
   // LRM 21.3.4.3: the k-th output lvalue is only written when at least
   // k+1 matches were made, so the commit is gated on the matched count.
   for (std::size_t k = 0; k < target_types.size(); ++k) {
-    const mir::ExprId count_read_id =
-        scan_body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
+    const mir::ExprId count_read_id = scan_body.ReadLocal(count_var, integer_t);
     const mir::ExprId k_lit_id =
         BuildIntegerLiteral(unit, scan_body, static_cast<std::int64_t>(k + 1));
     // The count is an `integer`, so the comparison answers a bit that can be
@@ -395,8 +388,7 @@ auto LowerScanSystemSubroutineCall(
   body.AppendIfThen(
       ReduceToCondition(unit, body, known_id), std::move(scan_body));
 
-  const mir::ExprId count_id =
-      body.exprs.Add(mir::MakeLocalRefExpr(count_var, integer_t));
+  const mir::ExprId count_id = body.LocalPlace(count_var, integer_t);
   return steps.Build(count_id);
 }
 

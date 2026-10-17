@@ -3,10 +3,15 @@
 #
 # A size is chosen so that the larger run takes long enough to time and stays
 # inside what the front end allows a generate loop to count, or a vector to be
-# wide.
+# wide, and so that a value whose size follows N is on the same side of what a
+# frame keeps in both runs, since one past it is held through a box of a type
+# of its own. Neither N nor twice it equals a number the design fixes, such as
+# how many bits an element of an array streams as: a unit keeps one constant
+# per distinct value, so a coincidence at one size and not the other reads as
+# a constant the size added.
 instance_array: 512
-loop_choosing_by_outer_index: 64
-loop_counted_by_outer_index: 64
+loop_choosing_by_outer_index: 100
+loop_counted_by_outer_index: 100
 loop_declaring_a_type: 512
 loop_of_children_reading_index_in_code: 32
 loop_of_children_sized_by_index: 32
@@ -19,7 +24,7 @@ loop_of_instances_reading_their_block: 512
 loop_of_instances_reading_upward: 512
 loop_of_one_body: 512
 loop_reaching_its_neighbour: 256
-loop_selecting_by_index: 512
+loop_selecting_by_index: 256
 loop_sizing_by_index: 64
 packed_value_width: 4194304
 unread_parameter_width: 16384

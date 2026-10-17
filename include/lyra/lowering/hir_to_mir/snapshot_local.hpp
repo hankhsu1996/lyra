@@ -34,7 +34,7 @@ auto SnapshotExprToLocal(
 
 // `value` as a node that may stand at several places. A node that computes is
 // evaluated at every place that reaches it, so one is evaluated here, once, as
-// the initializer of a local of the enclosing body, and the result names that
+// the initializer of a local of the enclosing body, and the result reads that
 // local; a node that evaluates nothing already may stand at several and is
 // handed back. The value is what the local starts out as, so one of a type no
 // declaration holds -- a pointer, a machine integer -- is held the same way.
@@ -48,7 +48,14 @@ auto SnapshotExprToLocal(
 // assignment, a postponed `$display`) keeps a value computed at construction
 // time: every value goes through the same path, and the closure layer only ever
 // forwards an ordinary local -- the snapshot is not a special capture form.
-auto SnapshotIntoClosure(
+auto SnapshotValueIntoClosure(
+    UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
+    ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId;
+
+// The same snapshot, answering the body-side binding as the place it is, for a
+// snapshot that is itself something a path is rooted at -- a reference the
+// body writes through.
+auto SnapshotPlaceIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId;
 

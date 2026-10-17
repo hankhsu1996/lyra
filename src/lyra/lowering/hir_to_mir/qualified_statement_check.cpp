@@ -130,15 +130,16 @@ auto BuildUniquenessReportBody(
   mir::Block& body = closure.Body();
 
   const mir::LocalId count = closure.Bindings().DeclareAnonymous(int_type);
-  const auto read_count = [&](mir::Block& block) {
-    return block.exprs.Add(mir::MakeLocalRefExpr(count, int_type));
+  const auto count_place = [&](mir::Block& block) {
+    return block.LocalPlace(count, int_type);
   };
   body.AppendStmt(
       mir::LocalDeclStmt{
           .target = count, .init = BuildIntLiteral(unit, body, 0)});
   for (const HeldArm& arm : arms) {
-    const mir::ExprId held = body.exprs.Add(closure.Bindings().MakeReadExpr(
-        closure.Bindings().EnsureCarrier(arm.origin), body));
+    const mir::ExprId held =
+        body.Read(body.exprs.Add(closure.Bindings().MakeBindingPlace(
+            closure.Bindings().EnsureCarrier(arm.origin), body)));
     const mir::ExprId one_if_held = body.exprs.Add(
         mir::Expr{
             .data =
@@ -148,13 +149,13 @@ auto BuildUniquenessReportBody(
                     .else_value = BuildIntLiteral(unit, body, 0)},
             .type = int_type});
     const mir::ExprId counted = body.exprs.Add(MakeBinary(
-        unit, body, mir::BinaryOp::kAdd, read_count(body), one_if_held,
-        int_type));
+        unit, body, mir::BinaryOp::kAdd, body.ReadLocal(count, int_type),
+        one_if_held, int_type));
     body.AppendStmt(
         mir::ExprStmt{
             .expr = body.exprs.Add(
                 mir::MakeAssignExpr(
-                    unit.builtins, read_count(body), counted))});
+                    unit.builtins, count_place(body), counted))});
   }
 
   mir::Block report;
@@ -164,7 +165,7 @@ auto BuildUniquenessReportBody(
           .text = std::format("{} violation: ", KeywordOf(check))});
   items.emplace_back(
       mir::RuntimePrintValue(
-          read_count(report), int_type,
+          report.ReadLocal(count, int_type), int_type,
           mir::FormatSpec(
               value::FormatKind::kDecimal, mir::FormatModifiers{})));
   items.emplace_back(
@@ -174,7 +175,7 @@ auto BuildUniquenessReportBody(
   AppendReportEmit(unit, report, std::move(items), std::move(origin));
 
   const mir::ExprId violated = body.exprs.Add(MakeBinary(
-      unit, body, mir::BinaryOp::kGreaterThan, read_count(body),
+      unit, body, mir::BinaryOp::kGreaterThan, body.ReadLocal(count, int_type),
       BuildIntLiteral(unit, body, 1), unit.builtins.bit1));
   body.AppendStmt(
       mir::IfStmt{

@@ -1,7 +1,11 @@
 #pragma once
 
+#include <array>
+#include <concepts>
 #include <cstddef>
 #include <utility>
+
+#include "lyra/value/clear_above_widths.hpp"
 
 namespace lyra::value {
 
@@ -27,9 +31,10 @@ struct TupleComponents<std::index_sequence<Is...>, Ts...>
     : TupleComponent<Is, Ts>... {
   TupleComponents() = default;
 
-  explicit TupleComponents(Ts... values)
-    requires(sizeof...(Ts) > 0)
-      : TupleComponent<Is, Ts>{std::move(values)}... {
+  template <typename... Us>
+    requires(sizeof...(Us) == sizeof...(Ts) && sizeof...(Ts) > 0)
+  explicit TupleComponents(Us&&... values)
+      : TupleComponent<Is, Ts>{std::forward<Us>(values)}... {
   }
 };
 
@@ -65,18 +70,30 @@ class Tuple {
  public:
   Tuple() = default;
 
-  // A product of no components is a value like any other and its only form is
-  // the default one, so the constructor that takes components is declared only
-  // where there are components to take.
-  explicit Tuple(Ts... values)
-    requires(sizeof...(Ts) > 0)
-      : data_(std::move(values)...) {
+  // Each component is built where it lies, copied or moved from what it is
+  // handed, so a large one is never first made a copy of its own on the way
+  // in. A product of no components is a value like any other and its only form
+  // is the default one, so the constructor that takes components is declared
+  // only where there are components to take.
+  template <typename... Us>
+    requires(
+        sizeof...(Us) == sizeof...(Ts) && sizeof...(Ts) > 0 &&
+        (std::constructible_from<Ts, Us &&> && ...))
+  explicit Tuple(Us&&... values) : data_(std::forward<Us>(values)...) {
   }
 
-  // Component `I`'s value, by declaration-order index: a reference to read it
-  // through, or, from an expiring product, one to move it out of.
+  // Component `I`, by declaration-order index, in the product's own value
+  // category: one to read through a product that may not be changed, one to
+  // write or reach further through, and one to move out of an expiring
+  // product. Every component of a product is live at once, so reaching one
+  // settles nothing about the others, and reading and writing it are the one
+  // access.
   template <std::size_t I>
   [[nodiscard]] auto Component() const& -> decltype(auto) {
+    return detail::ComponentAt<I>(data_);
+  }
+  template <std::size_t I>
+  [[nodiscard]] auto Component() & -> decltype(auto) {
     return detail::ComponentAt<I>(data_);
   }
   template <std::size_t I>
@@ -84,14 +101,19 @@ class Tuple {
     return detail::ComponentAt<I>(std::move(data_));
   }
 
-  // Component `I` itself, for a caller that will write it or reach further
-  // through it. Every component of a product is live at once, so reaching one
-  // settles nothing about the others; a value holding one member at a time
-  // answers the same request by settling which member that is, which is why
-  // reaching a part is spelled apart from reading its value at all.
-  template <std::size_t I>
-  [[nodiscard]] auto ComponentRef() -> decltype(auto) {
-    return detail::ComponentAt<I>(data_);
+  // Each component's positions above its widths made clear, through a table
+  // for the reason the components are bases.
+  void ClearAboveWidths() {
+    using Clear = void (*)(Tuple&);
+    static constexpr auto kClears =
+        []<std::size_t... I>(std::index_sequence<I...>) {
+          return std::array<Clear, sizeof...(I)>{+[](Tuple& product) {
+            lyra::value::ClearAboveWidths(product.template Component<I>());
+          }...};
+        }(std::index_sequence_for<Ts...>{});
+    for (const Clear clear : kClears) {
+      clear(*this);
+    }
   }
 
  private:

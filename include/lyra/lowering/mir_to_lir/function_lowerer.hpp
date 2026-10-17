@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -25,8 +24,9 @@ namespace lyra::lowering::mir_to_lir {
 // Lowers one MIR callable body -- a method, a class constructor, or a closure's
 // invoke -- into a LIR function. Structured control flow becomes a CFG, and
 // expression trees become instruction streams: each MIR expression node becomes
-// one LIR instruction defining a temporary, and the parent reads the child
-// temporaries as operands. A source-level place -- a member, an automatic local
+// one LIR assignment putting its value where its destination says -- a
+// transient the parent reads as an operand, or storage it is made in. A
+// source-level place -- a member, an automatic local
 // -- becomes a LIR place, and the use decides whether it is read, written, or
 // addressed.
 class FunctionLowerer {
@@ -76,6 +76,13 @@ class FunctionLowerer {
     lir::ValueId slot;
   };
   struct EndPassedOn {};
+  // Storage a new-expression allocated, while what it is to hold is still
+  // being initialized there: a way out gives the storage back and ends
+  // nothing, since nothing whole lies in it yet, as clang's new-expression
+  // calls `operator delete` when a constructor throws.
+  struct StorageRelease {
+    lir::Operand storage;
+  };
 
   // A region a departure may be claimed at: the block that runs its handler,
   // and the storage the departure is bound to for the handler to read.
@@ -97,7 +104,7 @@ class FunctionLowerer {
   // handler -- built the first time something needs it and shared by every
   // landing and every scope nested inside after that.
   using ScopeKind = std::variant<
-      CleanupScope, ValueEnd, SlotEnd, EndPassedOn, RegionScope,
+      CleanupScope, ValueEnd, SlotEnd, EndPassedOn, StorageRelease, RegionScope,
       TerminateScope>;
   struct UnwindScope {
     ScopeKind kind;
@@ -174,12 +181,24 @@ class FunctionLowerer {
   // forgets them. A block that control left by a statement of its own has had
   // them ended on that way out, and a way out never returns here.
   auto CloseExtent(std::size_t depth) -> diag::Result<void>;
-  // The value a store into a slot, or a return, hands on. One this body made
-  // passes its end along with it; one it was only lent is copied, so what is
-  // handed on is always one this body owned.
+  // `value` handed on, the end this body owed for it going with it. Only a
+  // value this body owns is handed on.
   auto HandOn(lir::Operand value) -> lir::Operand;
-  // Whether this body made `value` and still owes its end.
-  [[nodiscard]] auto OwesItsEnd(const lir::Operand& value) const -> bool;
+  // What the scope at `index` owed is owed no longer, from here on: its value
+  // went to whoever holds it now, or the storage it was to give back holds
+  // what it was allocated for.
+  void PassEndAt(std::size_t index);
+  // `value` as what an assignment puts where it goes, as rustc's
+  // `consume_by_copy_or_move`: one this body made is moved, and one it was only
+  // lent is copied, so what is put there is a value of its own.
+  auto ConsumeByCopyOrMove(lir::Operand value) -> lir::Rvalue;
+  // `value` put where `destination` says, consumed; one moved out leaves the
+  // bytes it was made in behind.
+  void AssignFrom(lir::Destination destination, lir::Operand value);
+  // The scope owing the end of `value`, where this body made it and still owes
+  // that end, and nothing otherwise.
+  [[nodiscard]] auto OwedEndAt(const lir::Operand& value) const
+      -> std::optional<std::size_t>;
   // States the end of an owned value, and of the one a frame slot holds.
   void EndValue(lir::Operand value);
   void EndSlotValue(lir::ValueId slot);
@@ -190,11 +209,9 @@ class FunctionLowerer {
   // end, and its bytes going out of use.
   void EmitScopeDrop(const ValueEnd& end);
   void EmitScopeDrop(const SlotEnd& end);
+  void EmitScopeDrop(const StorageRelease& release);
   // Brings a slot's bytes into use with the first value it is to own.
   void InitializeSlot(lir::ValueId slot, lir::Operand value);
-  // Stores a value a slot is to own, handing it on, and leaves the bytes it
-  // was made in out of use: the slot holds it from here.
-  auto StoreMoved(lir::Place place, lir::Operand value) -> lir::Operand;
   auto LowerIfInto(const mir::Block& block, const mir::IfStmt& stmt)
       -> diag::Result<void>;
   auto LowerForInto(const mir::Block& block, const mir::ForStmt& stmt)
@@ -205,6 +222,8 @@ class FunctionLowerer {
       -> diag::Result<void>;
   auto LowerBreakInto(const mir::BreakStmt& stmt) -> diag::Result<void>;
   auto LowerContinueInto() -> diag::Result<void>;
+  auto LowerReturnInto(const mir::Block& block, const mir::ReturnStmt& stmt)
+      -> diag::Result<void>;
   auto LowerTryInto(const mir::Block& block, const mir::TryStmt& stmt)
       -> diag::Result<void>;
   auto LowerFinallyInto(const mir::Block& block, const mir::FinallyStmt& stmt)
@@ -219,12 +238,13 @@ class FunctionLowerer {
   // Lowers a cleanup's own code, on whichever way out reached it, under a
   // scope that refuses any landing inside it.
   auto LowerCleanupInto(CleanupScope cleanup) -> diag::Result<void>;
-  // Hands control back to the scheduler, leaving the body at `resume`. Being
-  // ended rather than run again is a way out of every scope open here, so the
-  // second way out runs all of their cleanups and then ends the body; the
-  // source spells none of it, which is why it is built from what is owed
-  // rather than from a statement.
-  auto SuspendResumingAt(lir::BlockId resume) -> diag::Result<void>;
+  // Hands control back to the scheduler where `park` holds, the body going on
+  // in one block either way: where it suspended and is resumed, and where it
+  // did not have to. Being ended rather than run again is a way out of every
+  // scope open here, so the second way out runs all of their cleanups and then
+  // ends the body; the source spells none of it, which is why it is built from
+  // what is owed rather than from a statement.
+  auto SuspendIf(lir::Operand park) -> diag::Result<void>;
   // Carries `effect`, the departure a landing received, on outward: a region
   // that declined it is not where it was going, and what a further landing
   // tests is the target it names. Reached only from a landing, which is the
@@ -246,10 +266,11 @@ class FunctionLowerer {
   // as well as where it returns. Every such call names one, including where
   // nothing here claims or owes anything: a landing is also how a frame says
   // the departure is passing through it, and a frame that says nothing is one
-  // the platform will not look at.
+  // the platform will not look at. What the call answers goes where
+  // `destination` says.
   auto EmitDepartingCall(
       lir::CallTarget target, std::vector<lir::Operand> args,
-      lir::TypeId result_type) -> diag::Result<lir::Operand>;
+      lir::Destination destination) -> diag::Result<void>;
   // The landing the call about to be made here unwinds to: it receives the
   // departure into the frame's one slot for it and continues where the
   // innermost open scope takes one. Each call has a landing of its own,
@@ -273,10 +294,24 @@ class FunctionLowerer {
   auto DepartureSlot() -> lir::ValueId;
   auto CurrentRuntime() -> lir::Operand;
 
-  // Reads a value out of an expression. An expression naming storage that has
-  // no value of its own -- a cell -- has no reading, and is rejected here.
+  // Reads a value out of an expression, as rustc's `as_operand`. An expression
+  // naming storage that has no value of its own -- a cell -- has no reading,
+  // and is rejected here.
   auto LowerExpr(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
+  // What computes an expression's value, as rustc's `as_rvalue`: the one step
+  // that makes it, or the value read or made elsewhere, consumed.
+  struct TypedRvalue {
+    lir::TypeId type;
+    lir::Rvalue value;
+  };
+  auto LowerRvalue(const mir::Block& block, mir::ExprId id)
+      -> diag::Result<TypedRvalue>;
+  // An expression's value put where `destination` says, as rustc's
+  // `expr_into_dest`: a call and the step that makes a value make it there.
+  auto LowerExprInto(
+      const mir::Block& block, mir::ExprId id,
+      const lir::Destination& destination) -> diag::Result<void>;
   // The readings of `ids`, in order. An instruction taking a list of them
   // composes these operands; the walk over the list is not each caller's.
   auto LowerEachExpr(const mir::Block& block, std::span<const mir::ExprId> ids)
@@ -305,6 +340,9 @@ class FunctionLowerer {
   // What reaching a part asks of the value holding it: reading a part reads
   // the holder, and writing a part, whole or in part, writes into the holder.
   static auto HolderReach(Reach part) -> Reach;
+  // What binding a reference asks of its referent: one read through reads it,
+  // and one written through reaches the whole of it.
+  static auto BorrowReach(mir::Mutability mutability) -> Reach;
   // Whether the access writes into what the storage holds, which is what a
   // cell reporting its writes has to be opened for.
   static auto WritesInto(Reach reach) -> bool;
@@ -320,12 +358,9 @@ class FunctionLowerer {
   // address, so the place opens there and dereferences it -- the same shape a
   // member place has once its receiver is resolved.
   auto SymbolPlace(std::string symbol, mir::TypeId type) -> lir::Place;
-  // The value naming a referent yields, whether that is the reference itself --
-  // a member table, a function, a local bound to a value that never had storage
-  // -- or what the storage it names holds.
-  auto ReferenceValue(
-      const mir::Block& block, mir::ExprId id,
-      const mir::ReferenceTarget& target, mir::TypeId type)
+  // The value a name of something that is no storage stands for: a member
+  // table, a constant, a function's address.
+  auto ReferenceValue(const mir::ReferenceTarget& target, mir::TypeId type)
       -> diag::Result<lir::Operand>;
   // The storage a capability wrapper stands for. A wrapper that is itself
   // storage continues the chain that reached it; one that refers to storage
@@ -335,6 +370,12 @@ class FunctionLowerer {
   // the contents live.
   auto WrapperContentsPlace(const mir::Block& block, mir::ExprId wrapper)
       -> diag::Result<lir::Place>;
+  // The word a wrapper that refers elsewhere holds, as rustc's `as_operand`
+  // makes an operand of either kind of expression. MIR names the wrapper as a
+  // value it read, or as the place it lies in where a member is reached on it
+  // or an owner is reached through, as C++ enters `operator*` on the object.
+  auto WrapperOperand(const mir::Block& block, mir::ExprId wrapper)
+      -> diag::Result<lir::Operand>;
   // Opens a write into what a wrapper stands for -- an object held for the rest
   // of the full-expression, whose end tells the wrapper what the write did --
   // and answers with the whole of what the wrapper holds, designated within
@@ -348,21 +389,14 @@ class FunctionLowerer {
       -> diag::Result<lir::Place>;
   // The address of storage holding a value of `value`.
   auto AddressType(lir::TypeId value) -> lir::TypeId;
-  // How an expression names a part of a value that holds its parts as storage
-  // of their own, where it names one.
-  [[nodiscard]] auto StorageSelection(const mir::Block& block, mir::ExprId id)
-      const -> std::optional<support::PartSelection>;
-  // The access an expression makes to a part that is storage of its own, where
-  // it is one.
-  [[nodiscard]] auto StoragePartAccess(
-      const mir::Block& block, mir::ExprId id) const -> const mir::CallExpr*;
-  // The place a part that is storage of its own names: the place holding the
-  // value it is part of, one step further. Reaching the part for any write is
-  // writing into that place.
-  auto PartPlace(
-      const mir::Block& block, const mir::CallExpr& part, Reach reach)
+  // The place the element `element` reaches lies in: the place holding its
+  // receiver, then the step to the element, the receiver evaluated before the
+  // coordinates. Reaching the element for any write is writing into that
+  // place.
+  auto ElementPlace(
+      const mir::Block& block, const mir::CallExpr& element, Reach reach)
       -> diag::Result<lir::Place>;
-  // The step from a value into one of its parts that is storage of its own.
+  // The step a call reaching a part takes into the value it is taken on.
   auto PartStep(const mir::Block& block, const mir::CallExpr& part)
       -> diag::Result<lir::Projection>;
   // The place the value `id` evaluates to is reached in. An expression naming
@@ -372,23 +406,24 @@ class FunctionLowerer {
       -> diag::Result<lir::Place>;
   // A slot of this frame holding `value` for the rest of the full-expression.
   auto HeldInSlot(lir::Operand value, lir::TypeId type) -> lir::ValueId;
-  [[nodiscard]] auto NamesStorage(const mir::Block& block, mir::ExprId id) const
-      -> bool;
-  auto MemberRefOf(const mir::FieldRef& field) -> lir::StatedMemberRef;
-  // Reads the value held where an expression names storage, whichever way it
-  // names it. A cell is address-only and holds no value a reader can take out
-  // of it, so an expression whose own type is one is rejected: what such a
-  // reader wants is what the cell holds, which is a dereference and names a
-  // different place.
-  auto ReadPlace(const mir::Block& block, mir::ExprId id, lir::TypeId type)
+  // The step `field` takes off the place of its receiver: a member an object
+  // or a closure declares, or a component where its product's type lays it.
+  auto FieldStep(const mir::FieldRef& field) -> lir::Projection;
+  // The value `place` holds, read where it lies: the one way a place stands
+  // as a value, under a copy and a move alike. A cell is address-only and holds
+  // no value a reader can take out of it, so a place whose own type is one is
+  // rejected: what such a reader wants is what the cell holds, which is a
+  // dereference and names a different place.
+  auto LowerRead(const mir::Block& block, mir::ExprId place)
       -> diag::Result<lir::Operand>;
   // Reduces an expression to the machine boolean a conditional branch tests.
   auto LowerCondition(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Operand>;
 
-  auto LowerCall(
-      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
+  // A call, what it answers put where `destination` says.
+  auto LowerCallInto(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
+      const lir::Destination& destination) -> diag::Result<void>;
   // Resolves the callee and emits the call over arguments already lowered.
   // The result type is passed rather than read off the MIR expression, because
   // a caller partway through building a compound shape has the type in hand
@@ -403,6 +438,11 @@ class FunctionLowerer {
   auto EmitCallTo(
       lir::CallTarget target, std::vector<lir::Operand> args,
       lir::TypeId result_type) -> diag::Result<lir::Operand>;
+  // The same, with what the call answers put where `destination` says, as a
+  // call in rustc's MIR names its `destination`.
+  auto CallInto(
+      lir::CallTarget target, std::vector<lir::Operand> args,
+      lir::Destination destination) -> diag::Result<void>;
   // Says what a call reaches. A callee named outright resolves to its identity
   // with nothing evaluated; one that is a code address the program computed
   // resolves by lowering that address, which is why this reaches the block.
@@ -428,26 +468,34 @@ class FunctionLowerer {
   auto EnterCoroutine(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type,
       std::optional<lir::Operand> completion) -> diag::Result<lir::Operand>;
-  // Brings an object into existence and enters the construction the program
-  // asked for on it (LRM 8.3, 8.7). The heap is the runtime's, so what it
-  // answers is an object whose properties hold their storage's default; the
-  // body that brings them to their initial values is this program's own and is
-  // entered like any other.
-  auto LowerObjectConstruction(
-      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
-  // Brings an instance of the design hierarchy into existence and enters its
-  // class's constructor on it, the same two operations: the part every scope
-  // shares is the runtime's, built from what the instance is built against,
-  // and the rest is this program's own constructor.
-  auto LowerScopeConstruction(
-      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
+  // Allocates the storage a new-expression owns, initializes it from the
+  // initializer, and hands it to `owner`, the type that owns it from there
+  // (LRM 8.3, 8.7).
+  auto LowerNew(
+      const mir::Block& block, const mir::NewExpr& allocation,
+      mir::TypeId owner) -> diag::Result<lir::Operand>;
+  // Evaluates a new-expression's initializer `id` into the storage `storage`
+  // points at, which holds nothing yet.
+  auto InitializeAllocated(
+      const mir::Block& block, mir::ExprId id, const lir::Operand& storage)
+      -> diag::Result<void>;
   // A reference is the address of the storage its referent lives in, carrying
   // which of the two kinds that storage is. One built over a reference denotes
   // the storage at the end of the chain rather than binding afresh, so it
   // carries what it was handed (LRM 23.3.3.2).
   auto LowerReferenceBind(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // A reference into the receiver of `call` -- an element read or written,
+  // as rustc's `Index::index` and `IndexMut::index_mut` answer one -- is the
+  // address of the part where it lies, taken at the reference's own
+  // mutability, which is what asks the step for a read or for a write.
+  auto LowerReferenceIntoReceiver(
+      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
+      -> diag::Result<lir::Operand>;
+  // A reference to what a capability wrapper holds: the address of the
+  // storage the wrapper represents.
+  auto LowerReferenceToContents(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
   // A reference to a property of an object (LRM 13.5.2), the call naming the
@@ -475,123 +523,41 @@ class FunctionLowerer {
   // A method that changes the object it is applied to. The entry changes the
   // object where it lies, and answers with whatever result of its own the
   // method states -- a queue pop yields the element it removed (LRM 7.10.2.4).
-  // An object that is a view of its whole is read out, changed, and written
-  // back as a write to a view is.
   auto LowerMutatingCall(
       const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
       mir::TypeId type) -> diag::Result<lir::Operand>;
-  // Reading what a target holds, changing it, and putting the result back,
-  // reaching the target exactly once. Which kind of storage the target names --
-  // a part of a value aggregate, or storage the chain reaches -- is answered
-  // here and nowhere else, so no site that changes what a target holds reaches
-  // one twice, once to read and once to write. `change` is handed a way to read
-  // the old value and the type it has, and answers with what to put back; one
-  // that never reads emits no read at all, which is how a plain write reaches
-  // this. A read may be a call, which can depart like any other. What this
-  // yields is the write, whose type is void; a caller in expression position
-  // states the value its own expression has, out of what it kept while `change`
-  // ran.
-  using ValueReader = std::function<diag::Result<lir::Operand>()>;
-  using ValueChange = std::function<diag::Result<lir::Operand>(
-      const ValueReader&, lir::TypeId)>;
-  auto UpdateTarget(
-      const mir::Block& block, mir::ExprId target, const ValueChange& change)
+  // A store of `value` through the reference to bits `reference` (LRM
+  // 11.5.1): the `slice_mut` steps it was taken by, followed back to what the
+  // first was taken on, and the bits written there.
+  auto LowerBitsStore(
+      const mir::Block& block, mir::ExprId reference, mir::ExprId value)
       -> diag::Result<lir::Operand>;
-  // The bits of an integral value a target names (LRM 11.5.1): the steps to
-  // bits its chain ends in, innermost first, and what the outermost of them is
-  // taken in. A target that ends in no such step has none, and is itself what
-  // nothing is taken in.
-  struct BitsProjection {
-    mir::ExprId base;
-    std::vector<const mir::CallExpr*> steps;
-  };
-  static auto SplitBitsProjection(const mir::Block& block, mir::ExprId target)
-      -> BitsProjection;
-  // The step designating bits within a write in progress, where `landed` is
-  // where that write lands.
-  [[nodiscard]] auto DesignatedBitsStep(
-      const mir::Block& block, mir::ExprId landed) const
-      -> const mir::CallExpr*;
-  // Whether an expression names storage a write lands in. A part of a value
-  // some view reached is storage only of a copy held for the write, so it is
-  // not.
-  [[nodiscard]] auto IsAddressablePlace(
-      const mir::Block& block, mir::ExprId id) const -> bool;
-  // The parts of `bits`, outermost first: where each starts and the type it
-  // is written at.
-  auto LowerBitsParts(const mir::Block& block, const BitsProjection& bits)
+  // The parts `steps` name, outermost first: where each starts and the type
+  // it is written at. `steps` are the `slice_mut` calls a reference to bits
+  // was taken by, innermost first.
+  auto LowerBitsParts(
+      const mir::Block& block, std::span<const mir::CallExpr* const> steps)
       -> diag::Result<std::vector<lir::BitsPart>>;
-  // What `change` writes over bits of `type`. Nothing reads such bits back
-  // first: an assignment operator states its own read, and no method changes
-  // an integral value where it lies.
-  static auto BitsWritten(const ValueChange& change, lir::TypeId type)
-      -> diag::Result<lir::Operand>;
-  // Writing bits of an integral value that lies where a write lands: one
-  // statement on its place, naming the parts the bits are reached through.
-  auto StoreBitsOfPlace(
-      const mir::Block& block, const BitsProjection& bits,
-      const ValueChange& change) -> diag::Result<lir::Operand>;
-  // Writing bits of an integral value some view reached: the value is held in
-  // a slot, the bits are written where they lie there, and what the slot then
-  // holds is what the view is updated to. The bits are written into the
-  // whole value, so what the part's own type cannot hold stays as it was --
-  // an x under a two-state member of a four-state structure (LRM 7.2.1).
-  auto StoreBitsInCopy(
-      const mir::Block& block, const BitsProjection& bits,
-      const ValueChange& change) -> diag::Result<lir::Operand>;
-  auto StoreBitsAtPlace(
-      const mir::Block& block, lir::Place place, const BitsProjection& bits,
-      const ValueChange& change) -> diag::Result<lir::Operand>;
-  // Writing bits of the integral value a write in progress designates: one
-  // call on the designation `designated` steps from, which hears which bits
-  // moved.
-  auto StoreBitsInDesignation(
-      const mir::Block& block, const mir::CallExpr& designated,
-      const BitsProjection& bits, const ValueChange& change)
-      -> diag::Result<lir::Operand>;
-  // Whether a target reaches, somewhere along its chain, a part that is a view
-  // of its whole rather than storage of its own.
-  [[nodiscard]] auto ReachesViewedPart(
-      const mir::Block& block, mir::ExprId target) const -> bool;
-  // Updating a part, other than bits, whose chain passes through a view: what
-  // the part is taken from is updated in turn, with the part changed inside
-  // it. Out of a view,
-  // the part is extracted and the whole rebuilt around it; out of a value a
-  // view reached, the value is held in a slot and the part written where it
-  // lies there.
-  auto UpdateThroughView(
-      const mir::Block& block, mir::ExprId target, const ValueChange& change)
-      -> diag::Result<lir::Operand>;
-  // The slice of elements a target names, where it is a slice of a container
-  // that holds its elements as storage of their own.
-  [[nodiscard]] auto StorageSlice(const mir::Block& block, mir::ExprId target)
-      const -> const mir::CallExpr*;
-  // Updating a slice of elements: the elements it spans, read as one value,
-  // and what that value is changed to written into the elements already there
-  // (LRM 7.6).
-  auto LowerSliceUpdate(
-      const mir::Block& block, const mir::CallExpr& slice, mir::ExprId target,
-      const ValueChange& change) -> diag::Result<lir::Operand>;
-  // The slice write itself: `writer` is handed `container` -- the container's
-  // storage, or what a write in progress designates of it -- then the slice's
-  // bounds and what the slice is changed to. `read` answers with the slice's
-  // value at those bounds, where the change reads one.
-  auto WriteSlice(
-      const std::vector<lir::Operand>& bounds, const ValueChange& change,
-      const lir::Operand& container, lir::TypeId slice_type,
-      lir::CallTarget writer, const ValueReader& read)
-      -> diag::Result<lir::Operand>;
-  // Which subvalue one reaching call names, in the vocabulary this layer's
-  // aggregate instructions take.
-  auto LowerValuePartSelector(
-      const mir::Block& block, const mir::CallExpr& call)
-      -> diag::Result<lir::AggregateSelector>;
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;
 
-  auto Emit(lir::TypeId type, lir::InstrData data) -> lir::Operand;
-  auto Append(lir::TypeId type, lir::InstrData data) -> lir::Operand;
+  // `value` computed and put where `destination` says, as rustc's
+  // `push_assign`; a transient holding an owned value owes its end here.
+  void Assign(lir::Destination destination, lir::Rvalue value);
+  // The transient an owned value made into `destination` owes its end in, or
+  // nothing where the value goes into storage, whose holder owns it.
+  [[nodiscard]] auto OwningTransient(
+      const lir::Destination& destination, bool makes_value) const
+      -> std::optional<lir::ValueId>;
+  auto NewTransient(lir::TypeId type) -> lir::ValueId;
+  // `value` computed into a new transient of `type`, as rustc's `as_temp`.
+  auto Emit(lir::TypeId type, lir::Rvalue value) -> lir::Operand;
+  // A step that yields nothing: a write, or a frame's bytes coming into or
+  // going out of use.
+  void EmitStatement(lir::InstrData statement);
+  // What a step yielding nothing stands as where a value is wanted.
+  auto VoidValue() -> lir::Operand;
   auto NewPlaceLocal(lir::TypeId type) -> lir::ValueId;
   // Answers the frame slot the local became where that slot owns its value,
   // for the caller to end with the extent the local belongs to.
@@ -607,18 +573,14 @@ class FunctionLowerer {
   // handle names storage rather than a value, so neither of those carries it.
   auto LoadActivationValue(lir::Operand handle, lir::TypeId value_type)
       -> lir::Operand;
-  auto StoreActivationValue(
-      lir::Operand handle, lir::Operand value, lir::TypeId value_type)
-      -> lir::Operand;
+  void StoreActivationValue(
+      lir::Operand handle, lir::Operand value, lir::TypeId value_type);
   // A cell this body supplies for something it calls to complete into, built at
   // frame entry so a call in a loop writes into one place rather than leaving a
   // fresh one behind per iteration. The caller supplies it because the caller
   // outlives what it calls; a cell of the callee's own would be gone by the
   // time the caller read it.
   auto AllocateCompletionFor(lir::TypeId payload) -> lir::Operand;
-  // What a handle to such a cell is: the address of storage holding a
-  // `payload`, which is not itself a `payload`.
-  auto CompletionCellType(lir::TypeId payload) -> lir::TypeId;
 
   // Brings the storage this body's variables live in into existence and binds
   // each of them to the address of its own piece of it. Runs once, before
@@ -630,7 +592,7 @@ class FunctionLowerer {
   void CloseVariables();
   // Installs a cell's representation and initial contents, the one write it
   // takes before it will accept a store.
-  auto InitializeCell(lir::Operand cell, lir::Operand value) -> lir::Operand;
+  void InitializeCell(lir::Operand cell, lir::Operand value);
   // The place an address opens to, and the place reached by opening that in
   // turn. What the first names is storage, reached through whatever protocol
   // that storage has rather than by loading it; the second is for an address

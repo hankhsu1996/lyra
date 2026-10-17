@@ -10,28 +10,21 @@ element of a value -- through ports or not -- costs the element.
 
 Each phase replaces one concept completely and deletes the shape it replaces, leaves the whole
 corpus green on both backends, and is measured once on Ibex by instruction count, beside Verilator,
-against the run before it. The reference point is Ibex at `91b619f1`: 12.26 G instructions on the
-C++ backend and 14.96 G on the execution backend against Verilator's 0.122 G, 100x and 122x per
-cycle.
+against the run before it; the figures are in the pull requests that measured them.
 
 ## Phase 1: what is specific to a type is generated, not described
 
 - [x] A runtime facility that acts on a value of any type -- formatting, DPI conversion, file and
       memory-image reading and writing, sampled history, a wait's comparison -- is handed the
       functions the compiler generated for that type. A value held beside its type's constant
-      survives on the execution backend where a union holds its member, an associative array its
-      key, and a closure or a `with` clause its answer.
+      survives on the execution backend where an associative array holds its key, and a closure or a
+      `with` clause its answer.
 - [x] A write reports the range it reached, and a wait decided at the write tests that range against
       what it watches on the words, without materializing either side.
 - [x] On the execution backend, a queue, a dynamic array, an associative array and a fixed-size
       array hold their elements as raw storage acted on through the element type's generated
-      functions, a union holds its member with the member's type, and a value whose representation
-      an entry cannot know crosses as itself and its type.
-
-Measured 2026-10-05 on Ibex, whole run under callgrind, `--release`, both programs ending at
-`$finish` at 26548 as the reference run did: the C++ backend 10.87 G instructions (819 K per cycle)
-and the execution backend 13.13 G (990 K per cycle), against 12.26 G and 14.96 G at the reference
-point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
+      functions, and a value whose representation an entry cannot know crosses as itself and its
+      type.
 
 ## Phase 2: a packed value is its words
 
@@ -39,79 +32,93 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
       contiguous sequence of bits; a type is identified by its exact width, signedness and state
       domain, on both backends.
 - [x] Every operation on a packed value is generated for its type. On the execution backend it is
-      instructions at the value's own width wherever every value it takes and answers is within the
-      in-place size; a product, a quotient and a remainder past 64 bits, and any operation over a
-      larger value, are calls taking the words.
+      instructions at the value's own width wherever every value it takes and answers is small
+      enough for a frame; a product, a quotient and a remainder past 64 bits, and any operation over
+      a larger value, are calls taking the words.
 - [x] An element or a member at a run-time index is reached by bit addressing at the cost of the
-      element. Measured on a packed array of 8-bit elements held in a variable, `--release`, 20,000
-      writes of one element at 1,024, 16,384 and 262,144 elements: 3, 3 and 4 ms on the execution
-      backend and 2, 3 and 3 ms on the C++ backend, process start included. The same number of reads
-      takes 5 ms at every size on the execution backend and 3 ms on the C++ backend.
+      element, whatever size the array is, on both backends.
 - [x] A write to part of a wide packed value costs the part wherever the value lies, a subroutine's
-      own local included. The same 20,000 writes into a function's automatic local take 2, 2 and 3
-      ms at those three sizes on the execution backend and 2, 2 and 2 ms on the C++ backend. The
-      execution backend took 7, 42 and 638 ms while it rebuilt the local to change one element.
+      own local included.
 - [x] A write to part of a part of a packed value names only the bits written, so it changes no
       other bit. Writing one bit of a two-state member of a four-state packed structure whose bits
       are x leaves the member's other bits x on both backends, in a variable and in a subroutine's
       local (LRM 7.2.1, 11.5.1). The execution backend used to read the member out as two-state and
       write it back, which turned those bits into 0.
 - [ ] Reading a part of a part of a packed value costs the part read. It costs the outer part on
-      both backends. 20,000 reads of one 8-bit element of a wide member of a packed structure take
-      13 ms at 1,024 elements and 1,752 ms at 262,144 on the execution backend, and 8 ms and 1,743
-      ms on the C++ backend, `--release`, process start included.
-- [ ] Writing a character of a string, or a member of an unpacked union, costs the part written. On
-      the execution backend each reads the whole value, builds a new one around the part and stores
-      it back. Not measured.
+      both backends.
+- [x] Writing a character of a string changes that character where the string lies, on both
+      backends, as the string's own `putc` does.
+- [x] Writing a member of an unpacked union costs the part written, on both backends: the store lies
+      where the member lies, and the write keeps and compares only what it lands on below the member
+      while reporting the change to the whole union.
 - [ ] No one-word operation costs more than it did while the value library's word functions were
       marked to be inlined always, and a shift of a value of several words stays inline in an
-      optimized C++ build. Counted under clang at `-O2`, the 28 one-word operations together cost
-      fewer instructions than before, 227 against 270, but an XOR and an XNOR reduction of a
-      four-state value cost 18 each against 15 and 16, and a right shift of a value of several words
-      is a call where it was inline.
-- [x] A value past a fixed size owns its words apart from what holds it, and a frame keeps the
-      address of a value's bytes past that size, so what a call takes from the stack does not follow
-      a declared width. The widest packed type accepted is the front end's, 16,777,215 bits (LRM
-      6.9.1 and 7.4.1 set the floor at 65,536): a design declaring one, adding to it, shifting it,
-      writing a part of it and passing it through a function builds and runs on both backends,
-      started directly under an 8 MiB stack. One bit wider is refused by the front end, which names
-      the limit.
-- [x] The size past which a value owns its words is decided by what a frame may hold and not by
-      speed. Counted under clang at `-O2`, a temporary that owns its words costs 60 to 70
-      instructions more than one lying in place, the same at every width, so no size makes owning
-      the cheaper of the two, while a frame holding seven temporaries in place is seven times the
-      type.
-- [x] A released run of words is found again by its length at the same cost however many wide
-      lengths a design has. Freed buffers are kept by length in 61 slots, and two lengths that share
-      a slot evict each other. A program alternating between 20 wide lengths takes 10,446 page
-      faults and one alternating between 40 takes 28,746; while only the first lengths released were
-      kept they took 47,866 and 86,428.
-- [ ] A design holding more than eight values of one wide length at once keeps eight of their runs,
-      and the rest go back to the system each time. Not measured.
-- [ ] An operator on a value that owns its words writes its answer once. Each clears the answer and
+      optimized C++ build. Under clang at `-O2` the one-word operations together cost fewer
+      instructions than before, but an XOR and an XNOR reduction of a four-state value cost more,
+      and a right shift of a value of several words is a call where it was inline.
+- [x] A value is its words at every width, and a value too large for a frame is held through a box,
+      so what a call takes from the stack does not follow a declared width. The widest packed type
+      the front end accepts (LRM 6.9.1, 7.4.1): a design declaring one, adding to it, shifting it,
+      writing a part of it and passing it through a function builds and runs on both backends under
+      a default stack. One bit wider is refused by the front end, which names the limit.
+- [x] The size past which a value is kept apart from a frame is decided by what a frame may hold and
+      not by speed.
+- [x] A run of words a holder of a wide value released is found again by its length at the same cost
+      however many wide lengths a design has; two lengths that share a slot evict each other.
+- [ ] A design building more holders of one wide length at once than are kept keeps only that many
+      of their runs, and the rest go back to the system each time. Not measured.
+- [ ] An operator on a value wider than a word writes its answer once. Each clears the answer and
       then writes all of it, a second pass over the value. Not measured.
-- [ ] An operation over a value that owns its words is carried out several words at a time by every
+- [ ] An operation over a value wider than a word is carried out several words at a time by every
       host compiler. Under gcc its loops go a word at a time. Not measured as a rate.
 - [ ] The size and the number of runs kept are checked against the wide cases of the benchmark
       corpus. Neither has been.
-- [ ] A fill or an extension of a type that owns its words is carried out each time it is evaluated,
-      a pass over the value, where naming a constant was a copy of the same length. What that costs
-      a design evaluating one often is not measured.
+- [ ] A fill or an extension of a type too large for a frame is carried out each time it is
+      evaluated, a pass over the value, where naming a constant was a copy of the same length. What
+      that costs a design evaluating one often is not measured.
+- [x] A local, a parameter taken by value, and an argument handed to one, of a type too large for a
+      frame, is held through a box the compiler states in MIR before either backend reads it, so
+      both keep the value off the stack by translating what they are given
+      (`../decisions/a-value-too-large-for-a-frame-is-held-through-a-box.md`). A variable's cell
+      keeps such a value in storage of its own on both backends, as every holder does, so a cell is
+      never boxed.
+- [x] A list of elements an array is built from is made, elements and all, in its box where it is
+      too large for a frame, on both backends.
+- [x] A value of such a type that an expression makes is made in a box and read through it, a member
+      of one is read through its box, and one a condition chooses is chosen as its box. A value a
+      box is built from is made in the box's storage on both backends, never in a frame first, so a
+      call answering one makes it in the box. What a suspending call completes with is kept out of
+      every frame on both backends where it is too large for one.
+- [x] A closure capturing such a value holds it through a box, which the closure owns and ends.
+- [x] A structure's operations on its whole value -- equality, case equality, the unknown tests, the
+      stream conversions, a net's resolution -- refer to the structure they are asked of and to
+      every operand of the same type where it lies, as Rust's comparison operators borrow theirs; an
+      operand the program computes is held for the reference to the end of the full-expression, in a
+      box where it is too large for a frame, and the operations' own bodies keep what they hold by
+      the same rule as any body.
+- [x] The execution backend keeps no value apart from the frame on its own account, and the compiler
+      refuses a body that leaves a value too large for a frame unboxed. A receiver an operation is
+      asked of is boxed as any operand is, while what a write lands on is carried as the place it
+      names.
+- [x] An integral, a fixed-size array and a structure are laid out flat at every size on both
+      backends, and no operation of the value library builds a whole value of its own on the stack:
+      what it makes it builds where its caller keeps it, and what it must keep aside while it works
+      it keeps in storage of its own. A callable answering a value makes it where its caller takes
+      it. A design whose every value is twice the stack it runs on runs on both backends.
+- [x] A union is laid out flat on both backends.
 - [x] A wait on part of an unpacked aggregate is passed over by a write that reached another part of
-      it, and a write visits only the waits on what it reached: 4,096 `always_comb` stages chained
-      through one array and driven 200 times run in 0.12 s on the execution backend, `--release`.
-- [x] On the C++ backend a fixed-size unpacked array is its elements in place, the count part of its
-      type, and one past 1,024 bytes owns its elements apart from whatever holds it. An element
-      keeps its address across every assignment on both backends, so a reference to one (LRM 13.5.2)
-      goes on naming it.
+      it, and a write visits only the waits on what it reached.
+- [x] On the C++ backend a fixed-size unpacked array is its elements in place at every size, the
+      count part of its type. An element keeps its address across every assignment on both backends,
+      so a reference to one (LRM 13.5.2) goes on naming it.
 - [x] On the execution backend a fixed-size unpacked array is laid out in place from its type: its
-      elements one after another where the array lies, and one past 1,024 bytes owning them apart
-      from whatever holds it. A read of an element is arithmetic on where the array lies, with a
-      call only for an index naming no element. A write into an element of a variable is a call for
-      each level of the select, which is where the variable is told the part the write reached. A
-      variable, a net and a history holding one hold it with its type, and a reference to one and a
-      part designated within a write are told the type at each access. Building one takes its
-      elements and nothing its type states, on both backends.
+      elements one after another where the array lies, at every size. A read of an element is
+      arithmetic on where the array lies, with a call only for an index naming no element. A write
+      into an element of a variable is a call for each level of the select, which is where the
+      variable is told the part the write reached. A variable, a net and a history holding one hold
+      it with its type, and a reference to one and a part designated within a write are told the
+      type at each access. Building one takes its elements and nothing its type states, on both
+      backends.
 - [x] What a position of an array holds before anything is written to it (LRM 7.4.5) is stated once
       for the element's type, for a fixed-size array, a dynamic array, a queue and an associative
       array alike, on both backends
@@ -124,15 +131,15 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
       element is its bytes. Comparing two, and each net fold, is a call that asks the element's type
       for every element. Not measured.
 - [x] Constants are compile-time constants on both backends, and the execution backend lays out a
-      value, a cell and a frame slot of an integral up to 64 bits from the type. The one exception
-      is a constant of a type that owns its words on the C++ backend, which the host compiler is not
-      asked to build while it compiles.
+      value, a cell and a frame slot of an integral up to 64 bits from the type.
 - [x] Whatever holds an integral wider than 64 bits -- a variable, a net, a sampled history, a
       procedural local -- holds the value's words and is handed no type. A variable, a net and a
-      history are told the width once, where they are installed. A reference to one, and a part
-      designated within a write, are told the width at each access.
-- [x] A procedural local wider than 64 bits is told its width once, where its storage is built, and
-      a store into it is told nothing.
+      procedural local hold the words in their own storage, which the code generator lays out at the
+      size the type gives, and are told the width where they are built, so the value has one address
+      from then on, the one every reference to it names; past the size a frame may keep, that
+      storage holds the address of words allocated once, where it is built. A history is told the
+      width where it is installed. A reference, and a part designated within a write, are told the
+      width at each access, and a store into a procedural local is told nothing.
 - [x] A whole write of a value wider than 64 bits compares the arriving bytes with the words the
       holder has and takes them there: a store into a variable, a force on a variable or a net, a
       push into a sampled history and a driver's contribution. The first value a forced variable
@@ -154,39 +161,45 @@ point -- 11% and 12% fewer, and 89x and 108x Verilator's 0.122 G.
 - [x] The instructions the execution backend writes for an operation are held to the library's
       statement of the same operation by a test that evaluates both on the same operands, at widths
       on both sides of 64 bits.
-- [x] A net of an integral type has one install, told how many positions its declared type has, on
-      both backends.
+- [x] A net of an integral type has one install on both backends, and counts its positions by its
+      declared type.
 - [x] An enumeration's member table states the base type it is laid out at, and the library reads
       how many words a member takes from the table.
 - [ ] Every operation over constants is folded where it is built, except where folding would make
-      data the source did not write: an operation whose answer owns its words and is wider than its
-      operands together stays an operation, and a wide value that is a few bits extended is stated
-      as that extension. An operator, a cast and a system function over constants are folded, and
-      one left unfolded where it would fold is refused. A conversion of constant bits to a string
-      and the text of a constant under a format are still folded by functions of their own, an
-      enumeration method called on a constant is not folded, and an enumeration's members are not
+      data the source did not write: an operation whose answer is too large for a frame and wider
+      than its operands together stays an operation, and a wide value that is a few bits extended is
+      stated as that extension. An operator, a cast and a system function over constants are folded,
+      and one left unfolded where it would fold is refused. A conversion of constant bits to a
+      string and the text of a constant under a format are still folded by functions of their own,
+      an enumeration method called on a constant is not folded, and an enumeration's members are not
       constants the unit names.
-- [ ] The execution backend lays out a cell of every other type from the type.
-- [ ] A tuple's bytes no longer open with its type: every holder of one -- a cell, a reference, a
+- [x] A variable, a net, a class's property and what a suspending call answers into, of an unpacked
+      structure or a fixed-size unpacked array, are told its type where they are built and keep the
+      value in their own storage, holding a valid value of the type from then, so the value has one
+      address from the moment its holder exists and is read and written where it lies. A property
+      read before its initializer runs (LRM 8.7) reads that value.
+- [x] A tuple's bytes no longer open with its type: every holder of one -- a cell, a reference, a
       designated part, a net, a sampled history -- states the type of what it holds.
-- [ ] An unpacked union is one storage its members overlay, laid out from its type. A structure
-      member's common initial sequence then reads what was written through another member (LRM 7.3),
-      and a union streams its first-declared member whichever is live (LRM 11.4.14.1). Both are
-      refused today, since a union holds only its live member.
+- [x] The execution backend lays out a cell of an unpacked union from the union's type, so a
+      property of a union type, or of a structure holding one, read before its initializer runs
+      reads the union's first member's default (LRM 7.3) on both backends.
+- [x] An unpacked union is one storage its members overlay, laid out from its type. A structure
+      member's common initial sequence reads what was written through another member (LRM 7.3), a
+      union streams its first-declared member whichever was written last (LRM 11.4.14.1), and a
+      net's drivers on different members fold as its first member, on both backends.
+- [x] Every operation on a whole value of a union, a tagged union or a fixed-size unpacked array --
+      the equalities, `$bits`, `$countbits`, `$isunknown`, the bit stream, the net folds, whether a
+      write changed it, and its copy and its end -- is code compiled for the type on both backends,
+      as a structure's is. A union's are stated once, by its declaration, as a structure's are; an
+      array's by each unit naming it. The prebuilt library is told an array's count and its
+      element's type for reaching an element, building one from elements and merging two, and no
+      description of a union.
 - [x] Runtime scalars that were packed values -- descriptors, seeds, counts, a takeover's generation
       -- are machine integers, and a constant passed as one is a constant of that machine integer. A
       delay's amount is not one of them: it crosses as its bits with its width, because an unknown
       amount is a zero delay (LRM 9.4.1), which a machine integer cannot say.
 - [ ] The C++ backend's compile time on Ibex and on the largest open designs available is measured
-      against the run before, and stated here.
-
-Measured on Ibex, whole run under callgrind, `--release`, both programs ending at `$finish` at
-26548: the execution backend 7.16 G instructions, against 13.13 G at the end of phase 1 -- 45%
-fewer, and 59x Verilator's 0.122 G. The C++ backend 3.03 G instructions (228 K per cycle) against
-10.87 G at the end of phase 1, measured on the merged tree, so what else merged in between is in
-that figure. Measured again on 2026-10-10 with a plane held in the integer its width asks for: the
-execution backend 3.18 G instructions and the C++ backend 2.47 G, against 3.18 G and 2.66 G on the
-tree before it.
+      against the run before.
 
 ## What the library is told of an element's type
 
@@ -206,9 +219,7 @@ that true of a packed value. These make it true of what holds one.
 
 - [x] A child's input port is a reference, naming a whole variable of an equivalent type wherever it
       is declared, or another such port, and a cell the instantiator assigns otherwise: an
-      expression, a part of a variable, a default, and an input left unconnected. Measured on Ibex,
-      whole run under callgrind, `--release`, execution backend: 3.61 G instructions to 3.17 G, both
-      ending at `$finish` at 26548.
+      expression, a part of a variable, a default, and an input left unconnected.
 - [ ] An output connected to a whole variable of an equivalent type makes that variable a reference
       to the child's port.
 - [ ] A variable continuously assigned the whole of another of an equivalent type, with no delay,

@@ -304,13 +304,13 @@ class Queue : public OrdinalArrayMethods<Queue<T, kBound>, T> {
   [[nodiscard]] auto Element(const Position& position) const -> const T& {
     return *static_cast<const T*>(core_.ElementAt(ReadPosition(position)));
   }
-  [[nodiscard]] auto ElementRef(const Position& position, Formation& formed)
+  [[nodiscard]] auto ElementMut(const Position& position, Formation& formed)
       -> T& {
-    return *static_cast<T*>(core_.ElementRef(ReadPosition(position), formed));
+    return *static_cast<T*>(core_.ElementMut(ReadPosition(position), formed));
   }
-  [[nodiscard]] auto ElementRef(const Position& position) -> T& {
+  [[nodiscard]] auto ElementMut(const Position& position) -> T& {
     Formation formed{};
-    return ElementRef(position, formed);
+    return ElementMut(position, formed);
   }
 
   // LRM 7.10.1 queue slice: the elements from position `lo` through `hi`, as

@@ -3,7 +3,13 @@
 Date: 2026-09-24 Status: accepted. Realizes [storage-owns-its-value](storage-owns-its-value.md) on
 the execution backend; supersedes, for parts that are storage, the functional update of
 [value-projection-write](value-projection-write.md) D2 and the immutability of
-[jit-value-realization](jit-value-realization.md) invariant 6.
+[jit-value-realization](jit-value-realization.md) invariant 6. Revised by
+[an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md)
+(2026-10-13): which parts are storage is stated in MIR, on the place, rather than read by MIR-to-LIR
+from an entry and a receiver type; an element is the dereference of a call answering a reference,
+which the first rejected alternative below refused while a dereferenced pointer to a value meant a
+value cell, and a cell is now a wrapper type of its own; a union's member is a field step of a
+place.
 
 ## Context
 
@@ -29,12 +35,13 @@ there.**
 
 - **Which parts are storage is the language's fact, stated once per value domain.** An element of an
   unpacked array, a dynamic array, a queue or an associative array, and a member of an unpacked
-  structure, are storage (LRM 7.2, 7.4, 7.8, 7.10). A bit or slice of a packed value, a character of
-  a string and a member of a union are views of their whole. MIR-to-LIR reads that fact to choose
-  between a place step and a value projection. Nothing else asks it. A view is not thereby written
-  by rebuilding its whole. Bits of a packed value that lies at a place are written where they lie
-  ([a-packed-value-is-its-words](a-packed-value-is-its-words.md) D3), on the statement that writes
-  them and not as a step of the place.
+  structure, are storage (LRM 7.2, 7.4, 7.8, 7.10). A bit or slice of a packed value and a character
+  of a string are parts of their whole's value, reached by its own operations. A member of a union
+  has no identity of its own and is still reached in place, at the union's own start
+  ([a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md)).
+  None of them is written by rebuilding its whole. Bits of a packed value that lies at a place are
+  written where they lie ([a-packed-value-is-its-words](a-packed-value-is-its-words.md) D3), on the
+  statement that writes them and not as a step of the place.
 - **LIR states an element and a component as place steps, beside member and dereference.** An
   element is named by the coordinate the program computed, a component by its position. The backend
   realizes an element step through the library, which holds the container, and a component step as
@@ -60,12 +67,12 @@ there.**
   the end of one object and the start of another, so storage that names the part goes on naming it
   (LRM 7.6).
 - **A method that changes its receiver changes it where it lies.** Push, pop, insert, delete, sort,
-  `putc` and a shift-assign each act on the storage the receiver names. A receiver that is a view is
-  read out, changed and written back.
-- **A value no place holds is given one.** A part of a call's result, or of a value a view reached,
-  is reached in a frame slot the value is bound to for the rest of the full-expression, which is how
-  a C++ temporary gets an address. A write to a member of a structure held in a union member lands
-  in that slot, and the union is rebuilt from it.
+  `putc` and a shift-assign each act on the storage the receiver names. A receiver another member of
+  a union overlays is read out, changed and written back, so what lands holds what its type
+  requires.
+- **A value no place holds is given one.** A part of a call's result is reached in a frame slot the
+  value is bound to for the rest of the full-expression, which is how a C++ temporary gets an
+  address.
 
 ## Rejected
 

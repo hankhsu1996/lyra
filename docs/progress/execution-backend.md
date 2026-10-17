@@ -132,14 +132,14 @@ ownership, or native in-frame layout) for every value.
       answer and not one per container. Reading a class object out as a bit stream (LRM 6.24.3) is a
       separate operation over the object's own properties and is not carried out.
 - [x] **The unpacked struct** (LRM 7.2) -- realized on the execution backend as a product the code
-      generator lays out by its type, opening with its type's table of operations, so a component
-      lies at an offset wherever the struct lies and the runtime reaches what the struct can do
-      through that table. It default-constructs member-wise, builds from an assignment pattern,
-      copies with value semantics, takes the equality and case-equality families as the methods its
-      declaration states, reads and writes a component (including a nested struct and a string
-      component), reads its bit stream out and builds one back from a stream, lives in a member slot
-      as a whole-cell observable signal whose partial write fires subscribers, and crosses a
-      suspension as an activation-frame value.
+      generator lays out by its type, so a component lies at an offset wherever the struct lies, and
+      the runtime reaches what the struct can do through its type, which whatever hands a struct to
+      the runtime states beside it. It default-constructs member-wise, builds from an assignment
+      pattern, copies with value semantics, takes the equality and case-equality families as the
+      methods its declaration states, reads and writes a component (including a nested struct and a
+      string component), reads its bit stream out and builds one back from a stream, lives in a
+      member slot as a whole-cell observable signal whose partial write fires subscribers, and
+      crosses a suspension as an activation-frame value.
 - [x] **The dynamic array** (LRM 7.5) -- realized on the execution backend as a run-time-sized
       container value domain, the first variable-size aggregate. It defaults to empty, builds from
       `new[N]` / `new[N](src)` and an assignment pattern, copies with value semantics, takes the
@@ -152,8 +152,7 @@ ownership, or native in-frame layout) for every value.
       one write of the variable, and neither rebuilds the array; this is the mutating-container
       protocol the queue and associative array reuse.
 - [x] **The fixed-size unpacked array** (LRM 7.4.2) -- realized on the execution backend as its
-      elements laid out by its type, one after another where the array lies, an array past the
-      in-place size owning its elements apart from whatever holds it
+      elements laid out by its type, one after another where the array lies, at every size
       (`../decisions/a-fixed-array-is-laid-out-by-its-type.md`). It default-constructs element by
       element, builds from an enumerated element list and from a replicated pattern through one path
       that lays a unit of elements down until the array is full, copies with value semantics, takes
@@ -215,14 +214,12 @@ ownership, or native in-frame layout) for every value.
       concatenation is the left-to-right chain of two-operand appends it stands for, folded where it
       is built; a spread part crosses erased, its own container domain being no concern of the entry
       that appends its elements.
-- [x] **The union domains** (LRM 7.3 untagged, 7.3.2 tagged) -- realized on the execution backend.
-      An untagged union holds one member at a time, so its value is that member plus which one it
-      is, and a member write makes the written member the live one; a tagged union adds a checked
-      tag, so an access whose tag does not match the live one is a run-time error. Pattern matching
-      (LRM 12.6) rides on the tagged form. Reading an untagged union member other than the one last
-      written is reported, on both backends: LRM 7.3 defines it where the members are structures
-      sharing a common initial sequence, which then reads what was written, and a union that stores
-      only its live member has no such part to read.
+- [x] **The union domains** (LRM 7.3 untagged, 7.3.2 tagged) -- realized on the execution backend,
+      laid out by the union's type as on the C++ backend. An untagged union is one storage its
+      members overlay, so a member is written and read where it lies and a read through another
+      member answers the bits there, the common initial sequence included; a tagged union adds a tag
+      after its members, and an access whose tag does not name the member is a run-time error.
+      Pattern matching (LRM 12.6) rides on the tagged form.
 - [x] **The managed reference** (LRM 8.3, and the LRM 9.7 `process` a handle names) -- realized on
       the execution backend as a value domain: the object's address together with a share of its
       ownership, with the object's type erased, so one representation serves every object a handle
@@ -310,12 +307,17 @@ The value layer is realized two ways, and the breadth work above runs against th
   runtime holds it in that same layout and reaches those, and the methods a structure's declaration
   states in MIR for its whole-value operations, through the table the value carries
   (`../decisions/a-tuple-is-laid-out-by-its-type.md`,
-  `../decisions/a-structures-operations-are-stated-in-mir.md`). A fixed-size unpacked array is laid
-  out by the code generator too, as its elements and nothing else, and the runtime is handed the
-  array's type beside its bytes, a constant stating the count and the element's type, over which it
-  runs every whole-array operation (`../decisions/a-fixed-array-is-laid-out-by-its-type.md`). A
-  container whose size is a run-time quantity and a union stay one erased object, and a component
-  that is storage of its own is reached where it lies.
+  `../decisions/a-structures-operations-are-stated-in-mir.md`). A union is declared the same way,
+  laid out as one storage its members overlay, its methods and lifecycle compiled into one table in
+  the program by the unit declaring it. A fixed-size unpacked array is laid out as its elements and
+  nothing else, and each unit naming one compiles its whole-value operations and its lifecycle for
+  the type into the table its type constant holds; the runtime is told an array's count and its
+  element's type only to reach an element
+  (`../decisions/a-union-is-one-storage-its-members-overlay.md`,
+  `../decisions/a-fixed-array-is-laid-out-by-its-type.md`,
+  `../decisions/a-fixed-arrays-operations-are-stated-per-unit.md`). A container whose size is a
+  run-time quantity stays one erased object, and a component that is storage of its own is reached
+  where it lies.
 
 Both are correct and agree per source (the backend-agreement tests check this), but they are two
 implementations of the same value semantics. Every value domain added to the execution backend is a

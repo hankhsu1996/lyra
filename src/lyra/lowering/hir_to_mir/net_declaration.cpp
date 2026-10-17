@@ -12,7 +12,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/strength_level.hpp"
@@ -145,26 +144,17 @@ auto BuildNetInstall(
       BuildStrengthOperand(unit, block, resolution.strength);
   return std::visit(
       Overloaded{
-          [&](const IntegralNetData& integral) {
+          [&](const IntegralNetData&) {
             return mir::MakeNetInstallCallExpr(
-                target, integral.position_count, fill, strength,
-                IntegralNetEntry(resolution.fold), void_type);
+                target, {fill, strength}, IntegralNetEntry(resolution.fold),
+                void_type);
           },
           [&](const AggregateNetData& aggregate) {
             return mir::MakeNetInstallCallExpr(
-                target, aggregate.prototype, fill, strength,
+                target, {aggregate.prototype, fill, strength},
                 AggregateNetEntry(resolution.fold), void_type);
           }},
       data);
-}
-
-auto BuildNetPositionCount(
-    const mir::CompilationUnit& unit, mir::Block& block, mir::TypeId data_type)
-    -> mir::ExprId {
-  return BuildMachineIntLiteral(
-      unit, block,
-      static_cast<std::int64_t>(
-          unit.types.Get(data_type).Integral().bit_width));
 }
 
 auto BuildStrengthOperand(

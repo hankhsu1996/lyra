@@ -11,6 +11,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/wide.hpp"
 
@@ -98,7 +99,7 @@ void ExpectMatchesWideResultTruncated() {
     EXPECT_TRUE(a.ReductionXor().IsBitIdentical(wide_a.ReductionXor()));
     EXPECT_TRUE(a.Pow(Int::FromInt(3))
                     .IsBitIdentical(cut(wide_a.Pow(Int::FromInt(3)))));
-    const Twice twice = Replicate<Twice>(a);
+    const auto twice = Replicate<Twice>(a);
     EXPECT_TRUE(a.IsBitIdentical(cut(twice)));
     EXPECT_TRUE(a.IsBitIdentical(cut(twice.LogicalShiftRight(
         Int::FromInt(static_cast<std::int64_t>(T::kWidth))))));
@@ -832,36 +833,29 @@ TEST(IntegralTest, AWriteThroughAPartStaysInsideIt) {
   EXPECT_EQ(written.ToInt64(), 0x0c);
 }
 
-// Bits named for a write are of a type: a write lands where they lie, a part
-// of them inside them only, and they are read at that type.
-TEST(IntegralTest, ABitsDesignationWritesInPlaceAtItsType) {
+// A reference to bits is of a type: a write through it lands where the bits
+// lie, and through a part of them inside them only.
+TEST(IntegralTest, ABitsReferenceWritesInPlaceAtItsType) {
   using Nibble = LogicVector<4>;
   Logic8 held = Logic8::FromInt(0);
-  held.SliceRef<Nibble>(Int::FromInt(4)) = Nibble::FromInt(0x9);
+  held.SliceMut<Nibble>(Int::FromInt(4)).Set(Nibble::FromInt(0x9));
   EXPECT_EQ(held.ToInt64(), 0x90);
-  held.SliceRef<Nibble>(Int::FromInt(0)).SliceRef<Nibble>(Int::FromInt(2)) =
-      Nibble::FromInt(0xf);
+  held.SliceMut<Nibble>(Int::FromInt(0))
+      .SliceMut<Nibble>(Int::FromInt(2))
+      .Set(Nibble::FromInt(0xf));
   EXPECT_EQ(held.ToInt64(), 0x9c);
-  held.SliceRef<Nibble>(Logic8{}) = Nibble::FromInt(0);
+  held.SliceMut<Nibble>(Logic8{}).Set(Nibble::FromInt(0));
   EXPECT_EQ(held.ToInt64(), 0x9c);
-  const auto reached = held.SliceRef<Nibble>(Int::FromInt(6)).Reached();
+  const auto reached = held.SliceMut<Nibble>(Int::FromInt(6)).Reached();
   ASSERT_TRUE(reached.has_value());
   EXPECT_EQ(reached->lsb, 6U);
   EXPECT_EQ(reached->width, 2U);
-  EXPECT_FALSE(held.SliceRef<Nibble>(Int::FromInt(8)).Reached().has_value());
-  EXPECT_FALSE(held.SliceRef<Nibble>(Logic8{}).Reached().has_value());
+  EXPECT_FALSE(held.SliceMut<Nibble>(Int::FromInt(8)).Reached().has_value());
+  EXPECT_FALSE(held.SliceMut<Nibble>(Logic8{}).Reached().has_value());
 
-  EXPECT_EQ(
-      held.SliceRef<SignedLogicVector<4>>(Int::FromInt(4)).Read().ToInt64(),
-      -7);
-  EXPECT_EQ(held.SliceRef<Nibble>(Int::FromInt(4)).Read().ToInt64(), 9);
-  EXPECT_TRUE(held.SliceRef<Nibble>(Logic8{}).Read().IsBitIdentical(Nibble{}));
-
-  // A two-state part of four-state storage reads each x or z as 0 and settles
-  // the bits it writes.
+  // A two-state part of four-state storage settles the bits it writes.
   Logic8 mixed;
-  EXPECT_EQ(mixed.SliceRef<Bits4>(Int::FromInt(0)).Read().ToInt64(), 0);
-  mixed.SliceRef<Bits4>(Int::FromInt(0)) = Bits4::FromInt(0x5);
+  mixed.SliceMut<Bits4>(Int::FromInt(0)).Set(Bits4::FromInt(0x5));
   EXPECT_EQ(ValueBits(mixed), 0xF5U);
   EXPECT_EQ(UnknownBits(mixed), 0xF0U);
 }
@@ -1108,6 +1102,15 @@ TEST(IntegralTest, AWordIsReadInItsRadix) {
   EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, "g"));
   EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, "_"));
   EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, ""));
+  // A word that is no word leaves what it was read into as it was, even where
+  // its digits before the bad one were good.
+  EXPECT_FALSE(FromDigits(read.MutableView(), DigitRadix::kHex, "5g"));
+  EXPECT_EQ(HeldIn<Logic8>(read).ToInt64(), 0x23);
+  Logic8 slot = Logic8::FromInt(0x42);
+  EXPECT_FALSE(FromDigits(slot, DigitRadix::kHex, "g1"));
+  EXPECT_EQ(slot.ToInt64(), 0x42);
+  ASSERT_TRUE(FromDigits(slot, DigitRadix::kHex, "1_7"));
+  EXPECT_EQ(slot.ToInt64(), 0x17);
 
   // An octal digit lying across two words lands in both.
   WrittenWords wide(kShapeOf<BitVector<100>>);
@@ -1129,9 +1132,15 @@ TEST(IntegralTest, StreamsHoldTheirFirstItemMostSignificant) {
   const auto whole = HeldIn<LogicVector<12>>(stream);
   EXPECT_EQ(ValueBits(whole), 0xAFFU);
   EXPECT_EQ(UnknownBits(whole), 0x0FFU);
-  EXPECT_EQ(ReadFromStream<Bits4>(stream.View(), 0).ToInt64(), 0xa);
-  EXPECT_TRUE(ReadFromStream<Logic8>(stream.View(), 4).HasUnknown());
-  EXPECT_EQ(ReadFromStream<BitVector<8>>(stream.View(), 4).ToInt64(), 0);
+  Bits4 first;
+  EXPECT_EQ(ReadFromStream(stream.View(), 0, first), 4U);
+  EXPECT_EQ(first.ToInt64(), 0xa);
+  Logic8 second;
+  EXPECT_EQ(ReadFromStream(stream.View(), 4, second), 12U);
+  EXPECT_TRUE(second.HasUnknown());
+  BitVector<8> two_state = BitVector<8>::FromInt(1);
+  ReadFromStream(stream.View(), 4, two_state);
+  EXPECT_EQ(two_state.ToInt64(), 0);
 }
 
 // LRM 5.9: text is a value whose last character is least significant, and
@@ -1319,13 +1328,12 @@ TEST(IntegralTest, SignedOperatorsAgreeAtEveryStorageUnit) {
   ExpectSignedMatchesWideResultTruncated<SignedLogicVector<40>>();
 }
 
-// A value past the size stored inline owns its words, and copying, moving and
-// assigning one keep the value.
-TEST(IntegralTest, AHeapStoredValueKeepsItsBitsHoweverItMoves) {
+// A value past the size a frame keeps is its words like any other, and
+// copying, moving and assigning one keep the value.
+TEST(IntegralTest, AValuePastTheFrameBoundKeepsItsBitsHoweverItMoves) {
   constexpr std::uint64_t kLargestInline = 8 * kMaxInlineBytes;
   using Wide = BitVector<kLargestInline + 1>;
-  static_assert(UsesHeapWords(Wide::kWidth, Wide::kDomain));
-  static_assert(!UsesHeapWords(kLargestInline, StateDomain::kTwoState));
+  static_assert(sizeof(Wide) == IntegralBytesFor(Wide::kWidth, Wide::kDomain));
   const Int to_the_top =
       Int::FromInt(static_cast<std::int64_t>(kLargestInline));
   const Wide one = Wide::FromInt(1);

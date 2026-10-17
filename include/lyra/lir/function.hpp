@@ -26,8 +26,9 @@
 
 namespace lyra::lir {
 
-// An SSA-style value: a function parameter or the result of one instruction.
-// Values are numbered per function in the function's value arena.
+// A value of a body: a parameter, a transient an assignment defines, or a
+// place local naming storage. Values are numbered per function in the
+// function's value arena.
 struct ValueId {
   std::uint32_t value = base::kUnassignedId;
 
@@ -42,12 +43,13 @@ struct BlockId {
 
 // How a value is realized. A parameter arrives in the callable's signature; a
 // temporary is a transient computed once and consumed. A place local is named
-// storage on the frame. Which one a local is follows a canonical lowering rule,
-// not the source notion of a variable: a local is a place exactly when the
-// lowering names it as storage -- a declared local, a value a part is reached
-// in, or a result that control-flow paths join at. LIR is not SSA, so a value
-// produced on several paths is a place each path writes, not a merge of
-// transients.
+// storage: the frame's, or, for the answer, wherever the backend's convention
+// for answering puts it. Which one a local is follows a canonical lowering
+// rule, not the source notion of a variable: a local is a place exactly when
+// the lowering names it as storage -- a declared local, a value a part is
+// reached in, a result that control-flow paths join at, or the answer. LIR is
+// not SSA, so a value produced on several paths is a place each path writes,
+// not a merge of transients.
 enum class LocalKind : std::uint8_t { kParam, kTemp, kPlace };
 
 struct Local {
@@ -101,6 +103,12 @@ struct BoolConst {
   TypeId type;
 };
 
+// The one value of the void type, as rustc's MIR writes `()`: what an
+// evaluation yielding nothing stands as where an operand is wanted.
+struct VoidConst {
+  TypeId type;
+};
+
 // An enumeration's member table, named by the entry holding it. Its contents
 // are data the unit states and an operand is a leaf, so what the operand
 // carries is which table it is.
@@ -149,8 +157,8 @@ struct FunctionRef {
 // operand rather than a value of its own because it has no dataflow origin to
 // name -- it is materialized at the use site.
 using Operand = std::variant<
-    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, EnumTableRef,
-    IntegralConstantRef, StaticRef, DefinitionRef, FunctionRef>;
+    Use, IntConst, StrConst, RealConst, NullConst, BoolConst, VoidConst,
+    EnumTableRef, IntegralConstantRef, StaticRef, DefinitionRef, FunctionRef>;
 
 // A runtime-library entry. `position` names the part the entry acts on where
 // the call itself fixes it, carried on the callee rather than among the
@@ -220,8 +228,9 @@ struct IndirectTarget {
 
 // The one way the value's type comes into existence, which is the whole
 // identity -- and that type is what the call answers with, so the target names
-// nothing further. A wrapper that owns what it points at begins the storage it
-// owns along with itself, which is that same one way seen from the owner.
+// nothing further. A shared pointer begins the storage it owns along with
+// itself; the owner of storage a new-expression allocated takes over that
+// storage, which already holds its value.
 struct ConstructTarget {};
 
 // The constructor of a class of the runtime library, entered by the constructor
@@ -272,24 +281,22 @@ struct ValueCellTarget {
 // whose value from before the write the write keeps where anything will ask
 // whether the write changed the variable (LRM 4.3); it answers with where the
 // part lies. `kAssignSlice` writes a run of the elements of the container
-// designated within the write (LRM 7.4.6), telling it what moved. `kReadSlice`
-// answers with that run as it stands, which an assignment operator combines
-// before the run is written (LRM 11.4.1), read at the type the call answers
-// at: the slice's operands say where it starts and nothing of how much of the
-// value it takes. `value` is what the part or the container holds, and the
-// domain it is realized in names the runtime entry.
+// designated within the write (LRM 7.4.6, 7.6), telling it what moved. `value`
+// is what the part or the container holds, and the domain it is realized in
+// names the runtime entry.
 // A LIR-only target with no MIR twin: MIR states the landing as a dereference
-// and the slice write as an assignment into a designated slice, and a place is
-// named by an address here, so each is a call on the designation.
+// and the slice write as the array's own `assign_element_slice` on the
+// designation, and a place is named by an address here, so each is a call on
+// the designation.
 struct OpenWriteTarget {
-  enum class Op : std::uint8_t { kLand, kAssignSlice, kReadSlice };
+  enum class Op : std::uint8_t { kLand, kAssignSlice };
   Op op;
   TypeId value;
 };
 
 // One part of an integral value: where it starts within what it is a part of,
-// counted from the least significant bit, and the type it is read or written
-// at, which fixes how many bits it has. A start naming no position names no
+// counted from the least significant bit, and the type it is written at,
+// which fixes how many bits it has. A start naming no position names no
 // part (LRM 11.5.1).
 struct BitsPart {
   Operand start;
@@ -304,8 +311,8 @@ struct BitsPart {
 // the bits as a store of bits at a place names them: outermost first, the
 // first a part of the value, each one after it a part of the one before, and
 // the last the part written, whose type is the type of the bits.
-// A LIR-only target with no MIR twin: MIR states the write as an assignment
-// into a slice designated within the write.
+// A LIR-only target with no MIR twin: MIR states the write as `set` through
+// the reference `slice_mut` answers on the designation.
 struct DesignatedBitsTarget {
   TypeId value;
   std::vector<BitsPart> parts;
@@ -323,6 +330,20 @@ struct DesignatedBitsTarget {
 struct EndValueTarget {};
 
 struct CopyValueTarget {};
+
+// Storage of dynamic duration for one value: allocating it, which answers a
+// borrowed pointer to storage holding no value yet, and giving back storage so
+// allocated while it holds none, as C++'s allocation and deallocation functions
+// do ([basic.stc.dynamic]). What is allocated is the pointee of the pointer
+// answered or given back. A new-expression allocates, initializes what the
+// storage is to hold, and only then makes the pointer owning it; one whose
+// initialization departs gives the storage back instead.
+//
+// A LIR-only target with no MIR twin: MIR states the new-expression whole.
+struct DynamicStorageTarget {
+  enum class Op : std::uint8_t { kAllocate, kDeallocate };
+  Op op;
+};
 
 // An operation on the control effect that leaves an execution (LRM 9.6.2, 9.7).
 // The effect crosses as the target it names, since naming one is all an effect
@@ -388,6 +409,7 @@ struct CoroutineTarget {
 auto ValueCellOpName(ValueCellTarget::Op op) -> std::string_view;
 auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view;
 auto ControlEffectOpName(ControlEffectTarget::Op op) -> std::string_view;
+auto DynamicStorageOpName(DynamicStorageTarget::Op op) -> std::string_view;
 auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 
 // The target of a call: a runtime builtin, a function of this unit, a dispatch
@@ -395,12 +417,14 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 // computed, a value constructor named by the call's result type, the
 // constructor of a library class, a body of this program or a foreign symbol
 // the host resolves, a value-cell operation, the end or copy of an owned value,
-// a control-effect operation, or an operation of the coroutine protocol.
+// storage of dynamic duration allocated or given back, a control-effect
+// operation, or an operation of the coroutine protocol.
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, IndirectTarget,
     ConstructTarget, LibraryConstructorTarget, SymbolTarget, ForeignTarget,
     ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget, EndValueTarget,
-    CopyValueTarget, ControlEffectTarget, CoroutineTarget>;
+    CopyValueTarget, DynamicStorageTarget, ControlEffectTarget,
+    CoroutineTarget>;
 
 // How a call to `target` ends, which is a property of the callee and never of
 // what it happens to do. The design's own code can depart, wherever it stands
@@ -418,10 +442,10 @@ struct CallInstr {
   std::vector<Operand> args;
 };
 
-// Builds a product value -- a tuple or a struct -- from its components, in
+// Builds a product value -- a tuple or a structure -- from its components, in
 // position order. Its result is the product itself; the components keep their
 // own types.
-struct TupleInstr {
+struct ProductInstr {
   std::vector<Operand> components;
 };
 
@@ -441,55 +465,22 @@ struct ArrayInstr {
   std::vector<Operand> elements;
 };
 
-// Names a member of an active-member value by its declaration-order position,
-// carrying no operands because the position is the whole coordinate. What a
-// read of a member that is not live answers with, and whether an update settles
-// which member is live, follow from the aggregate's type, the same way the
-// entry realizing a coordinate step does.
-struct Component {
-  base::ComponentIndex index;
+// Builds a union holding member `member` as `value`, every other byte of its
+// storage zero, and, for a tagged union, the tag naming that member (LRM 7.3,
+// 7.3.2): the peer of a product's build for a value whose type overlays its
+// members, as rustc's MIR builds a union or an enum's variant by an aggregate
+// naming the field or the variant. Its result is the union.
+struct UnionInstr {
+  base::ComponentIndex member;
+  Operand value;
 };
 
-// One coordinate into a homogeneous or keyed value, and one fixed-width range
-// of a value. `operands` carries the source coordinates followed by whatever
-// the value's family takes from its static type rather than from the value -- a
-// declared range, a declared result shape. Which runtime entry realizes a step
-// follows from the aggregate's type, below this layer; the selector says only
-// which subvalue is named.
-struct ContainerElement {
-  std::vector<Operand> operands;
-};
-
-struct ContainerSlice {
-  std::vector<Operand> operands;
-};
-
-using AggregateSelector =
-    std::variant<Component, ContainerElement, ContainerSlice>;
-
-// Extracts a subvalue of an aggregate value, named by `selector`: a part that
-// is a view of the whole it belongs to rather than storage of its own -- a bit
-// or a slice of a packed value, a character of a string, a member of a union.
-// The subvalue is built out of the aggregate, not aliased. This is the read
-// half of value-aggregate access, the peer of LLVM's `extractvalue`; a part
-// that is storage of its own is a step of a place instead. The result's type
-// is the selected subvalue's type.
-struct AggregateExtractInstr {
-  Operand aggregate;
-  AggregateSelector selector;
-};
-
-// Produces an aggregate value equal to `aggregate` with the subvalue at
-// `selector` replaced by `replacement`. A pure value operation -- it never
-// mutates the operand -- so writing a part that is a view of its whole is a
-// store of the whole this builds. The peer of LLVM's `insertvalue`; a part
-// that is storage of its own is written where it lies instead, and so are bits
-// of an integral value held at a place. The result's type is the operand's
-// aggregate type.
-struct AggregateUpdateInstr {
-  Operand aggregate;
-  AggregateSelector selector;
-  Operand replacement;
+// One element of a sequence of handles, at the position the program computes.
+// The element is built out of the sequence, not aliased: a part that is
+// storage of its own is a step of a place instead.
+struct VectorGetInstr {
+  Operand vector;
+  Operand index;
 };
 
 // Where one declaration put one of its own members: the member's stable
@@ -532,17 +523,20 @@ struct MemberProjection {
 // Selects one element of whatever container the projection has reached, by the
 // coordinate the program computed -- an ordinal, or the index an associative
 // array is keyed by. Only a container that holds each element as storage of
-// its own is stepped into this way (LRM 7.4, 7.8, 7.10); a part that is a view
-// of its whole is reached by value projection instead. Which element the step
-// reaches depends on the access: a read of one that is not there reads the
-// default, and a write to one allocates or discards it by the container's own
-// rule, so the access, not the step, says which.
+// its own is stepped into this way (LRM 7.4, 7.8, 7.10); an element of a
+// sequence of handles is taken out of it by value instead. Which element the
+// step reaches depends on the access: a read of one that is not there reads
+// the default, and a write to one allocates or discards it by the container's
+// own rule, so the access, not the step, says which.
 struct ElementProjection {
   std::vector<Operand> coordinates;
 };
 
-// Selects one component of whatever product the projection has reached, by its
-// position. A component is storage of its own (LRM 7.2).
+// Selects one component of whatever product or union the projection has
+// reached, by its position. A product's component is storage of its own (LRM
+// 7.2); a union's member lies at the start of the union's storage, and where
+// the union is untagged its bits may be another member's, so a load through it
+// reads the value its type holds out of them.
 struct ComponentProjection {
   base::ComponentIndex index;
 };
@@ -575,11 +569,33 @@ struct LoadInstr {
   Place place;
 };
 
-// Writes `value` into `place`. The store yields no value; its instruction
-// result is an unused void.
+// Reads the value of the place's type that the bits at `place` stand for,
+// where another member of an untagged union may have written them (LRM
+// 7.3.2): a value of its own, with every position its type keeps clear made
+// clear, as a bit-field's load is its bits made a value of the field's type.
+// The result's type is the place's type.
+struct OverlaidLoadInstr {
+  Place place;
+};
+
+// The tag of the tagged union at `place`, as a machine integer, as rustc's MIR
+// reads an enum's discriminant before it projects a variant.
+struct DiscriminantInstr {
+  Place place;
+};
+
+// Writes `value` into the value `place` holds, which goes on being that value.
 struct StoreInstr {
   Place place;
   Operand value;
+};
+
+// `operand` put where the assignment puts it, as rustc's MIR writes
+// `Rvalue::Use`: an owned value moved, any other copied. Put in storage holding
+// no value yet -- a frame slot, or storage of dynamic duration just allocated
+// -- it initializes that storage, and is ended where that storage's value is.
+struct UseInstr {
+  Operand operand;
 };
 
 // Writes `bits` over some bits of the integral value held at `place`, where
@@ -588,8 +604,7 @@ struct StoreInstr {
 // bits, outermost first: the first is a part of the value, each one after it a
 // part of the one before, and the last is the part written, whose type is the
 // type of `bits`. A part reaches nothing outside the part it is taken in, and
-// one that names no position is not written. The store yields no value; its
-// instruction result is an unused void.
+// one that names no position is not written.
 //
 // The bits ride on the statement rather than on the place, because a place is
 // storage a load, a store and an address-of can each name, and some bits of a
@@ -609,10 +624,9 @@ struct BitsStoreInstr {
 // of the extent it was introduced in, a departure included -- and where a call
 // that would have made the value departs instead, in that call's landing. A
 // value handed on takes its bytes out of use with it, which is what a return
-// does with the value it returns. How
-// long a frame's bytes are needed is all this states: whether a frame is where
-// they are kept is decided below, from how large they are. The statement
-// yields no value; its instruction result is an unused void.
+// does with the value it returns. How long a frame's bytes are needed is all
+// this states; none of them is a value too large for a frame, which MIR keeps
+// in a box.
 //
 // A LIR-only statement with no MIR twin: a target whose own language places
 // its values states none of this. It is the pair rustc's MIR states as
@@ -714,26 +728,48 @@ struct CloseVariablesInstr {
   Operand variables;
 };
 
-using InstrData = std::variant<
-    CallInstr, TupleInstr, ClosureInstr, ArrayInstr, AggregateExtractInstr,
-    AggregateUpdateInstr, LoadInstr, StoreInstr, BitsStoreInstr, StorageInstr,
+// What computes a value, as rustc's MIR names the right-hand side of an
+// assignment: every instruction that yields one, a call to a callee answering
+// nothing included, whose value is the void one.
+using Rvalue = std::variant<
+    CallInstr, ProductInstr, UnionInstr, ClosureInstr, ArrayInstr,
+    VectorGetInstr, DiscriminantInstr, LoadInstr, OverlaidLoadInstr,
     AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, HandleCastInstr,
     DynamicCastInstr, ReceiveDepartureInstr, OpenVariablesInstr,
-    VariableAddressInstr, CloseVariablesInstr>;
+    VariableAddressInstr, UseInstr>;
 
-// One instruction: it defines `result` (whose type lives on the function's
-// value arena) from `data`.
+// A value computed once and consumed where it is used, with a pure dataflow
+// origin and no storage of its own to name.
+struct Transient {
+  ValueId value;
+};
+
+// Where a computed value goes, as rustc's MIR states the place an assignment
+// writes and a call's `destination`: a transient it defines, or storage
+// holding nothing yet that it initializes and whose holder then owns it. Which
+// one is always stated, never worked out from how the value is used.
+using Destination = std::variant<Transient, Place>;
+
+// A value computed and put where `destination` says.
+struct AssignInstr {
+  Destination destination;
+  Rvalue value;
+};
+
+// One step of a block: an assignment, or a statement that yields nothing --
+// a write into a value already there, or a frame's bytes coming into or going
+// out of use.
+using InstrData = std::variant<
+    AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, CloseVariablesInstr>;
+
 struct Instr {
-  ValueId result;
   InstrData data;
 };
 
-// Returns from the callable; the value, when present, rides the result. Whether
-// this is a coroutine completion or a plain return is the callable's result
-// type, not a property of the terminator.
-struct ReturnTerm {
-  std::optional<Operand> value;
-};
+// Returns from the callable, whose answer, where it has one, is already in its
+// return place. Whether this is a coroutine completion or a plain return is the
+// callable's result type, not a property of the terminator.
+struct ReturnTerm {};
 
 // Transfers to `target` unconditionally.
 struct BranchTerm {
@@ -793,9 +829,10 @@ struct UnreachableTerm {};
 // through it either way, which is what a terminator means here; both of this
 // IR's peers say it the same way. Only a callee that can depart takes this
 // form, which is every callee but one declared not to; a call to one that
-// cannot stays an instruction.
+// cannot stays an instruction. Where its value goes is stated as an
+// assignment's is, as a call in rustc's MIR names its `destination`.
 struct DepartingCallInstr {
-  ValueId result;
+  Destination destination;
   CallTarget target;
   std::vector<Operand> args;
   BlockId returned;
@@ -836,6 +873,11 @@ struct Function {
   std::vector<ValueId> params;
   std::vector<TypeId> variables;
   TypeId result_type;
+  // The storage the answer is put in, as rustc's return place: a place local
+  // every way out initializes before it returns, whose value the caller then
+  // owns. None where the callable answers nothing, and for a coroutine, which
+  // completes into storage it is handed.
+  std::optional<ValueId> return_place;
   std::vector<BasicBlock> blocks;
   Linkage linkage = Linkage::kExternal;
 };

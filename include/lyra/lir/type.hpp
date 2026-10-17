@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -11,7 +12,7 @@
 #include "lyra/base/interner.hpp"
 #include "lyra/lir/class_id.hpp"
 #include "lyra/lir/closure_id.hpp"
-#include "lyra/lir/struct_id.hpp"
+#include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/runtime_class.hpp"
@@ -268,11 +269,11 @@ struct CoroutineType {
   auto operator==(const CoroutineType&) const -> bool = default;
 };
 
-struct RefType {
+struct VariableRefType {
   TypeId pointee;
   Mutability mutability;
 
-  auto operator==(const RefType&) const -> bool = default;
+  auto operator==(const VariableRefType&) const -> bool = default;
 };
 
 struct PointerType {
@@ -313,31 +314,20 @@ struct TupleType {
   auto operator==(const TupleType&) const -> bool = default;
 };
 
-// The declaration a struct type is: one this unit declares, by its position in
+// The declaration a record type is: one this unit declares, by its position in
 // the unit's registry, or one another unit declares, by that unit and which
-// declaration of it the struct is.
-using StructRef = std::variant<StructId, TypeDeclarationRef>;
+// declaration of it the record is.
+using RecordRef = std::variant<RecordId, TypeDeclarationRef>;
 
-// A product named by its declaration, each component reached by its position
-// the way a tuple's is: two structs with the same components are still two
-// types (LRM 6.22.1), and the declaration is what states the operations on a
-// whole value of one.
-struct StructType {
-  StructRef declaration;
+// A structure, a union or a tagged union named by its declaration, as clang's
+// record type names its record declaration: two with the same members are
+// still two types (LRM 6.22.1). Which aggregate it is and its members' types
+// are the declaration's, as are the operations on a whole value of one; a
+// member is reached by its position.
+struct RecordType {
+  RecordRef declaration;
 
-  auto operator==(const StructType&) const -> bool = default;
-};
-
-struct UnionType {
-  std::vector<TypeId> members;
-
-  auto operator==(const UnionType&) const -> bool = default;
-};
-
-struct TaggedUnionType {
-  std::vector<TypeId> members;
-
-  auto operator==(const TaggedUnionType&) const -> bool = default;
+  auto operator==(const RecordType&) const -> bool = default;
 };
 
 // The sealed endpoint of a cross-instance reference -- a resolution node
@@ -420,10 +410,14 @@ using TypeDeclaration =
 // What a value is held as: an integral value as the bits its type declares,
 // whose layout this layer does not state; any other value of the design as an
 // object of its value domain, which is never a domain of an integral layout
-// here; and what the library builds for its own use as that object.
+// here; what the library builds for its own use as that object; and a pointer
+// owning what it points at as the address of that storage, which its end gives
+// back, as Rust's `Box` is held.
 struct IntegralBits {};
-using Holding =
-    std::variant<IntegralBits, support::ValueDomain, support::LibraryObject>;
+struct OwnedStorageAddress {};
+using Holding = std::variant<
+    IntegralBits, support::ValueDomain, support::LibraryObject,
+    OwnedStorageAddress>;
 
 // A type one LIR compilation unit names, and the vocabulary for asking what it
 // is. The alternatives are a closed set, consumed by visiting them: a visitor
@@ -443,10 +437,10 @@ class Type {
       MachineFunctionType, EventType, RealType, ShortRealType, ChandleType,
       VoidType, EmptyType, ObjectType, CrossUnitClassType, RuntimeClassType,
       ClosureType, RuntimeEffectsType, FilesType, DiagnosticType,
-      RuntimeLibraryType, CoroutineType, RefType, PointerType, ManagedRefType,
-      VectorType, TupleType, StructType, UnionType, TaggedUnionType,
-      ResolvedType, DriverType, ObservableType, SampledHistoryType,
-      EvaluationAttemptsType, LoopBlocksType, OpenWriteType, DesignationType>;
+      RuntimeLibraryType, CoroutineType, VariableRefType, PointerType,
+      ManagedRefType, VectorType, TupleType, RecordType, ResolvedType,
+      DriverType, ObservableType, SampledHistoryType, EvaluationAttemptsType,
+      LoopBlocksType, OpenWriteType, DesignationType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -497,29 +491,21 @@ class Type {
   // Any other value of the design is its domain's object; an object a call
   // builds for one use -- what a print is assembled from, what a wait
   // registers, the storage a closure captures into, a counted hold on a value
-  // -- is the library's own. Each of those names a logical shape only, whose
-  // size is a physical fact decided below this layer too.
+  // -- is the library's own. A pointer owning what it points at is the address
+  // of that storage. Each of those names a logical shape only, whose size is a
+  // physical fact decided below this layer too.
   [[nodiscard]] auto HeldAs() const -> std::optional<Holding>;
 
-  // True for a value its holder owns and has to end, which is a value held as
-  // a runtime object. One of these ends where the lowering that made it says,
-  // the way a C++ temporary ends with its full-expression and a local with its
-  // block.
+  // True for a value its holder owns and has to end. One of these ends where
+  // the lowering that made it says, the way a C++ temporary ends with its
+  // full-expression and a local with its block.
   [[nodiscard]] auto IsOwnedValue() const -> bool;
 
-  // True for a value made of all its components at once, each reached by its
-  // position -- a tuple, or a struct a declaration names. What the components
-  // are is read from the unit, since a struct's are listed on its declaration.
-  [[nodiscard]] auto IsProduct() const -> bool;
-
-  // True for a value that holds one of its members at a time (LRM 7.3 /
-  // 7.3.2), which is what makes reaching a member of one a choice of domain
-  // where reaching a product's component is not.
-  [[nodiscard]] auto IsUnion() const -> bool;
-
-  // The member types of a union, in declaration order. A type that is not a
-  // union is a caller error.
-  [[nodiscard]] auto UnionMemberTypes() const -> std::vector<TypeId>;
+  // True for an owned value that has no copy: a pointer owning what it points
+  // at, which two holders would each give back. Wherever one is handed on --
+  // to a slot, to a caller, to a callee, as another type -- its end goes with
+  // it, as Rust moves a value that is not `Copy`.
+  [[nodiscard]] auto IsMoveOnly() const -> bool;
 
   // The type of the elements this one holds a sequence of, or nothing where it
   // holds none: the unpacked array (LRM 7.4), the dynamic array (7.5), the
