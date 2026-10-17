@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/declaration_initializer.hpp"
 #include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -180,13 +181,16 @@ auto PassArmOf(const hir::ProceduralBody& body, const AssertionParts& parts)
 }
 
 // A fail statement takes the place of the tool's own report, which is what a
-// false result selects where the source wrote none; a coverage goal has
-// neither, because an attempt that does not succeed is not a failure
-// (LRM 16.14.3).
+// false result selects where the source wrote no else clause (LRM 16.14.1); a
+// null one runs nothing. A coverage goal has neither, because an attempt that
+// does not succeed is not a failure (LRM 16.14.3).
 auto FailArmOf(const hir::ProceduralBody& body, const AssertionParts& parts)
     -> ActionArm {
-  if (HasRealArm(body, parts.fail_stmt)) {
-    return RunsStatements{.stmt = *parts.fail_stmt};
+  if (parts.fail_stmt.has_value()) {
+    if (HasRealArm(body, parts.fail_stmt)) {
+      return RunsStatements{.stmt = *parts.fail_stmt};
+    }
+    return RunsNothing{};
   }
   if (parts.reports_as.has_value()) {
     return RunsDefaultReport{.directive = *parts.reports_as};
@@ -194,10 +198,12 @@ auto FailArmOf(const hir::ProceduralBody& body, const AssertionParts& parts)
   return RunsNothing{};
 }
 
-// One arm of the action block as a callable of its own. Both arms are the same
-// for every attempt -- an assertion local variable, which is what would make
-// two attempts' statements differ, is refused where it is read -- so an outcome
-// selects a call and never a per-attempt closure.
+// One arm of the action block as a callable of its own, answering the execution
+// it runs as: an arm is any procedural statement, so it may stop and resume
+// (LRM 16.3, 16.14.1). Both arms are the same for every attempt -- an assertion
+// local variable, which is what would make two attempts' statements differ, is
+// refused where it is read -- so an outcome starts one of two bodies and never
+// a per-attempt closure.
 auto LowerActionArm(
     ProcessLowerer& action, const WalkFrame& parent, const ActionArm& arm,
     diag::SourceSpan span) -> diag::Result<mir::CallableCode> {
@@ -207,12 +213,13 @@ auto LowerActionArm(
   const mir::LocalId self_id = bindings.Declare(
       BindingOriginId::Receiver(), parent.current_class->self_pointer_type);
   code.params = {self_id};
-  code.result_type = unit.builtins.void_type;
+  code.result_type = unit.builtins.coroutine_void;
 
   const WalkFrame frame =
       parent.WithBlock(&code.Body())
           .WithBindings(&bindings)
-          .WithScopeNameBorrowedHandle(action.RootScope().NameBorrowedHandle());
+          .WithScopeNameBorrowedHandle(action.RootScope().NameBorrowedHandle())
+          .WithBodyCanWait(true);
 
   auto appended = std::visit(
       Overloaded{
@@ -666,7 +673,8 @@ auto BuildEvaluationAttemptsExpr(
 
 auto LowerConcurrentAssertion(
     StructuralScopeLowerer& lowerer, mir::Class& mir_class,
-    const WalkFrame& ctor_frame, const DeclaredScopes& scopes,
+    const WalkFrame& ctor_frame, const StorageBringUp& bring_up,
+    const DeclaredScopes& scopes, const StaticVarBindings& statics,
     hir::ConcurrentAssertionId id, const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion> {
   const AssertionParts parts = PartsOf(decl.assertion);
@@ -675,7 +683,7 @@ auto LowerConcurrentAssertion(
 
   ProcessLowerer action(
       lowerer.Owner(), &lowerer, lowerer.HirScope().time_resolution,
-      decl.action, std::nullopt, ctor_frame, scopes, {});
+      decl.action, std::nullopt, ctor_frame, scopes, statics);
 
   auto pass = LowerActionArm(
       action, ctor_frame, PassArmOf(decl.action, parts), decl.span);
@@ -688,6 +696,12 @@ auto LowerConcurrentAssertion(
   auto advance =
       LowerAdvance(action, ctor_frame, lowerer, id, *parts.spec, automaton);
   if (!advance) return std::unexpected(std::move(advance.error()));
+
+  for (const StaticVarBinding& binding : statics) {
+    auto integrated =
+        IntegrateStaticInitializer(action, decl.action, bring_up, binding);
+    if (!integrated) return std::unexpected(std::move(integrated.error()));
+  }
 
   const mir::CallableId pass_id = mir_class.callables.Add(
       mir::CallableDecl{
@@ -723,7 +737,8 @@ auto LowerConcurrentAssertion(
       .pass_action = pass_id,
       .fail_action = fail_id,
       .words = automaton.words,
-      .pending_holds = parts.pending_holds};
+      .pending_holds = parts.pending_holds,
+      .written_at = decl.span};
 }
 
 void AppendConcurrentAssertionInstall(
@@ -735,29 +750,16 @@ void AppendConcurrentAssertionInstall(
   const mir::TypeId void_type = unit.builtins.void_type;
 
   // Both arms are the same for every attempt, so the storage holds one of each
-  // and calls it once per attempt an outcome selects rather than being handed a
-  // closure per attempt.
+  // and starts it once per attempt an outcome selects rather than being handed
+  // a closure per attempt.
   const auto arm = [&](mir::CallableId target) {
     ClosureBuilder closure(unit, activate_frame);
     closure.Body().AppendStmt(
         mir::ExprStmt{
-            .expr = closure.Body().exprs.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee =
-                                mir::Direct{
-                                    .target =
-                                        mir::CallableTarget{
-                                            .owner =
-                                                activate_frame.current_class_id,
-                                            .slot = target},
-                                    .receiver = BuildObjectDeref(
-                                        unit, closure.Body(),
-                                        closure.Body().exprs.Add(
-                                            MakeSelfRefExpr(closure.Frame())))},
-                            .arguments = {}},
-                    .type = void_type})});
+            .expr = BuildExecutionStart(
+                lowerer.Owner(), closure.Frame(), target,
+                support::BuiltinFn::kRunAssertionAction,
+                installed.written_at)});
     return block.exprs.Add(closure.BuildVoid());
   };
 

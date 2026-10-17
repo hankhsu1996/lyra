@@ -114,6 +114,11 @@ that names processes may find it: `wait fork` does not wait for it and `disable 
 it (LRM 9.6.1, 9.6.3). **Forbidden:** giving such an execution a parent to reuse the spawning path,
 which makes the update visible to process control the standard never put it under.
 
+An assertion's action is the other execution of no lineage. Its placement is known -- Reactive, or
+Postponed for a final deferred assertion -- but what runs there is a procedural statement that may
+wait (LRM 16.3, 16.4, 16.14.1), so the region starts it as an execution rather than calling it, and
+runs it to its first stop at once, since nothing in the region runs ahead of it.
+
 Yield-based alternatives are rejected because they would entangle the deferred effect's commit time
 with the process's resumption schedule. A process that does `q <= d; #5; ...` should not be forced
 to suspend before `#5` just because the NBA write has not yet committed; the write commits in the
@@ -170,7 +175,7 @@ runs before that slot's Observed region rather than being pushed to the next tim
 
 The reactive group (Reactive, ReInactive, ReNBA) is reached only when the active group has drained,
 which the one ordering rule already gives. It holds program-block statements, checker code, the
-action blocks of concurrent assertions, and the report a matured deferred immediate assertion issues
+action blocks of concurrent assertions, and the action a matured observed deferred assertion runs
 (LRM 16.4.1). Preponed carries the `#1step` sampling of a clocking block (LRM 14.13).
 
 `#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other

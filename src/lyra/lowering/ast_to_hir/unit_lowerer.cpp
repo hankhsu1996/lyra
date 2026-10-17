@@ -629,7 +629,7 @@ void UnitLowerer::DeclareModportEvaluators(
 
 // An assertion whose enabling condition is 1 is not a procedure the design
 // runs (LRM 16.14.5): what starts its attempts is the clock. So it takes no
-// process identity and nothing reaches into it by a hierarchical name.
+// process identity.
 void UnitLowerer::DeclareProcess(
     const slang::ast::ProceduralBlockSymbol& proc, ScopeDeclarations& decls,
     ScopePublicationRecord& published, ScopeFrameId frame) {

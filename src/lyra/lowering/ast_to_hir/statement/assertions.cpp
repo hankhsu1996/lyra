@@ -678,17 +678,13 @@ auto LowerImmediateAssertionStmt(
           hir::AssertionDirective::kAssume, timing, condition, pass_stmt,
           fail_stmt, span);
     case slang::ast::AssertionKind::CoverProperty:
-      if (timing != hir::AssertionTiming::kSimple) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedStatementForm,
-            "a deferred cover statement holds its recorded hit back to a later "
-            "region of the time step, which is not yet supported; pass "
-            "--assertions skip to elide it");
-      }
       return hir::Stmt{
           .label = std::nullopt,
           .data =
-              hir::CoverStmt{.condition = condition, .pass_stmt = pass_stmt},
+              hir::CoverStmt{
+                  .timing = timing,
+                  .condition = condition,
+                  .pass_stmt = pass_stmt},
           .span = span};
     case slang::ast::AssertionKind::CoverSequence:
     case slang::ast::AssertionKind::Restrict:

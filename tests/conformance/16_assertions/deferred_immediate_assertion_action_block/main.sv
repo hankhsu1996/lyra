@@ -4,7 +4,10 @@
 // time step rather than running it inline (LRM 16.4), and the outcome still
 // selects which arm that action is. A true expression selects the pass arm, so
 // a passing assertion carrying no pass statement runs nothing at all and
-// reaches no default report -- an observed (`#0`) and a final one alike.
+// reaches no default report -- an observed (`#0`) and a final one alike. A
+// false expression whose else clause is a null statement selects that
+// statement, and the default report stands only where no else clause is
+// present (LRM 16.4.1), so it too runs nothing.
 //
 // An assertion has no other effect on the design: it never writes a variable
 // the design can read, and the report a failing one reaches is the tool's, at a
@@ -20,6 +23,8 @@ module Top;
     completed = 0;
     assert #0 (1);
     assert final (1);
+    assert #0 (0) else ;
+    assert final (0) else ;
     completed = 1;
   end
 

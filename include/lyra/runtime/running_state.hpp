@@ -5,6 +5,31 @@
 
 namespace lyra::runtime {
 
+class Scope;
+
+// What an execution runs in, which one it starts carries over unchanged.
+struct ExecutionContext {
+  // The scope a report raised while it runs names -- a run-time warning or
+  // error, and the note on a slot that never settles. Borrowed, and outlives
+  // the execution. Null for a namespace's initializer, which has no scope.
+  Scope* scope = nullptr;
+  // The initialization RNG of the module, interface or program instance, or of
+  // the package, its declaration belongs to, which seeds whatever nothing that
+  // is a thread creates there (LRM 18.14.1). Borrowed, and held for the run.
+  InitializationRng* seeds = nullptr;
+  // Where the source writes what it runs, as text that stands for the whole
+  // run; empty where no source text states one. Plain characters, because the
+  // one reader that cannot wait for a safe moment -- the run being stopped from
+  // outside -- may neither allocate nor call anything that does.
+  const char* written_at = "";
+
+  // A generator for an execution nothing that is a thread creates here: the
+  // next one of the initialization RNG (LRM 18.14.1).
+  [[nodiscard]] auto SplitInitializationRng() const -> DrawRng {
+    return seeds->Split();
+  }
+};
+
 // What is in force while something runs. Two things are: the generator a
 // randomization call draws from (LRM 18.14), and the DPI-C import calls this
 // execution is inside (LRM 35.5.3). Neither is ever handed to the code that
@@ -25,6 +50,9 @@ struct RunningState {
 // that leaving restores whatever was running before.
 struct DisplacingState {
   RunningState state;
+  // What the initialization runs in, which a deferred assertion it reaches
+  // takes its action's context from.
+  ExecutionContext context;
   // Null where nothing was running before this one started.
   RunningState* displaced = nullptr;
 };

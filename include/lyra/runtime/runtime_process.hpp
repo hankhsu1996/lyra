@@ -88,26 +88,13 @@ struct DeferredReportValidity {
 // across every fork the process executes.
 class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
  public:
-  // `owning_scope` is the scope this process was registered against -- the
-  // scope whose Observed queue a runtime side effect this process reaches
-  // attributes to. Every side effect the body performs runs in this scope's
-  // attribution: an unqualified-case runtime warning, an NBA or postponed
-  // submit, a `%m` hierarchical name. A fork branch inherits its parent
-  // process's owning scope so a side effect the branch performs attributes
-  // to the same scope the outer body's would. The scope is borrowed, and
-  // outlives the process.
   // `rng` is this process's own generator. LRM 18.14.1 fixes where it comes
   // from by how the process was created: a dynamically created one takes it
-  // out of the process that created it, a static one out of the initialization
-  // RNG of the unit instance its declaration belongs to.
-  // `written_at` is where the source writes the procedure this process runs,
-  // as text that stands for the whole run; a process the design spawns takes
-  // its spawner's. It is held as plain characters because the one reader that
-  // cannot wait for a safe moment -- the run being stopped from outside -- may
-  // neither allocate nor call anything that does.
+  // out of the process that created it, and one nothing that is a thread
+  // creates -- a static process, an assertion's action -- out of the
+  // initialization RNG of its context's instance.
   RuntimeProcess(
-      Scope* owning_scope, Coroutine<void> coroutine, DrawRng rng,
-      const char* written_at);
+      ExecutionContext context, Coroutine<void> coroutine, DrawRng rng);
 
   RuntimeProcess(const RuntimeProcess&) = delete;
   auto operator=(const RuntimeProcess&) -> RuntimeProcess& = delete;
@@ -133,16 +120,10 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
     return running_;
   }
 
-  // The scope this process's runtime side effects attribute to. Inherited
-  // by fork branches so a branch's effects belong to the same scope as the
-  // outer body's would.
-  [[nodiscard]] auto OwningScope() const -> Scope* {
-    return owning_scope_;
-  }
-
-  // Empty where no source text states the procedure.
-  [[nodiscard]] auto WrittenAt() const noexcept -> const char* {
-    return written_at_;
+  // What this process runs in, which an execution it starts takes as its own.
+  // Read by a run stopped from outside, so it may not throw.
+  [[nodiscard]] auto Context() const noexcept -> const ExecutionContext& {
+    return context_;
   }
 
   // The process's internal execution state. A `process` handle (LRM 9.7) reads
@@ -492,8 +473,7 @@ class RuntimeProcess : public std::enable_shared_from_this<RuntimeProcess> {
   // each releases its child once that walk returns.
   void Dismantle(RuntimeEffects& services);
 
-  Scope* owning_scope_;
-  const char* written_at_;
+  ExecutionContext context_;
   Coroutine<void> coroutine_;
   RunningState running_;
   // The frame the engine will resume next for this process (invariant: a

@@ -2417,25 +2417,25 @@ class HirDumper {
     throw InternalError("DirectiveName: unknown hir::AssertionDirective");
   }
 
+  static auto TimingName(AssertionTiming timing) -> std::string_view {
+    switch (timing) {
+      case AssertionTiming::kSimple:
+        return "simple";
+      case AssertionTiming::kObserved:
+        return "deferred #0";
+      case AssertionTiming::kFinal:
+        return "deferred final";
+    }
+    throw InternalError("TimingName: unknown hir::AssertionTiming");
+  }
+
   void DumpAssertStmtNode(
       const ProceduralBody& p, StmtId id, const AssertStmt& a) {
     const std::string_view directive = DirectiveName(a.directive);
-    std::string_view timing;
-    switch (a.timing) {
-      case AssertionTiming::kSimple:
-        timing = "simple";
-        break;
-      case AssertionTiming::kObserved:
-        timing = "deferred #0";
-        break;
-      case AssertionTiming::kFinal:
-        timing = "deferred final";
-        break;
-    }
     Line(
         std::format(
             "Stmt[{}] AssertStmt {} [{}] cond=Expr[{}]", id.value, directive,
-            timing, a.condition.value));
+            TimingName(a.timing), a.condition.value));
     Indent();
     Line(
         std::format(
@@ -2449,7 +2449,8 @@ class HirDumper {
       const ProceduralBody& p, StmtId id, const CoverStmt& c) {
     Line(
         std::format(
-            "Stmt[{}] CoverStmt cond=Expr[{}]", id.value, c.condition.value));
+            "Stmt[{}] CoverStmt [{}] cond=Expr[{}]", id.value,
+            TimingName(c.timing), c.condition.value));
     Indent();
     Line(
         std::format(

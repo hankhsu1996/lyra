@@ -27,9 +27,11 @@ void AppendDefaultReport(
     ProcessLowerer& process, mir::Block& block,
     hir::AssertionDirective directive, diag::SourceSpan span);
 
-// Whether an action arm carries a statement to run. An omitted arm is absent,
-// and slang gives an omitted arm an empty statement rather than none, so both
-// stand for "no action here" (LRM 16.3, 16.4).
+// Whether an action arm carries a statement to run. An omitted pass arm arrives
+// as an empty statement and an omitted fail arm as absent, and either runs
+// nothing. Whether an else clause is present at all is a separate question: it
+// is what replaces the tool's own report, even where the clause is a null
+// statement (LRM 16.4.1, 16.14.1).
 [[nodiscard]] auto HasRealArm(
     const hir::ProceduralBody& body, std::optional<hir::StmtId> arm) -> bool;
 

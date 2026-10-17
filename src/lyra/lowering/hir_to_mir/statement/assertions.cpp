@@ -6,6 +6,7 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -15,6 +16,7 @@
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -57,8 +59,8 @@ auto BuildDefaultReportScope(
 
 // The runtime commit a deferred assertion's report rides: an observed (`#0`)
 // one matures in Observed and runs in Reactive, a final one in Postponed (LRM
-// 16.4). The report is a receiver-less void closure the region invokes, so the
-// call carries only the runtime handle and that closure.
+// 16.4). The report is the body its action runs as, so the call carries
+// only the runtime handle and that coroutine.
 auto DeferredSubmitBuiltin(hir::AssertionTiming timing) -> support::BuiltinFn {
   switch (timing) {
     case hir::AssertionTiming::kObserved:
@@ -73,35 +75,131 @@ auto DeferredSubmitBuiltin(hir::AssertionTiming timing) -> support::BuiltinFn {
       "deferred report");
 }
 
-// LRM 16.4: a failed deferred assert / assume with no fail statement submits
-// its default report to the process's deferred report queue, to mature and run
-// a region later. The report emit is frozen into a closure the region invokes;
-// the submit itself is what the false branch of the assertion runs inline.
-auto BuildDeferredReportSubmit(
+// Queues what `fill` writes as a body of its own, which is what a deferred
+// action runs as, on the process's deferred report queue, to mature and run a
+// region later (LRM 16.4); the queuing is what the outcome's arm runs inline.
+// `fill` is handed the body and the frame of the arm, where whatever the
+// action is passed by value is evaluated.
+template <typename Fill>
+auto BuildDeferredSubmit(
     ProcessLowerer& process, WalkFrame frame, hir::AssertionTiming timing,
-    hir::AssertionDirective directive, diag::SourceSpan span) -> mir::Block {
-  mir::CompilationUnit& unit = process.Owner().Unit();
+    Fill fill) -> diag::Result<mir::Block> {
   mir::Block scope;
   const WalkFrame scope_frame = frame.WithBlock(&scope);
-
-  ClosureBuilder closure(unit, scope_frame);
-  AppendDefaultReport(process, closure.Body(), directive, span);
-  const mir::ExprId closure_id = scope.exprs.Add(closure.BuildVoid());
-
+  ClosureBuilder body(process.Owner().Unit(), scope_frame);
+  if (auto filled = fill(body, scope_frame); !filled) {
+    return std::unexpected(std::move(filled.error()));
+  }
+  const mir::ExprId body_id = scope.exprs.Add(body.BuildCoroutine());
   const mir::ExprId runtime_id =
       scope.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId submit_id = scope.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = DeferredSubmitBuiltin(timing),
-                          .receiver = runtime_id},
-                  .arguments = {closure_id}},
-          .type = unit.builtins.void_type});
-  scope.AppendStmt(mir::ExprStmt{.expr = submit_id});
+  scope.AppendStmt(
+      mir::ExprStmt{
+          .expr = scope.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target = DeferredSubmitBuiltin(timing),
+                                  .receiver = runtime_id},
+                          .arguments = {body_id}},
+                  .type = process.Owner().Unit().builtins.void_type})});
   return scope;
+}
+
+// LRM 16.4: a deferred assertion's pass or fail statement is one subroutine
+// call, made in the region the report runs in -- where it may wait, since the
+// subroutine can be a task -- with the arguments it is passed by value
+// evaluated where the assertion is, on every outcome that selects it, whether
+// or not the report is later flushed (16.4.1). One passed by reference is the
+// variable as it is when the call runs.
+auto LowerDeferredCallInto(
+    ProcessLowerer& process, ClosureBuilder& body, const WalkFrame& statement,
+    hir::StmtId action) -> diag::Result<void> {
+  const hir::Stmt& call_stmt = process.HirBody().stmts.Get(action);
+  const auto* call_expr = std::get_if<hir::ExprStmt>(&call_stmt.data);
+  const auto* call =
+      call_expr == nullptr
+          ? nullptr
+          : std::get_if<hir::CallExpr>(
+                &process.HirBody().exprs.Get(call_expr->expr).data);
+  if (call == nullptr) {
+    throw InternalError(
+        "LowerDeferredCallInto: a deferred assertion's action is one "
+        "subroutine "
+        "call, which the front end requires (LRM 16.4)");
+  }
+  std::vector<hir::ExprId> operands;
+  for (const std::optional<hir::ExprId>& argument : call->arguments) {
+    if (argument.has_value()) operands.push_back(*argument);
+  }
+  const ArgumentsEvaluatedEarlier arguments{
+      .operands = operands, .statement = &statement};
+  auto lowered = process.LowerStmt(
+      call_stmt,
+      body.Frame().WithBodyCanWait(true).WithArgumentsEvaluatedEarlier(
+          &arguments));
+  if (!lowered) return std::unexpected(std::move(lowered.error()));
+  body.Body().AppendStmt(*std::move(lowered));
+  return {};
+}
+
+// The submit of a deferred arm the source wrote a statement for.
+auto BuildDeferredCallSubmit(
+    ProcessLowerer& process, WalkFrame frame, hir::AssertionTiming timing,
+    hir::StmtId arm) -> diag::Result<mir::Block> {
+  return BuildDeferredSubmit(
+      process, frame, timing,
+      [&](ClosureBuilder& body, const WalkFrame& statement) {
+        return LowerDeferredCallInto(process, body, statement, arm);
+      });
+}
+
+// A false result of a deferred assert or assume runs the fail statement the
+// source wrote, nothing where that statement is null, and the tool's own report
+// where the source wrote no else clause (LRM 16.4.1).
+auto BuildDeferredFailArm(
+    ProcessLowerer& process, WalkFrame frame, const hir::AssertStmt& a,
+    diag::SourceSpan span) -> diag::Result<mir::Block> {
+  if (!a.fail_stmt.has_value()) {
+    return BuildDeferredSubmit(
+        process, frame, a.timing,
+        [&](ClosureBuilder& body, const WalkFrame&) -> diag::Result<void> {
+          AppendDefaultReport(process, body.Body(), a.directive, span);
+          return {};
+        });
+  }
+  if (!HasRealArm(process.HirBody(), a.fail_stmt)) {
+    return mir::Block{};
+  }
+  return BuildDeferredCallSubmit(process, frame, a.timing, *a.fail_stmt);
+}
+
+// LRM 16.3: one evaluation of an immediate cover, and whether it succeeded,
+// recorded against the statement's own place, which is what separates one
+// coverage goal from another.
+void AppendRecordCoverage(
+    ProcessLowerer& process, mir::Block& block, diag::SourceSpan span,
+    mir::ExprId outcome) {
+  const mir::CompilationUnit& unit = process.Owner().Unit();
+  const mir::ExprId runtime_id =
+      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
+  const mir::ExprId site_id = BuildStringValueExpr(
+      unit, block,
+      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.exprs.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target = support::BuiltinFn::kRecordCoverage,
+                                  .receiver = runtime_id},
+                          .arguments = {site_id, outcome}},
+                  .type = unit.builtins.void_type})});
 }
 
 }  // namespace
@@ -132,29 +230,23 @@ auto LowerAssertStmt(
   if (!cond_or) return std::unexpected(std::move(cond_or.error()));
   const mir::ExprId condition = block.exprs.Add(*std::move(cond_or));
 
-  // LRM 16.4: a deferred assertion holds its action for a later region. The
-  // action block is not yet carried; the default report is, so a deferred
-  // assertion with no action submits its report and one with an action is
-  // refused rather than run inline.
+  // LRM 16.4: a deferred assertion evaluates its expression inline and holds
+  // the action the outcome selects for a later region.
   if (a.timing != hir::AssertionTiming::kSimple) {
-    if (HasRealArm(process.HirBody(), a.pass_stmt) ||
-        HasRealArm(process.HirBody(), a.fail_stmt)) {
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedStatementForm,
-          "a deferred immediate assertion with an action block is not yet "
-          "supported, though its default report is; pass --assertions skip to "
-          "elide it");
-    }
-    // The expression is evaluated inline; only a false one submits the report,
-    // so the pass arm runs nothing and the fail arm submits (LRM 16.4).
-    mir::Block report_scope =
-        BuildDeferredReportSubmit(process, frame, a.timing, a.directive, span);
+    // A true result with no pass statement runs nothing.
+    auto pass_or =
+        HasRealArm(process.HirBody(), a.pass_stmt)
+            ? BuildDeferredCallSubmit(process, frame, a.timing, *a.pass_stmt)
+            : diag::Result<mir::Block>{mir::Block{}};
+    if (!pass_or) return std::unexpected(std::move(pass_or.error()));
+    auto fail_or = BuildDeferredFailArm(process, frame, a, span);
+    if (!fail_or) return std::unexpected(std::move(fail_or.error()));
     return mir::Stmt{
         .label = std::move(label),
         .data = mir::IfStmt{
             .condition = ReduceToCondition(unit, block, condition),
-            .then_scope = block.child_scopes.Add(mir::Block{}),
-            .else_scope = block.child_scopes.Add(std::move(report_scope))}};
+            .then_scope = block.child_scopes.Add(*std::move(pass_or)),
+            .else_scope = block.child_scopes.Add(*std::move(fail_or))}};
   }
 
   auto pass_or = LowerArmIntoScope(process, frame, a.pass_stmt);
@@ -196,30 +288,45 @@ auto LowerCoverStmt(
       mir::LocalDeclStmt{
           .target = succeeded,
           .init = ReduceToCondition(unit, block, condition)});
-
-  const mir::ExprId runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId site_id = BuildStringValueExpr(
-      unit, block,
-      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
-  const mir::ExprId outcome_id = block.ReadLocal(succeeded, bool_type);
-  const mir::ExprId record_id = block.exprs.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kRecordCoverage,
-                          .receiver = runtime_id},
-                  .arguments = {site_id, outcome_id}},
-          .type = unit.builtins.void_type});
-  block.AppendStmt(mir::ExprStmt{.expr = record_id});
-
-  auto pass_or = LowerArmIntoScope(process, frame, c.pass_stmt);
-  if (!pass_or) return std::unexpected(std::move(pass_or.error()));
-
   // A condition consumes a machine boolean, and the outcome already is one.
   const mir::ExprId taken_id = block.ReadLocal(succeeded, bool_type);
+
+  // LRM 16.4: a deferred cover holds back what it records together with its
+  // statement, so a flush that withdraws the one withdraws the other and a
+  // value met only in passing is not credited.
+  if (c.timing != hir::AssertionTiming::kSimple) {
+    auto covered_or = BuildDeferredSubmit(
+        process, frame, c.timing,
+        [&](ClosureBuilder& body,
+            const WalkFrame& statement) -> diag::Result<void> {
+          AppendRecordCoverage(
+              process, body.Body(), span,
+              BuildMachineBool(unit, body.Body(), true));
+          if (!HasRealArm(process.HirBody(), c.pass_stmt)) return {};
+          return LowerDeferredCallInto(process, body, statement, *c.pass_stmt);
+        });
+    if (!covered_or) return std::unexpected(std::move(covered_or.error()));
+    auto missed_or = BuildDeferredSubmit(
+        process, frame, c.timing,
+        [&](ClosureBuilder& body, const WalkFrame&) -> diag::Result<void> {
+          AppendRecordCoverage(
+              process, body.Body(), span,
+              BuildMachineBool(unit, body.Body(), false));
+          return {};
+        });
+    if (!missed_or) return std::unexpected(std::move(missed_or.error()));
+    return mir::Stmt{
+        .label = std::move(label),
+        .data = mir::IfStmt{
+            .condition = taken_id,
+            .then_scope = block.child_scopes.Add(*std::move(covered_or)),
+            .else_scope = block.child_scopes.Add(*std::move(missed_or))}};
+  }
+
+  AppendRecordCoverage(
+      process, block, span, block.ReadLocal(succeeded, bool_type));
+  auto pass_or = LowerArmIntoScope(process, frame, c.pass_stmt);
+  if (!pass_or) return std::unexpected(std::move(pass_or.error()));
   return mir::Stmt{
       .label = std::move(label),
       .data = mir::IfStmt{

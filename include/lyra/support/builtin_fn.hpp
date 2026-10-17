@@ -478,11 +478,11 @@ enum class BuiltinFn : std::uint16_t {
   // point first.
   kSubmitViolationReport,
   // LRM 16.4 deferred immediate assertion action commits, each a
-  // `RuntimeEffects` method taking the action closure. The observed (`#0`) form
-  // matures in Observed and runs its action in Reactive; the final form matures
-  // and runs in Postponed. Both ride the executing process's deferred report
-  // queue, which the runtime reads ambiently, so the call carries only the
-  // closure.
+  // `RuntimeEffects` method taking the coroutine the action runs as. The
+  // observed (`#0`) form matures in Observed and runs its action in Reactive;
+  // the final form matures and runs in Postponed. Both ride the executing
+  // process's deferred report queue, which the runtime reads ambiently, so the
+  // call carries only the coroutine.
   kSubmitDeferredObserved,
   kSubmitDeferredFinal,
   // File-IO subsystem accessor and cancellation token operations. `Files`
@@ -869,6 +869,10 @@ enum class BuiltinFn : std::uint16_t {
   kRegisterInitial,
   kRegisterTriggered,
   kRegisterFinal,
+  // A concurrent assertion's pass or fail statement, started as an execution of
+  // its own when an attempt's outcome selects it (LRM 16.14.1), from what a
+  // registered process is started from.
+  kRunAssertionAction,
   // The execution a process body runs as when its only stop is the wait at the
   // head of its loop: built from the object the body belongs to, erased, and
   // the addresses of its setup and its pass, and registered as any process

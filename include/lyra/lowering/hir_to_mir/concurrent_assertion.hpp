@@ -5,6 +5,7 @@
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/structural_scope.hpp"
+#include "lyra/lowering/hir_to_mir/static_var_binding.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/callable_id.hpp"
@@ -36,15 +37,20 @@ struct InstalledConcurrentAssertion {
   // What an attempt still in flight when the run ends is owed: an obligation is
   // met by "holds", a coverage goal needed a match (LRM 16.12.2).
   bool pending_holds = true;
+  // Where the source writes the assertion, which each action it runs reports
+  // from.
+  diag::SourceSpan written_at;
 };
 
 // Lowers one concurrent assertion the scope declares into the callables it
 // takes -- the statements each outcome selects, the advance one tick performs,
 // and the process that submits that advance to Observed at every tick of the
-// clock -- adding each to `mir_class`.
+// clock -- adding each to `mir_class`. `statics` are the cells of its action
+// block's static-lifetime variables, whose initializers `bring_up` runs.
 [[nodiscard]] auto LowerConcurrentAssertion(
     StructuralScopeLowerer& lowerer, mir::Class& mir_class,
-    const WalkFrame& ctor_frame, const DeclaredScopes& scopes,
+    const WalkFrame& ctor_frame, const StorageBringUp& bring_up,
+    const DeclaredScopes& scopes, const StaticVarBindings& statics,
     hir::ConcurrentAssertionId id, const hir::ConcurrentAssertionDecl& decl)
     -> diag::Result<InstalledConcurrentAssertion>;
 

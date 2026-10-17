@@ -47,8 +47,9 @@ process re-triggers, the deferred assertions it enqueued earlier are invalidated
 recent activation's survive.
 
 That shape -- evaluate now, capture the operands, run in a later region -- is the one non-blocking
-assignment already uses. The deferred action is a closure submitted to a region, not a mechanism of
-its own.
+assignment already uses. What differs is that an action may wait: the subroutine may be a task, and
+a concurrent assertion's action is any procedural statement. So the action is a body of its own,
+started in the region it runs in as an execution that belongs to no process's lineage.
 
 ### Corner cases worth stating before implementing
 
@@ -76,25 +77,26 @@ The IDs are stable references and do not imply execution order beyond the depend
       qualifier: the condition is evaluated and the pass or fail action runs in the same procedural
       step. A failure with no user action reports with its source location and severity. This is the
       whole family's condition-evaluation model, so every later item builds on it.
-- [ ] AS2 -- Deferred immediate assertions (LRM 16.4), both `#0` and `final`. Adds the
+- [x] AS2 -- Deferred immediate assertions (LRM 16.4), both `#0` and `final`. Adds the
       encounter-versus-execution split above: operand capture at encounter, reference actuals bound
       rather than copied, the per-process flush rule, and maturity in Observed (`#0`) or Postponed
       (`final`) with the action running in Reactive or Postponed. Rides on AS1 and on the region
-      scheduler. In place for `assert` and `assume` with no action block, on both backends: the
-      expression is evaluated where the statement is reached and the default report is held to
-      Reactive (`#0`) or Postponed (`final`), and it is withdrawn before it matures if the process
-      re-executes, if the assertion's own label is disabled, or if the procedure's outermost scope
-      is (LRM 16.4.2, 16.4.4). One written outside procedural code runs as the `always_comb`
-      procedure LRM 16.4.3 makes of it, in a module, an interface and a generate block alike, so it
-      is evaluated again whenever what it reads changes and withdrawn when that procedure resumes.
-      What remains is the action block -- a single subroutine call whose by-value actuals are
-      captured at encounter and whose reference actuals bind rather than copy.
-- [ ] AS3 -- The deferred cover statement (LRM 16.7 with a timing qualifier). The immediate form
-      rides on AS1: the disposition is inverted, a cover with no user action records a hit, and the
-      hits are reported one line per cover statement at the end of a run. What is left is the same
-      statement carrying `#0` or `final`, which is refused rather than lowered -- a hit is recorded
-      where the statement is reached but the action it selects is held to a later region, so it
-      needs the withdrawal model AS2 established and the inverted disposition at once.
+      scheduler. In place on both backends: the expression is evaluated where the statement is
+      reached, and the action the outcome selects -- the subroutine call the source wrote, or the
+      default report where a false result has none -- is held to Reactive (`#0`) or Postponed
+      (`final`), and withdrawn before it matures if the process re-executes, if the assertion's own
+      label is disabled, or if the procedure's outermost scope is (LRM 16.4.2, 16.4.4). The call's
+      by-value arguments are evaluated where the statement is, on every outcome that selects it,
+      whether or not the report is later withdrawn; a `ref` argument is the variable as it is when
+      the call runs. The subroutine may be a task, which may wait. One written outside procedural
+      code runs as the `always_comb` procedure LRM 16.4.3 makes of it, in a module, an interface and
+      a generate block alike, so it is evaluated again whenever what it reads changes and withdrawn
+      when that procedure resumes.
+- [x] AS3 -- The deferred cover statement (LRM 16.4). The immediate form rides on AS1: the
+      disposition is inverted, a cover with no user action records a hit, and the hits are reported
+      one line per cover statement at the end of a run. The same statement carrying `#0` or `final`
+      holds back both what it records and the statement it carries, so a withdrawn report credits
+      nothing and a value met only in passing is not counted.
 - [ ] AS4 -- Sampled value functions (`$past`, `$stable`, `$rose`, `$fell`, `$changed`, `$sampled`,
       LRM 16.9.3) used as ordinary logic, outside any assertion. These read a value as of the
       Preponed region, so they need sampling to exist independently of the assertion machinery.
@@ -141,7 +143,10 @@ The IDs are stable references and do not imply execution order beyond the depend
 
       In place on both backends for an assertion a scope declares: an attempt begins at every tick
       of the clock, attempts overlap and each carries its own result, and the statements an outcome
-      selects run in the Reactive region. The operator set carried is a Boolean expression, a delay
+      selects run in the Reactive region, as any procedural statement does: one may wait, declare
+      variables and disable a named block, and actions that wait run side by side. An attempt
+      still in flight when the run ends runs the statement its answer selects before the final
+      procedures, up to its first wait. The operator set carried is a Boolean expression, a delay
       window and a consecutive repetition with constant bounds, and overlapped and non-overlapped
       implication nested to any depth; a named sequence or property taking arguments is carried
       because the front end substitutes the actuals into its body. A sequence standing as a property
@@ -166,9 +171,10 @@ The IDs are stable references and do not imply execution order beyond the depend
       window, a repetition admitting an empty match, a nonconsecutive or goto repetition, composing
       sequences with `and` / `or` / `intersect` / `throughout` / `within`, `first_match`, the
       property connectives and the operators over time, the abort operators, more than one clocking
-      event (LRM 16.13), a clocking event that is a named event, an action block that consumes
-      time, and the fifth statement form, `cover sequence`, which counts every match an attempt
-      produces rather than the attempt.
+      event (LRM 16.13), a clocking event that is a named event, a hierarchical name reaching a
+      variable of a named block in a declared assertion's action block (LRM 23.6 allows it, and the
+      clause's example reaches one in an immediate assertion's), and the fifth statement form,
+      `cover sequence`, which counts every match an attempt produces rather than the attempt.
 
 - [ ] AS6 -- Assertion control tasks (LRM 20.11). They act on assertion state -- turning checking
       on, off, or killing it by scope or by name -- so they need that state to exist first.

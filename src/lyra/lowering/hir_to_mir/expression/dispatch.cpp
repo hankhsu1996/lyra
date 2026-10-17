@@ -12,6 +12,8 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/value_ref.hpp"
+#include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/expression/aggregates.hpp"
 #include "lyra/lowering/hir_to_mir/expression/assignment.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
@@ -392,15 +394,60 @@ auto LowerLhsExprImpl(L& lowerer, const hir::Expr& expr, WalkFrame frame)
   return target;
 }
 
+// Whether `expr` is an argument of a call `frame` lowers after its statement,
+// which that statement evaluates (LRM 16.4). The lowering is handed the node
+// rather than its id, so an operand is recognized by the node's address.
+auto IsArgumentEvaluatedEarlier(
+    const ProcessLowerer& lowerer, const hir::Expr& expr,
+    const WalkFrame& frame) -> bool {
+  if (frame.arguments_evaluated_earlier == nullptr) {
+    return false;
+  }
+  return std::ranges::any_of(
+      frame.arguments_evaluated_earlier->operands, [&](hir::ExprId operand) {
+        return &lowerer.HirBody().exprs.Get(operand) == &expr;
+      });
+}
+
+// Where the argument `expr` lies as the statement evaluated it: lowered where
+// the statement is, held in a local there, and carried into the body the call
+// is made in, as a C++ lambda's init-capture is.
+auto ArgumentEvaluatedEarlier(
+    ProcessLowerer& lowerer, const hir::Expr& expr, const WalkFrame& frame)
+    -> diag::Result<mir::Expr> {
+  const WalkFrame& statement = *frame.arguments_evaluated_earlier->statement;
+  auto value = lowerer.LowerExpr(expr, statement);
+  if (!value) return std::unexpected(std::move(value.error()));
+  mir::Block& at = *statement.current_block;
+  const mir::ExprId held =
+      at.AsValue(lowerer.Owner().Unit().types, at.exprs.Add(*std::move(value)));
+  const BindingOriginId origin =
+      BindingOriginId::Synthesized(lowerer.Owner().NextSynthesizedSite(), 0);
+  const mir::LocalId local =
+      statement.bindings->Declare(origin, at.exprs.Get(held).type);
+  at.AppendStmt(mir::LocalDeclStmt{.target = local, .init = held});
+  return frame.bindings->MakeBindingPlace(
+      frame.bindings->EnsureCarrier(origin), *frame.current_block);
+}
+
 }  // namespace
 
 auto ProcessLowerer::LowerExpr(const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
+  if (IsArgumentEvaluatedEarlier(*this, expr, frame)) {
+    auto place = ArgumentEvaluatedEarlier(*this, expr, frame);
+    if (!place) return std::unexpected(std::move(place.error()));
+    return frame.current_block->AsValue(
+        Owner().Unit().types, *std::move(place));
+  }
   return LowerExprImpl(*this, expr, frame);
 }
 
 auto ProcessLowerer::LowerAsPlace(const hir::Expr& expr, WalkFrame frame)
     -> diag::Result<mir::Expr> {
+  if (IsArgumentEvaluatedEarlier(*this, expr, frame)) {
+    return ArgumentEvaluatedEarlier(*this, expr, frame);
+  }
   return LowerAsPlaceImpl(*this, expr, frame);
 }
 

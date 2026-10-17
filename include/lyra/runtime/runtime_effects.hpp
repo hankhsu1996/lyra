@@ -149,9 +149,11 @@ class RuntimeEffects {
   // observed (`#0`) report matures in the Observed region and acts in Reactive;
   // a final one matures and acts in Postponed. Maturing discards what it
   // validated, which is why a matured report can no longer be withdrawn
-  // (16.4.1).
-  void SubmitDeferredObserved(OwnedCall action);
-  void SubmitDeferredFinal(OwnedCall action);
+  // (16.4.1). The action is a subroutine call, which can be a task (16.4), so
+  // `body` is what it runs as, built where the statement is with the
+  // arguments it was handed there.
+  void SubmitDeferredObserved(Coroutine<void> body);
+  void SubmitDeferredFinal(Coroutine<void> body);
 
   // LRM 16.14.5: a concurrent assertion's attempts outlive the tick that
   // started them, so an attempt can still be in flight when the run ends. What
