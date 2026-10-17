@@ -8,21 +8,18 @@
 # stopping, until its entry says so or goes -- so this file is the record of what
 # stands between Lyra and each design, and an entry leaves it only by the design
 # getting all the way.
-BlackParrot:1x1:hello:
-  stops: build
-  says: cannot be written to by any other process
 Caliptra:default:hello:
   stops: build
-  says: cannot mix continuous and procedural assignments to variable
+  says: taking over part of a target is not yet supported
 HammerBlade:16x8:hello:
   stops: run
   says: did not end within
 NVDLA:default:hello:
-  stops: build
-  says: duplicate definition of 'first_stage_of_sync'
+  stops: run
+  says: did not end within
 OpenPiton:1x1:hello:
   stops: run
   says: did not end within
 OpenTitan:default:hello:
-  stops: build
-  says: no implicit conversion from 'logic' to 'mubi4_t'
+  stops: run
+  says: out of memory
