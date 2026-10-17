@@ -47,6 +47,12 @@ use_repo(llvm, "llvm-project")
 # It is the same on every machine, local or remote, and needs nothing installed.
 # `--config=gcc` selects the remote image's GCC instead.
 #
+# On Linux x86-64 it is fetched as the files its toolchain reads and nothing
+# else, cut from the official release by lyra-toolchain's script: every action's
+# key hashes the compiler on the machine running Bazel, so a CI runner fetches
+# it on every run, and the official archive unpacks to 11 GB. Another host takes
+# the official archive.
+#
 # The C++ standard library is the machine's own libstdc++, not the one the
 # release ships. A program Lyra builds is linked by the user's compiler against
 # the runtime library built here, and the two have to use the same library.
@@ -56,7 +62,12 @@ clang = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
 clang.toolchain(
     name = "clang_toolchain",
     llvm_version = "20.1.8",
+    sha256 = {"linux-x86_64": "a110f87318ea5f9dd677c016dc68792716cb4383539282960c3f355ade1b002a"},
     stdlib = {"": "dynamic-stdc++"},
+    strip_prefix = {"linux-x86_64": "clang-20.1.8-linux-x64"},
+    urls = {"linux-x86_64": [
+        "https://github.com/hankhsu1996/lyra-toolchain/releases/download/clang-20.1.8/clang-20.1.8-linux-x64.tar.zst",
+    ]},
 )
 use_repo(clang, "clang_toolchain")
 

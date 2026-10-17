@@ -446,6 +446,13 @@ The pinned clang builds Lyra remotely and locally alike. The standard library is
 machine's, so a remote build and a local one can still differ there, and `CLAUDE.md` states why it
 is the machine's.
 
+Every runner that runs Bazel holds that compiler's files, even when no action runs there, because
+each action's key hashes its inputs on the machine running Bazel. So it is a fixed cost of every job
+that builds with clang, and on Linux x86-64 the build fetches only the files the toolchain reads,
+cut from the official release by the script in `hankhsu1996/lyra-toolchain` and published there; the
+official archive unpacks to 11 GB, which took about four minutes of every such job. Moving the pin
+is a new release there and its URL and digest in `MODULE.bazel`.
+
 ## LLVM toolchain
 
 A job that needs a specific LLVM gets it from the `setup-clang` composite action, naming only the
