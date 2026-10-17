@@ -18,7 +18,7 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
-#include "lyra/value/integral_value_type.hpp"
+#include "lyra/value/integral.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -219,7 +219,8 @@ constexpr std::array kForReal{RealizedFor{.domains = {Domain::kReal}}};
 constexpr std::array kForReals{RealizedFor{.domains = kReals}};
 constexpr std::array kForStrings{RealizedFor{.domains = {Domain::kString}}};
 // What an entry answers `===`, a change of bits and an unknown bit for: every
-// value but an integral one, which the target answers itself.
+// value but an integral one, which the target answers itself, and one laid out
+// by its type, which that type's own operation answers.
 constexpr std::array kForWhatAnEntryComparesWhole{RealizedFor{
     .domains =
         kLibraryContainers | kReals |

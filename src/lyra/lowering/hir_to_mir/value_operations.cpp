@@ -1629,8 +1629,7 @@ auto UnionMethodsOf(
     methods.push_back(
         mir::RecordMethod{.answers = answers, .code = std::move(code)});
   };
-  const OperationsHad had =
-      OperationsHadByUnion(lowerer.Unit(), members);
+  const OperationsHad had = OperationsHadByUnion(lowerer.Unit(), members);
   UnionBodies bodies(
       lowerer, declaration, overlay, {members.begin(), members.end()});
   StateWholeValue(bodies, add);
