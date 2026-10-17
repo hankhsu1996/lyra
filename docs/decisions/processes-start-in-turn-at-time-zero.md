@@ -56,6 +56,10 @@ on a stated rule instead of on registration order.
    engine's loop is untouched: a turn is released into the Active region, and the next is placed
    behind the point where Active empties, which is where the Inactive region begins (LRM 4.4.2.3).
 
+4. **A program's processes take the same turns in the reactive region set** (LRM 24.3.1): a turn is
+   released into the Reactive region and the next placed behind Re-Inactive, so they start once the
+   design's have settled, and in the order the design's do.
+
 ## Consequences
 
 - An `always @(negedge r)` sees the first value given to `r` by a net's declaration assignment, a

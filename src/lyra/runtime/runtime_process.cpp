@@ -39,7 +39,7 @@ auto RuntimeProcess::TopActivation() const -> Activation* {
 }
 
 auto RuntimeProcess::Parent() const -> RuntimeProcess* {
-  return owned_by_ != nullptr ? owned_by_->Owner() : nullptr;
+  return owned_by_ != nullptr ? owned_by_->Parent() : nullptr;
 }
 
 auto RuntimeProcess::ParkAt(RuntimeEffects& services, Awaiter& awaiter)
@@ -57,6 +57,7 @@ auto RuntimeProcess::ParkAt(RuntimeEffects& services, Awaiter& awaiter)
 auto RuntimeProcess::Arrange(
     RuntimeEffects& services, Activation* leaf, Awaiter& awaiter,
     const Resumption& resumption) -> bool {
+  const RegionSet& regions = leaf->Process().Context().regions;
   return std::visit(
       Overloaded{
           [](const WithoutStopping&) { return false; },
@@ -66,7 +67,7 @@ auto RuntimeProcess::Arrange(
           },
           [&](const LaterInThisTimeStep& later) {
             leaf->ParkOn(awaiter);
-            services.Schedule(services.Now(), later.region, leaf);
+            services.Schedule(services.Now(), regions[later.region], leaf);
             return true;
           },
           [&](const AtTime& at) {
@@ -75,7 +76,7 @@ auto RuntimeProcess::Arrange(
               return false;
             }
             leaf->ParkOn(awaiter);
-            services.Schedule(at.when, Region::kActive, leaf);
+            services.Schedule(at.when, regions.active, leaf);
             return true;
           }},
       resumption);
@@ -167,8 +168,7 @@ void RuntimeProcess::Resume(RuntimeEffects& effects) {
 }
 
 void RuntimeProcess::DisableDescendants(RuntimeEffects& services) {
-  children_.ForEach(
-      [&services](RuntimeProcess& child) { child.Dismantle(services); });
+  children_.EndAll(services, nullptr);
 }
 
 void RuntimeProcess::Dismantle(RuntimeEffects& services) {
@@ -206,13 +206,7 @@ void RuntimeProcess::TerminateSubtreeDeferringRunning(
   // Off-path children are killed and dismantled synchronously; the one child on
   // the path down to `running` is kept and recursed into, so the chain that
   // owns `running` survives until `running` settles at its safe boundary.
-  children_.ForEach([&](RuntimeProcess& child) {
-    if (child.IsSelfOrAncestorOf(running)) {
-      child.TerminateSubtreeDeferringRunning(running, services);
-      return;
-    }
-    child.Dismantle(services);
-  });
+  children_.EndAll(services, &running);
   if (this == &running) {
     RequestTermination(ProcessTerminationCause::kKilled);
     return;

@@ -12,13 +12,20 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// Lower a simulation control task ($finish, $stop, $exit, LRM 20.2) into a
+// Lower a simulation control task ($finish, $stop, LRM 20.2) into a
 // generic `mir::CallExpr` on the runtime handle carrying the call's origin and
 // its finish number.
 auto LowerTerminationSystemSubroutineCall(
     ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
     const support::TerminationSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
+
+// Lower the program control task `$exit` (LRM 24.7) into a call on the runtime
+// handle carrying where the call was written, which a call it ignores reports;
+// the program it ends is the one the running thread originates in.
+auto LowerProgramControlSystemSubroutineCall(
+    const ProcessLowerer& process, mir::Block& block, diag::SourceSpan span)
+    -> mir::Expr;
 
 // The finish number of a call to `$finish`, `$stop` or `$fatal`, which selects
 // what is printed about the run ending (LRM 20.2, Table 20-1; 20.10 names it

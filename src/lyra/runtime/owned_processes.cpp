@@ -25,6 +25,20 @@ void OwnedProcesses::Adopt(std::shared_ptr<RuntimeProcess> process) {
   live_.PushBack(adopted.owned_place_);
 }
 
+auto OwnedProcesses::EndAll(RuntimeEffects& effects, RuntimeProcess* running)
+    -> bool {
+  bool running_under = false;
+  ForEach([&](RuntimeProcess& kept) {
+    if (running != nullptr && kept.IsSelfOrAncestorOf(*running)) {
+      kept.TerminateSubtreeDeferringRunning(*running, effects);
+      running_under = true;
+      return;
+    }
+    kept.Dismantle(effects);
+  });
+  return running_under;
+}
+
 void OwnedProcesses::Ended(RuntimeProcess& process, RuntimeEffects& effects) {
   process.owned_place_.Unlink();
   ended_.PushBack(process.owned_place_);

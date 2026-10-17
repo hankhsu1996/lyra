@@ -59,10 +59,11 @@ on an occurrence, later in this time step in a named region, or at a time -- whi
 arranges through a small fixed set of construct-neutral scheduling verbs. What those verbs take is a
 **placement** -- which time slot, and which region of it -- because that is what an LRM 4.4 event
 is: a time, a region, and the thing to do there. A stop places its activation; a satisfied wait
-wakes it into the Active region of the current slot; a spawning construct may adopt a coroutine and
-place it; and a construct may ask that the simulation stop. The verbs name _where and when_ a handle
-becomes runnable again, never _why_. Distinct constructs -- a delay, an event wait, a task enable --
-bottom out in the same verbs, and the engine cannot tell them apart.
+wakes it into the current slot, in the Active region of its thread's region set (Reactive for a
+program's); a spawning construct may adopt a coroutine and place it; and a construct may ask that
+the simulation stop. The verbs name _where and when_ a handle becomes runnable again, never _why_.
+Distinct constructs -- a delay, an event wait, a task enable -- bottom out in the same verbs, and
+the engine cannot tell them apart.
 
 Taking the placement as an argument rather than encoding it in the verb's name is what keeps the set
 complete. A verb per combination covers points of that space and leaves the rest unreachable, and a
@@ -79,10 +80,13 @@ construct-neutral verb (adopt a coroutine and schedule it). Either way the engin
 per-construct branch.
 
 **Invariant:** the engine branches only on queue and region, never on the kind of construct a
-coroutine came from. **Forbidden:** a per-construct case inside the engine's resume or dispatch
-path; a priority field or out-of-band note a coroutine leaves for the scheduler to read. When a
-construct seems to require the engine to ask "is this an X?", the neutral verb set is missing a
-primitive -- add the primitive, do not teach the engine the construct.
+coroutine came from, because what a construct means lives in what it waits for. A per-construct case
+inside the engine's resume or dispatch path fails that, and so does a note a coroutine leaves for
+the scheduler to read in place of a placement. When a construct seems to require the engine to ask
+"is this an X?", the neutral verb set is missing a primitive -- add the primitive, do not teach the
+engine the construct. Which region set a thread runs in is not such a note: the standard places a
+thread by it as it places one by time (LRM 24.3.1), so it is part of the placement, chosen where the
+placement is and never read by the dispatch.
 
 ## Deferred work is a closure submit, not a suspension
 
@@ -138,8 +142,9 @@ counter the generated body compares, because taking an event back is the engine'
 the program's. The timer is bound once to what firing does, which reads its owner rather than a
 value captured per change, and the delay a value takes among rise, fall and turn-off delays (LRM
 28.16, 10.3.3) is a function of the runtime, so a net's own delay can reach the same rule from
-inside the net. Where a delay of some steps is due -- the Inactive region now for none, the Active
-region of its deadline otherwise -- is one answer, shared with a process stopped at a delay.
+inside the net. Where a delay of some steps is due -- the Inactive region of its region set now for
+none, that set's Active region at its deadline otherwise -- is one answer, shared with a process
+stopped at a delay.
 
 ## Region structure
 
@@ -147,25 +152,27 @@ A time slot runs regions in LRM 4.4 order: Preponed, Active, Inactive, NBA, Obse
 ReInactive, ReNBA, Postponed. That clause's PLI regions are absent, because there is no PLI.
 
 Preponed runs once on entry and Postponed once on exit. Between them the slot repeats one step: take
-the earliest region from Active through ReNBA that has anything pending, run it, and look again.
-Running a region produces work that lands back in the slot -- an NBA commit wakes a process into
-Active, a resumed process submits an NBA -- so the step repeats until nothing between those two
+the earliest region from Active through ReNBA that has anything pending -- or, once the reactive set
+has begun and while it holds anything, the earliest of Reactive through ReNBA -- run it, and look
+again. Running a region produces work that lands back in the slot -- an NBA commit wakes a process
+into Active, a resumed process submits an NBA -- so the step repeats until nothing between those two
 bounds is left.
 
 ```mermaid
 flowchart TB
   P[Preponed] --> S
-  subgraph S [scanned in order; the earliest with work runs, then the scan restarts]
+  subgraph S [the earliest with work runs, then the scan restarts; a begun reactive set drains first]
     direction LR
     A[Active] --> I[Inactive] --> N[NBA] --> O[Observed] --> R[Reactive] --> RI[ReInactive] --> RN[ReNBA]
   end
   S --> POST[Postponed]
 ```
 
-That one step is LRM 4.5's loop. The reference algorithm writes it as moving the earliest nonempty
-region's events into Active and running Active again; running the region where it stands reaches the
-same order, since a region later in the list is reached only once everything before it is empty, and
-whatever it schedules earlier is found first on the next look.
+That one step is LRM 4.5's loop. The reference algorithm writes it as two inner loops, one per
+region set, each moving the earliest nonempty region of its own set into that set's first region and
+running it again until the set is empty; running the region where it stands reaches the same order.
+So work the reactive set schedules into the active set waits until the reactive set has drained,
+which is when LRM 24.3.2 has a design process woken by a program run.
 
 Two consequences carry the weight. A process woken by a blocking write runs while the active set
 drains, before the NBA region commits the nonblocking writes issued beside it -- deferring it past
@@ -173,10 +180,21 @@ NBA is the classic wrong answer, because the process then reads values that in t
 it cannot yet see. And a process woken by an NBA commit belongs to the slot whose NBA woke it, so it
 runs before that slot's Observed region rather than being pushed to the next time slot.
 
-The reactive group (Reactive, ReInactive, ReNBA) is reached only when the active group has drained,
-which the one ordering rule already gives. It holds program-block statements, checker code, the
-action blocks of concurrent assertions, and the action a matured observed deferred assertion runs
-(LRM 16.4.1). Preponed carries the `#1step` sampling of a clocking block (LRM 14.13).
+The reactive group (Reactive, ReInactive, ReNBA) is reached only when the active group has drained.
+It holds program-block statements, checker code, the action blocks of concurrent assertions, and the
+action a matured observed deferred assertion runs (LRM 16.4.1). Preponed carries the `#1step`
+sampling of a clocking block (LRM 14.13).
+
+A thread runs in one region set for its whole life: the one the thread that started it runs in, as a
+coroutine inherits its context from the scope it is launched in and from its parent, and whatever
+code it calls, since a subroutine runs in its caller's thread (LRM 24.3.1, 24.5). A process is
+launched in the instance whose code it evaluates, and that instance's class says which set: the
+design's run in the active set and a program's in the reactive one (LRM 24.3.2) -- so the drive
+across a program's output port is the program's, and the instantiating scope never needs to know it
+is one. Every placement a thread asks for names a region of its own set -- where a wake or a delay
+resumes it, where a `#0` does, where its nonblocking updates land -- and the two sets are each
+other's dual region for region. At time zero each set starts its processes in the same turns, the
+reactive set's once the active set's have settled.
 
 `#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other
 already-pending active work finish first, then come back at this same simulation time. Pushing
@@ -218,6 +236,13 @@ owed because the run is over, not because of how it ended.
 A run-time error of the design is not a separate ending. It is reported where the activation it left
 lands, and asks for the ending `$fatal` asks for, so the same tail runs and the engine sees a
 request rather than a failure.
+
+A program ends its own threads, and the last program to end ends the run (LRM 24.3). Once every
+initial procedure of a program has ended, whatever they started that is still running is ended with
+them; once that has happened to every program, the run ends as `$finish` ends it, printing nothing
+because no call was made. `$exit` ends the program the calling thread originates in, that thread
+with it, and from any other thread does nothing but warn (LRM 24.7). The program's continuous
+assignments are not its threads, so neither ending reaches them.
 
 ## Closure capture lifetime
 

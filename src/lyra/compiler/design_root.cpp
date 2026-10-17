@@ -57,18 +57,18 @@ void LeaveInputsUnconnected(
           reference->binding != hir::ReferenceBinding::kInput) {
         continue;
       }
+      const hir::OwnedChildStep step{
+          .names = hir::OwnedChildRef{instance}, .selects = {}};
       root.root_scope.port_connections.Add(
           hir::PortConnection{
               .span = {},
+              .instance = step,
               .kind = hir::DataPortConnection{
                   .direction = hir::PortDirection::kInput,
                   .endpoint =
                       hir::ValueRoute{
                           .base = hir::InUnitBase{.hops = {}},
-                          .steps = {hir::AsPathStep(
-                              hir::OwnedChildStep{
-                                  .names = hir::OwnedChildRef{instance},
-                                  .selects = {}})},
+                          .steps = {hir::AsPathStep(step)},
                           .leaf =
                               hir::ExternalMemberLeaf{
                                   .scope_class = scope_class,

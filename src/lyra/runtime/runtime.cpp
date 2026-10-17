@@ -8,6 +8,8 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,10 +25,14 @@
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/owned_call.hpp"
+#include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/scope_info.hpp"
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/timer.hpp"
+#include "lyra/support/scope_execution.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -131,7 +137,8 @@ void Runtime::RunSimulation() {
     // reported and ends the run.
     RunAsLanding(*this, [this] { WalkInitialize(design_->Root()); });
     RunAsLanding(*this, [this] { WalkActivate(design_->Root()); });
-    StartFrom(0);
+    StartFrom(design_starting_, 0);
+    StartFrom(program_starting_, 0);
 
     while (std::holds_alternative<Running>(state_)) {
       ExecuteTimeSlot();
@@ -350,17 +357,42 @@ auto TurnOf(StartKind kind) -> std::size_t {
 }  // namespace
 
 void Runtime::QueueStart(StartKind kind, Activation* top) {
-  top->Queue(starting_.at(TurnOf(kind)));
+  // The region set is an ordered scale's two halves, so its first region says
+  // which set it is.
+  StartingTurns& starting = top->Process().Context().regions.active ==
+                                    program_starting_.regions.active
+                                ? program_starting_
+                                : design_starting_;
+  top->Queue(starting.turns.at(TurnOf(kind)));
 }
 
-void Runtime::StartFrom(std::size_t turn) {
-  if (turn == starting_.size()) {
+void Runtime::StartFrom(StartingTurns& starting, std::size_t turn) {
+  if (turn == starting.turns.size()) {
     return;
   }
-  current_slot_[Region::kActive].activations.Append(starting_.at(turn));
+  current_slot_[starting.regions.active].activations.Append(
+      starting.turns.at(turn));
   // The Inactive region is reached once the Active one is empty (LRM 4.4.2.3),
-  // which is when every process of this turn has run to its first wait.
-  Submit(now_, Region::kInactive, [this, turn] { StartFrom(turn + 1); });
+  // which is when every process of this turn has run to its first wait, and
+  // the same holds of their duals (LRM 4.4.2.7).
+  Submit(now_, starting.regions.inactive, [this, &starting, turn] {
+    StartFrom(starting, turn + 1);
+  });
+}
+
+auto Runtime::ProgramOf(const Scope& program) -> ProgramThreads& {
+  // Made with the program's first initial procedure, from which the program
+  // keeps the run open (LRM 24.3); one with none is never made.
+  return programs_.try_emplace(&program).first->second;
+}
+
+void Runtime::ProgramEnded() {
+  // LRM 24.3: the implicit `$finish` has no call and no place, so it prints
+  // nothing, and the run ends as one that runs out of work does.
+  if (std::ranges::all_of(
+          std::views::values(programs_), &ProgramThreads::AllRootsEnded)) {
+    RequestSimulationEnd();
+  }
 }
 
 auto Runtime::ClaimNamespaceInitialization(std::string_view name) -> bool {
@@ -431,33 +463,15 @@ auto Runtime::AdvanceToNextSlot() -> bool {
 
 void Runtime::ExecuteTimeSlot() {
   RunRegion(Region::kPreponed);
-  std::size_t passes = 0;
-  std::vector<NotedProcedure> ran;
-  // LRM 4.5: take the earliest region that has anything, run it, and look
-  // again -- what it produced lands back in the slot. The reactive group comes
-  // after Observed in the order, so it is reached only once the active group is
-  // empty, and work it schedules back into Active is found first on the next
-  // look.
-  while (std::optional<Region> region =
-             current_slot_.FirstPending(Region::kActive, Region::kReNba)) {
-    if (++passes > kMaxRegionPassesPerSlot) {
-      ReportUnsettledSlot(ran);
+  SlotPasses passes;
+  // LRM 4.5: the active region set is run until it is empty, then the reactive
+  // one, and the two again while either holds anything -- so what the reactive
+  // set schedules into the active one waits until the reactive set is empty.
+  while (current_slot_.FirstPending(Region::kActive, Region::kReNba)) {
+    if (!DrainRegions(Region::kActive, Region::kObserved, passes) ||
+        !DrainRegions(Region::kReactive, Region::kReNba, passes)) {
       return;
     }
-    if (passes > kMaxRegionPassesPerSlot - kNotedRegionPasses) {
-      // What a pass runs is what its region holds as the pass begins, and a
-      // procedure is noted from there because its run may be the one that ends
-      // it.
-      current_slot_[*region].activations.ForEach(
-          [&ran](const QueuePlace& queued) {
-            const RuntimeProcess& process = queued.activation->Process();
-            ran.push_back(
-                NotedProcedure{
-                    .written_at = process.Context().written_at,
-                    .scope = process.Context().scope});
-          });
-    }
-    RunRegion(*region);
   }
   RunRegion(Region::kPostponed);
   if (std::holds_alternative<Running>(state_) && !current_slot_.Empty()) {
@@ -465,6 +479,34 @@ void Runtime::ExecuteTimeSlot() {
         "the postponed region scheduled work back into the time slot that "
         "ends with it (LRM 4.4.2.9)");
   }
+}
+
+auto Runtime::DrainRegions(Region first, Region last, SlotPasses& passes)
+    -> bool {
+  // What a region produces lands back in the slot, so the earliest one holding
+  // anything is looked for again after each.
+  while (const std::optional<Region> region =
+             current_slot_.FirstPending(first, last)) {
+    if (++passes.count > kMaxRegionPassesPerSlot) {
+      ReportUnsettledSlot(passes.ran);
+      return false;
+    }
+    if (passes.count > kMaxRegionPassesPerSlot - kNotedRegionPasses) {
+      // What a pass runs is what its region holds as the pass begins, and a
+      // procedure is noted from there because its run may be the one that ends
+      // it.
+      current_slot_[*region].activations.ForEach(
+          [&passes](const QueuePlace& queued) {
+            const RuntimeProcess& process = queued.activation->Process();
+            passes.ran.push_back(
+                NotedProcedure{
+                    .written_at = process.Context().written_at,
+                    .scope = process.Context().scope});
+          });
+    }
+    RunRegion(*region);
+  }
+  return true;
 }
 
 void Runtime::RunRegion(Region region) {
@@ -543,16 +585,43 @@ void Runtime::RunProcess(Activation* activation) {
 
 namespace {
 
+// Where the design's code runs and where a program's does (LRM 24.3.1).
+auto RegionsOf(support::ScopeExecution execution) -> RegionSet {
+  switch (execution) {
+    case support::ScopeExecution::kDesign:
+      return kActiveRegionSet;
+    case support::ScopeExecution::kProgram:
+      return kReactiveRegionSet;
+  }
+  throw InternalError("RegionsOf: an instance run no way");
+}
+
+// What an execution registered in `unit_instance` runs in: the scope its
+// reports name, the seeds of the instance it belongs to, and the region set
+// that instance's class states (LRM 18.14.1, 24.3.1). It belongs to no
+// program; an initial procedure of one is made a member where it registers.
+auto ContextIn(
+    Scope* owning_scope, Scope* unit_instance, const char* written_at)
+    -> ExecutionContext {
+  return ExecutionContext{
+      .scope = owning_scope,
+      .seeds = &unit_instance->InitializationSeeds(),
+      .written_at = written_at,
+      .regions = RegionsOf(unit_instance->Info().metadata.Execution())};
+}
+
+auto StartingProcess(const ExecutionContext& context, Coroutine<void> coroutine)
+    -> std::shared_ptr<RuntimeProcess> {
+  return std::make_shared<RuntimeProcess>(
+      context, std::move(coroutine), context.SplitInitializationRng());
+}
+
 void RegisterStartingProcess(
     StartKind kind, Scope* owning_scope, Scope* unit_instance,
     Coroutine<void> coroutine, const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
-  const ExecutionContext context{
-      .scope = owning_scope,
-      .seeds = &unit_instance->InitializationSeeds(),
-      .written_at = written_at};
-  auto process = std::make_shared<RuntimeProcess>(
-      context, std::move(coroutine), context.SplitInitializationRng());
+  auto process = StartingProcess(
+      ContextIn(owning_scope, unit_instance, written_at), std::move(coroutine));
   rt.QueueStart(kind, process->TopActivation());
   rt.AdoptProcess(std::move(process));
 }
@@ -575,12 +644,42 @@ void RegisterContinuousDriver(
       std::move(coroutine), written_at);
 }
 
+// A program's initial procedure is one of its roots, which the program keeps,
+// and every thread it starts is one of the program's (LRM 24.3, 24.7).
 void RegisterInitialProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at) {
-  RegisterStartingProcess(
-      StartKind::kInitialProcedure, owning_scope, unit_instance,
-      std::move(coroutine), written_at);
+  switch (unit_instance->Info().metadata.Execution()) {
+    case support::ScopeExecution::kDesign:
+      RegisterStartingProcess(
+          StartKind::kInitialProcedure, owning_scope, unit_instance,
+          std::move(coroutine), written_at);
+      return;
+    case support::ScopeExecution::kProgram: {
+      Runtime& rt = AsRuntime(current_runtime());
+      ProgramThreads& program = rt.ProgramOf(*unit_instance);
+      ExecutionContext context =
+          ContextIn(owning_scope, unit_instance, written_at);
+      context.program = &program;
+      auto process = StartingProcess(context, std::move(coroutine));
+      rt.QueueStart(StartKind::kInitialProcedure, process->TopActivation());
+      program.AdoptRoot(std::move(process));
+      return;
+    }
+  }
+  throw InternalError("RegisterInitialProcess: an instance run no way");
+}
+
+void Exit(RuntimeEffects& runtime, const value::String& origin) {
+  ProgramThreads* const program = AsRuntime(runtime).RunningContext().program;
+  if (program == nullptr) {
+    runtime.Diagnostic().EmitWarning(
+        origin, value::String(
+                    "$exit ignored, since this thread does not originate in "
+                    "an initial procedure of a program (LRM 24.7)"));
+    return;
+  }
+  program->Exit(runtime);
 }
 
 void RegisterTriggeredProcess(
@@ -595,12 +694,8 @@ void RegisterFinalProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at) {
   Runtime& rt = AsRuntime(current_runtime());
-  const ExecutionContext context{
-      .scope = owning_scope,
-      .seeds = &unit_instance->InitializationSeeds(),
-      .written_at = written_at};
-  auto process = std::make_shared<RuntimeProcess>(
-      context, std::move(coroutine), context.SplitInitializationRng());
+  auto process = StartingProcess(
+      ContextIn(owning_scope, unit_instance, written_at), std::move(coroutine));
   rt.QueueFinal(process->TopActivation());
   rt.AdoptProcess(std::move(process));
 }
@@ -608,10 +703,8 @@ void RegisterFinalProcess(
 void RunAssertionAction(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at) {
-  const ExecutionContext context{
-      .scope = owning_scope,
-      .seeds = &unit_instance->InitializationSeeds(),
-      .written_at = written_at};
+  const ExecutionContext context =
+      ContextIn(owning_scope, unit_instance, written_at);
   AsRuntime(current_runtime())
       .RunAction(
           context, std::move(coroutine), context.SplitInitializationRng());

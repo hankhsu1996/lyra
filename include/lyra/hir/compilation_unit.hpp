@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "lyra/base/arena.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/hir/class_registry.hpp"
 #include "lyra/hir/external_class.hpp"
 #include "lyra/hir/external_scope_class.hpp"
@@ -18,15 +19,41 @@
 
 namespace lyra::hir {
 
-// Whether a compilation unit's instances exist as objects. A module (LRM 23)
-// and an interface (LRM 25) are instantiated into the hierarchy, so each roots
-// an object composing a top class; a package (LRM 26) and the `$unit` file-set
-// scope (LRM 3.12.1) hold declarations reached by name with no receiver, and
-// root none. Which of the four forms a unit was written as is a different
-// question, and not one anything below this asks. The answer is intrinsic to
-// the source construct, so it travels on the unit rather than being re-inferred
-// from its scope shape at each stage that must branch on it.
-enum class UnitRole : std::uint8_t { kObjectRoot, kNamespace };
+// What a compilation unit's instances are. A module (LRM 23) and an interface
+// (LRM 25) are instantiated into the hierarchy, so each roots an object
+// composing a top class. A program (LRM 24) roots one too, and its procedures
+// are moreover a program's: they run in the reactive region set, and the
+// program and the run end with them (LRM 24.3, 24.7). A package (LRM 26) and
+// the `$unit` file-set scope (LRM 3.12.1) hold declarations reached by name
+// with no receiver, and root none. Whether a module or an interface was written
+// is not asked below this. The answer is intrinsic to the source construct, so
+// it travels on the unit rather than being re-inferred from its scope shape at
+// each stage that must branch on it.
+enum class UnitRole : std::uint8_t { kModuleOrInterface, kProgram, kNamespace };
+
+// Whether a unit of `role` roots an object, which a namespace does not.
+[[nodiscard]] inline auto RootsAnObject(UnitRole role) -> bool {
+  switch (role) {
+    case UnitRole::kModuleOrInterface:
+    case UnitRole::kProgram:
+      return true;
+    case UnitRole::kNamespace:
+      return false;
+  }
+  throw InternalError("hir::RootsAnObject: a unit of no role");
+}
+
+// Whether the procedures a unit of `role` declares are a program's (LRM 24.3).
+[[nodiscard]] inline auto IsProgram(UnitRole role) -> bool {
+  switch (role) {
+    case UnitRole::kProgram:
+      return true;
+    case UnitRole::kModuleOrInterface:
+    case UnitRole::kNamespace:
+      return false;
+  }
+  throw InternalError("hir::IsProgram: a unit of no role");
+}
 
 // Canonical TypeIds for primitives the lowering frequently materializes
 // (literal int type, void result of system tasks, etc.). Populated by
@@ -62,7 +89,7 @@ struct CompilationUnit {
   // (LRM 33.2.1), which is what a `%l` written anywhere in it prints (LRM
   // 33.7).
   std::string library_binding;
-  UnitRole role = UnitRole::kObjectRoot;
+  UnitRole role = UnitRole::kModuleOrInterface;
   TypePool types;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;

@@ -15,12 +15,14 @@
 #include <vector>
 
 #include "lyra/base/id_allocator.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/translation.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/class_decl.hpp"
 #include "lyra/hir/class_ref.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/external_scope_class.hpp"
 #include "lyra/hir/published_scope.hpp"
 #include "lyra/hir/structural_data_object.hpp"
@@ -549,6 +551,7 @@ auto UnitLowerer::SettlePublishedScope(
   // It is the unit's object as other units see it, so it is the same time
   // scope (LRM 3.14.2.2) as the classes extending it, which is the unit's.
   shape.time_resolution = hir_->root_scope.time_resolution;
+  shape.execution = ScopeExecution();
   // Each published subroutine is a virtual method it introduces, its identity
   // reserved here at the position the signature gave the subroutine, so a body
   // reaching another instance of this unit calls it by position before any
@@ -748,6 +751,20 @@ void UnitLowerer::PublishTypeOperations() {
             .answers = default_value,
             .code = std::move(code)});
   }
+}
+
+auto UnitLowerer::ScopeExecution() const -> support::ScopeExecution {
+  switch (hir_->role) {
+    case hir::UnitRole::kModuleOrInterface:
+      return support::ScopeExecution::kDesign;
+    case hir::UnitRole::kProgram:
+      return support::ScopeExecution::kProgram;
+    case hir::UnitRole::kNamespace:
+      throw InternalError(
+          "UnitLowerer::ScopeExecution: a namespace has no instance to start "
+          "anything in");
+  }
+  throw InternalError("UnitLowerer::ScopeExecution: a unit of no role");
 }
 
 auto UnitLowerer::RunObjectRoot() -> diag::Result<mir::CompilationUnit> {

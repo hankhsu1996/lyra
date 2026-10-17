@@ -24,6 +24,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/scope_execution.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -104,6 +105,7 @@ struct ClassShape {
   // is a type of no instance.
   std::optional<DeclaringInstance> declaring_instance;
   TimeResolution time_resolution;
+  support::ScopeExecution execution = support::ScopeExecution::kDesign;
   base::Arena<mir::ParamDecl, mir::ParamId> ctor_prefix_params;
   base::Arena<mir::FieldDecl, mir::FieldId> fields;
   std::vector<mir::NamedField> named_fields;

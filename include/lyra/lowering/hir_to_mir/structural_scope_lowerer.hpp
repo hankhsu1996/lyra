@@ -665,4 +665,12 @@ auto DescendOwnedChildren(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
     support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId;
 
+// The same, for an execution belonging to `unit_instance` rather than to the
+// instance the frame stands in: the drive across a child's output port, which
+// evaluates the child's code and so runs as the child's does (LRM 24.3.2).
+[[nodiscard]] auto BuildExecutionStartIn(
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
+    mir::ExprId unit_instance, mir::CallableId body, support::BuiltinFn start,
+    diag::SourceSpan written_at) -> mir::ExprId;
+
 }  // namespace lyra::lowering::hir_to_mir

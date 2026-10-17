@@ -96,6 +96,7 @@ auto ClassShape::OpenClass() const -> mir::Class {
       .is_interface_class = is_interface_class,
       .self_pointer_type = self_pointer_type,
       .time_resolution = time_resolution,
+      .execution = execution,
       .fields = fields,
       .named_fields = named_fields,
       .constructor = std::nullopt,

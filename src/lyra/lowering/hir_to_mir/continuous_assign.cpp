@@ -9,9 +9,11 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/continuous_assign.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/structural_scope.hpp"
@@ -385,12 +387,14 @@ auto LowerContinuousDrive(
       drivers.emplace_back(driver);
     });
 
-    // A drive carrying a delay gives what its source held a while ago, which
-    // is not what the source shows now, so no net shows its source in its
-    // place.
+    // A drive carrying a delay gives what its source held a while ago, and so
+    // does a program's own, which runs once the design has settled while what
+    // it reads may be written there (LRM 24.3.1); in neither does the source
+    // show what the drive gives, so no net shows its source in its place.
     const auto* whole = std::get_if<AccessPath>(&named->form);
     const std::optional<support::BuiltinFn> carried =
-        delay.has_value() || whole == nullptr || !whole->descent.empty() ||
+        delay.has_value() || hir::IsProgram(lowerer.Owner().Hir().role) ||
+                whole == nullptr || !whole->descent.empty() ||
                 !drivers.front().has_value()
             ? std::nullopt
             : CarriedObjectEntry(

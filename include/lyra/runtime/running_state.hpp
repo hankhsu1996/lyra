@@ -1,10 +1,12 @@
 #pragma once
 
 #include "lyra/runtime/import_call_chain.hpp"
+#include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
 
 namespace lyra::runtime {
 
+class ProgramThreads;
 class Scope;
 
 // What an execution runs in, which one it starts carries over unchanged.
@@ -22,6 +24,21 @@ struct ExecutionContext {
   // one reader that cannot wait for a safe moment -- the run being stopped from
   // outside -- may neither allocate nor call anything that does.
   const char* written_at = "";
+  // The region set the execution is placed in, which is the one its thread
+  // started in, whatever the code it runs was declared in (LRM 24.3.1, 24.5).
+  RegionSet regions = kActiveRegionSet;
+  // The program whose initial procedure the thread originates in, which a
+  // `$exit` it calls ends (LRM 24.7). Borrowed, and held for the run. Null for
+  // every other execution.
+  ProgramThreads* program = nullptr;
+
+  // The context of an execution of no lineage started from this one: placed
+  // where this one is, but no thread a `$exit` ends (LRM 24.7).
+  [[nodiscard]] auto WithoutLineage() const -> ExecutionContext {
+    ExecutionContext detached = *this;
+    detached.program = nullptr;
+    return detached;
+  }
 
   // A generator for an execution nothing that is a thread creates here: the
   // next one of the initialization RNG (LRM 18.14.1).

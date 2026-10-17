@@ -1802,6 +1802,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDistErlang:
     case support::BuiltinFn::kFinish:
     case support::BuiltinFn::kStop:
+    case support::BuiltinFn::kExit:
     case support::BuiltinFn::kEnclosingScope:
     case support::BuiltinFn::kLoopBlocksAdd:
     case support::BuiltinFn::kLoopBlocksAt:

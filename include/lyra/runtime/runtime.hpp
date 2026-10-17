@@ -26,6 +26,7 @@
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_processes.hpp"
 #include "lyra/runtime/plusargs.hpp"
+#include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
@@ -33,6 +34,7 @@
 #include "lyra/runtime/stream_dispatcher.hpp"
 #include "lyra/runtime/time_slot.hpp"
 #include "lyra/value/format.hpp"
+#include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
 
@@ -144,8 +146,16 @@ class Runtime final : public RuntimeEffects {
   // last slot, rather than in any slot.
   void QueueFinal(Activation* top);
 
-  // A process that starts at time zero waits for the turn its kind has.
+  // A process that starts at time zero waits for the turn its kind has, in the
+  // region set it runs in: the design's, or a program's (LRM 24.3.1).
   void QueueStart(StartKind kind, Activation* top);
+
+  // The threads of the program instance `program`.
+  [[nodiscard]] auto ProgramOf(const Scope& program) -> ProgramThreads&;
+
+  // A program's initial procedures have all ended. Once that holds of every
+  // program the run ends, by the implicit `$finish` LRM 24.3 makes.
+  void ProgramEnded();
 
   // Takes a static initialization on as what is running, and gives it back.
   // It runs in `context`, whose initialization RNG hands it its generator (LRM
@@ -205,6 +215,13 @@ class Runtime final : public RuntimeEffects {
     auto operator<=>(const NotedProcedure&) const = default;
   };
 
+  // How many times a slot has entered its regions, and what its last passes
+  // ran, which the bound on its passes reports.
+  struct SlotPasses {
+    std::size_t count = 0;
+    std::vector<NotedProcedure> ran;
+  };
+
   // The slot at `when`. Asked on every wake and every nonblocking update, so
   // the current slot is answered inline and only a later one costs a call.
   auto SlotAt(SimTime when) -> TimeSlot& {
@@ -226,16 +243,27 @@ class Runtime final : public RuntimeEffects {
   void WalkResolve(Scope& scope);
   void WalkInitialize(Scope& scope);
   void WalkActivate(Scope& scope);
+  // The processes that start at time zero in one region set, by turn, until
+  // each turn comes.
+  struct StartingTurns {
+    RegionSet regions;
+    std::array<IntrusiveList<QueuePlace>, kStartTurnCount> turns;
+  };
+
   // Releases the processes of `turn` into the first slot, and each later turn
   // once the one before it has run to its first waits.
-  void StartFrom(std::size_t turn);
+  void StartFrom(StartingTurns& starting, std::size_t turn);
 
   void RunProcess(Activation* activation);
 
-  // LRM 4.5: Preponed, then regions taken in order until nothing in Active
-  // through Re-NBA remains, then Postponed. Work a region produces lands back
-  // in the slot, so the middle step repeats until the slot settles.
+  // LRM 4.5: Preponed; then the active region set run until it is empty and
+  // the reactive set likewise, repeated until nothing in Active through Re-NBA
+  // remains; then Postponed.
   void ExecuteTimeSlot();
+  // Runs the earliest of the regions `first` through `last` holding anything
+  // until none does, answering false where the slot met the bound on its passes
+  // and was reported.
+  auto DrainRegions(Region first, Region last, SlotPasses& passes) -> bool;
   void RunRegion(Region region);
   // The fatal report of a slot that met the bound on its passes, and what its
   // last passes ran, a procedure once for each time it ran.
@@ -272,8 +300,10 @@ class Runtime final : public RuntimeEffects {
   // Final processes wait here rather than in any slot: LRM 9.2.3 runs them
   // after the last one, when no slot is left to hold them.
   IntrusiveList<QueuePlace> finals_;
-  // The processes that start at time zero, by turn, until each turn comes.
-  std::array<IntrusiveList<QueuePlace>, kStartTurnCount> starting_;
+  // The design's processes start in the active region set, and a program's in
+  // the reactive one once the design's have settled (LRM 24.3.1).
+  StartingTurns design_starting_{.regions = kActiveRegionSet, .turns = {}};
+  StartingTurns program_starting_{.regions = kReactiveRegionSet, .turns = {}};
   // Every concurrent assertion the design activated, so an attempt no tick
   // settled can be answered before the finals run.
   std::vector<EvaluationAttempts*> concurrent_assertions_;
@@ -286,9 +316,13 @@ class Runtime final : public RuntimeEffects {
   Observable every_object_;
   BoundMembers bound_members_;
   std::unordered_set<const VariableCell*> driven_continuously_;
-  // The executions no process started. Released before the queues above, which
-  // a running one is still placed in.
+  // Every execution no process started and no program keeps. Released before
+  // the queues above, which a running one is still placed in.
   OwnedProcesses roots_{nullptr};
+  // Each program instance's threads, by the instance, released before the
+  // queues above as the runtime's own are. A map holds each where it was made,
+  // which its roots point back at.
+  std::map<const Scope*, ProgramThreads> programs_;
   // The process running now. Atomic, as the current time is, because a run
   // stopped from outside is asked where it is from a signal handler, which may
   // read nothing else.
@@ -337,11 +371,13 @@ class Runtime final : public RuntimeEffects {
 // `final` waits on the finals list until shutdown. The scope handle arrives as
 // a pointer because the generated call site is holding the `self` pointer from
 // its enclosing body. `unit_instance` is the module, interface, or program
-// instance the process is declared within, which holds the seeds LRM 18.14.1
-// starts a static process from. It is the scope itself unless the process is
-// declared inside a generate scope, which has no seeds of its own. `written_at`
-// is where the source writes the procedure, as text that stands for the whole
-// run.
+// instance the process belongs to, which holds the seeds LRM 18.14.1 starts a
+// static process from and whose class says how what it starts is run (LRM
+// 24.3.1): the instance whose code the process evaluates, which is the scope
+// itself unless the process is declared inside a generate scope, which has no
+// seeds of its own, or is the drive across another instance's output port.
+// `written_at` is where the source writes the procedure, as text that stands
+// for the whole run.
 void RegisterAlwaysProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at);
@@ -357,6 +393,11 @@ void RegisterTriggeredProcess(
 void RegisterFinalProcess(
     Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
     const char* written_at);
+
+// LRM 24.7 `$exit`: ends the program the running thread originates in, the
+// running thread with it; from any other thread it is ignored, and says so at
+// `origin`, where the call is written.
+void Exit(RuntimeEffects& runtime, const lyra::value::String& origin);
 
 // Reached by the generated code running a concurrent assertion's pass or fail
 // statement in the Reactive region, or at the end of the run for an attempt

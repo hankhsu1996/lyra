@@ -583,7 +583,7 @@ void UnitLowerer::DeclareSubroutine(
     const slang::ast::SubroutineSymbol& sub, ScopeDeclarations& decls,
     ScopePublicationRecord& published, ScopeFrameId frame) {
   if (sub.flags.has(slang::ast::MethodFlags::DPIImport)) {
-    if (unit_.role != hir::UnitRole::kNamespace) {
+    if (hir::RootsAnObject(unit_.role)) {
       MapForeignImportScope(sub, frame);
     }
     return;
@@ -885,7 +885,7 @@ auto UnitLowerer::TakePublication(const slang::ast::Scope& scope)
     -> hir::ScopePublication {
   // A namespace roots no object, so no class lays out what it publishes;
   // another unit reaches its declarations by name (LRM 26.3).
-  if (unit_.role == hir::UnitRole::kNamespace) return {};
+  if (!hir::RootsAnObject(unit_.role)) return {};
   const ScopePublicationRecord& published = PublicationOf(scope);
   const auto unbound = [] [[noreturn]] (std::string_view what) {
     throw InternalError(

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 namespace lyra::runtime {
 
@@ -26,5 +27,37 @@ enum class Region : std::uint8_t {
 
 inline constexpr std::size_t kRegionCount =
     static_cast<std::size_t>(Region::kPostponed) + 1;
+
+// A region later in the time step that a thread's own work lands in, named by
+// what it is for in whichever region set the thread runs in (LRM 4.4.1): where
+// a `#0` resumes it, and where its nonblocking assignments update.
+enum class RegionInSet : std::uint8_t { kInactive, kNba };
+
+// The regions of one region set. Design code runs in the active region set and
+// a program's in the reactive one (LRM 24.3.1), each the other's dual.
+struct RegionSet {
+  Region active;
+  Region inactive;
+  Region nba;
+
+  [[nodiscard]] constexpr auto operator[](RegionInSet which) const -> Region {
+    switch (which) {
+      case RegionInSet::kInactive:
+        return inactive;
+      case RegionInSet::kNba:
+        return nba;
+    }
+    std::unreachable();
+  }
+};
+
+inline constexpr RegionSet kActiveRegionSet{
+    .active = Region::kActive,
+    .inactive = Region::kInactive,
+    .nba = Region::kNba};
+inline constexpr RegionSet kReactiveRegionSet{
+    .active = Region::kReactive,
+    .inactive = Region::kReInactive,
+    .nba = Region::kReNba};
 
 }  // namespace lyra::runtime

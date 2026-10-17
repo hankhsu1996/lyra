@@ -214,10 +214,10 @@ void AppendNamedBodyTable(
 }
 
 // What a class of the design hierarchy states of its instances, as a constant
-// of class `id`, and its address as a value of `block`: its timescale, then
-// the bodies its export names reach.
+// of class `id`, and its address as a value of `block`: its timescale, how what
+// an instance starts is run, then the bodies its export names reach.
 //
-//   {unit, precision, exports, n}
+//   {unit, precision, execution, exports, n}
 auto ScopeInfoAddress(
     const mir::CompilationUnit& unit, mir::Block& block, mir::ClassId id,
     mir::Class& cls, std::span<const mir::NamedCallable> exports)
@@ -232,7 +232,10 @@ auto ScopeInfoAddress(
           mir::Signedness::kSigned),
       MachineInt(
           unit, info, cls.time_resolution.precision_power,
-          mir::MachineIntWidth::k8, mir::Signedness::kSigned)};
+          mir::MachineIntWidth::k8, mir::Signedness::kSigned),
+      MachineInt(
+          unit, info, static_cast<std::uint8_t>(cls.execution),
+          mir::MachineIntWidth::k8, mir::Signedness::kUnsigned)};
   AppendNamedBodyTable(
       parts, unit, info, id, cls, Kind::kScopeCallable, exports);
   build.value = Record(unit, info, Kind::kScopeInfo, std::move(parts));

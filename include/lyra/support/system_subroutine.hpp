@@ -58,14 +58,17 @@ struct PrintSystemSubroutineInfo {
   PrintSinkKind sink_kind;
 };
 
-// LRM 20.2 simulation control tasks ($finish, $stop, $exit). All three end a
-// run nothing can resume, and what the tool prints is the whole of what tells
-// them apart, so each names the entry that prints for it. `$exit` makes an
-// implicit call to `$finish` (LRM 24.7), so it names that entry rather than one
-// of its own.
+// LRM 20.2 simulation control tasks ($finish, $stop). Both end a run nothing
+// can resume, and what the tool prints is the whole of what tells them apart,
+// so each names the entry that prints for it.
 struct TerminationSystemSubroutineInfo {
   BuiltinFn builtin_fn;
 };
+
+// LRM 24.7 program control task ($exit), which ends the program the calling
+// thread originates in rather than the run, and from any other thread is
+// ignored.
+struct ProgramControlSystemSubroutineInfo {};
 
 // LRM 20.10 severity-fixed diagnostic tasks. The MIR-side identity is the
 // `BuiltinFn` Emit method on the diagnostic broker; the descriptor stores it
@@ -282,14 +285,15 @@ struct PastValueSystemSubroutineInfo {};
 
 using SystemSubroutineSemantic = std::variant<
     PrintSystemSubroutineInfo, TerminationSystemSubroutineInfo,
-    DiagnosticSystemSubroutineInfo, FileIOSystemSubroutineInfo,
-    ScanSystemSubroutineInfo, SFormatSystemSubroutineInfo,
-    TimeSystemSubroutineInfo, TimeFormatSystemSubroutineInfo,
-    PrintTimescaleSystemSubroutineInfo, PlusargsSystemSubroutineInfo,
-    MemFileSystemSubroutineInfo, BitVectorSystemSubroutineInfo,
-    HostCommandSystemSubroutineInfo, RandomSystemSubroutineInfo,
-    DistributionSystemSubroutineInfo, SampledValueSystemSubroutineInfo,
-    ValueChangeSystemSubroutineInfo, PastValueSystemSubroutineInfo>;
+    ProgramControlSystemSubroutineInfo, DiagnosticSystemSubroutineInfo,
+    FileIOSystemSubroutineInfo, ScanSystemSubroutineInfo,
+    SFormatSystemSubroutineInfo, TimeSystemSubroutineInfo,
+    TimeFormatSystemSubroutineInfo, PrintTimescaleSystemSubroutineInfo,
+    PlusargsSystemSubroutineInfo, MemFileSystemSubroutineInfo,
+    BitVectorSystemSubroutineInfo, HostCommandSystemSubroutineInfo,
+    RandomSystemSubroutineInfo, DistributionSystemSubroutineInfo,
+    SampledValueSystemSubroutineInfo, ValueChangeSystemSubroutineInfo,
+    PastValueSystemSubroutineInfo>;
 
 struct SystemSubroutineDesc {
   SystemSubroutineId id;
@@ -1048,8 +1052,7 @@ inline constexpr std::array kSystemSubroutines = {
         .name = "$exit",
         .kind = SystemSubroutineKind::kTask,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
-        .semantic =
-            TerminationSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFinish},
+        .semantic = ProgramControlSystemSubroutineInfo{},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{78},

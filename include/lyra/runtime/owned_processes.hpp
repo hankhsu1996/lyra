@@ -17,15 +17,16 @@ struct OwnedPlace : IntrusiveListNode<OwnedPlace> {
 };
 
 // The executions one owner started and still keeps: a process's children (LRM
-// 9.5), or, for the runtime, every execution no process started. One that has
-// ended is kept while anything it started is still live, because ending a
-// process reaches the descendants of a child that already terminated (LRM
-// 9.6.3, 9.7). Past that nothing here keeps it, and only a handle the design
-// holds can (LRM 9.7).
+// 9.5), a program's initial procedures (LRM 24.3), or, for the runtime, every
+// other execution no process started. One that has ended is kept while
+// anything it started is still live, because ending a process reaches the
+// descendants of a child that already terminated (LRM 9.6.3, 9.7). Past that
+// nothing here keeps it, and only a handle the design holds can (LRM 9.7).
 class OwnedProcesses {
  public:
-  // `owner` is the process these were started by, null for the runtime's own.
-  explicit OwnedProcesses(RuntimeProcess* owner) : owner_(owner) {
+  // `parent` is the process these were started by, null where no process
+  // started them.
+  explicit OwnedProcesses(RuntimeProcess* parent) : parent_(parent) {
   }
   OwnedProcesses(const OwnedProcesses&) = delete;
   auto operator=(const OwnedProcesses&) -> OwnedProcesses& = delete;
@@ -36,14 +37,14 @@ class OwnedProcesses {
   // through their own sets, what they started.
   ~OwnedProcesses();
 
-  [[nodiscard]] auto Owner() const -> RuntimeProcess* {
-    return owner_;
+  [[nodiscard]] auto Parent() const -> RuntimeProcess* {
+    return parent_;
   }
 
   void Adopt(std::shared_ptr<RuntimeProcess> process);
 
   // `process`, one of these, has terminated. Whatever waits for all of them to
-  // have ended is asked, since this may have been the last (LRM 9.6.1).
+  // have ended is asked, since this may have been the last (LRM 9.6.1, 24.3).
   void Ended(RuntimeProcess& process, RuntimeEffects& effects);
 
   [[nodiscard]] auto AllEnded() const -> bool {
@@ -54,10 +55,17 @@ class OwnedProcesses {
     return live_.Empty() && ended_.Empty();
   }
 
-  // What a `wait fork` of the owner enrols on (LRM 9.6.1).
+  // What a `wait fork` of the owner enrols on (LRM 9.6.1), and what a program
+  // observes its initial procedures by (LRM 24.3).
   [[nodiscard]] auto AllEndedCondition() -> IntrusiveList<WaitMembership>& {
     return all_ended_;
   }
+
+  // Ends every execution kept here and everything they started (LRM 9.6.3,
+  // 9.7, 24.3), except the chain down to `running`, whose frame is executing:
+  // that is asked to end, and settles once it has left. Answers whether
+  // `running` was under one of them.
+  auto EndAll(RuntimeEffects& effects, RuntimeProcess* running) -> bool;
 
   // Visits each kept process, the ended ones first, so one `fn` ends is not
   // visited again. `fn` may end or release the one it is handed, but no other.
@@ -68,7 +76,7 @@ class OwnedProcesses {
   }
 
  private:
-  RuntimeProcess* owner_;
+  RuntimeProcess* parent_;
   IntrusiveList<OwnedPlace> live_;
   IntrusiveList<OwnedPlace> ended_;
   IntrusiveList<WaitMembership> all_ended_;

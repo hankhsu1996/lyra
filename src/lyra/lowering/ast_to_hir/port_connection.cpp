@@ -359,6 +359,7 @@ auto ConnectInterfacePort(
   frame.current_structural_scope->port_connections.Add(
       hir::PortConnection{
           .span = child.span,
+          .instance = child.step,
           .kind = hir::InterfacePortConnection{
               .endpoint = PublishedMemberRoute(child, std::move(member)),
               .peers = *std::move(peers)}});
@@ -455,6 +456,7 @@ auto ConnectDataPort(
       frame.current_structural_scope->port_connections.Add(
           hir::PortConnection{
               .span = span,
+              .instance = child.step,
               .kind = hir::DataPortConnection{
                   .direction = data.direction,
                   .endpoint = port_route,
@@ -599,6 +601,7 @@ auto ConnectDataPort(
   frame.current_structural_scope->port_connections.Add(
       hir::PortConnection{
           .span = span,
+          .instance = child.step,
           .kind = hir::DataPortConnection{
               .direction = direction,
               .endpoint = std::move(endpoint),
