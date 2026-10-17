@@ -6,6 +6,7 @@
 #include <format>
 #include <iterator>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -88,13 +89,23 @@ auto SourceNameOf(const slang::ast::Symbol& home) -> std::string {
   return std::string(home.name);
 }
 
-// `scopes`, then every body of `others` not among them, in order.
-auto WithOthers(
-    std::vector<const slang::ast::Scope*> scopes,
-    std::span<const slang::ast::InstanceBodySymbol* const> others)
+auto HomesOf(
+    const slang::ast::Symbol& home,
+    std::span<const slang::ast::InstanceBodySymbol* const> checked_against)
+    -> std::vector<const slang::ast::Symbol*> {
+  std::vector<const slang::ast::Symbol*> homes{&home};
+  for (const slang::ast::InstanceBodySymbol* other : checked_against) {
+    if (!std::ranges::contains(homes, other)) homes.push_back(other);
+  }
+  return homes;
+}
+
+auto ScopesLoweredFor(std::span<const slang::ast::Symbol* const> homes)
     -> std::vector<const slang::ast::Scope*> {
-  for (const slang::ast::InstanceBodySymbol* other : others) {
-    if (!std::ranges::contains(scopes, other)) scopes.push_back(other);
+  std::vector<const slang::ast::Scope*> scopes;
+  scopes.reserve(homes.size());
+  for (const slang::ast::Symbol* home : homes) {
+    scopes.push_back(&ScopeLoweredFor(*home));
   }
   return scopes;
 }
@@ -106,9 +117,9 @@ UnitLowerer::UnitLowerer(
     hir::UnitBodyRef names, hir::UnitRole role,
     std::span<const slang::ast::InstanceBodySymbol* const> checked_against)
     : facts_(facts),
-      home_(&home),
-      scope_(&ScopeLoweredFor(home)),
-      applications_(WithOthers({scope_}, checked_against)),
+      homes_(HomesOf(home, checked_against)),
+      applications_(ScopesLoweredFor(homes_)),
+      scope_(applications_.front()),
       lowering_(scope_),
       unit_{std::move(names.unit), std::move(names.body)} {
   unit_.role = role;
@@ -118,12 +129,7 @@ UnitLowerer::UnitLowerer(
 }
 
 auto UnitLowerer::Owns(const slang::ast::Symbol& decl) const -> bool {
-  const slang::ast::Symbol& home = UnitHomeOf(decl);
-  return &home == home_ ||
-         std::ranges::any_of(
-             applications_, [&](const slang::ast::Scope* application) {
-               return &application->asSymbol() == &home;
-             });
+  return std::ranges::contains(homes_, &UnitHomeOf(decl));
 }
 
 auto UnitLowerer::Declare() -> diag::Result<void> {

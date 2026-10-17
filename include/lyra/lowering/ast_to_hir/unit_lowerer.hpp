@@ -8,7 +8,6 @@
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1735,11 +1734,12 @@ class UnitLowerer {
       -> diag::Result<hir::StructuralScope>;
 
   LoweringFacts facts_;
-  const slang::ast::Symbol* home_;
-  const slang::ast::Scope* scope_;
-  // The scope of every application the body is lowered and declared from, the
-  // one it is named for first.
+  // The homes whose declarations this unit holds, the one it is named for
+  // first.
+  std::vector<const slang::ast::Symbol*> homes_;
+  // The scope each home is lowered and declared from, in the same order.
   std::vector<const slang::ast::Scope*> applications_;
+  const slang::ast::Scope* scope_;
   // The application being read, which is what a name leaving the instance is
   // resolved from.
   const slang::ast::Scope* lowering_;

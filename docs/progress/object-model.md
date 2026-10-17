@@ -116,6 +116,8 @@ each stage establishes, not how.
       encoding of the bindings. A package generic's specialization is compiled with its arguments
       rather than with the package: on another package's types it is a unit of its own, and on a
       type a module declares it is part of that module, with its static properties per instance.
+      Either way it holds nothing of the scope declaring the generic but itself, so that scope's
+      other classes, variables and initializers exist once however many specializations are made.
   - [x] A generic class that extends its own type parameter (`class W #(type T) extends T`, LRM
         8.25), specialized on a class of another package, of a module, or of a generate block.
 
