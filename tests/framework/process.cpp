@@ -9,6 +9,7 @@
 #include <expected>
 #include <filesystem>
 #include <format>
+#include <optional>
 #include <poll.h>
 #include <span>
 #include <spawn.h>
@@ -48,19 +49,6 @@ auto WaitPidNoHang(pid_t pid, int* status) -> std::expected<pid_t, int> {
   }
 }
 
-auto WaitPidBlocking(pid_t pid, int* status) -> std::expected<void, int> {
-  while (true) {
-    pid_t w = waitpid(pid, status, 0);
-    if (w == pid) {
-      return {};
-    }
-    if (w < 0 && errno == EINTR) {
-      continue;
-    }
-    return std::unexpected(errno);
-  }
-}
-
 // Waits for a child that was just killed, so it does not linger as a zombie.
 // A caller reaching here is already reporting a failure of its own, so neither
 // the child's status nor a failure to collect it can change what it reports.
@@ -70,17 +58,22 @@ void ReapKilledChild(pid_t pid) {
   }
 }
 
+// How long a child past its time limit has to end once asked, before it is
+// killed. It is enough for a program to write a few lines, and it bounds the
+// limit whatever the child does.
+constexpr std::chrono::seconds kKillDelay{5};
+
 auto ComputePollTimeoutMs(
-    std::chrono::steady_clock::time_point deadline, bool has_timeout) -> int {
-  if (!has_timeout) {
+    std::optional<std::chrono::steady_clock::time_point> deadline) -> int {
+  if (!deadline) {
     return 100;
   }
   auto now = std::chrono::steady_clock::now();
-  if (now >= deadline) {
+  if (now >= *deadline) {
     return 0;
   }
   auto remaining_ms = static_cast<int>(
-      std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
+      std::chrono::duration_cast<std::chrono::milliseconds>(*deadline - now)
           .count());
   return std::min(remaining_ms, 100);
 }
@@ -157,8 +150,13 @@ auto RunChildProcess(
   int status = 0;
   bool child_reaped = false;
   bool timed_out = false;
-  const bool has_timeout = (timeout != std::chrono::seconds{0});
-  auto deadline = std::chrono::steady_clock::now() + timeout;
+  // A child past its limit is asked to end, then killed if it has not once the
+  // delay is over, as `timeout -k` and Bazel's own test runner do. Nothing is
+  // waited on once it is killed.
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  if (timeout != std::chrono::seconds{0}) {
+    deadline = std::chrono::steady_clock::now() + timeout;
+  }
 
   std::array<struct pollfd, 2> fds{};
   fds[0] = {.fd = stdout_pipe[0], .events = POLLIN, .revents = 0};
@@ -169,7 +167,7 @@ auto RunChildProcess(
   std::array<char, 4096> buffer{};
 
   while (open_fds > 0 || !child_reaped) {
-    const int poll_timeout_ms = ComputePollTimeoutMs(deadline, has_timeout);
+    const int poll_timeout_ms = ComputePollTimeoutMs(deadline);
     const int ready = poll(fds.data(), fds.size(), poll_timeout_ms);
     if (ready < 0 && errno != EINTR) {
       kill(-pid, SIGKILL);
@@ -220,25 +218,19 @@ auto RunChildProcess(
       }
     }
 
-    if (!child_reaped && has_timeout &&
-        std::chrono::steady_clock::now() >= deadline) {
-      kill(-pid, SIGKILL);
-      timed_out = true;
-      auto reap_result = WaitPidBlocking(pid, &status);
-      if (!reap_result) {
-        outcome.termination = TerminationKind::kWaitFailed;
-        outcome.stderr_text = std::format(
-            "waitpid after SIGKILL failed: {}",
-            std::strerror(reap_result.error()));
-        for (auto& fd : fds) {
-          if (fd.fd >= 0) {
-            close(fd.fd);
-            fd.fd = -1;
-          }
+    if (deadline && std::chrono::steady_clock::now() >= *deadline) {
+      if (!timed_out) {
+        kill(-pid, SIGTERM);
+        timed_out = true;
+        deadline = std::chrono::steady_clock::now() + kKillDelay;
+      } else {
+        kill(-pid, SIGKILL);
+        if (!child_reaped) {
+          ReapKilledChild(pid);
+          child_reaped = true;
         }
-        return outcome;
+        deadline.reset();
       }
-      child_reaped = true;
     }
   }
 

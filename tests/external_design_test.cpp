@@ -75,9 +75,11 @@ constexpr std::uint64_t kStepAddressLimitKib = 12ULL << 20;
 // machine. Its peak memory is that many units' at once, all within the limit.
 constexpr int kBuildWidth = 4;
 
-// How much of what a step said is shown when it is not what was recorded. The
-// first lines name the cause; a design that stops can say thousands more.
-constexpr std::size_t kLinesShown = 40;
+// How much of what a step said is shown. A design that stops can say thousands
+// of lines; the first name what a build refused, and the last say how a run
+// ended, the time it had reached included when it was asked to end.
+constexpr std::size_t kFirstLinesShown = 30;
+constexpr std::size_t kLastLinesShown = 10;
 
 enum class Step : std::uint8_t {
   kBuild,
@@ -106,7 +108,8 @@ auto NameOf(Step step) -> std::string_view {
 // case is the suite's quick check, which Verilator's own published figures put
 // under a second for most designs and at about thirty for the largest, so ten
 // times the largest is the limit. A run past it is either stuck or slower than
-// that, and waiting longer does not say which.
+// that. Waiting longer does not say which, and the time it says it had reached
+// when asked to end does.
 auto TimeLimitOf(Step step) -> std::chrono::seconds {
   switch (step) {
     case Step::kBuild:
@@ -489,7 +492,9 @@ auto Carry(
   for (const std::filesystem::path& file : design.files) {
     std::filesystem::create_symlink(file, run / file.filename());
   }
-  std::string command = "../sim";
+  // The program is the step's process itself, so that asking the step to end
+  // asks the program, and the step ends when the program does.
+  std::string command = "exec ../sim";
   for (const std::string& argument : design.arguments) {
     command += ' ';
     command += ShellQuoted(argument);
@@ -536,13 +541,38 @@ auto NotNeeded(
   return not_needed;
 }
 
-auto FirstLines(std::string_view text) -> std::string {
+// Where the first `count` lines of `text` end.
+auto EndOfFirstLines(std::string_view text, std::size_t count) -> std::size_t {
   std::size_t end = 0;
-  for (std::size_t line = 0; line < kLinesShown && end < text.size(); ++line) {
+  for (std::size_t line = 0; line < count && end < text.size(); ++line) {
     const std::size_t next = text.find('\n', end);
     end = next == std::string_view::npos ? text.size() : next + 1;
   }
-  return std::string(text.substr(0, end));
+  return end;
+}
+
+// Where the last `count` lines of `text` begin.
+auto StartOfLastLines(std::string_view text, std::size_t count) -> std::size_t {
+  std::size_t start = text.ends_with('\n') ? text.size() - 1 : text.size();
+  for (std::size_t line = 0; line < count && start > 0; ++line) {
+    const std::size_t previous = text.rfind('\n', start - 1);
+    start = previous == std::string_view::npos ? 0 : previous;
+  }
+  return start == 0 ? 0 : start + 1;
+}
+
+auto LastLines(std::string_view text) -> std::string {
+  return std::string(text.substr(StartOfLastLines(text, kLastLinesShown)));
+}
+
+// What a step said, its first and its last lines where it said more.
+auto Shown(std::string_view text) -> std::string {
+  const std::size_t first = EndOfFirstLines(text, kFirstLinesShown);
+  const std::size_t last = StartOfLastLines(text, kLastLinesShown);
+  if (last <= first) {
+    return std::string(text);
+  }
+  return std::format("{}...\n{}", text.substr(0, first), text.substr(last));
 }
 
 // Holds what a case did against what is recorded of it. Nothing where they
@@ -568,7 +598,7 @@ auto Differs(
                : std::string("recorded as stopping nowhere");
   return std::format(
       "stops at its {}, and is {}. What the step said:\n{}", NameOf(stop->at),
-      was, FirstLines(stop->said));
+      was, Shown(stop->said));
 }
 
 // The cases, their record, and the front end's options each design is built
@@ -727,13 +757,16 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
   // Written as each case ends, so a run that is cut short has still said how
   // far the cases before it got. A case that stops is said with where it was
   // built, since one that stops as recorded is looked into from there as much
-  // as one that does not.
+  // as one that does not, and with the last lines its step wrote, which say how
+  // it ended.
   std::cout << std::format(
                    "{}: {} after {} s{}", subject.design.name,
                    stop ? std::format("stops at its {}", NameOf(stop->at))
                         : std::string("builds, runs and passes its check"),
                    took.count(),
-                   stop ? std::format(", built in\n{}", work->string())
+                   stop ? std::format(
+                              ", built in\n{}\n{}", work->string(),
+                              LastLines(stop->said))
                         : std::string())
             << std::endl;
 
