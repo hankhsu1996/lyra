@@ -161,12 +161,13 @@ class RuntimeEffects {
   // what the statements it runs wrote.
   void RegisterConcurrentAssertion(EvaluationAttempts& attempts);
 
-  // LRM 20.2: a simulation control task ends the run, and its level selects
-  // what the tool prints about it (Table 20-1). `task` is the one the design
-  // called, which is the whole of what a run nothing can resume has to tell
-  // `$stop` and `$finish` apart by.
+  // LRM 20.2: a simulation control task ends the run, and its finish number
+  // selects what the tool prints about it (Table 20-1). `task` is the one the
+  // design called, which is the whole of what a run nothing can resume has to
+  // tell `$stop` and `$finish` apart by.
   void EndRun(
-      std::string_view task, const value::String& origin, std::int64_t level);
+      std::string_view task, const value::String& origin,
+      std::int64_t finish_number);
   // Adopts `coroutine` as a spawned child of the executing process's
   // lineage (LRM 9.5), schedules it, and answers the process it now is.
   auto Spawn(Coroutine<void> coroutine) -> std::shared_ptr<RuntimeProcess>;

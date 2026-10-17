@@ -692,21 +692,20 @@ TEST(LyraCommandLine, ATextCanTellItIsReadByLyra) {
   }
 }
 
-// Text the standard does not allow is an error when nothing asks otherwise,
-// whichever simulators take it: what a design means is what the standard says
-// of it, and a text it forbids has no meaning there to build from. A caller
-// who knows the design was written against a more tolerant tool asks for that
-// reading by name, and the same text then runs with a warning.
+// Text the front end refuses is an error when nothing asks otherwise, whichever
+// simulators take it. A caller who knows the design was written against a more
+// tolerant tool asks for that reading by name, and the same text then runs with
+// a warning.
 //
 // A module defined twice in one library is among the tolerated forms, and
 // there the standard itself says what happens: the last one met is the one the
 // library holds, with a warning (LRM 33.3.1).
 //
 // What the tolerance does not reach is text the front end could give no
-// meaning: that is refused at its place in Lyra's own words, beside what the
+// meaning. That is refused at its place in Lyra's own words, beside what the
 // front end said of it, rather than ending the compile as a defect of the
 // compiler.
-TEST(LyraCommandLine, TextTheStandardForbidsIsRefusedUnlessToleranceIsAsked) {
+TEST(LyraCommandLine, TextTheFrontEndRefusesIsRefusedUnlessToleranceIsAsked) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -742,7 +741,8 @@ TEST(LyraCommandLine, TextTheStandardForbidsIsRefusedUnlessToleranceIsAsked) {
       "endmodule\n");
   const auto strict =
       RunLyraFrom(lyra, *tmp_or, "check --top Test tolerated.sv");
-  EXPECT_NE(strict.exit_code, 0) << "the standard's reading accepted it";
+  EXPECT_NE(strict.exit_code, 0)
+      << "the front end's default reading accepted it";
   EXPECT_NE(
       strict.stderr_text.find("error: misplaced trailing"), std::string::npos)
       << strict.stderr_text;
@@ -837,6 +837,121 @@ TEST(LyraCommandLine, TextTheStandardForbidsIsRefusedUnlessToleranceIsAsked) {
         << source << ": the front end's account of the same text was withheld: "
         << refused.stderr_text;
   }
+}
+
+// A text the standard forbids and the front end accepts runs the way the front
+// end analyzed it, with whatever warning it gives. `$fatal` with its message
+// first is one (LRM 20.10): the front end takes the first argument as the
+// finish number and the message from the second on, so the string is not
+// printed. What it leaves open is what a level other than 0, 1 or 2 does, and
+// Lyra takes level 1, what is printed when no level is given (LRM 20.2). Case
+// equality on reals (LRM Table 11-1), a left-justified field and a format
+// string ending in `%` (LRM 21.2.1.2) are others: the front end evaluates the
+// first as a comparison of values, and the other two run as a field padded on
+// the right and a `%` printed. The finish number is the first argument of a
+// `$fatal`, so it is evaluated before the message's arguments.
+TEST(LyraRun, ATextTheFrontEndAcceptsRunsAsItAnalyzedIt) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "message_first.sv",
+      "module Test;\n"
+      "  int n = 7;\n"
+      "  initial begin\n"
+      "    #3;\n"
+      "    $fatal(\"Randomize %0d failed\", n);\n"
+      "  end\n"
+      "endmodule\n");
+  const auto checked =
+      RunLyraFrom(lyra, *tmp_or, "check --top Test message_first.sv");
+  EXPECT_EQ(checked.exit_code, 0) << checked.stderr_text;
+  EXPECT_NE(
+      checked.stderr_text.find(
+          "warning: finish argument must have value of 0, 1, or 2"),
+      std::string::npos)
+      << checked.stderr_text;
+
+  const auto fatal = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --top Test message_first.sv");
+  EXPECT_NE(fatal.exit_code, 0) << fatal.stderr_text;
+  EXPECT_NE(fatal.stderr_text.find("7 (Test at time 3)"), std::string::npos)
+      << fatal.stderr_text;
+  EXPECT_EQ(fatal.stderr_text.find("Randomize"), std::string::npos)
+      << "the text in the level's place was printed: " << fatal.stderr_text;
+  EXPECT_NE(fatal.stderr_text.find("$finish at time 3"), std::string::npos)
+      << "the run did not end at level 1: " << fatal.stderr_text;
+
+  WriteFile(
+      *tmp_or / "level_out_of_range.sv",
+      "module Test;\n"
+      "  initial begin\n"
+      "    #4;\n"
+      "    $finish(5);\n"
+      "  end\n"
+      "endmodule\n");
+  const auto out_of_range =
+      RunLyraFrom(lyra, *tmp_or, "check --top Test level_out_of_range.sv");
+  EXPECT_EQ(out_of_range.exit_code, 0) << out_of_range.stderr_text;
+  EXPECT_NE(
+      out_of_range.stderr_text.find("warning: finish argument must have value"),
+      std::string::npos)
+      << out_of_range.stderr_text;
+  const auto finished = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --top Test level_out_of_range.sv");
+  ASSERT_EQ(finished.exit_code, 0) << finished.stderr_text;
+  EXPECT_NE(finished.stderr_text.find("$finish at time 4"), std::string::npos)
+      << "the run did not end at level 1: " << finished.stderr_text;
+
+  WriteFile(
+      *tmp_or / "level_evaluated_first.sv",
+      "module Test;\n"
+      "  function int level();\n"
+      "    $display(\"level\");\n"
+      "    return 1;\n"
+      "  endfunction\n"
+      "  function int count();\n"
+      "    $display(\"count\");\n"
+      "    return 2;\n"
+      "  endfunction\n"
+      "  initial $fatal(level(), \"failed %0d\", count());\n"
+      "endmodule\n");
+  const auto ordered = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --top Test level_evaluated_first.sv");
+  EXPECT_NE(ordered.exit_code, 0) << ordered.stderr_text;
+  EXPECT_NE(ordered.stdout_text.find("level\ncount\n"), std::string::npos)
+      << "the finish number was not evaluated first: " << ordered.stdout_text;
+
+  WriteFile(
+      *tmp_or / "read_as_analyzed.sv",
+      "module Test;\n"
+      "  real a = 1.5, b = 1.5, c = 2.5, zero = 0.0;\n"
+      "  initial begin\n"
+      "    $display(\"same %0d %0d\", a === b, a !== b);\n"
+      "    $display(\"apart %0d %0d\", a === c, a !== c);\n"
+      "    $display(\"signed zeros %0d\", zero === -zero);\n"
+      "    $display(\"[%-5d][%-4s]\", 3, \"ab\");\n"
+      "    $display(\"tail %\");\n"
+      "    $display(\"[%0t][%-4t]\", $time, $time);\n"
+      "  end\n"
+      "endmodule\n");
+  const auto analyzed = RunLyraFrom(
+      lyra, *tmp_or, "run --backend llvm --top Test read_as_analyzed.sv");
+  ASSERT_EQ(analyzed.exit_code, 0) << analyzed.stderr_text;
+  EXPECT_NE(analyzed.stdout_text.find("same 1 0\n"), std::string::npos)
+      << analyzed.stdout_text;
+  EXPECT_NE(analyzed.stdout_text.find("apart 0 1\n"), std::string::npos)
+      << analyzed.stdout_text;
+  EXPECT_NE(analyzed.stdout_text.find("signed zeros 1\n"), std::string::npos)
+      << analyzed.stdout_text;
+  EXPECT_NE(analyzed.stdout_text.find("[3    ][ab  ]\n"), std::string::npos)
+      << analyzed.stdout_text;
+  EXPECT_NE(analyzed.stdout_text.find("tail %\n"), std::string::npos)
+      << analyzed.stdout_text;
+  EXPECT_NE(analyzed.stdout_text.find("[0][0   ]\n"), std::string::npos)
+      << analyzed.stdout_text;
 }
 
 // An interface port (LRM 23.3.3.4) and a `ref` port (LRM 23.3.3.2) may not be
@@ -1607,10 +1722,9 @@ constexpr std::size_t kActionsBuildingOneModule = 4;
 // performs nothing new; compiling it at another level changes what every step
 // reads, and changing the module's text changes only what its unit's compile
 // and the link read. How wide it was built changes nothing any step reads, so
-// that keeps none. `build` writes the
-// one file it was asked for and `run` writes nothing, and nothing kept can be
-// reached through what a command handed back: clearing the store leaves both
-// the built program and a later run whole.
+// that keeps none. `build` writes the one file it was asked for and `run`
+// writes nothing, and nothing kept can be reached through what a command handed
+// back: clearing the store leaves both the built program and a later run whole.
 TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();

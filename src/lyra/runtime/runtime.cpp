@@ -191,8 +191,12 @@ void Runtime::ReportToolFailure(std::string_view message) {
 }
 
 void Runtime::ReportSimulationControl(
-    std::string_view task, std::string_view origin, int level) {
-  if (level <= 0) {
+    std::string_view task, std::string_view origin, int finish_number) {
+  // A finish number other than 0, 1 or 2 has no meaning in the standard, and
+  // the front end accepts one (LRM 20.2). It prints what an omitted one prints.
+  const int selected =
+      finish_number < 0 || finish_number > 2 ? 1 : finish_number;
+  if (selected == 0) {
     return;
   }
   std::string line;
@@ -201,7 +205,7 @@ void Runtime::ReportSimulationControl(
     line += ": ";
   }
   line += std::format("{} at time {}", task, now_.load());
-  if (level >= 2) {
+  if (selected == 2) {
     line += std::format(", {:.3f}s of processor time", ProcessorSeconds());
   }
   diagnostic_.Note(line);

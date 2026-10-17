@@ -5,17 +5,15 @@
 #include <expected>
 #include <utility>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/diag/source_span.hpp"
 #include "lyra/hir/expr.hpp"
-#include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/control.hpp"
-#include "lyra/lowering/hir_to_mir/integral_literal.hpp"
 #include "lyra/lowering/hir_to_mir/print_items.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -24,45 +22,26 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-auto LowerDiagnosticSystemSubroutineCall(
-    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
-    const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)
+namespace {
+
+// The report a severity task makes: its message formatted from the items at
+// `items_offset` on, with decimal as the bare-argument radix (LRM 20.10,
+// 21.2.1.4), handed to the diagnostic dispatcher at the severity `entry`
+// names. The call's source location is the origin the dispatcher prints and
+// keeps each site's reports apart by.
+auto BuildReportCall(
+    ProcessLowerer& process, const WalkFrame& frame, const hir::CallExpr& call,
+    support::BuiltinFn entry, std::size_t items_offset, diag::SourceSpan span)
     -> diag::Result<mir::Expr> {
-  // $info / $warning / $error / $fatal format their items with decimal as the
-  // bare-arg default radix (LRM 20.10 / 21.2.1.4), then route through the
-  // diagnostic dispatcher rather than a print sink. The call's source span
-  // becomes the origin tag the dispatcher prepends and uses as its per-site
-  // dedup key. $fatal additionally consumes its first argument as the
-  // `finish_number` (LRM 20.2 verbosity level) and chains an implicit $finish
-  // after the EmitFatal record.
-  const bool is_fatal = info.builtin_fn == support::BuiltinFn::kEmitFatal;
-
-  // LRM 20.2 default verbosity level. Honored only by the $fatal path.
-  int finish_level = 1;
-  std::size_t items_offset = 0;
-  if (is_fatal && !call.arguments.empty()) {
-    if (!call.arguments.front().has_value()) {
-      throw InternalError("$fatal finish_number argument unexpectedly elided");
-    }
-    auto level_or = LowerDiagnosticLevel(
-        process.HirBody().exprs.Get(*call.arguments.front()),
-        "$fatal finish_number", span);
-    if (!level_or) return std::unexpected(std::move(level_or.error()));
-    finish_level = *level_or;
-    items_offset = 1;
-  }
-
   auto items_or = BuildDisplayListPrintItems(
       process, frame, call, support::PrintRadix::kDecimal, items_offset);
   if (!items_or) return std::unexpected(std::move(items_or.error()));
-
   auto& unit = process.Owner().Unit();
   auto& block = *frame.current_block;
   const auto time_unit_power =
       static_cast<std::int64_t>(process.Resolution().unit_power);
   const mir::ExprId items_array = block.exprs.Add(
       BuildPrintItemsArray(unit, block, *items_or, time_unit_power));
-
   const mir::ExprId text_id =
       block.exprs.Add(BuildFormatCallExpr(unit, block, items_array));
   const mir::ExprId diagnostic_id =
@@ -70,32 +49,36 @@ auto LowerDiagnosticSystemSubroutineCall(
   const mir::ExprId origin_id = BuildStringValueExpr(
       unit, block,
       diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
+  return BuildReportCallExpr(unit, entry, diagnostic_id, origin_id, text_id);
+}
 
-  mir::Expr emit_call = BuildReportCallExpr(
-      unit, info.builtin_fn, diagnostic_id, origin_id, text_id);
+}  // namespace
 
-  if (!is_fatal) return emit_call;
+auto LowerDiagnosticSystemSubroutineCall(
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
+    const support::DiagnosticSystemSubroutineInfo& info, diag::SourceSpan span)
+    -> diag::Result<mir::Expr> {
+  if (info.builtin_fn != support::BuiltinFn::kEmitFatal) {
+    return BuildReportCall(process, frame, call, info.builtin_fn, 0, span);
+  }
 
-  // $fatal: emit happens as its own statement, then the implicit $finish call
-  // becomes this lowering's returned expression, which departs from the
-  // calling execution rather than returning; the two statements land in the
-  // enclosing block in source order.
-  const mir::ExprId emit_call_id = block.exprs.Add(std::move(emit_call));
-  block.AppendStmt(mir::ExprStmt{.expr = emit_call_id});
-
-  const mir::ExprId finish_runtime_id =
-      block.exprs.Add(BuildCurrentRuntimeCallExpr(process.Owner()));
-  const mir::ExprId finish_origin_id = BuildStringValueExpr(
-      unit, block,
-      diag::RuntimeOriginOf(span, process.Owner().SourceManager()));
-  const mir::ExprId level_id = BuildMachineIntLiteral(
-      unit, block, static_cast<std::int64_t>(finish_level));
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = support::BuiltinFn::kFinish},
-              .arguments = {finish_runtime_id, finish_origin_id, level_id}},
-      .type = unit.builtins.void_type};
+  // $fatal takes its first argument as the finish number (LRM 20.10), held in
+  // a local before the message's arguments are evaluated, and ends the run
+  // with an implicit $finish after the report. The report is a statement of
+  // its own, and the $finish is this lowering's expression, which departs from
+  // the calling execution rather than returning.
+  auto finish_number = BuildFinishNumber(process, frame, call);
+  if (!finish_number) return std::unexpected(std::move(finish_number.error()));
+  const mir::ExprId held = EvaluatedOnce(frame, *finish_number);
+  auto reported = BuildReportCall(
+      process, frame, call, info.builtin_fn, call.arguments.empty() ? 0 : 1,
+      span);
+  if (!reported) return std::unexpected(std::move(reported.error()));
+  auto& block = *frame.current_block;
+  block.AppendStmt(
+      mir::ExprStmt{.expr = block.exprs.Add(*std::move(reported))});
+  return BuildEndRunCall(
+      process, block, support::BuiltinFn::kFinish, held, span);
 }
 
 }  // namespace lyra::lowering::hir_to_mir

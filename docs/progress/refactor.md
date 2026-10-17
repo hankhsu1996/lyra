@@ -3108,11 +3108,11 @@ source, or not yet tried.
       in an included file and so name two units alike. Target: the front end keeps each. Confirmed
       by reading; the last not yet tried.
 
-- [ ] R231 -- A dynamic array's `new[]` is refused on the right of a continuous assignment here,
-      because the front end accepts it where the grammar admits it only in a declaration and a
-      blocking assignment (LRM 7.5.1, A.6.2); the nonblocking position is accepted by both.
-      Confirmed by running the front end's check. Target: the front end diagnoses it, reported
-      upstream, and the refusal here goes.
+- [ ] R231 -- A dynamic array's `new[]` on the right of a continuous assignment stops the build as
+      not yet supported, and the front end accepts it though the grammar admits it only in a
+      declaration and a blocking assignment (LRM 7.5.1, A.6.2); the nonblocking position is accepted
+      by both. Confirmed by running the front end's check. Target: the front end diagnoses it,
+      reported upstream.
 
 - [x] R232 -- A unit's name counted the constants its code was compiled for as well as those its
       declarations hold, so an edit to a body that made a parameter fix something new renamed the

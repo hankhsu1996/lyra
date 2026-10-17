@@ -299,11 +299,11 @@ auto FormatTimeMagnitude(
   const int precision = tf.precision >= 0 ? tf.precision : 0;
   std::string body = std::format("{:.{}f}", scaled, precision);
   body += tf.suffix;
-  if (tf.min_width > 0 &&
-      body.size() < static_cast<std::size_t>(tf.min_width)) {
-    body.insert(0, static_cast<std::size_t>(tf.min_width) - body.size(), ' ');
-  }
-  return body;
+  // `$timeformat`'s width is the field a directive gets where it writes none
+  // (LRM 20.4.3), as a type's size is for another conversion (LRM 21.2.1.2).
+  FormatSpec field = spec;
+  if (field.width < 0) field.width = tf.min_width;
+  return ApplyFieldWidth(std::move(body), field);
 }
 
 auto FormatIntegral(const FormatSpec& spec, const ConstIntegralView& value)

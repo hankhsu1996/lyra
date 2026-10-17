@@ -1,21 +1,16 @@
 #include "lyra/lowering/ast_to_hir/expression/operators.hpp"
 
-#include <algorithm>
 #include <expected>
 #include <utility>
 
 #include <slang/ast/Compilation.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
-#include <slang/ast/Symbol.h>
 #include <slang/ast/expressions/ConversionExpression.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/statements/ConditionalStatements.h>
-#include <slang/ast/symbols/VariableSymbols.h>
-#include <slang/ast/types/AllTypes.h>
 #include <slang/ast/types/Type.h>
 
-#include "lyra/diag/diag_code.hpp"
 #include "lyra/lowering/ast_to_hir/event_handle.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
 #include "lyra/lowering/ast_to_hir/pattern.hpp"
@@ -23,65 +18,6 @@
 #include "lyra/lowering/ast_to_hir/structural_scope_lowerer.hpp"
 
 namespace lyra::lowering::ast_to_hir {
-
-namespace {
-
-// Whether `type` is a real-family type, or a composite (any depth) with a
-// real-family leaf. Recurses the two ways a value type nests other value types:
-// unpacked array elements and unpacked struct / union members. A packed
-// struct / union cannot hold a real (packed members are integral); a class is a
-// handle whose `===` compares identity, not members, so neither is recursed.
-auto TypeHasRealLeaf(const slang::ast::Type& type) -> bool {
-  const auto& canonical = type.getCanonicalType();
-  if (canonical.kind == slang::ast::SymbolKind::FloatingType) {
-    return true;
-  }
-  if (const auto* element = canonical.getArrayElementType();
-      element != nullptr) {
-    return TypeHasRealLeaf(*element);
-  }
-  if (canonical.isUnpackedStruct()) {
-    return std::ranges::any_of(
-        canonical.as<slang::ast::UnpackedStructType>().fields,
-        [](const auto* field) { return TypeHasRealLeaf(field->getType()); });
-  }
-  if (canonical.isUnpackedUnion()) {
-    return std::ranges::any_of(
-        canonical.as<slang::ast::UnpackedUnionType>().fields,
-        [](const auto* field) { return TypeHasRealLeaf(field->getType()); });
-  }
-  return false;
-}
-
-// LRM Table 11-1: case equality (`===` / `!==`) is not defined on real /
-// shortreal operands. slang accepts the form and evaluates it as a value
-// comparison, but that is a deviation from the standard the backend does not
-// follow: for a real there is no x/z plane, so the bit-matching the case
-// operators specify (LRM 12.5) has no single correct meaning. Lowering rejects
-// it here -- including a real-element aggregate, where case equality would
-// recurse element-wise into the same undefined comparison. An event operand is
-// refused here too, whatever the operator.
-auto CheckBinaryOperands(
-    const slang::ast::BinaryExpression& bin, diag::SourceSpan span)
-    -> diag::Result<void> {
-  const bool is_case_equality =
-      bin.op == slang::ast::BinaryOperator::CaseEquality ||
-      bin.op == slang::ast::BinaryOperator::CaseInequality;
-  if (is_case_equality && (TypeHasRealLeaf(*bin.left().type) ||
-                           TypeHasRealLeaf(*bin.right().type))) {
-    return diag::Fail(
-        span, diag::DiagCode::kErrorCaseEqualityOnRealOperand,
-        "case equality (=== / !==) is not defined on real or shortreal "
-        "operands (LRM Table 11-1)");
-  }
-  if (auto refused = RefuseReadingAnEventAsAValue(*bin.left().type, span);
-      !refused) {
-    return refused;
-  }
-  return RefuseReadingAnEventAsAValue(*bin.right().type, span);
-}
-
-}  // namespace
 
 template <ExprLowerer Lowerer>
 auto LowerConversionExpr(
@@ -129,8 +65,13 @@ template <ExprLowerer Lowerer>
 auto LowerBinaryExpr(
     Lowerer& lowerer, WalkFrame frame, const slang::ast::BinaryExpression& bin,
     diag::SourceSpan span) -> diag::Result<hir::Expr> {
-  if (auto check = CheckBinaryOperands(bin, span); !check) {
-    return std::unexpected(std::move(check.error()));
+  if (auto refused = RefuseReadingAnEventAsAValue(*bin.left().type, span);
+      !refused) {
+    return std::unexpected(std::move(refused.error()));
+  }
+  if (auto refused = RefuseReadingAnEventAsAValue(*bin.right().type, span);
+      !refused) {
+    return std::unexpected(std::move(refused.error()));
   }
   auto lhs_or = lowerer.LowerExpr(bin.left(), frame);
   if (!lhs_or) return std::unexpected(std::move(lhs_or.error()));

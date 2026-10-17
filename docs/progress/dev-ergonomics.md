@@ -292,16 +292,18 @@ layer directly.
       of one module compiled for different parameters are shown under one name, and the C++
       backend's compile does not say what was up to date.
 
-- [ ] D27 -- Text the standard forbids is an error and text it allows is accepted, whatever another
-      simulator does. Lyra no longer asks the front end for its most tolerant reading, and a caller
-      asks for one by name (`--compat`). Under a tolerant reading a statement or expression the
-      front end could give no meaning is refused where it was written, and a build that fails shows
-      the warnings `run` otherwise withholds. A select at a constant position outside its vector or
-      array, which the standard both gives a value and lets a tool refuse, runs with a warning.
-      Open: the front end's default refuses two texts the standard allows (an `always_comb` writing
-      one constant key of an associative array, `$bits` of a member through an interface port), and
-      the default waits on each being corrected there.
-      `decisions/the-standard-decides-what-text-is-legal.md` settles it.
+- [ ] D27 -- Lyra accepts the text the front end accepts, at the severity it gives except where the
+      standard leaves the choice to the tool, whatever another simulator does. Lyra no longer asks
+      the front end for its most tolerant reading, and a caller asks for one by name (`--compat`). A
+      forbidden text the front end accepts with a warning runs with that warning, such as `$fatal`
+      with its message first. Under a tolerant reading a statement or expression the front end could
+      give no meaning is refused where it was written, and a build that fails shows the warnings
+      `run` otherwise withholds. A select at a constant position outside its vector or array, which
+      the standard both gives a value and lets a tool refuse, runs with a warning. Open: the front
+      end's default refuses two texts the standard allows (an `always_comb` writing one constant key
+      of an associative array, `$bits` of a member through an interface port), and the default waits
+      on each being corrected there. `decisions/the-standard-decides-what-text-is-legal.md` settles
+      it.
 
 - [x] D29 -- One run tells its reader about every place in the source the same way. A message the
       compiler raises about a place is shown as the front end shows its own: the same form, the line

@@ -15,10 +15,8 @@ namespace lyra::value {
 // Runtime representation of the SystemVerilog real family (LRM 6.12).
 // `RealValue<double>` is `real` / `realtime` (LRM 6.12.1 makes them one type);
 // `RealValue<float>` is `shortreal`. The two differ only in host precision, so
-// one template carries both. The operator surface mirrors LRM Table 11-1: real
-// satisfies the universal-equality and relational families but NOT case
-// equality (`===` / `!==` are excluded from real operands), so this type has no
-// `CaseEqual` and does not model `CaseEqualComparable`.
+// one template carries both. The operator surface mirrors LRM Table 11-1, and
+// adds the case equality the front end gives real operands.
 template <typename Host>
 class RealValue {
  public:
@@ -214,12 +212,18 @@ class RealValue {
     return Bit::FromBool(v_ != o.v_);
   }
 
+  // LRM Table 11-1 gives `===` no real operand, and the front end accepts one
+  // and compares the two as values, so `+0.0` and `-0.0` are equal and a NaN
+  // equals nothing.
+  [[nodiscard]] auto CaseEqual(const RealValue& o) const -> Bit {
+    return Bit::FromBool(v_ == o.v_);
+  }
+
   // LRM 9.4.2 update event predicate (engine change-detection hook): compares
   // the raw bit pattern, so +0.0 / -0.0 differ and a NaN classifies by its
   // bits, both required for "did the storage cell's bits change". This is an
-  // engine hook, not an SV operator: real has no LRM `===` (Table 11-1 excludes
-  // it), so there is no `CaseEqual` here for it to coincide with or diverge
-  // from.
+  // engine hook, not an SV operator, and differs from `===` on exactly those
+  // two.
   [[nodiscard]] auto IsBitIdentical(const RealValue& o) const -> bool {
     return std::bit_cast<BitsType>(v_) == std::bit_cast<BitsType>(o.v_);
   }
@@ -277,7 +281,7 @@ static_assert(LyraValue<Real>);
 static_assert(LyraValue<ShortReal>);
 static_assert(Ordered<Real>);
 static_assert(Ordered<ShortReal>);
-static_assert(!CaseEqualComparable<Real>);
-static_assert(!CaseEqualComparable<ShortReal>);
+static_assert(CaseEqualComparable<Real>);
+static_assert(CaseEqualComparable<ShortReal>);
 
 }  // namespace lyra::value

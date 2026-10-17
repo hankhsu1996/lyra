@@ -14,11 +14,11 @@
 //
 // A value crosses erased exactly where it states a representation the entry
 // receiving it has no other way to know -- the member a union is to hold, an
-// associative array's index. It then
-// crosses as two pointers, where it lies and then the type it is a value of,
-// the pair a Rust trait-object reference and a Swift existential carry, and is
-// borrowed for the call. A value that conforms to a representation its entry
-// already fixes crosses as the bare handle of its own domain instead.
+// associative array's index. It then crosses as two pointers, where it lies and
+// then the type it is a value of, the pair a Rust trait-object reference and a
+// Swift existential carry, and is borrowed for the call. A value that conforms
+// to a representation its entry already fixes crosses as the bare handle of its
+// own domain instead.
 //
 // An integral value is the bytes its type lays it out in, and its handle is
 // their address. Those bytes state no type, so an entry that reads one is told
@@ -636,14 +636,14 @@ auto lyra_rt_realtime(void* runtime, std::int64_t unit_power, void* out)
     -> void*;
 
 // Records a request to tear the simulation down once the current time slot
-// completes, prints what the level selects about it (LRM 20.2, Table 20-1), and
-// departs from the calling execution, so neither returns. The origin crosses as
-// an opaque string value and the level as a machine integer, like every runtime
-// scalar.
+// completes, prints what the finish number selects about it (LRM 20.2, Table
+// 20-1), and departs from the calling execution, so neither returns. The
+// origin crosses as an opaque string value and the finish number as a machine
+// integer, like every runtime scalar.
 [[noreturn]] void lyra_rt_finish(
-    void* runtime, const void* origin, std::int64_t level);
+    void* runtime, const void* origin, std::int64_t finish_number);
 [[noreturn]] void lyra_rt_stop(
-    void* runtime, const void* origin, std::int64_t level);
+    void* runtime, const void* origin, std::int64_t finish_number);
 
 // Runs a command line through the host's command processor and yields what it
 // answered; the null form runs nothing and yields whether a command processor
@@ -1192,6 +1192,8 @@ auto lyra_rt_real_div(const void* lhs, const void* rhs, void* out) -> void*;
 auto lyra_rt_real_neg(const void* operand, void* out) -> void*;
 auto lyra_rt_real_eq(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_real_ne(const void* lhs, const void* rhs) -> std::uint8_t;
+auto lyra_rt_real_case_equal(const void* lhs, const void* rhs, void* out)
+    -> void*;
 auto lyra_rt_real_lt(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_real_le(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_real_gt(const void* lhs, const void* rhs) -> std::uint8_t;
@@ -1257,6 +1259,8 @@ auto lyra_rt_shortreal_div(const void* lhs, const void* rhs, void* out)
 auto lyra_rt_shortreal_neg(const void* operand, void* out) -> void*;
 auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs) -> std::uint8_t;
+auto lyra_rt_shortreal_case_equal(const void* lhs, const void* rhs, void* out)
+    -> void*;
 auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_shortreal_le(const void* lhs, const void* rhs) -> std::uint8_t;
 auto lyra_rt_shortreal_gt(const void* lhs, const void* rhs) -> std::uint8_t;
@@ -1558,9 +1562,8 @@ auto lyra_rt_unpackedarray_value_cell_load(void* cell) noexcept -> void*;
 // long as the net lives. `driver_set` publishes that driver's whole
 // contribution, after which the net shows what its drivers then determine and
 // wakes its subscribers only on a real change; `driver_get` reads the
-// contribution back, which is what a
-// source driving part of a net updates part of and leaves the rest of at high
-// impedance (LRM 6.6.1).
+// contribution back, which is what a source driving part of a net updates part
+// of and leaves the rest of at high impedance (LRM 6.6.1).
 //
 // `net_join` states that some positions of one net and as many positions of
 // another are one physical net, whose contributions resolve together (LRM
@@ -1797,13 +1800,13 @@ auto lyra_rt_assocarray_value_cell_load(void* cell) noexcept -> void*;
 // with the receiver, and answers that type's default for a receiver with no
 // entries. A locator answers a queue and is told that queue's type; a
 // projection answers an array of the receiver's kind and is told the type of
-// what it builds where that type states more than its elements -- a queue's,
-// a fixed-size unpacked array's -- and otherwise the element type the clause
-// chose. The ordering family reorders the
-// receiver and produces no element it did not already hold, so it is told
-// nothing more, and `reverse` projects nothing, so it runs no body. The clause
-// defines ordering on the ordinally indexed containers alone. A fixed-size
-// unpacked array receiver crosses with its type.
+// what it builds where that type states more than its elements -- a queue's, a
+// fixed-size unpacked array's -- and otherwise the element type the clause
+// chose. The ordering family reorders the receiver and produces no element it
+// did not already hold, so it is told nothing more, and `reverse` projects
+// nothing, so it runs no body. The clause defines ordering on the ordinally
+// indexed containers alone. A fixed-size unpacked array receiver crosses with
+// its type.
 auto lyra_rt_unpackedarray_sum(
     const void* receiver, const void* receiver_type, void* body,
     const void* answer_type, void* out) -> void*;

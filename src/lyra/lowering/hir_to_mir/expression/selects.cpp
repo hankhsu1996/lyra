@@ -409,6 +409,7 @@ auto LiesInStorage(Lowerer& lowerer, const hir::Expr& expr) -> bool {
           [](const hir::IncDecExpr&) { return false; },
           [](const hir::CallExpr&) { return false; },
           [](const hir::ConversionExpr&) { return false; },
+          [](const hir::ConstantExpr&) { return false; },
           [](const hir::ValueRangeExpr&) { return false; },
           [](const hir::InsideExpr&) { return false; },
           [](const hir::InterfaceInstanceAccessExpr&) { return false; },

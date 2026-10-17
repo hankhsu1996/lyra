@@ -66,8 +66,8 @@ LRM 6.12: `real` is IEEE 754 double, `shortreal` is IEEE 754 single, `realtime` 
 - [x] C3 -- Cross-family conversions: integral -> real treats `'x` / `'z` as 0 (LRM 6.12.1); real ->
       integral rounds half-away-from-zero (LRM 6.12.1).
 - [x] C4 -- LRM-illegal real forms (LRM 6.12 + 11.3.1 / Table 11-1) diagnose as an unsupported
-      diagnostic with an LRM citation. Slang's frontend filters all but case equality (`===` /
-      `!==`); the case-equality path is guarded at lowering.
+      diagnostic with an LRM citation. The front end refuses them all but case equality (`===` /
+      `!==`), which it evaluates as `==`, and Lyra runs it that way.
 - [x] C5 -- Observable `real` / `shortreal` / `realtime` signals. A module-scope floating-point
       signal is an observable cell (`Var<Real>`): `wait (sig == ...)`, `always_comb` / `@*` reads,
       continuous assignment, non-blocking writes, and the explicit any-change `@(sig)` event control
@@ -245,9 +245,9 @@ so a chandle variable is observable storage and a wait on one has that meaning.
       (`dpi.md`). A variable of the type is waited on for the pointer it holds changing.
 - [x] CH2 -- `%p` on a chandle, which LRM 21.2.1.6 names among the handles that print in an
       implementation-dependent format, except that one naming nothing prints the word `null`. Every
-      other conversion is one the language defines no text for; the frontend does not filter a bare
-      chandle operand, so lowering diagnoses it where the conversion is written and the runtime
-      formatter where the format string is one the program computed.
+      other conversion is one the language defines no text for: the front end refuses one in a
+      format string written in the call, a bare chandle operand prints the `%p` text, and the
+      runtime formatter refuses one where the format string is one the program computed.
 
 ### Cross-references
 

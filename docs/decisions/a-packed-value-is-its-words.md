@@ -377,11 +377,11 @@ type contributes where nothing drives it; a net of an unpacked aggregate is inst
 of its type instead, which is an entry of its own.
 
 **D11. The widest packed type is the front end's, 2^24 - 1 bits.** The standard's floor is 65,536
-(LRM 6.9.1, 7.4.1), and a design is refused only for a reason the standard gives
+(LRM 6.9.1, 7.4.1), and a design is refused only where the front end refuses it
 (`architecture/language_conformance.md`). A limit of Lyra's own below the front end's would refuse a
-design for a reason no clause gives. The generous limit is affordable because no cost follows it.
-Under D1 what a call takes from the stack does not follow a width, under D2 a unit's data does not,
-and under D3 an operation costs the bits it touches.
+design the front end accepts. The generous limit is affordable because no cost follows it. Under D1
+what a call takes from the stack does not follow a width, under D2 a unit's data does not, and under
+D3 an operation costs the bits it touches.
 
 ## Rejected
 

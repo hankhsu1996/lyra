@@ -142,10 +142,20 @@ auto FormatRuntime(
     const TimeFormat& time_format, std::int64_t timeunit_power) -> String {
   const auto power = static_cast<std::int32_t>(timeunit_power);
   const FormatParseResult parsed = ParseFormatString(format.View());
-  if (parsed.error != FormatParseError::kNone) {
-    throw SimulationError(
-        std::format(
-            "malformed format string at offset {}", parsed.error_offset));
+  switch (parsed.error) {
+    case FormatParseError::kNone:
+      break;
+    case FormatParseError::kUnsupportedSpecifier:
+      throw SimulationError(
+          std::format(
+              "the '%{}' conversion is not yet supported", parsed.spec_char));
+    case FormatParseError::kUnknownSpecifier:
+    case FormatParseError::kWidthOverflow:
+    case FormatParseError::kPrecisionOverflow:
+    case FormatParseError::kModifierNotPermitted:
+      throw SimulationError(
+          std::format(
+              "malformed format string at offset {}", parsed.error_offset));
   }
 
   const FormatContext ctx{.time_format = &time_format};

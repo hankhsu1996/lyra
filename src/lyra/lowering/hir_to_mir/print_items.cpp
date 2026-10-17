@@ -143,16 +143,14 @@ auto BuildPrintValueItem(
   const hir::TypeId source_type = lowerer.HirExprs().Get(hir_arg).type;
 
   // LRM 21.2.1.6 gives a handle a text under the assignment pattern and the
-  // language gives it one under no other conversion. slang does not filter the
-  // form, so lowering does, exactly as it does for a real case equality (LRM
-  // Table 11-1). A format string the program computes reaches no directive
-  // here, so the runtime formatter answers that one on its own.
-  if (is_handle && spec.kind != value::FormatKind::kAssignmentPattern) {
-    return diag::Fail(
-        lowerer.HirExprs().Get(hir_arg).span,
-        diag::DiagCode::kErrorHandleFormatConversion,
-        "a handle is printed only by the assignment pattern conversion "
-        "(LRM 21.2.1.6)");
+  // language gives it one under no other conversion. The front end refuses any
+  // other in a format string written in the call, and accepts a handle given
+  // with no format at all, so a handle prints the one text it has. A format
+  // string the program computes reaches no directive here, so the runtime
+  // formatter answers that one on its own.
+  if (is_handle) {
+    spec =
+        mir::FormatSpec(value::FormatKind::kAssignmentPattern, spec.modifiers);
   }
 
   // %s formats by operand type (LRM 21.2.1.7): a String and a packed value
@@ -324,36 +322,30 @@ template <ExprLowerer Lowerer>
 auto LowerPrintItemForDirective(
     Lowerer& lowerer, WalkFrame frame, const value::FormatDirective& directive,
     std::span<const std::optional<hir::ExprId>> arguments,
-    std::size_t& next_argument, diag::SourceSpan span)
-    -> diag::Result<mir::RuntimePrintItem> {
+    std::size_t& next_argument) -> diag::Result<mir::RuntimePrintItem> {
   switch (directive.role) {
     case value::FormatDirective::Role::kLiteral:
       return mir::RuntimePrintLiteral{.text = directive.literal};
 
     case value::FormatDirective::Role::kModulePath:
       // The directive takes no operand, so it leaves the operand cursor where
-      // it found it; its modifiers ride through the string-format spec like an
-      // ordinary `%s` argument.
+      // it found it, and it takes no modifier either.
       return mir::RuntimePrintValue(
           BuildHierarchicalNameExpr(lowerer, frame),
           lowerer.Owner().Unit().builtins.string,
-          mir::FormatSpec(
-              value::FormatKind::kString,
-              ToMirFormatModifiers(directive.modifiers)));
+          mir::FormatSpec(value::FormatKind::kString, mir::FormatModifiers{}));
 
     case value::FormatDirective::Role::kLibraryBinding:
       return mir::RuntimePrintValue(
           BuildLibraryBindingExpr(lowerer, frame),
           lowerer.Owner().Unit().builtins.string,
-          mir::FormatSpec(
-              value::FormatKind::kString,
-              ToMirFormatModifiers(directive.modifiers)));
+          mir::FormatSpec(value::FormatKind::kString, mir::FormatModifiers{}));
 
     case value::FormatDirective::Role::kValue: {
       if (next_argument >= arguments.size()) {
-        return diag::Fail(
-            span, diag::DiagCode::kErrorDisplayMissingArg,
-            "format string consumes more arguments than provided");
+        throw InternalError(
+            "a format string the front end checked takes more arguments than "
+            "the call gives");
       }
       const std::optional<hir::ExprId> argument = arguments[next_argument++];
       if (!argument.has_value()) return EmptyArgumentItem();
@@ -367,46 +359,25 @@ auto LowerPrintItemForDirective(
 }
 
 // The format grammar is span-free so the runtime can share it (LRM 21.3.3
-// allows a format string known only at simulation time), and this is where a
-// string the design settles at compile time is held to it. The front end reads
-// only a literal written at the call site, so a format string that is constant
-// but not literal -- a parameter, a localparam, a constant function's result --
-// reaches here unexamined. LRM 21.2.1.1 makes an undefined specifier an error
-// and requires an argument for every `%` but `%m`, `%l` and `%%`, so a
-// malformed one is refused rather than carried to the runtime, whatever the
-// front end chose to say about it.
+// allows a format string known only at simulation time). Only a format string
+// written in the call is parsed here, and the front end has checked that one
+// and refuses what this grammar refuses, so a parse that fails names a
+// conversion not yet carried out.
 auto FailFormatParse(
     const value::FormatParseResult& parsed, diag::SourceSpan span)
     -> std::unexpected<diag::Diagnostic> {
   switch (parsed.error) {
-    case value::FormatParseError::kMissingPrecision:
+    case value::FormatParseError::kUnsupportedSpecifier:
       return diag::Fail(
-          span, diag::DiagCode::kErrorFormatStringMissingPrecision,
-          "format directive '.' is missing precision digits");
-    case value::FormatParseError::kTrailingPercent:
-      return diag::Fail(
-          span, diag::DiagCode::kErrorFormatStringTrailingPercent,
-          "format string ends with unfinished '%' directive");
-    case value::FormatParseError::kUnknownSpecifier:
-      return diag::Fail(
-          span, diag::DiagCode::kErrorFormatStringUnknownSpecifier,
-          std::format("unknown format specifier '%{}'", parsed.spec_char));
-    case value::FormatParseError::kWidthOverflow:
-      return diag::Fail(
-          span, diag::DiagCode::kErrorFormatStringWidthOverflow,
-          "format directive width does not fit in int32");
-    case value::FormatParseError::kPrecisionOverflow:
-      return diag::Fail(
-          span, diag::DiagCode::kErrorFormatStringWidthOverflow,
-          "format directive precision does not fit in int32");
-    case value::FormatParseError::kModifierNotPermitted:
-      return diag::Fail(
-          span, diag::DiagCode::kErrorFormatStringModifierNotPermitted,
+          span, diag::DiagCode::kUnsupportedSubroutineArgument,
           std::format(
-              "'%{}' takes a non-negative field width and nothing else; a "
-              "left-justifying '-' and a precision are defined only for the "
-              "real conversions %e / %f / %g (LRM 21.2.1.2)",
-              parsed.spec_char));
+              "the '%{}' conversion is not yet supported", parsed.spec_char));
+    case value::FormatParseError::kUnknownSpecifier:
+    case value::FormatParseError::kWidthOverflow:
+    case value::FormatParseError::kPrecisionOverflow:
+    case value::FormatParseError::kModifierNotPermitted:
+      throw InternalError(
+          "a format string the front end checked fails to parse");
     case value::FormatParseError::kNone:
       break;
   }
@@ -418,6 +389,9 @@ struct LiteralFormatStringRef {
   diag::SourceSpan span;
 };
 
+// A string literal the source wrote, which in a display list is a format
+// string (LRM 21.2.1). A string constant the front end settled is a value, and
+// is not one.
 auto TryGetHirStringLiteral(
     const base::Arena<hir::Expr, hir::ExprId>& exprs, hir::ExprId expr_id)
     -> std::optional<LiteralFormatStringRef> {
@@ -505,8 +479,7 @@ auto RadixToFormatKind(support::PrintRadix r) -> value::FormatKind {
 // directives formats, taken from `next_argument` on.
 template <ExprLowerer Lowerer>
 auto LowerFormatStringItems(
-    Lowerer& lowerer, WalkFrame frame, const LiteralFormatStringRef& literal,
-    const value::FormatParseResult& parsed,
+    Lowerer& lowerer, WalkFrame frame, const value::FormatParseResult& parsed,
     std::span<const std::optional<hir::ExprId>> arguments,
     std::size_t& next_argument)
     -> diag::Result<std::vector<mir::RuntimePrintItem>> {
@@ -514,7 +487,7 @@ auto LowerFormatStringItems(
   items.reserve(parsed.directives.size());
   for (const auto& directive : parsed.directives) {
     auto item_or = LowerPrintItemForDirective(
-        lowerer, frame, directive, arguments, next_argument, literal.span);
+        lowerer, frame, directive, arguments, next_argument);
     if (!item_or) return std::unexpected(std::move(item_or.error()));
     items.push_back(*std::move(item_or));
   }
@@ -551,7 +524,7 @@ auto BuildDisplayListPrintItems(
       return FailFormatParse(parsed, literal->span);
     }
     auto formatted = LowerFormatStringItems(
-        lowerer, frame, *literal, parsed, arguments, next_argument);
+        lowerer, frame, parsed, arguments, next_argument);
     if (!formatted) return std::unexpected(std::move(formatted.error()));
     std::ranges::move(*formatted, std::back_inserter(items));
   }
@@ -688,9 +661,12 @@ auto BuildFormatStringTextExpr(
         parsed.directives, value::FormatDirective::Role::kValue,
         &value::FormatDirective::role));
     std::size_t next_argument = arg_offset + 1;
-    if (taken >= arguments.size() - next_argument) {
+    // Operands past the last directive are evaluated and contribute nothing,
+    // with the front end's warning (LRM 21.3.3), as at run time; any other
+    // format string is known only when the call runs.
+    if (taken == arguments.size() - next_argument) {
       auto items = LowerFormatStringItems(
-          lowerer, frame, *literal, parsed, arguments, next_argument);
+          lowerer, frame, parsed, arguments, next_argument);
       if (!items) return std::unexpected(std::move(items.error()));
       auto& unit = lowerer.Owner().Unit();
       auto& block = *frame.current_block;

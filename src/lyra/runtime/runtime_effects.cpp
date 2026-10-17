@@ -276,9 +276,11 @@ auto RuntimeEffects::DrivenContinuously(const VariableCell& variable) const
 }
 
 void RuntimeEffects::EndRun(
-    std::string_view task, const value::String& origin, std::int64_t level) {
+    std::string_view task, const value::String& origin,
+    std::int64_t finish_number) {
   Runtime& rt = AsRuntime(*this);
-  rt.ReportSimulationControl(task, origin.View(), static_cast<int>(level));
+  rt.ReportSimulationControl(
+      task, origin.View(), static_cast<int>(finish_number));
   rt.RequestSimulationEnd();
 }
 

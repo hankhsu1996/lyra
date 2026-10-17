@@ -1,40 +1,80 @@
 # Language Conformance
 
-What source text Lyra accepts, and how a text nobody is sure about gets ruled on.
+What source text Lyra accepts, who decides it, and how a text nobody is sure about gets ruled on.
 
 ## The rule
 
-**Lyra reads IEEE 1800-2023. A text the standard forbids is an error where it is written; a text the
-standard allows is accepted and does what the standard says.**
+**Lyra targets IEEE 1800-2023 and delegates language analysis to a chosen version of its front end.
+By default it takes the front end's range of accepted text and the severity of its diagnostics, and
+lowering does not judge again whether the source is legal. Lyra carries out what the front end's
+analyzed representation means. Where neither the standard nor that representation's contract says
+what an accepted text does, Lyra chooses the simplest behaviour. An error of analysis is corrected
+in the front end, and an error of execution or a missing capability is corrected in Lyra.**
 
-Nothing is accepted because another tool accepts it. Every simulator takes some text the standard
-forbids, no two take the same set, and the ones that take a forbidden text do not agree on what it
-means -- so there is no tolerant reading to adopt, only one tool's choice to copy. A design accepted
-that way means what that tool decided, and nothing tells its author.
+The responsibilities are split three ways.
 
-Four consequences, each of which has been argued the other way and lost:
+| Layer                | Responsibility                                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Language policy      | The IEEE version, the front end version, the default options, and the compatibility modes a caller may select. |
+| Front end            | Parsing, type checking, constant evaluation, language diagnostics, and the analyzed representation.            |
+| Lowering and runtime | What the analyzed representation means when run, and a report for what is not yet carried out.                 |
 
-1. **A text that is widely taken is still an error.** An exception for "every tool takes this one"
-   turns the rule into "the standard, except where enough tools agree", and that boundary cannot be
-   stated in advance. The first exception is what the second is argued from. **One class of
-   forbidden text is still run when a caller asks for it**, and its boundary is stated in advance
-   and drawn by the standard rather than by any tool's answer: the standard's own rules fix what the
-   text means, and it allows no other way to say it (see _Forbidden, but the defect is the
-   standard's_ below). It stays an error by default.
-2. **A text the standard does not settle is read the stricter way.** A design refused can be
-   rewritten in a form every reading accepts. A design accepted under one reading of an unclear
-   clause means something else under the other.
-3. **What is legal is the front end's to answer, and Lyra keeps no list of its own.** The front
-   end's default reading is the reading Lyra ships. Where that default is wrong in either direction
-   -- it takes a forbidden text, or refuses an allowed one -- the front end is corrected, upstream,
-   and Lyra follows. A table in Lyra of diagnostics to raise and lower would be a second statement
-   of the standard, and every entry in it a disagreement that was never argued where it could be
-   settled. **A choice the standard leaves to the tool is different**: there the front end is not
-   wrong whichever way it went, so nothing can be corrected upstream, and Lyra makes the choice
-   itself (see _Given a meaning, but a tool may refuse it_ below).
-4. **A caller may ask for another tool's reading by name** (`--compat`, or one of the front end's
-   options for a single reading, such as `--allow-hierarchical-const`). What the design then means
-   is that tool's answer, not one Lyra stands behind.
+**That the front end accepts a text means the text passed language analysis.** It does not mean Lyra
+can yet carry it out, and it does not mean the front end has defined everything it does when run.
+
+**The hand-off is the analyzed representation and its contract.** The contract is the nodes, their
+types, the constants the front end evaluated, and the meaning the front end commits to for them. The
+shape a tree happens to take is not part of it. Lowering keeps every decision the front end made,
+even for a text the standard leaves undefined, and decides only what the front end left open.
+
+The goal is that a text the standard allows is accepted and does what the standard says. A case that
+fails it is a defect, either the front end's (reported upstream) or Lyra's (a bug, or a gap reported
+as one).
+
+Lyra adds no rule of its own accepting a text because a design runs on some other simulator. Tools
+that take a text the standard forbids do not agree on which texts or on what they mean, so a rule
+added for one tool copies that tool's choice, and the design then means what that tool decided.
+
+Lyra takes the front end's defaults because language analysis then has one implementation. A second
+set of rules beside it, as a table of diagnostics to raise and lower or as checks in lowering, would
+drift from the first, and every difference between them would be a disagreement never argued where
+it could be settled.
+
+Consequences:
+
+1. **The default options are the front end's, with one kind of exception.** Where the standard
+   leaves a choice to the tool, the front end is not wrong whichever way it went, so nothing can be
+   corrected upstream, and the policy makes the choice itself (see _Given a meaning, but a tool may
+   refuse it_ below). No other default is overridden, in either direction.
+2. **One class of forbidden text the front end refuses is run when a caller asks for it.** Its
+   boundary is stated in advance and drawn by the standard rather than by any tool's answer. The
+   standard's own rules fix what the text means, and it allows no other way to say it (see
+   _Forbidden, but the defect is the standard's_ below). It stays an error by default.
+3. **Lowering does not judge again whether the source is legal.** It carries out what the front end
+   analyzed and never inspects the form the source wrote it in. A reader sees one of four outcomes,
+   and lowering says which.
+
+   | Situation                                                     | Reported as                                                        |
+   | ------------------------------------------------------------- | ------------------------------------------------------------------ |
+   | The front end refuses the source                              | The front end's diagnostic. Lowering does not run.                 |
+   | The front end accepts it with no meaning (a tolerant reading) | A refusal where it was written, saying the front end gave it none. |
+   | The front end accepts it and Lyra does not yet carry it out   | A gap, naming the construct.                                       |
+   | The representation breaks the hand-off contract               | A compiler error, never a statement about the source.              |
+
+4. **An accepted text with no defined meaning gets the simplest behaviour, stated where it is
+   carried out.** Where the standard gives a text no meaning and the front end's contract does not
+   supply one, what Lyra does with it is an execution policy, and the comment beside the code that
+   carries it out is its record. It becomes a ruling below only where the choice changes what the
+   program computes, and a ruling never records the front end's behaviour in full.
+5. **What goes upstream is decided by evidence, not by severity.** A suspected analysis error, a
+   missing diagnostic, or a meaning that contradicts the standard is reported with the clause and a
+   reduction. A text the front end accepts deliberately as an extension is not a defect for being
+   nonstandard. For a text the standard does not settle, Lyra's position in that discussion is the
+   stricter reading.
+6. **A caller may select a named compatibility mode or front end option** (`--compat`, or an option
+   for a single reading, such as `--allow-hierarchical-const`). Lyra applies the corresponding
+   analysis rules and stands behind the mode as it does the default. It does not promise to behave
+   the same as any other simulator.
 
 ## Ruling on a disputed text
 
@@ -77,7 +117,7 @@ show all three leaves the text an ordinary forbidden one.
 Each text below was met in a real design or in Lyra's own tests and was disputed: some tool takes
 it, or some tool refuses it, against what one would expect.
 
-### Forbidden
+### Forbidden, and refused by the front end
 
 #### A based literal whose digits start with an underscore
 
@@ -208,8 +248,38 @@ wrote, while it keeps the forced value of a whole variable as 10.6.2 says, so it
 is its own. And no allowed text says the same: forcing the whole variable restates every member the
 design drives, and forcing a net adds one to the design for the testbench's sake.
 
-`-Wno-error=bad-procedural-force` asks for it, and so does `--compat all`. Lyra does not yet carry
-out a force on part of a variable and says so.
+`-Wno-error=bad-procedural-force` asks for it, and so does `--compat all`.
+
+### Forbidden, accepted by the front end
+
+Run as the front end analyzed it, with whatever warning it gives, which is what tells the author.
+
+#### A message as the first argument of `$fatal`
+
+```systemverilog
+$fatal("Randomize %s failed", name);
+```
+
+20.10: `$fatal [ ( finish_number [, list_of_arguments ] ) ]`, with `finish_number ::= 0 | 1 | 2`.
+The message belongs in the list of arguments after the finish number. Forbidden.
+
+The front end takes the first argument as the finish number, warns that it "must have value of 0, 1,
+or 2" (`-Wfinish-num`), and takes the message from the second argument on. Lyra keeps both
+decisions, so the string is not printed, and the simulation still ends with a failure. Write
+`$fatal(1, "Randomize %s failed", name)`.
+
+#### Case equality on a real operand
+
+```systemverilog
+real a, b;
+if (a === b) ...
+```
+
+Table 11-1 gives `===` and `!==` the operands "Any except real and shortreal". Forbidden.
+
+The front end accepts it with no diagnostic and evaluates it as `==`, and Lyra keeps that reading,
+so `+0.0 === -0.0` is 1 and a NaN equals nothing. The choice changes what the program computes,
+since a bit-by-bit match (12.5) would answer both the other way. Write `==`.
 
 ### Not settled by the standard, so refused
 
@@ -350,8 +420,11 @@ type is known at elaboration.
 
 ## Forbidden shapes
 
-- **A setting in Lyra that makes a forbidden text legal by default.** The reason is consequence 3:
-  it is a second statement of the standard that nobody argues with the front end.
+- **A default in Lyra's policy that overrides the front end's acceptance or severity**, except where
+  the standard leaves the choice to the tool. It is a second statement of the standard that nobody
+  argues with the front end.
+- **A refusal in lowering phrased as a rule about the source.** Lowering reports one of the outcomes
+  consequence 3 lists, and says which.
 - **A ruling whose stated reason is that a tool accepts or refuses the text.** A tool is at most a
   second reader of the clause, and tools that take a forbidden text do not agree on what it means.
 - **A carried change to somebody else's design that only suits Lyra.** A design that is wrong is

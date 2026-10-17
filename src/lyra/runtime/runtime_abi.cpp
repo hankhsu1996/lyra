@@ -3049,12 +3049,18 @@ auto lyra_rt_realtime(void* runtime, std::int64_t unit_power, void* out)
       out, RealTimeInUnit(*static_cast<RuntimeEffects*>(runtime), unit_power));
 }
 
-void lyra_rt_finish(void* runtime, const void* origin, std::int64_t level) {
-  Finish(*static_cast<RuntimeEffects*>(runtime), Read<String>(origin), level);
+void lyra_rt_finish(
+    void* runtime, const void* origin, std::int64_t finish_number) {
+  Finish(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(origin),
+      finish_number);
 }
 
-void lyra_rt_stop(void* runtime, const void* origin, std::int64_t level) {
-  Stop(*static_cast<RuntimeEffects*>(runtime), Read<String>(origin), level);
+void lyra_rt_stop(
+    void* runtime, const void* origin, std::int64_t finish_number) {
+  Stop(
+      *static_cast<RuntimeEffects*>(runtime), Read<String>(origin),
+      finish_number);
 }
 
 auto lyra_rt_run_host_command(void* runtime, const void* command, void* out)
@@ -4470,6 +4476,11 @@ auto lyra_rt_real_ne(const void* lhs, const void* rhs) -> std::uint8_t {
   return Compared(Read<Real>(lhs) != Read<Real>(rhs));
 }
 
+auto lyra_rt_real_case_equal(const void* lhs, const void* rhs, void* out)
+    -> void* {
+  return Emplace(out, Read<Real>(lhs).CaseEqual(Read<Real>(rhs)));
+}
+
 auto lyra_rt_real_lt(const void* lhs, const void* rhs) -> std::uint8_t {
   return Compared(Read<Real>(lhs) < Read<Real>(rhs));
 }
@@ -4667,6 +4678,11 @@ auto lyra_rt_shortreal_eq(const void* lhs, const void* rhs) -> std::uint8_t {
 
 auto lyra_rt_shortreal_ne(const void* lhs, const void* rhs) -> std::uint8_t {
   return Compared(Read<ShortReal>(lhs) != Read<ShortReal>(rhs));
+}
+
+auto lyra_rt_shortreal_case_equal(const void* lhs, const void* rhs, void* out)
+    -> void* {
+  return Emplace(out, Read<ShortReal>(lhs).CaseEqual(Read<ShortReal>(rhs)));
 }
 
 auto lyra_rt_shortreal_lt(const void* lhs, const void* rhs) -> std::uint8_t {

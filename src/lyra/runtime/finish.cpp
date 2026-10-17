@@ -19,8 +19,8 @@ namespace {
 // not cross (LRM 35.9).
 [[noreturn]] void EndRunFrom(
     RuntimeEffects& runtime, std::string_view task,
-    const lyra::value::String& origin, std::int64_t level) {
-  runtime.EndRun(task, origin, level);
+    const lyra::value::String& origin, std::int64_t finish_number) {
+  runtime.EndRun(task, origin, finish_number);
   if (RuntimeProcess* process = runtime.TryCurrentProcess();
       process != nullptr) {
     process->RequestTermination(ProcessTerminationCause::kKilled);
@@ -32,14 +32,14 @@ namespace {
 
 void Finish(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    std::int64_t level) {
-  EndRunFrom(runtime, "$finish", origin, level);
+    std::int64_t finish_number) {
+  EndRunFrom(runtime, "$finish", origin, finish_number);
 }
 
 void Stop(
     RuntimeEffects& runtime, const lyra::value::String& origin,
-    std::int64_t level) {
-  EndRunFrom(runtime, "$stop", origin, level);
+    std::int64_t finish_number) {
+  EndRunFrom(runtime, "$stop", origin, finish_number);
 }
 
 }  // namespace lyra::runtime

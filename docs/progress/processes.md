@@ -6,8 +6,8 @@ The numeric IDs (P1..P16, T1..T7) are stable references and do **not** imply exe
 
 ## Actionable
 
-Every numbered item is closed but P12. What stays open otherwise is the forms recorded as rejected
-under each item, and the conformance gaps at the end.
+Every numbered item is closed but P12 and P19. What stays open otherwise is the forms recorded as
+rejected under each item, and the conformance gaps at the end.
 
 ## Blocked
 
@@ -28,11 +28,13 @@ under each item, and the conformance gaps at the end.
       still suspended when the run ends stops where it stands: its frame is released without
       resuming, so what it would have written is not written, and a cleanup that frame was holding
       open runs with nothing of the design executing and has nothing left to withdraw from.
-- [x] P14 -- `$finish` / `$stop` / `$exit` diagnostic level (LRM 20.2, Table 20-1). The argument
-      selects what the tool prints where the task is reached -- nothing, the call's location with
-      the simulation time, or those plus what the run has cost -- and defaults to 1. The message is
-      also the whole of what tells `$stop` from `$finish` in a run nothing can resume, since neither
-      the ending nor the exit status differs.
+- [x] P14 -- `$finish` / `$stop` finish number (LRM 20.2, Table 20-1), which `$fatal` takes first
+      (LRM 20.10). The argument selects what the tool prints where the task is reached -- nothing,
+      the call's location with the simulation time, or those plus what the run has cost -- and
+      defaults to 1. It is any expression, read when the call runs, and a value other than 0, 1 or 2
+      prints as 1, an unknown bit reading as 0. The message is also the whole of what tells `$stop`
+      from `$finish` in a run nothing can resume, since neither the ending nor the exit status
+      differs.
   - [ ] The most verbose level reports the processor time the run has cost and not the memory, which
         the clause names alongside it. Nothing standard answers for memory, so a figure needs a
         per-platform query in the library an emitted program links.
@@ -243,8 +245,6 @@ under each item, and the conformance gaps at the end.
       process, after the write that nulled it has finished.
   - [ ] A value-change event control on any other operand whose change is not watched (LRM 9.4.2):
         an operand that is no value at all, and one whose value nothing yet compares.
-  - [ ] A nested timing control inside an event-list entry: only signal events compose in a list
-        today.
 - [x] T6 -- The non-blocking event trigger `->> e` (LRM 15.5.1), with and without a control. The
       statement runs without waiting, and the trigger becomes an update due in the nonblocking
       assignment region of a slot: this one where the source wrote no control, the one a delay
@@ -302,6 +302,14 @@ under each item, and the conformance gaps at the end.
         from a variable's declaration initializer, which runs before any process starts (LRM 6.21).
         It is reported as a compiler bug. Whether the standard gives such a fork a parent, or makes
         the program illegal, has not been read; either way the answer is not an internal error.
+
+- [ ] P19 -- A program block (LRM 24) runs as a module does, so what the clause gives a program
+      alone is not carried out. The run does not end when every initial procedure of every program
+      has ended, where LRM 24.3 makes it end by an implicit `$finish`: a module's later statements
+      still run. `$exit` ends the whole run where it is reached, where LRM 24.7 ends only the
+      initial procedures of the program that called it, ignores a call from anywhere else, and
+      leaves the run to end once every program has (LRM 20.2), so a `$exit` in a module ends a run
+      that should go on.
 
 ### Generate
 

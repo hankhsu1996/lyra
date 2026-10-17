@@ -165,8 +165,7 @@ auto BuildArrayMethodClosure(
 auto RejectStructuralEffect(diag::SourceSpan span) -> diag::Result<mir::Expr> {
   return diag::Fail(
       span, diag::DiagCode::kUnsupportedStructuralExpressionForm,
-      "this system subroutine is not yet supported in a continuous assignment; "
-      "only a value query is legal there");
+      "this system subroutine is not yet supported in a continuous assignment");
 }
 
 // Fans out a system-subroutine call to the per-family handler. The visit is
@@ -197,7 +196,7 @@ auto LowerSystemSubroutineCall(
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
               return LowerTerminationSystemSubroutineCall(
-                  lowerer, frame, call, desc.name, term, span);
+                  lowerer, frame, call, term, span);
             } else {
               return RejectStructuralEffect(span);
             }

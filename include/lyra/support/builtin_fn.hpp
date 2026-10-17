@@ -623,12 +623,11 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 9.4.1 `#N`. The runtime free functions answering the wait of a delay.
   // Each call takes the runtime handle, the amount of time the design asked to
   // wait, and the calling scope's time unit and precision powers; the runtime
-  // rounds
-  // that amount to the scope's precision (LRM 3.14.1) and scales it to the
-  // design-global tick (LRM 3.14.3). There are two because the language gives a
-  // program two ways to write such an amount and reads them differently -- an
-  // integral expression, whose unknown and negative values carry meanings of
-  // their own, and a real expression, which can name a fraction of a unit.
+  // rounds that amount to the scope's precision (LRM 3.14.1) and scales it to
+  // the design-global tick (LRM 3.14.3). There are two because the language
+  // gives a program two ways to write such an amount and reads them differently
+  // -- an integral expression, whose unknown and negative values carry meanings
+  // of their own, and a real expression, which can name a fraction of a unit.
   kDelay,
   kDelayReal,
   // The same amounts as a count of the scope's precision steps, for a delay
@@ -739,12 +738,12 @@ enum class BuiltinFn : std::uint16_t {
   kDistT,
   kDistErlang,
   // LRM 20.2 simulation control. Takes the runtime handle, the call's origin,
-  // and the diagnostic level (0 / 1 / 2) that selects what the tool prints
-  // about it (Table 20-1). The call ends the run and never returns: the calling
-  // execution departs, so no statement after it runs, in any body -- a
-  // function included (LRM 13.4). `$stop` suspends the simulation where
-  // `$finish` exits it, and a run nothing can resume tells the two apart only
-  // in what it prints, so each names the entry that prints for it.
+  // and the finish number that selects what the tool prints about it (Table
+  // 20-1). The call ends the run and never returns: the calling execution
+  // departs, so no statement after it runs, in any body -- a function included
+  // (LRM 13.4). `$stop` suspends the simulation where `$finish` exits it, and a
+  // run nothing can resume tells the two apart only in what it prints, so each
+  // names the entry that prints for it.
   kFinish,
   kStop,
   // Where a hierarchical name leaving an instance starts (LRM 23.6 / 23.8):

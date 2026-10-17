@@ -4,19 +4,19 @@ Tracks `$display` / `$write` / `$strobe` format-specifier coverage and file-sink
 
 The standard describes two formatting models and the conversion character selects which one a
 directive follows, so Lyra holds each conversion to its own. Every conversion but the three real
-ones takes a non-negative field width and nothing else: the field is filled on the left, with spaces
-for a decimal or string value and zeros for the other radices, and a directive that writes no width
-gets the columns the widest value of the operand's type occupies -- one more than that where the
-type is signed, for the sign (LRM 21.2.1.2). The three real conversions are given C's whole
-formatting capability instead (LRM 21.2.1.1 Table 21-2), so a left-justifying `-` and a precision
-stand on `%e` / `%f` / `%g` and are refused everywhere else, where the standard defines no such
-syntax for a conforming program to contain.
+ones takes a non-negative field width, filled on the left with spaces for a decimal or string value
+and zeros for the other radices, and a directive that writes no width gets the columns the widest
+value of the operand's type occupies -- one more than that where the type is signed, for the sign
+(LRM 21.2.1.2). The three real conversions are given C's whole formatting capability instead (LRM
+21.2.1.1 Table 21-2), so a precision and a zero fill stand on `%e` / `%f` / `%g` alone. The front
+end also accepts a left-justifying `-`, which the standard defines only there, on every conversion
+that takes a width, and the field is then padded on the right with spaces. A `%` with nothing but
+modifiers after it prints a `%`, with the front end's warning.
 
-Two consequences are worth stating because a design written against a tool that follows C will meet
-them. `%05d` asks for a field of five filled with spaces, not a zero-filled one, because a field
-width is a decimal constant and a leading zero belongs to that number -- while `%08h` reads the same
-under both models, zeros being what a hexadecimal field is filled with either way. And `%-4h` is
-refused outright rather than left-justified.
+A consequence is worth stating because a design written against a tool that follows C will meet it.
+`%05d` asks for a field of five filled with spaces, not a zero-filled one, because a field width is
+a decimal constant and a leading zero belongs to that number -- while `%08h` reads the same under
+both models, zeros being what a hexadecimal field is filled with either way.
 
 ## Sub-Steps
 
@@ -25,7 +25,8 @@ refused outright rather than left-justified.
       yields `x`, otherwise any Z bit yields `z`. Width / precision modifiers are rejected by the
       slang frontend, so the lowered form is always a single character.
 - [x] DI2 -- `%t` (time): formatted against the active timescale. The display unit, precision,
-      suffix and field width come from `$timeformat` (LRM 20.4.3), applied design-wide.
+      suffix and field width come from `$timeformat` (LRM 20.4.3), applied design-wide, and a width
+      the directive writes takes the place of `$timeformat`'s.
 - [x] DI3 -- `%f` / `%e` / `%g` (real). Default precision 6 per LRM Table 21-2. Coverage tracked
       under `datatypes.md` Real C1.
 - [x] DI4 -- `%m` (hierarchical name, LRM 21.2.1.5). The reported name is the scope the call was
@@ -86,9 +87,10 @@ refused outright rather than left-justified.
 - [x] DI10 -- `%p` on a handle (LRM 21.2.1.6). A chandle and a class handle each print in a format
       the clause leaves to the tool, except that one naming nothing prints the word `null`; the text
       stands for which object the handle names, so two handles naming one object print alike and no
-      two objects share a text. The clause defines a handle under that conversion alone, so every
-      other one is diagnosed where it is written, or rejected by the formatter where the format
-      string is one the program computed.
+      two objects share a text. The clause defines a handle under that conversion alone, so a handle
+      given with no format prints that text too; another conversion is refused by the front end
+      where the format string is written in the call, and by the formatter where the program
+      computed it.
 
 ## Argument list follow-ups
 
@@ -111,6 +113,10 @@ What LRM 21.2.1 says of the list of arguments itself, apart from any one convers
       call supplies is carried out as one whose format string is known only at run time: the surplus
       is evaluated and contributes nothing (LRM 21.3.3, which asks for a warning and for execution
       to continue). The surplus used to be appended in decimal.
+- [x] A string parameter in the list is a value, not a format string, since only a string literal
+      written in the list is read as one (LRM 21.2.1), and the front end analyzes it so; this holds
+      however the parameter's value was settled. Every format string written in the list has passed
+      the front end's check, so none stops the build as malformed.
 
 ## Scan family follow-ups
 
@@ -118,6 +124,8 @@ Tracks remaining LRM 21.3.4.3 corners explicitly rejected by the scan family. Ea
 user-observable feature gap (a lowering-time unsupported diagnostic or runtime rejection) that
 should close as the corresponding behaviour lands.
 
+- [ ] A `$sscanf` / `$fscanf` output that is neither integral nor a string, such as a `real` under
+      `%f`, stops the build as not yet supported.
 - [x] Expression-position `$sscanf` / `$fscanf` (if-condition, blocking assign-RHS, case selector,
       arithmetic operand). The scan family is modelled per LRM 21.3.4.3 as a system function whose
       `integer` return is observable in any expression position; writes to output args are runtime
@@ -185,11 +193,15 @@ string-output core.
 - [x] `$sformat` / `$sformatf` format_string of integral or unpacked-array-of-byte type (LRM
       21.3.3). The text carried as bytes reaches the parse through the same bits-to-text conversion
       any other such operand takes.
+- [ ] A string constant the front end formats while elaborating (a `$sformatf` in a parameter's
+      value) right-justifies a left-justified `%s` field and fills a left-justified radix field with
+      zeros on the right, where the same directive run by Lyra pads it on the right with spaces. The
+      front end's formatter is what is wrong; it is reported there before anything changes here.
 
 Not yet closed: LRM 21.3.3 asks for a warning when the operand count does not match the format
-string's directives. A literal format string with too few operands is an error, which LRM 21.3.3
-sanctions; one with too many continues silently, and so does a format string known only at run time
-either way.
+string's directives. A format string written in the call with too few operands is the front end's
+error, which LRM 21.3.3 sanctions; one with too many continues silently, and so does any other
+format string either way, a constant one included, since the front end leaves those to the run.
 
 ## Strobe family follow-ups
 
@@ -226,12 +238,12 @@ either way.
 
 ## Out of Scope
 
-- Format-string parse diagnostics (an unfinished trailing `%`, an unknown specifier, a width or
-  precision too large to hold, a missing precision, a modifier the conversion does not admit) --
-  already implemented, not gaps.
+- Format-string parse diagnostics (an unknown specifier, a width or precision too large to hold, a
+  modifier the conversion does not admit) -- the front end's for a format string written in the
+  call.
 - `$monitor` / `$fmonitor`. Not modelled today; add an entry when a concrete consumer needs it.
 - File read / positioning tasks (`$fgetc` / `$ungetc` / `$fseek` / `$rewind` / `$ftell` / `$feof` /
   `$fflush`) are implemented per LRM 21.3.4..21.3.8. The output-argument reads `$fgets` / `$fread` /
   `$ferror` are implemented in statement position; their expression-position gap is tracked above.
-- `%u` / `%z` (binary-packed unsigned / signed) and `%v` (strength). Not on the immediate roadmap;
-  add entries when concrete consumers appear.
+- `%u` / `%z` (unformatted 2-value / 4-value data) and `%v` (strength) stop the build as not yet
+  supported, and a format string the program computes stops the run instead.

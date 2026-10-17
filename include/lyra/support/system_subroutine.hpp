@@ -82,12 +82,10 @@ struct PrintSystemSubroutineInfo {
 
 // LRM 20.2 simulation control tasks ($finish, $stop, $exit). All three end a
 // run nothing can resume, and what the tool prints is the whole of what tells
-// them apart, so each names the entry that prints for it. `default_level` is
-// the diagnostic-message selector (0, 1, or 2, Table 20-1) a call takes when it
-// names none. `$exit` makes an implicit call to `$finish` (LRM 24.7), so it
-// names that entry rather than one of its own.
+// them apart, so each names the entry that prints for it. `$exit` makes an
+// implicit call to `$finish` (LRM 24.7), so it names that entry rather than one
+// of its own.
 struct TerminationSystemSubroutineInfo {
-  int default_level;
   BuiltinFn builtin_fn;
 };
 
@@ -542,8 +540,7 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
         .semantic =
-            TerminationSystemSubroutineInfo{
-                .default_level = 1, .builtin_fn = BuiltinFn::kFinish},
+            TerminationSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFinish},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{17},
@@ -1144,8 +1141,7 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
         .semantic =
-            TerminationSystemSubroutineInfo{
-                .default_level = 1, .builtin_fn = BuiltinFn::kStop},
+            TerminationSystemSubroutineInfo{.builtin_fn = BuiltinFn::kStop},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{77},
@@ -1154,8 +1150,7 @@ inline constexpr std::array kSystemSubroutines = {
         .result_conv = ReturnConvention::kVoid,
         .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
         .semantic =
-            TerminationSystemSubroutineInfo{
-                .default_level = 1, .builtin_fn = BuiltinFn::kFinish},
+            TerminationSystemSubroutineInfo{.builtin_fn = BuiltinFn::kFinish},
     },
     SystemSubroutineDesc{
         .id = SystemSubroutineId{78},

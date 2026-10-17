@@ -33,8 +33,9 @@ enum class FormatKind : std::uint8_t {
 // -- a non-negative field width, or none at all where the conversion has a size
 // its operand's type implies -- and fixes everything else about how the field
 // is filled. LRM 21.2.1.1 Table 21-2 gives the three real conversions C's full
-// formatting capability instead, so `precision`, `zero_pad`, and `left_align`
-// describe one of those and nothing else.
+// formatting capability instead, so `precision` and `zero_pad` describe one of
+// those and nothing else. `left_align` describes any conversion with a field,
+// where the front end accepts a `-` the standard defines only for a real.
 struct FormatSpec {
   FormatKind kind = FormatKind::kDecimal;
   std::int32_t width = -1;
@@ -55,12 +56,12 @@ struct FormatSpec {
 
 // LRM 21.2.1.2: a rendering narrower than its field is padded to reach it and
 // one wider expands the field rather than being truncated. What fills the field
-// and which side it goes on are the conversion's own properties -- spaces for a
-// decimal or string value, zeros for the other radices, and always on the left
-// -- so only a real conversion, carrying C's capability, can ask for something
-// else. `spec.width` is the field this rendering is to occupy, which for a
-// conversion sized from its operand's type means the caller has resolved that
-// size into the spec first; a width still negative asks for no field at all.
+// are the conversion's own properties -- spaces for a decimal or string value,
+// zeros for the other radices -- and it goes on the left unless the directive
+// asks for justification, which then fills the right with spaces. `spec.width`
+// is the field this rendering is to occupy, which for a conversion sized from
+// its operand's type means the caller has resolved that size into the spec
+// first; a width still negative asks for no field at all.
 [[nodiscard]] auto ApplyFieldWidth(std::string body, const FormatSpec& spec)
     -> std::string;
 
