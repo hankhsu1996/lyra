@@ -12,7 +12,6 @@
 
 #include <algorithm>
 #include <array>
-#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -1347,8 +1346,8 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProceduresKeepingItThere) {
 // A procedure that never stops to wait cannot be told from one that is only
 // taking long, so nothing ends such a run but whoever is waiting on it. What
 // that reader is owed when they do is where the run was. The program is ended
-// here as a job scheduler would end it, since a shell starts a background job
-// with the keyboard's interrupt ignored.
+// by the time limit every harness here waits with, so what it says is what a
+// harness that gave up on it reports.
 TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -1373,18 +1372,8 @@ TEST(LyraRun, ARunStoppedFromOutsideSaysWhichProcedureWasRunning) {
           "build --backend llvm --top Test -o '{}' test.sv", program.string()));
   ASSERT_EQ(built.exit_code, 0) << built.stderr_text;
 
-  auto sh_or = lyra::driver::FindOnPath("sh");
-  ASSERT_TRUE(sh_or.has_value()) << sh_or.error();
-  const std::vector<std::string> argv = {
-      "-c", std::format(
-                "'{}' &\n"
-                "run=$!\n"
-                "sleep 2\n"
-                "kill -TERM $run\n"
-                "wait $run\n",
-                program.string())};
-  const auto run = RunChildProcess(*sh_or, argv, 120s);
-  EXPECT_EQ(run.exit_code, 128 + SIGTERM) << run.stderr_text;
+  const auto run = RunChildProcess(program, {}, 2s);
+  EXPECT_EQ(run.termination, TerminationKind::kTimedOut) << run.stderr_text;
   EXPECT_NE(run.stderr_text.find("interrupted at time 7"), std::string::npos)
       << run.stderr_text;
   EXPECT_NE(

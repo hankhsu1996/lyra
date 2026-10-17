@@ -233,13 +233,16 @@ else in the design through; where the meaning would depend on the reading, the c
 options each design is built with are listed in `tests/external_design_options.yaml`, and one a
 design no longer needs fails the run until it is taken out.
 
-A step that takes more than half an hour, or asks for more memory than the smallest machine these
-run on holds, stops the case there. The first is set well past the slowest build measured, so that a
-design does not fall on one side of it on one machine and the other on the next; what it catches is
-a step that will not end. Each build compiles a fixed number of units at once, so how wide a build
-ran does not differ from one machine to the next either. How long each case took is printed beside
-where it stopped, and a case that stops keeps the directory it was built in and names it, while one
-that gets all the way leaves nothing behind.
+A build that takes more than half an hour, a run or a check that takes more than five minutes, or a
+step that asks for more memory than the smallest machine these run on holds, stops the case there.
+The build's limit is set well past the slowest build measured, so that a design does not fall on one
+side of it on one machine and the other on the next; what it catches is a build that will not end. A
+run past its limit is either stuck or slow, and waiting longer does not say which. It is asked to
+end before it is killed, and the simulation time it says it had reached, with the procedure running
+then, is printed beside where it stopped. Each build compiles a fixed number of units at once, so
+how wide a build ran does not differ from one machine to the next either. How long each case took is
+printed beside where it stopped, and a case that stops keeps the directory it was built in and names
+it, while one that gets all the way leaves nothing behind.
 
 Where each case stops is recorded in `tests/paths/llvm.external_designs.yaml`, and a case is held to
 exactly what is listed for it, so the file is the account of what stands between Lyra and each

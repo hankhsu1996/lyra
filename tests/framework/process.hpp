@@ -25,8 +25,14 @@ struct ProcessOutcome {
 };
 
 // Spawns `exe` with `args` and collects both streams. A child that outlives
-// `timeout` is killed and reported as such, so a hung run fails as a timeout
-// rather than hanging the suite.
+// `timeout` is asked to end, killed if it has not shortly after, and reported
+// as timed out, so a hung run fails rather than hanging the suite.
+//
+// Whether it timed out is decided here, by the clock, and nothing the child
+// does once asked changes it, an exit of 0 included. What it writes when asked
+// is kept as evidence: a program Lyra built says the simulation time its run
+// had reached, which only the program knows, and a kill with no request first
+// would leave the record saying only that the limit passed.
 auto RunChildProcess(
     const std::filesystem::path& exe, std::span<const std::string> args,
     std::chrono::seconds timeout = std::chrono::seconds{30}) -> ProcessOutcome;
