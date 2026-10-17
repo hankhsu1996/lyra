@@ -28,9 +28,10 @@ run-time trade is a choice: iterating pays the compile on every edit, while a lo
 back. Which level `--release` asks the host compiler for is the open one, and is an entry below.
 
 Runtime performance is tracked by the benchmark over the corpus under `tests/benchmark/`, which
-builds every case under both Lyra and Verilator and puts the two rates side by side. It runs nightly
-and gates its own run on a case building, running, and finishing inside a time limit -- never on a
-rate itself, which would be a claim about the machine that ran it.
+builds every case under Lyra, on each backend, and under Verilator and puts the rates side by side.
+It runs nightly and gates its own run on a case building, running, and finishing inside a time limit
+-- never on a rate itself, which would be a claim about the machine that ran it. Whether one change
+made a case do more work is a count instead, taken on every merge against its parent.
 
 What a case reports is a **rate**, and no amount of work is written down anywhere: the harness
 raises the amount until a measurement reaches a target duration, separately for each tool, and

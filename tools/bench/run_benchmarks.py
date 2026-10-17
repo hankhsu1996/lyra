@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Lyra benchmark runner.
 
-Runs every case under tests/benchmark/ against Lyra and a reference simulator,
-choosing how much work each one does so that every measurement lands in the
-same duration, and reports the rate each tool sustained.
+Runs every case under tests/benchmark/ against Lyra, on each backend, and a
+reference simulator, choosing how much work each one does so that every
+measurement lands in the same duration, and reports the rate each sustained.
+
+With --count it measures something else: how many instructions one unit of each
+case's work costs Lyra, counted under callgrind. A count does not move with the
+machine's load, so two compilers counted on one machine are told apart however
+small the difference; it can move from one machine to another, so it is compared
+only with a count taken beside it, and a rate is what compares Lyra with the
+reference simulator.
 
 A case that cannot be measured costs only itself: the run goes on, the report
 carries every number that was obtained, and the case is named there with the
@@ -13,12 +20,17 @@ measured and 1 when any was not, or when there was nothing to run.
 Usage:
     python3 tools/bench/run_benchmarks.py [--json PATH] [--filter SUBSTRING]
                                           [--seconds N] [--lyra PATH]
+                                          [--backend llvm|cpp ...]
+                                          [--count [--amounts PATH] [-j N]]
+                                          [--revision TEXT]
 """
 
 import argparse
+import concurrent.futures
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -58,6 +70,24 @@ DEFAULT_TARGET_SECONDS = 1.0
 # enough that what varies with the design is the bulk of the reading.
 BUILD_TARGET_SECONDS = 20.0
 
+# What a run is counted at is chosen the same way, by timing natively, but far
+# shorter: a count is exact at any amount, so the amount only has to be large
+# enough that the work, rather than what a run does once, is what was counted,
+# and every instruction counted costs about fifty times its native time.
+COUNT_RUN_TARGET_SECONDS = 0.02
+
+# A build is counted at one design size and twice it, the same for every case
+# and backend, whatever a duration would choose. A search for a duration
+# follows a cost that barely grows -- a wider signal -- out to designs that
+# take minutes to build under callgrind, and stops sooner on one backend than
+# the other, so the two would not count the same design; how a build's cost
+# grows with its size is the growth tests' subject. The size is what makes the
+# difference of the two counts the design's: what a build does before any of
+# it is billions of instructions and varies between runs by some hundreds of
+# thousands, so the units between the two sizes have to add far more than
+# that, while adding little to what each build costs to count.
+COUNT_BUILD_AMOUNT = 64
+
 TIMEOUT_SECONDS = 900
 
 # How much of what a failed step printed is kept. The reason is nearly always
@@ -96,6 +126,18 @@ CELL_NOT_RUN = "not run"
 LYRA = "lyra"
 VERILATOR = "verilator"
 
+# Lyra builds a program on either backend, and each is measured as a tool of
+# its own, since one may regress while the other does not.
+BACKENDS = ("llvm", "cpp")
+
+# What a result file's numbers are counts of.
+METRIC_TIME = "time"
+METRIC_INSTRUCTIONS = "instructions"
+
+# The version of the result file's shape, raised whenever a field is removed or
+# changes type.
+SCHEMA_VERSION = 7
+
 MEASURE_BUILD = "build"
 MEASURE_RUN = "run"
 
@@ -123,16 +165,23 @@ class Result:
     measure: str = ""
     work_unit: str = ""
     tool: str = ""
+    backend: str = ""
     status: str = STATUS_OK
     work: int = 0
     seconds: float = 0.0
     rate: float = 0.0
+    instructions_per_unit: float = 0.0
     build_s: float = 0.0
     binary_kb: int = 0
     readings: tuple[tuple[int, float], ...] = ()
     growth: float = 0.0
     detail: str = ""
     output: str = ""
+
+
+def measured_name(tool: str, backend: str) -> str:
+    """The tool and backend that make a measurement, as one name."""
+    return f"{tool}-{backend}" if backend else tool
 
 
 @dataclass
@@ -143,6 +192,31 @@ class ProcessRun:
     stdout: str
     stderr: str
     timed_out: bool
+
+
+# Every process group a step has started and not yet seen end, so that a run
+# told to stop can stop all of them: with cases counted side by side, more than
+# one step is in flight, and an exit unwinds through none of them.
+_live_groups: set[int] = set()
+# Reentrant, because the handler for being told to stop takes it, and the
+# signal can land while the thread it interrupts already holds it.
+_live_lock = threading.RLock()
+_stopping = threading.Event()
+
+
+def kill_group(pgid: int) -> None:
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def stop_every_step() -> None:
+    """Stop every step in flight, and let no further one start."""
+    with _live_lock:
+        _stopping.set()
+        for pgid in _live_groups:
+            kill_group(pgid)
 
 
 def run_process(
@@ -159,21 +233,19 @@ def run_process(
         # The command leads a process group of its own, so that stopping it
         # stops the host compiler it started too. One left running would be
         # taking the machine from the measurement after it.
-        proc = subprocess.Popen(
-            cmd, stdout=out, stderr=err, cwd=cwd, env=env, text=True,
-            start_new_session=True)
+        with _live_lock:
+            if _stopping.is_set():
+                raise OSError("the run is stopping")
+            proc = subprocess.Popen(
+                cmd, stdout=out, stderr=err, cwd=cwd, env=env, text=True,
+                start_new_session=True)
+            _live_groups.add(proc.pid)
 
         killed: list[bool] = []
 
-        def stop() -> None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-
         def on_timeout() -> None:
             killed.append(True)
-            stop()
+            kill_group(proc.pid)
 
         watchdog = threading.Timer(TIMEOUT_SECONDS, on_timeout)
         watchdog.start()
@@ -183,8 +255,10 @@ def run_process(
         finally:
             watchdog.cancel()
             if proc.poll() is None:
-                stop()
+                kill_group(proc.pid)
                 proc.wait()
+            with _live_lock:
+                _live_groups.discard(proc.pid)
 
         out.seek(0)
         err.seek(0)
@@ -401,11 +475,17 @@ def growth_exponent(history: list[tuple[int, float]], target: float) -> float:
 
 
 def lyra_build_command(
-    lyra: str, case: Case, out_dir: str, amount: int | None,
+    lyra: str, backend: str, case: Case, out_dir: str, amount: int | None,
 ) -> list[str]:
     # Every build is a build: a program kept from an earlier probe of the same
-    # amount would be copied rather than compiled, and time the copy.
-    cmd = [lyra, "build", "--rebuild"]
+    # amount would be copied rather than compiled, and time the copy. What it
+    # keeps goes in a store of its own, so a measurement leaves nothing in the
+    # user's. And it draws no progress: drawing follows the clock, which moves
+    # a count of the same build from one run to the next.
+    cmd = [
+        lyra, "build", "--rebuild", "--progress=none",
+        "--cache-dir", str(Path(out_dir) / "store"), "--backend", backend,
+    ]
     # A simulation is timed on the code a user would ship, so its translation
     # unit is optimized. A build is timed the way an edit loop builds, since
     # that is the cost it exists to protect and optimizing it would measure the
@@ -445,26 +525,53 @@ class Tool:
     build: Callable[[Case, str, int | None], list[str]]
     binary: Callable[[str], Path]
     env: dict | None = None
+    backend: str = ""
+
+
+def build_program(
+    case: Case, tool: Tool, result: Result, root: str,
+) -> Path | None:
+    """Build a simulation case's program once, or record why there is none."""
+    work = os.path.join(root, "build")
+    os.makedirs(work, exist_ok=True)
+    build = run_process(tool.build(case, work, None), cwd=work, env=tool.env)
+    result.build_s = build.elapsed_s
+    if record_failure(result, "build", build):
+        return None
+    binary = tool.binary(work)
+    if not binary.is_file():
+        result.status = STATUS_ERROR
+        result.detail = f"build produced no {binary.name}"
+        return None
+    result.binary_kb = round(binary.stat().st_size / 1024)
+    return binary
+
+
+def prove_built(tool: Tool, result: Result, work: str, amount: int) -> bool:
+    """Run once what a build case built, or record why it did not run.
+
+    The artifact is run, not measured: a build case earns its number from the
+    build, and running it is what says the build produced something real.
+    """
+    binary = tool.binary(work)
+    if not binary.is_file():
+        result.status = STATUS_ERROR
+        result.detail = (
+            f"build at {WORK_PARAM}={amount} produced no {binary.name}")
+        return False
+    result.binary_kb = round(binary.stat().st_size / 1024)
+    proof = run_process([str(binary), "+work=1"])
+    return not record_failure(
+        result, f"run of the program built at {WORK_PARAM}={amount}", proof)
 
 
 def measure_run_case(
     case: Case, tool: Tool, result: Result, root: str, target: float,
 ) -> Result:
     """Build once, then raise the work count until a run reaches the target."""
-    work = os.path.join(root, "build")
-    os.makedirs(work, exist_ok=True)
-    build = run_process(tool.build(case, work, None), cwd=work, env=tool.env)
-    result.build_s = build.elapsed_s
-
-    if record_failure(result, "build", build):
+    binary = build_program(case, tool, result, root)
+    if binary is None:
         return result
-
-    binary = tool.binary(work)
-    if not binary.is_file():
-        result.status = STATUS_ERROR
-        result.detail = f"build produced no {binary.name}"
-        return result
-    result.binary_kb = round(binary.stat().st_size / 1024)
 
     amount, run, history = converge(
         lambda n: run_process([str(binary), f"+work={n}"]), target,
@@ -500,24 +607,100 @@ def measure_build_case(
 
     if record_failure(result, f"build at {WORK_PARAM}={amount}", build):
         return result
-
-    binary = tool.binary(builds[-1])
-    if not binary.is_file():
-        result.status = STATUS_ERROR
-        result.detail = (
-            f"build at {WORK_PARAM}={amount} produced no {binary.name}")
-        return result
-    result.binary_kb = round(binary.stat().st_size / 1024)
-
-    # The artifact is run once, not timed: a build case earns its number from
-    # the build, and running it is what says the build produced something real.
-    proof = run_process([str(binary), "+work=1"])
-    if record_failure(
-            result, f"run of the program built at {WORK_PARAM}={amount}",
-            proof):
+    if not prove_built(tool, result, builds[-1], amount):
         return result
 
     record_measurement(result, amount, build, history, target)
+    return result
+
+
+def count_instructions(
+    cmd: list[str], cwd: str, env: dict | None = None,
+) -> tuple[int, ProcessRun]:
+    """Run one command under callgrind; return the instructions it executed.
+
+    Only the command's own process is counted. A build starts the host
+    compiler, which runs natively and uncounted: it is not Lyra, and what Lyra
+    hands it is held by the growth tests, which count what a build leaves.
+    """
+    out = Path(cwd) / "callgrind.out"
+    run = run_process(
+        ["valgrind", "--tool=callgrind", f"--callgrind-out-file={out}", *cmd],
+        cwd=cwd, env=env)
+    if run.timed_out or run.returncode != 0:
+        return 0, run
+    match = (
+        re.search(r"^summary:\s+(\d+)", out.read_text(), re.MULTILINE)
+        if out.is_file() else None)
+    if match is None:
+        raise OSError(f"callgrind wrote no total to {out}")
+    return int(match.group(1)), run
+
+
+def record_count(
+    result: Result, readings: list[tuple[int, int]],
+) -> None:
+    """Record instructions per unit from counts taken at two amounts.
+
+    Their difference is the work alone: what a run executes once -- the
+    process starting, a design being constructed, a compiler reading its
+    prelude -- is in both and cancels exactly, as no two timings can.
+    """
+    (low, low_count), (high, high_count) = readings
+    result.work = low
+    result.readings = tuple(readings)
+    result.instructions_per_unit = (high_count - low_count) / (high - low)
+
+
+def count_run_case(
+    case: Case, tool: Tool, result: Result, root: str, amount: int | None,
+) -> Result:
+    """Build once, then count a run at an amount and at twice it."""
+    binary = build_program(case, tool, result, root)
+    if binary is None:
+        return result
+
+    if amount is None:
+        amount, run, _ = converge(
+            lambda n: run_process([str(binary), f"+work={n}"]),
+            COUNT_RUN_TARGET_SECONDS, case.work_max)
+        if record_failure(result, f"run at +work={amount}", run):
+            return result
+    # The higher count is taken at twice the amount, which the case must still
+    # hold.
+    amount = max(1, min(amount, case.work_max // 2))
+
+    readings: list[tuple[int, int]] = []
+    for n in (amount, 2 * amount):
+        count, run = count_instructions(
+            [str(binary), f"+work={n}"], str(binary.parent))
+        if record_failure(result, f"counted run at +work={n}", run):
+            return result
+        readings.append((n, count))
+    record_count(result, readings)
+    return result
+
+
+def count_build_case(
+    case: Case, tool: Tool, result: Result, root: str,
+) -> Result:
+    """Count what Lyra executes building the design at a size and twice it."""
+    amount = COUNT_BUILD_AMOUNT
+    readings: list[tuple[int, int]] = []
+    for n in (amount, 2 * amount):
+        work = os.path.join(root, f"build-{n}")
+        os.makedirs(work, exist_ok=True)
+        count, run = count_instructions(
+            tool.build(case, work, n), work, tool.env)
+        if record_failure(result, f"counted build at {WORK_PARAM}={n}", run):
+            return result
+        readings.append((n, count))
+    if not prove_built(
+            tool, result, os.path.join(root, f"build-{2 * amount}"),
+            2 * amount):
+        return result
+
+    record_count(result, readings)
     return result
 
 
@@ -566,12 +749,13 @@ def record_measurement(
     result.growth = growth_exponent(history, target)
 
 
-def lyra_tool(lyra: str) -> Tool:
+def lyra_tool(lyra: str, backend: str) -> Tool:
     return Tool(
         name=LYRA,
         build=lambda case, out, amount: lyra_build_command(
-            lyra, case, out, amount),
+            lyra, backend, case, out, amount),
         binary=lambda out: Path(out) / BINARY_NAME,
+        backend=backend,
     )
 
 
@@ -589,28 +773,53 @@ def verilator_tool(verilator: str) -> Tool:
     )
 
 
-def measure(case: Case, tool: Tool, tmpdir: str, target: float) -> Result:
+def measure(
+    case: Case, tool: Tool, tmpdir: str,
+    step: Callable[[Case, Tool, Result, str], Result],
+) -> Result:
+    """Make one measurement of one case with one tool, by the step given."""
     result = Result(
         case=case.name,
         family=case.family,
         measure=case.measure,
         work_unit=case.work_unit,
         tool=tool.name,
+        backend=tool.backend,
     )
-    root = os.path.join(tmpdir, f"{case.name}-{tool.name}")
+    name = measured_name(tool.name, tool.backend)
+    root = os.path.join(tmpdir, f"{case.name}-{name}")
     os.makedirs(root, exist_ok=True)
+    # Said as it starts, so a run that hangs names the measurement it hung in.
+    print(f"  {case.path}/{name} ...", file=sys.stderr, flush=True)
 
     # A step the operating system would not start -- a program that is not one,
     # a directory that cannot be made -- is this case's failure like any other.
     try:
-        if case.measure == MEASURE_BUILD:
-            return measure_build_case(
-                case, tool, result, root, BUILD_TARGET_SECONDS)
-        return measure_run_case(case, tool, result, root, target)
+        return step(case, tool, result, root)
     except OSError as e:
         result.status = STATUS_ERROR
         result.detail = f"a step could not be carried out ({e})"
         return result
+
+
+def timing_step(target: float) -> Callable[[Case, Tool, Result, str], Result]:
+    def step(case: Case, tool: Tool, result: Result, root: str) -> Result:
+        if case.measure == MEASURE_BUILD:
+            return measure_build_case(
+                case, tool, result, root, BUILD_TARGET_SECONDS)
+        return measure_run_case(case, tool, result, root, target)
+    return step
+
+
+def counting_step(
+    amounts: dict[tuple[str, str], int],
+) -> Callable[[Case, Tool, Result, str], Result]:
+    def step(case: Case, tool: Tool, result: Result, root: str) -> Result:
+        if case.measure == MEASURE_BUILD:
+            return count_build_case(case, tool, result, root)
+        return count_run_case(
+            case, tool, result, root, amounts.get((case.name, tool.backend)))
+    return step
 
 
 def fmt_rate(rate: float) -> str:
@@ -662,98 +871,163 @@ def get_git_sha() -> str:
         return "unknown"
 
 
-def print_report(
-    cases: list[Case], tools_run: list[str], results: list[Result],
-    target: float,
+def print_absences(
+    results: list[Result], not_reached: list[str], extra: list[str],
 ) -> None:
-    """Print every number obtained, and name each measurement that has none.
-
-    The table has a row for every case and a column for each tool whatever was
-    reached, so a run that was cut short still says which cases it never got
-    to.
-    """
-    by_case: dict[str, dict[str, Result]] = {}
-    for r in results:
-        by_case.setdefault(r.case, {})[r.tool] = r
-
+    """Name each measurement that has no number, and say why."""
     failed = [r for r in results if r.status == STATUS_ERROR]
-    not_reached = [
-        f"{case.name}/{tool}"
+    if not (failed or not_reached or extra):
+        return
+    print()
+    print("### Not measured")
+    print()
+    for r in failed:
+        print(f"- **{r.case}/{measured_name(r.tool, r.backend)}**: {r.detail}")
+        if r.output:
+            print()
+            print("  ```")
+            for line in r.output.splitlines():
+                print(f"  {line}")
+            print("  ```")
+    for line in extra:
+        print(f"- {line}")
+    for name in not_reached:
+        print(f"- **{name}**: the run ended before measuring it")
+
+
+def print_absence_count(
+    results: list[Result], not_run: int, number: str,
+) -> None:
+    """Say under a report's heading how many measurements have no number."""
+    failed = sum(1 for r in results if r.status == STATUS_ERROR)
+    if not (failed or not_run):
+        return
+    absences = ((failed, CELL_FAILED), (not_run, CELL_NOT_RUN))
+    counts = [f"{count} {word}" for count, word in absences if count]
+    print(
+        f"> **Not every measurement has a number: "
+        f"{' and '.join(counts)}, of {len(results) + not_run}.** Each is "
+        f"named under \"Not measured\" below. A cell reading "
+        f"`{CELL_FAILED}` or `{CELL_NOT_RUN}` is never a {number} of zero.")
+
+
+def by_measurement(results: list[Result]) -> dict[tuple[str, str], Result]:
+    return {(r.case, measured_name(r.tool, r.backend)): r for r in results}
+
+
+def unreached_measurements(
+    cases: list[Case], tools: list[Tool], results: list[Result],
+) -> list[str]:
+    reached = by_measurement(results)
+    return [
+        f"{case.name}/{measured_name(tool.name, tool.backend)}"
         for case in cases
-        for tool in tools_run
-        if tool not in by_case.get(case.name, {})
+        for tool in tools
+        if (case.name, measured_name(tool.name, tool.backend)) not in reached
     ]
-    verilator_ran = VERILATOR in tools_run
+
+
+def families_of(cases: list[Case]) -> dict[str, list[Case]]:
+    families: dict[str, list[Case]] = {}
+    for case in cases:
+        families.setdefault(case.family, []).append(case)
+    return families
+
+
+def print_report(
+    cases: list[Case], tools: list[Tool], backends: list[str],
+    results: list[Result], revision: str, target: float,
+) -> None:
+    """Print every rate obtained, and name each measurement that has none.
+
+    The table has a row for every case on every backend whatever was reached,
+    so a run that was cut short still says which cases it never got to. Each
+    row sets one backend beside the reference simulator, which is measured once
+    per case.
+    """
+    reached = by_measurement(results)
+    not_reached = unreached_measurements(cases, tools, results)
+    verilator_ran = any(t.name == VERILATOR for t in tools)
     not_run = len(not_reached) + (0 if verilator_ran else len(cases))
 
     print()
     print("## Lyra Benchmark Report")
     print()
-    print(f"> git: `{get_git_sha()}` | target: {target:g}s per measurement")
+    print(f"> git: `{revision}` | target: {target:g}s per measurement")
     print(
         "> Each tool is given the amount of work it needs to reach that "
         "target, so a rate is comparable across tools, machines, and runs "
         "wherever the cost of the work grew as `n^1.0`. Where Lyra's did "
         "not, its rate holds only at the amount beside it.")
-    if failed or not_run:
-        absences = ((len(failed), CELL_FAILED), (not_run, CELL_NOT_RUN))
-        counts = [f"{count} {word}" for count, word in absences if count]
-        print(
-            f"> **Not every measurement has a number: "
-            f"{' and '.join(counts)}, of {len(results) + not_run}.** Each is "
-            f"named under \"Not measured\" below. A cell reading "
-            f"`{CELL_FAILED}` or `{CELL_NOT_RUN}` is never a rate of zero.")
+    print_absence_count(results, not_run, "rate")
 
-    families: dict[str, list[Case]] = {}
-    for case in cases:
-        families.setdefault(case.family, []).append(case)
-
-    for family, members in families.items():
+    for family, members in families_of(cases).items():
         print()
         print(f"## {family}")
         print()
         print(
-            "| Case | Unit | Lyra /s | Verilator /s | vs Verilator "
+            "| Case | Backend | Unit | Lyra /s | Verilator /s | vs Verilator "
             "| Lyra work | Lyra growth | Binary (KB) |")
         print(
-            "|------|------|--------:|-------------:|:-------------"
+            "|------|---------|------|--------:|-------------:|:-------------"
             "|----------:|:------------|------------:|")
         for case in members:
-            tools = by_case.get(case.name, {})
-            lyra = tools.get(LYRA)
-            ver = tools.get(VERILATOR)
-            lyra_ok = lyra is not None and lyra.status == STATUS_OK
+            ver = reached.get((case.name, VERILATOR))
             ver_ok = ver is not None and ver.status == STATUS_OK
-            lyra_rate = lyra.rate if lyra_ok else 0.0
             ver_rate = ver.rate if ver_ok else 0.0
-            work = f"{lyra.work:,}" if lyra_ok else "-"
-            growth = fmt_growth(lyra.growth) if lyra_ok else "-"
-            binary = f"{lyra.binary_kb:,}" if lyra_ok else "-"
-            print(
-                f"| {case.name} | {case.work_unit} "
-                f"| {fmt_cell(lyra, fmt_rate(lyra_rate))} "
-                f"| {fmt_cell(ver, fmt_rate(ver_rate))} "
-                f"| {fmt_comparison(lyra_rate, ver_rate)} "
-                f"| {work} | {growth} | {binary} |")
+            for backend in backends:
+                lyra = reached.get((case.name, measured_name(LYRA, backend)))
+                lyra_ok = lyra is not None and lyra.status == STATUS_OK
+                lyra_rate = lyra.rate if lyra_ok else 0.0
+                work = f"{lyra.work:,}" if lyra_ok else "-"
+                growth = fmt_growth(lyra.growth) if lyra_ok else "-"
+                binary = f"{lyra.binary_kb:,}" if lyra_ok else "-"
+                print(
+                    f"| {case.name} | {backend} | {case.work_unit} "
+                    f"| {fmt_cell(lyra, fmt_rate(lyra_rate))} "
+                    f"| {fmt_cell(ver, fmt_rate(ver_rate))} "
+                    f"| {fmt_comparison(lyra_rate, ver_rate)} "
+                    f"| {work} | {growth} | {binary} |")
 
-    if failed or not_run:
-        print()
-        print("### Not measured")
-        print()
-        for r in failed:
-            print(f"- **{r.case}/{r.tool}**: {r.detail}")
-            if r.output:
-                print()
-                print("  ```")
-                for line in r.output.splitlines():
-                    print(f"  {line}")
-                print("  ```")
-        if not verilator_ran:
-            print(
-                f"- **{VERILATOR}**: not on PATH, so no case was run with it")
-        for name in not_reached:
-            print(f"- **{name}**: the run ended before measuring it")
+    print_absences(
+        results, not_reached,
+        [] if verilator_ran else
+        [f"**{VERILATOR}**: not on PATH, so no case was run with it"])
+    print()
 
+
+def print_count_report(
+    cases: list[Case], tools: list[Tool], backends: list[str],
+    results: list[Result], revision: str,
+) -> None:
+    """Print instructions per unit of work for every case on every backend."""
+    reached = by_measurement(results)
+    not_reached = unreached_measurements(cases, tools, results)
+
+    print()
+    print("## Lyra Instruction Count Report")
+    print()
+    print(
+        f"> git: `{revision}` | instructions per unit of work, "
+        f"under callgrind")
+    print_absence_count(results, len(not_reached), "count")
+    for family, members in families_of(cases).items():
+        print()
+        print(f"## {family}")
+        print()
+        print("| Case | Backend | Unit | Instructions per unit | Work |")
+        print("|------|---------|------|----------------------:|-----:|")
+        for case in members:
+            for backend in backends:
+                lyra = reached.get((case.name, measured_name(LYRA, backend)))
+                ok = lyra is not None and lyra.status == STATUS_OK
+                count = f"{lyra.instructions_per_unit:,.0f}" if ok else "-"
+                work = f"{lyra.work:,}" if ok else "-"
+                print(
+                    f"| {case.name} | {backend} | {case.work_unit} "
+                    f"| {fmt_cell(lyra, count)} | {work} |")
+
+    print_absences(results, not_reached, [])
     print()
 
 
@@ -764,10 +1038,12 @@ def result_to_dict(r: Result) -> dict:
         "measure": r.measure,
         "work_unit": r.work_unit,
         "tool": r.tool,
+        "backend": r.backend,
         "status": r.status,
         "work": r.work,
         "seconds": r.seconds,
         "rate": r.rate,
+        "instructions_per_unit": r.instructions_per_unit,
         "build_s": r.build_s,
         "binary_kb": r.binary_kb,
         "readings": [list(reading) for reading in r.readings],
@@ -777,10 +1053,14 @@ def result_to_dict(r: Result) -> dict:
     }
 
 
-def write_json(results: list[Result], path: str, target: float) -> None:
+def write_json(
+    results: list[Result], path: str, metric: str, revision: str,
+    target: float,
+) -> None:
     data = {
-        "schema_version": 6,
-        "git": get_git_sha(),
+        "schema_version": SCHEMA_VERSION,
+        "git": revision,
+        "metric": metric,
         "target_seconds": target,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results": [result_to_dict(r) for r in results],
@@ -788,6 +1068,30 @@ def write_json(results: list[Result], path: str, target: float) -> None:
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
+
+
+def read_count_file(path: str) -> dict:
+    """A count run's result file, or ValueError where the file is not one."""
+    with open(path) as f:
+        data = json.load(f)
+    if (data.get("schema_version") != SCHEMA_VERSION
+            or data.get("metric") != METRIC_INSTRUCTIONS):
+        raise ValueError(f"{path} is not a count run's result file")
+    return data
+
+
+def read_amounts(path: str) -> dict[tuple[str, str], int]:
+    """The amount each case was counted at in an earlier count run.
+
+    Two compilers are compared on the same work only where they did the same
+    amount of it: a count is exact, but the amount a run converges on is chosen
+    by timing, which does not repeat.
+    """
+    return {
+        (r["case"], r["backend"]): r["work"]
+        for r in read_count_file(path)["results"]
+        if r["status"] == STATUS_OK
+    }
 
 
 def main() -> None:
@@ -803,11 +1107,43 @@ def main() -> None:
         "--lyra", default=str(REPO_ROOT / "bazel-bin" / "lyra"),
         help="The compiler to measure; this checkout's bazel-bin/lyra if "
              "not given")
+    parser.add_argument(
+        "--backend", action="append", choices=BACKENDS, default=None,
+        help="A backend to measure Lyra on; may be given more than once, and "
+             "every backend is measured if it is not given")
+    parser.add_argument(
+        "--count", action="store_true",
+        help="Count instructions per unit of work under callgrind instead of "
+             "timing, Lyra only")
+    parser.add_argument(
+        "--amounts", default=None,
+        help="With --count, count each simulation at the amount this earlier "
+             "count run's result file records for it")
+    parser.add_argument(
+        "-j", "--jobs", type=int, default=os.cpu_count() or 1,
+        help="With --count, how many cases are counted at once")
+    parser.add_argument(
+        "--revision", default=None,
+        help="What the measured compiler was built from, as the report and "
+             "the result file name it; this checkout's HEAD if not given")
     args = parser.parse_args()
 
     lyra = os.path.abspath(args.lyra)
     if not os.path.isfile(lyra):
         print(f"error: lyra binary not found at {lyra}", file=sys.stderr)
+        sys.exit(1)
+    if args.amounts and not args.count:
+        print("error: --amounts is read only with --count", file=sys.stderr)
+        sys.exit(1)
+    if args.count and not shutil.which("valgrind"):
+        print("error: --count needs valgrind on PATH", file=sys.stderr)
+        sys.exit(1)
+    backends = args.backend or list(BACKENDS)
+    revision = args.revision or get_git_sha()
+    try:
+        amounts = read_amounts(args.amounts) if args.amounts else {}
+    except (OSError, ValueError, KeyError) as e:
+        print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -821,19 +1157,35 @@ def main() -> None:
         print("error: no cases found", file=sys.stderr)
         sys.exit(1)
 
-    tools = [lyra_tool(lyra)]
-    verilator = shutil.which("verilator")
-    if verilator:
-        tools.append(verilator_tool(verilator))
+    tools = [lyra_tool(lyra, backend) for backend in backends]
+    if args.count:
+        metric = METRIC_INSTRUCTIONS
+        step = counting_step(amounts)
+        target = 0.0
+        # A count is of one process and does not depend on what else the
+        # machine is running, so cases are counted side by side. The timing
+        # that picks a simulation's amount runs beside them too: the amount
+        # need only be roughly right, and a compiler compared is given the
+        # same one. A timing run is of the machine, and takes it alone.
+        jobs = max(1, args.jobs)
     else:
-        print("note: verilator not on PATH; Lyra only", file=sys.stderr)
+        metric = METRIC_TIME
+        step = timing_step(args.seconds)
+        target = args.seconds
+        jobs = 1
+        verilator = shutil.which("verilator")
+        if verilator:
+            tools.append(verilator_tool(verilator))
+        else:
+            print("note: verilator not on PATH; Lyra only", file=sys.stderr)
 
     print(f"Running {len(cases)} cases", file=sys.stderr)
 
     # A step runs in a process group of its own, so a signal sent to this one
-    # does not reach it. Being told to stop is made an exit from here, which
-    # unwinds through the step in flight and stops it on the way.
+    # does not reach it. Being told to stop stops every step in flight, and is
+    # then made an exit from here.
     def exit_on(signum: int, _frame: object) -> None:
+        stop_every_step()
         sys.exit(128 + signum)
 
     for stopping in (signal.SIGTERM, signal.SIGHUP):
@@ -844,25 +1196,48 @@ def main() -> None:
     # file is rewritten as each result arrives for the same reason, since a run
     # that is killed outright prints no report at all.
     results: list[Result] = []
+
+    def done(r: Result) -> None:
+        results.append(r)
+        name = f"{r.family}/{r.case}/{measured_name(r.tool, r.backend)}"
+        if r.status != STATUS_OK:
+            print(f"  {name} -> {r.status}: {r.detail}", file=sys.stderr)
+        elif metric == METRIC_INSTRUCTIONS:
+            print(
+                f"  {name} -> {r.status} "
+                f"({r.instructions_per_unit:,.0f} instructions/{r.work_unit})",
+                file=sys.stderr)
+        else:
+            print(
+                f"  {name} -> {r.status} ({fmt_rate(r.rate)} {r.work_unit}/s)",
+                file=sys.stderr)
+        if args.json:
+            write_json(results, args.json, metric, revision, target)
+
     try:
         with tempfile.TemporaryDirectory(prefix="lyra-bench-") as tmpdir:
-            for case in cases:
-                for tool in tools:
-                    print(f"  {case.path}/{tool.name}", end="", flush=True,
-                          file=sys.stderr)
-                    r = measure(case, tool, tmpdir, args.seconds)
-                    results.append(r)
-                    if r.status == STATUS_OK:
-                        print(
-                            f" -> {r.status} "
-                            f"({fmt_rate(r.rate)} {r.work_unit}/s)",
-                            file=sys.stderr)
-                    else:
-                        print(f" -> {r.status}: {r.detail}", file=sys.stderr)
-                    if args.json:
-                        write_json(results, args.json, args.seconds)
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs)
+            try:
+                pending = [
+                    pool.submit(measure, case, tool, tmpdir, step)
+                    for case in cases
+                    for tool in tools
+                ]
+                for future in concurrent.futures.as_completed(pending):
+                    done(future.result())
+            finally:
+                # Reached early only when the run is stopping: what has not
+                # started never does, and what is in flight is stopped rather
+                # than waited for.
+                pool.shutdown(wait=False, cancel_futures=True)
+                stop_every_step()
+                pool.shutdown(wait=True)
     finally:
-        print_report(cases, [t.name for t in tools], results, args.seconds)
+        results.sort(key=lambda r: (r.family, r.case, r.tool, r.backend))
+        if metric == METRIC_INSTRUCTIONS:
+            print_count_report(cases, tools, backends, results, revision)
+        else:
+            print_report(cases, tools, backends, results, revision, target)
 
     if args.json:
         print(f"JSON written to {args.json}", file=sys.stderr)

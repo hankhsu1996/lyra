@@ -92,9 +92,8 @@ stops that layer being worth filling in. A missing pass is a thing to build, nev
   crosses a suspension, which lives in the execution's own store and is reached by the calls that
   read and write it, so it has no address for anything that needs one to point at; that refuses and
   says so.
-- Every local now costs a slot in the generated frame. Nothing measures this path's speed today --
-  the benchmark corpus drives the C++ backend -- so the cost is stated rather than measured, and the
-  layer that would remove it is the one named above.
+- Every local now costs a slot in the generated frame. The benchmark corpus measures that cost on
+  this path as on the C++ one, and the layer that would remove it is the one named above.
 
 ## Cross-references
 

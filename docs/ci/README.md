@@ -87,6 +87,7 @@ Each moment answers a different question, and the answers are not interchangeabl
 | nightly    | is the C++ path still correct   | `bazel test //... --config=nightly`          |
 | nightly    | is any of it reading freed bits | `bazel test //... --config=asan`             |
 | nightly    | how far does a real design get  | `bazel test //tests:external_design_tests`   |
+| each merge | how much more work does it make | `instruction-count.yml`, base against head   |
 
 Pre-commit and the merge gate run the same tests, and that is the whole point: a green run before
 committing means "this lands green" only while the two sets are identical. Any change that makes the
@@ -160,7 +161,7 @@ a baseline. A ratio of two runs made back to back on one machine needs neither, 
 property the benchmark job's comparison against Verilator rests on. Go holds its own compiler and
 runtime to linear growth the same way, timing a function at n and at 2n and failing past three
 times. What a ratio can tell apart is a line from a square, which is a factor of two; a regression
-of a few percent is still only found by counting instructions outside the run.
+of a few percent is found by the instruction count below.
 
 One run of a pair can still be stretched by a loaded machine, so a time or a peak past its bound is
 measured again, and counts as exceeded only if it is on every attempt. Counts and sizes of files are
@@ -200,6 +201,39 @@ What is in it today: a unit's code holds the file and line of what a run reports
 task's call, the procedure a stopped run was in -- so a unit holding either is made again when its
 text only moves; and on the C++ backend a unit is made again when a variable of its own is renamed
 or a class it includes gains a member it never reads.
+
+## How much more work a change makes
+
+Every test above asks whether something is right, and a change can pass all of them while every
+program Lyra builds does a tenth more work. What says so is a count: `instruction-count.yml` builds
+the compiler at a change and at the revision before it, and has the benchmark runner count, under
+callgrind, how many instructions one unit of each case's work costs each of them on each backend --
+and, for a case whose subject is the build, how many Lyra itself executes building it. Two counts at
+an amount and at twice it are differenced, so what a run does once, starting and constructing the
+design, cancels exactly.
+
+A count is the same however loaded the machine is, which is why it can say what a timing cannot: a
+change of a few percent stands out on a runner whose wall clock moves by half from one night to the
+next. It is not the same on every machine, though -- the C library picks its copy routines by
+processor, and the runner image moves its compiler and standard library on its own schedule -- so
+both counts are taken in the one job, on one machine, and none is stored for another day to compare
+against. What compares across days is the nightly benchmark's ratio to Verilator.
+
+It is not on the path a change takes to merge, since the question is not one a merge waits for. A
+merge to `main` is counted against its parent, so each count belongs to exactly one pull request,
+and where any case moved by two percent or more either way the table goes on that pull request as a
+comment. A branch expected to move a case is counted before it merges by dispatching the workflow on
+it, and the same dispatch compares any revision with another, its parent by default.
+
+The job goes red where a case that built and ran at the parent no longer does, and where one got
+worse by two percent or more. A duration is never failed on, because it reports on the machine; a
+count does not, so a count that rose is a statement about the change. Being red holds up nothing,
+since the job is not one a merge waits for: it marks the commit that did it, and the next merge,
+counted against that commit, starts clean. Two counts of one compiler agree to a few hundredths of a
+percent, so what two percent leaves unmarked is a change too small to be worth marking, not noise.
+
+The host compiler a build starts is not counted: tracing it would cost fifty times a compile that is
+most of a build, and what Lyra hands it is held by `growth_tests`.
 
 ## What a real design stops on
 
@@ -358,28 +392,27 @@ newly stops at its check is read against the standard before it is called either
 the suite's and was written for another simulator. The jobs are the cases the test itself lists, so
 a design the suite gains is run without this file changing.
 
-`benchmark-nightly.yml` builds every case under `tests/benchmark/` and times it beside Verilator on
-the same sources, giving each tool the amount of work it needs to reach the same duration. It gates
-its own run on a narrower claim than a timing: a case that fails to build, fails to run, or outlives
-the time limit is red, while the rates themselves are printed for a reader. Failing a run on a rate
-would be reporting on the machine that ran it. Such a case costs only itself: the runner goes on to
-the others and exits non-zero only after printing its report, so a red run's summary still carries
-every rate that was obtained and names each case that has none, with the step that failed, how it
-ended, and the last lines it printed.
+`benchmark-nightly.yml` builds every case under `tests/benchmark/` on each backend and times it
+beside Verilator on the same sources, giving each tool the amount of work it needs to reach the same
+duration. It gates its own run on a narrower claim than a timing: a case that fails to build, fails
+to run, or outlives the time limit is red, while the rates themselves are printed for a reader.
+Failing a run on a rate would be reporting on the machine that ran it. Such a case costs only
+itself: the runner goes on to the others and exits non-zero only after printing its report, so a red
+run's summary still carries every rate that was obtained and names each case that has none, with the
+step that failed, how it ended, and the last lines it printed.
 
 The comparison it prints needs no stored history, which is what makes it worth running unattended:
 both tools are measured on one machine in one run, so the ratio between them survives a slow runner
-and a change of runner in a way an absolute time does not. A per-pull-request benchmark would answer
-a different question -- whether _this change_ regressed -- and that one does need a baseline, which
-is why there is no such job.
+and a change of runner in a way an absolute time does not. Whether _one change_ regressed is a
+different question, and the instruction count above answers it.
 
 ## What is deliberately absent
 
-**A per-pull-request benchmark.** A timing carries a regression only once something compares it to
-the same case on `main`, and a job that prints absolute times without that comparison spends a
-benchmark run on every pull request to say nothing. The comparison is what has to exist first, and
-the job that wants it will not look like a copy of the nightly one, because fetching a baseline and
-choosing a threshold are most of it.
+**A timing per change.** A timing carries a regression only once something compares it to the same
+case before the change, and on a shared runner the two differ by more than most regressions do, so
+the comparison would need repeated runs and a statistical threshold before it said anything. The
+instruction count needs neither, because it does not move with the machine's load; that is why the
+per-change job counts and the nightly times.
 
 **A standing diagnosis job.** One lived here, comparing a cached compiler's artifacts against a
 freshly built one to chase a specific incident: a build that selected AVX-512 and produced a binary
@@ -405,10 +438,11 @@ fi
 bazel build -c opt //:lyra $RBE_FLAGS
 ```
 
-The job of `bazel-build.yml` that builds and tests runs two, so it appends them to `.bazelrc.user`
-instead -- the untracked layer the build configuration already reserves for one checkout's own key.
-Two command lines can drift apart; one rc file cannot, and flags that differ between the two
-invocations would throw away the analysis that keeping them in one job exists to share.
+The job of `bazel-build.yml` that builds and tests runs two, and `instruction-count.yml` builds at
+two revisions, so each appends them to `.bazelrc.user` instead -- the untracked layer the build
+configuration already reserves for one checkout's own key. Two command lines can drift apart; one rc
+file cannot, and flags that differ between the two invocations would throw away the analysis that
+keeping them in one job exists to share.
 
 The pinned clang builds Lyra remotely and locally alike. The standard library is the executing
 machine's, so a remote build and a local one can still differ there, and `CLAUDE.md` states why it
